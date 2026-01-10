@@ -91,9 +91,13 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 - fastapi is the source of truth and must enforce authorization for every request.
 
 ### api authentication (hard constraint)
-- browser requests to fastapi MUST include a verified httpOnly secure session cookie.
-- fastapi verifies token signature + claims and derives `viewer_user_id` from the token (`sub`).
+- browser requests to fastapi MUST include a session cookie or `Authorization: Bearer <access_token>`.
+- fastapi verifies access token signature + claims and derives `viewer_user_id` from the token (`sub`).
 - fastapi never trusts user identity passed via custom headers from clients.
+
+### cors + cookie posture (hard constraint)
+- browsers call fastapi directly with credentials; allow only the frontend origin and `credentials: true`.
+- cookies must be compatible with same-site access (same registrable domain or `SameSite=None; Secure`).
 
 ---
 
@@ -121,11 +125,8 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 
 ### auth system
 - supabase auth (gotrue) is the identity provider.
-- browser auth uses httpOnly secure cookies for session (issued by our domain).
-- cookie names:
-  - `sb-access-token` (short-lived access token jwt)
-  - `sb-refresh-token` (longer-lived refresh token)
-- next.js auth routes set/refresh cookies server-side; the browser never reads tokens.
+- use `@supabase/ssr` to create server + browser clients that share session via cookies.
+- browser uses supabase-js for auth flows and token refresh; cookies may be non-httpOnly under this model.
 - `Authorization: Bearer <access_token>` is optional for non-browser clients only.
   - non-browser clients obtain an access token from supabase auth and send it via `Authorization`.
   - cookie and bearer tokens are the same jwt type and validated identically; if both are present, bearer takes precedence.
@@ -136,7 +137,6 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 - no endpoint may accept a viewer id from request headers/body as authoritative.
 - access tokens must never be stored in localstorage/sessionstorage.
 - fastapi accepts access tokens only; refresh tokens are never read by fastapi.
-- when access expires, the browser calls a next.js `/auth/refresh` route to refresh cookies, then retries the request.
 
 ### identity mapping
 - `user.id` is a uuid in our postgres `users` table.
@@ -163,12 +163,15 @@ if ingestion logic changes and we want “new output”, that is a *new media ro
 - sanitizer uses an explicit allowlist of tags/attrs; strips all event handlers, scripts, iframes, forms, and inline styles.
 - drop all attributes starting with `on` (event handlers) even if an allowlist misconfiguration occurs.
 - always remove `style` attributes; inline styles are never allowed.
+- disallow all svg tags and attributes.
+- disallow `base`, `meta`, and `link` tags.
 - disallow `srcdoc`, `srcset`, and `xlink:href`.
 - urls in `href`/`src` are validated:
   - forbid `javascript:` and `data:`.
   - normalize external links to add `rel="noopener noreferrer"` and `referrerpolicy="no-referrer"`, and force `target="_blank"`.
 - ingestion rewrites relative `href`/`src` to absolute using the source url (web) or epub resource mapping (epub).
 - external images are served via an image proxy endpoint that enforces allowlist + size limits (10 MB) and caching; no external `src` survives sanitization.
+  - image proxy enforces `image/*` content-types (no svg), max decoded dimensions, and caches by content hash (not url).
 
 ### canonical text definition (html/epub/transcripts that behave like html)
 `fragment.canonical_text` is produced by:
@@ -187,6 +190,7 @@ if ingestion logic changes and we want “new output”, that is a *new media ro
 5. block definition (minimum): `p`, `li`, `ul`, `ol`, `h1..h6`, `blockquote`, `pre`, `div`, `section`, `article`, `header`, `footer`, `nav`, `aside`
 6. `pre` and `code` highlighting: not supported in v1 (whitespace is normalized as above).
 7. `pre`/`code` text nodes are included in `fragment.canonical_text`, but highlight creation is disallowed when a selection intersects `pre`/`code`.
+8. canonical text is intentionally structure-heavy (block boundaries preserved); this favors stability over “reading-flow” text.
 
 **highlight offsets are defined only over `fragment.canonical_text`.**
 
@@ -229,6 +233,7 @@ notes:
 - conversation visibility depends only on conversation sharing + root media intersection rule.
 - message visibility is identical to its conversation; message-level sharing does not exist.
 - a message may reference context objects the viewer cannot see; those context links are omitted from the response for that viewer.
+- non-visible context links are omitted (no tombstones).
 - messages inherit conversation visibility (a visible conversation implies all its messages are visible).
 - default sharing: conversation `private`; highlight/annotation `library`.
 - `conversation.root_media_id` may be null only for private conversations.
@@ -257,6 +262,7 @@ notes:
 - user-generated annotations are rendered as plain text (no html).
 - untrusted html rendering uses a dedicated component and never renders unsanitized input.
 - frontend must never use `dangerouslySetInnerHTML` except for `fragment.html_sanitized` returned by the api, and only in that dedicated component.
+- the dedicated html renderer is enforced via lint rule + codeowner review.
 
 ---
 
@@ -321,6 +327,7 @@ rules:
 - search may over-fetch then filter, but must never return non-visible results.
 - snippets are generated only after visibility filtering to avoid leakage.
 - search counts/facets are computed only over visibility-filtered results.
+- semantic search returns only items with embeddings ready; results may be partial until embeddings complete.
 
 ---
 
