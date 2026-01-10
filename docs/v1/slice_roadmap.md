@@ -2,7 +2,7 @@
 
 this document defines the **delivery order** of nexus. each slice is a vertical, user-visible increment. slices form a DAG; later slices assume earlier ones are complete.
 
-non-goal: this document does NOT define schemas, APIs, or code structure.
+non-goal: this document does NOT define full schemas, APIs, or code structure.
 
 ---
 
@@ -23,6 +23,9 @@ a real user can log in, has a default library, and the system enforces visibilit
 - default personal library creation
 - library + membership model (admin/member)
 - server-side visibility enforcement (no leaks)
+- minimal schema:
+  - users, libraries, library_users, media, library_media
+  - social stubs: highlights, conversations (only columns needed for visibility)
 
 **excludes**
 - media ingestion
@@ -35,7 +38,8 @@ a real user can log in, has a default library, and the system enforces visibilit
 - unauthenticated request → rejected
 - authenticated user sees only their own default library
 - user cannot see any object they do not own or share a library with
-- `can_view` is used by all read paths (even if no data yet)
+- 2–3 integration tests prove “no cross-library leak” on at least one social table
+- `can_view` is used by all existing read paths
 
 **dependencies**
 - none
@@ -72,6 +76,8 @@ a user can add a web article by url and read it once processing completes.
 - html is rendered (sanitized) in content pane
 - canonical_text exists and matches rendered content semantics
 - user cannot read media not in a library they belong to
+- failed job transitions to `failed` with a typed error and visible UI state
+- manual retry resets state and re-runs extraction
 
 **dependencies**
 - slice 0
@@ -93,6 +99,11 @@ users can highlight passages in html content and see linked-items aligned with t
 - linked-items pane rendering
 - vertical alignment between highlight targets and linked-items
 - highlight deletion/edit (in-place mutation)
+- alignment contract:
+  - tolerance ≤ 4px between target and linked-item
+  - alignment measured via DOM Range bounding rects for highlights
+  - off-screen targets show a placeholder state (no forced scroll)
+  - alignment recalculates on resize and content reflow (including image load)
 
 **excludes**
 - annotations (notes)
@@ -103,8 +114,9 @@ users can highlight passages in html content and see linked-items aligned with t
 **acceptance**
 - user can create multiple highlights in a document
 - overlapping highlights render correctly
-- scrolling content keeps active highlight and linked-item aligned (± defined tolerance)
+- scrolling content keeps active highlight and linked-item aligned (± 4px)
 - resizing panes recomputes alignment
+- deleting a highlight does not delete any other object; future link cleanup occurs via link deletion rules
 - highlights are invisible to other users unless shared later
 
 **dependencies**
@@ -156,6 +168,8 @@ users can start a conversation and send messages with quoted context.
 - messages ordered by per-conversation seq
 - message_context links (media/highlight/annotation)
 - quote-to-chat flow (inject quote + surrounding context + metadata)
+- conversation schema includes `sharing` enum and `root_media_id` (required for library sharing)
+- message roles (`user`/`assistant`/`system`)
 - conversation pane ui
 
 **excludes**
@@ -169,6 +183,7 @@ users can start a conversation and send messages with quoted context.
 - message includes quote + context text
 - deleting a highlight removes it from message context but not the message
 - conversations are private by default and never leak
+- no llm call yet; conversations store user-authored text only (assistant replies are out of scope)
 
 **dependencies**
 - slice 3
@@ -227,7 +242,7 @@ epubs behave like first-class readable documents.
 **acceptance**
 - user uploads epub → sees chapters
 - highlights + annotations work per chapter
-- linked-items align correctly within chapter fragments
+- linked-items align within chapter fragments per slice 2 alignment contract
 
 **dependencies**
 - slice 2 (html highlights)
@@ -249,6 +264,9 @@ pdfs are readable and gated correctly.
 - signed url issuance
 - pdf.js viewer integration
 - page count + basic metadata
+- virtualized page loading
+- zoom + rotation support with exposed transform matrix
+- deterministic screen ↔ page coordinate conversions
 
 **excludes**
 - pdf highlights
@@ -259,6 +277,8 @@ pdfs are readable and gated correctly.
 - user uploads pdf → sees pdf viewer
 - access is blocked if not in a shared library
 - pdf rendering works on desktop + mobile
+- viewer exposes transform matrix used for later overlays
+- coordinate conversions remain correct under zoom/rotation
 
 **dependencies**
 - slice 0
@@ -295,7 +315,7 @@ pdf highlights are supported without breaking the model.
 
 ---
 
-## slice 9 — search (keyword first)
+## slice 9a — search (private-only, keyword first)
 
 **goal**
 users can find what they’ve read and written.
@@ -304,7 +324,34 @@ users can find what they’ve read and written.
 - discovery without ML complexity
 
 **includes**
-- keyword search across media, highlights, annotations, conversations
+- keyword search across the viewer’s own media, highlights, annotations, conversations
+- scoping (media, conversation)
+- visibility-filtered results only (owner-only)
+
+**excludes**
+- semantic search
+- ranking optimization
+
+**acceptance**
+- search never returns invisible objects
+- scoped search returns only scoped results
+- snippets correspond to canonical text or annotation content
+
+**dependencies**
+- slice 4
+
+---
+
+## slice 9b — search (shared keyword)
+
+**goal**
+users can search across shared libraries they can see.
+
+**outcome**
+- shared discovery works without leaks
+
+**includes**
+- keyword search across media, highlights, annotations, conversations the viewer can see
 - scoping (library, media, conversation)
 - visibility-filtered results only
 
@@ -319,6 +366,7 @@ users can find what they’ve read and written.
 
 **dependencies**
 - slice 5
+- slice 9a
 
 ---
 
@@ -346,7 +394,7 @@ semantic recall across everything the user can see.
 - chunk regeneration is safe and idempotent
 
 **dependencies**
-- slice 9
+- slice 9b
 
 ---
 
