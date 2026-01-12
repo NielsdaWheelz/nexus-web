@@ -26,10 +26,8 @@ a real user can log in, has a default library, and the system enforces visibilit
 - server-side visibility enforcement (no leaks)
 - minimal schema:
   - users, libraries, library_users, media, library_media
-  - social stubs: highlights, conversations (only columns needed for visibility)
-  - highlight stub fields: `owner_user_id`, `sharing`, `fragment_id` (html/epub anchor), `media_id` + `page_number` (pdf anchor)
-  - conversation stub fields: `owner_user_id`, `sharing`, `root_media_id`
-  - anchoring rule: every social object has an anchor used by `can_view` (no future rewrites)
+  - highlight stub fields: `owner_user_id`, `sharing`, `anchor_media_id`
+  - anchoring rule: highlights are anchored by `anchor_media_id` used by `can_view`
 - `visible_media_ids(viewer)` helper (query/cte/view) used by all read paths
 - one real read endpoint for social objects:
   - list visible highlights for a media id (even if highlight creation is not implemented)
@@ -251,12 +249,15 @@ users can start a conversation and send messages with quoted context.
 - messages ordered by per-conversation seq
 - message_context links (media/highlight/annotation)
 - quote-to-chat flow (inject quote + surrounding context + metadata)
-- conversation schema includes `sharing` enum and `root_media_id` (required for library sharing)
+- conversations have `sharing` with default `private`
+- `conversation_shares` table exists; required when `sharing = library`
+- `conversation_media` is derived from message_context and updated transactionally
+- linked-items panes list conversations via `conversation_media`
 - message roles (`user`/`assistant`/`system`)
 - context construction includes ±K chars around selection with a hard cap
 - quote context sources:
   - html/epub: `fragment.canonical_text`
-  - pdf: not supported until slice 10
+  - pdf: not supported until slice 12
 - conversation pane ui
 
 **excludes**
@@ -271,6 +272,7 @@ users can start a conversation and send messages with quoted context.
 - deleting a highlight removes it from message context but not the message
 - conversations are private by default and never leak
 - roles are stored, but only `user` messages can be created via ui in this slice
+- a conversation created without media appears under media only after message_context creates `conversation_media`
 
 **dependencies**
 - slice 0
@@ -278,7 +280,35 @@ users can start a conversation and send messages with quoted context.
 
 ---
 
-## slice 7 — llm replies + quota gates
+## slice 7 — conversation sharing (library)
+
+**goal**
+owners can share conversations to one or more libraries.
+
+**outcome**
+- conversations become visible to other library members
+
+**includes**
+- set `conversation.sharing = library` with ≥1 share target
+- create/delete `conversation_shares` rows
+- enforce owner membership in target libraries at write time
+
+**excludes**
+- public sharing
+- message-level sharing
+
+**acceptance**
+- owner selects a library they are a member of and shares the conversation
+- members of that library can view the conversation and messages
+- non-members cannot view the conversation
+
+**dependencies**
+- slice 5
+- slice 6
+
+---
+
+## slice 8 — llm replies + quota gates
 
 **goal**
 conversations produce assistant replies with basic plan gating.
@@ -305,7 +335,7 @@ conversations produce assistant replies with basic plan gating.
 
 ---
 
-## slice 8 — epub ingestion (html pipeline reuse)
+## slice 9 — epub ingestion (html pipeline reuse)
 
 **goal**
 epubs behave like first-class readable documents.
@@ -336,7 +366,7 @@ epubs behave like first-class readable documents.
 
 ---
 
-## slice 9 — pdf ingestion (viewer first)
+## slice 10 — pdf ingestion (viewer first)
 
 **goal**
 pdfs are readable and gated correctly.
@@ -373,7 +403,7 @@ pdfs are readable and gated correctly.
 
 ---
 
-## slice 10 — pdf highlights (overlay-based)
+## slice 11 — pdf highlights (overlay-based)
 
 **goal**
 pdf highlights are supported without breaking the model.
@@ -398,12 +428,12 @@ pdf highlights are supported without breaking the model.
 
 **dependencies**
 - slice 0
-- slice 9
+- slice 10
 - slice 4
 
 ---
 
-## slice 11 — pdf text extraction + canonical_text
+## slice 12 — pdf text extraction + canonical_text
 
 **goal**
 pdfs become searchable and quotable beyond geometry.
@@ -425,11 +455,11 @@ pdfs become searchable and quotable beyond geometry.
 
 **dependencies**
 - slice 0
-- slice 9
+- slice 10
 
 ---
 
-## slice 12 — search (private keyword)
+## slice 13 — search (private keyword)
 
 **goal**
 users can find what they’ve read and written (private-only).
@@ -463,7 +493,7 @@ users can find what they’ve read and written (private-only).
 
 ---
 
-## slice 13 — search (shared keyword)
+## slice 14 — search (shared keyword)
 
 **goal**
 users can search across shared libraries they can see.
@@ -484,15 +514,16 @@ users can search across shared libraries they can see.
 - search never returns invisible objects
 - scoped search returns only scoped results
 - snippets correspond to canonical text or annotation content
+- conversation results are filtered via `conversation_shares` visibility
 
 **dependencies**
 - slice 0
 - slice 5
-- slice 12
+- slice 13
 
 ---
 
-## slice 14 — embeddings + semantic search
+## slice 15 — embeddings + semantic search
 
 **goal**
 semantic recall across everything the user can see.
@@ -516,19 +547,19 @@ semantic recall across everything the user can see.
 - chunk regeneration is safe and idempotent
 
 **dependencies**
-- slice 8
-- slice 11
-- slice 13
+- slice 9
+- slice 12
+- slice 14
 
 ---
 
 ## v1 cutline
 
 v1 ships after:
-- slice 10 (pdf highlights)
-- slice 13 (shared keyword search)
-- slice 14 (semantic search)
-- slice 7 (llm replies + quota gates)
+- slice 11 (pdf highlights)
+- slice 14 (shared keyword search)
+- slice 15 (semantic search)
+- slice 8 (llm replies + quota gates)
 
 ---
 
