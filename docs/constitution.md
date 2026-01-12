@@ -61,9 +61,11 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
   - pdf: fragments are not used for highlights (pdf uses overlay geometry)
 - **highlight**: a user-owned selection in a fragment (html/epub) or in a pdf page geometry.
 - **annotation**: optional note attached to a highlight (0..1).
-- **conversation**: a thread of messages authored by exactly one user.
+- **conversation**: a thread of messages authored by exactly one user (no anchor media; visibility via shares).
 - **message**: one entry in a conversation; ordered by per-conversation `seq`.
 - **context**: a link from a message to an object (media/highlight/annotation/message/conversation) used as llm context.
+- **conversation_share**: mapping of a conversation to one or more libraries (visibility for `sharing=library`).
+- **conversation_media**: derived mapping of a conversation to media for ui placement (from message_context; does not affect visibility).
 - **sharing**: visibility mode for social objects: `private` | `library` | `public`.
 
 ---
@@ -217,37 +219,46 @@ a viewer can read a media item iff:
 - the media is in at least one library the viewer is a member of
 
 ### social object visibility (highlight/annotation/message/conversation)
-a viewer can see a social object iff:
-- sharing = `public`, OR
-- sharing = `private` AND viewer is the owner, OR
-- sharing = `library` AND:
-  - there exists a library `L` such that:
-    - viewer ∈ members(L)
-    - owner ∈ members(L)
-    - anchor_media_id ∈ media(L)
+
+**highlights + annotations**
+- `sharing = public`, OR
+- `sharing = private` AND viewer is the owner, OR
+- `sharing = library` AND there exists a library `L` such that:
+  - viewer ∈ members(L)
+  - owner ∈ members(L)
+  - anchor_media_id ∈ media(L)
+
+**conversations + messages**
+- `sharing = public`, OR
+- `sharing = private` AND viewer is the owner, OR
+- `sharing = library` AND there exists a library `L` such that:
+  - `L ∈ conversation_shares(conversation_id)`
+  - viewer ∈ members(L)
+  - owner ∈ members(L)
 
 notes:
 - conversations are `private` by default and never become visible “by accident”.
-- every conversation has a `root_media_id` (or `root_fragment_id` for html/epub) set at creation.
-- if sharing = `library`, `anchor_media_id` must exist and is the referenced media for visibility checks.
-- conversation visibility depends only on conversation sharing + root media intersection rule.
 - message visibility is identical to its conversation; message-level sharing does not exist.
+- message_context and conversation_media never expand visibility; they only control placement.
 - a message may reference context objects the viewer cannot see; those context links are omitted from the response for that viewer.
 - non-visible context links are omitted (no tombstones).
-- messages inherit conversation visibility (a visible conversation implies all its messages are visible).
 - default sharing: conversation `private`; highlight/annotation `library`.
-- `conversation.root_media_id` may be null only for private conversations.
+- setting `conversation.sharing = library` requires ≥1 `conversation_share` rows; `sharing = private` forbids `conversation_share` rows.
+- `conversation_shares` libraries must include the owner (enforced at write time).
 
 ### anchoring rules (hard constraint)
 - highlight is anchored to exactly one media via `fragment_id` (html/epub) or `media_id + page_number` (pdf).
 - annotation is anchored to a highlight and inherits its media.
-- message is anchored to its conversation and inherits `root_media_id` for library visibility.
+- message is anchored to its conversation for visibility (no independent sharing).
 - context links do not change visibility of message/conversation objects.
-- every social object has an effective `anchor_media_id`; all library-visibility checks are computed against that id:
+- library-visibility checks use `anchor_media_id` for highlights/annotations; conversations use `conversation_shares`:
   - highlight (html/epub): `fragment.media_id`
   - highlight (pdf): `media_id`
   - annotation: inherits highlight anchor
-  - conversation/message: `root_media_id`
+  - conversation/message: `conversation_shares`
+- `conversation_shares(conversation_id, library_id)` is required when `sharing = library` and forbidden when `sharing = private`.
+- `conversation_media(conversation_id, media_id, last_message_at)` is derived from `message_context`, unique on `(conversation_id, media_id)`, and updated transactionally in v1.
+- `conversation_media` contains `(conversation_id, media_id)` iff at least one `message_context` in the conversation resolves to that media and the target still exists.
 
 ### storage access
 - storage buckets are private.
@@ -318,6 +329,7 @@ rules:
 - deleting a highlight deletes its annotation (if present).
 - deleting an annotation leaves the highlight.
 - deleting a message deletes its context links; if it was the last message, delete the conversation.
+- deleting a context target that was the only reason a conversation was associated to a media must remove that `(conversation_id, media_id)` from `conversation_media` transactionally.
 - media rows persist in v1; users remove media from libraries.
 
 ### search
@@ -362,7 +374,7 @@ rules:
 - a conversation never contains messages from multiple users.
 - a message belongs to exactly one conversation.
 - messages have strict order by `seq` (no reliance on timestamp ordering).
-- a conversation always has `root_media_id` (or `root_fragment_id`), set at creation.
+- `conversation_media` is updated in the same db transaction as `message_context` inserts/deletes (no inconsistent reads).
 
 ### visibility correctness
 - any endpoint that returns social objects must apply the visibility predicate.
@@ -387,6 +399,7 @@ rules:
   - content pane (left)
   - linked-items pane (right)
 - linked-items must remain vertically aligned with their highlight targets.
+- a conversation is listed in a media’s linked-items pane iff `conversation_media` contains `(conversation_id, media_id)` and the viewer can view the conversation.
 
 ---
 
