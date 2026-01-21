@@ -24,10 +24,18 @@ check_tool docker
 echo "✓ Required tools found"
 echo ""
 
-# Start infrastructure services
+# Start infrastructure services (reuse if already running)
 echo "Starting infrastructure services..."
 cd "$PROJECT_ROOT/docker"
-docker compose up -d
+# Check if containers already exist and are running
+if docker ps --format '{{.Names}}' | grep -q '^nexus-postgres$' && \
+   docker ps --format '{{.Names}}' | grep -q '^nexus-redis$'; then
+    echo "✓ Infrastructure containers already running (reusing)"
+else
+    # Remove any existing stopped containers with conflicting names
+    docker rm -f nexus-postgres nexus-redis 2>/dev/null || true
+    docker compose up -d
+fi
 echo "✓ PostgreSQL and Redis started"
 echo ""
 
@@ -62,7 +70,7 @@ echo ""
 # Run migrations on dev database
 echo "Running migrations on dev database..."
 cd "$PROJECT_ROOT/migrations"
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/nexus_dev \
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5433/nexus_dev \
     uv run --project ../python alembic upgrade head
 echo "✓ Migrations applied"
 echo ""
@@ -71,7 +79,7 @@ echo "=== Setup Complete ==="
 echo ""
 echo "To start the API server:"
 echo "  cd apps/api"
-echo "  PYTHONPATH=\$PWD/../../python DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/nexus_dev \\"
+echo "  PYTHONPATH=\$PWD/../../python DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5433/nexus_dev \\"
 echo "    uv run --project ../../python uvicorn main:app --reload"
 echo ""
 echo "API docs: http://localhost:8000/docs"
