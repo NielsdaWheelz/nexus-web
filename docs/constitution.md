@@ -320,6 +320,11 @@ store:
 a viewer can read a media item iff:
 - the media is in at least one library the viewer is a member of
 
+### media idempotency (hard constraint)
+- **web_article / video / podcast_episode**: idempotent by `(kind, canonical_source_url)` or episode guid. two users adding the same URL share one media row. extraction artifacts are shared; this is intentional.
+- **epub / pdf (file uploads)**: idempotent by `(user_id, file_hash)`. different users uploading the same file get separate media rows.
+- no dedupe across formats: a URL and a PDF of the same content are separate media rows.
+
 ### global discovery objects (podcasts)
 - podcasts are global metadata objects, not media. they are visible to all authenticated users.
 - podcast search results from PodcastIndex can be returned to any authenticated user (these are discovery objects).
