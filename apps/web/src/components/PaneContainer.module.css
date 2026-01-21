@@ -1,0 +1,14 @@
+.container {
+  display: flex;
+  flex: 1;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Mobile: single pane mode */
+@media (max-width: 768px) {
+  .container {
+    overflow-x: hidden;
+  }
+}
