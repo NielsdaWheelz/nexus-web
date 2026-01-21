@@ -10,10 +10,11 @@ Two test suites are introduced early and reused by every later slice:
 
 ### Visibility Test Suite (introduced in S0)
 - Integration scenarios covering:
-  - Media readability via library membership
-  - Highlights visible only via library intersection
-  - Conversations visible via `conversation_shares`
-  - Search filtering (never leaks invisible results)
+  - Media readability via library membership **(S0)**
+  - Highlights visible only via library intersection **(S2+)**
+  - Conversations visible via `conversation_shares` **(S3+)**
+  - Search filtering (never leaks invisible results) **(S3+)**
+- S0 establishes the foundation (media visibility only); later slices extend coverage.
 - Every slice that touches visibility must pass all existing scenarios + add new ones.
 
 ### Processing-State Test Suite (introduced in S1)
@@ -44,6 +45,7 @@ Two test suites are introduced early and reused by every later slice:
   - `libraries`
   - `memberships`
   - `media`
+  - `fragments`
   - `library_media`
 - Default library creation invariant
 - Library CRUD:
@@ -55,7 +57,7 @@ Two test suites are introduced early and reused by every later slice:
   - Collapsible navbar
   - Tabsbar
   - Horizontal resizable panes
-  - `/media/:id` route renders content pane + linked-items pane
+  - `/media/:id` route renders content pane (linked-items pane deferred to S2)
 - **Seeded fixture media** (no placeholder kind):
   - One real `web_article` row seeded via hardcoded fixture URL in tests
   - Uses real schema: `kind = web_article`, `processing_status = ready_for_reading`
@@ -179,7 +181,7 @@ Two test suites are introduced early and reused by every later slice:
 - Highlight colors
 - Highlight edit (mutate offsets/color without delete/recreate)
 - Optional annotation (0..1)
-- Linked-items pane (highlights only)
+- Linked-items pane (shows highlights; empty shell exists from S0)
 - Visibility enforcement (single-user only; sharing comes in S4)
 - **Security fixtures suite** (explicit acceptance tests):
   - Sanitizer blocks XSS payloads (script injection, event handlers, javascript: urls)
