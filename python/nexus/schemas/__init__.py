@@ -8,9 +8,9 @@ from nexus.schemas.library import (
     CreateLibraryRequest,
     LibraryMediaOut,
     LibraryOut,
-    MediaOut,
     UpdateLibraryRequest,
 )
+from nexus.schemas.media import FragmentOut, MediaOut
 
 __all__ = [
     "CreateLibraryRequest",
@@ -19,4 +19,5 @@ __all__ = [
     "LibraryOut",
     "LibraryMediaOut",
     "MediaOut",
+    "FragmentOut",
 ]

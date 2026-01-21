@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
-from nexus.schemas.library import LibraryMediaOut, LibraryOut, MediaOut
+from nexus.schemas.library import LibraryMediaOut, LibraryOut
+from nexus.schemas.media import MediaOut
 
 
 def create_library(db: Session, viewer_id: UUID, name: str) -> LibraryOut:

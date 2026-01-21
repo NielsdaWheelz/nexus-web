@@ -15,7 +15,8 @@ nexus/
 │   └── routes/    # Route handlers
 │       ├── health.py    # Health check
 │       ├── me.py        # Current user endpoint
-│       └── libraries.py # Library CRUD + library-media
+│       ├── libraries.py # Library CRUD + library-media
+│       └── media.py     # Media read endpoints
 ├── auth/          # Authentication
 │   ├── middleware.py  # Auth middleware
 │   └── verifier.py    # JWT verifiers (SupabaseJwksVerifier, MockTokenVerifier)
@@ -23,10 +24,12 @@ nexus/
 │   ├── engine.py  # SQLAlchemy engine
 │   └── session.py # Session management
 ├── schemas/       # Pydantic request/response models
-│   └── library.py # Library and media schemas
+│   ├── library.py # Library schemas
+│   └── media.py   # Media and fragment schemas
 └── services/      # Business logic
     ├── bootstrap.py   # User/library bootstrap
-    └── libraries.py   # Library domain logic
+    ├── libraries.py   # Library domain logic
+    └── media.py       # Media visibility + retrieval
 ```
 
 ## API Endpoints
@@ -43,6 +46,8 @@ nexus/
 | GET | `/libraries/{id}/media` | List media in library |
 | POST | `/libraries/{id}/media` | Add media to library |
 | DELETE | `/libraries/{id}/media/{media_id}` | Remove media from library |
+| GET | `/media/{id}` | Get media by ID (visibility enforced) |
+| GET | `/media/{id}/fragments` | Get fragments for media (visibility enforced) |
 
 ### Public Endpoints
 
