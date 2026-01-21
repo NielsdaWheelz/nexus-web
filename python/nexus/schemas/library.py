@@ -9,6 +9,18 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# MediaOut is defined in schemas/media.py - import from there
+from nexus.schemas.media import MediaOut
+
+__all__ = [
+    "CreateLibraryRequest",
+    "UpdateLibraryRequest",
+    "AddMediaRequest",
+    "LibraryOut",
+    "LibraryMediaOut",
+    "MediaOut",
+]
+
 # =============================================================================
 # Request Schemas
 # =============================================================================
@@ -51,24 +63,6 @@ class LibraryOut(BaseModel):
     owner_user_id: UUID
     is_default: bool
     role: str  # "admin" or "member" — viewer's role in this library
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class MediaOut(BaseModel):
-    """Response schema for media.
-
-    Note: `author` is NOT included. The media schema does not have an
-    `author` column in S0. Authors are added in S2 with metadata extraction.
-    """
-
-    id: UUID
-    kind: str  # "web_article", "epub", "pdf", "podcast_episode", "video"
-    title: str
-    canonical_source_url: str | None
-    processing_status: str  # "pending", "extracting", "ready_for_reading", etc.
     created_at: datetime
     updated_at: datetime
 

@@ -196,9 +196,9 @@ When running locally, API docs are available at:
 ### Quick Commands
 
 ```bash
-make test              # Run tests (69 tests, excludes migrations)
+make test              # Run tests (128 tests, excludes migrations)
 make test-migrations   # Run migration tests (11 tests, separate DB)
-make test-all          # Run all tests (80 tests)
+make test-all          # Run all tests (139 tests)
 make verify            # Full verification (lint + format + all tests)
 ```
 
