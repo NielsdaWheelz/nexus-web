@@ -207,42 +207,49 @@ Rationale:
 - Single source of truth for visibility logic
 
 **Tests:**
-- Request ID generated when missing (FastAPI)
-- Request ID echoed when provided (FastAPI)
-- Request ID forwarded by BFF
+
+*FastAPI (pytest):*
+- Request ID generated when missing
+- Request ID echoed when provided
 - Request ID appears in Celery task logs (when task called directly in test)
 - `can_read_media`: member returns true, non-member returns false
 - `can_read_media_bulk`: correct for mixed visibility
 - `is_library_admin`: correct role check
 - Existing media endpoint tests still pass (refactor doesn't break behavior)
 
+*Next.js (vitest/jest):*
+- **`proxyToFastAPI` unit test:** Verify it generates `X-Request-ID` if missing and forwards it
+- **`proxyToFastAPI` unit test:** Verify it forwards existing `X-Request-ID` from request
+
+These are route handler unit tests (mock the fetch to FastAPI), not full e2e. They ensure the BFF propagation logic is tested in CI without requiring Playwright.
+
 ---
 
 ## PR-03 — Processing Status + Capability Derivation + Media List
 
-**Goal:** Add state machine enums; implement viewer-scoped capability derivation; add media list endpoint.
+**Goal:** Add state machine enums; implement capability derivation; add media list endpoint.
 
 **Deliverables:**
 
 - Enums (in ORM or separate module):
   - `ProcessingStatus`: `pending`, `extracting`, `ready_for_reading`, `embedding`, `ready`, `failed`
   - `FailureStage`: `upload`, `extract`, `transcribe`, `embed`, `other`
-- Pure function with **viewer-scoped** signature:
+- Pure function (assumes caller already verified read access):
   ```python
   derive_capabilities(
       media,
       *,
-      viewer_can_read: bool,
       media_file_exists: bool,
       external_playback_url_exists: bool
   ) -> dict
   ```
+  - **Precondition:** Caller has already verified `can_read_media(viewer, media)`. If that check failed, endpoint returned 404 and never calls this function.
   - Returns: `can_read`, `can_highlight`, `can_quote`, `can_search`, `can_play`, `can_download_file`
-  - **If `viewer_can_read` is false, all capabilities are false** (endpoint returns 404 anyway)
   - Handles `failed + E_TRANSCRIPT_UNAVAILABLE` → playback-only
-  - **PDF special case:** `can_read` = `media_file_exists AND viewer_can_read`, independent of `processing_status`
+  - **PDF special case:** `can_read` = `media_file_exists`, independent of `processing_status`
     - `ready_for_reading` for PDF means "text extraction complete" (enables `can_quote`, `can_search`)
     - Viewing (pdf.js render) is available earlier if file exists
+  - **`can_download_file`** = `media_file_exists` (authorization already passed at endpoint level)
 - **State invariant clarification:**
   - `ready_for_reading` means "highlightable/quotable artifacts exist for that kind"
   - For PDF: file renderability (`can_read`) can happen before `ready_for_reading`
@@ -273,13 +280,14 @@ Rationale:
 Never leak raw DB fields; capabilities always nested in response.
 
 **Tests:**
-- Capability matrix unit tests (all kinds × key statuses × viewer_can_read true/false)
+- Capability matrix unit tests (all kinds × key statuses)
 - Playback-only edge case (`failed + E_TRANSCRIPT_UNAVAILABLE`)
 - PDF special case: `can_read = true` with file before `ready_for_reading`
-- PDF: `can_read = false` if `viewer_can_read = false` regardless of file existence
 - PDF: `can_quote = false` before `ready_for_reading`, `can_quote = true` after (tested via state injection)
+- `can_download_file = true` iff `media_file_exists`
 - API responses include capabilities
-- `GET /media` returns paginated list with capabilities
+- `GET /media/{id}` returns 404 if `can_read_media` fails (capabilities never computed)
+- `GET /media` returns paginated list with capabilities (all items are readable by definition)
 
 ---
 
@@ -321,12 +329,35 @@ Never leak raw DB fields; capabilities always nested in response.
   - **Validates content-type matches expected** (HEAD check)
   - Streams object, computes sha256 **synchronously**
   - Sets `media.file_sha256` (API owns this field)
-  - **Duplicate handling (race-safe):**
-    - Attempt to set `file_sha256` in transaction
-    - If unique constraint violation: fetch existing media_id, delete uploaded object, return existing media_id as duplicate
-    - Response: `{ "data": { "media_id": "...", "duplicate": true|false } }`
+  - **Duplicate handling (race-safe, with cleanup):**
+    ```python
+    with transaction():
+        # Lock this media row to prevent concurrent ingest
+        media = select(Media).where(Media.id == media_id).with_for_update()
+
+        sha256 = compute_sha256_from_storage(media.storage_path)
+
+        # Check for existing media with same (user, kind, sha256)
+        existing = find_media_by_hash(media.created_by_user_id, media.kind, sha256)
+
+        if existing and existing.id != media_id:
+            # DUPLICATE DETECTED
+            # 1. Delete the orphan media row (cascades media_file, library_media)
+            delete(media)
+            # 2. Delete the uploaded object from storage
+            storage.delete_object(media.storage_path)
+            # 3. Ensure existing media is in viewer's default library
+            ensure_in_default_library(viewer_user_id, existing.id)
+            return {"media_id": existing.id, "duplicate": True}
+
+        # Not a duplicate: set sha256
+        media.file_sha256 = sha256
+        media.updated_at = now()
+    ```
+  - Response: `{ "data": { "media_id": "...", "duplicate": true|false } }`
   - **Does NOT enqueue task** — media stays `pending` (see §S1 Task Scheduling Policy)
 - **No re-upload to same media_id:** Each upload init creates fresh media_id; duplicates collapse via sha256
+- **Orphan cleanup:** On duplicate, the fresh media row is deleted transactionally (no orphans)
 
 ### Web Deliverables
 
@@ -351,8 +382,10 @@ Never leak raw DB fields; capabilities always nested in response.
 - Ingest validates content-type matches
 - Ingest computes sha256 synchronously
 - Ingest does NOT enqueue task (verify no Celery calls)
-- Same file + same user → dedupe (race-safe)
-- Same file + different user → separate rows
+- **Dedupe + cleanup:** Same file + same user → returns existing media_id, orphan media row deleted, storage object deleted
+- **Dedupe adds to library:** After dedupe, existing media is in viewer's default library
+- Same file + different user → separate rows (no dedupe across users)
+- **Race condition:** Concurrent ingests of same file → one wins, one dedupes, no orphans
 - Size/content-type validation → 400
 - Manual smoke for upload UI
 
@@ -416,34 +449,70 @@ Never leak raw DB fields; capabilities always nested in response.
   - Calls `retry_media()` (resets state)
   - Calls `maybe_enqueue_extraction()` (no-op in S1)
   - Response: `{ "data": { "media_id": "...", "enqueued": true|false } }`
-- URL canonicalization (`app/services/url.py`):
+- URL validation + canonicalization (`app/services/url.py`):
   ```python
-  canonicalize_url(requested_url: str) -> str
-  # Lowercase scheme+host, drop fragments, strip utm_*/gclid/fbclid
-  # NO redirect resolution (that's extractor responsibility in S2+)
+  MAX_URL_LENGTH = 2048
+
+  def validate_url(url: str) -> None:
+      """Raises E_INVALID_URL if URL is malformed or disallowed."""
+      # Must be parseable
+      # Scheme must be http or https
+      # Length must be <= MAX_URL_LENGTH
+      # Host must be present and non-empty
+
+  def canonicalize_url(requested_url: str) -> str:
+      """Canonicalize a validated URL. Call validate_url first."""
+      # Lowercase scheme+host, drop fragments, strip utm_*/gclid/fbclid
+      # NO redirect resolution (that's extractor responsibility in S2+)
   ```
 - `POST /media/url` endpoint:
   - Request: `{ "kind": "web_article", "url": "..." }`
-  - Response: `{ "data": { "media_id": "...", "created": true|false, "enqueued": false } }`
+  - **Allowed kinds:** `web_article`, `video`, `podcast_episode`
+    - Note: `podcast` (the feed/show) is a discovery object, not media — handled separately in future slices
+  - **URL validation (no network fetch):**
+    - `validate_url()` → 400 `E_INVALID_URL` if malformed/disallowed
+    - Rejects: non-http(s), unparseable, > 2048 chars, missing host
   - Canonicalizes URL, checks `(kind, canonical_url)` uniqueness
   - Reuses existing rows (including failed ones)
   - **Creates `library_media` row in viewer's default library**
   - Calls `maybe_enqueue_extraction()` → returns false in S1
+  - Response: `{ "data": { "media_id": "...", "created": true|false, "enqueued": false } }`
 - Celery tasks (`apps/worker/tasks.py`):
   ```python
   @celery.task(bind=True, max_retries=3)
-  def ingest_media(self, media_id: UUID, request_id: str | None = None):
+  def ingest_media(
+      self,
+      media_id: UUID,
+      request_id: str | None = None,
+      *,
+      _test_force_run: bool = False  # Test-only flag
+  ):
       """
       Task definition exists in S1 but is never auto-enqueued.
-      Can be called directly in tests via .apply() or .delay().
+
+      SAFETY: If no extractor exists for the media kind, this task
+      is a no-op (logs and returns). This prevents accidental failure
+      pollution if someone mistakenly calls .delay() in dev/prod.
+
+      Tests can pass _test_force_run=True to exercise failure paths.
       """
       configure_logging(request_id)
-      worker_start_attempt(media_id)  # pending → extracting
-
       media = get_media(media_id)
       extractor = AVAILABLE_EXTRACTORS.get(media.kind)
 
+      # SAFETY CHECK: No extractor = no-op (unless testing)
+      if extractor is None and not _test_force_run:
+          logger.info(
+              "ingest_media no-op: no extractor for %s (media_id=%s)",
+              media.kind, media_id
+          )
+          return  # Do NOT mark failed, do NOT transition state
+
+      # From here: either extractor exists, or _test_force_run=True
+      worker_start_attempt(media_id)  # pending → extracting
+
       if extractor is None:
+          # Only reachable with _test_force_run=True
           mark_failed(media_id, "extract", "E_EXTRACTOR_NOT_IMPLEMENTED",
                       f"No extractor for {media.kind}")
           return
@@ -473,15 +542,33 @@ Never leak raw DB fields; capabilities always nested in response.
 
 **Testing approach for S1:**
 - Use Celery eager mode to call `ingest_media.apply()` directly
-- This simulates "extractor available" scenario for testing task logic
+- **To test failure paths:** Pass `_test_force_run=True` to bypass the no-op safety check
+- **To test no-op behavior:** Call without the flag, verify media stays `pending`
 - Tests verify lifecycle functions work correctly
 - Tests do NOT verify auto-enqueue (because it doesn't happen in S1)
+
+**Example test patterns:**
+```python
+# Test that accidental enqueue is a no-op
+def test_ingest_noop_without_extractor(media_pending):
+    ingest_media.apply(args=[media_pending.id])
+    assert media_pending.processing_status == "pending"  # Unchanged
+
+# Test failure path (for testing lifecycle functions)
+def test_ingest_fails_without_extractor_forced(media_pending):
+    ingest_media.apply(args=[media_pending.id], kwargs={"_test_force_run": True})
+    assert media_pending.processing_status == "failed"
+    assert media_pending.last_error_code == "E_EXTRACTOR_NOT_IMPLEMENTED"
+```
 
 **Coverage:**
 - `worker_start_attempt` increments attempts, sets timestamps
 - `mark_failed` sets failure fields correctly
 - `mark_ready_for_reading` sets status (tested via direct call)
 - Retry clears failure fields, sets pending, does NOT enqueue
+- **URL validation:** rejects ftp://, data:, javascript:, unparseable, > 2048 chars, missing host
+- **URL validation:** accepts http://, https:// with valid host
+- URL canonicalization unit tests
 - URL idempotency: same URL → same media_id
 - File idempotency: same file + same user → dedupe
 - `is_transient_error` classification
@@ -500,11 +587,15 @@ Never leak raw DB fields; capabilities always nested in response.
 - URL media creation UI (optional; can defer to S2)
 
 **Tests:**
-- Eager-mode Celery: direct task call → extracting → failed (E_EXTRACTOR_NOT_IMPLEMENTED)
+- **Task no-op safety:** `ingest_media.apply()` without `_test_force_run` → media stays `pending`
+- **Task failure path:** `ingest_media.apply(_test_force_run=True)` → extracting → failed (E_EXTRACTOR_NOT_IMPLEMENTED)
 - Lifecycle functions set correct fields and timestamps
 - Retry resets state to pending
 - Retry does NOT enqueue (verify no Celery delay calls)
-- `maybe_enqueue_extraction` returns false for all kinds
+- `maybe_enqueue_extraction` returns false for all kinds in S1
+- **URL validation:** `POST /media/url` rejects invalid URLs (ftp://, > 2048 chars, missing host) → 400 `E_INVALID_URL`
+- **URL validation:** `POST /media/url` accepts valid http/https URLs
+- **URL allowed kinds:** `POST /media/url` accepts web_article, video, podcast_episode; rejects others
 - URL canonicalization unit tests
 - URL idempotency: same URL → same media_id
 - Processing-state suite runs in CI
@@ -562,8 +653,10 @@ PR-01 → PR-02 → PR-03 → PR-04 → PR-05
 ## Endpoint Naming Note
 
 S1 uses separate endpoints for different creation flows:
-- `POST /media/url` — create URL-based media (web_article, video, podcast)
-- `POST /media/upload/init` — initiate file upload (pdf, epub)
+- `POST /media/url` — create URL-based media (`web_article`, `video`, `podcast_episode`)
+- `POST /media/upload/init` — initiate file upload (`pdf`, `epub`)
+
+**Note:** `podcast` (the feed/show) is NOT a media kind — it's a discovery object handled separately in future slices. Individual episodes are `podcast_episode`.
 
 Both share idempotency logic via common service functions and both add media to the creator's default library.
 
