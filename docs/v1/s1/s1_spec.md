@@ -253,11 +253,12 @@ Internal codes may change; API error codes are mapped separately.
 
 ### URL-Based Media
 
-**Canonicalization:**
+**Canonicalization (S1 — string-only):**
 - Lowercase scheme + host
 - Drop fragments
 - Remove `utm_*`, `gclid`, `fbclid`
-- Follow redirects once
+
+**Note:** Redirect resolution is **not** performed in S1. The extractor slices (S2+) resolve redirects when fetching content; the resolved URL may update `canonical_url` at that time.
 
 **Store:**
 - `requested_url`
