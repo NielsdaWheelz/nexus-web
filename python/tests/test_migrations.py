@@ -1,9 +1,10 @@
 """Tests for database migrations.
 
-These tests run SEPARATELY from other tests and do NOT use the db_session fixture.
-They manage their own database state by running alembic upgrade/downgrade commands.
+These tests run on a SEPARATE DATABASE (nexus_test_migrations) from other tests.
+This allows them to safely drop/recreate schema without affecting other tests.
 
-Run separately: pytest tests/test_migrations.py -v
+Run with: make test-migrations
+Do NOT run with: make test (these are excluded)
 """
 
 import os
@@ -36,15 +37,24 @@ def get_migrations_dir() -> str:
 def run_alembic_command(command: str) -> subprocess.CompletedProcess:
     """Run an alembic command and return the result."""
     migrations_dir = get_migrations_dir()
+    python_dir = os.path.join(os.path.dirname(migrations_dir), "python")
     result = subprocess.run(
-        f"alembic {command}",
-        shell=True,
+        ["uv", "run", "--project", python_dir, "alembic"] + command.split(),
         capture_output=True,
         text=True,
         env={**os.environ},
         cwd=migrations_dir,
     )
     return result
+
+
+@pytest.fixture(scope="session", autouse=True)
+def verify_schema_exists():
+    """Override the global verify_schema_exists fixture.
+
+    Migration tests manage their own schema state, so we skip the check.
+    """
+    yield
 
 
 @pytest.fixture(scope="module")

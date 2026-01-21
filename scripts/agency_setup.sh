@@ -3,11 +3,27 @@ set -euo pipefail
 
 # Nexus project setup script
 # Installs dependencies and prepares the development environment
+#
+# Environment variables:
+#   POSTGRES_PORT - Host port for postgres (default: 5432)
+#   REDIS_PORT - Host port for redis (default: 6379)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Derive unique project name from directory for container isolation
+PROJECT_NAME="nexus-$(basename "$PROJECT_ROOT")"
+export COMPOSE_PROJECT_NAME="$PROJECT_NAME"
+
+# Configurable ports (default to standard ports)
+export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+export REDIS_PORT="${REDIS_PORT:-6379}"
+
 echo "=== Nexus Project Setup ==="
+echo ""
+echo "Project: $PROJECT_NAME"
+echo "Postgres port: $POSTGRES_PORT"
+echo "Redis port: $REDIS_PORT"
 echo ""
 
 # Check for required tools
@@ -24,17 +40,28 @@ check_tool docker
 echo "✓ Required tools found"
 echo ""
 
+# Container names (derived from compose project name)
+POSTGRES_CONTAINER="${PROJECT_NAME}-postgres-1"
+REDIS_CONTAINER="${PROJECT_NAME}-redis-1"
+
 # Start infrastructure services
 echo "Starting infrastructure services..."
 cd "$PROJECT_ROOT/docker"
-docker compose up -d
+
+# Check if our containers are already running
+if docker ps --format '{{.Names}}' | grep -q "^${POSTGRES_CONTAINER}$" && \
+   docker ps --format '{{.Names}}' | grep -q "^${REDIS_CONTAINER}$"; then
+    echo "✓ Infrastructure containers already running (reusing)"
+else
+    docker compose up -d
+fi
 echo "✓ PostgreSQL and Redis started"
 echo ""
 
 # Wait for PostgreSQL to be ready
 echo "Waiting for PostgreSQL to be ready..."
 for i in {1..30}; do
-    if docker exec nexus-postgres pg_isready -U postgres &> /dev/null; then
+    if docker exec "$POSTGRES_CONTAINER" pg_isready -U postgres &> /dev/null; then
         echo "✓ PostgreSQL is ready"
         break
     fi
@@ -46,10 +73,11 @@ for i in {1..30}; do
 done
 echo ""
 
-# Create test database if it doesn't exist
-echo "Creating test database..."
-docker exec nexus-postgres createdb -U postgres nexus_test 2>/dev/null || true
-echo "✓ Test database ready"
+# Create test databases if they don't exist
+echo "Creating test databases..."
+docker exec "$POSTGRES_CONTAINER" createdb -U postgres nexus_test 2>/dev/null || true
+docker exec "$POSTGRES_CONTAINER" createdb -U postgres nexus_test_migrations 2>/dev/null || true
+echo "✓ Test databases ready (nexus_test, nexus_test_migrations)"
 echo ""
 
 # Install python dependencies
@@ -59,19 +87,47 @@ uv sync --all-extras
 echo "✓ Python dependencies installed"
 echo ""
 
+# Database URL using configured port
+DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:${POSTGRES_PORT}"
+
 # Run migrations on dev database
 echo "Running migrations on dev database..."
 cd "$PROJECT_ROOT/migrations"
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/nexus_dev \
+DATABASE_URL="${DATABASE_URL}/nexus_dev" \
     uv run --project ../python alembic upgrade head
-echo "✓ Migrations applied"
+echo "✓ Migrations applied to nexus_dev"
+
+# Run migrations on test database
+echo "Running migrations on test database..."
+DATABASE_URL="${DATABASE_URL}/nexus_test" \
+    uv run --project ../python alembic upgrade head
+echo "✓ Migrations applied to nexus_test"
+echo ""
+
+# Generate .env file for local development
+echo "Creating .env file..."
+cat > "$PROJECT_ROOT/.env" << EOF
+# Nexus local development configuration
+# Created by: make setup
+# Do not commit this file (it's in .gitignore)
+
+# Infrastructure ports
+POSTGRES_PORT=${POSTGRES_PORT}
+REDIS_PORT=${REDIS_PORT}
+
+# Application config
+NEXUS_ENV=local
+DATABASE_URL=${DATABASE_URL}/nexus_dev
+EOF
+echo "✓ Created .env file"
 echo ""
 
 echo "=== Setup Complete ==="
 echo ""
 echo "To start the API server:"
-echo "  cd apps/api"
-echo "  PYTHONPATH=\$PWD/../../python DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/nexus_dev \\"
-echo "    uv run --project ../../python uvicorn main:app --reload"
+echo "  make api"
+echo ""
+echo "To run tests:"
+echo "  make test-all"
 echo ""
 echo "API docs: http://localhost:8000/docs"

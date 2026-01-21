@@ -1,10 +1,12 @@
 """FastAPI application creation and configuration.
 
 This module creates and configures the FastAPI application instance.
-It registers exception handlers and routes.
+It registers exception handlers, auth middleware, and routes.
 """
 
 import json
+import logging
+from uuid import UUID
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -12,6 +14,10 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from nexus.api.routes import api_router
+from nexus.auth.middleware import AuthMiddleware
+from nexus.auth.verifier import MockTokenVerifier, SupabaseJwksVerifier
+from nexus.config import Environment, get_settings
+from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import (
     api_error_handler,
@@ -19,14 +25,67 @@ from nexus.responses import (
     http_exception_handler,
     unhandled_exception_handler,
 )
+from nexus.services.bootstrap import ensure_user_and_default_library
+
+logger = logging.getLogger(__name__)
 
 
-def create_app() -> FastAPI:
+def create_bootstrap_callback():
+    """Create a bootstrap callback that creates its own database session.
+
+    The callback is called by the auth middleware for each authenticated request.
+    It creates a fresh database session, runs the bootstrap, and closes it.
+    """
+    session_factory = get_session_factory()
+
+    def bootstrap(user_id: UUID) -> UUID:
+        db = session_factory()
+        try:
+            return ensure_user_and_default_library(db, user_id)
+        finally:
+            db.close()
+
+    return bootstrap
+
+
+def create_token_verifier():
+    """Create the appropriate token verifier based on environment.
+
+    Returns:
+        SupabaseJwksVerifier in staging/prod, MockTokenVerifier in local/test.
+    """
+    settings = get_settings()
+
+    if settings.nexus_env in (Environment.STAGING, Environment.PROD):
+        # Production verifier with Supabase JWKS
+        return SupabaseJwksVerifier(
+            jwks_url=settings.supabase_jwks_url,  # type: ignore
+            issuer=settings.normalized_issuer,  # type: ignore
+            audiences=settings.audience_list,
+        )
+    else:
+        # Test verifier for local/test environments
+        return MockTokenVerifier(
+            issuer=settings.test_token_issuer,
+            audiences=settings.test_audience_list,
+        )
+
+
+def create_app(
+    skip_auth_middleware: bool = False,
+    token_verifier=None,
+) -> FastAPI:
     """Create and configure the FastAPI application.
+
+    Args:
+        skip_auth_middleware: If True, skip adding auth middleware (for testing).
+        token_verifier: Optional custom token verifier (for testing).
 
     Returns:
         Configured FastAPI application instance.
     """
+    settings = get_settings()
+
     app = FastAPI(
         title="Nexus API",
         description="Backend API for Nexus - a reading and annotation platform",
@@ -71,8 +130,27 @@ def create_app() -> FastAPI:
                         )
         return await call_next(request)
 
-    # Include API routes
+    # Include API routes (must be before middleware for correct ordering)
     app.include_router(api_router)
+
+    # Add auth middleware (runs on all requests except public paths)
+    if not skip_auth_middleware:
+        verifier = token_verifier or create_token_verifier()
+        bootstrap_callback = create_bootstrap_callback()
+
+        app.add_middleware(
+            AuthMiddleware,
+            verifier=verifier,
+            requires_internal_header=settings.requires_internal_header,
+            internal_secret=settings.nexus_internal_secret,
+            bootstrap_callback=bootstrap_callback,
+        )
+
+        logger.info(
+            "Auth middleware enabled (env=%s, internal_header_required=%s)",
+            settings.nexus_env.value,
+            settings.requires_internal_header,
+        )
 
     return app
 
