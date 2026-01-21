@@ -101,12 +101,11 @@ create unique index libraries_one_default_per_user
 
 ```sql
 memberships (
-  id uuid primary key default gen_random_uuid(),
   library_id uuid not null references libraries(id) on delete cascade,
   user_id uuid not null references users(id) on delete cascade,
   role text not null check (role in ('admin', 'member')),
   created_at timestamptz not null default now(),
-  unique (library_id, user_id)
+  primary key (library_id, user_id)
 )
 ```
 
@@ -493,7 +492,7 @@ def remove_media_from_library(viewer_id: UUID, library_id: UUID, media_id: UUID)
                     WHERE l.owner_user_id = :viewer_id
                     AND l.is_default = false
                     GROUP BY l.id
-                    HAVING COUNT(m.id) = 1
+                    HAVING COUNT(*) = 1
                 )
             """, media_id=media_id, viewer_id=viewer_id)
 
