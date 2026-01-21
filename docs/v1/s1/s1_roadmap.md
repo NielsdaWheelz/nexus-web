@@ -13,9 +13,11 @@ Compressed 5-PR roadmap that **extends S0** (not duplicates it).
 - UI shell (navbar, tabsbar, panes)
 - `GET /media/{id}`, `GET /media/{id}/fragments` endpoints
 - Visibility via library membership (but not as reusable predicates)
+- Docker Compose with postgres:15 + redis:7
+- `apps/worker/main.py` placeholder
 
 **What S1 Adds:**
-- Redis + Celery worker infrastructure (skeleton only; no tasks scheduled)
+- Celery app configuration + task module (no tasks scheduled in S1)
 - `media` table S1 fields (processing_status, failure_stage, timestamps, file_sha256, canonical_url, external_playback_url, etc.)
 - `media_file` table
 - `X-Request-ID` middleware + BFF propagation + Celery logging
@@ -117,56 +119,200 @@ Rationale:
 
 ---
 
-## PR-01 — Infra (Redis + Celery) + S1 Migration + CI
+## PR-01 — Celery Config + S1 Migration + CI
 
-**Goal:** Add Celery infrastructure; extend schema for S1; establish CI.
+**Goal:** Configure Celery; extend schema for S1; establish CI.
 
-**Deliverables:**
+### Docker Compose
 
-- Add to `docker-compose.yml`:
-  - `redis:7` service
-  - `postgres:15` service (explicit; S0 may have external postgres, but compose should be self-contained for CI)
-- Add `apps/worker/` directory:
-  - Celery app config (broker via env)
-  - Empty task module (task definitions added in PR-05)
-- Extend `Makefile` / `justfile`:
-  - `make worker` — starts Celery worker
-- Extend `.env.example`:
-  - `REDIS_URL`
-  - `CELERY_BROKER_URL`
-  - `NEXUS_INTERNAL_SECRET=local-dev-secret` (default for local/test)
-- Alembic migration to **add S1 fields to existing `media` table**:
-  - `processing_status` (enum, default `pending`)
-  - `failure_stage` (enum, nullable)
-  - `last_error_code`, `last_error_message` (nullable)
-  - `processing_attempts` (int, default 0)
-  - `processing_started_at`, `processing_completed_at`, `failed_at` (nullable timestamps)
-  - `file_sha256` (nullable, for pdf/epub)
-  - `requested_url` (text, nullable)
-  - `canonical_url` (text, nullable)
-  - `external_playback_url` (text, nullable) — for podcasts/videos; needed for capability derivation
-  - `provider`, `provider_id` (nullable, for future S7/S8)
-- Alembic migration to **create `media_file` table**:
-  - `media_id` (pk, fk)
-  - `storage_path`, `content_type`, `size_bytes`
-- Add partial unique indexes per S1 spec:
-  - `(kind, canonical_url)` where `canonical_url` is not null
-  - `(created_by_user_id, kind, file_sha256)` where kind in (pdf, epub) and `file_sha256` is not null
-- **Enum strategy:** Use Postgres `CREATE TYPE` for enums; Alembic migrations must handle create/drop cleanly (use `op.execute` for `CREATE TYPE IF NOT EXISTS`)
-- Extend ORM models: add new fields to `Media`, create `MediaFile`
-- Extend test client fixture: **auto-include internal header** with test secret
-- **`updated_at` policy:** Service functions must set `updated_at` on state changes (no DB triggers)
-- Add `.github/workflows/ci.yml`:
-  - Lint + typecheck (ruff, pyright optional)
-  - `pytest` (unit + integration)
-  - Start docker-compose services (postgres, redis)
-  - Set env vars from secrets
-  - Storage integration tests: conditional (see §Storage Test Playbook)
+- **Location:** `docker/docker-compose.yml` (already exists from S0)
+- **Images:** S0 uses `postgres:15` — consider upgrading to `pgvector/pgvector:pg15` for future embedding support (S9)
+- **No changes required for PR-01** — postgres + redis already configured
+
+### Celery Configuration
+
+- `python/nexus/celery.py`: Celery app config (broker via `CELERY_BROKER_URL` env)
+- `python/nexus/tasks/__init__.py`: Empty task module (task definitions added in PR-05)
+- `apps/worker/__init__.py`: Export `celery_app` for deterministic import
+- Update `apps/worker/main.py`:
+  ```python
+  from nexus.celery import celery_app
+  # Celery discovers tasks via celery_app.autodiscover_tasks()
+  ```
+
+### Environment Variables
+
+Extend `.env.example`:
+```bash
+# Database (psycopg3 + SQLAlchemy 2)
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/nexus_dev
+
+# Redis
+REDIS_URL=redis://localhost:6379/0
+CELERY_BROKER_URL=redis://localhost:6379/1
+
+# Auth
+NEXUS_INTERNAL_SECRET=local-dev-secret
+NEXUS_ENV=local
+```
+
+**Header name (locked):** `X-Nexus-Internal`
+
+### Make Targets
+
+Extend `Makefile` with composable targets:
+```makefile
+.PHONY: infra api worker dev
+
+infra:                    # Start postgres + redis
+	docker compose -f docker/docker-compose.yml up -d
+
+api:                      # Start FastAPI (assumes infra running)
+	uvicorn apps.api.main:app --reload
+
+worker:                   # Start Celery worker (assumes infra running)
+	celery -A apps.worker worker --loglevel=info
+
+dev: infra                # Start infra, then api (blocking)
+	$(MAKE) api
+```
+
+### Alembic Migration
+
+**File:** `migrations/alembic/versions/XXXX_s1_media_fields.py`
+- Number: Next available after S0 head (e.g., `0002` if S0 ends at `0001`)
+
+**Enum creation (guarded, not IF NOT EXISTS):**
+```python
+def upgrade():
+    # Guarded enum creation — safe across Postgres versions
+    op.execute("""
+        DO $$
+        BEGIN
+            CREATE TYPE processing_status AS ENUM (
+                'pending', 'extracting', 'ready_for_reading', 'embedding', 'ready', 'failed'
+            );
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END $$;
+    """)
+    op.execute("""
+        DO $$
+        BEGIN
+            CREATE TYPE failure_stage AS ENUM (
+                'upload', 'extract', 'transcribe', 'embed', 'other'
+            );
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END $$;
+    """)
+    # Then add columns...
+
+def downgrade():
+    # Drop columns first, then types
+    op.drop_column('media', 'processing_status')
+    op.drop_column('media', 'failure_stage')
+    # ... other columns ...
+    op.execute("DROP TYPE IF EXISTS processing_status")
+    op.execute("DROP TYPE IF EXISTS failure_stage")
+```
+
+**Add S1 fields to `media` table:**
+- `processing_status` (enum, default `pending`)
+- `failure_stage` (enum, nullable)
+- `last_error_code`, `last_error_message` (nullable)
+- `processing_attempts` (int, default 0)
+- `processing_started_at`, `processing_completed_at`, `failed_at` (nullable timestamps)
+- `file_sha256` (nullable, for pdf/epub)
+- `requested_url` (text, nullable)
+- `canonical_url` (text, nullable)
+- `external_playback_url` (text, nullable)
+- `provider`, `provider_id` (nullable, for future S7/S8)
+
+**Create `media_file` table:**
+- `media_id` (pk, fk)
+- `storage_path`, `content_type`, `size_bytes`
+
+**Partial unique indexes:**
+- `(kind, canonical_url)` WHERE `canonical_url IS NOT NULL`
+- `(created_by_user_id, kind, file_sha256)` WHERE `kind IN ('pdf', 'epub') AND file_sha256 IS NOT NULL`
+
+**Constraint note:** `canonical_url` is nullable, but for URL-based media kinds (`web_article`, `video`, `podcast_episode`), the service layer (PR-05) must set it at creation time. The partial index only dedupes rows where `canonical_url` is set.
+
+### ORM Models
+
+- Extend `Media` model with new fields
+- Create `MediaFile` model
+- **`updated_at` policy:** Service functions set `updated_at` on mutations (no DB triggers)
+
+### Test Client Fixture
+
+- Auto-include `X-Nexus-Internal: test-secret` header
+- Use `NEXUS_ENV=test` in test configuration
+
+### CI Workflow
+
+**File:** `.github/workflows/ci.yml`
+
+```yaml
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: nexus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/nexus_test
+      REDIS_URL: redis://localhost:6379/0
+      CELERY_BROKER_URL: redis://localhost:6379/1
+      NEXUS_INTERNAL_SECRET: test-secret
+      NEXUS_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -e "python/[dev]"
+      - name: Run migrations
+        run: alembic -c migrations/alembic.ini upgrade head
+      - name: Lint
+        run: ruff check python/
+      - name: Test
+        run: pytest python/tests/
+```
 
 **Tests:**
 - Migration applies cleanly on top of S0 schema
+- Migration downgrades cleanly (columns dropped before types)
 - New constraints work (unique indexes)
 - Celery app initializes (smoke test)
+- **Redis reachable:** `redis.ping()` returns `PONG`
 - CI runs green
 
 ---
@@ -189,7 +335,7 @@ Rationale:
   - All task log entries include `request_id`
   - When FastAPI enqueues a task (in S2+), it passes `request_id` from middleware context
 - **Structured logging:** JSON format for FastAPI + Celery, with `request_id`, `user_id`, `timestamp` fields
-- Authorization module (`app/auth/permissions.py` or similar):
+- Authorization module (`python/nexus/auth/permissions.py` or similar):
   ```python
   can_read_media(viewer_user_id: UUID, media_id: UUID) -> bool
   # True iff media is in at least one library the viewer is a member of
@@ -297,7 +443,7 @@ Never leak raw DB fields; capabilities always nested in response.
 
 ### API Deliverables
 
-- `StorageClient` abstraction (`app/storage/client.py`):
+- `StorageClient` abstraction (`python/nexus/storage/client.py`):
   ```python
   sign_download(path, expires_in_s) -> str
   sign_upload(path, expires_in_s, content_type) -> SignedUpload
@@ -309,7 +455,7 @@ Never leak raw DB fields; capabilities always nested in response.
   # ObjectMetadata: { content_type: str, size_bytes: int }
   stream_object(path) -> Iterator[bytes]
   ```
-- **Storage path prefix config:** `app/storage/config.py` with `get_storage_prefix()` that returns:
+- **Storage path prefix config:** `python/nexus/storage/config.py` with `get_storage_prefix()` that returns:
   - Production: `media/`
   - Test: `test_runs/{run_id}/media/` (from env or fixture)
 - `GET /media/{id}/file`:
@@ -397,7 +543,7 @@ Never leak raw DB fields; capabilities always nested in response.
 
 ### API Deliverables
 
-- **Lifecycle service functions** (`app/services/media_lifecycle.py`):
+- **Lifecycle service functions** (`python/nexus/services/media_lifecycle.py`):
   ```python
   def worker_start_attempt(media_id: UUID) -> None:
       """Called by worker at job start. Single writer for these fields."""
@@ -429,7 +575,7 @@ Never leak raw DB fields; capabilities always nested in response.
       # Set updated_at = now
       # NOTE: Does NOT enqueue task (see §S1 Retry Semantics)
   ```
-- **Extractor registry** (`app/services/extractors.py`):
+- **Extractor registry** (`python/nexus/services/extractors.py`):
   ```python
   AVAILABLE_EXTRACTORS: dict[MediaKind, Callable] = {}
   # Empty in S1; S2+ adds entries like {MediaKind.web_article: extract_web_article}
@@ -449,7 +595,7 @@ Never leak raw DB fields; capabilities always nested in response.
   - Calls `retry_media()` (resets state)
   - Calls `maybe_enqueue_extraction()` (no-op in S1)
   - Response: `{ "data": { "media_id": "...", "enqueued": true|false } }`
-- URL validation + canonicalization (`app/services/url.py`):
+- URL validation + canonicalization (`python/nexus/services/url.py`):
   ```python
   MAX_URL_LENGTH = 2048
 
@@ -477,7 +623,7 @@ Never leak raw DB fields; capabilities always nested in response.
   - **Creates `library_media` row in viewer's default library**
   - Calls `maybe_enqueue_extraction()` → returns false in S1
   - Response: `{ "data": { "media_id": "...", "created": true|false, "enqueued": false } }`
-- Celery tasks (`apps/worker/tasks.py`):
+- Celery tasks (`python/nexus/tasks/ingest.py`):
   ```python
   @celery.task(bind=True, max_retries=3)
   def ingest_media(
@@ -524,7 +670,7 @@ Never leak raw DB fields; capabilities always nested in response.
               raise self.retry(exc=e, countdown=backoff(self.request.retries))
           mark_failed(media_id, e.stage, e.code, str(e))
   ```
-- **Error code taxonomy** (`app/services/errors.py`):
+- **Error code taxonomy** (`python/nexus/services/errors.py`):
   ```python
   # Internal error codes (stored in last_error_code)
   TRANSIENT_ERRORS = {"E_NETWORK_ERROR", "E_TIMEOUT", "E_PROVIDER_5XX"}
@@ -533,7 +679,7 @@ Never leak raw DB fields; capabilities always nested in response.
   def is_transient_error(error_code: str) -> bool:
       return error_code in TRANSIENT_ERRORS
 
-  # API error codes (returned to clients) are mapped separately in app/errors.py
+  # API error codes (returned to clients) are mapped separately in python/nexus/errors.py
   ```
 
 ### Processing-State Integration Test Suite
