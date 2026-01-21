@@ -1,374 +1,472 @@
-# s1_spec.md — slice 1: web article ingestion (read-only)
+# Nexus — L2 Slice Spec: S1 Ingestion Framework + Storage
 
-this slice defines **web article ingestion by url** and read-only rendering. it establishes the ingestion pipeline, persistence contracts, failure semantics, and read api surface. later slices build on these guarantees.
+This spec defines the ingestion framework, storage model, processing state machine, retry semantics, idempotency, and API contracts required before any media-specific extraction logic is implemented.
 
----
-
-## 1) goal and scope
-
-### goal
-a user can submit a web url, wait for processing, and read a sanitized, immutable article once ingestion completes.
-
-### in scope
-- http/https url ingestion
-- fetch + redirect resolution
-- readability extraction
-- server-side html sanitization
-- canonical text generation
-- fragment creation (single fragment)
-- processing_status lifecycle through `ready_for_reading`
-- read api for rendered content
-- retry + failure semantics
-- visibility enforcement via library membership
-
-### out of scope
-- highlights
-- annotations
-- conversations
-- epub/pdf
-- search
-- embeddings
-- dedup beyond canonical_url
+This slice introduces no real extractors. It exists to make ingestion *structural*, *testable*, and *irreversible*.
 
 ---
 
-## 2) domain model (minimum fields)
+## 1) Purpose
 
-### media
-represents a readable item.
+Establish a deterministic, testable ingestion framework that:
+- enforces the global media lifecycle
+- guarantees immutability boundaries
+- supports retries without partial-state corruption
+- provides secure file storage and access
+- exposes stable API contracts for all future media kinds
 
-| field | type | constraints |
-|------|------|-------------|
-| id | uuid | pk |
-| kind | enum | `web_article` |
-| source_url | text | original user-submitted url |
-| canonical_url | text | normalized final url after redirects |
-| title | text | nullable; filled by extraction/llm later |
-| processing_status | enum | see §5 |
-| failure_code | text | nullable |
-| failure_message | text | nullable |
-| failure_details_json | jsonb | nullable; internal debug only |
-| processing_attempts | int | default 0 |
-| created_at | timestamptz | not null |
-| updated_at | timestamptz | not null |
-
-notes:
-- `canonical_url` is the dedup key for web articles.
-- media rows are global; visibility is library-based.
-
-### fragment
-immutable render unit for html-like media.
-
-| field | type | constraints |
-|------|------|-------------|
-| id | uuid | pk |
-| media_id | uuid | fk → media.id |
-| ordinal | int | always 0 for web_article |
-| html_sanitized | text | immutable after ready_for_reading |
-| canonical_text | text | immutable after ready_for_reading |
-| created_at | timestamptz | not null |
-
-invariant:
-- exactly one fragment exists for a `web_article` media.
+All later slices (S2–S9) depend on S1 invariants.
 
 ---
 
-## 3) ingestion input contract
+## 2) In Scope
 
-### accepted urls
-- schemes: `http`, `https` only
-- max redirects followed: 5
-- redirects to non-http(s) or private ip ranges are rejected
-
-### url normalization
-- follow network redirects (3xx); ignore later JS-driven location changes
-- final resolved url after redirects becomes `canonical_url`
-- normalization steps:
-  - strip fragment (`#...`)
-  - lowercase scheme and host
-  - remove default ports (`:80`/`:443`)
-- query string is preserved (no heuristic stripping in v1)
-
-### dedup rule (hard)
-- if a `media` row exists with the same `canonical_url`:
-  - if `processing_status` ∈ {`pending`,`extracting`}: attach media to target library and show pending
-  - if `processing_status` ≥ `ready_for_reading`: attach media to target library and return immediately
-  - if `processing_status = failed`: attach and allow retry on the same media row
-- no duplicate media rows are created for the same canonical_url.
-- enforce with a unique index: `unique(kind, canonical_url)` where `kind = web_article`.
-- service logic uses insert-or-select with conflict handling to avoid duplicates.
+- Media lifecycle state machine
+- Job orchestration skeleton (Celery + Redis)
+- Inline ingestion path for dev
+- File upload + storage (Supabase Storage)
+- Idempotency rules (URL + file)
+- Retry/reset semantics
+- Capability derivation
+- Quota enforcement hooks (no real limits yet)
+- Processing-state test suite
 
 ---
 
-## 4) processing pipeline (single job)
+## 3) Out of Scope
 
-ingestion is executed as **a single job** per media row.
-
-### steps
-1. validate url
-2. fetch url via headless browser
-3. enforce fetch limits (see §9)
-4. extract main content via mozilla readability
-5. if no meaningful content → fail
-6. sanitize html per constitution
-7. rewrite links and images
-8. generate canonical_text per constitution
-9. persist fragment + update media status
-
-### atomicity
-- fragment row is written **only if** all steps succeed.
-- fragment write + `media.processing_status = ready_for_reading` are persisted in a single db transaction.
-- partial fragments are never persisted.
-- status transitions may be persisted earlier as they occur.
+- Any real extraction logic (HTML, EPUB, PDF, transcript)
+- Highlighting
+- Search
+- Conversations
+- Sharing
+- Billing enforcement (limits only stubbed)
 
 ---
 
-## 5) processing_status state machine
+## 4) Data Model (Minimum)
 
-### states
-- `pending`
-- `extracting`
-- `ready_for_reading`
-- `failed`
+### `media`
+Core ingestion unit.
 
-### transitions
+Required fields:
+- `id` (uuid, pk)
+- `kind` (enum)
+- `processing_status` (enum)
+- `failure_stage` (enum|null)
+- `last_error_code` (string|null)
+- `last_error_message` (text|null)
+- `processing_attempts` (int, default 0)
+- `processing_started_at` (timestamptz|null)
+- `processing_completed_at` (timestamptz|null)
+- `failed_at` (timestamptz|null)
+- `requested_url` (text|null)
+- `canonical_url` (text|null)
+- `file_sha256` (text|null) — for pdf/epub only; null for url-based media
+- `provider` (text|null) — e.g., "youtube"; for future S7/S8 identity keys
+- `provider_id` (text|null) — e.g., video ID; for future S7/S8 identity keys
+- `created_by_user_id` (uuid)
+- `created_at`, `updated_at`
 
-pending → extracting → ready_for_reading
-pending → failed
-extracting → failed
-failed → extracting (manual retry)
+**Timestamp + Attempt Semantics:**
+- `processing_attempts` increments each time a job attempt starts (including automatic retries)
+- `processing_attempts` is NOT reset on success; it tracks total attempts
+- `processing_started_at` is set when `pending → extracting`; cleared on retry
+- `processing_completed_at` is set when reaching `ready` or `ready_for_reading`
+- `failed_at` is set when entering `failed` state; cleared on retry
 
-rules:
-- `ready_for_reading` implies fragment rows exist and are immutable.
-- no transition out of `ready_for_reading` in this slice.
-
----
-
-## 6) failure taxonomy (stable error codes)
-
-all failures store:
-- `failure_code`
-- `failure_message` (human-readable; not api-stable)
-
-### error codes
-- `E_URL_INVALID` — invalid scheme or malformed url
-- `E_FETCH_FAILED` — network error, timeout, dns failure
-- `E_FETCH_FORBIDDEN` — blocked by private ip / disallowed host
-- `E_FETCH_UNSUPPORTED_CONTENT_TYPE` — non-html response (no readable content)
-- `E_FETCH_KIND_MISMATCH_PDF` — final resource is a pdf
-- `E_FETCH_KIND_MISMATCH_EPUB` — final resource is an epub
-- `E_EXTRACT_NO_CONTENT` — readability produced no usable content
-- `E_SANITIZE_FAILED` — sanitizer error (bug-level)
-- `E_CANONICALIZE_FAILED` — canonical text generation error (bug-level)
-
-### retry policy
-- automatic retries:
-  - allowed for `E_FETCH_FAILED`
-  - max N attempts (configurable)
-- manual retry:
-  - always allowed
-  - resets `processing_status = extracting`
-  - deletes fragment rows (if any)
-  - increments `processing_attempts`
-
-### content-type handling
-- treat as html-like if navigation succeeds and either:
-  - `document.contentType` is `text/html`, OR
-  - readability returns content.
-- if neither, return `E_FETCH_UNSUPPORTED_CONTENT_TYPE`.
-- if final resource is a pdf/epub, return the kind-mismatch error above.
+Constraints:
+- `(kind, canonical_url)` unique where `canonical_url` is not null — for url-based media
+- `(created_by_user_id, kind, file_sha256)` unique where `kind in ('pdf', 'epub')` and `file_sha256` is not null — for file uploads
+- media rows are immutable in identity; retries reuse the same row
 
 ---
 
-## 7) html sanitization + rewriting (binding)
+### `media_file`
+0..1 per media. Stores file storage metadata (not used for idempotency).
 
-sanitization rules are inherited from the constitution and are binding here.
+Fields:
+- `media_id` (pk, fk)
+- `storage_path` (text)
+- `content_type` (text)
+- `size_bytes` (int)
 
-additional s1-specific rules:
-- unknown tags are **unwrapped** (children preserved)
-- unknown attributes are dropped
-- `<base>` tags are removed
-- `<svg>` is fully disallowed
-- `<meta>`, `<link>`, `<style>` are removed entirely
-
-### links
-- relative `href` rewritten to absolute using `canonical_url`
-- all `<a>` rewritten with:
-  - `target="_blank"`
-  - `rel="noopener noreferrer"`
-  - `referrerpolicy="no-referrer"`
-
-### images
-- all `<img src>` rewritten at ingestion time to an **opaque image-proxy url**
-- opaque urls are backed by a stateful mapping table:
-  - `image_assets(id, media_id, origin_url, created_at)`
-  - rewrite `src` to `/api/images/{id}`
-- proxy enforces:
-  - scheme allowlist
-  - private ip blocking
-  - content-type allowlist (`image/*`, excluding svg)
-  - max size (10mb)
-- no external `src` survives sanitization
+Note: `sha256` lives on `media.file_sha256` for constraint enforcement; `media_file` is purely storage metadata.
 
 ---
 
-## 8) canonical text generation (binding)
-
-canonical_text is generated exactly as defined in the constitution (§7).
-
-additional s1 rules:
-- block list is exactly the constitution list
-- newline rules are applied deterministically
-- canonical_text is never sent to the client in v1
+### `fragment`
+Exists but remains empty in S1.
+- Table is created; no rows are written by S1 jobs.
+- `ready_for_reading` is not reachable via S1 ingestion (no extractors exist).
+- S1 tests use seeded fixture media (from S0) for `ready_for_reading` scenarios.
 
 ---
 
-## 9) fetch hardening (security boundary)
+## 5) Processing State Machine
 
-the fetcher MUST enforce:
-- block private ip ranges (ipv4 + ipv6)
-- block localhost, link-local, `.local`
-- block cloud metadata endpoints (e.g., `169.254.169.254`)
-- block redirects to blocked ranges
-- max response size (configurable; e.g. 5mb)
-- max wall-clock time per fetch
-- max dom size processed by readability
-- user agent is explicit and fixed
-- fetcher runs in a restricted network environment with egress-only access and no internal service reachability
+### States
 
-violations return `E_FETCH_FORBIDDEN` or `E_FETCH_FAILED`.
+```
+pending → extracting → ready_for_reading → embedding → ready
+    ↘           ↘              ↘               ↘
+                            failed
+```
+
+### State Invariants
+
+| State | Guaranteed True |
+|-------|-----------------|
+| `pending` | Media row exists; awaiting job pickup |
+| `extracting` | Extraction requested and in-flight or queued |
+| `ready_for_reading` | Minimum readable artifacts exist (per-kind; see §6) |
+| `embedding` | Readable; embedding job in-flight or queued |
+| `ready` | Embedding complete |
+| `failed` | Terminal failure recorded; `failure_stage` + `last_error_code` set |
+
+**S1 Limitations:**
+- S1 creates no real artifacts; `ready_for_reading` is unreachable via S1 jobs.
+- S1 tests focus on: `pending → extracting → failed`, `failed → retry`, and storage signing.
+- `ready_for_reading` tests use seeded fixture media from S0.
+- `extracting` means "job requested," not "job actively running" (worker crash doesn't violate the invariant).
 
 ---
 
-## 10) library insertion semantics
+## 6) Capabilities Derivation (Hard Contract)
 
-### write rule
-- ingestion request specifies `target_library_id`
-- default is the user’s default personal library
-- viewer must be `admin` of target library
+A derived object is returned by all `GET /media/*` endpoints:
 
-### invariant
-- `(library_id, media_id)` is unique
-- adding media to any library MUST ensure it exists in the user’s default library (enforced by service logic)
-
----
-
-## 11) api contracts (minimal)
-
-auth is as defined in the constitution; endpoints require a verified `viewer_user_id`.
-
-### POST /media/web-articles
-create or attach a web article.
-
-request:
-
-{
-“url”: “https://example.com/article”,
-“library_id”: “uuid” // optional; defaults to user’s default library
+```python
+capabilities = {
+    "can_read": bool,           # can render primary content pane
+    "can_highlight": bool,      # can create highlights
+    "can_quote": bool,          # can quote-to-chat
+    "can_search": bool,         # included in search results
+    "can_play": bool,           # has playable external url
+    "can_download_file": bool,  # can download original file
 }
+```
 
-responses (enveloped):
-- `200`: `{ "data": { ...media } }` existing media attached (ready or pending)
-- `202`: `{ "data": { ...media } }` new ingestion started
-- `400`: `{ "error": { "code": "E_URL_INVALID", ... } }`
-- `403`: `{ "error": { "code": "E_FORBIDDEN", ... } }`
-- `401`: `{ "error": { "code": "E_UNAUTHORIZED", ... } }`
+Derived **only** from:
+- `media.kind`
+- `processing_status`
+- `last_error_code`
+- `media_file` existence (for `can_download_file`)
+- `external_playback_url` existence (for `can_play`)
 
-### GET /media/:id
-metadata only.
+### Capability Rules by Kind
 
-returns (enveloped):
+**All kinds:**
+- `can_download_file` = true iff `media_file` exists AND `can_read(viewer, media)` passes
+- `can_play` = true iff `external_playback_url` exists AND (`status >= ready_for_reading` OR `failed + E_TRANSCRIPT_UNAVAILABLE`)
 
+**web_article / epub:**
+- `can_read` = true iff `status >= ready_for_reading` (fragments exist)
+- `can_highlight` = `can_read`
+- `can_quote` = `can_read`
+- `can_search` = `can_read`
+
+**pdf:**
+- `can_read` = true iff `media_file` exists AND pdf.js can render (even before text extraction completes)
+- `can_highlight` = `can_read` (geometry-based)
+- `can_quote` = `can_read` AND `media.plain_text` exists (may be delayed until text extraction completes)
+- `can_search` = `can_quote`
+- Note: pdf allows viewing before `ready_for_reading` if file is stored and renderable
+
+**podcast_episode / video:**
+- `can_read` = true iff transcript fragments exist (`status >= ready_for_reading`)
+- `can_highlight` = `can_read`
+- `can_quote` = `can_read`
+- `can_search` = `can_read`
+- `can_play` = true iff `external_playback_url` exists (even if `failed + E_TRANSCRIPT_UNAVAILABLE`)
+- Special case: `failed + E_TRANSCRIPT_UNAVAILABLE` → `can_play=true`, `can_read=false`, `can_highlight=false`
+
+### S1 Baseline Rules
+
+S1 implements the capability derivation logic but:
+- Only `pdf`/`epub` have `media_file` scenarios (file upload flow)
+- No fragments exist (no extractors), so `can_read` is always false for S1-created media
+- `ready_for_reading` capability tests use seeded S0 fixtures
+- `failed + E_TRANSCRIPT_UNAVAILABLE` semantics are testable via state injection
+
+UI and downstream slices must rely on capabilities, never raw status.
+
+---
+
+## 7) Failure Taxonomy
+
+### `failure_stage` Enum
+
+```
+upload | extract | transcribe | embed | other
+```
+
+### Internal `last_error_code`
+
+Examples (non-exhaustive):
+- `E_UPLOAD_FAILED`
+- `E_EXTRACTION_FAILED`
+- `E_TRANSCRIPT_UNAVAILABLE`
+- `E_JOB_TIMEOUT`
+- `E_EMBEDDING_FAILED`
+
+Internal codes may change; API error codes are mapped separately.
+
+---
+
+## 8) Retry Semantics (Deterministic)
+
+### Automatic Retry
+
+- **Max attempts:** 3
+- Only for transient failures:
+  - Network errors
+  - Timeouts
+  - Provider 5xx
+- Exponential backoff with jitter
+
+### Manual Retry
+
+- Always allowed
+- Resets based on `failure_stage`
+
+### Reset Rules
+
+| `failure_stage` | Reset Behavior |
+|-----------------|----------------|
+| `upload` | Delete `media_file`, clear `file_sha256`, reset to `pending` |
+| `extract` | Delete fragments, reset to `pending` |
+| `transcribe` | Delete transcript fragments, reset to `pending` |
+| `embed` | Delete embeddings/chunks, reset to `ready_for_reading` |
+
+**Retry semantics:**
+- Manual retry always sets `processing_status = pending`, clears failure fields, enqueues job.
+- Job runner transitions `pending → extracting` deterministically.
+- For `failure_stage = transcribe`, the job runner picks up from the transcript phase (within extraction).
+- For `failure_stage = embed`, reset to `ready_for_reading` since readable artifacts exist.
+
+**No partial state may survive a reset.**
+
+---
+
+## 9) Idempotency Rules
+
+### URL-Based Media
+
+**Canonicalization:**
+- Lowercase scheme + host
+- Drop fragments
+- Remove `utm_*`, `gclid`, `fbclid`
+- Follow redirects once
+
+**Store:**
+- `requested_url`
+- `canonical_url`
+
+**Idempotency key:** `(kind, canonical_url)`
+
+Existing failed rows are reused and retried.
+
+#### Forward-Compatibility Notes (S7/S8)
+
+The `(kind, canonical_url)` key is the **temporary S1 invariant**. Later slices will add stronger identity keys:
+
+| Kind | S1 Key | Future Key (S7/S8) |
+|------|--------|-------------------|
+| `web_article` | `(kind, canonical_url)` | Same (stable) |
+| `video` | `(kind, canonical_url)` | `(kind, provider, provider_video_id)` — e.g., `(video, youtube, dQw4w9WgXcQ)` |
+| `podcast_episode` | `(kind, canonical_url)` | `(podcast_id, episode_guid)` with fallback `(podcast_id, enclosure_url, published_at)` |
+
+S1 schema should include nullable `provider`, `provider_id` fields on `media` to support future constraints without migration.
+
+**Rationale:** URL strings are fragile identifiers for videos (URL format changes) and podcasts (RSS feeds vary). Provider-native IDs are more stable.
+
+---
+
+### File Uploads (EPUB / PDF)
+
+- **Hash:** sha256, stored as `media.file_sha256`
+- Computed server-side during upload stream (preferred)
+- **Idempotency key:** `(created_by_user_id, kind, file_sha256)`
+- Enforced via unique partial index on `media` table
+- Different users always get different media rows.
+
+---
+
+## 10) Storage Model
+
+- Supabase Storage (private bucket)
+- Path invariant:
+
+```
+media/{media_id}/original.{ext}
+```
+
+- No user identifiers in paths.
+
+### Signed URLs
+
+- Minted server-side only
+- Expiry: **5 minutes**
+- Returned only if `can_read(viewer, media)` passes
+
+---
+
+## 11) API Surface (Stable Contracts)
+
+### Create / Upload
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /media` | Creates media stub (kind + source) |
+| `POST /media/upload/init` | Returns signed upload target |
+| `POST /media/{id}/ingest` | Enqueues ingestion job |
+
+#### `POST /media/upload/init` Contract
+
+**Request:**
+```json
 {
-  "data": {
-    "id": "...",
-    "kind": "web_article",
-    "title": "...?",
-    "processing_status": "...",
-    "failure_code": "...?",
-    "failure_message": "...?"
-  }
+  "kind": "pdf" | "epub",
+  "filename": "document.pdf",
+  "content_type": "application/pdf",
+  "size_bytes": 1048576
 }
+```
 
-visibility:
-- must enforce `can_view(viewer, media)`; return 404 on non-visible.
-
-### GET /media/:id/fragments
-returns sanitized html for reading.
-
-returns (enveloped):
-
+**Response:**
+```json
 {
-  "data": {
-    "fragments": [
-      {
-        "id": "...",
-        "ordinal": 0,
-        "html_sanitized": ""
-      }
-    ]
-  }
+  "media_id": "uuid",
+  "storage_path": "media/{media_id}/original.pdf",
+  "upload_url": "https://...",
+  "upload_headers": { "Content-Type": "application/pdf" },
+  "expires_at": "2025-01-01T00:05:00Z"
 }
+```
 
-rules:
-- allowed only if `processing_status >= ready_for_reading`
-- canonical_text is never returned
-- return 404 on non-visible media (no 403 for reads)
+**Flow:**
+1. Client calls `POST /media/upload/init` with file metadata
+2. Server creates `media` row with `processing_status = pending`, returns signed upload URL
+3. Client uploads file directly to Supabase Storage using `upload_url` + `upload_headers`
+4. Client calls `POST /media/{id}/ingest` to confirm upload and enqueue processing
+5. Server computes `sha256` from stored file, checks idempotency, updates `media.file_sha256`
+6. If duplicate found: return existing `media_id`, delete the just-uploaded file
 
----
+**Idempotency check happens at ingest time**, not at init time (sha256 requires the file).
 
-## 12) invariants (slice-level)
+### Read / Retry
 
-- exactly one fragment exists for a web article
-- fragment.html_sanitized and fragment.canonical_text are immutable after `ready_for_reading`
-- no read endpoint bypasses `can_view`
-- failed ingestion never leaves partial fragment data
-- retry never creates a new media id for the same canonical_url
-- two users ingesting the same url converge on the same media row
-- `canonical_url` uniqueness is enforced at the db level
+| Endpoint | Description |
+|----------|-------------|
+| `GET /media/{id}` | Returns metadata + processing_status + capabilities |
+| `POST /media/{id}/retry` | Retries failed ingestion |
+| `GET /media/{id}/file` | Returns signed URL (PDF/EPUB only) |
 
----
+**All endpoints require:**
+- Valid bearer token
+- Internal secret header
 
-## 13) acceptance scenarios
+### Visibility Enforcement (S1 Requirements)
 
-### successful ingestion
-given: authenticated user  
-when: POST url  
-then:
-- media row is created or reused
-- status transitions to `ready_for_reading`
-- fragment exists with sanitized html
-- user can read content
+All S1 endpoints must enforce media readability via library membership, consistent with constitution §8.
 
-### dedup attach
-given: media exists and is ready  
-when: another user submits same url  
-then:
-- no new media row
-- media attached to user’s library
-- content is immediately readable
+| Endpoint | Visibility Rule |
+|----------|-----------------|
+| `GET /media/{id}` | Returns 404 if viewer cannot read the media (no library membership) |
+| `GET /media/{id}/file` | Returns 404 if viewer cannot read; only then checks `can_download_file` |
+| `POST /media/{id}/retry` | Allowed only if viewer can read AND (viewer is creator OR viewer is admin of a containing library) |
+| `POST /media/{id}/ingest` | Allowed only for media the viewer created |
 
-### failed extraction
-given: unreadable page  
-when: ingestion runs  
-then:
-- status = `failed`
-- failure_code = `E_EXTRACT_NO_CONTENT`
-- user sees failed state
-- retry is available
-
-### visibility enforcement
-given: media not in viewer’s libraries  
-when: GET media or fragments  
-then:
-- request is rejected (404)
+**S1 inherits `library_media` from S0.** S1 must not bypass library membership checks even though S0 established them.
 
 ---
 
-## 14) non-goals (explicit)
+## 12) Job Architecture
 
-- storing raw fetched html
-- client-side sanitization
-- iframe rendering
-- highlight creation
-- semantic processing
+- Celery tasks exist for each stage:
+  - `ingest_media`
+  - `retry_media`
+- Tasks call **service-layer functions**
+- No job writes fake fragments or artifacts
+- Inline ingestion (dev):
+  - Calls the same service functions synchronously
+- Tests may run Celery in eager mode
+
+---
+
+## 13) Quota Hooks (Stubbed)
+
+Introduce but do not enforce real limits.
+
+### Operations
+
+- `TRANSCRIBE_SECONDS`
+- `LLM_TOKENS`
+- `INGEST_URLS`
+
+### Contract
+
+```python
+check_quota(user_id, operation, amount) -> allowed | denied
+record_usage(user_id, operation, amount, media_id)
+```
+
+Called but always allowed in S1.
+
+---
+
+## 14) Testing Requirements
+
+### Processing-State Test Suite
+
+**Must cover:**
+- All valid transitions
+- Failed → retry → success
+- No duplicate artifacts after retry
+- `failed + playback-ok` semantics
+- Idempotent URL + file ingest
+- Signed URL access only when permitted
+
+**Tests must run with:**
+- Real DB
+- Real storage bucket (test project)
+- Inline ingestion + eager jobs
+
+### Test Storage Isolation
+
+All test uploads must use a run-scoped prefix to avoid polluting the storage bucket:
+
+```
+test_runs/{run_id}/media/{media_id}/original.{ext}
+```
+
+**Requirements:**
+- `run_id` is a unique identifier per test run (e.g., CI job ID or UUID)
+- Test teardown deletes the `test_runs/{run_id}/` prefix (best-effort)
+- Production code uses `media/{media_id}/...`; test code overrides the prefix
+- Tests must never write to the production path pattern
+
+**CI cleanup:** If teardown fails, a scheduled job should clean up old `test_runs/*` prefixes (e.g., older than 24 hours).
+
+---
+
+## 15) Acceptance Criteria
+
+- Media lifecycle transitions are deterministic
+- Idempotency works for URLs and uploads
+- Failed media can be retried without residue
+- Signed URLs are secure and expire
+- Capabilities object is correct and used everywhere
+- Inline ingestion behaves identically to job ingestion
+- Processing-state test suite passes
+
+---
+
+## 16) Non-Negotiable Invariants
+
+- No partial derived state survives retries
+- Capabilities, not status, drive UI behavior
+- Media rows are reused for same canonical source
+- Storage is never directly accessible by clients
+- No fake extraction artifacts in S1
