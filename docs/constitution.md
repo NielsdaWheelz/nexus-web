@@ -21,6 +21,16 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
   - web articles by url (headless browser → mozilla readability)
   - epubs uploaded or via url (fully extracted into html rendered by us)
   - pdfs uploaded or via url (processed by pymupdf; rendered via pdf.js)
+- podcasts:
+  - podcast discovery via podcastindex search + rss fetch
+  - subscribe/unsubscribe podcasts
+  - episodes are ingested as media (audio url + transcript)
+  - transcript viewing + highlighting + quote-to-chat
+  - basic audio player + transcript click-to-seek
+- videos:
+  - youtube url ingestion
+  - transcript ingestion
+  - basic youtube playback embed + transcript click-to-seek
 - libraries (groups) + membership + roles (member/admin)
 - highlights + optional annotation (0..1) per highlight
 - conversations + messages (single-user authoring; can be visible if shared)
@@ -30,36 +40,42 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 - async processing via jobs (pending/failed/retry states)
 
 ### v2 (explicitly not required for v1)
-- podcasts (subscription, episodes, transcript highlights)
-- videos (transcription, timestamps, highlightable transcript)
 - advanced players + deep media controls
-
-### v3 (explicitly not required for v1)
-- “enterprise” hardening: full local ephemeral infra parity, perf tuning, deep observability, advanced rate limiting, extensive admin tooling
+- "enterprise" hardening: full local ephemeral infra parity, perf tuning, deep observability, advanced rate limiting, extensive admin tooling
 - perfect migration tooling / backfills for old ingestion formats
 
 ### explicit non-scope (for all v1)
 - no multi-user conversations (no mixed authors in a conversation)
 - no realtime collaborative editing / cursors / live co-annotation
-- no document “versioning” or “same-doc” dedup across formats (pdf+epub are separate media rows)
+- no document "versioning" or "same-doc" dedup across formats (pdf+epub are separate media rows)
 - no offline-first
 - no browser extension
-- no iframes (render sanitized html in app dom)
+- no iframes for document rendering (render sanitized html in app dom); iframes allowed only for youtube playback embeds (allowlist)
 - no untyped polymorphic link table; `message_context` is typed and limited to its allowed target types.
+- no youtube channel subscriptions (explicitly out of scope v1)
+- no word-level timestamps (segment/utterance-level only)
+- no local audio/video uploads (external urls only)
+- no first-class support for non-browser clients (cli, mobile apps); browser traffic always flows through next.js; direct fastapi usage is not a supported public API in v1
 
 ---
 
 ## 3) core abstractions (ubiquitous language)
 
 - **user**: an account with libraries and authored social objects.
-- **library**: an access-control group + a view over media. invisible unless you’re a member.
-- **membership**: a user’s role in a library (`admin` or `member`).
-- **media**: a readable item: `web_article`, `epub`, or `pdf`.
-- **fragment**: an immutable render unit of a media item.
-  - web article: 1 fragment
-  - epub: 1 fragment per chapter/spine item (plus toc metadata)
+- **library**: an access-control group + a view over media. invisible unless you're a member.
+- **membership**: a user's role in a library (`admin` or `member`).
+- **media**: a readable item: `web_article`, `epub`, `pdf`, `podcast_episode`, or `video`.
+- **podcast**: a global collection (not itself media); discovered via podcastindex or rss.
+- **podcast_subscription**: user↔podcast relationship; subscribing triggers episode ingestion and auto-add to default library.
+- **podcast_episode** (media): `media.kind=podcast_episode`; belongs to exactly one podcast. "episode" is shorthand in prose but the canonical term is `podcast_episode`.
+- **video** (media): `media.kind=video`; from youtube with external watch url and transcript. "video" refers to the media item, not a separate object.
+- **fragment**: an immutable render unit of a media item. fragments may represent:
+  - a document chapter/section (epub: 1 fragment per chapter/spine item, plus toc metadata)
+  - an entire article (web article: 1 fragment)
+  - a transcript segment (podcast_episode, video: many fragments per media, each with timestamps)
   - pdf: fragments are not used for highlights (pdf uses overlay geometry)
-- **highlight**: a user-owned selection in a fragment (html/epub) or in a pdf page geometry.
+- **transcript segment**: a fragment (not a separate concept) for podcast_episode/video with timestamps (`t_start_ms`, `t_end_ms`) used for transcript rendering, highlighting, and click-to-seek. transcript segments are the fragments for audio/video media.
+- **highlight**: a user-owned selection in a fragment (html/epub/transcript segment) or in a pdf page geometry.
 - **annotation**: optional note attached to a highlight (0..1).
 - **conversation**: a thread of messages authored by exactly one user (no anchor media; visibility via shares).
 - **message**: one entry in a conversation; ordered by per-conversation `seq`.
@@ -76,30 +92,65 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 - **frontend (next.js)**
   - responsive ui (mobile + desktop)
   - renders media, panes, highlights
-  - calls the public api directly with a session cookie (or bearer token for non-browser clients)
+  - route handlers (`/api/*`) act as BFF proxy to fastapi
 - **api (fastapi)**
   - primary business logic, persistence, authorization, search
-  - public http api; all endpoints authenticate + authorize every request
+  - accepts requests only via bearer tokens (server-to-server from next.js)
 - **db (supabase postgres + pgvector)**
   - primary datastore for all structured data + embeddings
 - **storage (supabase storage)**
   - stores original epub/pdf files (private)
 - **jobs (celery + redis)**
   - ingestion + extraction + chunking + embeddings + llm metadata verification
+- **transcription provider (deepgram)**
+  - transcription requests are processed by jobs
 
 ### request topology (hard constraint)
-- browsers call **fastapi** directly for all app data operations.
-- frontend is untrusted; fastapi enforces all authorization; frontend may do SSR/CSR but is not a trust boundary.
-- fastapi is the source of truth and must enforce authorization for every request.
+- browsers communicate ONLY with the next.js app (same-origin).
+- browsers NEVER call fastapi directly.
+- next.js route handlers (`/api/*`) act as a thin BFF proxy.
+- next.js forwards authenticated requests to fastapi using `Authorization: Bearer <supabase_access_token>`.
+- fastapi accepts requests ONLY via bearer tokens and never via cookies.
 
-### api authentication (hard constraint)
-- browser requests to fastapi MUST include a session cookie or `Authorization: Bearer <access_token>`.
-- fastapi verifies access token signature + claims and derives `viewer_user_id` from the token (`sub`).
-- fastapi never trusts user identity passed via custom headers from clients.
+### api ownership (hard constraint)
+- fastapi is the single source of truth for:
+  - authorization
+  - business logic
+  - validation
+  - error semantics
+- next.js route handlers are transport-only:
+  - authenticate session
+  - attach bearer token
+  - forward request/response
+- next.js must not implement domain logic.
 
-### cors + cookie posture (hard constraint)
-- browsers call fastapi directly with credentials; allow only the frontend origin and `credentials: true`.
-- cookies must be compatible with same-site access (same registrable domain or `SameSite=None; Secure`).
+### fastapi exposure model (hard constraint)
+- fastapi is designed to be secure even if publicly reachable.
+- all fastapi endpoints require a valid bearer token.
+- internal secret header is required in production:
+  - next.js always includes a shared internal secret header (`X-Internal-Secret`).
+  - fastapi rejects requests missing or mismatching this header in production.
+  - this enforces that only next.js can call fastapi, even if someone has a valid supabase token.
+
+### iframe policy (hard constraint)
+- documents: never use iframes (render sanitized html in app dom).
+- youtube playback: allow trusted iframes for youtube player embeds (playback only) with provider allowlist (`youtube.com`, `youtube-nocookie.com`).
+- no other iframe sources are permitted.
+
+### cors + csrf posture (hard constraint)
+- browser → next.js: same-origin only.
+- next.js → fastapi: server-to-server requests only.
+- fastapi does NOT enable browser CORS.
+- next.js enforces CSRF protection on all state-changing `/api/*` routes:
+  - same-origin policy
+  - `Origin` / `Referer` validation
+- fastapi does NOT implement CSRF protection (bearer-token, non-browser clients only).
+
+### jobs and background processing
+- celery workers are trusted internal actors.
+- jobs write directly to the database using service credentials.
+- jobs prefer direct database writes for performance; they may call internal fastapi endpoints if centralization of invariants is needed later.
+- fastapi reads job-written state and enforces visibility.
 
 ---
 
@@ -113,8 +164,28 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 - pdf rendering: pdf.js
 - pdf extraction: pymupdf
 - web article extraction: headless browser + mozilla readability
-- epub extraction: fully materialized to html we render (no “reader from file”)
+- epub extraction: fully materialized to html we render (no "reader from file")
 - llm metadata verification: openai model call (exact model may change); runs as async jobs and failures never block reading
+- podcasts: PodcastIndex API + rss fetch
+- videos: youtube url ingestion + embed playback (no local video files)
+- transcription: deepgram (primary), with fallback to non-diarized transcription if diarization fails; english-only in v1
+
+### media hosting posture (hard constraint)
+- we do not host audio or video files; we store external urls + transcripts only.
+
+### audio playback fallback (v1 behavior)
+- external podcast audio urls may fail in-browser due to cors, redirects, range request issues, or transient errors.
+- if in-browser audio playback fails, show a "open in source" link to the original audio url.
+- transcript reading and highlighting remain functional even if playback fails.
+- no audio proxy in v1; consider adding a lightweight proxy in v2 if failure rate is high.
+
+### video transcript failure (v1 behavior)
+- youtube transcript fetch may fail due to: transcripts disabled, auto-captions only, rate limits, language mismatch.
+- if transcript fetch fails but video is playable:
+  - allow "playback-only" mode: video plays via embed, but highlights and quote-to-chat are disabled.
+  - show "transcript unavailable" state in the transcript pane.
+  - `processing_status` = `ready_for_reading` requires transcript; playback-only uses `last_error_code = E_TRANSCRIPT_UNAVAILABLE` with status `failed` but playback url still usable.
+- search does not include videos without transcripts.
 
 ### rls posture (hard constraint)
 - clients do not access tables via postgrest.
@@ -125,20 +196,29 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 
 ## 6) auth and identity
 
-### auth system
-- supabase auth (gotrue) is the identity provider.
-- use `@supabase/ssr` to create server + browser clients that share session via cookies.
-- browser uses supabase-js for auth flows and token refresh; cookies may be non-httpOnly under this model.
-- `Authorization: Bearer <access_token>` is optional for non-browser clients only.
-  - non-browser clients obtain an access token from supabase auth and send it via `Authorization`.
-  - cookie and bearer tokens are the same jwt type and validated identically; if both are present, bearer takes precedence.
+### authentication model (hard constraint)
+- supabase auth is the sole identity provider.
+- authentication state is maintained by next.js using `@supabase/ssr` session cookies.
+- access tokens are NEVER stored in localStorage or sessionStorage.
+- no endpoint returns access tokens to the browser; tokens exist only in server runtime.
+- browser may hold tokens transiently in memory during supabase client auth flows, but never persists them.
 
-### token verification (hard constraint)
-- fastapi MUST verify the access token on every request (signature + expiry).
-- `viewer_user_id` is derived from the verified token subject (`sub`).
+### token flow
+- browser authenticates with supabase via next.js.
+- next.js reads the authenticated session server-side.
+- next.js extracts the supabase access token.
+- next.js forwards the token to fastapi as: `Authorization: Bearer <access_token>`.
+- fastapi validates:
+  - jwt signature (supabase jwks)
+  - expiration
+  - issuer / audience
+- fastapi derives `viewer_user_id` from `sub`.
+
+### fastapi constraints
+- fastapi NEVER reads cookies.
+- fastapi NEVER receives refresh tokens.
+- fastapi trusts ONLY verified bearer tokens.
 - no endpoint may accept a viewer id from request headers/body as authoritative.
-- access tokens must never be stored in localstorage/sessionstorage.
-- fastapi accepts access tokens only; refresh tokens are never read by fastapi.
 
 ### identity mapping
 - `user.id` is a uuid in our postgres `users` table.
@@ -157,7 +237,7 @@ after ingestion completes:
 
 if ingestion logic changes and we want “new output”, that is a *new media row* (not v1-required).
 
-### html sanitization (no iframes means no exceptions)
+### html sanitization (document content only; no iframes in documents)
 - sanitization is performed server-side and persisted as `fragment.html_sanitized`; clients never render unsanitized html.
 - sanitizer implementation: `bleach` with a strict allowlist.
 - allowed tags/attrs are explicitly enumerated in code to preserve common article structure (text formatting, links, images, tables, code blocks) while removing active content.
@@ -204,11 +284,33 @@ store:
   - prefix/suffix length: 64 chars each
   - no extra normalization beyond canonicalization
 
+### transcript segment canonicalization
+- transcript segments store plain text only (no html).
+- `fragment.canonical_text` for a transcript segment is the segment's plain text after NFC normalization and whitespace collapse (same normalization rules as html canonicalization, but no html parsing step).
+- rendering: transcript text is rendered as escaped plain text (no html injection). use react text nodes or equivalent; never use `dangerouslySetInnerHTML` for transcripts.
+- the only blessed use of `dangerouslySetInnerHTML` remains `fragment.html_sanitized` for document rendering.
+
+### transcript highlight anchoring
+- transcript highlights anchor to `(fragment_id, start_offset, end_offset)` where fragment is a transcript segment.
+- store `t_anchor_ms` for click-to-seek, or derive from the segment's `t_start_ms`.
+- minimum: reference the segment id and use its `t_start_ms` for seek target.
+
+### transcript segment fields
+- `t_start_ms`, `t_end_ms`: timestamps in milliseconds.
+- optional `speaker_label` (string): speaker identification from diarization; no speaker identity resolution in v1.
+
 ### pdf highlights (separate model)
 store:
 - `page_number`
 - one or more rectangles/quadpoints in page coordinates
 - optional `exact/prefix/suffix` for debug/search support
+
+### pdf text model (for quote-to-chat)
+- `media.plain_text` is the linearized pdf text extracted by pymupdf, used for chunking and semantic search.
+- pdf highlights store `exact` text at creation time, extracted from the text layer at the highlight coordinates.
+- quote-to-chat uses the stored `exact` text plus nearby spans from `media.plain_text` for context.
+- we do not re-extract text from coordinates at render time; stored `exact` is authoritative.
+- if text extraction fails for a region, highlight creation is allowed but `exact` may be empty; quote-to-chat gracefully degrades.
 
 ---
 
@@ -217,6 +319,15 @@ store:
 ### media readability
 a viewer can read a media item iff:
 - the media is in at least one library the viewer is a member of
+
+### global discovery objects (podcasts)
+- podcasts are global metadata objects, not media. they are visible to all authenticated users.
+- podcast search results from PodcastIndex can be returned to any authenticated user (these are discovery objects).
+- podcast metadata pages (title, description, artwork) are viewable before subscribing.
+- episodes are media; library readability rules apply: an episode is readable iff it is in a library the viewer is a member of.
+- subscribing to a podcast auto-adds episodes to the user's default library, making them readable to that user.
+- search over episodes must be visibility-filtered: only return episodes the viewer can read.
+- search over podcasts can return podcasts even if none of their episodes are in the viewer's libraries (discovery is allowed).
 
 ### social object visibility (highlight/annotation/message/conversation)
 
@@ -267,7 +378,13 @@ notes:
 - clients never use service-role keys and never receive them.
 
 ### content security policy (csp)
-- use a strict csp: `script-src 'self'` with no inline scripts and no `unsafe-eval`.
+- baseline strict csp with youtube embed allowances:
+  - `script-src 'self'` plus nonces for next.js inline scripts (next.js requires nonces in production for inline script hydration).
+  - `frame-src https://www.youtube.com https://www.youtube-nocookie.com` (youtube embeds only).
+  - `img-src 'self' https:` (external images via our proxy only; document content never uses data: urls since we proxy images).
+  - `data:` in img-src is allowed only for next/image blur placeholders, not for document content (enforced by sanitizer stripping data: from document img src).
+  - no `unsafe-eval`; no `unsafe-inline` for scripts (use nonces).
+- next.js nonce handling: configure next.js to use CSP nonces for inline scripts; nonce is generated per-request server-side.
 - prefer trusted types where supported.
 - sanitization happens server-side only; clients never run sanitizer logic.
 - user-generated annotations are rendered as plain text (no html).
@@ -296,13 +413,22 @@ rules:
 - retry policy: max N automatic retries with exponential backoff; manual retry resets state and deletes chunks.
 - `ready_for_reading` means per-kind minimums are satisfied:
   - web_article/epub: `fragment.html_sanitized` + `fragment.canonical_text` exist.
-  - pdf: original file stored, page count extracted, and pdf.js can render pages.
+  - pdf: original file stored, page count extracted, and pdf.js can render pages. text extraction for search/quote-to-chat may still be in progress; semantic search results may be partial until embeddings complete.
+  - podcast_episode/video: transcript segments exist (fragments created) + playback url exists (external). diarization may be missing; transcript is still usable.
 - allowed transitions:
   - `pending` → `extracting` → `ready_for_reading` → `embedding` → `ready`
   - any → `failed`
   - `failed` → `extracting` on retry
   - `ready_for_reading` → `ready` directly if embedding is skipped
 - `ready_for_reading` implies fragments are immutable thereafter.
+
+### transcription failure modes
+- distinguish "transcript failed" vs "embedding failed" in `last_error_code` conventions.
+- single `processing_status` enum, but `last_error_code` provides richer error detail:
+  - `E_TRANSCRIPTION_FAILED`: transcription provider returned an error.
+  - `E_TRANSCRIPTION_TIMEOUT`: transcription did not complete in time.
+  - `E_DIARIZATION_FAILED`: diarization failed but base transcript may still be usable (fallback to non-diarized).
+  - `E_EMBEDDING_FAILED`: embedding step failed after transcript was successful.
 
 ---
 
@@ -333,13 +459,28 @@ rules:
 - media rows persist in v1; users remove media from libraries.
 
 ### search
-- search must never return objects the viewer cannot see.
-- search supports optional scoping (media, author, library, conversation).
-- search must apply the same `can_view(viewer, object)` predicate to every returned hit type.
-- search may over-fetch then filter, but must never return non-visible results.
+search is split into two distinct modes:
+
+**discovery search** (podcasts only):
+- search podcasts globally via PodcastIndex; available to all authenticated users.
+- returns podcast metadata (not episodes) regardless of library membership.
+- no visibility filtering required for podcast discovery results.
+
+**library search** (everything else):
+- search media, episodes, highlights, annotations, conversations.
+- must never return objects the viewer cannot see.
+- supports optional scoping (media, author, library, conversation).
+- must apply the same `can_view(viewer, object)` predicate to every returned hit type.
+- may over-fetch then filter, but must never return non-visible results.
 - snippets are generated only after visibility filtering to avoid leakage.
-- search counts/facets are computed only over visibility-filtered results.
+- counts/facets are computed only over visibility-filtered results.
 - semantic search returns only items with embeddings ready; results may be partial until embeddings complete.
+
+### chunking + embeddings (transcripts)
+- transcript chunking sizes are different from articles (smaller, time-aware).
+- embed transcript content by aggregating transcript segment fragments; transcripts have no single root fragment (the "full transcript" is a derived view, not a data model primitive).
+- no plan-based embedding limitation.
+- exact chunk sizes are implementation details and not specified in L0.
 
 ---
 
@@ -385,6 +526,30 @@ rules:
 - after `ready_for_reading`, `fragment.html_sanitized` and `fragment.canonical_text` never change.
 - optional derived render caches are allowed and may be recomputed; they are derived from `fragment.canonical_text`.
 
+### podcasts
+- each `podcast_episode` media belongs to exactly one podcast.
+- podcast subscriptions:
+  - subscribing creates `user_podcast_subscription`.
+  - subscribing triggers ingestion of episodes and auto-adds ingested episodes to user's default library.
+  - new episodes are periodically fetched and auto-added to default library while subscribed.
+- unsubscribe options (user chooses one):
+  1. stop future ingestion only (default): existing episodes remain in libraries.
+  2. also remove episodes from default library only.
+  3. also remove episodes from all single-member libraries (consistent with default-library closure rule).
+- never remove episodes from shared libraries without explicit per-library action (protects shared contexts).
+
+### transcript segments
+- transcript segment fragments have:
+  - `t_start_ms < t_end_ms`
+  - `(media_id, idx)` is unique; `idx` is a stable integer ordering key assigned at ingestion.
+  - display order is `(t_start_ms, idx)` to handle overlapping segments deterministically.
+  - overlaps are allowed (diarized utterances may overlap when speakers interrupt); UI uses `t_start_ms` for click-to-seek.
+- transcript fragments obey the same immutability law after `ready_for_reading`.
+
+### videos
+- video media has exactly one external watch url and provider id (youtube).
+- we never store the video file.
+
 ---
 
 ## 12) ui contract (minimal but binding)
@@ -394,12 +559,14 @@ rules:
   - collapsible left navbar
   - tabsbar at top for pane management
   - horizontal, resizable panes that can overflow off-screen (horizontal scroll)
-  - footer player bar for audio/video (v2+), but the bar shell may exist in v1
+  - footer player bar for audio/video (v1-required, basic): play/pause, jump back/forward, next/prev (episode), and open pane
 - opening a media creates two panes:
   - content pane (left)
   - linked-items pane (right)
 - linked-items must remain vertically aligned with their highlight targets.
-- a conversation is listed in a media’s linked-items pane iff `conversation_media` contains `(conversation_id, media_id)` and the viewer can view the conversation.
+- a conversation is listed in a media's linked-items pane iff `conversation_media` contains `(conversation_id, media_id)` and the viewer can view the conversation.
+- podcast episode pane and video pane are "media panes" whose content is the transcript view plus player (audio controls or youtube embed).
+- clicking a transcript segment seeks the player to that segment's `t_start_ms`.
 
 ---
 
@@ -414,6 +581,14 @@ changing any of the following is a constitution change:
 - canonicalization definition for offsets
 - visibility rules and sharing semantics
 - storage privacy model
-- “no iframes” constraint
+- document iframe ban policy (documents must never use iframes)
+- youtube embed allowlist policy (adding/removing allowed embed domains)
 - single-author conversation constraint
 - generic links scope
+- transcript segmentation/immutability rules
+- subscription auto-add semantics
+- request topology (BFF vs direct api)
+- auth token flow or storage location
+- fastapi exposure model
+- allowing browsers to call fastapi directly
+- supporting non-browser clients as a public API

@@ -49,6 +49,7 @@ explicitly out of scope for this slice:
 - non-browser clients: `Authorization: Bearer <access_token>`
 
 fastapi extracts access tokens from cookies using a single helper. if both cookie and bearer are present, bearer takes precedence.
+nextjs and fastapi are served under the same site, and cookies are configured so the api receives them (SameSite/Domain set appropriately). cookie auth is required for browser clients; bearer is allowed for non-browser clients.
 
 ### token verification (mandatory)
 for every request:
@@ -62,10 +63,10 @@ for every request:
 - derive `viewer_user_id` from `sub`
 
 jwks handling:
-- fastapi fetches jwks from the configured supabase project jwks url on startup
-- cache jwks in memory with a ttl (15 minutes) and background refresh
-- startup: if jwks fetch fails and no cached jwks exists, fail closed (401)
-- refresh: if refresh fails, keep last-known-good jwks until ttl + grace (24h) expires, and log loudly
+- fastapi fetches jwks from the configured supabase project jwks url
+- jwks are cached in memory and rotation is handled without per-request introspection
+- startup: the app must not serve requests until a valid jwks set is available (fail to start or return 503)
+- refresh: if refresh fails, continue using the last-known-good jwks while it remains valid; do not fail all requests solely due to refresh errors; log loudly
 
 logging guardrails:
 - do not log raw tokens
@@ -84,10 +85,11 @@ fastapi MUST NOT:
 
 fastapi provides a test-only bypass used only in integration tests:
 - enabled only when `ENV=test`
+- requires `X-Test-Auth: <secret>` to match a test-only env var
 - accepts `X-Test-Viewer-Id: <uuid>` header
-- middleware rejects this header unless `ENV=test` (return `400 E_INVALID_REQUEST`)
+- middleware rejects this header unless `ENV=test` (return `400 E_INVALID_REQUEST`) and logs a security warning
 
-note: slice 0 tests do **not** validate jwks verification; they validate access-control gating.
+note: the test bypass still triggers user bootstrap for the injected viewer id. slice 0 tests do **not** validate jwks verification; they validate access-control gating.
 
 ---
 
@@ -146,6 +148,7 @@ enforcement:
 - membership uniqueness: `(library_id, user_id)`
 
 slice 0 does NOT include UI for membership management.
+slice 0 uses `user_id` only; email lookup for membership is slice 5.
 
 ---
 
@@ -187,6 +190,7 @@ required fields:
 - **public visibility**:
   `sharing = public` means any authenticated viewer may see the object.
   endpoints still require authentication in v1.
+  public does not override media readability in v1.
 
 - **anchor media**:
   - highlight → `anchor_media_id`
@@ -220,6 +224,14 @@ ALL media read paths MUST use this primitive (or an equivalent join).
 
 ## api surface (minimum)
 
+### response shapes (minimum)
+
+all responses are wrapped in the standard envelope. minimum fields:
+
+- **library**: `id`, `name` (nullable), `is_default`, `owner_user_id`, `role_of_viewer`
+- **media**: `id`, `kind`, `processing_status`
+- **highlight**: `id`, `owner_user_id`, `sharing`, `anchor_media_id`, `created_at`
+
 ### read endpoints (required)
 
 1. `GET /libraries`
@@ -242,6 +254,7 @@ ALL media read paths MUST use this primitive (or an equivalent join).
    - returns highlights where `highlight.anchor_media_id = media_id`
    - applies `can_view` to each highlight
    - invisible highlights are not returned
+   - public does not bypass media readability in v1
 
 these endpoints exist even though creation is not implemented.
 
@@ -347,6 +360,10 @@ indexes:
 8. **membership mutation authorization**
    - non-admin add member → 403
    - non-admin remove member → 403
+
+9. **admin invariants**
+   - attempt to remove the last admin → rejected
+   - attempt to remove/downgrade the owner admin → rejected
 
 ALL read paths added in this slice must be exercised by at least one allow and one deny test.
 
