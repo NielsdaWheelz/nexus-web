@@ -1,0 +1,22 @@
+.layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Mobile: offset for collapsed navbar */
+@media (max-width: 768px) {
+  .layout {
+    padding-left: var(--navbar-collapsed-width);
+  }
+
+  .main {
+    width: 100%;
+  }
+}

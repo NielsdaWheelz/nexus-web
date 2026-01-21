@@ -6,10 +6,10 @@ A reading and annotation platform.
 
 ```
 nexus/
-├── apps/                        # Application entrypoints (thin launchers)
-│   ├── api/                     # FastAPI server
+├── apps/                        # Application entrypoints
+│   ├── api/                     # FastAPI server (thin launcher)
 │   ├── web/                     # Next.js BFF + frontend
-│   └── worker/                  # Celery worker
+│   └── worker/                  # Celery worker (placeholder)
 │
 ├── python/                      # Shared Python package
 │   ├── nexus/                   # THE package: models, services, auth, etc.
@@ -40,18 +40,19 @@ nexus/
 └── Makefile
 ```
 
-### Architecture Rationale
+### Architecture
 
-- **`python/nexus/`** is the single Python package imported by both API and worker
-- **`apps/`** contains thin launchers - no code duplication between api/worker
-- **`migrations/`** lives at root level, runs against the nexus package
-- Tests target `python/nexus` cleanly without starting web apps
+- **BFF Pattern**: Browser → Next.js → FastAPI. Browser never calls FastAPI directly.
+- **Single Python Package**: `python/nexus/` is imported by both API and worker.
+- **Auth Flow**: Supabase auth → Next.js session cookies → Bearer token to FastAPI.
+- **Visibility Enforcement**: All authorization happens in FastAPI, never in Next.js.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.12+
+- Node.js 20+
 - Docker
 - [uv](https://github.com/astral-sh/uv) package manager
 
@@ -63,6 +64,9 @@ make setup
 
 # If you have a local postgres on port 5432, use an alternate port:
 POSTGRES_PORT=5433 make setup
+
+# Install frontend dependencies
+cd apps/web && npm install
 ```
 
 This creates a `.env` file with your configuration that's automatically loaded by subsequent commands.
@@ -70,30 +74,35 @@ This creates a `.env` file with your configuration that's automatically loaded b
 ### Development
 
 ```bash
-# Start services
+# Start infrastructure services (postgres, redis)
 make dev
 
-# Run API server
+# In terminal 1: Start API server (http://localhost:8000)
 make api
 
-# Run tests (excludes migration tests)
-make test
-
-# Run migration tests (separate database)
-make test-migrations
+# In terminal 2: Start web frontend (http://localhost:3000)
+make web
 
 # Run all tests
 make test-all
 
-# Run linter
-make lint
+# Run backend tests only
+make test
 
-# Format code
-make fmt
+# Run frontend tests only
+make test-web
 
-# Full verification (lint + format check + all tests)
-make verify
+# Seed development data (creates fixture media)
+make seed
 ```
+
+### Run Full Stack
+
+1. Start services: `make dev`
+2. Run migrations: `make migrate`
+3. Start API: `make api` (terminal 1)
+4. Start web: `make web` (terminal 2)
+5. Open http://localhost:3000
 
 ## Configuration
 
@@ -118,152 +127,103 @@ This file is:
 
 ### Environment Variables
 
-#### Core Settings
+#### Backend (FastAPI)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `NEXUS_ENV` | No | Environment: `local`, `test`, `staging`, `prod` (default: `local`) |
 | `NEXUS_INTERNAL_SECRET` | staging/prod | BFF authentication secret |
+| `SUPABASE_JWKS_URL` | staging/prod | Full URL to Supabase JWKS endpoint |
+| `SUPABASE_ISSUER` | staging/prod | Expected JWT issuer |
+| `SUPABASE_AUDIENCES` | staging/prod | Comma-separated list of allowed audiences |
 
-#### Infrastructure (for Makefile/Docker)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `POSTGRES_PORT` | `5432` | Host port for PostgreSQL container |
-| `REDIS_PORT` | `6379` | Host port for Redis container |
-
-#### Auth Settings (Required in staging/prod)
+#### Frontend (Next.js)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SUPABASE_JWKS_URL` | staging/prod | Full URL to Supabase JWKS endpoint |
-| `SUPABASE_ISSUER` | staging/prod | Expected JWT issuer (trailing slash stripped) |
-| `SUPABASE_AUDIENCES` | staging/prod | Comma-separated list of allowed audiences |
-
-#### Test Auth Settings (Optional)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TEST_TOKEN_ISSUER` | `test-issuer` | Issuer for test JWT tokens |
-| `TEST_TOKEN_AUDIENCES` | `test-audience` | Comma-separated test audiences |
-
-### Database URL Format
-
-```
-postgresql+psycopg://user:password@host:port/database
-```
-
-Example:
-```
-postgresql+psycopg://postgres:postgres@localhost:5433/nexus_dev
-```
+| `FASTAPI_BASE_URL` | Yes | FastAPI server URL (e.g., `http://localhost:8000`) |
+| `NEXUS_INTERNAL_SECRET` | staging/prod | Same as backend |
+| `NEXUS_ENV` | No | Environment (default: `local`) |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon key |
 
 ## Authentication
-
-Nexus uses JWT bearer token authentication. All endpoints except `/health` require authentication.
 
 ### Request Flow
 
 1. Browser authenticates with Supabase via Next.js
-2. Next.js extracts the access token from the session
-3. Next.js forwards requests to FastAPI with `Authorization: Bearer <token>`
-4. FastAPI validates the JWT and derives the user identity
+2. Next.js stores session in cookies (@supabase/ssr)
+3. Next.js route handlers:
+   - Extract access token from session (server-side only)
+   - Forward to FastAPI with `Authorization: Bearer <token>`
+   - Attach `X-Nexus-Internal` header
+4. FastAPI validates JWT and derives user identity
 
-### Internal Header (BFF Gate)
+### Security Model
 
-In `staging` and `prod` environments, FastAPI also requires an `X-Nexus-Internal` header:
-- Next.js always attaches this header with the configured secret
-- This ensures only the BFF can call FastAPI, even with a valid user token
-
-### User Bootstrap
-
-On first authenticated request:
-- User row is created in the database
-- Default library ("My Library") is created
-- Owner admin membership is established
-
-This is race-safe and idempotent.
+- **Tokens never in localStorage**: Access tokens exist only in server runtime
+- **BFF gate**: In staging/prod, FastAPI rejects requests without internal header
+- **Visibility masking**: Unauthorized access returns 404 (not 403) to hide existence
 
 ## API Documentation
 
-When running locally, API docs are available at:
+When running locally:
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
 ## Testing
 
-### Quick Commands
+### Commands
 
 ```bash
-make test              # Run tests (128 tests, excludes migrations)
-make test-migrations   # Run migration tests (11 tests, separate DB)
-make test-all          # Run all tests (139 tests)
+make test              # Backend tests (excludes migrations)
+make test-migrations   # Migration tests (separate DB)
+make test-web          # Frontend tests
+make test-all          # All tests
 make verify            # Full verification (lint + format + all tests)
 ```
 
 ### Test Architecture
 
-- **Main tests** run on `nexus_test` database with savepoint isolation (auto-rollback)
-- **Migration tests** run on `nexus_test_migrations` database (can drop/recreate schema)
-- Tests use `MockTokenVerifier` for JWT validation (local RSA keypair)
-
-### Manual Test Commands
-
-```bash
-cd python
-
-# Run specific test files
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5433/nexus_test \
-  NEXUS_ENV=test uv run pytest tests/test_auth.py -v
-
-# Run unit tests only (no database required)
-DATABASE_URL=postgresql+psycopg://localhost/test \
-  uv run pytest tests/test_health.py tests/test_errors.py tests/test_verifier.py -v
-```
+- **Backend Integration**: Tests hit FastAPI with MockTokenVerifier
+- **BFF Smoke Tests**: Verify header attachment and auth flow
+- **Frontend Unit**: Component tests with mocked fetch
 
 ## Code Quality
 
 ```bash
-# Lint
-make lint
+# Backend
+make lint              # Run ruff linter
+make fmt               # Format with ruff
 
-# Format
-make fmt
-
-# Or manually:
-cd python
-uv run ruff check .
-uv run ruff format .
+# Frontend
+make lint-web          # Run ESLint
+cd apps/web && npm run lint
 ```
 
 ## Troubleshooting
 
 ### Port Conflicts
 
-If you have a local PostgreSQL on port 5432:
-
 ```bash
-# Use alternate port
-POSTGRES_PORT=5433 make setup
-```
-
-### Stale Database Connections
-
-If tests hang due to stale connections from killed test runs:
-
-```bash
-# Kill idle connections (replace container name if needed)
-docker exec <postgres-container> psql -U postgres -d postgres -c \
-  "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname LIKE 'nexus_test%' AND state LIKE 'idle%';"
+# Use alternate ports
+POSTGRES_PORT=5433 WEB_PORT=3001 make setup
 ```
 
 ### Missing Schema
 
-If tests fail with "relation does not exist":
+```bash
+make migrate       # Dev database
+make migrate-test  # Test database
+```
+
+### Stale Connections
 
 ```bash
-make migrate-test  # Apply migrations to test database
+# Kill idle connections
+docker exec <postgres-container> psql -U postgres -d postgres -c \
+  "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname LIKE 'nexus_test%' AND state LIKE 'idle%';"
 ```
 
 ## License
