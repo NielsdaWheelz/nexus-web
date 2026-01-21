@@ -10,6 +10,8 @@ dependencies = [
     "sqlalchemy[postgresql-psycopg]>=2.0.36",
     "alembic>=1.14.0",
     "pydantic-settings>=2.6.0",
+    "PyJWT[crypto]>=2.8.0",
+    "httpx>=0.28.0",
 ]
 
 [project.optional-dependencies]
