@@ -7,14 +7,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Must match setup script's naming convention
+PROJECT_NAME="nexus-$(basename "$PROJECT_ROOT")"
+export COMPOSE_PROJECT_NAME="$PROJECT_NAME"
+
 echo "=== Nexus Cleanup ==="
 echo ""
+echo "Project: $PROJECT_NAME"
+echo ""
 
-# Stop Docker services
+# Stop Docker services (with volumes to free up space)
 echo "Stopping infrastructure services..."
 cd "$PROJECT_ROOT/docker"
-if docker compose down 2>/dev/null; then
-    echo "✓ Services stopped"
+if docker compose down -v 2>/dev/null; then
+    echo "✓ Services stopped and volumes removed"
 else
     echo "  (no services were running)"
 fi

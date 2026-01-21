@@ -5,8 +5,8 @@ set -euo pipefail
 # Installs dependencies and prepares the development environment
 #
 # Environment variables:
-#   POSTGRES_PORT - Host port for postgres (default: 5432)
-#   REDIS_PORT - Host port for redis (default: 6379)
+#   POSTGRES_PORT - Host port for postgres (default: auto-detect available)
+#   REDIS_PORT - Host port for redis (default: auto-detect available)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -15,9 +15,37 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 PROJECT_NAME="nexus-$(basename "$PROJECT_ROOT")"
 export COMPOSE_PROJECT_NAME="$PROJECT_NAME"
 
-# Configurable ports (default to standard ports)
-export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
-export REDIS_PORT="${REDIS_PORT:-6379}"
+# Find an available port starting from a given port
+find_available_port() {
+    local start_port=$1
+    local port=$start_port
+    local max_port=$((start_port + 100))
+
+    while [ $port -lt $max_port ]; do
+        # Check if port is in use (works on macOS and Linux)
+        if ! lsof -i ":$port" >/dev/null 2>&1; then
+            echo $port
+            return 0
+        fi
+        port=$((port + 1))
+    done
+
+    echo "Error: Could not find available port starting from $start_port" >&2
+    return 1
+}
+
+# Use provided ports or find available ones
+if [ -n "${POSTGRES_PORT:-}" ]; then
+    export POSTGRES_PORT
+else
+    export POSTGRES_PORT=$(find_available_port 5432)
+fi
+
+if [ -n "${REDIS_PORT:-}" ]; then
+    export REDIS_PORT
+else
+    export REDIS_PORT=$(find_available_port 6379)
+fi
 
 echo "=== Nexus Project Setup ==="
 echo ""
