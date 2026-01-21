@@ -286,7 +286,8 @@ S1 schema should include nullable `provider`, `provider_id` fields on `media` to
 ### File Uploads (EPUB / PDF)
 
 - **Hash:** sha256, stored as `media.file_sha256`
-- Computed server-side during upload stream (preferred)
+- Computed server-side **after upload** by streaming from storage during `POST /media/{id}/ingest`
+- Not computed during upload (client uploads directly to storage; server has no stream access)
 - **Idempotency key:** `(created_by_user_id, kind, file_sha256)`
 - Enforced via unique partial index on `media` table
 - Different users always get different media rows.

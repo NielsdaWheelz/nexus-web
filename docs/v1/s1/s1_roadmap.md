@@ -1,169 +1,290 @@
-s1_pr_roadmap.md — slice 1 (compressed): web article ingestion (read-only)
+# Nexus — L3 PR Roadmap: Slice 1 (Ingestion Framework + Storage)
 
-assumptions
-	•	slice 0 is complete and merged (auth, libraries, can_view, visible_media_ids, integration test harness)
-	•	migrations: alembic
-	•	jobs: celery
-	•	headless browser: playwright
-	•	images: proxied on-demand (no image downloads/storage in s1)
-	•	links must remain functional (relative→absolute; preserve in-doc #anchors)
+Compressed 5-PR roadmap optimized for solo development velocity.
 
-⸻
+**Assumptions:**
+- S0 complete: auth, libraries, memberships, BFF proxy (`proxyToFastAPI()`), UI shell exist
+- Monorepo: Next.js + FastAPI + Celery workers
+- DB: PostgreSQL 15+ with pgvector, SQLAlchemy 2.x (sync), Alembic
+- Internal header required in **all envs** (value differs: `dev-secret` in local/test)
 
-PR-A — schema + api skeleton + dedup attach
+---
 
-goal
-create the persistence layer and minimal api surface so the frontend can create/attach media and poll status.
+## PR-01 — Scaffold + Infra + Migrations + Test Harness
 
-includes
-	•	alembic migrations:
-	•	media table (web_article fields per s1_spec)
-	•	fragment table (single fragment for web_article)
-	•	unique index: (kind, canonical_url) (web_article)
-	•	service logic:
-	•	validate target_library_id + admin role
-	•	dedup attach: insert-or-select by canonical_url (conflict-safe)
-	•	create library_media row (or noop if exists)
-	•	api routes (enveloped responses):
-	•	POST /media/web-articles
-	•	GET /media/:id (metadata only)
-	•	GET /media/:id/fragments (only allowed if ready_for_reading)
-	•	visibility:
-	•	enforce can_view / visible_media_ids on all reads
-	•	forbidden reads return 404
-	•	tests:
-	•	db constraint test for uniqueness
-	•	integration test: user A cannot read user B’s media unless shared library contains it
-	•	integration test: two ingests of same canonical_url converge on one media row
+**Goal:** Repo boots; DB schema exists; tests run deterministically.
 
-explicitly not
-	•	no celery wiring
-	•	no fetching/extraction/sanitization/canonicalization
+**Deliverables:**
 
-acceptance
-	•	schema migrated + validated
-	•	endpoints behave with correct auth + 404-on-forbidden
-	•	dedup attach works under concurrency (transactional test)
+- Monorepo skeleton:
+  ```
+  apps/web/         # Next.js (from S0)
+  apps/api/         # FastAPI
+  apps/worker/      # Celery
+  packages/shared/  # Shared Python (optional)
+  infra/            # Compose, scripts
+  ```
+- `docker-compose.yml`:
+  - `postgres:15` with pgvector
+  - `redis:7`
+- `Makefile` / `justfile`:
+  - `make dev` — starts infra
+  - `make test` — runs pytest
+  - `make migrate` — runs alembic
+- `.env.example` with scoping:
+  ```
+  # === All apps ===
+  NEXUS_ENV=local
+  NEXUS_INTERNAL_SECRET=dev-secret
 
-⸻
+  # === API + Worker only ===
+  DATABASE_URL=...
+  SUPABASE_SERVICE_ROLE_KEY=...  # NEVER in web
 
-PR-B — ingestion job end-to-end (fetch → readability → sanitize → canonicalize → persist)
+  # === Web only ===
+  NEXT_PUBLIC_SUPABASE_URL=...
+  NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+  FASTAPI_BASE_URL=...
+  ```
+- CI workflow (GitHub Actions):
+  - Start postgres + redis
+  - Run migrations
+  - Run pytest (storage tests require secrets, fail if missing)
+  - Internal header secret set in CI
+- Alembic init + first migration:
+  - `media` table (all S1 fields: kind, processing_status, failure_stage, timestamps, attempts, urls, file_sha256, provider/provider_id)
+  - `media_file` table
+  - `fragment` table (empty in S1)
+  - Partial unique indexes per S1 spec
+- ORM models: `Media`, `MediaFile`, `Fragment`
+- pytest harness:
+  - Single Engine/Connection for test session
+  - Outer transaction + SAVEPOINT per test
+  - Session injected into FastAPI deps via `get_db_session()`
+  - Event listener to restart SAVEPOINT after commits
+  - Guardrail: forbid Engine creation outside DI (monkeypatch/lint)
+  - **Test client fixture auto-includes internal header** (baked in, can't forget)
+- One proof test: create row, verify gone after rollback
 
-goal
-a submitted url becomes readable (ready_for_reading) with immutable fragment artifacts.
+**Why merge:** These pieces are mutually dependent; splitting is fake neatness.
 
-includes
-	•	celery wiring:
-	•	worker config
-	•	task ingest_web_article(media_id)
-	•	enqueue from POST /media/web-articles when new media row created
-	•	pipeline (single task; artifact persistence atomic):
-	1.	url validate
-	2.	playwright fetch with redirects (max 5)
-	3.	canonical_url derivation:
-	•	final network redirect url only (ignore JS redirects after navigation)
-	•	strip fragment for canonical_url only
-	•	lowercase scheme/host; drop default ports
-	4.	fetch hardening:
-	•	block private ip ranges + localhost + link-local + .local + cloud metadata ips
-	•	block redirects to blocked ranges
-	•	timeouts + max response size + max dom size for readability
-	5.	readability extraction; empty → E_EXTRACT_NO_CONTENT
-	6.	sanitize via bleach (no scripts/styles/forms/iframes/svg/base/meta/link; unwrap unknown tags)
-	7.	link rewriting:
-	•	relative <a href> → absolute based on canonical_url
-	•	preserve #anchors on in-doc links
-	•	add target=_blank, rel=noopener noreferrer, referrerpolicy=no-referrer
-	8.	canonical_text generation per constitution
-	9.	single db transaction:
-	•	insert fragment(ordinal=0, html_sanitized, canonical_text)
-	•	set media.processing_status=ready_for_reading, clear failure fields
-	•	failure taxonomy + retries:
-	•	set failed with failure_code + failure_message
-	•	auto retry only for E_FETCH_FAILED (N attempts, exponential backoff)
-	•	manual retry endpoint or action (reuse same media_id; deletes fragments; resets status)
-	•	tests:
-	•	happy path: ingest → ready_for_reading → fragments readable
-	•	failure: extract no content → failed + retry works
-	•	security: blocked private ip url fails with E_FETCH_FORBIDDEN
+**Tests:**
+- Migration applies to empty DB
+- Schema constraints work (unique indexes)
+- Rollback isolation proof
 
-explicitly not
-	•	no image proxy yet (images may be stripped or temporarily retained but must not violate sanitization constraints)
-	•	no frontend UI changes beyond polling (if needed)
+---
 
-acceptance
-	•	end-to-end ingestion works for normal article urls
-	•	artifacts are immutable after ready_for_reading
-	•	no partial fragments persisted on failure/crash
-	•	retry re-runs extraction correctly
+## PR-02 — FastAPI Bootstrap + Middleware + Auth + Error Envelope
 
-⸻
+**Goal:** One protected endpoint works; request pipeline is locked.
 
-PR-C — image proxy + image rewriting + SSRF hardening (images)
+**Deliverables:**
 
-goal
-images render while preventing privacy leaks and SSRF.
+- FastAPI app factory in `apps/api`
+- Middleware stack:
+  - `X-Request-ID`: generate if missing, echo on response, add to logs
+  - `X-Nexus-Internal`: required in ALL envs (constant-time compare)
+  - Supabase JWT verification via JWKS (cached with TTL)
+  - Derive `viewer_user_id` from `sub`
+- Error envelope:
+  ```json
+  { "error": { "code": "E_...", "message": "..." } }
+  ```
+- Success envelope:
+  ```json
+  { "data": ... }
+  ```
+- `GET /whoami` endpoint (returns viewer info)
+- Structured logging with request_id
 
-includes
-	•	sanitizer rule: external images do not survive; all <img src> rewritten to proxy URLs
-	•	proxy strategy (no storage table in s1):
-	•	rewrite <img src> to /images/proxy?u=<url>&sig=<hmac>&exp=<ts> OR similar signed token scheme
-	•	token is tamper-proof; url may be base64-encoded but is not “secret”
-	•	fastapi route:
-	•	GET /images/proxy (or /images/:token)
-	•	validates signature + expiry
-	•	reuses the same SSRF hardening rules as fetcher (private ip block, redirects, size limits)
-	•	validates content-type allowlist image/* excluding svg
-	•	sets caching headers (short TTL) + strips upstream caching surprises
-	•	link/image rewrite tests:
-	•	<img> becomes proxy url
-	•	proxy rejects svg, html, oversized
-	•	proxy rejects private ip / metadata ip
+**Tests:**
+- Missing token → 401
+- Invalid token → 401
+- Missing internal header → 403
+- Request ID generated/echoed
 
-explicitly not
-	•	no downloading/storing images in supabase storage
-	•	no srcset support
+**Note:** Next.js forwarding of `X-Request-ID` is in PR-04 (BFF concern).
 
-acceptance
-	•	proxied images render in the article
-	•	proxy cannot be used to fetch internal resources
-	•	no external image URLs remain in stored html_sanitized
+---
 
-⸻
+## PR-03 — Authorization + Media Endpoints + Capability Derivation
 
-PR-D — e2e + integration hardening (user-visible acceptance)
+**Goal:** Fetch media safely; never leak; capabilities derived correctly.
 
-goal
-prove the slice actually works in the UI and doesn’t leak.
+**Deliverables:**
 
-includes
-	•	playwright e2e:
-	•	submit url → pending state → readable state
-	•	verify sanitized html renders
-	•	verify at least one proxied image loads (mock or controlled host)
-	•	verify links open in new tab and preserve anchors where applicable
-	•	integration tests:
-	•	404-on-forbidden for media + fragments
-	•	dedup attach across two users
-	•	snippetless leak check: fragments endpoint never returns canonical_text
-	•	docs:
-	•	dev commands for worker + api + frontend
+- Authorization module:
+  ```python
+  can_read_media(viewer_user_id, media_id) -> bool
+  is_library_admin(viewer_user_id, library_id) -> bool
+  is_admin_of_any_containing_library(viewer_user_id, media_id) -> bool
+  ```
+- Enums: `ProcessingStatus`, `FailureStage`
+- Pure function:
+  ```python
+  derive_capabilities(media, media_file_exists, external_playback_url_exists) -> dict
+  ```
+  - Handles `failed + E_TRANSCRIPT_UNAVAILABLE` playback-only
+  - Handles PDF can_read before ready_for_reading
+- Endpoints:
+  - `GET /media/{id}` — returns media + processing_status + capabilities, 404 if cannot read
+  - `GET /media` — list readable media only
+- Minimal seed fixtures in tests (libraries, memberships, media rows)
 
-explicitly not
-	•	no performance tuning beyond “not obviously broken”
+**Tests:**
+- Visibility masking: non-member gets 404
+- Capability matrix unit tests (all kinds, key statuses, edge cases)
+- Member sees media, non-member doesn't
 
-acceptance
-	•	all e2e + integration tests pass
-	•	slice 1 acceptance criteria satisfied
+**Note:** No upload, retry, or Celery yet.
 
-⸻
+---
 
-slice 1 completion gate
+## PR-04 — Storage + Upload + Ingest + File Idempotency + Upload UI
 
-slice 1 is done when:
-	•	user can ingest a web url and read it (ready_for_reading)
-	•	dedup by canonical_url works
-	•	sanitizer invariants hold (no active content; no external image src)
-	•	proxy images render and are SSRF-hardened
-	•	forbidden reads return 404
-	•	retry works without creating new media ids
+**Goal:** File uploads work end-to-end (API + UI) and are secure.
+
+### API Deliverables
+
+- `StorageClient` abstraction:
+  ```python
+  sign_download(path, expires_in_s)
+  sign_upload(path, expires_in_s, content_type)
+  delete_object(path)
+  object_exists(path)
+  stream_object(path) -> bytes iterator
+  ```
+- `GET /media/{id}/file`:
+  - `can_read_media` check → 404 if fails
+  - Requires `media_file` exists
+  - Returns signed URL (5 min expiry)
+- `POST /media/upload/init`:
+  - Validates `kind ∈ {pdf, epub}`
+  - Validates content-type (`application/pdf`, `application/epub+zip`)
+  - Validates size (`MAX_PDF_BYTES=100MB`, `MAX_EPUB_BYTES=50MB`)
+  - Creates media row (pending) + media_file
+  - Returns signed upload URL + headers + expiry
+- `POST /media/{id}/ingest`:
+  - Verifies object exists in storage
+  - Streams object, computes sha256
+  - Sets `media.file_sha256`
+  - Enforces `(created_by_user_id, kind, file_sha256)` uniqueness:
+    - Duplicate → delete new upload, return existing media_id
+  - Enqueues ingestion job (stub; real tasks in PR-05)
+- Test storage prefix: `test_runs/{run_id}/...` with cleanup
+
+### Web Deliverables
+
+- Extend `proxyToFastAPI()` to forward/generate `X-Request-ID`:
+  - Generate UUID if not present
+  - Forward to FastAPI
+  - (Optional) Return FastAPI's response header to browser
+- BFF routes (follow S0 route mirroring pattern):
+  - `POST /api/media/upload/init` → proxies to `POST /media/upload/init`
+  - `POST /api/media/[id]/ingest` → proxies to `POST /media/{id}/ingest`
+  - `GET /api/media/[id]/file` → proxies to `GET /media/{id}/file`
+- Upload flow UI (minimal, uses S0 shell):
+  - File picker (accepts pdf/epub only)
+  - Call `/api/media/upload/init` → get signed URL
+  - PUT file to signed upload URL
+  - Call `/api/media/{id}/ingest`
+  - Show progress/error states
+- `ProcessingStatusBadge` component:
+  - Reads `processing_status` from `GET /media/{id}` response
+  - Displays pending/extracting/failed/ready states
+
+**Why UI here:** This is the first PR where S1 introduces user-triggered upload. Shipping upload without UI is wasted time for solo dev.
+
+**Tests:**
+- Member gets signed URL; non-member gets 404
+- Upload init returns path/url/expiry
+- Ingest computes sha256
+- Same file + same user → dedupe
+- Same file + different user → separate rows
+- Size/content-type validation → 400
+- No Next.js-specific tests; API tests provide correctness; manual smoke for upload UI
+
+---
+
+## PR-05 — State Machine + Retry/Reset + Celery + URL Idempotency + Retry UI
+
+**Goal:** Jobs are real; retries are deterministic; invariants enforced; URL media works.
+
+### API Deliverables
+
+- Service-layer state transitions:
+  ```python
+  transition(media_id, to_status, *, failure_stage?, error_code?, error_message?)
+  mark_failed(media_id, stage, error_code, error_message)
+  retry_media(media_id, actor_user_id)
+  ```
+- `retry_media` authorization: creator OR admin of any containing library
+- Reset rules per `failure_stage` (deletes dependent rows)
+- `POST /media/{id}/retry` endpoint
+- URL canonicalization:
+  ```python
+  canonicalize_url(requested_url) -> canonical_url
+  # lowercase scheme+host, drop fragments, strip utm_*/gclid/fbclid
+  ```
+- `POST /media/url` endpoint:
+  ```json
+  Request: { "kind": "web_article", "url": "..." }
+  Response: { "data": { "media_id": "...", "created": true|false } }
+  ```
+  - Idempotent by `(kind, canonical_url)`
+  - Reuses failed rows
+- Celery worker skeleton (`apps/worker`):
+  - Broker/Redis config via env
+  - Eager mode toggle for tests
+  - `ingest_media(media_id, request_id?)`:
+    - `pending → extracting → failed` with `E_EXTRACTOR_NOT_IMPLEMENTED`
+    - (Real extractors in S2+)
+  - Auto retry policy: max 3 for transient codes
+- Processing-state integration test suite:
+  - Deterministic transitions
+  - Retry clears failure fields
+  - Playback-only semantics (`failed + E_TRANSCRIPT_UNAVAILABLE`)
+  - URL + file idempotency
+  - Signed URL security
+  - Documentation: "how to extend for new media kinds"
+
+### Web Deliverables
+
+- BFF route:
+  - `POST /api/media/[id]/retry` → proxies to `POST /media/{id}/retry`
+- Retry button in UI:
+  - Visible when `processing_status = failed`
+  - Calls `/api/media/{id}/retry`
+  - Refreshes status afterwards
+- `ProcessingStatusBadge` behavior for failed states (optional: special copy/styling)
+
+**Why UI here:** Retry UI depends on retry endpoint and semantics. Don't ship a button that lies.
+
+**Tests:**
+- Eager-mode Celery: enqueue → extracting → failed
+- Retry clears state, re-enqueues
+- URL canonicalization unit tests
+- URL idempotency: same URL → same media_id
+- Processing-state suite runs in CI
+- No Next.js-specific tests; API tests provide correctness
+
+---
+
+## Dependency Order
+
+```
+PR-01 → PR-02 → PR-03 → PR-04 → PR-05
+         (linear, no parallelization needed for solo dev)
+```
+
+---
+
+## Global Constraints
+
+- **No fake extractors:** S1 jobs must not create fragments
+- **Internal header required everywhere:** test client fixture bakes it in
+- **UI must use `capabilities`**, not raw statuses
+- **Tests run against real Postgres** with nested transaction isolation
+- **Storage tests use `test_runs/{run_id}/...` prefix** and clean up
+- **No Next.js-specific tests in S1:** API integration tests + manual smoke for UI
