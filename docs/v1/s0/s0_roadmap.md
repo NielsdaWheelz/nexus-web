@@ -16,46 +16,50 @@ No PR may violate the Slice 0 spec (`s0_spec.md`) or the constitution.
 **Goal:** Establish backend foundation, database, and infrastructure before any domain logic.
 
 ### Includes
-- FastAPI bootstrap
+- Monorepo structure (`apps/`, `python/`, `migrations/`, `docker/`)
+- FastAPI bootstrap with thin launcher pattern
 - Settings + environment loading
 - Error model + `{data}/{error}` envelope
 - DB engine/session/transaction helpers
 - Alembic setup + Slice 0 migrations
 - Health endpoint (`GET /health`)
+- Docker Compose for local services
 
-### Backend Changes
-- `app/main.py`: FastAPI app creation
-- `app/settings.py`: Pydantic settings
+### Python Package (`python/nexus/`)
+- `config.py`: Pydantic settings
   - `NEXUS_ENV` (local | test | staging | prod)
   - `NEXUS_INTERNAL_SECRET`
   - `DATABASE_URL`
-- `app/errors.py`:
+- `errors.py`:
   - `ApiError` base class
   - `ApiErrorCode` enum (all E_* codes from spec)
   - error code → HTTP status mapping
-- Global exception handler:
-  - always returns `{ "error": { "code", "message" } }`
-- Success helper:
-  - returns `{ "data": ... }`
-- `app/db/engine.py`:
-  - create_engine with connection pooling
-  - sessionmaker configuration
-- `app/db/session.py`:
+- `responses.py`:
+  - `success_response()` helper
+  - `error_response()` helper
+  - Exception handlers
+- `app.py`: FastAPI app creation
+- `api/routes/health.py`: Health endpoint
+- `db/engine.py`: create_engine with connection pooling
+- `db/session.py`:
   - `get_db()` dependency (request-scoped)
   - `transaction()` context manager
-- `app/db/testing.py`:
-  - test fixture that uses nested transactions (savepoints)
-  - auto-rollback after each test
-- `alembic/versions/xxxx_slice0_schema.py`:
+
+### App Entrypoints (`apps/`)
+- `apps/api/main.py`: Thin launcher imports from `nexus.app`
+- `apps/worker/main.py`: Placeholder for Celery
+
+### Migrations (`migrations/`)
+- `alembic/versions/0001_slice0_schema.py`:
   - `users`
   - `libraries` (with partial unique index for default)
   - `memberships`
   - `media`
   - `fragments`
   - `library_media`
-- `GET /health` endpoint (returns `{ "data": { "status": "ok" } }`)
 
-### Tests
+### Tests (`python/tests/`)
+- `utils/db.py`: Test fixture with nested transactions (savepoints)
 - Unit tests for error → HTTP mapping
 - Unit tests for envelope shape
 - Migration applies cleanly to empty DB
@@ -73,6 +77,7 @@ No PR may violate the Slice 0 spec (`s0_spec.md`) or the constitution.
 - Schema exactly matches spec
 - Every request gets isolated session
 - Test isolation via rollback works
+- `./scripts/agency_verify.sh` passes
 
 ---
 
@@ -90,27 +95,27 @@ No PR may violate the Slice 0 spec (`s0_spec.md`) or the constitution.
 - Minimal `/me` endpoint
 - Test helpers for minting tokens and auth headers
 
-### Backend Changes
-- `app/auth/verifier.py`:
+### Python Package Changes
+- `python/nexus/auth/verifier.py`:
   - `TokenVerifier` interface
   - `SupabaseJwksVerifier`:
     - JWKS cache TTL: 1 hour
     - Refresh-on-kid-miss: if `kid` not in cache, refresh once then fail
     - Clock skew allowance: 60 seconds for `exp`
   - `TestTokenVerifier`
-- `app/auth/middleware.py`:
+- `python/nexus/auth/middleware.py`:
   - bearer token validation
   - `viewer_user_id` injection into request state
   - `X-Nexus-Internal` enforcement:
     - required if `NEXUS_ENV ∈ {staging, prod}`
 - Startup validation:
   - missing secret in staging/prod → crash
-- `app/services/bootstrap.py`:
+- `python/nexus/services/bootstrap.py`:
   - `ensure_user_and_default_library(user_id)` (race-safe)
 - Middleware hook after auth calls bootstrap function
-- `app/api/me.py`:
+- `python/nexus/api/routes/me.py`:
   - `GET /me` returns `{ user_id, default_library_id }`
-- `tests/helpers.py`:
+- `python/tests/helpers.py`:
   - `mint_test_token(user_id)` → JWT string
   - `auth_headers(user_id)` → dict with Authorization header
   - `create_test_user()` → user_id
@@ -147,8 +152,8 @@ No PR may violate the Slice 0 spec (`s0_spec.md`) or the constitution.
 - All library and library-media routes
 - Pydantic request/response schemas (inline with routes)
 
-### Backend Changes
-- `app/services/libraries.py`:
+### Python Package Changes
+- `python/nexus/services/libraries.py`:
   - `create_library(viewer_id, name)` → creates library + owner membership
   - `rename_library(viewer_id, library_id, name)` → admin only, forbid default
   - `delete_library(viewer_id, library_id)` → admin only, forbid default, cascade allowed
@@ -158,13 +163,13 @@ No PR may violate the Slice 0 spec (`s0_spec.md`) or the constitution.
   - `remove_media_from_library(viewer_id, library_id, media_id)` → admin only, closure enforced
   - `list_library_media(viewer_id, library_id)` → 404 if not member
 - All mutations wrapped in transactions
-- `app/schemas/library.py`:
+- `python/nexus/schemas/library.py`:
   - `LibraryResponse`
   - `LibraryCreateRequest`
   - `LibraryUpdateRequest`
   - `LibraryMediaResponse`
   - `AddMediaRequest`
-- `app/api/libraries.py`:
+- `python/nexus/api/routes/libraries.py`:
   - `GET /libraries` (limit default 100, max 200)
   - `POST /libraries`
   - `PATCH /libraries/{id}`
@@ -176,7 +181,7 @@ No PR may violate the Slice 0 spec (`s0_spec.md`) or the constitution.
 ### Enforcement
 - **No raw SQL in routes rule:**
   - Routes only import service functions
-  - Add CODEOWNERS rule: `app/api/*.py` requires review if importing `sqlalchemy` or `app/db`
+  - Add CODEOWNERS rule: `python/nexus/api/**/*.py` requires review if importing `sqlalchemy` or `nexus.db`
   - Test that route modules don't import DB directly
 
 ### Tests
@@ -212,14 +217,14 @@ No PR may violate the Slice 0 spec (`s0_spec.md`) or the constitution.
 - Full 26-scenario test suite
 - Any hardening fixes found during testing
 
-### Backend Changes
-- `app/schemas/media.py`:
+### Python Package Changes
+- `python/nexus/schemas/media.py`:
   - `MediaResponse`
   - `FragmentResponse`
-- `app/api/media.py`:
+- `python/nexus/api/routes/media.py`:
   - `GET /media/{id}` → 404 if not readable
   - `GET /media/{id}/fragments` → 404 if not readable, ordered by `idx asc`
-- `tests/fixtures.py`:
+- `python/tests/fixtures.py`:
   - `FIXTURE_MEDIA_ID = UUID("00000000-0000-0000-0000-000000000001")`
   - `FIXTURE_FRAGMENT_ID = UUID("00000000-0000-0000-0000-000000000002")`
   - `seeded_media` pytest fixture (creates web_article + fragment)
@@ -280,15 +285,15 @@ No PR may violate the Slice 0 spec (`s0_spec.md`) or the constitution.
 - UI shell (navbar, tabsbar, panes, pages)
 - Documentation and scripts
 
-### Frontend Changes — BFF Proxy
+### Frontend Changes — BFF Proxy (`apps/web/`)
 - Route handlers mirror FastAPI paths (no `/proxy/` in URL):
-  - `app/api/me/route.ts` → FastAPI `/me`
-  - `app/api/libraries/route.ts` → FastAPI `/libraries`
-  - `app/api/libraries/[id]/route.ts` → FastAPI `/libraries/{id}`
-  - `app/api/libraries/[id]/media/route.ts` → FastAPI `/libraries/{id}/media`
-  - `app/api/libraries/[id]/media/[mediaId]/route.ts` → FastAPI `/libraries/{id}/media/{media_id}`
-  - `app/api/media/[id]/route.ts` → FastAPI `/media/{id}`
-  - `app/api/media/[id]/fragments/route.ts` → FastAPI `/media/{id}/fragments`
+  - `apps/web/src/app/api/me/route.ts` → FastAPI `/me`
+  - `apps/web/src/app/api/libraries/route.ts` → FastAPI `/libraries`
+  - `apps/web/src/app/api/libraries/[id]/route.ts` → FastAPI `/libraries/{id}`
+  - `apps/web/src/app/api/libraries/[id]/media/route.ts` → FastAPI `/libraries/{id}/media`
+  - `apps/web/src/app/api/libraries/[id]/media/[mediaId]/route.ts` → FastAPI `/libraries/{id}/media/{media_id}`
+  - `apps/web/src/app/api/media/[id]/route.ts` → FastAPI `/media/{id}`
+  - `apps/web/src/app/api/media/[id]/fragments/route.ts` → FastAPI `/media/{id}/fragments`
 - Shared proxy helper:
   - extract bearer token from Supabase SSR session
   - attach `X-Nexus-Internal` header
@@ -315,14 +320,6 @@ No PR may violate the Slice 0 spec (`s0_spec.md`) or the constitution.
   - Test commands (`pytest`, `npm test`)
   - PR checklist
   - Code style guide
-- `scripts/dev-up.sh`:
-  - starts postgres + redis
-  - runs migrations
-  - starts fastapi + nextjs
-- `scripts/test.sh`:
-  - runs all backend + frontend tests
-- `scripts/seed_dev.py`:
-  - seeds fixture data for local dev
 
 ### Tests — BFF Smoke Tests (3)
 
