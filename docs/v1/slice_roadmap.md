@@ -1,589 +1,375 @@
-# slice_roadmap.md — nexus v1
+# Nexus — L1 Slice Roadmap (v1)
 
-this document defines the **delivery order** of nexus. each slice is a vertical, user-visible increment. slices form a DAG; later slices assume earlier ones are complete.
-
-non-goal: this document does NOT define full schemas, APIs, or code structure.
+This roadmap orders work into vertical slices. Each slice delivers user-visible value and enforces invariants from the constitution.
 
 ---
 
-## slice 0 — foundation: auth, libraries, visibility
+## Slice 0 — Platform Bootstrap (Walking Skeleton)
 
-**goal**
-a real user can log in, has a default library, and the system enforces visibility correctly.
+**Goal:** The system boots, authenticates, and enforces permissions end-to-end.
 
-**outcome**
-- users can authenticate
-- every request has a verified `viewer_user_id`
-- libraries exist with membership + roles
-- a single canonical `can_view(viewer, object)` predicate exists and is enforced
-- a canonical `visible_media_ids(viewer)` primitive exists and is used by all reads
+**Outcome:** A logged-in user can hit a protected endpoint and get a deterministic response.
 
-**includes**
-- supabase auth integration
-- user bootstrap on first login
-- default personal library creation
-- library + membership model (admin/member)
-- server-side visibility enforcement (no leaks)
-- minimal schema:
-  - users, libraries, library_users, media, library_media
-  - highlight stub fields: `owner_user_id`, `sharing`, `anchor_media_id`
-  - anchoring rule: highlights are anchored by `anchor_media_id` used by `can_view`
-- `visible_media_ids(viewer)` helper (query/cte/view) used by all read paths
-- one real read endpoint for social objects:
-  - list visible highlights for a media id (even if highlight creation is not implemented)
+### Includes
+- Supabase auth integration
+- Next.js BFF proxy (`/api/*`)
+- FastAPI app with:
+  - Bearer token verification
+  - User row creation on first login
+  - Canonical `viewer_user_id`
+- Minimal DB schema:
+  - `users`
+  - `libraries`
+  - `memberships`
+- Default library creation invariant
 
-**excludes**
-- media ingestion
-- reading UI
-- highlights
-- conversations
-- search
+### Excludes
+- Media
+- Ingestion
+- UI beyond "you're logged in"
 
-**acceptance**
-- unauthenticated request → rejected
-- authenticated user sees only their own default library
-- user cannot see any object they do not own or share a library with
-- 2–3 integration tests prove “no cross-library leak” on highlights via the real read endpoint
-- `can_view` and `visible_media_ids` are used by all existing read paths
-- `can_view` supports the shared-library intersection rule even before sharing UI exists
+### Acceptance Criteria
+- User logs in via browser
+- Next.js forwards token to FastAPI
+- FastAPI rejects unauthenticated requests
+- Default library exists and is enforced
+- Integration test spins up Next.js + FastAPI + DB
 
-**dependencies**
-- none
+### Risk
+- Auth plumbing bugs → fix here or nowhere
 
 ---
 
-## slice 1 — ingestion skeleton: web articles (read-only)
+## Slice 1 — Permissions + Visibility Core
 
-**goal**
-a user can add a web article by url and read it once processing completes.
+**Goal:** Lock the visibility model before content exists.
 
-**outcome**
-- ingestion jobs exist
-- web article → sanitized html → canonical text → readable pane
+**Outcome:** `can_view(viewer, object)` exists and is enforced everywhere.
 
-**includes**
-- headless browser fetch
-- mozilla readability extraction
-- server-side html sanitization
-- fragment creation (single fragment)
-- processing_status lifecycle up to `ready_for_reading`
-- read-only content pane
+### Includes
+- Library membership roles
+- Service-layer permission checks
+- Visibility predicates for:
+  - Libraries
+  - Media (placeholder)
+  - Social objects (placeholder)
+- Error semantics (404 vs 403 discipline)
 
-**excludes**
-- highlights
-- annotations
-- conversations
-- epub/pdf
-- search
+### Excludes
+- UI sharing flows
+- Semantic search
+- Conversations
 
-**acceptance**
-- user submits url → sees `pending`
-- job completes → media becomes readable
-- html is rendered (sanitized) in content pane
-- canonical_text exists and conforms to the constitution canonicalization spec
-- user cannot read media not in a library they belong to
-- failed job transitions to `failed` with a typed error and visible UI state
-- manual retry resets state and re-runs extraction
+### Acceptance Criteria
+- Unauthorized access always rejected
+- No endpoint returns data without passing `can_view`
+- Tests cover:
+  - Owner access
+  - Non-member denial
+  - Default library invariants
 
-**dependencies**
-- slice 0
+### Risk
+- This is hard to retrofit later; must be right now
 
 ---
 
-## slice 2 — read ui skeleton + pane model
+## Slice 2 — Media Ingestion Framework (No Media Yet)
 
-**goal**
-core reading layout is real and stable enough to support alignment and highlights.
+**Goal:** Build ingestion as a first-class system before any specific media.
 
-**outcome**
-- pane/tab state machine exists and is predictable
+**Outcome:** Media lifecycle + jobs are real, observable, retryable.
 
-**includes**
-- panes/tabsbar/nav state machine
-- opening media creates (content pane, linked-items pane)
-- open singleton list panes
-- pane resizing + horizontal overflow scroll
-- no deep links in v1 (pane state is local-only)
-- open-by-id routes exist (e.g., `/media/:id`, `/highlight/:id`) without serializing pane layout
-- stub media row or static html fragment for layout testing
+### Includes
+- `media` table + `processing_status` state machine
+- `fragment` table (empty initially)
+- Job queue wiring (Celery + Redis)
+- Retry + failure semantics
+- Inline ingestion path (dev) calling same service functions
+- Minimal UI:
+  - `processing_status` badge
+  - Retry button
 
-**excludes**
-- highlights
-- annotations
-- conversations
+### Excludes
+- Actual media extractors
+- Highlights
+- Search
 
-**acceptance**
-- opening a media always yields two panes (content + linked-items)
-- pane resizing works without breaking scroll containers
-- pane state persists locally across reloads (not shareable URLs)
-- open-by-id routes resolve deterministically to the correct object
+### Acceptance Criteria
+- Media row moves through states deterministically
+- Failure is visible and retryable
+- No duplicate partial data after retry
+- Integration tests assert state transitions
 
-**dependencies**
-- slice 0
-
----
-
-## slice 3 — html highlights + linked-items alignment
-
-**goal**
-users can highlight passages in html content and see linked-items aligned with text.
-
-**outcome**
-- core interaction (read → highlight → inspect) works
-- alignment behavior is real, not fake
-
-**includes**
-- highlight creation on html fragments (offset-based)
-- overlapping highlights supported
-- linked-items pane rendering
-- vertical alignment between highlight targets and linked-items
-- highlight deletion/edit (in-place mutation)
-- alignment contract:
-  - tolerance ≤ 4px between target and linked-item
-  - alignment measured via DOM Range bounding rects for highlights
-  - off-screen targets show a placeholder state (no forced scroll)
-  - alignment recalculates on resize and content reflow (including image load)
-  - recalculation is debounced (rAF + 50ms) and avoids layout thrash
-- highlight rendering done on a detached DOM tree and swapped in as a whole
-
-**excludes**
-- annotations (notes)
-- conversations
-- epub/pdf
-- search
-
-**acceptance**
-- user can create multiple highlights in a document
-- overlapping highlights render deterministically with no DOM corruption
-- segmentation scales without quadratic blowups in number of highlight boundaries
-- a perf test measures algorithmic operation count (not wall-clock) under a fixed input size; exact metric defined in the slice spec
-- scrolling content keeps active highlight and linked-item aligned (± 4px)
-- resizing panes recomputes alignment
-- deleting a highlight does not delete any other object; future link cleanup occurs via link deletion rules
-- highlights are only visible to their owner until a shared library intersects on the anchor media
-
-**dependencies**
-- slice 0
-- slice 1
-- slice 2
+### Risk
+- Bad state machine = endless bugs later
 
 ---
 
-## slice 4 — annotations (notes on highlights)
+## Slice 3 — Web Articles (First Real Media, End-to-End)
 
-**goal**
-users can attach notes to highlights.
+**Goal:** Ship the first complete reading experience.
 
-**outcome**
-- highlights become meaningful, not just colored text
+**Outcome:** User can add a web article, read it, highlight it.
 
-**includes**
-- annotation model (0..1 per highlight)
-- create/edit/delete annotation
-- annotation rendering in linked-items pane
-- annotation visibility rules enforced
+### Includes
+- URL ingestion via headless browser
+- Mozilla Readability extraction
+- HTML sanitization (persisted)
+- `canonical_text` generation
+- Fragment creation (single fragment)
+- Content pane rendering
+- Keyword search over:
+  - Media title
+  - `canonical_text`
 
-**excludes**
-- conversations
-- quote-to-chat
-- epub/pdf
-- search
+### Excludes
+- Conversations
+- Semantic search
+- Sharing
+- Annotations
 
-**acceptance**
-- highlight can exist without annotation
-- annotation always belongs to exactly one highlight
-- deleting highlight deletes its annotation
-- annotations follow same visibility rules as highlights
+### Acceptance Criteria
+- Article renders without iframe
+- Sanitized HTML only
+- Highlight offsets stable across reloads
+- Keyword search finds article text
 
-**dependencies**
-- slice 0
-- slice 3
-
----
-
-## slice 5 — library sharing (two-user visibility)
-
-**goal**
-two users can share a library and see each other’s work on shared media.
-
-**outcome**
-- collaborative reading works
-
-**includes**
-- library membership management (add/remove by email; no invite flow in v1)
-- role enforcement (admin vs member)
-- library-scoped sharing mode
-- visibility across users via shared library intersection
-
-**excludes**
-- public sharing
-- conversations
-- search
-- epub/pdf
-
-**acceptance**
-- user A shares library with user B by email (user must already exist)
-- if user is not found, return `E_USER_NOT_FOUND` and do not create membership
-- membership is stored by `user_id` (email is lookup only)
-- email uniqueness is enforced by auth provider configuration
-- B can read shared media
-- B can see A’s highlights and annotations (if sharing = library)
-- B cannot see A’s private objects or non-shared media
-
-**dependencies**
-- slice 0
-- slice 4
+### Risk
+- Canonicalization bugs → highlight drift
 
 ---
 
-## slice 6 — conversations + quote-to-chat (single-user)
+## Slice 4 — Highlights + Annotations (HTML)
 
-**goal**
-users can start a conversation and send messages with quoted context.
+**Goal:** Make reading interactive.
 
-**outcome**
-- nexus becomes an actual “thinking tool”
+**Outcome:** Users can highlight overlapping spans and annotate them.
 
-**includes**
-- conversation creation (single author only)
-- messages ordered by per-conversation seq
-- message_context links (media/highlight/annotation)
-- quote-to-chat flow (inject quote + surrounding context + metadata)
-- conversations have `sharing` with default `private`
-- `conversation_shares` table exists; required when `sharing = library`
-- `conversation_media` is derived from message_context and updated transactionally
-- linked-items panes list conversations via `conversation_media`
-- message roles (`user`/`assistant`/`system`)
-- context construction includes ±K chars around selection with a hard cap
-- quote context sources:
-  - html/epub: `fragment.canonical_text`
-  - pdf: not supported until slice 12
-- conversation pane ui
+### Includes
+- Highlight model + uniqueness constraint
+- Overlapping highlight support (event-segmented rendering)
+- Highlight colors
+- Optional annotation (0..1)
+- Linked-items pane (highlights only)
+- Visibility enforcement (library intersection)
 
-**excludes**
-- multi-user conversations
-- public sharing
-- epub/pdf
-- search
+### Excludes
+- Conversations
+- PDF
+- Transcripts
 
-**acceptance**
-- user can start a conversation from a highlight
-- message includes quote + context text
-- deleting a highlight removes it from message context but not the message
-- conversations are private by default and never leak
-- roles are stored, but only `user` messages can be created via ui in this slice
-- a conversation created without media appears under media only after message_context creates `conversation_media`
+### Acceptance Criteria
+- Overlapping highlights render correctly
+- Annotations attach/detach cleanly
+- No duplicate highlights per user/span
+- Integration tests for overlap edge cases
 
-**dependencies**
-- slice 0
-- slice 4
+### Risk
+- DOM segmentation complexity; must be correct
 
 ---
 
-## slice 7 — conversation sharing (library)
+## Slice 5 — Conversations + Chat (No Quotes Required)
 
-**goal**
-owners can share conversations to one or more libraries.
+**Goal:** Establish the chat system independently of media.
 
-**outcome**
-- conversations become visible to other library members
+**Outcome:** User can chat with an LLM in a private conversation.
 
-**includes**
-- set `conversation.sharing = library` with ≥1 share target
-- create/delete `conversation_shares` rows
-- enforce owner membership in target libraries at write time
+### Includes
+- `conversation` + `message` schema
+- Message ordering (`seq`)
+- Model selection per message
+- LLM adapter abstraction
+- Usage accounting hooks
+- Chat UI pane
 
-**excludes**
-- public sharing
-- message-level sharing
+### Excludes
+- Quote-to-chat
+- Sharing conversations
+- Summarization
 
-**acceptance**
-- owner selects a library they are a member of and shares the conversation
-- members of that library can view the conversation and messages
-- non-members cannot view the conversation
+### Acceptance Criteria
+- New chat works without media
+- Model choice respected
+- Messages ordered strictly
+- Failures are surfaced as system messages
 
-**dependencies**
-- slice 5
-- slice 6
-
----
-
-## slice 8 — llm replies + quota gates
-
-**goal**
-conversations produce assistant replies with basic plan gating.
-
-**outcome**
-- the core product moment exists
-
-**includes**
-- minimal llm call for assistant replies
-- token accounting hooks
-- plan gates (free tier restrictions enforced server-side)
-
-**excludes**
-- advanced routing
-- model switching
-
-**acceptance**
-- user message triggers an assistant reply stored as a message
-- token usage is recorded per request
-- plan gates enforce allowed usage (free tier behaves as configured)
-
-**dependencies**
-- slice 6
+### Risk
+- Provider abstraction mistakes
 
 ---
 
-## slice 9 — epub ingestion (html pipeline reuse)
+## Slice 6 — Quote-to-Chat (Documents)
 
-**goal**
-epubs behave like first-class readable documents.
+**Goal:** Connect reading to thinking.
 
-**outcome**
-- books work the same way articles do
+**Outcome:** User can quote highlighted text into a chat with context.
 
-**includes**
-- epub upload / fetch
-- full extraction into html
-- toc + chapter fragments
-- html rendering + highlighting reuse
-- fragment navigation
+### Includes
+- `message_context` table
+- Quote payload:
+  - Exact text
+  - ±600 chars context (cap enforced)
+  - Media metadata
+- `conversation_media` derivation
+- Linked-items pane shows conversations
 
-**excludes**
-- pdf
-- search
+### Excludes
+- Transcripts
+- PDF
 
-**acceptance**
-- user uploads epub → sees chapters
-- highlights + annotations work per chapter
-- linked-items align within chapter fragments per slice 3 alignment contract
+### Acceptance Criteria
+- Quoted context is correct and bounded
+- Conversations appear next to the media
+- Deleting highlight does not break messages
 
-**dependencies**
-- slice 0
-- slice 1 (ingestion framework)
-- slice 3 (html highlights)
+### Risk
+- Token bloat if context rules aren't enforced
 
 ---
 
-## slice 10 — pdf ingestion (viewer first)
+## Slice 7 — EPUB (Partial)
 
-**goal**
-pdfs are readable and gated correctly.
+**Goal:** Prove multi-fragment media works.
 
-**outcome**
-- pdf is no longer a second-class citizen
+**Outcome:** User can read an EPUB chapter and highlight it.
 
-**includes**
-- pdf upload / fetch
-- storage in private bucket
-- signed url issuance
-- pdf.js viewer integration
-- page count + basic metadata
-- virtualized page loading
-- zoom support with exposed transform matrix (includes rotation metadata)
-- deterministic screen ↔ page coordinate conversions (zoom + rotation metadata)
+### Includes
+- EPUB ingestion
+- TOC extraction
+- Fragment per chapter
+- Render:
+  - Chapter list
+  - First chapter only (initially)
+- Reuse highlight + chat logic
 
-**excludes**
-- pdf highlights
-- text extraction
-- embeddings
-- user-controlled rotation
+### Excludes
+- Full EPUB navigation polish
 
-**acceptance**
-- user uploads pdf → sees pdf viewer
-- access is blocked if not in a shared library
-- pdf rendering works on desktop + mobile
-- viewer exposes transform matrix used for later overlays
-- coordinate conversions remain correct under zoom and intrinsic rotation
+### Acceptance Criteria
+- Chapter fragment immutability holds
+- Highlights scoped to fragment
+- Reuse all document logic
 
-**dependencies**
-- slice 0
-- slice 1 (jobs + storage patterns)
+### Risk
+- EPUB HTML weirdness
 
 ---
 
-## slice 11 — pdf highlights (overlay-based)
+## Slice 8 — PDF (Required for v1)
 
-**goal**
-pdf highlights are supported without breaking the model.
+**Goal:** Support academic / scanned reading.
 
-**outcome**
-- parity with html highlights at the interaction level
+**Outcome:** User can read a PDF, select text, highlight, quote.
 
-**includes**
-- overlay-based highlight geometry
-- linked-items integration
-- annotation support reuse
-- visibility enforcement
+### Includes
+- PyMuPDF text extraction (for search/quote)
+- PDF.js rendering
+- Text-layer selection capture
+- Geometry-based highlights
+- PDF highlights appear in linked-items pane
 
-**excludes**
-- text-based anchoring
-- embeddings
+### Excludes
+- Perfect text ↔ geometry reconciliation
 
-**acceptance**
-- user can highlight text regions on pdf pages
-- highlights persist and re-render correctly
-- linked-items show and align (page-relative)
+### Acceptance Criteria
+- Selection creates stable highlight
+- Exact text stored
+- Quote-to-chat works
+- Overlapping PDF highlights supported
 
-**dependencies**
-- slice 0
-- slice 10
-- slice 4
+### Risk
+- PDF selection edge cases; accept imperfection
 
 ---
 
-## slice 12 — pdf text extraction + canonical_text
+## Slice 9 — Podcast Episodes (Audio + Transcript)
 
-**goal**
-pdfs become searchable and quotable beyond geometry.
+**Goal:** Extend "media" abstraction to time-based text.
 
-**outcome**
-- text-based features can include pdfs
+**Outcome:** User can read/listen/highlight podcast transcripts.
 
-**includes**
-- pdf text extraction via pymupdf
-- store `media.plain_text`
-- optional per-page text mapping for debugging
+### Includes
+- PodcastIndex search
+- `podcast` + `subscription` tables
+- RSS fetch + idempotent episode ingest
+- Transcript via Deepgram
+- Transcript segments as fragments
+- Audio player + click-to-seek
+- Auto-add episodes to default library
 
-**excludes**
-- pdf semantic embeddings
+### Excludes
+- Semantic search
+- Advanced playback
 
-**acceptance**
-- extracted text is stored for a pdf media row
-- text extraction does not break existing pdf viewing/highlights
+### Acceptance Criteria
+- Subscribe → episodes appear
+- Highlights anchor to segments
+- Quote-to-chat includes timestamps/speaker labels
+- Unsubscribe stops future auto-add
 
-**dependencies**
-- slice 0
-- slice 10
-
----
-
-## slice 13 — search (private keyword)
-
-**goal**
-users can find what they’ve read and written (private-only).
-
-**outcome**
-- discovery without ML complexity
-
-**includes**
-- postgres FTS over:
-  - media.title and author names
-  - fragment.canonical_text (html/epub)
-  - annotation bodies (once slice 4 exists)
-  - conversation titles + message bodies (once slice 6 exists)
-- keyword search over the viewer’s own objects
-- scoping (media)
-- visibility-filtered results only (owner-only)
-
-**excludes**
-- semantic search
-- ranking optimization
-
-**acceptance**
-- search never returns invisible objects
-- scoped search returns only scoped results
-- snippets correspond to canonical text or annotation content
-- annotations/messages are included in search results only after their slices ship
-
-**dependencies**
-- slice 0
-- slice 3
+### Risk
+- Transcription cost + queue pressure
 
 ---
 
-## slice 14 — search (shared keyword)
+## Slice 10 — Video (YouTube)
 
-**goal**
-users can search across shared libraries they can see.
+**Goal:** Reuse transcript logic for video.
 
-**outcome**
-- shared discovery works without leaks
+**Outcome:** User can ingest a YouTube video and work with transcript.
 
-**includes**
-- keyword search across media, highlights, annotations, conversations the viewer can see
-- scoping (library, media, conversation)
-- visibility-filtered results only
+### Includes
+- YouTube URL ingestion
+- Transcript fetch (or fail open)
+- YouTube embed playback
+- Transcript highlighting + quote-to-chat
 
-**excludes**
-- semantic search
-- ranking optimization
+### Excludes
+- Channels
+- Local video
 
-**acceptance**
-- search never returns invisible objects
-- scoped search returns only scoped results
-- snippets correspond to canonical text or annotation content
-- conversation results are filtered via `conversation_shares` visibility
+### Acceptance Criteria
+- Transcript view works without playback
+- Playback seeks from transcript
+- No document iframes used
 
-**dependencies**
-- slice 0
-- slice 5
-- slice 13
+### Risk
+- YouTube transcript availability variability
 
 ---
 
-## slice 15 — embeddings + semantic search
+## Slice 11 — Semantic Search (Post-Skeleton)
 
-**goal**
-semantic recall across everything the user can see.
+**Goal:** Add meaning-aware discovery.
 
-**outcome**
-- llm-native discovery works
+**Outcome:** Users can semantically search what they can see.
 
-**includes**
-- chunking pipeline
-- embeddings storage
-- semantic search with keyword fallback
-- cost tracking hooks
+### Includes
+- Chunking per media type
+- Embeddings
+- Semantic ranking
+- Hybrid keyword + semantic UX
 
-**excludes**
-- podcasts
-- videos
-
-**acceptance**
-- semantic search returns relevant results
-- respects same visibility predicate as keyword search
-- chunk regeneration is safe and idempotent
-
-**dependencies**
-- slice 9
-- slice 12
-- slice 14
+### Acceptance Criteria
+- Semantic search never leaks invisible content
+- Partial results handled gracefully
 
 ---
 
-## v1 cutline
+## Dependency Spine
 
-v1 ships after:
-- slice 11 (pdf highlights)
-- slice 14 (shared keyword search)
-- slice 15 (semantic search)
-- slice 8 (llm replies + quota gates)
-
----
-
-## notes on parallelism
-
-allowed parallel work:
-- ui polish can happen inside slices once acceptance is met
-- epub ingestion can begin while conversations are being finalized
-- pdf viewer integration can start before html highlights are “perfect”
-
-not allowed:
-- building search before visibility rules are locked
-- building semantic search before keyword search exists
-- adding new media types before html highlight engine is stable
-
----
-
-## definition of “slice complete”
-
-a slice is complete when:
-- all acceptance criteria pass
-- no earlier slice behavior is broken
-- no new surface contradicts the constitution
-- at least one integration test per new read endpoint verifies `can_view` gating
-- every slice that adds a visibility boundary adds allow + deny tests
-- search slices test snippet non-leak behavior
-- alignment requires e2e coverage (playwright) for scroll/reflow cases
+```
+S0: Auth
+ └── S1: Permissions
+      └── S2: Ingestion Core
+           └── S3: Web Article
+                └── S4: Highlights
+                     └── S5: Chat
+                          └── S6: Quote-to-Chat
+                               ├── S7: EPUB
+                               ├── S8: PDF
+                               ├── S9: Podcast Episode
+                               └── S10: Video
+                                    └── S11: Semantic Search
+```
