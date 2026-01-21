@@ -15,34 +15,92 @@ Compressed 5-PR roadmap that **extends S0** (not duplicates it).
 - Visibility via library membership (but not as reusable predicates)
 
 **What S1 Adds:**
-- Redis + Celery worker infrastructure
+- Redis + Celery worker infrastructure (skeleton only; no tasks scheduled)
 - `media` table S1 fields (processing_status, failure_stage, timestamps, file_sha256, canonical_url, external_playback_url, etc.)
 - `media_file` table
 - `X-Request-ID` middleware + BFF propagation + Celery logging
 - Reusable authorization predicates (`can_read_media`, etc.)
 - Capability derivation (viewer-scoped)
 - Storage client + upload/download endpoints
-- State machine + retry semantics
+- State machine + retry semantics (framework only)
 - URL canonicalization + idempotency (string-only; no redirect resolution)
 - Processing-state test suite
 - CI workflow
 
 ---
 
+## S1 Task Scheduling Policy (Critical)
+
+**S1 does not enqueue Celery tasks for any media kind.**
+
+Rationale:
+- S1 has no extractors
+- Enqueueing would immediately fail with `E_EXTRACTOR_NOT_IMPLEMENTED`
+- That fills the UI with "Failed" badges, which is noisy and misleading
+- The framework must exist and be testable, but actual scheduling waits for extractors
+
+**What S1 builds:**
+- Celery app + worker process (`make worker` runs, accepts connections)
+- `ingest_media` task definition (implemented, can be called)
+- Lifecycle service functions (`worker_start_attempt`, `mark_failed`, etc.)
+- Retry endpoint (resets state but does NOT enqueue in S1)
+
+**What S1 does NOT do:**
+- Auto-enqueue tasks on upload ingest or URL creation
+- Transition any media past `pending` in normal operation
+
+**Testing:** Eager-mode Celery tests directly call `ingest_media.apply()` to verify task logic works. This simulates "extractor exists" without polluting real usage.
+
+**When extractors land (S2+):**
+- Enable scheduling per-kind: `if kind in AVAILABLE_EXTRACTORS: enqueue()`
+- Existing `pending` media can be batch-processed or manually retried
+
+---
+
 ## Writer Responsibility Model
 
-**Worker owns:**
+**Worker owns (when tasks run):**
 - All `processing_status` transitions (including `pending → extracting`)
 - `processing_attempts`, `processing_started_at`, `processing_completed_at`, `failed_at`
 - `failure_stage`, `last_error_code`, `last_error_message`
 
 **API owns:**
-- Identity fields: `requested_url`, `canonical_url`, `file_sha256`
+- Identity fields: `requested_url`, `canonical_url`
+- **`file_sha256`:** Computed **synchronously** at ingest confirm (not by worker)
 - Storage metadata: `media_file` rows
 - Initial state: create media with `processing_status = pending`
-- Manual retry: reset `processing_status = pending`, clear failure fields, re-enqueue
+- Manual retry: reset `processing_status = pending`, clear failure fields
+
+**Hard rule:** `file_sha256` is set by API during `POST /media/{id}/ingest`, never by worker. The uniqueness constraint fires at ingest time, not async.
 
 **Invariant:** Only one codepath writes each field category. No mixing.
+
+---
+
+## S1 Retry Semantics
+
+**What retry does in S1:**
+1. Verify actor is creator OR `is_admin_of_any_containing_library`
+2. Apply reset rules per `failure_stage` (delete dependent rows if any)
+3. Set `processing_status = pending`
+4. Clear `failure_stage`, `last_error_code`, `last_error_message`, `failed_at`
+5. Clear `processing_started_at`
+6. Set `updated_at = now`
+7. **Do NOT enqueue task** (no extractors available)
+
+**What retry does NOT do in S1:**
+- Enqueue any Celery task
+- Transition to `extracting`
+
+**User experience:**
+- After retry, media shows "Queued" badge (status = pending)
+- Media stays queued until S2+ lands with extractors
+- User can retry again after S2 and it will actually process
+
+**When extractors land (S2+):**
+- Retry checks `AVAILABLE_EXTRACTORS[media.kind]`
+- If available: enqueue task
+- If not available: reset state only (same as S1)
 
 ---
 
@@ -70,7 +128,7 @@ Compressed 5-PR roadmap that **extends S0** (not duplicates it).
   - `postgres:15` service (explicit; S0 may have external postgres, but compose should be self-contained for CI)
 - Add `apps/worker/` directory:
   - Celery app config (broker via env)
-  - Empty task module (tasks added in PR-05)
+  - Empty task module (task definitions added in PR-05)
 - Extend `Makefile` / `justfile`:
   - `make worker` — starts Celery worker
 - Extend `.env.example`:
@@ -129,7 +187,7 @@ Compressed 5-PR roadmap that **extends S0** (not duplicates it).
 - **Celery convention:**
   - Tasks accept optional `request_id` parameter
   - All task log entries include `request_id`
-  - When FastAPI enqueues a task, it passes `request_id` from middleware context
+  - When FastAPI enqueues a task (in S2+), it passes `request_id` from middleware context
 - **Structured logging:** JSON format for FastAPI + Celery, with `request_id`, `user_id`, `timestamp` fields
 - Authorization module (`app/auth/permissions.py` or similar):
   ```python
@@ -152,7 +210,7 @@ Compressed 5-PR roadmap that **extends S0** (not duplicates it).
 - Request ID generated when missing (FastAPI)
 - Request ID echoed when provided (FastAPI)
 - Request ID forwarded by BFF
-- Request ID appears in Celery task logs
+- Request ID appears in Celery task logs (when task called directly in test)
 - `can_read_media`: member returns true, non-member returns false
 - `can_read_media_bulk`: correct for mixed visibility
 - `is_library_admin`: correct role check
@@ -189,6 +247,7 @@ Compressed 5-PR roadmap that **extends S0** (not duplicates it).
   - `ready_for_reading` means "highlightable/quotable artifacts exist for that kind"
   - For PDF: file renderability (`can_read`) can happen before `ready_for_reading`
   - For web_article/epub: `can_read` requires `ready_for_reading` (fragments exist)
+  - **S1 never reaches `ready_for_reading`** — all media stays `pending`
 - Extend `GET /media/{id}` response to include:
   - `processing_status`
   - `failure_stage`, `last_error_code` (if failed)
@@ -218,7 +277,7 @@ Never leak raw DB fields; capabilities always nested in response.
 - Playback-only edge case (`failed + E_TRANSCRIPT_UNAVAILABLE`)
 - PDF special case: `can_read = true` with file before `ready_for_reading`
 - PDF: `can_read = false` if `viewer_can_read = false` regardless of file existence
-- PDF: `can_quote = false` before `ready_for_reading`, `can_quote = true` after
+- PDF: `can_quote = false` before `ready_for_reading`, `can_quote = true` after (tested via state injection)
 - API responses include capabilities
 - `GET /media` returns paginated list with capabilities
 
@@ -226,7 +285,7 @@ Never leak raw DB fields; capabilities always nested in response.
 
 ## PR-04 — Storage + Upload + Ingest + File Idempotency + Upload UI
 
-**Goal:** File uploads work end-to-end (API + UI) and are secure.
+**Goal:** File uploads work end-to-end (API + UI) and are secure. No tasks enqueued.
 
 ### API Deliverables
 
@@ -260,13 +319,13 @@ Never leak raw DB fields; capabilities always nested in response.
   - Verifies caller is media creator
   - Verifies object exists in storage via `get_object_metadata`
   - **Validates content-type matches expected** (HEAD check)
-  - Streams object, computes sha256
-  - Sets `media.file_sha256`
+  - Streams object, computes sha256 **synchronously**
+  - Sets `media.file_sha256` (API owns this field)
   - **Duplicate handling (race-safe):**
     - Attempt to set `file_sha256` in transaction
     - If unique constraint violation: fetch existing media_id, delete uploaded object, return existing media_id as duplicate
     - Response: `{ "data": { "media_id": "...", "duplicate": true|false } }`
-  - If not duplicate: **enqueue `ingest_media` task** (status remains `pending`; worker transitions)
+  - **Does NOT enqueue task** — media stays `pending` (see §S1 Task Scheduling Policy)
 - **No re-upload to same media_id:** Each upload init creates fresh media_id; duplicates collapse via sha256
 
 ### Web Deliverables
@@ -280,8 +339,9 @@ Never leak raw DB fields; capabilities always nested in response.
   - Call upload init → get signed URL
   - PUT file to signed URL
   - Call ingest
-  - Show progress/error states
+  - Show progress/status states
   - Handle duplicate response (show link to existing media)
+  - **After ingest: show "Queued" badge** (not "Processing" — no task running)
 - `ProcessingStatusBadge` component
 
 **Tests:**
@@ -289,7 +349,8 @@ Never leak raw DB fields; capabilities always nested in response.
 - Upload init creates library_media in default library
 - Upload init returns path/url/expiry
 - Ingest validates content-type matches
-- Ingest computes sha256
+- Ingest computes sha256 synchronously
+- Ingest does NOT enqueue task (verify no Celery calls)
 - Same file + same user → dedupe (race-safe)
 - Same file + different user → separate rows
 - Size/content-type validation → 400
@@ -299,7 +360,7 @@ Never leak raw DB fields; capabilities always nested in response.
 
 ## PR-05 — State Machine + Retry + Celery Tasks + URL Idempotency + Retry UI
 
-**Goal:** Jobs are real; retries are deterministic; URL media works.
+**Goal:** Lifecycle functions work; task definitions exist; retries reset state; URL media works.
 
 ### API Deliverables
 
@@ -316,6 +377,7 @@ Never leak raw DB fields; capabilities always nested in response.
   def mark_ready_for_reading(media_id: UUID) -> None:
       # Assert status == extracting
       # Set processing_status = ready_for_reading
+      # Set processing_completed_at = now (partial completion)
       # Set updated_at = now
 
   def mark_failed(media_id: UUID, stage: FailureStage, error_code: str, error_message: str) -> None:
@@ -325,16 +387,35 @@ Never leak raw DB fields; capabilities always nested in response.
       # Set updated_at = now
 
   def retry_media(media_id: UUID, actor_user_id: UUID) -> None:
-      """API-callable. Resets state and re-enqueues."""
+      """API-callable. Resets state only — does NOT enqueue in S1."""
       # Verify actor is creator OR is_admin_of_any_containing_library
       # Apply reset rules per failure_stage (delete dependent rows)
       # Set processing_status = pending
       # Clear failure_stage, last_error_code, last_error_message, failed_at
       # Clear processing_started_at
       # Set updated_at = now
-      # Enqueue ingest_media task
+      # NOTE: Does NOT enqueue task (see §S1 Retry Semantics)
   ```
-- `POST /media/{id}/retry` endpoint
+- **Extractor registry** (`app/services/extractors.py`):
+  ```python
+  AVAILABLE_EXTRACTORS: dict[MediaKind, Callable] = {}
+  # Empty in S1; S2+ adds entries like {MediaKind.web_article: extract_web_article}
+
+  def can_extract(kind: MediaKind) -> bool:
+      return kind in AVAILABLE_EXTRACTORS
+
+  def maybe_enqueue_extraction(media_id: UUID, request_id: str | None) -> bool:
+      """Enqueue task only if extractor available. Returns True if enqueued."""
+      media = get_media(media_id)
+      if can_extract(media.kind):
+          ingest_media.delay(media_id, request_id)
+          return True
+      return False
+  ```
+- `POST /media/{id}/retry` endpoint:
+  - Calls `retry_media()` (resets state)
+  - Calls `maybe_enqueue_extraction()` (no-op in S1)
+  - Response: `{ "data": { "media_id": "...", "enqueued": true|false } }`
 - URL canonicalization (`app/services/url.py`):
   ```python
   canonicalize_url(requested_url: str) -> str
@@ -343,22 +424,37 @@ Never leak raw DB fields; capabilities always nested in response.
   ```
 - `POST /media/url` endpoint:
   - Request: `{ "kind": "web_article", "url": "..." }`
-  - Response: `{ "data": { "media_id": "...", "created": true|false } }`
+  - Response: `{ "data": { "media_id": "...", "created": true|false, "enqueued": false } }`
   - Canonicalizes URL, checks `(kind, canonical_url)` uniqueness
   - Reuses existing rows (including failed ones)
   - **Creates `library_media` row in viewer's default library**
-  - **Does NOT enqueue task in S1** — media stays `pending` with no worker action
-    - Rationale: S1 has no extractors; enqueueing would instantly fail with `E_EXTRACTOR_NOT_IMPLEMENTED`
-    - UI shows "Queued" badge; actual processing starts when extractor slice lands
+  - Calls `maybe_enqueue_extraction()` → returns false in S1
 - Celery tasks (`apps/worker/tasks.py`):
-  - `ingest_media(media_id: UUID, request_id: str | None = None)`:
-    - Calls `worker_start_attempt(media_id)` → `pending → extracting`
-    - Checks `media.kind`
-    - For `pdf`/`epub`: succeeds (file already exists; in S1, just mark complete or leave extracting)
-    - For URL kinds: `mark_failed(media_id, "extract", "E_EXTRACTOR_NOT_IMPLEMENTED", "...")`
-    - (Real extractors in S2+)
-  - Auto retry: max 3 for transient error codes only
-  - Eager mode toggle for tests
+  ```python
+  @celery.task(bind=True, max_retries=3)
+  def ingest_media(self, media_id: UUID, request_id: str | None = None):
+      """
+      Task definition exists in S1 but is never auto-enqueued.
+      Can be called directly in tests via .apply() or .delay().
+      """
+      configure_logging(request_id)
+      worker_start_attempt(media_id)  # pending → extracting
+
+      media = get_media(media_id)
+      extractor = AVAILABLE_EXTRACTORS.get(media.kind)
+
+      if extractor is None:
+          mark_failed(media_id, "extract", "E_EXTRACTOR_NOT_IMPLEMENTED",
+                      f"No extractor for {media.kind}")
+          return
+
+      try:
+          extractor(media_id)
+      except TransientError as e:
+          if is_transient_error(e.code):
+              raise self.retry(exc=e, countdown=backoff(self.request.retries))
+          mark_failed(media_id, e.stage, e.code, str(e))
+  ```
 - **Error code taxonomy** (`app/services/errors.py`):
   ```python
   # Internal error codes (stored in last_error_code)
@@ -370,19 +466,25 @@ Never leak raw DB fields; capabilities always nested in response.
 
   # API error codes (returned to clients) are mapped separately in app/errors.py
   ```
-- **State invariant:** `extracting` means "a worker attempt started" (set by `worker_start_attempt`)
 
 ### Processing-State Integration Test Suite
 
 **Scope:** FastAPI + DB + Redis + storage only (no Next.js in Python tests)
 
+**Testing approach for S1:**
+- Use Celery eager mode to call `ingest_media.apply()` directly
+- This simulates "extractor available" scenario for testing task logic
+- Tests verify lifecycle functions work correctly
+- Tests do NOT verify auto-enqueue (because it doesn't happen in S1)
+
 **Coverage:**
-- Deterministic state transitions
 - `worker_start_attempt` increments attempts, sets timestamps
-- Retry clears failure fields, re-enqueues
-- Playback-only semantics (`failed + E_TRANSCRIPT_UNAVAILABLE`)
+- `mark_failed` sets failure fields correctly
+- `mark_ready_for_reading` sets status (tested via direct call)
+- Retry clears failure fields, sets pending, does NOT enqueue
 - URL idempotency: same URL → same media_id
 - File idempotency: same file + same user → dedupe
+- `is_transient_error` classification
 - Documentation: "how to extend for new media kinds"
 
 ### Web Deliverables
@@ -393,15 +495,16 @@ Never leak raw DB fields; capabilities always nested in response.
 - Retry button in UI:
   - Visible when `processing_status = failed`
   - Calls retry endpoint
-  - Refreshes status
-- URL media creation UI (if desired; can defer to S2)
+  - Shows "Queued" after retry (status resets to pending)
+  - Tooltip: "Extraction will begin when processor is available"
+- URL media creation UI (optional; can defer to S2)
 
 **Tests:**
-- Eager-mode Celery: file upload → ingest → extracting (stays extracting in S1 for pdf)
-- URL media stays `pending` (no task enqueued in S1)
-- Worker increments `processing_attempts` on start
-- Retry clears state, re-enqueues
-- `is_transient_error` unit tests
+- Eager-mode Celery: direct task call → extracting → failed (E_EXTRACTOR_NOT_IMPLEMENTED)
+- Lifecycle functions set correct fields and timestamps
+- Retry resets state to pending
+- Retry does NOT enqueue (verify no Celery delay calls)
+- `maybe_enqueue_extraction` returns false for all kinds
 - URL canonicalization unit tests
 - URL idempotency: same URL → same media_id
 - Processing-state suite runs in CI
@@ -443,6 +546,7 @@ PR-01 → PR-02 → PR-03 → PR-04 → PR-05
 
 ## Global Constraints
 
+- **No tasks enqueued in S1:** See §S1 Task Scheduling Policy
 - **No fake extractors:** S1 jobs must not create fragments
 - **Internal header required everywhere:** See §Internal Header Enforcement Policy
 - **UI must use `capabilities`**, not raw statuses
@@ -465,13 +569,21 @@ Both share idempotency logic via common service functions and both add media to 
 
 ---
 
-## URL Media Behavior in S1
+## S1 End State
 
-Since S1 has no extractors, URL-based media (`POST /media/url`) behaves as follows:
-- Media row created with `processing_status = pending`
-- Added to creator's default library (visible, but not readable)
-- **No task enqueued** — avoids instant failure noise
-- UI shows "Queued" or "Awaiting Processor" badge
-- When S2 lands (web article extractor), existing `pending` URL media can be manually retried or batch-processed
+After S1 is complete:
 
-This is intentional: S1 establishes the framework; S2+ provides the extractors.
+| Media Kind | Can Upload/Create | Has File | Status | Can Read |
+|------------|-------------------|----------|--------|----------|
+| `pdf` | Yes | Yes | `pending` | Yes (pdf.js renders file) |
+| `epub` | Yes | Yes | `pending` | No (needs fragments) |
+| `web_article` | Yes (URL) | No | `pending` | No (needs fragments) |
+| `video` | Yes (URL) | No | `pending` | No (needs transcript) |
+| `podcast_episode` | Yes (URL) | No | `pending` | No (needs transcript) |
+
+**Key insight:** PDF is the only kind readable in S1, because pdf.js can render the stored file directly. All other kinds require extraction artifacts.
+
+When S2+ lands extractors, existing `pending` media can be:
+- Batch-processed via management command
+- Manually retried by users
+- Auto-processed if we add a "process pending" job
