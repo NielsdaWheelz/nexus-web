@@ -826,7 +826,12 @@ Slice 0 UI must include:
   - Library detail (media list)
   - Media view (renders `html_sanitized` from `GET /media/{id}/fragments`)
 
-**Not included:** Highlighting, linked-items alignment, chat, media creation/ingestion UI.
+**Mobile behavior:**
+- Single-pane mode (no horizontal resizing)
+- Opening a library or media replaces the view
+- Back button returns to previous view
+
+**Not included:** Highlighting, linked-items pane, chat, media creation/ingestion UI.
 
 ---
 
