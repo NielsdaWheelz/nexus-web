@@ -36,15 +36,46 @@ find "$PROJECT_ROOT" -type f -name "*.pyc" -delete 2>/dev/null || true
 echo "✓ Python artifacts cleaned"
 echo ""
 
-# Optionally remove virtual environments
-if [ "${CLEAN_VENV:-}" = "1" ]; then
+# Clean coverage reports
+echo "Cleaning coverage reports..."
+rm -rf "$PROJECT_ROOT/python/.coverage" 2>/dev/null || true
+rm -rf "$PROJECT_ROOT/python/htmlcov" 2>/dev/null || true
+rm -rf "$PROJECT_ROOT/python/coverage.xml" 2>/dev/null || true
+rm -rf "$PROJECT_ROOT/apps/web/coverage" 2>/dev/null || true
+echo "✓ Coverage reports cleaned"
+echo ""
+
+# Clean frontend build artifacts
+echo "Cleaning frontend build artifacts..."
+rm -rf "$PROJECT_ROOT/apps/web/.next" 2>/dev/null || true
+echo "✓ Frontend build artifacts cleaned"
+echo ""
+
+# Optionally remove virtual environments and node_modules
+if [ "${CLEAN_DEPS:-}" = "1" ]; then
     echo "Removing virtual environments..."
     rm -rf "$PROJECT_ROOT/python/.venv"
     echo "✓ Virtual environments removed"
+    echo ""
+
+    echo "Removing node_modules..."
+    rm -rf "$PROJECT_ROOT/apps/web/node_modules"
+    echo "✓ node_modules removed"
+    echo ""
+fi
+
+# Optionally remove .env file
+if [ "${CLEAN_ENV:-}" = "1" ]; then
+    echo "Removing .env file..."
+    rm -f "$PROJECT_ROOT/.env"
+    echo "✓ .env file removed"
     echo ""
 fi
 
 echo "=== Cleanup Complete ==="
 echo ""
-echo "To also remove virtual environments, run:"
-echo "  CLEAN_VENV=1 ./scripts/agency_archive.sh"
+echo "Options:"
+echo "  CLEAN_DEPS=1  - Also remove dependencies (venv, node_modules)"
+echo "  CLEAN_ENV=1   - Also remove .env file"
+echo ""
+echo "Example: CLEAN_DEPS=1 CLEAN_ENV=1 ./scripts/agency_archive.sh"

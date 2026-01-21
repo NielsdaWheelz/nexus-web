@@ -65,6 +65,7 @@ check_tool() {
 echo "Checking required tools..."
 check_tool uv
 check_tool docker
+check_tool npm
 echo "✓ Required tools found"
 echo ""
 
@@ -101,6 +102,21 @@ for i in {1..30}; do
 done
 echo ""
 
+# Wait for Redis to be ready
+echo "Waiting for Redis to be ready..."
+for i in {1..30}; do
+    if docker exec "$REDIS_CONTAINER" redis-cli ping &> /dev/null; then
+        echo "✓ Redis is ready"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo "Error: Redis did not become ready in time"
+        exit 1
+    fi
+    sleep 1
+done
+echo ""
+
 # Create test databases if they don't exist
 echo "Creating test databases..."
 docker exec "$POSTGRES_CONTAINER" createdb -U postgres nexus_test 2>/dev/null || true
@@ -115,8 +131,16 @@ uv sync --all-extras
 echo "✓ Python dependencies installed"
 echo ""
 
+# Install frontend dependencies
+echo "Installing frontend dependencies..."
+cd "$PROJECT_ROOT/apps/web"
+npm install
+echo "✓ Frontend dependencies installed"
+echo ""
+
 # Database URL using configured port
 DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:${POSTGRES_PORT}"
+REDIS_URL="redis://localhost:${REDIS_PORT}/0"
 
 # Run migrations on dev database
 echo "Running migrations on dev database..."
@@ -130,6 +154,12 @@ echo "Running migrations on test database..."
 DATABASE_URL="${DATABASE_URL}/nexus_test" \
     uv run --project ../python alembic upgrade head
 echo "✓ Migrations applied to nexus_test"
+
+# Run migrations on test_migrations database
+echo "Running migrations on test_migrations database..."
+DATABASE_URL="${DATABASE_URL}/nexus_test_migrations" \
+    uv run --project ../python alembic upgrade head
+echo "✓ Migrations applied to nexus_test_migrations"
 echo ""
 
 # Generate .env file for local development
@@ -146,8 +176,24 @@ REDIS_PORT=${REDIS_PORT}
 # Application config
 NEXUS_ENV=local
 DATABASE_URL=${DATABASE_URL}/nexus_dev
+REDIS_URL=${REDIS_URL}
 EOF
 echo "✓ Created .env file"
+echo ""
+
+# Verification step
+echo "=== Verifying Setup ==="
+cd "$PROJECT_ROOT/python"
+
+echo "Running quick sanity check..."
+if DATABASE_URL="${DATABASE_URL}/nexus_test" NEXUS_ENV=test \
+    uv run pytest tests/test_db.py -v -q --tb=short 2>/dev/null; then
+    echo "✓ Database connectivity verified"
+else
+    echo "✗ Warning: Database sanity check failed"
+    echo "  Setup completed but verification failed. Check logs above."
+    exit 1
+fi
 echo ""
 
 echo "=== Setup Complete ==="
@@ -156,6 +202,6 @@ echo "To start the API server:"
 echo "  make api"
 echo ""
 echo "To run tests:"
-echo "  make test-all"
+echo "  make test"
 echo ""
 echo "API docs: http://localhost:8000/docs"

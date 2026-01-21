@@ -9,7 +9,7 @@ nexus/
 ├── apps/                        # Application entrypoints
 │   ├── api/                     # FastAPI server (thin launcher)
 │   ├── web/                     # Next.js BFF + frontend
-│   └── worker/                  # Celery worker (placeholder)
+│   └── worker/                  # Celery worker
 │
 ├── python/                      # Shared Python package
 │   ├── nexus/                   # THE package: models, services, auth, etc.
@@ -19,7 +19,7 @@ nexus/
 │   │   ├── app.py               # FastAPI app creation
 │   │   ├── api/                 # HTTP routers
 │   │   ├── auth/                # Authentication (JWT verifiers, middleware)
-│   │   ├── db/                  # Database layer
+│   │   ├── db/                  # Database layer + ORM models
 │   │   └── services/            # Business logic services
 │   ├── tests/                   # Python tests
 │   ├── pyproject.toml
@@ -28,14 +28,20 @@ nexus/
 ├── migrations/                  # Database migrations
 │   ├── alembic/
 │   │   └── versions/
+│   │       ├── 0001_slice0_schema.py     # S0: users, libraries, memberships, media, fragments
+│   │       └── 0002_slice1_ingestion_framework.py  # S1: processing lifecycle, storage
 │   └── alembic.ini
 │
 ├── docker/                      # Docker configs
-│   ├── docker-compose.yml       # Local dev services
+│   ├── docker-compose.yml       # Local dev services (postgres 15.8, redis 7.2)
 │   └── Dockerfile.api
+│
+├── .github/workflows/           # CI configuration
+│   └── ci.yml                   # GitHub Actions CI pipeline
 │
 ├── scripts/                     # Development scripts
 ├── docs/                        # Documentation
+├── .env.example                 # Environment variable template
 ├── .env                         # Local config (created by setup, gitignored)
 └── Makefile
 ```
@@ -83,11 +89,17 @@ make api
 # In terminal 2: Start web frontend (http://localhost:3000)
 make web
 
+# In terminal 3 (optional): Start Celery worker
+make worker
+
 # Run all tests
 make test-all
 
 # Run backend tests only
 make test
+
+# Run migration tests (separate database)
+make test-migrations
 
 # Run frontend tests only
 make test-web
@@ -102,7 +114,24 @@ make seed
 2. Run migrations: `make migrate`
 3. Start API: `make api` (terminal 1)
 4. Start web: `make web` (terminal 2)
-5. Open http://localhost:3000
+5. Start worker: `make worker` (terminal 3, optional)
+6. Open http://localhost:3000
+
+### Infrastructure Commands
+
+```bash
+# Start infrastructure (postgres + redis)
+make infra-up
+
+# Stop infrastructure
+make infra-down
+
+# View infrastructure logs
+make infra-logs
+
+# Run a migration rollback
+make migrate-down
+```
 
 ## Configuration
 
@@ -137,6 +166,14 @@ This file is:
 | `SUPABASE_JWKS_URL` | staging/prod | Full URL to Supabase JWKS endpoint |
 | `SUPABASE_ISSUER` | staging/prod | Expected JWT issuer |
 | `SUPABASE_AUDIENCES` | staging/prod | Comma-separated list of allowed audiences |
+
+#### Celery Worker
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `REDIS_URL` | For worker | Redis connection string (e.g., `redis://localhost:6379/0`) |
+| `CELERY_BROKER_URL` | No | Celery broker URL (defaults to `REDIS_URL`) |
+| `CELERY_RESULT_BACKEND` | No | Celery result backend URL (defaults to `REDIS_URL`) |
 
 #### Frontend (Next.js)
 

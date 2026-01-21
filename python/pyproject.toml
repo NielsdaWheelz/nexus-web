@@ -12,6 +12,8 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "PyJWT[crypto]>=2.8.0",
     "httpx>=0.28.0",
+    "celery[redis]>=5.4.0",
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +47,9 @@ select = [
 ignore = [
     "E501",  # line too long (handled by formatter)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/conftest.py" = ["E402"]  # sys.path modification requires imports after
 
 [tool.ruff.format]
 quote-style = "double"
