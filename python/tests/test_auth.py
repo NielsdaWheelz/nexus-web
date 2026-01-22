@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 
 from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
-from nexus.auth.verifier import MockTokenVerifier
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.helpers import (
@@ -27,6 +26,7 @@ from tests.helpers import (
     mint_test_token,
     mint_token_with_bad_signature,
 )
+from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
 
 
@@ -48,7 +48,7 @@ class TestAuthBoundary:
             finally:
                 db.close()
 
-        verifier = MockTokenVerifier()
+        verifier = MockJwtVerifier()
         app = create_app(skip_auth_middleware=True)
 
         app.add_middleware(
@@ -124,7 +124,7 @@ class TestInternalHeaderEnforcement:
             finally:
                 db.close()
 
-        verifier = MockTokenVerifier()
+        verifier = MockJwtVerifier()
         app = create_app(skip_auth_middleware=True)
 
         # Add middleware with internal header requirement
@@ -197,7 +197,7 @@ class TestBootstrap:
             finally:
                 db.close()
 
-        verifier = MockTokenVerifier()
+        verifier = MockJwtVerifier()
         app = create_app(skip_auth_middleware=True)
 
         app.add_middleware(
@@ -309,7 +309,7 @@ class TestBootstrap:
             finally:
                 db.close()
 
-        verifier = MockTokenVerifier()
+        verifier = MockJwtVerifier()
         app = create_app(skip_auth_middleware=True)
 
         app.add_middleware(
@@ -394,7 +394,7 @@ class TestBootstrap:
             finally:
                 db.close()
 
-        verifier = MockTokenVerifier()
+        verifier = MockJwtVerifier()
         app = create_app(skip_auth_middleware=True)
         app.add_middleware(
             AuthMiddleware,
@@ -437,7 +437,7 @@ class TestGetMe:
             finally:
                 db.close()
 
-        verifier = MockTokenVerifier()
+        verifier = MockJwtVerifier()
         app = create_app(skip_auth_middleware=True)
 
         app.add_middleware(
@@ -501,7 +501,7 @@ class TestHealthEndpointNoAuth:
             finally:
                 db.close()
 
-        verifier = MockTokenVerifier()
+        verifier = MockJwtVerifier()
         app = create_app(skip_auth_middleware=True)
 
         app.add_middleware(

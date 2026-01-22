@@ -5,6 +5,11 @@ Test isolation strategy:
 - Migration tests run in a separate database (nexus_test_migrations)
 - Tests needing multiple connections use direct_db fixture
 - Auth tests use authenticated_client with test JWT tokens
+
+Environment Setup:
+- Test environment variables are configured BEFORE any application imports
+- This ensures Settings validation passes without requiring external configuration
+- Tests use mock verifiers for JWT validation, not real Supabase endpoints
 """
 
 import os
@@ -12,6 +17,17 @@ import sys
 from collections.abc import Generator
 from pathlib import Path
 from uuid import UUID, uuid4
+
+# Configure test environment BEFORE any imports that load Settings.
+# These values are placeholders - tests use MockJwtVerifier, not real JWKS.
+if not os.environ.get("NEXUS_ENV"):
+    os.environ["NEXUS_ENV"] = "test"
+if not os.environ.get("SUPABASE_JWKS_URL"):
+    os.environ["SUPABASE_JWKS_URL"] = "http://localhost:54321/auth/v1/.well-known/jwks.json"
+if not os.environ.get("SUPABASE_ISSUER"):
+    os.environ["SUPABASE_ISSUER"] = "http://localhost:54321/auth/v1"
+if not os.environ.get("SUPABASE_AUDIENCES"):
+    os.environ["SUPABASE_AUDIENCES"] = "authenticated"
 
 # Add repo root to sys.path for importing top-level packages (e.g., apps)
 _repo_root = Path(__file__).parent.parent.parent
@@ -24,11 +40,11 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session
 
 from nexus.app import create_app
-from nexus.auth.verifier import MockTokenVerifier
 from nexus.config import clear_settings_cache
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.helpers import create_test_user_id
+from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager, TestDatabaseManager
 
 
@@ -141,9 +157,9 @@ def client() -> Generator[TestClient, None, None]:
 
 
 @pytest.fixture
-def test_verifier() -> MockTokenVerifier:
+def test_verifier() -> MockJwtVerifier:
     """Provide a test token verifier."""
-    return MockTokenVerifier()
+    return MockJwtVerifier()
 
 
 @pytest.fixture
@@ -164,7 +180,7 @@ def authenticated_app(engine: Engine):
             db.close()
 
     # Create app with test verifier and custom bootstrap
-    verifier = MockTokenVerifier()
+    verifier = MockJwtVerifier()
     app = create_app(skip_auth_middleware=True)
 
     # Manually add auth middleware with our test configuration
@@ -187,7 +203,7 @@ def authenticated_client(
 ) -> Generator[TestClient, None, None]:
     """Provide a FastAPI test client with auth middleware.
 
-    This client uses MockTokenVerifier and can handle authenticated requests.
+    This client uses MockJwtVerifier and can handle authenticated requests.
     Use auth_headers() to generate valid tokens for requests.
     """
     with TestClient(authenticated_app) as client:

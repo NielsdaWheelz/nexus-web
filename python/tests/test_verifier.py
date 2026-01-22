@@ -1,6 +1,6 @@
 """Unit tests for token verifiers.
 
-Tests the SupabaseJwksVerifier (with mocked HTTP) and MockTokenVerifier.
+Tests the SupabaseJwksVerifier (with mocked HTTP) and MockJwtVerifier.
 """
 
 import time
@@ -14,8 +14,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
-from nexus.auth.verifier import MockTokenVerifier, SupabaseJwksVerifier
+from nexus.auth.verifier import SupabaseJwksVerifier
 from nexus.errors import ApiError, ApiErrorCode
+from tests.support.test_verifier import MockJwtVerifier
 
 
 class TestSupabaseJwksVerifier:
@@ -349,12 +350,12 @@ class TestSupabaseJwksVerifier:
             assert exc_info.value.code == ApiErrorCode.E_UNAUTHENTICATED
 
 
-class TestMockTokenVerifier:
-    """Tests for MockTokenVerifier."""
+class TestMockJwtVerifier:
+    """Tests for MockJwtVerifier."""
 
     def test_valid_token(self):
-        """MockTokenVerifier accepts valid tokens."""
-        verifier = MockTokenVerifier()
+        """MockJwtVerifier accepts valid tokens."""
+        verifier = MockJwtVerifier()
         user_id = str(uuid4())
 
         from tests.helpers import mint_test_token
@@ -365,8 +366,8 @@ class TestMockTokenVerifier:
         assert claims["sub"] == user_id
 
     def test_expired_token(self):
-        """MockTokenVerifier rejects expired tokens."""
-        verifier = MockTokenVerifier()
+        """MockJwtVerifier rejects expired tokens."""
+        verifier = MockJwtVerifier()
         user_id = str(uuid4())
 
         from tests.helpers import mint_expired_token
@@ -379,8 +380,8 @@ class TestMockTokenVerifier:
         assert exc_info.value.code == ApiErrorCode.E_UNAUTHENTICATED
 
     def test_bad_signature(self):
-        """MockTokenVerifier rejects tokens with bad signatures."""
-        verifier = MockTokenVerifier()
+        """MockJwtVerifier rejects tokens with bad signatures."""
+        verifier = MockJwtVerifier()
         user_id = str(uuid4())
 
         from tests.helpers import mint_token_with_bad_signature
@@ -393,8 +394,8 @@ class TestMockTokenVerifier:
         assert exc_info.value.code == ApiErrorCode.E_UNAUTHENTICATED
 
     def test_wrong_issuer(self):
-        """MockTokenVerifier rejects tokens with wrong issuer."""
-        verifier = MockTokenVerifier()
+        """MockJwtVerifier rejects tokens with wrong issuer."""
+        verifier = MockJwtVerifier()
         user_id = str(uuid4())
 
         from tests.helpers import mint_test_token
@@ -407,8 +408,8 @@ class TestMockTokenVerifier:
         assert exc_info.value.code == ApiErrorCode.E_UNAUTHENTICATED
 
     def test_wrong_audience(self):
-        """MockTokenVerifier rejects tokens with wrong audience."""
-        verifier = MockTokenVerifier()
+        """MockJwtVerifier rejects tokens with wrong audience."""
+        verifier = MockJwtVerifier()
         user_id = str(uuid4())
 
         from tests.helpers import mint_test_token
@@ -421,8 +422,8 @@ class TestMockTokenVerifier:
         assert exc_info.value.code == ApiErrorCode.E_UNAUTHENTICATED
 
     def test_invalid_sub(self):
-        """MockTokenVerifier rejects tokens with invalid sub (not UUID)."""
-        verifier = MockTokenVerifier()
+        """MockJwtVerifier rejects tokens with invalid sub (not UUID)."""
+        verifier = MockJwtVerifier()
 
         from tests.helpers import mint_test_token
 

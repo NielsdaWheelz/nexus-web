@@ -10,7 +10,7 @@ nexus/
 ├── errors.py      # Error codes and exceptions
 ├── responses.py   # Response envelope helpers (includes request_id)
 ├── logging.py     # Structured logging with structlog
-├── app.py         # FastAPI app creation + middleware setup
+├── app.py         # FastAPI app factory + middleware setup (no module-level app)
 ├── api/           # HTTP routers
 │   ├── deps.py    # FastAPI dependencies
 │   └── routes/    # Route handlers
@@ -21,7 +21,7 @@ nexus/
 ├── auth/          # Authentication
 │   ├── middleware.py  # Auth middleware
 │   ├── permissions.py # Authorization predicates (can_read_media, etc.)
-│   └── verifier.py    # JWT verifiers (SupabaseJwksVerifier, MockTokenVerifier)
+│   └── verifier.py    # JWT verifier (SupabaseJwksVerifier)
 ├── middleware/    # Request middleware
 │   ├── __init__.py
 │   └── request_id.py  # X-Request-ID generation and logging
@@ -62,6 +62,20 @@ nexus/
 | GET | `/health` | Health check |
 
 ## Architecture
+
+### JWT Verification
+
+All environments use Supabase JWKS for JWT verification:
+- Local/test: Supabase local at `http://127.0.0.1:54321`
+- Staging/prod: Supabase cloud
+
+The `SupabaseJwksVerifier` validates:
+- Signature via JWKS
+- Algorithm: RS256 only
+- Expiration with ±60s clock skew
+- Issuer matches configured value
+- Audience is in configured list
+- Subject is valid UUID
 
 ### Request Tracing (X-Request-ID)
 
@@ -155,11 +169,10 @@ This package is imported by:
 From the repo root, use Make commands:
 
 ```bash
-make test              # Run tests (excludes migration tests)
+make test-back         # Run tests (excludes migration tests)
 make test-migrations   # Run migration tests (separate database)
-make test-all          # Run all tests
-make lint              # Run linter
-make fmt               # Format code
+make lint-back         # Run linter
+make fmt-back          # Format code
 make verify            # Full verification
 ```
 
@@ -171,8 +184,11 @@ cd python
 # Install dependencies
 uv sync --all-extras
 
-# Run tests (requires .env or DATABASE_URL)
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5434/nexus_test \
+# Run tests (requires Supabase local running + .env)
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test \
+  SUPABASE_JWKS_URL=http://127.0.0.1:54321/auth/v1/.well-known/jwks.json \
+  SUPABASE_ISSUER=http://127.0.0.1:54321/auth/v1 \
+  SUPABASE_AUDIENCES=authenticated \
   NEXUS_ENV=test uv run pytest -v
 
 # Lint and format
@@ -185,7 +201,7 @@ uv run ruff format .
 - **Savepoint isolation**: Most tests use `db_session` fixture with auto-rollback
 - **Direct DB access**: Tests needing multiple connections use `direct_db` fixture
 - **Migration tests**: Run on separate `nexus_test_migrations` database
-- **Mock auth**: Tests use `MockTokenVerifier` (local RSA keypair, same validation as production)
+- **Test auth**: Tests use `TestTokenVerifier` (local RSA keypair, same validation as production)
 - **Structural tests**: AST-based tests verify route files follow separation rules
 
 ## Install as Editable

@@ -14,8 +14,8 @@ from fastapi.testclient import TestClient
 
 from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
-from nexus.auth.verifier import MockTokenVerifier
 from tests.helpers import auth_headers
+from tests.support.test_verifier import MockJwtVerifier
 
 
 class TestEchoHeadersEndpoint:
@@ -41,7 +41,7 @@ class TestEchoHeadersEndpoint:
             finally:
                 db.close()
 
-        verifier = MockTokenVerifier()
+        verifier = MockJwtVerifier()
         app = create_app(skip_auth_middleware=True)
 
         app.add_middleware(
@@ -112,7 +112,7 @@ class TestInternalHeaderEnforcement:
             finally:
                 db.close()
 
-        verifier = MockTokenVerifier()
+        verifier = MockJwtVerifier()
         app = create_app(skip_auth_middleware=True)
 
         # Add middleware that REQUIRES internal header
