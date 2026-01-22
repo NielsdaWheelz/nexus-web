@@ -143,3 +143,13 @@
   background-color: var(--color-error);
   color: white;
 }
+
+/* Upload pane content */
+.uploadContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  min-height: 200px;
+}

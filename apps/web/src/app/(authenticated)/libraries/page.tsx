@@ -5,6 +5,7 @@ import Link from "next/link";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
+import FileUpload from "@/components/FileUpload";
 import styles from "./page.module.css";
 
 interface Library {
@@ -141,6 +142,11 @@ export default function LibrariesPage() {
               ))}
             </ul>
           )}
+        </div>
+      </Pane>
+      <Pane title="Upload">
+        <div className={styles.uploadContent}>
+          <FileUpload />
         </div>
       </Pane>
     </PaneContainer>

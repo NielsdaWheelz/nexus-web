@@ -188,6 +188,17 @@ This file is:
 | `CELERY_BROKER_URL` | No | Celery broker URL (defaults to `REDIS_URL`) |
 | `CELERY_RESULT_BACKEND` | No | Celery result backend URL (defaults to `REDIS_URL`) |
 
+#### Storage (Supabase)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SUPABASE_URL` | For storage | Supabase project URL |
+| `SUPABASE_SERVICE_KEY` | For storage | Supabase service role key |
+| `STORAGE_BUCKET` | No | Storage bucket name (default: `media`) |
+| `MAX_PDF_BYTES` | No | Max PDF upload size (default: 100 MB) |
+| `MAX_EPUB_BYTES` | No | Max EPUB upload size (default: 50 MB) |
+| `STORAGE_TEST_PREFIX` | For tests | Test storage path prefix (e.g., `test_runs/{run_id}/`) |
+
 #### Frontend (Next.js)
 
 | Variable | Required | Description |

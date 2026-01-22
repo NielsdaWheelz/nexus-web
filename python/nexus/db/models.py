@@ -12,6 +12,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Enum,
     ForeignKey,
     Integer,
     Text,
@@ -211,8 +212,23 @@ class Media(Base):
     canonical_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # S1 processing lifecycle fields
-    processing_status: Mapped[str] = mapped_column(Text, server_default="pending", nullable=False)
-    failure_stage: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processing_status: Mapped[ProcessingStatus] = mapped_column(
+        Enum(
+            ProcessingStatus,
+            name="processing_status_enum",
+            create_type=False,  # Type created in migration
+        ),
+        server_default="pending",
+        nullable=False,
+    )
+    failure_stage: Mapped[FailureStage | None] = mapped_column(
+        Enum(
+            FailureStage,
+            name="failure_stage_enum",
+            create_type=False,  # Type created in migration
+        ),
+        nullable=True,
+    )
     last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     processing_attempts: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
@@ -258,16 +274,8 @@ class Media(Base):
             "kind IN ('web_article', 'epub', 'pdf', 'video', 'podcast_episode')",
             name="ck_media_kind",
         ),
-        CheckConstraint(
-            "processing_status IN ('pending', 'extracting', 'ready_for_reading', "
-            "'embedding', 'ready', 'failed')",
-            name="ck_media_processing_status",
-        ),
-        CheckConstraint(
-            "failure_stage IS NULL OR failure_stage IN "
-            "('upload', 'extract', 'transcribe', 'embed', 'other')",
-            name="ck_media_failure_stage",
-        ),
+        # Note: processing_status and failure_stage use PostgreSQL enum types,
+        # so CHECK constraints are not needed - the enum enforces valid values.
         CheckConstraint(
             "requested_url IS NULL OR char_length(requested_url) <= 2048",
             name="ck_media_requested_url_length",

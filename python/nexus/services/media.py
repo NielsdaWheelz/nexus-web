@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media as _can_read_media
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.media import FragmentOut, MediaOut
+from nexus.services.capabilities import derive_capabilities
 
 
 def get_media_for_viewer(
@@ -21,7 +22,7 @@ def get_media_for_viewer(
 ) -> MediaOut:
     """Get media by ID if readable by viewer.
 
-    Returns media row if readable by viewer.
+    Returns media row if readable by viewer, including derived capabilities.
     Uses a single query that combines existence + visibility check.
 
     Args:
@@ -39,11 +40,14 @@ def get_media_for_viewer(
     if not _can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    # Fetch the media data
+    # Fetch the media data with additional fields needed for capabilities
     result = db.execute(
         text("""
             SELECT m.id, m.kind, m.title, m.canonical_source_url,
-                   m.processing_status, m.created_at, m.updated_at
+                   m.processing_status, m.failure_stage, m.last_error_code,
+                   m.external_playback_url, m.created_at, m.updated_at,
+                   (SELECT EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id)) as has_file,
+                   (SELECT EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id)) as has_fragments
             FROM media m
             WHERE m.id = :media_id
         """),
@@ -56,14 +60,28 @@ def get_media_for_viewer(
         # but handle defensively
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
+    # Derive capabilities
+    capabilities = derive_capabilities(
+        kind=row[1],
+        processing_status=row[4],
+        last_error_code=row[6],
+        media_file_exists=row[10],
+        external_playback_url_exists=row[7] is not None,
+        has_fragments=row[11],
+        has_plain_text=False,  # TODO: Check media.plain_text when added
+    )
+
     return MediaOut(
         id=row[0],
         kind=row[1],
         title=row[2],
         canonical_source_url=row[3],
         processing_status=row[4],
-        created_at=row[5],
-        updated_at=row[6],
+        failure_stage=row[5],
+        last_error_code=row[6],
+        capabilities=capabilities,
+        created_at=row[8],
+        updated_at=row[9],
     )
 
 

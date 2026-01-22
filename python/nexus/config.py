@@ -60,6 +60,21 @@ class Settings(BaseSettings):
     supabase_issuer: str | None = Field(default=None, alias="SUPABASE_ISSUER")
     supabase_audiences: str | None = Field(default=None, alias="SUPABASE_AUDIENCES")
 
+    # Test auth settings (optional, with defaults)
+    test_token_issuer: str = Field(default="test-issuer", alias="TEST_TOKEN_ISSUER")
+    test_token_audiences: str = Field(default="test-audience", alias="TEST_TOKEN_AUDIENCES")
+
+    # Supabase Storage settings
+    supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
+    supabase_service_key: str | None = Field(default=None, alias="SUPABASE_SERVICE_KEY")
+    storage_bucket: str = Field(default="media", alias="STORAGE_BUCKET")
+
+    # Storage limits
+    max_pdf_bytes: int = Field(default=100 * 1024 * 1024, alias="MAX_PDF_BYTES")  # 100 MB
+    max_epub_bytes: int = Field(default=50 * 1024 * 1024, alias="MAX_EPUB_BYTES")  # 50 MB
+    ingest_stream_timeout_s: int = Field(default=60, alias="INGEST_STREAM_TIMEOUT_S")
+    signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
