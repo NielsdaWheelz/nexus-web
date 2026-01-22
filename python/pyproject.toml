@@ -59,5 +59,8 @@ quote-style = "double"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m \"not supabase\""
 pythonpath = ["."]
+markers = [
+    "supabase: requires Supabase local auth/storage services",
+]

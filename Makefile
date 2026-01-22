@@ -1,7 +1,7 @@
 # Nexus Development Makefile
 # Run `make help` for available commands
 
-.PHONY: help setup dev down test test-back test-front test-migrations ensure-services lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker migrate migrate-test migrate-down seed verify logs
+.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations ensure-services lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker migrate migrate-test migrate-down seed verify logs
 
 # Load .env file if it exists (created by setup)
 -include .env
@@ -38,6 +38,7 @@ help:
 	@echo "  make test-back      - Run backend tests (excludes migrations)"
 	@echo "  make test-front     - Run frontend tests"
 	@echo "  make test-migrations - Run migration tests (separate database)"
+	@echo "  make test-supabase  - Run Supabase auth/storage integration tests"
 	@echo ""
 	@echo "Lint:"
 	@echo "  make lint           - Run all linters (backend + frontend)"
@@ -105,16 +106,33 @@ ensure-services:
 		$(MAKE) dev; \
 	fi
 
-test: test-back test-migrations test-front
+test: test-back-and-migrations test-front
 
-test-back: ensure-services
-	cd python && DATABASE_URL=$(DATABASE_URL_TEST) NEXUS_ENV=test uv run pytest -v --ignore=tests/test_migrations.py
+test-back-and-migrations:
+	./scripts/with_test_services.sh $(MAKE) test-back-no-services test-migrations-no-services
+
+test-back:
+	./scripts/with_test_services.sh $(MAKE) test-back-no-services
+
+test-back-no-services:
+	$(MAKE) migrate-test
+	cd python && NEXUS_ENV=test uv run pytest -v --ignore=tests/test_migrations.py
 
 test-front:
 	cd apps/web && npm test -- --passWithNoTests
 
-test-migrations: ensure-services
-	cd python && DATABASE_URL=$(DATABASE_URL_TEST_MIGRATIONS) REDIS_URL=redis://localhost:$(REDIS_PORT)/0 NEXUS_ENV=test uv run pytest -v tests/test_migrations.py
+test-migrations:
+	./scripts/with_test_services.sh $(MAKE) test-migrations-no-services
+
+test-migrations-no-services:
+	cd python && DATABASE_URL=$(DATABASE_URL_TEST_MIGRATIONS) NEXUS_ENV=test uv run pytest -v tests/test_migrations.py
+
+test-supabase:
+	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh $(MAKE) test-supabase-no-services
+
+test-supabase-no-services:
+	$(MAKE) migrate-test
+	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m supabase -o addopts=""
 
 # === Lint ===
 
@@ -149,7 +167,7 @@ web:
 		npm run dev
 
 worker:
-	cd python && PYTHONPATH=$$PWD \
+	cd python && PYTHONPATH=$$PWD:$$PWD/.. \
 		DATABASE_URL=$(DATABASE_URL) \
 		REDIS_URL=redis://localhost:$(REDIS_PORT)/0 \
 		CELERY_BROKER_URL=redis://localhost:$(REDIS_PORT)/0 \
@@ -176,7 +194,7 @@ seed:
 
 # === Verify ===
 
-verify: ensure-services lint fmt-check typecheck build test
+verify: lint fmt-check typecheck build test
 	@echo "=== All verification checks passed ==="
 
 fmt-check:

@@ -10,39 +10,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:15.8
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: nexus_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7.2-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      NEXUS_ENV: test
-      NEXUS_INTERNAL_SECRET: test-secret-for-ci
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/nexus_test
-      REDIS_URL: redis://localhost:6379/0
-      CELERY_BROKER_URL: redis://localhost:6379/0
-      CELERY_RESULT_BACKEND: redis://localhost:6379/0
-
     steps:
       - uses: actions/checkout@v4
 
@@ -58,22 +25,6 @@ jobs:
         run: |
           cd python
           uv sync --all-extras
-
-      - name: Install redis tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y redis-tools
-
-      - name: Wait for services
-        run: |
-          until pg_isready -h localhost -p 5432; do sleep 1; done
-          until redis-cli -h localhost ping; do sleep 1; done
-
-      - name: Run migrations
-        run: |
-          cd migrations
-          DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/nexus_test \
-            uv run --project ../python alembic upgrade head
 
       - name: Lint
         run: |
@@ -82,32 +33,10 @@ jobs:
 
       - name: Run tests
         run: |
-          cd python
-          DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/nexus_test \
-            NEXUS_ENV=test \
-            uv run pytest -v --ignore=tests/test_migrations.py
+          make test-back
 
   test-migrations:
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:15.8
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: nexus_test_migrations
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      NEXUS_ENV: test
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/nexus_test_migrations
 
     steps:
       - uses: actions/checkout@v4
@@ -125,16 +54,9 @@ jobs:
           cd python
           uv sync --all-extras
 
-      - name: Wait for postgres
-        run: |
-          until pg_isready -h localhost -p 5432; do sleep 1; done
-
       - name: Run migration tests
         run: |
-          cd python
-          DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/nexus_test_migrations \
-            NEXUS_ENV=test \
-            uv run pytest -v tests/test_migrations.py
+          make test-migrations
 
   lint-frontend:
     runs-on: ubuntu-latest

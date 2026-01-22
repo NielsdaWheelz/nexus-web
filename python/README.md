@@ -228,10 +228,16 @@ From the repo root, use Make commands:
 ```bash
 make test-back         # Run tests (excludes migration tests)
 make test-migrations   # Run migration tests (separate database)
+make test-supabase     # Supabase auth/storage integration tests (opt-in)
 make lint-back         # Run linter
 make fmt-back          # Format code
 make verify            # Full verification
 ```
+
+`make test-back` and `make test-migrations` are hermetic: they start Postgres + Redis
+on free ports, run migrations, and shut everything down automatically.
+`make test-supabase` starts Supabase local for JWKS/storage integration tests.
+Hermetic test env variables are centralized in `scripts/test_env.sh`.
 
 Or run directly:
 
@@ -241,11 +247,8 @@ cd python
 # Install dependencies
 uv sync --all-extras
 
-# Run tests (requires Supabase local running + .env)
+# Run tests against existing services (bypass hermetic wrapper)
 DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test \
-  SUPABASE_JWKS_URL=http://127.0.0.1:54321/auth/v1/.well-known/jwks.json \
-  SUPABASE_ISSUER=http://127.0.0.1:54321/auth/v1 \
-  SUPABASE_AUDIENCES=authenticated \
   NEXUS_ENV=test uv run pytest -v
 
 # Lint and format
@@ -258,7 +261,7 @@ uv run ruff format .
 - **Savepoint isolation**: Most tests use `db_session` fixture with auto-rollback
 - **Direct DB access**: Tests needing multiple connections use `direct_db` fixture
 - **Migration tests**: Run on separate `nexus_test_migrations` database
-- **Test auth**: Tests use `TestTokenVerifier` (local RSA keypair, same validation as production)
+- **Test auth**: Tests use `MockJwtVerifier` (local RSA keypair, same validation as production)
 - **Structural tests**: AST-based tests verify route files follow separation rules
 
 ## Install as Editable

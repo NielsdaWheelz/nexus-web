@@ -11,7 +11,6 @@
 2. Run setup:
    ```bash
    make setup
-   cd apps/web && npm install
    ```
 
 3. Start development:
@@ -33,7 +32,7 @@
 
 - Formatter: Prettier (via ESLint)
 - Linter: ESLint
-- Run: `make lint-web`
+- Run: `make lint-front`
 
 ### Key Rules
 
@@ -47,10 +46,11 @@
 ### Commands
 
 ```bash
-make test              # Backend tests
+make test              # All tests (backend + migrations + frontend)
+make test-back         # Backend tests (excludes migrations)
 make test-migrations   # Migration tests
-make test-web          # Frontend tests
-make test-all          # All tests
+make test-front        # Frontend tests
+make test-supabase     # Supabase auth/storage integration tests (opt-in)
 make verify            # Full verification
 ```
 
@@ -63,13 +63,17 @@ make verify            # Full verification
 ### Test Environment
 
 - `NEXUS_ENV=test` enables test-only endpoints
-- Tests use `MockTokenVerifier` with local RSA keypair
+- Tests use `MockJwtVerifier` with local RSA keypair
 - Database uses savepoint isolation (auto-rollback)
+- Backend tests are hermetic by default: they start their own Postgres + Redis
+- `make test-supabase` starts and stops Supabase local (set `SUPABASE_KEEP_RUNNING=1` to keep it up)
+- Override hermetic ports with `TEST_POSTGRES_PORT` / `TEST_REDIS_PORT`
+- Hermetic test env variables are centralized in `scripts/test_env.sh`
 
 ## Pull Request Checklist
 
-- [ ] Tests pass: `make test-all`
-- [ ] Linting passes: `make lint && make lint-web`
+- [ ] Tests pass: `make test`
+- [ ] Linting passes: `make lint && make lint-front`
 - [ ] No new `dangerouslySetInnerHTML` outside HtmlRenderer
 - [ ] No direct FastAPI calls from browser code
 - [ ] No access tokens in localStorage/sessionStorage

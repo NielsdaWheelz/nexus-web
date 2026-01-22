@@ -233,11 +233,34 @@ class StorageClient(StorageClientBase):
                 )
 
             data = response.json()
-            signed_path = data.get("signedURL", "")
-            # Supabase returns relative path, make absolute
+            signed_path = data.get("signedURL") or data.get("signedUrl") or ""
+            if not signed_path:
+                raise StorageError(
+                    "Failed to sign download: missing signed URL",
+                    code="E_SIGN_DOWNLOAD_FAILED",
+                )
+
+            # Supabase may return relative paths (with or without /storage/v1).
+            if signed_path.startswith("http://") or signed_path.startswith("https://"):
+                return signed_path
+
+            if signed_path.startswith("/storage/"):
+                return f"{self._base_url}{signed_path}"
+
+            if signed_path.startswith("/object/"):
+                return f"{self._storage_url}{signed_path}"
+
+            if signed_path.startswith("storage/"):
+                return f"{self._base_url}/{signed_path.lstrip('/')}"
+
+            if signed_path.startswith("object/"):
+                return f"{self._storage_url}/{signed_path.lstrip('/')}"
+
             if signed_path.startswith("/"):
                 return f"{self._base_url}{signed_path}"
-            return signed_path
+
+            # Fallback to storage base if the API returns a bare path.
+            return f"{self._storage_url}/{signed_path.lstrip('/')}"
 
     def head_object(self, path: str) -> ObjectMetadata | None:
         """Check object existence via HEAD request."""

@@ -105,6 +105,9 @@ make test-back
 # Run migration tests (separate database)
 make test-migrations
 
+# Run Supabase integration tests (auth JWKS + storage)
+make test-supabase
+
 # Seed development data (creates fixture media)
 make seed
 ```
@@ -155,6 +158,7 @@ REDIS_URL=redis://localhost:6379/0
 SUPABASE_URL=http://127.0.0.1:54321
 SUPABASE_ANON_KEY=<generated-by-supabase>
 SUPABASE_SERVICE_ROLE_KEY=<generated-by-supabase>
+SUPABASE_SERVICE_KEY=<service-role-key-for-storage>
 
 # Supabase auth settings (used by FastAPI)
 SUPABASE_ISSUER=http://127.0.0.1:54321/auth/v1
@@ -283,13 +287,23 @@ When running locally:
 make test              # All tests (backend + migrations + frontend)
 make test-back         # Backend tests (excludes migrations)
 make test-migrations   # Migration tests (separate DB)
+make test-supabase     # Supabase auth/storage integration tests (opt-in)
 make test-front        # Frontend tests
 make verify            # Full verification (lint + format + all tests)
 ```
 
+Backend tests are hermetic: they start their own Postgres + Redis on free ports,
+run migrations, and tear everything down. If you want to reuse existing services
+instead, use `make test-back-no-services` or `make test-migrations-no-services`.
+To override the hermetic ports, set `TEST_POSTGRES_PORT` and/or `TEST_REDIS_PORT`.
+Hermetic test env variables are centralized in `scripts/test_env.sh`.
+
+Supabase integration tests start and stop Supabase local by default. Set
+`SUPABASE_KEEP_RUNNING=1` to keep it running after the test run.
+
 ### Test Architecture
 
-- **Backend Integration**: Tests use TestTokenVerifier (test-only RSA keypair)
+- **Backend Integration**: Tests use `MockJwtVerifier` (test-only RSA keypair)
 - **BFF Smoke Tests**: Verify header attachment and auth flow
 - **Frontend Unit**: Component tests with mocked fetch
 
