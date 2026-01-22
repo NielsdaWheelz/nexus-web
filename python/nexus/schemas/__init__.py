@@ -3,6 +3,13 @@
 All schemas are re-exported here for convenient imports.
 """
 
+from nexus.schemas.highlights import (
+    AnnotationOut,
+    CreateHighlightRequest,
+    HighlightOut,
+    UpdateHighlightRequest,
+    UpsertAnnotationRequest,
+)
 from nexus.schemas.library import (
     AddMediaRequest,
     CreateLibraryRequest,
@@ -13,11 +20,19 @@ from nexus.schemas.library import (
 from nexus.schemas.media import FragmentOut, MediaOut
 
 __all__ = [
+    # Library schemas
     "CreateLibraryRequest",
     "UpdateLibraryRequest",
     "AddMediaRequest",
     "LibraryOut",
     "LibraryMediaOut",
+    # Media schemas
     "MediaOut",
     "FragmentOut",
+    # Highlight schemas (Slice 2)
+    "HighlightOut",
+    "AnnotationOut",
+    "CreateHighlightRequest",
+    "UpdateHighlightRequest",
+    "UpsertAnnotationRequest",
 ]

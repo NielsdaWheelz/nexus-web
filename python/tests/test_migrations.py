@@ -598,6 +598,527 @@ class TestS1SchemaConstraints:
             session.commit()
 
 
+class TestS2HighlightsAnnotationsConstraints:
+    """Tests for S2-specific schema constraints (highlights, annotations)."""
+
+    def test_invalid_highlight_color_rejected(self, migrated_engine):
+        """CHECK constraint prevents invalid highlight color values."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            fragment_id = uuid4()
+
+            # Create user and media with fragment
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Test Article', 'ready_for_reading', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'Test canonical text content', '<p>Test</p>')
+                """),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            session.commit()
+
+            # Attempt to create highlight with invalid color
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                        VALUES (:id, :user_id, :fragment_id, 0, 10, 'invalid_color', 'exact', 'prefix', 'suffix')
+                    """),
+                    {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_highlights_color" in str(exc_info.value)
+
+            # Clean up
+            session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_invalid_highlight_offsets_rejected(self, migrated_engine):
+        """CHECK constraint prevents invalid offset ranges."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            fragment_id = uuid4()
+
+            # Create user and media with fragment
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Test Article', 'ready_for_reading', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'Test canonical text content', '<p>Test</p>')
+                """),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            session.commit()
+
+            # Test case 1: end_offset <= start_offset (end == start)
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                        VALUES (:id, :user_id, :fragment_id, 10, 10, 'yellow', 'exact', 'prefix', 'suffix')
+                    """),
+                    {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_highlights_offsets_valid" in str(exc_info.value)
+
+            # Test case 2: end_offset < start_offset
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                        VALUES (:id, :user_id, :fragment_id, 10, 5, 'yellow', 'exact', 'prefix', 'suffix')
+                    """),
+                    {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_highlights_offsets_valid" in str(exc_info.value)
+
+            # Test case 3: negative start_offset
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                        VALUES (:id, :user_id, :fragment_id, -1, 10, 'yellow', 'exact', 'prefix', 'suffix')
+                    """),
+                    {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_highlights_offsets_valid" in str(exc_info.value)
+
+            # Clean up
+            session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_duplicate_highlight_span_rejected(self, migrated_engine):
+        """Unique index prevents duplicate (user_id, fragment_id, start_offset, end_offset)."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            fragment_id = uuid4()
+
+            # Create user and media with fragment
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Test Article', 'ready_for_reading', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'Test canonical text content', '<p>Test</p>')
+                """),
+                {"id": fragment_id, "media_id": media_id},
+            )
+
+            # Create first highlight
+            session.execute(
+                text("""
+                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                    VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'exact', 'prefix', 'suffix')
+                """),
+                {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+            )
+            session.commit()
+
+            # Attempt to create duplicate highlight at same span
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                        VALUES (:id, :user_id, :fragment_id, 0, 10, 'blue', 'exact', 'prefix', 'suffix')
+                    """),
+                    {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "uix_highlights_user_fragment_offsets" in str(exc_info.value)
+
+            # Clean up
+            session.execute(
+                text("DELETE FROM highlights WHERE fragment_id = :id"), {"id": fragment_id}
+            )
+            session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_second_annotation_for_highlight_rejected(self, migrated_engine):
+        """Unique constraint prevents multiple annotations per highlight."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            fragment_id = uuid4()
+            highlight_id = uuid4()
+
+            # Create user, media, fragment, and highlight
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Test Article', 'ready_for_reading', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'Test canonical text content', '<p>Test</p>')
+                """),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                    VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'exact', 'prefix', 'suffix')
+                """),
+                {"id": highlight_id, "user_id": user_id, "fragment_id": fragment_id},
+            )
+
+            # Create first annotation
+            session.execute(
+                text("""
+                    INSERT INTO annotations (id, highlight_id, body)
+                    VALUES (:id, :highlight_id, 'First annotation')
+                """),
+                {"id": uuid4(), "highlight_id": highlight_id},
+            )
+            session.commit()
+
+            # Attempt to create second annotation for same highlight
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO annotations (id, highlight_id, body)
+                        VALUES (:id, :highlight_id, 'Second annotation')
+                    """),
+                    {"id": uuid4(), "highlight_id": highlight_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "uix_annotations_one_per_highlight" in str(exc_info.value)
+
+            # Clean up
+            session.execute(
+                text("DELETE FROM annotations WHERE highlight_id = :id"), {"id": highlight_id}
+            )
+            session.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": highlight_id})
+            session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_highlight_delete_cascades_annotation(self, migrated_engine):
+        """Deleting a highlight cascades to delete its annotation."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            fragment_id = uuid4()
+            highlight_id = uuid4()
+            annotation_id = uuid4()
+
+            # Create user, media, fragment, highlight, and annotation
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Test Article', 'ready_for_reading', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'Test canonical text content', '<p>Test</p>')
+                """),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                    VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'exact', 'prefix', 'suffix')
+                """),
+                {"id": highlight_id, "user_id": user_id, "fragment_id": fragment_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO annotations (id, highlight_id, body)
+                    VALUES (:id, :highlight_id, 'Test annotation')
+                """),
+                {"id": annotation_id, "highlight_id": highlight_id},
+            )
+            session.commit()
+
+            # Verify annotation exists
+            result = session.execute(
+                text("SELECT COUNT(*) FROM annotations WHERE id = :id"),
+                {"id": annotation_id},
+            )
+            assert result.scalar() == 1
+
+            # Delete highlight
+            session.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": highlight_id})
+            session.commit()
+
+            # Verify annotation was cascaded
+            result = session.execute(
+                text("SELECT COUNT(*) FROM annotations WHERE id = :id"),
+                {"id": annotation_id},
+            )
+            assert result.scalar() == 0
+
+            # Clean up
+            session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_fragment_delete_cascades_highlights(self, migrated_engine):
+        """Deleting a fragment cascades to delete associated highlights (and annotations)."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            fragment_id = uuid4()
+            highlight_id = uuid4()
+            annotation_id = uuid4()
+
+            # Create user, media, fragment, highlight, and annotation
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Test Article', 'ready_for_reading', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'Test canonical text content', '<p>Test</p>')
+                """),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                    VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'exact', 'prefix', 'suffix')
+                """),
+                {"id": highlight_id, "user_id": user_id, "fragment_id": fragment_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO annotations (id, highlight_id, body)
+                    VALUES (:id, :highlight_id, 'Test annotation')
+                """),
+                {"id": annotation_id, "highlight_id": highlight_id},
+            )
+            session.commit()
+
+            # Verify highlight and annotation exist
+            result = session.execute(
+                text("SELECT COUNT(*) FROM highlights WHERE id = :id"),
+                {"id": highlight_id},
+            )
+            assert result.scalar() == 1
+            result = session.execute(
+                text("SELECT COUNT(*) FROM annotations WHERE id = :id"),
+                {"id": annotation_id},
+            )
+            assert result.scalar() == 1
+
+            # Delete fragment
+            session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
+            session.commit()
+
+            # Verify highlight was cascaded
+            result = session.execute(
+                text("SELECT COUNT(*) FROM highlights WHERE id = :id"),
+                {"id": highlight_id},
+            )
+            assert result.scalar() == 0
+
+            # Verify annotation was also cascaded (via highlight cascade)
+            result = session.execute(
+                text("SELECT COUNT(*) FROM annotations WHERE id = :id"),
+                {"id": annotation_id},
+            )
+            assert result.scalar() == 0
+
+            # Clean up
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_valid_highlight_colors_accepted(self, migrated_engine):
+        """All valid highlight colors are accepted."""
+        valid_colors = ["yellow", "green", "blue", "pink", "purple"]
+
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            fragment_id = uuid4()
+
+            # Create user and media with fragment
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Test Article', 'ready_for_reading', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'Test canonical text content for highlights', '<p>Test</p>')
+                """),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            session.commit()
+
+            # Create highlights with each valid color (at different offsets to avoid uniqueness constraint)
+            for i, color in enumerate(valid_colors):
+                start = i * 5
+                end = start + 4
+                session.execute(
+                    text("""
+                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                        VALUES (:id, :user_id, :fragment_id, :start, :end, :color, 'text', '', '')
+                    """),
+                    {
+                        "id": uuid4(),
+                        "user_id": user_id,
+                        "fragment_id": fragment_id,
+                        "start": start,
+                        "end": end,
+                        "color": color,
+                    },
+                )
+
+            session.commit()
+
+            # Verify all highlights were inserted
+            result = session.execute(
+                text("SELECT COUNT(*) FROM highlights WHERE fragment_id = :fid"),
+                {"fid": fragment_id},
+            )
+            count = result.scalar()
+            assert count == len(valid_colors)
+
+            # Clean up
+            session.execute(
+                text("DELETE FROM highlights WHERE fragment_id = :id"), {"id": fragment_id}
+            )
+            session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_overlapping_highlights_allowed(self, migrated_engine):
+        """Overlapping highlights at different offsets are allowed."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            fragment_id = uuid4()
+
+            # Create user and media with fragment
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Test Article', 'ready_for_reading', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'Test canonical text content', '<p>Test</p>')
+                """),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            session.commit()
+
+            # Create first highlight: [0, 10)
+            session.execute(
+                text("""
+                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                    VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'exact1', 'prefix', 'suffix')
+                """),
+                {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+            )
+
+            # Create overlapping highlight: [5, 15) - overlaps with first
+            session.execute(
+                text("""
+                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                    VALUES (:id, :user_id, :fragment_id, 5, 15, 'blue', 'exact2', 'prefix', 'suffix')
+                """),
+                {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+            )
+
+            # Create nested highlight: [2, 8) - contained within first
+            session.execute(
+                text("""
+                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
+                    VALUES (:id, :user_id, :fragment_id, 2, 8, 'green', 'exact3', 'prefix', 'suffix')
+                """),
+                {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+            )
+
+            session.commit()
+
+            # Verify all highlights were inserted
+            result = session.execute(
+                text("SELECT COUNT(*) FROM highlights WHERE fragment_id = :fid"),
+                {"fid": fragment_id},
+            )
+            assert result.scalar() == 3
+
+            # Clean up
+            session.execute(
+                text("DELETE FROM highlights WHERE fragment_id = :id"), {"id": fragment_id}
+            )
+            session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+
 class TestCeleryAndRedis:
     """Tests for Celery app and Redis connectivity."""
 

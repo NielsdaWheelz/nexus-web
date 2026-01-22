@@ -30,8 +30,9 @@ nexus/
 │   ├── models.py  # SQLAlchemy ORM models
 │   └── session.py # Session management
 ├── schemas/       # Pydantic request/response models
-│   ├── library.py # Library schemas
-│   └── media.py   # Media and fragment schemas
+│   ├── library.py    # Library schemas
+│   ├── media.py      # Media and fragment schemas
+│   └── highlights.py # Highlight and annotation schemas (S2)
 ├── services/      # Business logic
 │   ├── bootstrap.py     # User/library bootstrap
 │   ├── capabilities.py  # Media capabilities derivation
