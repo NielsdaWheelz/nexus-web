@@ -21,7 +21,6 @@ from sqlalchemy.orm import Session
 
 from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
-from nexus.auth.verifier import MockTokenVerifier
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.fixtures import (
@@ -32,6 +31,7 @@ from tests.fixtures import (
     FIXTURE_TITLE,
 )
 from tests.helpers import auth_headers, create_test_user_id
+from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
 
 # =============================================================================
@@ -53,7 +53,7 @@ def auth_client(engine):
         finally:
             db.close()
 
-    verifier = MockTokenVerifier()
+    verifier = MockJwtVerifier()
     app = create_app(skip_auth_middleware=True)
 
     # Add auth middleware first (so it runs second)

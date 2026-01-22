@@ -38,7 +38,7 @@ No PR may violate the Slice 0 spec (`s0_spec.md`) or the constitution.
   - `success_response()` helper
   - `error_response()` helper
   - Exception handlers
-- `app.py`: FastAPI app creation
+- `app.py`: FastAPI app factory (no module-level app)
 - `api/routes/health.py`: Health endpoint
 - `db/engine.py`: create_engine with connection pooling
 - `db/session.py`:
@@ -46,7 +46,7 @@ No PR may violate the Slice 0 spec (`s0_spec.md`) or the constitution.
   - `transaction()` context manager
 
 ### App Entrypoints (`apps/`)
-- `apps/api/main.py`: Thin launcher imports from `nexus.app`
+- `apps/api/main.py`: Thin launcher creates app via `create_app`
 - `apps/worker/main.py`: Placeholder for Celery
 
 ### Migrations (`migrations/`)

@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 import jwt
 
-from nexus.auth.verifier import MockTokenVerifier
+from tests.support.test_verifier import MockJwtVerifier
 
 # Default test token settings
 DEFAULT_ISSUER = "test-issuer"
@@ -38,7 +38,7 @@ def mint_test_token(
     Returns:
         A signed JWT token string.
     """
-    private_key = MockTokenVerifier.get_private_key()
+    private_key = MockJwtVerifier.get_private_key()
 
     now = int(time.time())
     payload = {

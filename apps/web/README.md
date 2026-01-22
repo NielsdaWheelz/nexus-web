@@ -33,15 +33,41 @@ The BFF filters FastAPI response headers via allowlist:
 
 ## Setup
 
+The `.env.local` file is created automatically by `make setup`. If you need to create it manually:
+
 ```bash
 # From repo root
-cd apps/web
-npm install
+make setup
+```
+
+Or create `apps/web/.env.local` manually with:
+
+```bash
+# Required: FastAPI backend URL
+FASTAPI_BASE_URL=http://localhost:8000
+
+# Required: Supabase local configuration (from supabase status)
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
+
+# Optional: Environment (default: local)
+NEXUS_ENV=local
+
+# Required in staging/prod: Internal API secret
+# NEXUS_INTERNAL_SECRET=your-secret
+```
+
+To get your Supabase local credentials:
+```bash
+supabase status
 ```
 
 ## Development
 
 ```bash
+# Install dependencies
+npm install
+
 # Start the development server
 npm run dev
 
@@ -51,26 +77,19 @@ make web
 
 The app runs at http://localhost:3000 by default.
 
-**Note**: The FastAPI server must be running for the app to work. Start it with `make api` from the repo root.
+**Prerequisites**:
+- Supabase local must be running (`supabase start`)
+- FastAPI server must be running (`make api`)
 
 ## Environment Variables
 
-Create `.env.local` for local development:
-
-```bash
-# Required: FastAPI backend URL
-FASTAPI_BASE_URL=http://localhost:8000
-
-# Required: Supabase configuration
-NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
-
-# Optional: Environment (default: local)
-NEXUS_ENV=local
-
-# Required in staging/prod: Internal API secret
-NEXUS_INTERNAL_SECRET=your-secret
-```
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FASTAPI_BASE_URL` | Yes | FastAPI server URL |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL (local: `http://127.0.0.1:54321`) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon key |
+| `NEXUS_ENV` | No | Environment (default: `local`) |
+| `NEXUS_INTERNAL_SECRET` | staging/prod | Internal API secret |
 
 ## Project Structure
 

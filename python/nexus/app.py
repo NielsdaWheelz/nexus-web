@@ -3,6 +3,11 @@
 This module creates and configures the FastAPI application instance.
 It registers exception handlers, auth middleware, request-id middleware, and routes.
 
+Token Verification:
+- All environments (local, test, staging, prod) use SupabaseJwksVerifier
+- Runtime always verifies JWTs via Supabase JWKS endpoint
+- No local/test fallback - only env values change between environments
+
 Middleware Ordering (Critical):
 - Middleware runs in reverse order of registration
 - RequestIDMiddleware is added LAST so it runs FIRST (outermost)
@@ -28,9 +33,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from nexus.api.routes import api_router
+from nexus.api.routes import create_api_router
 from nexus.auth.middleware import AuthMiddleware
-from nexus.auth.verifier import MockTokenVerifier, SupabaseJwksVerifier
+from nexus.auth.verifier import SupabaseJwksVerifier
 from nexus.config import Environment, get_settings
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
@@ -69,26 +74,21 @@ def create_bootstrap_callback():
 
 
 def create_token_verifier():
-    """Create the appropriate token verifier based on environment.
+    """Create the token verifier using Supabase JWKS.
+
+    All environments (local, test, staging, prod) use the same verifier.
+    Only the configuration values (JWKS URL, issuer, audiences) change.
 
     Returns:
-        SupabaseJwksVerifier in staging/prod, MockTokenVerifier in local/test.
+        SupabaseJwksVerifier configured with settings from environment.
     """
     settings = get_settings()
 
-    if settings.nexus_env in (Environment.STAGING, Environment.PROD):
-        # Production verifier with Supabase JWKS
-        return SupabaseJwksVerifier(
-            jwks_url=settings.supabase_jwks_url,  # type: ignore
-            issuer=settings.normalized_issuer,  # type: ignore
-            audiences=settings.audience_list,
-        )
-    else:
-        # Test verifier for local/test environments
-        return MockTokenVerifier(
-            issuer=settings.test_token_issuer,
-            audiences=settings.test_audience_list,
-        )
+    return SupabaseJwksVerifier(
+        jwks_url=settings.supabase_jwks_url,  # type: ignore
+        issuer=settings.normalized_issuer,  # type: ignore
+        audiences=settings.audience_list,
+    )
 
 
 def create_app(
@@ -151,6 +151,8 @@ def create_app(
         return await call_next(request)
 
     # Include API routes (must be before middleware for correct ordering)
+    # Use router factory to avoid import-time settings loading
+    api_router = create_api_router(include_test_routes=settings.nexus_env == Environment.TEST)
     app.include_router(api_router)
 
     # Add auth middleware (runs on all requests except public paths)
@@ -187,9 +189,3 @@ def add_request_id_middleware(app: FastAPI, log_requests: bool = True) -> None:
     """
     app.add_middleware(RequestIDMiddleware, log_requests=log_requests)
     logger.info("request_id_middleware_enabled")
-
-
-# Create the application instance
-app = create_app()
-# Add request-id middleware LAST so it runs FIRST (outermost)
-add_request_id_middleware(app)

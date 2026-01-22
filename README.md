@@ -16,7 +16,7 @@ nexus/
 │   │   ├── config.py            # Pydantic settings
 │   │   ├── errors.py            # Error codes
 │   │   ├── responses.py         # Response envelopes
-│   │   ├── app.py               # FastAPI app creation
+│   │   ├── app.py               # FastAPI app factory (no module-level app)
 │   │   ├── api/                 # HTTP routers
 │   │   ├── auth/                # Authentication (JWT verifiers, middleware)
 │   │   ├── db/                  # Database layer + ORM models
@@ -32,8 +32,11 @@ nexus/
 │   │       └── 0002_slice1_ingestion_framework.py  # S1: processing lifecycle, storage
 │   └── alembic.ini
 │
+├── supabase/                    # Supabase local configuration
+│   └── config.toml              # Ports: API=54321, DB=54322
+│
 ├── docker/                      # Docker configs
-│   ├── docker-compose.yml       # Local dev services (postgres 15.8, redis 7.2)
+│   ├── docker-compose.yml       # Local dev services (redis only)
 │   └── Dockerfile.api
 │
 ├── .github/workflows/           # CI configuration
@@ -52,6 +55,7 @@ nexus/
 - **Single Python Package**: `python/nexus/` is imported by both API and worker.
 - **Auth Flow**: Supabase auth → Next.js session cookies → Bearer token to FastAPI.
 - **Visibility Enforcement**: All authorization happens in FastAPI, never in Next.js.
+- **JWT Verification**: All environments use Supabase JWKS for token verification.
 
 ## Quick Start
 
@@ -59,28 +63,28 @@ nexus/
 
 - Python 3.12+
 - Node.js 20+
-- Docker
+- Docker (running)
 - [uv](https://github.com/astral-sh/uv) package manager
+- Supabase CLI (`brew install supabase/tap/supabase`)
 
 ### Setup
 
 ```bash
-# Full setup (installs deps, starts services, runs migrations, creates .env)
+# Full setup (starts Supabase local, installs deps, runs migrations, creates .env)
 make setup
-
-# If you have a local postgres on port 5432, use an alternate port:
-POSTGRES_PORT=5433 make setup
-
-# Install frontend dependencies
-cd apps/web && npm install
 ```
 
-This creates a `.env` file with your configuration that's automatically loaded by subsequent commands.
+This will:
+1. Start Supabase local (Postgres + Auth + Studio)
+2. Create test databases
+3. Install Python and Node.js dependencies
+4. Run database migrations
+5. Create `.env` and `apps/web/.env.local` with Supabase configuration
 
 ### Development
 
 ```bash
-# Start infrastructure services (postgres, redis)
+# Start infrastructure services (supabase + redis)
 make dev
 
 # In terminal 1: Start API server (http://localhost:8000)
@@ -93,16 +97,13 @@ make web
 make worker
 
 # Run all tests
-make test-all
+make test
 
 # Run backend tests only
-make test
+make test-back
 
 # Run migration tests (separate database)
 make test-migrations
-
-# Run frontend tests only
-make test-web
 
 # Seed development data (creates fixture media)
 make seed
@@ -120,14 +121,14 @@ make seed
 ### Infrastructure Commands
 
 ```bash
-# Start infrastructure (postgres + redis)
-make infra-up
+# Start infrastructure (supabase + redis)
+make dev
 
 # Stop infrastructure
-make infra-down
+make down
 
-# View infrastructure logs
-make infra-logs
+# View docker logs (redis only)
+make logs
 
 # Run a migration rollback
 make migrate-down
@@ -141,12 +142,24 @@ Running `make setup` creates a `.env` file with your local configuration:
 
 ```bash
 # Infrastructure ports
-POSTGRES_PORT=5433
 REDIS_PORT=6379
 
 # Application config
 NEXUS_ENV=local
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5433/nexus_dev
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/postgres
+DATABASE_URL_TEST=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test
+DATABASE_URL_TEST_MIGRATIONS=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations
+REDIS_URL=redis://localhost:6379/0
+
+# Supabase local configuration
+SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_ANON_KEY=<generated-by-supabase>
+SUPABASE_SERVICE_ROLE_KEY=<generated-by-supabase>
+
+# Supabase auth settings (used by FastAPI)
+SUPABASE_ISSUER=http://127.0.0.1:54321/auth/v1
+SUPABASE_JWKS_URL=http://127.0.0.1:54321/auth/v1/.well-known/jwks.json
+SUPABASE_AUDIENCES=authenticated
 ```
 
 This file is:
@@ -162,10 +175,10 @@ This file is:
 |----------|----------|-------------|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `NEXUS_ENV` | No | Environment: `local`, `test`, `staging`, `prod` (default: `local`) |
+| `SUPABASE_JWKS_URL` | Yes | Full URL to Supabase JWKS endpoint |
+| `SUPABASE_ISSUER` | Yes | Expected JWT issuer |
+| `SUPABASE_AUDIENCES` | Yes | Comma-separated list of allowed audiences |
 | `NEXUS_INTERNAL_SECRET` | staging/prod | BFF authentication secret |
-| `SUPABASE_JWKS_URL` | staging/prod | Full URL to Supabase JWKS endpoint |
-| `SUPABASE_ISSUER` | staging/prod | Expected JWT issuer |
-| `SUPABASE_AUDIENCES` | staging/prod | Comma-separated list of allowed audiences |
 
 #### Celery Worker
 
@@ -206,13 +219,14 @@ This file is:
    - Extract access token from session (server-side only)
    - Forward to FastAPI with `Authorization: Bearer <token>`
    - Attach `X-Nexus-Internal` header
-4. FastAPI validates JWT and derives user identity
+4. FastAPI validates JWT via Supabase JWKS and derives user identity
 
 ### Security Model
 
 - **Tokens never in localStorage**: Access tokens exist only in server runtime
 - **BFF gate**: In staging/prod, FastAPI rejects requests without internal header
 - **Visibility masking**: Unauthorized access returns 404 (not 403) to hide existence
+- **Supabase JWKS verification**: All environments verify JWTs via Supabase JWKS endpoint
 
 ### Request Tracing
 
@@ -230,6 +244,31 @@ curl -H "X-Request-ID: my-trace-123" http://localhost:8000/health
 # Response includes the ID in header and any error body
 ```
 
+## Supabase Local
+
+This project uses Supabase local for development:
+
+- **API**: http://localhost:54321
+- **Database**: localhost:54322 (postgres/postgres)
+- **Studio**: http://localhost:54323 (database admin UI)
+- **Inbucket**: http://localhost:54324 (email testing)
+
+### Supabase Commands
+
+```bash
+# Start Supabase local
+supabase start
+
+# Stop Supabase local
+supabase stop
+
+# View Supabase status
+supabase status
+
+# View Supabase logs
+supabase logs
+```
+
 ## API Documentation
 
 When running locally:
@@ -241,16 +280,16 @@ When running locally:
 ### Commands
 
 ```bash
-make test              # Backend tests (excludes migrations)
+make test              # All tests (backend + migrations + frontend)
+make test-back         # Backend tests (excludes migrations)
 make test-migrations   # Migration tests (separate DB)
-make test-web          # Frontend tests
-make test-all          # All tests
+make test-front        # Frontend tests
 make verify            # Full verification (lint + format + all tests)
 ```
 
 ### Test Architecture
 
-- **Backend Integration**: Tests hit FastAPI with MockTokenVerifier
+- **Backend Integration**: Tests use TestTokenVerifier (test-only RSA keypair)
 - **BFF Smoke Tests**: Verify header attachment and auth flow
 - **Frontend Unit**: Component tests with mocked fetch
 
@@ -258,21 +297,43 @@ make verify            # Full verification (lint + format + all tests)
 
 ```bash
 # Backend
-make lint              # Run ruff linter
-make fmt               # Format with ruff
+make lint-back         # Run ruff linter
+make fmt-back          # Format with ruff
 
 # Frontend
-make lint-web          # Run ESLint
-cd apps/web && npm run lint
+make lint-front        # Run ESLint
+make fmt-front         # Fix ESLint issues
+
+# All
+make lint              # Run all linters
+make fmt               # Format all code
 ```
 
 ## Troubleshooting
 
 ### Port Conflicts
 
+Supabase uses fixed ports (54321-54324). If they're in use:
 ```bash
-# Use alternate ports
-POSTGRES_PORT=5433 WEB_PORT=3001 make setup
+# Check what's using the ports
+lsof -i :54321
+lsof -i :54322
+
+# Stop conflicting processes before running setup
+```
+
+### Supabase Not Starting
+
+```bash
+# Check Docker is running
+docker ps
+
+# Check Supabase status
+supabase status
+
+# Reset Supabase (deletes local data)
+supabase stop
+supabase start
 ```
 
 ### Missing Schema
@@ -285,9 +346,9 @@ make migrate-test  # Test database
 ### Stale Connections
 
 ```bash
-# Kill idle connections
-docker exec <postgres-container> psql -U postgres -d postgres -c \
-  "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname LIKE 'nexus_test%' AND state LIKE 'idle%';"
+# Restart Supabase to clear connections
+supabase stop
+supabase start
 ```
 
 ## License

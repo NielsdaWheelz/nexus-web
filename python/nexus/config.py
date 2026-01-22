@@ -10,14 +10,13 @@ Redis / Celery Configuration:
     CELERY_BROKER_URL: Celery broker URL (defaults to REDIS_URL)
     CELERY_RESULT_BACKEND: Celery result backend URL (defaults to REDIS_URL)
 
-Auth Configuration (required in staging/prod):
+Auth Configuration (required in all environments):
     SUPABASE_JWKS_URL: Full URL to Supabase JWKS endpoint
     SUPABASE_ISSUER: Expected JWT issuer (trailing slash stripped)
     SUPABASE_AUDIENCES: Comma-separated list of allowed audiences
 
-Test Auth Configuration (optional, have defaults):
-    TEST_TOKEN_ISSUER: Issuer for test tokens (default: test-issuer)
-    TEST_TOKEN_AUDIENCES: Comma-separated test audiences (default: test-audience)
+Note: All environments use Supabase JWKS for JWT verification.
+Local/test environments use Supabase local, staging/prod use cloud.
 """
 
 from enum import Enum
@@ -43,8 +42,8 @@ class Settings(BaseSettings):
     Settings are loaded from environment variables.
     Validation rules:
     - DATABASE_URL is always required
-    - NEXUS_INTERNAL_SECRET is required in staging and prod
-    - Supabase auth settings are required in staging and prod
+    - SUPABASE_JWKS_URL, SUPABASE_ISSUER, SUPABASE_AUDIENCES are required in all environments
+    - NEXUS_INTERNAL_SECRET is required in staging and prod only
     """
 
     nexus_env: Environment = Field(default=Environment.LOCAL, alias="NEXUS_ENV")
@@ -56,7 +55,7 @@ class Settings(BaseSettings):
     celery_broker_url: str | None = Field(default=None, alias="CELERY_BROKER_URL")
     celery_result_backend: str | None = Field(default=None, alias="CELERY_RESULT_BACKEND")
 
-    # Supabase auth settings (required in staging/prod)
+    # Supabase auth settings (required in all environments)
     supabase_jwks_url: str | None = Field(default=None, alias="SUPABASE_JWKS_URL")
     supabase_issuer: str | None = Field(default=None, alias="SUPABASE_ISSUER")
     supabase_audiences: str | None = Field(default=None, alias="SUPABASE_AUDIENCES")
@@ -83,24 +82,30 @@ class Settings(BaseSettings):
     }
 
     @model_validator(mode="after")
-    def validate_staging_prod_requirements(self) -> "Settings":
-        """Ensure required settings are set in staging/prod."""
-        if self.nexus_env in (Environment.STAGING, Environment.PROD):
-            missing = []
-            if not self.nexus_internal_secret:
-                missing.append("NEXUS_INTERNAL_SECRET")
-            if not self.supabase_jwks_url:
-                missing.append("SUPABASE_JWKS_URL")
-            if not self.supabase_issuer:
-                missing.append("SUPABASE_ISSUER")
-            if not self.supabase_audiences:
-                missing.append("SUPABASE_AUDIENCES")
+    def validate_required_settings(self) -> "Settings":
+        """Ensure required settings are set for all environments."""
+        # Supabase auth settings are required in all environments
+        missing_auth = []
+        if not self.supabase_jwks_url:
+            missing_auth.append("SUPABASE_JWKS_URL")
+        if not self.supabase_issuer:
+            missing_auth.append("SUPABASE_ISSUER")
+        if not self.supabase_audiences:
+            missing_auth.append("SUPABASE_AUDIENCES")
 
-            if missing:
+        if missing_auth:
+            raise ValueError(
+                f"Missing required Supabase auth settings: {', '.join(missing_auth)}. "
+                "Run 'make setup' to configure Supabase local, or set these environment variables."
+            )
+
+        # NEXUS_INTERNAL_SECRET is required only in staging/prod
+        if self.nexus_env in (Environment.STAGING, Environment.PROD):
+            if not self.nexus_internal_secret:
                 raise ValueError(
-                    f"Missing required settings for NEXUS_ENV={self.nexus_env.value}: "
-                    f"{', '.join(missing)}"
+                    f"NEXUS_INTERNAL_SECRET is required for NEXUS_ENV={self.nexus_env.value}"
                 )
+
         return self
 
     @property
@@ -114,11 +119,6 @@ class Settings(BaseSettings):
         if self.supabase_audiences:
             return [a.strip() for a in self.supabase_audiences.split(",") if a.strip()]
         return []
-
-    @property
-    def test_audience_list(self) -> list[str]:
-        """Parse comma-separated test audiences into a list."""
-        return [a.strip() for a in self.test_token_audiences.split(",") if a.strip()]
 
     @property
     def normalized_issuer(self) -> str | None:

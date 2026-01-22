@@ -17,10 +17,10 @@ from sqlalchemy import Engine
 
 from nexus.app import add_request_id_middleware, create_app
 from nexus.auth.middleware import AuthMiddleware
-from nexus.auth.verifier import MockTokenVerifier
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.helpers import auth_headers, create_test_user_id
+from tests.support.test_verifier import MockJwtVerifier
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def auth_client(engine: Engine):
         finally:
             db.close()
 
-    verifier = MockTokenVerifier()
+    verifier = MockJwtVerifier()
     app = create_app(skip_auth_middleware=True)
 
     # Add auth middleware first (so it runs second)
@@ -163,7 +163,7 @@ class TestRequestIdMiddleware:
             finally:
                 db.close()
 
-        verifier = MockTokenVerifier()
+        verifier = MockJwtVerifier()
         app = create_app(skip_auth_middleware=True)
 
         # Add auth middleware first (so it runs second)
