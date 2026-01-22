@@ -232,6 +232,22 @@ This file is:
 - **Visibility masking**: Unauthorized access returns 404 (not 403) to hide existence
 - **Supabase JWKS verification**: All environments verify JWTs via Supabase JWKS endpoint
 
+### BFF Proxy
+
+All Next.js API routes use a centralized proxy helper (`apps/web/src/lib/api/proxy.ts`) that:
+
+- Attaches `Authorization: Bearer <token>` from Supabase session
+- Attaches `X-Nexus-Internal` header (staging/prod only)
+- Forwards `X-Request-ID` for tracing
+- Forwards query strings from the original request
+- Handles binary and text responses correctly
+- Filters request and response headers via allowlists
+- Never exposes cookies, tokens, or internal headers to the browser
+
+**Request header allowlist:** `content-type`, `accept`, `range`, `if-none-match`, `if-modified-since`
+
+**Response header allowlist:** `x-request-id`, `content-type`, `content-length`, `cache-control`, `etag`, `vary`, `content-disposition`, `location`
+
 ### Request Tracing
 
 Every request receives an `X-Request-ID` header for correlation and debugging:
@@ -305,7 +321,15 @@ Supabase integration tests start and stop Supabase local by default. Set
 
 - **Backend Integration**: Tests use `MockJwtVerifier` (test-only RSA keypair)
 - **BFF Smoke Tests**: Verify header attachment and auth flow
-- **Frontend Unit**: Component tests with mocked fetch
+- **Frontend Unit**: Vitest + happy-dom for component and utility tests
+- **Proxy Tests**: Comprehensive tests for BFF proxy behavior including:
+  - Authentication (401 when no session)
+  - Header allowlist/blocklist enforcement
+  - Query string forwarding
+  - Binary response handling
+  - Request ID propagation
+
+Frontend tests use `proxyToFastAPIWithDeps` for testability with injectable dependencies.
 
 ## Code Quality
 
