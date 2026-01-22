@@ -87,8 +87,9 @@ Introduce S2 error codes and route modules without implementing handlers yet.
 - create route file: `python/nexus/api/routes/highlights.py`
   - create empty `router = APIRouter(prefix="/highlights", tags=["highlights"])`
   - register in app (mount router, no endpoints yet — endpoints added in PR-06)
-- add shared route helper (if not already present):
-  - `get_readable_media_or_404(db, viewer_id, media_id)` — raises NotFoundError if not readable
+- add internal service helper to `python/nexus/services/media.py`:
+  - `get_media_for_viewer_or_404(db, viewer_id, media_id)` — returns `Media` row or raises `NotFoundError`
+  - used internally by other service functions (routes still call exactly one service function)
 
 ### tests
 - minimal route import/regression test (server starts, router mounted)
