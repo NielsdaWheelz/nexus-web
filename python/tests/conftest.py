@@ -8,8 +8,15 @@ Test isolation strategy:
 """
 
 import os
+import sys
 from collections.abc import Generator
+from pathlib import Path
 from uuid import UUID, uuid4
+
+# Add repo root to sys.path for importing top-level packages (e.g., apps)
+_repo_root = Path(__file__).parent.parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
 
 import pytest
 from fastapi.testclient import TestClient

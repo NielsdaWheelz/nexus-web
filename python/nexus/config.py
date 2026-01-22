@@ -5,6 +5,11 @@ Environment Configuration:
     DATABASE_URL: PostgreSQL connection string (required)
     NEXUS_INTERNAL_SECRET: Internal API secret (required in staging/prod)
 
+Redis / Celery Configuration:
+    REDIS_URL: Redis connection string (required for worker)
+    CELERY_BROKER_URL: Celery broker URL (defaults to REDIS_URL)
+    CELERY_RESULT_BACKEND: Celery result backend URL (defaults to REDIS_URL)
+
 Auth Configuration (required in staging/prod):
     SUPABASE_JWKS_URL: Full URL to Supabase JWKS endpoint
     SUPABASE_ISSUER: Expected JWT issuer (trailing slash stripped)
@@ -45,6 +50,11 @@ class Settings(BaseSettings):
     nexus_env: Environment = Field(default=Environment.LOCAL, alias="NEXUS_ENV")
     database_url: Annotated[str, Field(alias="DATABASE_URL")]
     nexus_internal_secret: str | None = Field(default=None, alias="NEXUS_INTERNAL_SECRET")
+
+    # Redis / Celery settings
+    redis_url: str | None = Field(default=None, alias="REDIS_URL")
+    celery_broker_url: str | None = Field(default=None, alias="CELERY_BROKER_URL")
+    celery_result_backend: str | None = Field(default=None, alias="CELERY_RESULT_BACKEND")
 
     # Supabase auth settings (required in staging/prod)
     supabase_jwks_url: str | None = Field(default=None, alias="SUPABASE_JWKS_URL")
@@ -105,6 +115,16 @@ class Settings(BaseSettings):
         if self.supabase_issuer:
             return self.supabase_issuer.rstrip("/")
         return None
+
+    @property
+    def effective_celery_broker_url(self) -> str | None:
+        """Return Celery broker URL, falling back to REDIS_URL if not set."""
+        return self.celery_broker_url or self.redis_url
+
+    @property
+    def effective_celery_result_backend(self) -> str | None:
+        """Return Celery result backend URL, falling back to REDIS_URL if not set."""
+        return self.celery_result_backend or self.redis_url
 
 
 @lru_cache

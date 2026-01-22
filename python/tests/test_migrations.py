@@ -211,13 +211,16 @@ class TestSchemaConstraints:
     def test_invalid_media_kind_rejected(self, migrated_engine):
         """Check constraint prevents invalid media kind values."""
         with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
             with pytest.raises(IntegrityError) as exc_info:
                 session.execute(
                     text("""
-                        INSERT INTO media (id, kind, title, processing_status)
-                        VALUES (:id, 'invalid_kind', 'Test', 'pending')
+                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                        VALUES (:id, 'invalid_kind', 'Test', 'pending', :user_id)
                     """),
-                    {"id": uuid4()},
+                    {"id": uuid4(), "user_id": user_id},
                 )
                 session.commit()
 
@@ -225,20 +228,25 @@ class TestSchemaConstraints:
             assert "ck_media_kind" in str(exc_info.value)
 
     def test_invalid_processing_status_rejected(self, migrated_engine):
-        """Check constraint prevents invalid processing status values."""
+        """Enum type prevents invalid processing status values."""
+        from sqlalchemy.exc import DBAPIError
+
         with Session(migrated_engine) as session:
-            with pytest.raises(IntegrityError) as exc_info:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            # With enum type, casting an invalid value fails with a database error
+            with pytest.raises(DBAPIError):
                 session.execute(
                     text("""
-                        INSERT INTO media (id, kind, title, processing_status)
-                        VALUES (:id, 'web_article', 'Test', 'invalid_status')
+                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                        VALUES (:id, 'web_article', 'Test', 'invalid_status'::processing_status_enum, :user_id)
                     """),
-                    {"id": uuid4()},
+                    {"id": uuid4(), "user_id": user_id},
                 )
                 session.commit()
 
             session.rollback()
-            assert "ck_media_processing_status" in str(exc_info.value)
 
     def test_library_name_too_short_rejected(self, migrated_engine):
         """Check constraint prevents empty library names."""
@@ -284,25 +292,35 @@ class TestSchemaConstraints:
         valid_kinds = ["web_article", "epub", "pdf", "video", "podcast_episode"]
 
         with Session(migrated_engine) as session:
+            # Need a user for created_by_user_id
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
             for kind in valid_kinds:
                 media_id = uuid4()
                 session.execute(
                     text("""
-                        INSERT INTO media (id, kind, title, processing_status)
-                        VALUES (:id, :kind, :title, 'pending')
+                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                        VALUES (:id, :kind, :title, 'pending', :user_id)
                     """),
-                    {"id": media_id, "kind": kind, "title": f"Test {kind}"},
+                    {"id": media_id, "kind": kind, "title": f"Test {kind}", "user_id": user_id},
                 )
 
             session.commit()
 
-            # Verify all were inserted
-            result = session.execute(text("SELECT COUNT(*) FROM media"))
+            # Verify all were inserted (including system user media)
+            result = session.execute(
+                text("SELECT COUNT(*) FROM media WHERE created_by_user_id = :user_id"),
+                {"user_id": user_id},
+            )
             count = result.scalar()
             assert count == len(valid_kinds)
 
             # Clean up
-            session.execute(text("DELETE FROM media"))
+            session.execute(
+                text("DELETE FROM media WHERE created_by_user_id = :user_id"), {"user_id": user_id}
+            )
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
 
     def test_valid_processing_statuses_accepted(self, migrated_engine):
@@ -317,18 +335,289 @@ class TestSchemaConstraints:
         ]
 
         with Session(migrated_engine) as session:
+            # Need a user for created_by_user_id
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
             for status in valid_statuses:
                 media_id = uuid4()
                 session.execute(
                     text("""
-                        INSERT INTO media (id, kind, title, processing_status)
-                        VALUES (:id, 'web_article', :title, :status)
+                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                        VALUES (:id, 'web_article', :title, CAST(:status AS processing_status_enum), :user_id)
                     """),
-                    {"id": media_id, "title": f"Test {status}", "status": status},
+                    {
+                        "id": media_id,
+                        "title": f"Test {status}",
+                        "status": status,
+                        "user_id": user_id,
+                    },
                 )
 
             session.commit()
 
             # Clean up
             session.execute(text("DELETE FROM media"))
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
+
+
+class TestS1SchemaConstraints:
+    """Tests for S1-specific schema constraints (idempotency indexes, URL lengths)."""
+
+    def test_canonical_url_uniqueness(self, migrated_engine):
+        """Partial unique index on (kind, canonical_url) enforced."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            canonical_url = "https://example.com/article"
+
+            # Create first media with canonical_url
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id, canonical_url)
+                    VALUES (:id, 'web_article', 'First Article', 'pending', :user_id, :canonical_url)
+                """),
+                {"id": uuid4(), "user_id": user_id, "canonical_url": canonical_url},
+            )
+            session.commit()
+
+            # Attempt to create second media with same kind and canonical_url
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id, canonical_url)
+                        VALUES (:id, 'web_article', 'Second Article', 'pending', :user_id, :canonical_url)
+                    """),
+                    {"id": uuid4(), "user_id": user_id, "canonical_url": canonical_url},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "uix_media_canonical_url" in str(exc_info.value)
+
+            # Clean up
+            session.execute(
+                text("DELETE FROM media WHERE created_by_user_id = :user_id"), {"user_id": user_id}
+            )
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_file_sha256_uniqueness_per_user(self, migrated_engine):
+        """Partial unique index on (user, kind, sha256) enforced for pdf/epub."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            another_user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": another_user_id})
+
+            file_sha256 = "abc123def456"
+
+            # Create first pdf with sha256
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id, file_sha256)
+                    VALUES (:id, 'pdf', 'First PDF', 'pending', :user_id, :file_sha256)
+                """),
+                {"id": uuid4(), "user_id": user_id, "file_sha256": file_sha256},
+            )
+            session.commit()
+
+            # Same user, same sha256 → should fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id, file_sha256)
+                        VALUES (:id, 'pdf', 'Duplicate PDF', 'pending', :user_id, :file_sha256)
+                    """),
+                    {"id": uuid4(), "user_id": user_id, "file_sha256": file_sha256},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "uix_media_file_sha256" in str(exc_info.value)
+
+            # Different user, same sha256 → should succeed
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id, file_sha256)
+                    VALUES (:id, 'pdf', 'Another User PDF', 'pending', :user_id, :file_sha256)
+                """),
+                {"id": uuid4(), "user_id": another_user_id, "file_sha256": file_sha256},
+            )
+            session.commit()
+
+            # Clean up
+            session.execute(
+                text("DELETE FROM media WHERE created_by_user_id IN (:u1, :u2)"),
+                {"u1": user_id, "u2": another_user_id},
+            )
+            session.execute(
+                text("DELETE FROM users WHERE id IN (:u1, :u2)"),
+                {"u1": user_id, "u2": another_user_id},
+            )
+            session.commit()
+
+    def test_requested_url_length_constraint(self, migrated_engine):
+        """Check constraint prevents requested_url over 2048 characters."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            long_url = "https://example.com/" + "x" * 2030
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id, requested_url)
+                        VALUES (:id, 'web_article', 'Test', 'pending', :user_id, :requested_url)
+                    """),
+                    {"id": uuid4(), "user_id": user_id, "requested_url": long_url},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_media_requested_url_length" in str(exc_info.value)
+
+    def test_canonical_url_length_constraint(self, migrated_engine):
+        """Check constraint prevents canonical_url over 2048 characters."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            long_url = "https://example.com/" + "y" * 2030
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id, canonical_url)
+                        VALUES (:id, 'web_article', 'Test', 'pending', :user_id, :canonical_url)
+                    """),
+                    {"id": uuid4(), "user_id": user_id, "canonical_url": long_url},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_media_canonical_url_length" in str(exc_info.value)
+
+    def test_media_file_table_exists(self, migrated_engine):
+        """media_file table exists and can store file metadata."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'pdf', 'Test PDF', 'pending', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+
+            # Insert media_file
+            session.execute(
+                text("""
+                    INSERT INTO media_file (media_id, storage_path, content_type, size_bytes)
+                    VALUES (:media_id, 'media/test/original.pdf', 'application/pdf', 1048576)
+                """),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+            # Verify it was inserted
+            result = session.execute(
+                text(
+                    "SELECT storage_path, content_type, size_bytes FROM media_file WHERE media_id = :media_id"
+                ),
+                {"media_id": media_id},
+            )
+            row = result.fetchone()
+            assert row is not None
+            assert row[0] == "media/test/original.pdf"
+            assert row[1] == "application/pdf"
+            assert row[2] == 1048576
+
+            # Clean up (cascade should handle media_file)
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_failure_stage_enum(self, migrated_engine):
+        """failure_stage enum accepts valid values and rejects invalid."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            valid_stages = ["upload", "extract", "transcribe", "embed", "other"]
+
+            for stage in valid_stages:
+                media_id = uuid4()
+                session.execute(
+                    text("""
+                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id, failure_stage)
+                        VALUES (:id, 'web_article', :title, 'failed', :user_id, CAST(:stage AS failure_stage_enum))
+                    """),
+                    {"id": media_id, "title": f"Test {stage}", "user_id": user_id, "stage": stage},
+                )
+
+            session.commit()
+
+            # Clean up
+            session.execute(
+                text("DELETE FROM media WHERE created_by_user_id = :user_id"), {"user_id": user_id}
+            )
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_processing_attempts_default(self, migrated_engine):
+        """processing_attempts defaults to 0."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Test', 'pending', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.commit()
+
+            result = session.execute(
+                text("SELECT processing_attempts FROM media WHERE id = :id"),
+                {"id": media_id},
+            )
+            attempts = result.scalar()
+            assert attempts == 0
+
+            # Clean up
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+
+class TestCeleryAndRedis:
+    """Tests for Celery app and Redis connectivity."""
+
+    def test_celery_app_initializes(self):
+        """Worker app can be imported without error."""
+        from apps.worker.main import app
+
+        assert app is not None
+        # Just check the broker URL is configured (may be None in test env without REDIS_URL)
+        # The app should still initialize
+
+    def test_redis_connectivity(self):
+        """Redis is reachable if REDIS_URL is set."""
+        import os
+
+        redis_url = os.environ.get("REDIS_URL")
+        if not redis_url:
+            pytest.skip("REDIS_URL not set, skipping Redis connectivity test")
+
+        from redis import Redis
+
+        r = Redis.from_url(redis_url)
+        assert r.ping()
