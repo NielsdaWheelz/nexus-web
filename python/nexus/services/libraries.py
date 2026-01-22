@@ -14,6 +14,7 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import LibraryMediaOut, LibraryOut
 from nexus.schemas.media import MediaOut
+from nexus.services.capabilities import derive_capabilities
 
 
 def create_library(db: Session, viewer_id: UUID, name: str) -> LibraryOut:
@@ -532,11 +533,14 @@ def list_library_media(
     if result.fetchone() is None:
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
-    # Fetch media
+    # Fetch media with fields needed for capabilities
     result = db.execute(
         text("""
             SELECT m.id, m.kind, m.title, m.canonical_source_url,
-                   m.processing_status, m.created_at, m.updated_at
+                   m.processing_status, m.failure_stage, m.last_error_code,
+                   m.external_playback_url, m.created_at, m.updated_at,
+                   EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) as has_file,
+                   EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) as has_fragments
             FROM media m
             JOIN library_media lm ON lm.media_id = m.id
             WHERE lm.library_id = :library_id
@@ -546,15 +550,29 @@ def list_library_media(
         {"library_id": library_id, "limit": limit},
     )
 
-    return [
-        MediaOut(
-            id=row[0],
+    media_list = []
+    for row in result.fetchall():
+        capabilities = derive_capabilities(
             kind=row[1],
-            title=row[2],
-            canonical_source_url=row[3],
             processing_status=row[4],
-            created_at=row[5],
-            updated_at=row[6],
+            last_error_code=row[6],
+            media_file_exists=row[10],
+            external_playback_url_exists=row[7] is not None,
+            has_fragments=row[11],
+            has_plain_text=False,  # TODO: Check media.plain_text when added
         )
-        for row in result.fetchall()
-    ]
+        media_list.append(
+            MediaOut(
+                id=row[0],
+                kind=row[1],
+                title=row[2],
+                canonical_source_url=row[3],
+                processing_status=row[4],
+                failure_stage=row[5],
+                last_error_code=row[6],
+                capabilities=capabilities,
+                created_at=row[8],
+                updated_at=row[9],
+            )
+        )
+    return media_list

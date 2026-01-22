@@ -32,10 +32,15 @@ nexus/
 ├── schemas/       # Pydantic request/response models
 │   ├── library.py # Library schemas
 │   └── media.py   # Media and fragment schemas
-└── services/      # Business logic
-    ├── bootstrap.py   # User/library bootstrap
-    ├── libraries.py   # Library domain logic
-    └── media.py       # Media visibility + retrieval
+├── services/      # Business logic
+│   ├── bootstrap.py     # User/library bootstrap
+│   ├── capabilities.py  # Media capabilities derivation
+│   ├── libraries.py     # Library domain logic
+│   ├── media.py         # Media visibility + retrieval
+│   └── upload.py        # File upload + ingest logic
+└── storage/       # Supabase Storage client
+    ├── client.py    # StorageClient abstraction + FakeStorageClient
+    └── paths.py     # Storage path building utilities
 ```
 
 ## API Endpoints
@@ -54,6 +59,9 @@ nexus/
 | DELETE | `/libraries/{id}/media/{media_id}` | Remove media from library |
 | GET | `/media/{id}` | Get media by ID (visibility enforced) |
 | GET | `/media/{id}/fragments` | Get fragments for media (visibility enforced) |
+| POST | `/media/upload/init` | Initialize file upload (PDF/EPUB) |
+| POST | `/media/{id}/ingest` | Confirm upload and process file |
+| GET | `/media/{id}/file` | Get signed download URL |
 
 ### Public Endpoints
 
@@ -114,6 +122,55 @@ Available predicates:
 - `is_library_admin(session, viewer_id, library_id)` - admin role in library
 - `is_admin_of_any_containing_library(session, viewer_id, media_id)` - admin of any library with media
 - `is_library_member(session, viewer_id, library_id)` - any role in library
+
+### Capabilities Derivation
+
+Media capabilities are derived from status and metadata:
+
+```python
+from nexus.services.capabilities import derive_capabilities
+
+caps = derive_capabilities(
+    kind="pdf",
+    processing_status="pending",
+    last_error_code=None,
+    media_file_exists=True,
+    external_playback_url_exists=False,
+)
+
+# caps.can_read == True (PDF can render before extraction)
+# caps.can_download_file == True (file exists)
+```
+
+Capabilities:
+- `can_read` - can render primary content pane
+- `can_highlight` - can create highlights
+- `can_quote` - can quote-to-chat
+- `can_search` - included in search results
+- `can_play` - has playable external URL
+- `can_download_file` - can download original file
+
+### Storage Client
+
+File storage uses Supabase Storage with signed URLs:
+
+```python
+from nexus.storage import get_storage_client, build_storage_path
+
+client = get_storage_client()
+
+# Sign upload URL
+signed = client.sign_upload(path, content_type="application/pdf")
+# Returns { path, token } for uploadToSignedUrl()
+
+# Sign download URL
+url = client.sign_download(path, expires_in=300)
+
+# Build storage paths (applies test prefix automatically)
+path = build_storage_path(media_id, "pdf")
+# Production: media/{id}/original.pdf
+# Test: test_runs/{run_id}/media/{id}/original.pdf
+```
 
 ### Service/Route Separation
 
