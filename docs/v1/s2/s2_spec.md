@@ -53,7 +53,9 @@ CREATE TABLE highlights (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
   CONSTRAINT chk_offsets_valid
-    CHECK (start_offset >= 0 AND end_offset > start_offset)
+    CHECK (start_offset >= 0 AND end_offset > start_offset),
+  CONSTRAINT chk_color_valid
+    CHECK (color IN ('yellow', 'green', 'blue', 'pink', 'purple'))
 );
 
 CREATE UNIQUE INDEX uix_highlights_user_fragment_offsets
@@ -123,23 +125,27 @@ POST /media/from_url
 
 ### 4.2 Canonical URL Rules
 
-- **requested_url**: exactly what the user submitted
-- **canonical_url**:
-  - Final URL after redirects
+- **requested_url**: exactly what the user submitted (stored immediately at creation)
+- **canonical_url**: final URL after redirects, normalized (set during ingestion)
   - Lowercase scheme + host
   - Fragment (`#...`) stripped
   - Query params preserved (no heuristic stripping in v1)
+  - NULL until ingestion resolves redirects
 
-**Dedup Behavior**
+**Dedup Behavior (two-phase)**
 
-- If `(kind=web_article, canonical_url)` exists:
-  - Reuse the media row
-  - Ensure the media is added to the user's default library
-  - Return `duplicate = true`
-- If not:
-  - Create media row
-  - Add to default library
-  - Begin ingestion
+**Phase 1: Creation (`POST /media/from_url`)**
+- Create provisional media row with `requested_url` set, `canonical_url = NULL`
+- Add to user's default library
+- Return `media_id`, `processing_status=pending`
+
+**Phase 2: Ingestion (after redirect resolution)**
+- Fetch page, follow redirects, compute `canonical_url = normalize(final_url)`
+- Check if `(kind=web_article, canonical_url)` already exists:
+  - **If exists:** delete this provisional row, attach existing media to user's library, return early
+  - **If not exists:** set `canonical_url` (claim uniqueness), proceed with sanitization
+
+**Result:** True dedup by final URL. Two different `requested_url` values that redirect to the same final URL produce one media row.
 
 **Placeholder Title**
 
@@ -321,6 +327,8 @@ Frontend must:
 - Reject selections intersecting `<pre>` or `<code>`
 - Apply the same canonicalization rules (block boundaries, `<br>` newlines) as the server to ensure offset alignment
 
+**Client responsibility:** Compute correct offsets only. Server derives `exact`/`prefix`/`suffix` from those offsets.
+
 ---
 
 ### 7.2 Create Highlight
@@ -335,12 +343,11 @@ POST /fragments/{fragment_id}/highlights
 {
   "start_offset": 120,
   "end_offset": 145,
-  "color": "yellow",
-  "exact": "the highlighted text",
-  "prefix": "context before ",
-  "suffix": " context after"
+  "color": "yellow"
 }
 ```
+
+Client sends **offsets + color only**. Server derives `exact`, `prefix`, `suffix` from `canonical_text`.
 
 **Response:** `201 Created`
 
@@ -365,7 +372,11 @@ POST /fragments/{fragment_id}/highlights
 - `end_offset > start_offset`
 - `end_offset <= len(fragment.canonical_text)` (service-level)
 - `color` must be one of: `yellow`, `green`, `blue`, `pink`, `purple`
-- `exact` must equal `canonical_text[start_offset:end_offset]`
+
+**Server-Side Derivation:**
+- `exact = canonical_text[start_offset:end_offset]`
+- `prefix = canonical_text[max(0, start_offset - 64):start_offset]`
+- `suffix = canonical_text[end_offset:min(len, end_offset + 64)]`
 
 ---
 
@@ -423,17 +434,16 @@ PATCH /highlights/{highlight_id}
 {
   "start_offset": 121,
   "end_offset": 146,
-  "color": "green",
-  "exact": "...",
-  "prefix": "...",
-  "suffix": "..."
+  "color": "green"
 }
 ```
+
+Client sends **offsets + color only**. Server re-derives `exact`, `prefix`, `suffix` if offsets change.
 
 **Response:** `200 OK` — updated highlight object.
 
 **Rules:**
-- If offsets change, `exact`/`prefix`/`suffix` must also be provided
+- If offsets change, server re-derives `exact`/`prefix`/`suffix`
 - Uniqueness constraint re-validated on update
 - No drag handles in v1; user reselects span
 
@@ -467,12 +477,16 @@ Deleting a highlight cascades to delete its annotation.
 
 ---
 
-### 7.8 Prefix/Suffix Length Rules
+### 7.8 Prefix/Suffix Derivation Rules
+
+Server derives `prefix` and `suffix` at create/update time:
 
 - `prefix`: the `min(64, start_offset)` codepoints immediately before `start_offset`
 - `suffix`: the `min(64, len(canonical_text) - end_offset)` codepoints immediately after `end_offset`
 - Both fields are **NOT NULL** but may be shorter than 64 chars at document boundaries
-- Server validates that provided prefix/suffix match the canonical text at those positions
+- Client never sends these fields; server computes them from `canonical_text`
+
+**Why store them?** For future anchor-based recovery if `canonical_text` changes (not in S2 scope, but the data model supports it).
 
 ---
 
