@@ -1,11 +1,26 @@
 """FastAPI application creation and configuration.
 
 This module creates and configures the FastAPI application instance.
-It registers exception handlers, auth middleware, and routes.
+It registers exception handlers, auth middleware, request-id middleware, and routes.
+
+Middleware Ordering (Critical):
+- Middleware runs in reverse order of registration
+- RequestIDMiddleware is added LAST so it runs FIRST (outermost)
+- This ensures all requests (including auth failures) get X-Request-ID
+
+Order of registration:
+1. AuthMiddleware (runs second - after request-id)
+2. RequestIDMiddleware (runs first - outermost)
+
+Actual execution order per request:
+1. RequestIDMiddleware (sets request_id, starts timer)
+2. AuthMiddleware (verifies auth, sets viewer)
+3. Route handler
+4. AuthMiddleware (returns response)
+5. RequestIDMiddleware (logs, sets response header)
 """
 
 import json
-import logging
 from uuid import UUID
 
 from fastapi import FastAPI, Request
@@ -19,6 +34,8 @@ from nexus.auth.verifier import MockTokenVerifier, SupabaseJwksVerifier
 from nexus.config import Environment, get_settings
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.logging import configure_logging, get_logger
+from nexus.middleware.request_id import RequestIDMiddleware
 from nexus.responses import (
     api_error_handler,
     error_response,
@@ -27,7 +44,10 @@ from nexus.responses import (
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 
-logger = logging.getLogger(__name__)
+# Configure structured logging at import time
+configure_logging()
+
+logger = get_logger(__name__)
 
 
 def create_bootstrap_callback():
@@ -147,13 +167,29 @@ def create_app(
         )
 
         logger.info(
-            "Auth middleware enabled (env=%s, internal_header_required=%s)",
-            settings.nexus_env.value,
-            settings.requires_internal_header,
+            "auth_middleware_enabled",
+            env=settings.nexus_env.value,
+            internal_header_required=settings.requires_internal_header,
         )
 
     return app
 
 
+def add_request_id_middleware(app: FastAPI, log_requests: bool = True) -> None:
+    """Add request-id middleware to the app.
+
+    This should be called AFTER all other middleware is added, so it runs FIRST.
+    This ensures every response includes X-Request-ID, including auth failures.
+
+    Args:
+        app: The FastAPI application.
+        log_requests: Whether to log access entries for each request.
+    """
+    app.add_middleware(RequestIDMiddleware, log_requests=log_requests)
+    logger.info("request_id_middleware_enabled")
+
+
 # Create the application instance
 app = create_app()
+# Add request-id middleware LAST so it runs FIRST (outermost)
+add_request_id_middleware(app)

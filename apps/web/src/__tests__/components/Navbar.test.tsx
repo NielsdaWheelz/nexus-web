@@ -1,8 +1,9 @@
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import Navbar from "@/components/Navbar";
 
 // Mock next/navigation
-jest.mock("next/navigation", () => ({
+vi.mock("next/navigation", () => ({
   usePathname: () => "/libraries",
 }));
 
@@ -18,7 +19,7 @@ describe("Navbar", () => {
   });
 
   it("toggles collapsed state", () => {
-    const onToggle = jest.fn();
+    const onToggle = vi.fn();
     render(<Navbar onToggle={onToggle} />);
 
     const toggleButton = screen.getByLabelText("Collapse navigation");
@@ -28,7 +29,7 @@ describe("Navbar", () => {
   });
 
   it("shows expand button when collapsed", () => {
-    const onToggle = jest.fn();
+    const onToggle = vi.fn();
     render(<Navbar onToggle={onToggle} />);
 
     // Collapse
@@ -43,6 +44,7 @@ describe("Navbar", () => {
   it("highlights active link", () => {
     render(<Navbar />);
     const librariesLink = screen.getByText("Libraries").closest("a");
-    expect(librariesLink).toHaveClass("active");
+    // CSS modules hash the class name, so check for partial match
+    expect(librariesLink?.className).toMatch(/active/i);
   });
 });
