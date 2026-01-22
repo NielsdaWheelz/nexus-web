@@ -80,10 +80,12 @@ Introduce S2 error codes and route modules without implementing handlers yet.
 - extend `python/nexus/errors.py`:
   - add:
     - `E_INGEST_FAILED` (502)
-    - `E_INGEST_TIMEOUT` (504)
     - `E_SANITIZATION_FAILED` (500)
     - `E_HIGHLIGHT_INVALID_RANGE` (400)
     - `E_HIGHLIGHT_CONFLICT` (409)
+    - `E_MEDIA_NOT_READY` (409)
+  - move `E_INGEST_TIMEOUT` to new "Ingestion errors" comment block (already exists, 504)
+  - note: `E_INGEST_TIMEOUT` (504) already exists — do not duplicate
 - create route file: `python/nexus/api/routes/highlights.py`
   - create empty `router = APIRouter(prefix="/highlights", tags=["highlights"])`
   - register in app (mount router, no endpoints yet — endpoints added in PR-06)
@@ -310,6 +312,7 @@ Implement highlight + annotation CRUD per spec, owner-only visibility, and stric
 - error handling:
   - invalid range → `E_HIGHLIGHT_INVALID_RANGE`
   - uniqueness collision → `E_HIGHLIGHT_CONFLICT` (409)
+  - media not ready → `E_MEDIA_NOT_READY` (409)
   - unauthorized → masked 404
 
 ### tests
@@ -320,7 +323,7 @@ Implement highlight + annotation CRUD per spec, owner-only visibility, and stric
   - update preserves id + created_at
   - delete cascades annotation
   - cannot highlight if not in library (404)
-  - cannot highlight before ready_for_reading
+  - cannot highlight before ready_for_reading (`E_MEDIA_NOT_READY`)
 - **codepoint test:** fixture with emoji in canonical_text; verify server slices exact/prefix/suffix correctly using codepoint indices (not UTF-16)
 - **bounds validation test:** verify `end_offset > len(canonical_text)` returns `E_HIGHLIGHT_INVALID_RANGE` (DB cannot enforce this; service-level only)
 
