@@ -98,3 +98,37 @@ class FileDownloadResponse(BaseModel):
 
     url: str
     expires_at: str
+
+
+# =============================================================================
+# URL-Based Ingestion Schemas (S2)
+# =============================================================================
+
+
+class FromUrlRequest(BaseModel):
+    """Request schema for POST /media/from_url.
+
+    Creates a provisional web_article from a URL.
+    URL validation (length, scheme, host, etc.) happens in the service layer
+    with clear error messages.
+    """
+
+    url: str = Field(
+        min_length=1,
+        description="The URL to ingest. Must be an absolute http/https URL.",
+    )
+
+
+class FromUrlResponse(BaseModel):
+    """Response schema for POST /media/from_url.
+
+    Returns the created media info. In PR-03:
+    - duplicate is always False (true dedup in PR-04)
+    - processing_status is always 'pending'
+    - ingest_enqueued is always False (ingestion not implemented yet)
+    """
+
+    media_id: UUID
+    duplicate: bool
+    processing_status: str
+    ingest_enqueued: bool

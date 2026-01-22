@@ -17,11 +17,36 @@ from sqlalchemy.orm import Session
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
-from nexus.schemas.media import UploadInitRequest
+from nexus.schemas.media import FromUrlRequest, UploadInitRequest
 from nexus.services import media as media_service
 from nexus.services import upload as upload_service
 
 router = APIRouter()
+
+
+@router.post("/media/from_url", status_code=201)
+def create_from_url(
+    request: FromUrlRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Create a provisional web_article from a URL.
+
+    Creates a media row with processing_status='pending' and attaches it
+    to the viewer's default library. No fetching or parsing occurs.
+
+    Returns:
+        - media_id: UUID of the created media
+        - duplicate: Always false in PR-03 (true dedup in PR-04)
+        - processing_status: Always 'pending'
+        - ingest_enqueued: Always false (ingestion not implemented yet)
+    """
+    result = media_service.create_provisional_web_article(
+        db=db,
+        viewer_id=viewer.user_id,
+        url=request.url,
+    )
+    return success_response(result.model_dump(mode="json"))
 
 
 @router.get("/media/{media_id}")
