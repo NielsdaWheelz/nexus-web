@@ -85,3 +85,26 @@ jobs:
         run: |
           cd apps/web
           npm run typecheck || true  # Allow type errors for now
+
+  test-frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd apps/web
+          npm ci
+
+      - name: Run tests
+        run: |
+          cd apps/web
+          npm test
