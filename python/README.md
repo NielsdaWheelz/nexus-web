@@ -38,8 +38,9 @@ nexus/
 │   ├── bootstrap.py     # User/library bootstrap
 │   ├── capabilities.py  # Media capabilities derivation
 │   ├── libraries.py     # Library domain logic
-│   ├── media.py         # Media visibility + retrieval
-│   └── upload.py        # File upload + ingest logic
+│   ├── media.py         # Media visibility + retrieval + URL-based creation
+│   ├── upload.py        # File upload + ingest logic
+│   └── url_normalize.py # URL validation and normalization (S2)
 └── storage/       # Supabase Storage client
     ├── client.py    # StorageClient abstraction + FakeStorageClient
     └── paths.py     # Storage path building utilities
@@ -61,6 +62,7 @@ nexus/
 | DELETE | `/libraries/{id}/media/{media_id}` | Remove media from library |
 | GET | `/media/{id}` | Get media by ID (visibility enforced) |
 | GET | `/media/{id}/fragments` | Get fragments for media (visibility enforced) |
+| POST | `/media/from_url` | Create provisional web_article from URL (S2) |
 | POST | `/media/upload/init` | Initialize file upload (PDF/EPUB) |
 | POST | `/media/{id}/ingest` | Confirm upload and process file |
 | GET | `/media/{id}/file` | Get signed download URL |

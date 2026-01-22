@@ -4,15 +4,18 @@ All media-domain business logic lives here.
 Routes may not contain domain logic or raw DB access - they must call these functions.
 """
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
+from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.media import FragmentOut, MediaOut
+from nexus.schemas.media import FragmentOut, FromUrlResponse, MediaOut
 from nexus.services.capabilities import derive_capabilities
+from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 
 def get_media_for_viewer(
@@ -99,6 +102,118 @@ def can_read_media(db: Session, viewer_id: UUID, media_id: UUID) -> bool:
         True if viewer can read the media, False otherwise.
     """
     return _can_read_media(db, viewer_id, media_id)
+
+
+def get_media_for_viewer_or_404(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+) -> Media:
+    """Get media by ID if readable by viewer, return the ORM model.
+
+    Internal helper for service functions that need the ORM model.
+    Returns Media row if readable by viewer.
+
+    Args:
+        db: Database session.
+        viewer_id: The ID of the viewer.
+        media_id: The ID of the media to fetch.
+
+    Returns:
+        The Media ORM model if found and viewer can read it.
+
+    Raises:
+        NotFoundError: If media does not exist or viewer cannot read it.
+    """
+    if not _can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    result = db.execute(
+        text("SELECT * FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    )
+    row = result.fetchone()
+
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    # Query returns all columns, map to Media model
+    return db.get(Media, media_id)
+
+
+def create_provisional_web_article(
+    db: Session,
+    viewer_id: UUID,
+    url: str,
+) -> FromUrlResponse:
+    """Create a provisional web_article media row from a URL.
+
+    This creates a media row with:
+    - kind = 'web_article'
+    - processing_status = 'pending'
+    - requested_url = exactly as provided
+    - canonical_url = NULL (set in PR-04 after redirect resolution)
+    - canonical_source_url = normalize_url_for_display(url)
+    - title = truncated URL or 'Untitled'
+
+    The media is immediately attached to the viewer's default library.
+
+    No fetching, parsing, or deduplication occurs in this function.
+    Those happen in PR-04 during ingestion.
+
+    Args:
+        db: Database session.
+        viewer_id: The ID of the viewer creating the media.
+        url: The URL to create a provisional media row for.
+
+    Returns:
+        FromUrlResponse with media_id, duplicate=False, processing_status='pending',
+        ingest_enqueued=False.
+
+    Raises:
+        InvalidRequestError: If URL validation fails.
+        NotFoundError: If user's default library doesn't exist.
+    """
+    # Import here to avoid circular dependency
+    from nexus.services.upload import _ensure_in_default_library
+
+    # Validate URL (raises InvalidRequestError on failure)
+    validate_requested_url(url)
+
+    # Normalize for display/storage
+    canonical_source = normalize_url_for_display(url)
+
+    # Generate placeholder title from URL (truncate to 255 chars)
+    title = url[:255] if url else "Untitled"
+
+    now = datetime.now(UTC)
+
+    # Create media row
+    media = Media(
+        kind=MediaKind.web_article.value,
+        title=title,
+        requested_url=url,
+        canonical_url=None,  # Not set until PR-04 after redirect resolution
+        canonical_source_url=canonical_source,
+        processing_status=ProcessingStatus.pending,
+        created_by_user_id=viewer_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(media)
+    db.flush()  # Get the generated ID
+
+    # Attach to viewer's default library
+    _ensure_in_default_library(db, viewer_id, media.id)
+
+    db.commit()
+
+    return FromUrlResponse(
+        media_id=media.id,
+        duplicate=False,  # Always false in PR-03; true dedup in PR-04
+        processing_status=ProcessingStatus.pending.value,
+        ingest_enqueued=False,  # Always false in PR-03; ingestion not implemented
+    )
 
 
 def list_fragments_for_viewer(
