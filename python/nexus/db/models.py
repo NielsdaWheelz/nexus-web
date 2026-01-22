@@ -375,3 +375,120 @@ class LibraryMedia(Base):
     # Relationships
     library: Mapped["Library"] = relationship("Library", back_populates="library_media")
     media: Mapped["Media"] = relationship("Media", back_populates="library_media")
+
+
+# =============================================================================
+# Slice 2: Highlights + Annotations
+# =============================================================================
+
+
+class Highlight(Base):
+    """Highlight model - a user-owned selection in a fragment.
+
+    Offsets are half-open [start_offset, end_offset) in Unicode codepoints
+    over fragment.canonical_text. Overlapping highlights are allowed.
+    Duplicate highlights at the exact same span by the same user are forbidden.
+
+    The exact, prefix, and suffix fields are server-derived and persisted for:
+    - Cheap reads
+    - Debugging
+    - Future repair tooling (out of scope for v1)
+    """
+
+    __tablename__ = "highlights"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    fragment_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("fragments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    color: Mapped[str] = mapped_column(Text, nullable=False)
+    exact: Mapped[str] = mapped_column(Text, nullable=False)
+    prefix: Mapped[str] = mapped_column(Text, nullable=False)
+    suffix: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "start_offset >= 0 AND end_offset > start_offset",
+            name="ck_highlights_offsets_valid",
+        ),
+        CheckConstraint(
+            "color IN ('yellow','green','blue','pink','purple')",
+            name="ck_highlights_color",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "fragment_id",
+            "start_offset",
+            "end_offset",
+            name="uix_highlights_user_fragment_offsets",
+        ),
+    )
+
+    # Note: Relationships deferred to PR-06 per PR-01 spec (keep schema-only)
+
+
+class Annotation(Base):
+    """Annotation model - optional note attached to a highlight (0..1).
+
+    An annotation does not have its own user_id; ownership is derived via
+    highlights.user_id to avoid ownership drift.
+
+    Deleting a highlight cascades to delete its annotation.
+    Deleting an annotation leaves the highlight intact (service behavior).
+    """
+
+    __tablename__ = "annotations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    highlight_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("highlights.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "highlight_id",
+            name="uix_annotations_one_per_highlight",
+        ),
+    )
+
+    # Note: Relationships deferred to PR-06 per PR-01 spec (keep schema-only)

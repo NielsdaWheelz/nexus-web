@@ -29,7 +29,8 @@ nexus/
 │   ├── alembic/
 │   │   └── versions/
 │   │       ├── 0001_slice0_schema.py     # S0: users, libraries, memberships, media, fragments
-│   │       └── 0002_slice1_ingestion_framework.py  # S1: processing lifecycle, storage
+│   │       ├── 0002_slice1_ingestion_framework.py  # S1: processing lifecycle, storage
+│   │       └── 0003_slice2_highlights_annotations.py  # S2: highlights, annotations
 │   └── alembic.ini
 │
 ├── supabase/                    # Supabase local configuration
