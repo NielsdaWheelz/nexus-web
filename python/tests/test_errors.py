@@ -94,6 +94,13 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_NAME_INVALID, 400),
             (ApiErrorCode.E_AUTH_UNAVAILABLE, 503),
             (ApiErrorCode.E_INTERNAL, 500),
+            # S2 error codes
+            (ApiErrorCode.E_INGEST_FAILED, 502),
+            (ApiErrorCode.E_INGEST_TIMEOUT, 504),
+            (ApiErrorCode.E_SANITIZATION_FAILED, 500),
+            (ApiErrorCode.E_HIGHLIGHT_INVALID_RANGE, 400),
+            (ApiErrorCode.E_HIGHLIGHT_CONFLICT, 409),
+            (ApiErrorCode.E_MEDIA_NOT_READY, 409),
         ],
     )
     def test_error_code_maps_to_correct_status(self, code: ApiErrorCode, expected_status: int):

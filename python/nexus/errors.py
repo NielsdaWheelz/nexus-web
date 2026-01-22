@@ -10,7 +10,6 @@ class ApiErrorCode(str, Enum):
     """Standardized error codes for the API.
 
     Format: E_CATEGORY_NAME
-    All error codes are defined here for Slice 0.
     """
 
     # Authentication errors (401)
@@ -35,26 +34,39 @@ class ApiErrorCode(str, Enum):
     E_FILE_TOO_LARGE = "E_FILE_TOO_LARGE"
     E_INVALID_FILE_TYPE = "E_INVALID_FILE_TYPE"
     E_STORAGE_MISSING = "E_STORAGE_MISSING"
-    E_INGEST_TIMEOUT = "E_INGEST_TIMEOUT"
 
-    # Server errors
+    # Highlight errors (400/409)
+    E_HIGHLIGHT_INVALID_RANGE = "E_HIGHLIGHT_INVALID_RANGE"  # 400
+    E_HIGHLIGHT_CONFLICT = "E_HIGHLIGHT_CONFLICT"  # 409
+    E_MEDIA_NOT_READY = "E_MEDIA_NOT_READY"  # 409
+
+    # Ingestion errors (502/504)
+    E_INGEST_FAILED = "E_INGEST_FAILED"  # 502
+    E_INGEST_TIMEOUT = "E_INGEST_TIMEOUT"  # 504
+
+    # Server errors (500/503)
     E_AUTH_UNAVAILABLE = "E_AUTH_UNAVAILABLE"  # 503
     E_INTERNAL = "E_INTERNAL"  # 500
     E_SIGN_UPLOAD_FAILED = "E_SIGN_UPLOAD_FAILED"  # 500
     E_SIGN_DOWNLOAD_FAILED = "E_SIGN_DOWNLOAD_FAILED"  # 500
     E_STORAGE_ERROR = "E_STORAGE_ERROR"  # 500
+    E_SANITIZATION_FAILED = "E_SANITIZATION_FAILED"  # 500
 
 
 # Error code to HTTP status mapping
 ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
+    # Authentication errors
     ApiErrorCode.E_UNAUTHENTICATED: 401,
+    # Authorization errors
     ApiErrorCode.E_FORBIDDEN: 403,
     ApiErrorCode.E_INTERNAL_ONLY: 403,
     ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN: 403,
     ApiErrorCode.E_LAST_ADMIN_FORBIDDEN: 403,
+    # Not found errors
     ApiErrorCode.E_NOT_FOUND: 404,
     ApiErrorCode.E_LIBRARY_NOT_FOUND: 404,
     ApiErrorCode.E_MEDIA_NOT_FOUND: 404,
+    # Validation errors
     ApiErrorCode.E_INVALID_REQUEST: 400,
     ApiErrorCode.E_NAME_INVALID: 400,
     ApiErrorCode.E_INVALID_KIND: 400,
@@ -62,12 +74,20 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_FILE_TOO_LARGE: 400,
     ApiErrorCode.E_INVALID_FILE_TYPE: 400,
     ApiErrorCode.E_STORAGE_MISSING: 400,
+    # Highlight errors
+    ApiErrorCode.E_HIGHLIGHT_INVALID_RANGE: 400,
+    ApiErrorCode.E_HIGHLIGHT_CONFLICT: 409,
+    ApiErrorCode.E_MEDIA_NOT_READY: 409,
+    # Ingestion errors
+    ApiErrorCode.E_INGEST_FAILED: 502,
     ApiErrorCode.E_INGEST_TIMEOUT: 504,
+    # Server errors
     ApiErrorCode.E_AUTH_UNAVAILABLE: 503,
     ApiErrorCode.E_INTERNAL: 500,
     ApiErrorCode.E_SIGN_UPLOAD_FAILED: 500,
     ApiErrorCode.E_SIGN_DOWNLOAD_FAILED: 500,
     ApiErrorCode.E_STORAGE_ERROR: 500,
+    ApiErrorCode.E_SANITIZATION_FAILED: 500,
 }
 
 
