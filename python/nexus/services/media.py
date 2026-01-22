@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media as _can_read_media
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.media import FragmentOut, MediaOut
 
@@ -34,25 +35,25 @@ def get_media_for_viewer(
     Raises:
         NotFoundError: If media does not exist or viewer cannot read it.
     """
-    # Single query pattern: returns a row only if readable
-    # This ensures no timing side-channel on existence
+    # First check if viewer can read the media using the canonical predicate
+    if not _can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    # Fetch the media data
     result = db.execute(
         text("""
             SELECT m.id, m.kind, m.title, m.canonical_source_url,
                    m.processing_status, m.created_at, m.updated_at
             FROM media m
             WHERE m.id = :media_id
-            AND EXISTS (
-                SELECT 1 FROM library_media lm
-                JOIN memberships mem ON mem.library_id = lm.library_id
-                WHERE lm.media_id = m.id AND mem.user_id = :viewer_id
-            )
         """),
-        {"media_id": media_id, "viewer_id": viewer_id},
+        {"media_id": media_id},
     )
     row = result.fetchone()
 
     if row is None:
+        # This should not happen if can_read_media returned True,
+        # but handle defensively
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     return MediaOut(
@@ -69,6 +70,8 @@ def get_media_for_viewer(
 def can_read_media(db: Session, viewer_id: UUID, media_id: UUID) -> bool:
     """Check if viewer can read a media item.
 
+    Delegates to the canonical predicate in nexus.auth.permissions.
+
     Args:
         db: Database session.
         viewer_id: The ID of the viewer.
@@ -77,16 +80,7 @@ def can_read_media(db: Session, viewer_id: UUID, media_id: UUID) -> bool:
     Returns:
         True if viewer can read the media, False otherwise.
     """
-    result = db.execute(
-        text("""
-            SELECT 1 FROM library_media lm
-            JOIN memberships mem ON mem.library_id = lm.library_id
-            WHERE lm.media_id = :media_id AND mem.user_id = :viewer_id
-            LIMIT 1
-        """),
-        {"media_id": media_id, "viewer_id": viewer_id},
-    )
-    return result.fetchone() is not None
+    return _can_read_media(db, viewer_id, media_id)
 
 
 def list_fragments_for_viewer(
@@ -97,7 +91,7 @@ def list_fragments_for_viewer(
     """List fragments for a media item if readable by viewer.
 
     Returns ordered fragments if media is readable.
-    Uses 2 queries: check readability, then fetch fragments.
+    Uses the canonical visibility predicate.
 
     Args:
         db: Database session.
@@ -110,24 +104,9 @@ def list_fragments_for_viewer(
     Raises:
         NotFoundError: If media does not exist or viewer cannot read it.
     """
-    # Query 1: Check readability (same as can_read_media, but we also check media exists)
-    # We do this in a single query to distinguish "not found" from "not readable"
-    # But per spec, both return 404 E_MEDIA_NOT_FOUND (masking existence)
-    result = db.execute(
-        text("""
-            SELECT EXISTS (SELECT 1 FROM media WHERE id = :media_id) as media_exists,
-                   EXISTS (
-                       SELECT 1 FROM library_media lm
-                       JOIN memberships mem ON mem.library_id = lm.library_id
-                       WHERE lm.media_id = :media_id AND mem.user_id = :viewer_id
-                   ) as can_read
-        """),
-        {"media_id": media_id, "viewer_id": viewer_id},
-    )
-    row = result.fetchone()
-
-    # If media doesn't exist OR viewer can't read it, return 404 (mask existence)
-    if not row[0] or not row[1]:
+    # Check readability using the canonical predicate
+    # This masks existence - both "not found" and "not readable" return 404
+    if not _can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     # Query 2: Fetch fragments ordered by idx ASC

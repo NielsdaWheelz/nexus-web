@@ -1,3 +1,4 @@
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import Pane from "@/components/Pane";
 
@@ -23,7 +24,7 @@ describe("Pane", () => {
   });
 
   it("shows close button when onClose is provided", () => {
-    const onClose = jest.fn();
+    const onClose = vi.fn();
     render(
       <Pane title="Test" onClose={onClose}>
         <div>Content</div>

@@ -2,18 +2,20 @@
 
 All API responses use a consistent envelope:
 - Success: { "data": ... }
-- Error: { "error": { "code": "E_...", "message": "..." } }
+- Error: { "error": { "code": "E_...", "message": "...", "request_id": "..." } }
+
+The request_id is included in error responses for debugging and support.
 """
 
-import logging
 from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.logging import get_logger, get_request_id
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def success_response(data: Any) -> dict[str, Any]:
@@ -28,17 +30,28 @@ def success_response(data: Any) -> dict[str, Any]:
     return {"data": data}
 
 
-def error_response(code: ApiErrorCode, message: str) -> dict[str, Any]:
+def error_response(
+    code: ApiErrorCode, message: str, request_id: str | None = None
+) -> dict[str, Any]:
     """Create an error response envelope.
 
     Args:
         code: The error code enum value.
         message: Human-readable error message.
+        request_id: Optional request ID for correlation (auto-populated from context if None).
 
     Returns:
-        Dict with "error" key containing code and message.
+        Dict with "error" key containing code, message, and request_id.
     """
-    return {"error": {"code": code.value, "message": message}}
+    # Get request_id from context if not explicitly provided
+    if request_id is None:
+        request_id = get_request_id()
+
+    error = {"code": code.value, "message": message}
+    if request_id:
+        error["request_id"] = request_id
+
+    return {"error": error}
 
 
 async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:

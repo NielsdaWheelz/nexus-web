@@ -8,8 +8,9 @@ Shared Python code for the Nexus platform.
 nexus/
 ├── config.py      # Pydantic settings (loads from .env)
 ├── errors.py      # Error codes and exceptions
-├── responses.py   # Response envelope helpers
-├── app.py         # FastAPI app creation
+├── responses.py   # Response envelope helpers (includes request_id)
+├── logging.py     # Structured logging with structlog
+├── app.py         # FastAPI app creation + middleware setup
 ├── api/           # HTTP routers
 │   ├── deps.py    # FastAPI dependencies
 │   └── routes/    # Route handlers
@@ -19,9 +20,14 @@ nexus/
 │       └── media.py     # Media read endpoints
 ├── auth/          # Authentication
 │   ├── middleware.py  # Auth middleware
+│   ├── permissions.py # Authorization predicates (can_read_media, etc.)
 │   └── verifier.py    # JWT verifiers (SupabaseJwksVerifier, MockTokenVerifier)
+├── middleware/    # Request middleware
+│   ├── __init__.py
+│   └── request_id.py  # X-Request-ID generation and logging
 ├── db/            # Database layer
 │   ├── engine.py  # SQLAlchemy engine
+│   ├── models.py  # SQLAlchemy ORM models
 │   └── session.py # Session management
 ├── schemas/       # Pydantic request/response models
 │   ├── library.py # Library schemas
@@ -56,6 +62,58 @@ nexus/
 | GET | `/health` | Health check |
 
 ## Architecture
+
+### Request Tracing (X-Request-ID)
+
+Every request gets a unique `X-Request-ID` for tracing:
+
+- Generated if not present in request
+- Preserved and normalized if valid (UUID lowercase, alphanumeric preserved)
+- Included in all response headers
+- Included in error response bodies for easy debugging
+- Propagated through BFF → FastAPI → Celery logs
+
+Example error response:
+```json
+{
+  "error": {
+    "code": "E_MEDIA_NOT_FOUND",
+    "message": "Media not found",
+    "request_id": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+### Structured Logging
+
+All logs are JSON-formatted via structlog with consistent fields:
+- `request_id`: Correlation ID for the request
+- `user_id`: Authenticated user (when available)
+- `timestamp`: ISO8601 formatted
+- `method`, `path`, `status_code`, `duration_ms` for access logs
+
+### Authorization Predicates
+
+Visibility checks use canonical predicates in `nexus.auth.permissions`:
+
+```python
+from nexus.auth.permissions import can_read_media, is_library_admin
+
+# Check media readability
+if can_read_media(session, viewer_id, media_id):
+    # User can read
+    
+# Check library admin role
+if is_library_admin(session, viewer_id, library_id):
+    # User is admin
+```
+
+Available predicates:
+- `can_read_media(session, viewer_id, media_id)` - media in any library user belongs to
+- `can_read_media_bulk(session, viewer_id, media_ids)` - batch check (single query)
+- `is_library_admin(session, viewer_id, library_id)` - admin role in library
+- `is_admin_of_any_containing_library(session, viewer_id, media_id)` - admin of any library with media
+- `is_library_member(session, viewer_id, library_id)` - any role in library
 
 ### Service/Route Separation
 
