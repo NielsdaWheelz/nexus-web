@@ -177,6 +177,22 @@ class TestForbiddenImports:
             assert "nexus.services" in source, "libraries.py should import from nexus.services"
 
 
+class TestHighlightsRouterScaffold:
+    """Tests for highlights router scaffold (PR-02)."""
+
+    def test_highlights_router_imports(self):
+        """Highlights router module can be imported and has router object."""
+        from nexus.api.routes import highlights
+
+        assert highlights.router is not None
+
+    def test_highlights_router_has_correct_tags(self):
+        """Highlights router is tagged correctly for OpenAPI grouping."""
+        from nexus.api.routes import highlights
+
+        assert "highlights" in highlights.router.tags
+
+
 class TestRouteFileStructure:
     """Tests for overall route file structure."""
 

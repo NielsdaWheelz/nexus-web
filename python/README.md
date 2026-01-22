@@ -17,7 +17,8 @@ nexus/
 │       ├── health.py    # Health check
 │       ├── me.py        # Current user endpoint
 │       ├── libraries.py # Library CRUD + library-media
-│       └── media.py     # Media read endpoints
+│       ├── media.py     # Media read endpoints
+│       └── highlights.py # Highlight/annotation CRUD (S2, endpoints in PR-06)
 ├── auth/          # Authentication
 │   ├── middleware.py  # Auth middleware
 │   ├── permissions.py # Authorization predicates (can_read_media, etc.)
