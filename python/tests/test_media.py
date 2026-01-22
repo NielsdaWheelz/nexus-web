@@ -41,7 +41,9 @@ from tests.utils.db import DirectSessionManager
 
 @pytest.fixture
 def auth_client(engine):
-    """Create a client with auth middleware for testing."""
+    """Create a client with auth + request-id middleware for testing."""
+    from nexus.app import add_request_id_middleware
+
     session_factory = create_session_factory(engine)
 
     def bootstrap_callback(user_id: UUID) -> UUID:
@@ -54,6 +56,7 @@ def auth_client(engine):
     verifier = MockTokenVerifier()
     app = create_app(skip_auth_middleware=True)
 
+    # Add auth middleware first (so it runs second)
     app.add_middleware(
         AuthMiddleware,
         verifier=verifier,
@@ -61,6 +64,9 @@ def auth_client(engine):
         internal_secret=None,
         bootstrap_callback=bootstrap_callback,
     )
+
+    # Add request-id middleware LAST (so it runs FIRST, outermost)
+    add_request_id_middleware(app, log_requests=False)
 
     return TestClient(app)
 
@@ -148,6 +154,41 @@ class TestGetMedia:
         assert data["kind"] == "web_article"
         assert data["title"] == FIXTURE_TITLE
         assert data["processing_status"] == "ready_for_reading"
+
+    def test_get_media_includes_request_id_header(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Test #21: GET /media/{id} includes X-Request-ID header on 200 response."""
+        user_id = create_test_user_id()
+
+        # Create media
+        with direct_db.session() as session:
+            media_id = create_seeded_media(session)
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # Add media to user's library
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        # Get media
+        response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        # Verify X-Request-ID header is present
+        assert "X-Request-ID" in response.headers
+        # Verify it's a valid format (UUID or alphanumeric)
+        request_id = response.headers["X-Request-ID"]
+        assert len(request_id) > 0
+        assert len(request_id) <= 128
 
     def test_get_media_not_found(self, auth_client):
         """Test #19b: Non-existent media returns 404."""

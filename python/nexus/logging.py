@@ -14,6 +14,15 @@ Usage:
     # Get a logger for a module
     logger = get_logger(__name__)
     logger.info("something_happened", extra_field="value")
+
+Celery Task Logging:
+    from nexus.logging import configure_task_logging, get_logger
+
+    @celery.task
+    def my_task(arg, request_id: str | None = None):
+        configure_task_logging(request_id=request_id, task_name="my_task", task_id=self.request.id)
+        logger = get_logger(__name__)
+        logger.info("task_started")
 """
 
 import logging
@@ -25,17 +34,25 @@ import structlog
 # Context variables for request-scoped logging
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 user_id_var: ContextVar[str | None] = ContextVar("user_id", default=None)
+task_name_var: ContextVar[str | None] = ContextVar("task_name", default=None)
+task_id_var: ContextVar[str | None] = ContextVar("task_id", default=None)
 
 
 def add_request_context(logger: logging.Logger, method_name: str, event_dict: dict) -> dict:
-    """Add request context (request_id, user_id) to all log entries."""
+    """Add request context (request_id, user_id, task_name, task_id) to all log entries."""
     request_id = request_id_var.get()
     user_id = user_id_var.get()
+    task_name = task_name_var.get()
+    task_id = task_id_var.get()
 
     if request_id:
         event_dict["request_id"] = request_id
     if user_id:
         event_dict["user_id"] = user_id
+    if task_name:
+        event_dict["task_name"] = task_name
+    if task_id:
+        event_dict["task_id"] = task_id
 
     return event_dict
 
@@ -130,3 +147,41 @@ def clear_request_context() -> None:
 def get_request_id() -> str | None:
     """Get the current request ID from context."""
     return request_id_var.get()
+
+
+def configure_task_logging(
+    request_id: str | None = None,
+    task_name: str | None = None,
+    task_id: str | None = None,
+) -> None:
+    """Configure logging context for a Celery task.
+
+    Call this at the start of each Celery task to set up proper logging context.
+    All subsequent log entries in the task will include these fields.
+
+    Args:
+        request_id: The request correlation ID (passed from FastAPI when task was enqueued).
+        task_name: The name of the Celery task.
+        task_id: The Celery task ID (from self.request.id).
+
+    Example:
+        @celery.task(bind=True)
+        def my_task(self, arg, request_id: str | None = None):
+            configure_task_logging(
+                request_id=request_id,
+                task_name="my_task",
+                task_id=self.request.id
+            )
+            logger.info("task_started")
+    """
+    request_id_var.set(request_id)
+    task_name_var.set(task_name)
+    task_id_var.set(task_id)
+
+
+def clear_task_context() -> None:
+    """Clear task context at the end of a task."""
+    request_id_var.set(None)
+    task_name_var.set(None)
+    task_id_var.set(None)
+    user_id_var.set(None)

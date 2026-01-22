@@ -203,6 +203,22 @@ This file is:
 - **BFF gate**: In staging/prod, FastAPI rejects requests without internal header
 - **Visibility masking**: Unauthorized access returns 404 (not 403) to hide existence
 
+### Request Tracing
+
+Every request receives an `X-Request-ID` header for correlation and debugging:
+
+- **Generation**: If client doesn't provide one, a UUID v4 is generated
+- **Propagation**: Browser → Next.js → FastAPI → Celery tasks
+- **Logging**: All structured logs (JSON format) include `request_id`
+- **Error responses**: Include `request_id` in the body for easy bug reporting
+
+```bash
+# Request with custom ID
+curl -H "X-Request-ID: my-trace-123" http://localhost:8000/health
+
+# Response includes the ID in header and any error body
+```
+
 ## API Documentation
 
 When running locally:
