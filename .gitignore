@@ -74,6 +74,7 @@ yarn-error.log*
 # Local development
 *.local
 .turbo/
+.dev-ports
 
 # Database
 *.db
