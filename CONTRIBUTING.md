@@ -7,6 +7,10 @@
    - Node.js 20+
    - Docker
    - [uv](https://github.com/astral-sh/uv)
+   - Playwright (for web article ingestion tests):
+     ```bash
+     npx playwright install --with-deps chromium
+     ```
 
 2. Run setup:
    ```bash
@@ -70,6 +74,45 @@ make verify            # Full verification
 - Override hermetic ports with `TEST_POSTGRES_PORT` / `TEST_REDIS_PORT`
 - Hermetic test env variables are centralized in `scripts/test_env.sh`
 
+### Web Article Ingestion Tests
+
+Tests that exercise the full web article ingestion pipeline require Node.js and Playwright:
+
+```bash
+# Install playwright browser
+npx playwright install --with-deps chromium
+
+# Run sync ingestion in tests (no worker required)
+from nexus.tasks.ingest_web_article import run_ingest_sync
+result = run_ingest_sync(db_session, media_id, viewer_id)
+```
+
+**Sync vs Async Ingestion:**
+- `run_ingest_sync(db, media_id, user_id)` - for tests and dev mode
+- `ingest_web_article.delay(media_id, user_id)` - Celery task for production
+
+Both use the same core logic; only the execution wrapper differs.
+
+### pytest-httpserver Fixtures
+
+Integration tests use `pytest-httpserver` for deterministic HTTP fixtures:
+
+```python
+def test_ingestion(httpserver):
+    httpserver.expect_request("/article").respond_with_data(
+        "<html><body>Content</body></html>",
+        content_type="text/html",
+    )
+    url = httpserver.url_for("/article")
+    # ... test with url
+```
+
+**Fixture Server Contract:**
+- **Localhost URLs**: Allowed in `NEXUS_ENV=test` only
+- **Redirects**: Allowed (301, 302, etc.) - useful for testing dedup
+- **JavaScript execution**: Allowed (Playwright renders with JS)
+- **External network access**: Forbidden in CI (all HTTP must go through httpserver fixtures)
+
 ## Pull Request Checklist
 
 - [ ] Tests pass: `make test`
@@ -109,16 +152,24 @@ Browser → Next.js (BFF) → FastAPI → Database
 
 See `docs/v1/slice_roadmap.md` for feature slices.
 
-### Current Slice: S0 (Auth + Libraries Core)
+### Current Slice: S2 (Web Articles + Highlights)
 
 - Auth flow working
 - Library CRUD
 - Pane-based UI shell
-- Seeded fixture media
+- Web article ingestion via URL
+- HTML sanitization and canonicalization
+- Highlights with overlapping support
+- Annotations (0..1 per highlight)
+- Image proxy with SSRF protection
+
+### Completed Slices
+
+- **S0**: Auth + Libraries Core
+- **S1**: Ingestion Framework + Storage
 
 ### Not Yet Implemented
 
-- Real media ingestion
-- Highlights/annotations
-- Chat/conversations
-- Search
+- Chat/conversations (S3)
+- Library sharing (S4)
+- Search (S3/S9)
