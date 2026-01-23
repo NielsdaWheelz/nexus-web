@@ -18,7 +18,7 @@ nexus/
 │       ├── me.py        # Current user endpoint
 │       ├── libraries.py # Library CRUD + library-media
 │       ├── media.py     # Media read endpoints
-│       └── highlights.py # Highlight/annotation CRUD (S2, endpoints in PR-06)
+│       └── highlights.py # Highlight/annotation CRUD (S2)
 ├── auth/          # Authentication
 │   ├── middleware.py  # Auth middleware
 │   ├── permissions.py # Authorization predicates (can_read_media, etc.)
@@ -37,6 +37,7 @@ nexus/
 ├── services/      # Business logic
 │   ├── bootstrap.py     # User/library bootstrap
 │   ├── capabilities.py  # Media capabilities derivation
+│   ├── highlights.py    # Highlight/annotation CRUD operations (S2)
 │   ├── libraries.py     # Library domain logic
 │   ├── media.py         # Media visibility + retrieval + URL-based creation
 │   ├── upload.py        # File upload + ingest logic
@@ -66,6 +67,13 @@ nexus/
 | POST | `/media/upload/init` | Initialize file upload (PDF/EPUB) |
 | POST | `/media/{id}/ingest` | Confirm upload and process file |
 | GET | `/media/{id}/file` | Get signed download URL |
+| POST | `/fragments/{id}/highlights` | Create highlight (S2) |
+| GET | `/fragments/{id}/highlights` | List highlights for fragment (S2) |
+| GET | `/highlights/{id}` | Get highlight by ID (S2) |
+| PATCH | `/highlights/{id}` | Update highlight (S2) |
+| DELETE | `/highlights/{id}` | Delete highlight (S2) |
+| PUT | `/highlights/{id}/annotation` | Upsert annotation (S2) |
+| DELETE | `/highlights/{id}/annotation` | Delete annotation (S2) |
 
 ### Public Endpoints
 
