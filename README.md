@@ -295,6 +295,35 @@ supabase status
 supabase logs
 ```
 
+## Image Proxy
+
+External images in web articles are served through a secure image proxy endpoint (`GET /media/image?url=...`) that provides:
+
+### Security Features
+
+- **SSRF Protection**: Blocks requests to private IPs, localhost, link-local addresses, and cloud metadata endpoints
+- **URL Validation**: Only allows http/https schemes, ports 80/443, and blocks credentials in URLs
+- **Hostname Denylist**: Blocks `.local`, `.internal`, `.lan`, `.home` suffixes
+- **Content Validation**: Verifies images with Pillow, rejects SVG (including disguised SVGs)
+- **Size Limits**: Max 10 MB per image, 4096x4096 max dimensions
+
+### Caching
+
+- In-memory LRU cache with 64 entry limit and 128 MB byte budget
+- ETag support for conditional GET (304 Not Modified)
+- Cache-Control: private, max-age=86400 (24 hours)
+
+### Integration
+
+Images in sanitized HTML are automatically rewritten to use the proxy:
+```html
+<!-- Original -->
+<img src="https://example.com/image.png">
+
+<!-- Sanitized -->
+<img src="/media/image?url=https%3A%2F%2Fexample.com%2Fimage.png">
+```
+
 ## Web Article Ingestion
 
 The system supports ingesting web articles by URL with asynchronous processing:

@@ -12,16 +12,83 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.media import FromUrlRequest, UploadInitRequest
+from nexus.services import image_proxy
 from nexus.services import media as media_service
 from nexus.services import upload as upload_service
 
 router = APIRouter()
+
+
+# =============================================================================
+# Image Proxy Endpoint (MUST be defined before /media/{media_id} to avoid
+# FastAPI matching "image" as a UUID)
+# =============================================================================
+
+
+@router.get("/media/image")
+def get_proxied_image(
+    url: str,
+    request: Request,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+) -> Response:
+    """Proxy an external image through the server with SSRF protection.
+
+    This endpoint fetches external images safely, validating URLs and content
+    to prevent SSRF attacks and ensure only valid images are served.
+
+    The endpoint:
+    - Validates URL scheme (http/https only), port (80/443 only), no credentials
+    - Blocks requests to private/internal IP addresses
+    - Validates image content type and decodes with Pillow
+    - Caches images by normalized URL with ETag support
+    - Returns 304 Not Modified for conditional GET with matching ETag
+
+    Args:
+        url: The external image URL to fetch (must be percent-encoded).
+        request: FastAPI request object for reading If-None-Match header.
+        viewer: Authenticated viewer (required for auth enforcement).
+
+    Returns:
+        Response with image bytes and appropriate headers.
+
+    Raises:
+        E_SSRF_BLOCKED (403): URL violates security rules.
+        E_IMAGE_FETCH_FAILED (502): Failed to fetch from upstream.
+        E_INGEST_TIMEOUT (504): Upstream fetch timed out.
+        E_IMAGE_TOO_LARGE (413): Image exceeds 10MB or 4096x4096 dimensions.
+        E_INVALID_REQUEST (400): Malformed URL or invalid image content.
+    """
+    # Check If-None-Match for conditional GET
+    if_none_match = request.headers.get("If-None-Match")
+
+    result = image_proxy.fetch_image(url, if_none_match=if_none_match)
+
+    if result.not_modified:
+        return Response(
+            status_code=304,
+            headers={"ETag": result.etag},
+        )
+
+    return Response(
+        content=result.data,
+        media_type=result.content_type,
+        headers={
+            "Cache-Control": "private, max-age=86400",
+            "ETag": result.etag,
+        },
+    )
+
+
+# =============================================================================
+# Media CRUD Endpoints
+# =============================================================================
 
 
 @router.post("/media/from_url", status_code=202)

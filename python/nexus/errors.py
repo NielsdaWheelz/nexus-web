@@ -44,6 +44,11 @@ class ApiErrorCode(str, Enum):
     E_INGEST_FAILED = "E_INGEST_FAILED"  # 502
     E_INGEST_TIMEOUT = "E_INGEST_TIMEOUT"  # 504
 
+    # Image proxy errors (400/403/413/502/504)
+    E_SSRF_BLOCKED = "E_SSRF_BLOCKED"  # 403 - URL violates SSRF rules
+    E_IMAGE_FETCH_FAILED = "E_IMAGE_FETCH_FAILED"  # 502 - Upstream fetch failed
+    E_IMAGE_TOO_LARGE = "E_IMAGE_TOO_LARGE"  # 413 - Image exceeds size/dimension limits
+
     # Server errors (500/503)
     E_AUTH_UNAVAILABLE = "E_AUTH_UNAVAILABLE"  # 503
     E_INTERNAL = "E_INTERNAL"  # 500
@@ -81,6 +86,10 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     # Ingestion errors
     ApiErrorCode.E_INGEST_FAILED: 502,
     ApiErrorCode.E_INGEST_TIMEOUT: 504,
+    # Image proxy errors
+    ApiErrorCode.E_SSRF_BLOCKED: 403,
+    ApiErrorCode.E_IMAGE_FETCH_FAILED: 502,
+    ApiErrorCode.E_IMAGE_TOO_LARGE: 413,
     # Server errors
     ApiErrorCode.E_AUTH_UNAVAILABLE: 503,
     ApiErrorCode.E_INTERNAL: 500,
