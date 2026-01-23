@@ -113,6 +113,8 @@ src/
 ├── lib/                    # Utilities
 │   ├── api/
 │   │   └── proxy.ts        # BFF proxy helper (proxyToFastAPI)
+│   ├── highlights/         # Highlight utilities (pure, no DOM)
+│   │   └── segmenter.ts    # Overlap segmentation algorithm
 │   └── supabase/
 │       ├── server.ts       # Server-side Supabase client
 │       └── middleware.ts   # Session refresh + auth redirects
@@ -154,7 +156,38 @@ npm run test:watch
 
 # Run tests for CI
 npm run test:ci
+
+# Run TypeScript type checking
+npm run typecheck
 ```
+
+## Highlight Libraries
+
+### `lib/highlights/segmenter.ts`
+
+A pure, deterministic overlap segmenter for highlights. This module:
+
+- Takes a text length (codepoints) and list of highlight ranges
+- Produces disjoint segments annotated with active highlight IDs
+- Determines the "topmost" highlight using `(created_at_ms DESC, id ASC)` ordering
+- Has no DOM or backend dependencies (used by rendering and interaction code)
+
+```typescript
+import { segmentHighlights, NormalizedHighlight, HIGHLIGHT_COLORS } from '@/lib/highlights/segmenter';
+
+const result = segmentHighlights(textLen, highlights);
+// result.segments: Segment[] - disjoint highlighted ranges
+// result.droppedIds: string[] - invalid highlights that were ignored
+```
+
+**Invariants guaranteed:**
+1. Segments are strictly ordered (non-overlapping)
+2. No zero-width segments
+3. Each segment has at least one active highlight
+4. `topmostId` is the first element of `activeIds`
+5. Output is deterministic regardless of input order
+6. No adjacent segments with identical active sets
+7. Coverage equals union of valid highlight ranges
 
 ## Linting
 
