@@ -16,6 +16,7 @@ dependencies = [
     "redis>=5.0.0",
     "structlog>=24.1.0",
     "lxml>=5.0.0",
+    "pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +25,7 @@ dev = [
     "pytest>=8.3.0",
     "httpx>=0.28.0",
     "pytest-httpserver>=1.0.0",
+    "respx>=0.21.0",
 ]
 
 [build-system]
