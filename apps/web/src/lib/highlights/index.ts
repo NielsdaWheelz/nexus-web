@@ -1,11 +1,14 @@
 /**
- * Highlights module - Read-only highlight rendering.
+ * Highlights module - Highlight rendering and interaction.
  *
- * This module provides functionality for rendering highlights on web articles.
+ * This module provides functionality for rendering and interacting with
+ * highlights on web articles.
  * It includes:
  * - Overlap segmentation (PR-07)
  * - Canonical cursor building (PR-08)
  * - Segment application to DOM (PR-08)
+ * - Selection → offset conversion (PR-09)
+ * - Highlight interaction (focus, cycling) (PR-09)
  * - Memoization for performance
  *
  * Usage:
@@ -14,12 +17,15 @@
  *   applyHighlightsToHtml,
  *   applyHighlightsToHtmlMemoized,
  *   segmentHighlights,
+ *   selectionToOffsets,
+ *   useHighlightInteraction,
  *   HIGHLIGHT_COLORS,
  * } from '@/lib/highlights';
  * ```
  *
  * @see docs/v1/s2/s2_prs/s2_pr07.md - Segmenter
  * @see docs/v1/s2/s2_prs/s2_pr08.md - Rendering
+ * @see docs/v1/s2/s2_prs/s2_pr09.md - Creation/Editing
  */
 
 // Re-export from segmenter (PR-07)
@@ -52,3 +58,30 @@ export {
   type HighlightInput,
   type ApplyHighlightsResult,
 } from "./applySegments";
+
+// Re-export from selection to offsets (PR-09)
+export {
+  selectionToOffsets,
+  selectionIntersectsCodeBlock,
+  findDuplicateHighlight,
+  utf16ToCodepoint,
+  codepointToUtf16,
+  MIN_HIGHLIGHT_LENGTH,
+  MAX_HIGHLIGHT_LENGTH,
+  type SelectionResult,
+  type SelectionError,
+  type SelectionErrorCode,
+  type SelectionConversionResult,
+} from "./selectionToOffsets";
+
+// Re-export from use highlight interaction (PR-09)
+export {
+  useHighlightInteraction,
+  parseHighlightElement,
+  findHighlightElement,
+  applyFocusClass,
+  reconcileFocusAfterRefetch,
+  type HighlightFocusState,
+  type HighlightClickData,
+  type UseHighlightInteractionReturn,
+} from "./useHighlightInteraction";

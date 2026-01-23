@@ -1,12 +1,50 @@
+/**
+ * Media View Page with highlight creation and editing.
+ *
+ * This page displays a media item with:
+ * - Content pane: Rendered HTML with highlights
+ * - Linked-items pane: Highlight list with editing
+ * - Selection popover for creating highlights
+ * - Full highlight interaction (focus, cycling, edit bounds)
+ *
+ * @see docs/v1/s2/s2_prs/s2_pr09.md
+ */
+
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, useCallback, useRef, use } from "react";
 import Link from "next/link";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import SelectionPopover from "@/components/SelectionPopover";
+import HighlightEditor, { type Highlight } from "@/components/HighlightEditor";
+import {
+  applyHighlightsToHtmlMemoized,
+  clearHighlightCache,
+  buildCanonicalCursor,
+  validateCanonicalText,
+  type HighlightColor,
+  type HighlightInput,
+  type CanonicalCursorResult,
+} from "@/lib/highlights";
+import {
+  selectionToOffsets,
+  findDuplicateHighlight,
+} from "@/lib/highlights/selectionToOffsets";
+import {
+  useHighlightInteraction,
+  parseHighlightElement,
+  findHighlightElement,
+  applyFocusClass,
+  reconcileFocusAfterRefetch,
+} from "@/lib/highlights/useHighlightInteraction";
 import styles from "./page.module.css";
+
+// =============================================================================
+// Types
+// =============================================================================
 
 interface Media {
   id: string;
@@ -27,16 +65,132 @@ interface Fragment {
   created_at: string;
 }
 
+interface SelectionState {
+  range: Range;
+  rect: DOMRect;
+}
+
+// =============================================================================
+// API Functions
+// =============================================================================
+
+async function fetchHighlights(fragmentId: string): Promise<Highlight[]> {
+  const response = await apiFetch<{ data: { highlights: Highlight[] } }>(
+    `/api/fragments/${fragmentId}/highlights`
+  );
+  return response.data.highlights;
+}
+
+async function createHighlight(
+  fragmentId: string,
+  startOffset: number,
+  endOffset: number,
+  color: HighlightColor
+): Promise<Highlight> {
+  const response = await apiFetch<{ data: Highlight }>(
+    `/api/fragments/${fragmentId}/highlights`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        start_offset: startOffset,
+        end_offset: endOffset,
+        color,
+      }),
+    }
+  );
+  return response.data;
+}
+
+async function updateHighlight(
+  highlightId: string,
+  updates: {
+    start_offset?: number;
+    end_offset?: number;
+    color?: HighlightColor;
+  }
+): Promise<Highlight> {
+  const response = await apiFetch<{ data: Highlight }>(
+    `/api/highlights/${highlightId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    }
+  );
+  return response.data;
+}
+
+async function deleteHighlight(highlightId: string): Promise<void> {
+  await apiFetch(`/api/highlights/${highlightId}`, {
+    method: "DELETE",
+  });
+}
+
+async function saveAnnotation(
+  highlightId: string,
+  body: string
+): Promise<void> {
+  await apiFetch(`/api/highlights/${highlightId}/annotation`, {
+    method: "PUT",
+    body: JSON.stringify({ body }),
+  });
+}
+
+async function deleteAnnotation(highlightId: string): Promise<void> {
+  await apiFetch(`/api/highlights/${highlightId}/annotation`, {
+    method: "DELETE",
+  });
+}
+
+// =============================================================================
+// Component
+// =============================================================================
+
 export default function MediaViewPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+
+  // Core data state
   const [media, setMedia] = useState<Media | null>(null);
   const [fragments, setFragments] = useState<Fragment[]>([]);
+  const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Highlight interaction state
+  const {
+    focusState,
+    focusHighlight,
+    handleHighlightClick,
+    clearFocus,
+    startEditBounds,
+    cancelEditBounds,
+    isHighlightFocused,
+  } = useHighlightInteraction();
+
+  // Selection state for creating highlights
+  const [selection, setSelection] = useState<SelectionState | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+
+  // Mismatch state (disable highlighting if canonical text doesn't match)
+  const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
+
+  // Refs
+  const contentRef = useRef<HTMLDivElement>(null);
+  const cursorRef = useRef<CanonicalCursorResult | null>(null);
+
+  // Version tracking for re-rendering highlights
+  const [highlightsVersion, setHighlightsVersion] = useState(0);
+
+  // Get the first fragment (web articles have exactly one)
+  const fragment = fragments[0] || null;
+
+  // ==========================================================================
+  // Data Fetching
+  // ==========================================================================
 
   useEffect(() => {
     const fetchData = async () => {
@@ -65,6 +219,381 @@ export default function MediaViewPage({
 
     fetchData();
   }, [id]);
+
+  // Fetch highlights when fragment is available
+  useEffect(() => {
+    if (!fragment) return;
+
+    const loadHighlights = async () => {
+      try {
+        const data = await fetchHighlights(fragment.id);
+        setHighlights(data);
+      } catch (err) {
+        console.error("Failed to load highlights:", err);
+      }
+    };
+
+    loadHighlights();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-fetch when fragment ID changes
+  }, [fragment?.id]);
+
+  // ==========================================================================
+  // Canonical Cursor Building
+  // ==========================================================================
+
+  useEffect(() => {
+    if (!fragment || !contentRef.current) return;
+
+    // Build canonical cursor from rendered content
+    const cursor = buildCanonicalCursor(contentRef.current);
+    const isValid = validateCanonicalText(
+      cursor,
+      fragment.canonical_text,
+      fragment.id
+    );
+
+    cursorRef.current = cursor;
+    setIsMismatchDisabled(!isValid);
+
+    if (!isValid) {
+      console.warn("Canonical text mismatch - highlights disabled");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuild cursor when fragment content changes or highlights version bumps
+  }, [fragment?.id, fragment?.canonical_text, highlightsVersion]);
+
+  // ==========================================================================
+  // Highlight Rendering
+  // ==========================================================================
+
+  const renderedHtml = fragment
+    ? applyHighlightsToHtmlMemoized(
+        fragment.html_sanitized,
+        fragment.canonical_text,
+        fragment.id,
+        highlights as HighlightInput[]
+      ).html
+    : "";
+
+  // ==========================================================================
+  // Focus Sync
+  // ==========================================================================
+
+  // Apply focus class when focus changes
+  useEffect(() => {
+    if (!contentRef.current) return;
+    applyFocusClass(contentRef.current, focusState.focusedId);
+  }, [focusState.focusedId]);
+
+  // ==========================================================================
+  // Selection Handling
+  // ==========================================================================
+
+  const handleSelectionChange = useCallback(() => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !contentRef.current) {
+      setSelection(null);
+      setSelectionError(null);
+      return;
+    }
+
+    const range = sel.getRangeAt(0);
+
+    // Check if selection is within our content
+    if (!contentRef.current.contains(range.commonAncestorContainer)) {
+      setSelection(null);
+      setSelectionError(null);
+      return;
+    }
+
+    // Check mismatch state
+    if (isMismatchDisabled) {
+      setSelection(null);
+      setSelectionError("Highlights disabled due to content mismatch.");
+      return;
+    }
+
+    const rect = range.getBoundingClientRect();
+    setSelection({ range, rect });
+    setSelectionError(null);
+  }, [isMismatchDisabled]);
+
+  // Listen for selection changes
+  useEffect(() => {
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, [handleSelectionChange]);
+
+  // ==========================================================================
+  // Highlight Creation
+  // ==========================================================================
+
+  const handleCreateHighlight = useCallback(
+    async (color: HighlightColor) => {
+      if (!selection || !fragment || !cursorRef.current || isCreating) return;
+
+      // Convert selection to offsets
+      const result = selectionToOffsets(
+        selection.range,
+        cursorRef.current,
+        fragment.canonical_text,
+        isMismatchDisabled
+      );
+
+      if (!result.success) {
+        setSelectionError(result.message);
+        setSelection(null);
+        // Show toast (for now just log)
+        console.warn("Selection error:", result.message);
+        return;
+      }
+
+      // Check for duplicate
+      const duplicateId = findDuplicateHighlight(
+        highlights,
+        result.startOffset,
+        result.endOffset
+      );
+
+      if (duplicateId) {
+        // Focus existing highlight instead
+        focusHighlight(duplicateId);
+        setSelection(null);
+        window.getSelection()?.removeAllRanges();
+        return;
+      }
+
+      setIsCreating(true);
+
+      try {
+        await createHighlight(
+          fragment.id,
+          result.startOffset,
+          result.endOffset,
+          color
+        );
+
+        // Refetch highlights
+        const newHighlights = await fetchHighlights(fragment.id);
+        setHighlights(newHighlights);
+        setHighlightsVersion((v) => v + 1);
+        clearHighlightCache();
+
+        // Find and focus the newly created highlight
+        const newHighlight = newHighlights.find(
+          (h) =>
+            h.start_offset === result.startOffset &&
+            h.end_offset === result.endOffset
+        );
+        if (newHighlight) {
+          focusHighlight(newHighlight.id);
+        }
+
+        setSelection(null);
+        window.getSelection()?.removeAllRanges();
+      } catch (err) {
+        if (isApiError(err) && err.code === "E_HIGHLIGHT_CONFLICT") {
+          // 409 conflict - refetch and focus
+          const newHighlights = await fetchHighlights(fragment.id);
+          setHighlights(newHighlights);
+          setHighlightsVersion((v) => v + 1);
+          clearHighlightCache();
+
+          const existing = newHighlights.find(
+            (h) =>
+              h.start_offset === result.startOffset &&
+              h.end_offset === result.endOffset
+          );
+          if (existing) {
+            focusHighlight(existing.id);
+          }
+        } else {
+          console.error("Failed to create highlight:", err);
+          setSelectionError("Failed to create highlight");
+        }
+      } finally {
+        setIsCreating(false);
+      }
+    },
+    [
+      selection,
+      fragment,
+      isCreating,
+      isMismatchDisabled,
+      highlights,
+      focusHighlight,
+    ]
+  );
+
+  const handleDismissPopover = useCallback(() => {
+    setSelection(null);
+    setSelectionError(null);
+  }, []);
+
+  // ==========================================================================
+  // Highlight Click Handling
+  // ==========================================================================
+
+  const handleContentClick = useCallback(
+    (e: React.MouseEvent) => {
+      const target = e.target as Element;
+      const highlightEl = findHighlightElement(target);
+
+      if (highlightEl) {
+        const clickData = parseHighlightElement(highlightEl);
+        if (clickData) {
+          handleHighlightClick(clickData);
+          return;
+        }
+      }
+
+      // Clicked outside highlights - only clear if not selecting
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) {
+        clearFocus();
+      }
+    },
+    [handleHighlightClick, clearFocus]
+  );
+
+  // ==========================================================================
+  // Edit Bounds Mode
+  // ==========================================================================
+
+  // Handle selection while in edit bounds mode
+  useEffect(() => {
+    if (!focusState.editingBounds || !selection || !fragment || !cursorRef.current)
+      return;
+
+    const focusedHighlight = highlights.find(
+      (h) => h.id === focusState.focusedId
+    );
+    if (!focusedHighlight) return;
+
+    // Convert selection to offsets
+    const result = selectionToOffsets(
+      selection.range,
+      cursorRef.current,
+      fragment.canonical_text,
+      isMismatchDisabled
+    );
+
+    if (!result.success) {
+      setSelectionError(result.message);
+      return;
+    }
+
+    // Update highlight bounds
+    const updateBounds = async () => {
+      try {
+        await updateHighlight(focusedHighlight.id, {
+          start_offset: result.startOffset,
+          end_offset: result.endOffset,
+        });
+
+        // Refetch and reconcile focus
+        const newHighlights = await fetchHighlights(fragment.id);
+        setHighlights(newHighlights);
+        setHighlightsVersion((v) => v + 1);
+        clearHighlightCache();
+
+        const newIds = new Set(newHighlights.map((h) => h.id));
+        const reconciledFocus = reconcileFocusAfterRefetch(
+          focusState.focusedId,
+          newIds
+        );
+        if (reconciledFocus !== focusState.focusedId) {
+          focusHighlight(reconciledFocus);
+        }
+
+        cancelEditBounds();
+        setSelection(null);
+        window.getSelection()?.removeAllRanges();
+      } catch (err) {
+        console.error("Failed to update bounds:", err);
+        setSelectionError("Failed to update highlight bounds");
+      }
+    };
+
+    updateBounds();
+  }, [
+    focusState.editingBounds,
+    focusState.focusedId,
+    selection,
+    fragment,
+    isMismatchDisabled,
+    highlights,
+    focusHighlight,
+    cancelEditBounds,
+  ]);
+
+  // ==========================================================================
+  // Highlight Editing Callbacks
+  // ==========================================================================
+
+  const handleColorChange = useCallback(
+    async (highlightId: string, color: HighlightColor) => {
+      if (!fragment) return;
+
+      await updateHighlight(highlightId, { color });
+
+      // Refetch
+      const newHighlights = await fetchHighlights(fragment.id);
+      setHighlights(newHighlights);
+      setHighlightsVersion((v) => v + 1);
+      clearHighlightCache();
+    },
+    [fragment]
+  );
+
+  const handleDelete = useCallback(
+    async (highlightId: string) => {
+      if (!fragment) return;
+
+      await deleteHighlight(highlightId);
+
+      // Refetch
+      const newHighlights = await fetchHighlights(fragment.id);
+      setHighlights(newHighlights);
+      setHighlightsVersion((v) => v + 1);
+      clearHighlightCache();
+
+      // Clear focus
+      clearFocus();
+    },
+    [fragment, clearFocus]
+  );
+
+  const handleAnnotationSave = useCallback(
+    async (highlightId: string, body: string) => {
+      if (!fragment) return;
+
+      await saveAnnotation(highlightId, body);
+
+      // Refetch
+      const newHighlights = await fetchHighlights(fragment.id);
+      setHighlights(newHighlights);
+    },
+    [fragment]
+  );
+
+  const handleAnnotationDelete = useCallback(
+    async (highlightId: string) => {
+      if (!fragment) return;
+
+      await deleteAnnotation(highlightId);
+
+      // Refetch
+      const newHighlights = await fetchHighlights(fragment.id);
+      setHighlights(newHighlights);
+    },
+    [fragment]
+  );
+
+  // ==========================================================================
+  // Render
+  // ==========================================================================
 
   if (loading) {
     return (
@@ -97,6 +626,7 @@ export default function MediaViewPage({
 
   return (
     <PaneContainer>
+      {/* Content Pane */}
       <Pane title={media.title}>
         <div className={styles.content}>
           <div className={styles.header}>
@@ -119,6 +649,16 @@ export default function MediaViewPage({
             </div>
           </div>
 
+          {isMismatchDisabled && (
+            <div className={styles.mismatchBanner}>
+              Highlights disabled due to content mismatch. Try reloading.
+            </div>
+          )}
+
+          {selectionError && (
+            <div className={styles.selectionError}>{selectionError}</div>
+          )}
+
           {!canRead ? (
             <div className={styles.notReady}>
               <p>This media is still being processed.</p>
@@ -129,18 +669,90 @@ export default function MediaViewPage({
               <p>No content available for this media.</p>
             </div>
           ) : (
-            <div className={styles.fragments}>
-              {fragments.map((fragment) => (
-                <HtmlRenderer
-                  key={fragment.id}
-                  htmlSanitized={fragment.html_sanitized}
-                  className={styles.fragment}
-                />
-              ))}
+            <div
+              ref={contentRef}
+              className={styles.fragments}
+              onClick={handleContentClick}
+            >
+              <HtmlRenderer
+                htmlSanitized={renderedHtml}
+                className={styles.fragment}
+              />
             </div>
           )}
         </div>
       </Pane>
+
+      {/* Linked Items Pane */}
+      {canRead && (
+        <Pane title="Highlights" defaultWidth={360} minWidth={280}>
+          <div className={styles.linkedItems}>
+            {highlights.length === 0 ? (
+              <div className={styles.noHighlights}>
+                <p>No highlights yet.</p>
+                <p className={styles.hint}>
+                  Select text to create a highlight.
+                </p>
+              </div>
+            ) : (
+              <div className={styles.highlightList}>
+                {highlights.map((h) => (
+                  <div
+                    key={h.id}
+                    className={`${styles.highlightItem} ${
+                      isHighlightFocused(h.id) ? styles.focused : ""
+                    }`}
+                    onClick={() => focusHighlight(h.id)}
+                  >
+                    {isHighlightFocused(h.id) ? (
+                      <HighlightEditor
+                        highlight={h}
+                        isEditingBounds={focusState.editingBounds}
+                        onStartEditBounds={startEditBounds}
+                        onCancelEditBounds={cancelEditBounds}
+                        onColorChange={handleColorChange}
+                        onDelete={handleDelete}
+                        onAnnotationSave={handleAnnotationSave}
+                        onAnnotationDelete={handleAnnotationDelete}
+                      />
+                    ) : (
+                      <div className={styles.highlightPreview}>
+                        <mark
+                          className={`${styles.previewMark} ${
+                            styles[`color-${h.color}`]
+                          }`}
+                        >
+                          {h.exact.length > 100
+                            ? `${h.exact.slice(0, 100)}...`
+                            : h.exact}
+                        </mark>
+                        {h.annotation && (
+                          <p className={styles.annotationPreview}>
+                            {h.annotation.body.length > 50
+                              ? `${h.annotation.body.slice(0, 50)}...`
+                              : h.annotation.body}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Pane>
+      )}
+
+      {/* Selection Popover */}
+      {selection && !focusState.editingBounds && contentRef.current && (
+        <SelectionPopover
+          selectionRect={selection.rect}
+          containerRef={contentRef}
+          onCreateHighlight={handleCreateHighlight}
+          onDismiss={handleDismissPopover}
+          isCreating={isCreating}
+        />
+      )}
     </PaneContainer>
   );
 }

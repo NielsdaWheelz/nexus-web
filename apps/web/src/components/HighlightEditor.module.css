@@ -1,0 +1,178 @@
+/**
+ * HighlightEditor styles.
+ *
+ * Styling for the highlight editing UI in the linked-items pane.
+ */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+/* Preview section */
+.preview {
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  word-break: break-word;
+}
+
+.previewPrefix,
+.previewSuffix {
+  opacity: 0.6;
+}
+
+.previewHighlight {
+  border-radius: 2px;
+  padding: 1px 2px;
+}
+
+/* Color classes for preview highlight */
+.color-yellow {
+  background: rgba(255, 235, 59, 0.5);
+}
+
+.color-green {
+  background: rgba(76, 175, 80, 0.4);
+}
+
+.color-blue {
+  background: rgba(33, 150, 243, 0.35);
+}
+
+.color-pink {
+  background: rgba(233, 30, 99, 0.35);
+}
+
+.color-purple {
+  background: rgba(156, 39, 176, 0.35);
+}
+
+/* Error message */
+.error {
+  padding: var(--space-2);
+  background: rgba(247, 118, 142, 0.1);
+  border: 1px solid var(--color-error);
+  border-radius: 4px;
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+}
+
+/* Section layout */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Color picker */
+.colorPicker {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.colorButton {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 100ms ease, border-color 100ms ease;
+}
+
+.colorButton:hover:not(:disabled) {
+  transform: scale(1.1);
+}
+
+.colorButton.selected {
+  border-color: var(--color-text);
+  box-shadow: 0 0 0 2px var(--color-surface);
+}
+
+.colorButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Actions */
+.actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.actionButton {
+  flex: 1;
+  padding: var(--space-2);
+  background: var(--color-surface-elevated, var(--color-surface));
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background-color 100ms ease, border-color 100ms ease;
+}
+
+.actionButton:hover:not(:disabled) {
+  background: var(--color-surface);
+  border-color: var(--color-border-subtle);
+}
+
+.actionButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.deleteButton {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+
+.deleteButton:hover:not(:disabled) {
+  background: rgba(247, 118, 142, 0.1);
+}
+
+/* Edit bounds mode */
+.editBoundsMode {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: rgba(189, 147, 249, 0.1);
+  border: 1px dashed var(--color-accent);
+  border-radius: 4px;
+}
+
+.editBoundsHint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.cancelButton {
+  padding: var(--space-2);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all 100ms ease;
+}
+
+.cancelButton:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+}

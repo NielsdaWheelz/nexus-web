@@ -99,7 +99,12 @@ src/
 │   ├── api/                # BFF proxy routes (mirror FastAPI paths)
 │   │   ├── me/
 │   │   ├── libraries/
-│   │   └── media/
+│   │   ├── media/
+│   │   ├── fragments/      # Highlight creation endpoints (PR-09)
+│   │   │   └── [fragmentId]/highlights/
+│   │   └── highlights/     # Highlight CRUD endpoints (PR-09)
+│   │       └── [highlightId]/
+│   │           └── annotation/
 │   ├── (authenticated)/    # Protected pages (require login)
 │   │   ├── libraries/
 │   │   └── media/
@@ -107,6 +112,9 @@ src/
 │   └── auth/               # Auth callbacks
 ├── components/             # React components
 │   ├── HtmlRenderer.tsx    # ONLY place with dangerouslySetInnerHTML
+│   ├── SelectionPopover.tsx    # Highlight color picker (PR-09)
+│   ├── HighlightEditor.tsx     # Highlight edit/delete UI (PR-09)
+│   ├── AnnotationEditor.tsx    # Note editor (PR-09)
 │   ├── Navbar.tsx
 │   ├── Pane.tsx
 │   └── ...
@@ -114,11 +122,13 @@ src/
 │   ├── api/
 │   │   └── proxy.ts        # BFF proxy helper (proxyToFastAPI)
 │   ├── highlights/         # Highlight rendering utilities
-│   │   ├── index.ts        # Module exports
-│   │   ├── segmenter.ts    # Overlap segmentation algorithm (PR-07)
-│   │   ├── canonicalCursor.ts  # DOM-to-canonical-text mapping (PR-08)
+│   │   ├── index.ts            # Module exports
+│   │   ├── segmenter.ts        # Overlap segmentation (PR-07)
+│   │   ├── canonicalCursor.ts  # DOM-to-offset mapping (PR-08)
 │   │   ├── applySegments.ts    # Highlight DOM application (PR-08)
-│   │   └── highlights.css     # Highlight styles
+│   │   ├── selectionToOffsets.ts   # Selection conversion (PR-09)
+│   │   ├── useHighlightInteraction.ts  # Focus/cycling hook (PR-09)
+│   │   └── highlights.css      # Highlight styles
 │   └── supabase/
 │       ├── server.ts       # Server-side Supabase client
 │       └── middleware.ts   # Session refresh + auth redirects
@@ -191,6 +201,20 @@ import {
   applyHighlightsToHtmlMemoized,
   clearHighlightCache,
   type HighlightInput,
+  
+  // Selection conversion (PR-09)
+  selectionToOffsets,
+  findDuplicateHighlight,
+  selectionIntersectsCodeBlock,
+  MIN_HIGHLIGHT_LENGTH,
+  MAX_HIGHLIGHT_LENGTH,
+  
+  // Highlight interaction (PR-09)
+  useHighlightInteraction,
+  parseHighlightElement,
+  findHighlightElement,
+  applyFocusClass,
+  reconcileFocusAfterRefetch,
 } from '@/lib/highlights';
 ```
 
@@ -275,7 +299,67 @@ const result = applyHighlightsToHtmlMemoized(
 <span data-highlight-anchor="h1"></span>
 ```
 
-### `highlights.css` - Styles (PR-08)
+### `selectionToOffsets.ts` - Selection Conversion (PR-09)
+
+Converts browser text selections to canonical offsets for highlight creation.
+
+```typescript
+import {
+  selectionToOffsets,
+  findDuplicateHighlight,
+  selectionIntersectsCodeBlock,
+  MIN_HIGHLIGHT_LENGTH,
+  MAX_HIGHLIGHT_LENGTH,
+} from '@/lib/highlights';
+
+// Convert a browser Range to canonical offsets
+const result = selectionToOffsets(range, cursor, canonicalText, mismatchDisabled);
+if (result.success) {
+  // result.startOffset, result.endOffset - codepoint offsets
+  // result.selectedText - the trimmed selected text
+}
+
+// Check for duplicate highlight before creating
+const existingId = findDuplicateHighlight(highlights, startOffset, endOffset);
+```
+
+**Features:**
+- Handles backwards selections (right-to-left)
+- Converts UTF-16 indices to codepoints (handles emoji)
+- Trims leading/trailing whitespace
+- Validates length (2-2000 codepoints)
+- Rejects selections inside `<pre>`/`<code>` blocks
+- Guards against mismatch state
+
+### `useHighlightInteraction.ts` - Interaction Hook (PR-09)
+
+React hook for managing highlight focus and overlap cycling.
+
+```typescript
+import { useHighlightInteraction, parseHighlightElement, applyFocusClass } from '@/lib/highlights';
+
+const { focusState, focusHighlight, handleHighlightClick, startEditBounds } = useHighlightInteraction();
+
+// On highlight span click:
+const onClick = (e: React.MouseEvent) => {
+  const el = findHighlightElement(e.target as Element);
+  if (el) {
+    const data = parseHighlightElement(el);
+    if (data) handleHighlightClick(data);
+  }
+};
+
+// Apply focus class to DOM (doesn't trigger re-render)
+applyFocusClass(containerRef.current, focusState.focusedId);
+```
+
+**Focus model:**
+- At most one highlight is focused at any time
+- First click focuses the topmost highlight
+- Subsequent clicks on the same segment cycle through overlapping highlights
+- Clicking a different segment resets cycling
+
+### `highlights.css` - Styles (PR-08/09)
 
 CSS classes for highlight colors:
 - `.hl-yellow` - Default yellow highlight
@@ -283,8 +367,15 @@ CSS classes for highlight colors:
 - `.hl-blue` - Blue highlight
 - `.hl-pink` - Pink highlight
 - `.hl-purple` - Purple highlight
+- `.hl-focused` - Focus ring for selected highlight (PR-09)
 
 Anchors are invisible zero-width spans used for positioning the linked-items pane.
+
+### Components (PR-09)
+
+- `SelectionPopover.tsx` - Color picker popover shown on text selection
+- `HighlightEditor.tsx` - Edit bounds, change color, delete highlights
+- `AnnotationEditor.tsx` - Add/edit/delete notes on highlights
 
 ## Linting
 
