@@ -900,3 +900,159 @@ class TestImageProxyEndpoint:
         assert response.status_code == 413
         data = response.json()
         assert data["error"]["code"] == "E_IMAGE_TOO_LARGE"
+
+
+# =============================================================================
+# E2E Integration Tests for Image Proxy (PR-11)
+# =============================================================================
+
+
+class TestImageProxyE2E:
+    """E2E integration tests for image proxy per PR-11 spec section 7.
+
+    Tests verify:
+    1. Request proxied image returns correct headers
+    2. ETag present in response
+    3. Cache-Control present in response
+    4. Re-request with If-None-Match returns 304
+
+    These tests use respx to mock upstream HTTP but test the full
+    endpoint flow including caching behavior.
+    """
+
+    @pytest.fixture(autouse=True)
+    def clear_image_cache_e2e(self):
+        """Clear the global cache before each test."""
+        clear_cache()
+        yield
+        clear_cache()
+
+    @respx.mock
+    def test_e2e_proxied_image_has_required_headers(
+        self, authenticated_client, test_user_id, monkeypatch
+    ):
+        """PR-11 Section 7.2: Verify Content-Type, ETag, and Cache-Control headers."""
+
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 80))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+        respx.get("http://example.com/photo.png").mock(
+            return_value=Response(200, content=TINY_PNG, headers={"Content-Type": "image/png"})
+        )
+
+        response = authenticated_client.get(
+            "/media/image",
+            params={"url": "http://example.com/photo.png"},
+            headers=auth_headers(test_user_id),
+        )
+
+        # Assert Content-Type is image/*
+        assert response.status_code == 200
+        assert response.headers["Content-Type"].startswith("image/")
+
+        # Assert ETag present
+        assert "ETag" in response.headers
+        etag = response.headers["ETag"]
+        assert etag.startswith('"')
+        assert etag.endswith('"')
+
+        # Assert Cache-Control present
+        assert "Cache-Control" in response.headers
+        assert "max-age" in response.headers["Cache-Control"]
+
+    @respx.mock
+    def test_e2e_conditional_request_returns_304(
+        self, authenticated_client, test_user_id, monkeypatch
+    ):
+        """PR-11 Section 7.3: Re-request with If-None-Match returns 304 Not Modified."""
+
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 80))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+        respx.get("http://example.com/cached.png").mock(
+            return_value=Response(200, content=TINY_PNG, headers={"Content-Type": "image/png"})
+        )
+
+        # First request
+        response1 = authenticated_client.get(
+            "/media/image",
+            params={"url": "http://example.com/cached.png"},
+            headers=auth_headers(test_user_id),
+        )
+
+        assert response1.status_code == 200
+        etag = response1.headers["ETag"]
+        assert etag is not None
+
+        # Second request with If-None-Match
+        response2 = authenticated_client.get(
+            "/media/image",
+            params={"url": "http://example.com/cached.png"},
+            headers={**auth_headers(test_user_id), "If-None-Match": etag},
+        )
+
+        # Should return 304 Not Modified
+        assert response2.status_code == 304
+        assert response2.content == b""
+        # ETag should still be present in 304 response
+        assert "ETag" in response2.headers
+
+    @respx.mock
+    def test_e2e_different_etag_returns_full_response(
+        self, authenticated_client, test_user_id, monkeypatch
+    ):
+        """Verify mismatched ETag returns full 200 response."""
+
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 80))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+        respx.get("http://example.com/mismatch.png").mock(
+            return_value=Response(200, content=TINY_PNG, headers={"Content-Type": "image/png"})
+        )
+
+        # Request with wrong ETag
+        response = authenticated_client.get(
+            "/media/image",
+            params={"url": "http://example.com/mismatch.png"},
+            headers={**auth_headers(test_user_id), "If-None-Match": '"wrong-etag"'},
+        )
+
+        # Should return full 200 response
+        assert response.status_code == 200
+        assert len(response.content) > 0
+
+    @respx.mock
+    def test_e2e_wildcard_etag_returns_304(self, authenticated_client, test_user_id, monkeypatch):
+        """Verify wildcard If-None-Match (*) returns 304 if cached."""
+
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 80))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+        respx.get("http://example.com/wildcard.png").mock(
+            return_value=Response(200, content=TINY_PNG, headers={"Content-Type": "image/png"})
+        )
+
+        # First request to populate cache
+        response1 = authenticated_client.get(
+            "/media/image",
+            params={"url": "http://example.com/wildcard.png"},
+            headers=auth_headers(test_user_id),
+        )
+        assert response1.status_code == 200
+
+        # Second request with wildcard
+        response2 = authenticated_client.get(
+            "/media/image",
+            params={"url": "http://example.com/wildcard.png"},
+            headers={**auth_headers(test_user_id), "If-None-Match": "*"},
+        )
+
+        assert response2.status_code == 304

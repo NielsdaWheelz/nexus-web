@@ -217,6 +217,21 @@ def test_user_id() -> UUID:
 
 
 @pytest.fixture
+def bootstrapped_user(db_session: Session) -> UUID:
+    """Create a test user with default library, ready for service-layer tests.
+
+    Use this fixture when tests call service functions directly (not via API).
+    The user and their default library are created in the database.
+
+    For API-based tests, use e2e_client or authenticated_client instead,
+    which bootstrap users automatically via AuthMiddleware.
+    """
+    user_id = uuid4()
+    ensure_user_and_default_library(db_session, user_id)
+    return user_id
+
+
+@pytest.fixture
 def random_uuid() -> str:
     """Generate a random UUID string for test data."""
     return str(uuid4())
