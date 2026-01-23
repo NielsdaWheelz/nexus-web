@@ -18,6 +18,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
@@ -25,6 +30,12 @@ jobs:
         run: |
           cd python
           uv sync --all-extras
+
+      - name: Install node ingest dependencies
+        run: |
+          cd node/ingest
+          npm ci
+          npx playwright install --with-deps chromium
 
       - name: Lint
         run: |

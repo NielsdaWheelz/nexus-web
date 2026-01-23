@@ -10,11 +10,13 @@ Key behaviors:
 - Host must be present and non-empty
 - Userinfo (user:pass@host) is forbidden
 - Localhost/private addresses are rejected (127.0.0.1, ::1, localhost, *.local)
+  - Exception: In NEXUS_ENV=test, localhost/127.0.0.1 are allowed for fixture servers
 - Fragment (#...) is stripped during normalization
 - Scheme and host are lowercased during normalization
 """
 
 import ipaddress
+import os
 import re
 from urllib.parse import urlparse, urlunparse
 
@@ -49,6 +51,14 @@ PRIVATE_IP_RANGES = [
 ]
 
 
+def _is_test_environment() -> bool:
+    """Check if running in test environment.
+
+    In test environment, localhost/127.0.0.1 are allowed for fixture servers.
+    """
+    return os.environ.get("NEXUS_ENV", "").lower() == "test"
+
+
 def _is_private_ip(hostname: str) -> bool:
     """Check if hostname is a private/local IP address.
 
@@ -72,6 +82,9 @@ def _is_private_ip(hostname: str) -> bool:
 def _is_blocked_hostname(hostname: str) -> bool:
     """Check if hostname is blocked.
 
+    In test environment (NEXUS_ENV=test), localhost and 127.0.0.1 are allowed
+    to enable testing with local fixture servers.
+
     Args:
         hostname: The hostname to check (will be lowercased).
 
@@ -79,6 +92,11 @@ def _is_blocked_hostname(hostname: str) -> bool:
         True if the hostname is blocked, False otherwise.
     """
     hostname_lower = hostname.lower()
+
+    # In test environment, allow localhost and 127.0.0.1 for fixture servers
+    if _is_test_environment():
+        if hostname_lower == "localhost" or hostname_lower == "127.0.0.1":
+            return False
 
     # Check exact matches
     if hostname_lower in BLOCKED_HOSTNAMES:

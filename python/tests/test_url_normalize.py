@@ -136,27 +136,33 @@ class TestValidateRequestedUrl:
         assert "credentials" in exc.value.message.lower()
 
     # === Host Validation ===
+    # Note: These tests use monkeypatch to simulate production environment
+    # where localhost/127.0.0.1 are blocked (test env allows them for fixtures)
 
-    def test_rejects_localhost(self):
-        """localhost should be rejected."""
+    def test_rejects_localhost(self, monkeypatch):
+        """localhost should be rejected in production."""
+        monkeypatch.setenv("NEXUS_ENV", "production")
         with pytest.raises(InvalidRequestError) as exc:
             validate_requested_url("http://localhost/admin")
         assert "localhost" in exc.value.message.lower()
 
-    def test_rejects_localhost_uppercase(self):
+    def test_rejects_localhost_uppercase(self, monkeypatch):
         """LOCALHOST should be rejected (case insensitive)."""
+        monkeypatch.setenv("NEXUS_ENV", "production")
         with pytest.raises(InvalidRequestError) as exc:
             validate_requested_url("http://LOCALHOST/admin")
         assert "localhost" in exc.value.message.lower()
 
-    def test_rejects_127_0_0_1(self):
-        """127.0.0.1 should be rejected."""
+    def test_rejects_127_0_0_1(self, monkeypatch):
+        """127.0.0.1 should be rejected in production."""
+        monkeypatch.setenv("NEXUS_ENV", "production")
         with pytest.raises(InvalidRequestError) as exc:
             validate_requested_url("http://127.0.0.1/admin")
         assert "not allowed" in exc.value.message.lower()
 
-    def test_rejects_127_0_0_1_with_port(self):
-        """127.0.0.1:port should be rejected."""
+    def test_rejects_127_0_0_1_with_port(self, monkeypatch):
+        """127.0.0.1:port should be rejected in production."""
+        monkeypatch.setenv("NEXUS_ENV", "production")
         with pytest.raises(InvalidRequestError) as exc:
             validate_requested_url("http://127.0.0.1:8080/admin")
         assert "not allowed" in exc.value.message.lower()

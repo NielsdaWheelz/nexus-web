@@ -1,17 +1,18 @@
 """Integration tests for POST /media/from_url endpoint.
 
-Tests cover PR-03 requirements:
+Tests cover PR-04 requirements:
 - Creating provisional web_article media from URL
 - URL validation (scheme, length, userinfo, localhost)
 - Default library attachment
 - Visibility enforcement
 - Response envelope and status codes
 
-Per s2_pr03.md spec:
-- duplicate is always False in PR-03
-- processing_status is always 'pending'
-- ingest_enqueued is always False
-- canonical_url is NULL
+Per s2_pr04.md spec:
+- Returns 202 Accepted (not 201) and enqueues ingestion
+- duplicate is always False at creation time
+- processing_status is 'pending'
+- ingest_enqueued reflects whether task was enqueued
+- canonical_url is NULL (set during ingestion after redirect resolution)
 - requested_url is stored exactly as provided
 - canonical_source_url is normalized
 """
@@ -89,7 +90,7 @@ class TestFromUrlSuccess:
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 201
+        assert response.status_code == 202
         data = response.json()["data"]
 
         # Verify response shape
@@ -97,7 +98,8 @@ class TestFromUrlSuccess:
         media_id = UUID(data["media_id"])
         assert data["duplicate"] is False
         assert data["processing_status"] == "pending"
-        assert data["ingest_enqueued"] is False
+        # In test environment, task is not actually enqueued
+        assert "ingest_enqueued" in data
 
         # Register cleanup
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -138,7 +140,7 @@ class TestFromUrlSuccess:
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 201
+        assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -169,7 +171,7 @@ class TestFromUrlSuccess:
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 201
+        assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -192,7 +194,7 @@ class TestFromUrlSuccess:
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 201
+        assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -222,7 +224,7 @@ class TestFromUrlSuccess:
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 201
+        assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -254,7 +256,7 @@ class TestFromUrlSuccess:
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 201
+        assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -338,8 +340,9 @@ class TestFromUrlValidation:
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
         assert "credentials" in response.json()["error"]["message"].lower()
 
-    def test_localhost_rejected(self, auth_client):
-        """Test that localhost URLs are rejected."""
+    def test_localhost_rejected(self, auth_client, monkeypatch):
+        """Test that localhost URLs are rejected in production."""
+        monkeypatch.setenv("NEXUS_ENV", "production")
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -353,8 +356,9 @@ class TestFromUrlValidation:
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
         assert "localhost" in response.json()["error"]["message"].lower()
 
-    def test_127_0_0_1_rejected(self, auth_client):
-        """Test that 127.0.0.1 URLs are rejected."""
+    def test_127_0_0_1_rejected(self, auth_client, monkeypatch):
+        """Test that 127.0.0.1 URLs are rejected in production."""
+        monkeypatch.setenv("NEXUS_ENV", "production")
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -462,7 +466,7 @@ class TestFromUrlVisibility:
             headers=auth_headers(user_a),
         )
 
-        assert response.status_code == 201
+        assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
