@@ -1,3 +1,9 @@
+/**
+ * Media View Page styles.
+ *
+ * Styling for the media content pane and linked-items pane.
+ */
+
 .content {
   display: flex;
   flex-direction: column;
@@ -69,6 +75,24 @@
   font-size: var(--font-size-sm);
 }
 
+.mismatchBanner {
+  padding: var(--space-3);
+  background-color: rgba(255, 184, 108, 0.1);
+  border: 1px solid var(--color-warning, #ffb86c);
+  border-radius: 6px;
+  color: var(--color-warning, #ffb86c);
+  font-size: var(--font-size-sm);
+}
+
+.selectionError {
+  padding: var(--space-2);
+  background-color: rgba(247, 118, 142, 0.1);
+  border: 1px solid var(--color-error);
+  border-radius: 4px;
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+}
+
 .notReady {
   padding: var(--space-6);
   text-align: center;
@@ -93,4 +117,94 @@
 
 .fragment {
   /* Fragment styling inherits from HtmlRenderer */
+}
+
+/* =============================================================================
+   Linked Items Pane
+   ============================================================================= */
+
+.linkedItems {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.noHighlights {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.noHighlights p {
+  margin: 0 0 var(--space-2);
+}
+
+.hint {
+  font-size: var(--font-size-sm);
+  opacity: 0.7;
+}
+
+.highlightList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.highlightItem {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition: border-color 150ms ease;
+  cursor: pointer;
+}
+
+.highlightItem:hover:not(.focused) {
+  border-color: var(--color-border);
+}
+
+.highlightItem.focused {
+  border-color: var(--color-accent);
+  cursor: default;
+}
+
+.highlightPreview {
+  padding: var(--space-3);
+}
+
+.previewMark {
+  display: block;
+  padding: var(--space-1);
+  border-radius: 2px;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* Color classes for preview */
+.color-yellow {
+  background: rgba(255, 235, 59, 0.5);
+}
+
+.color-green {
+  background: rgba(76, 175, 80, 0.4);
+}
+
+.color-blue {
+  background: rgba(33, 150, 243, 0.35);
+}
+
+.color-pink {
+  background: rgba(233, 30, 99, 0.35);
+}
+
+.color-purple {
+  background: rgba(156, 39, 176, 0.35);
+}
+
+.annotationPreview {
+  margin: var(--space-2) 0 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
 }

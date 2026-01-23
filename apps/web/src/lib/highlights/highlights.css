@@ -130,18 +130,41 @@
 */
 
 /* =============================================================================
+   Focus State (PR-09)
+   ============================================================================= */
+
+/**
+ * Focus state for highlighted text.
+ * Applied via applyFocusClass() when a highlight is focused.
+ */
+.hl-focused {
+  box-shadow: 0 0 0 2px var(--color-accent, #bd93f9);
+  border-radius: 3px;
+}
+
+/* =============================================================================
+   Hover States (PR-09)
+   ============================================================================= */
+
+/**
+ * Hover state for highlighted text.
+ * Shows cursor is interactive for highlight cycling.
+ */
+[data-highlight-ids]:hover {
+  cursor: pointer;
+  filter: brightness(0.95);
+}
+
+/* =============================================================================
    Constraints per Spec
    ============================================================================= */
 
 /**
  * Per spec §11:
- * - No borders or outlines in v1
- * - No pointer-events changes (must not break text selection)
  * - Colors are suggestions; may be adjusted for theme consistency
  * - Keep styling minimal and overridable
  *
- * Future PRs may add:
- * - Hover states for highlight interaction (PR-09)
- * - Focus states for keyboard navigation
- * - Active/selected states
+ * PR-09 additions:
+ * - Hover states for highlight interaction
+ * - Focus states via .hl-focused class
  */
