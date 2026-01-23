@@ -113,8 +113,12 @@ src/
 ├── lib/                    # Utilities
 │   ├── api/
 │   │   └── proxy.ts        # BFF proxy helper (proxyToFastAPI)
-│   ├── highlights/         # Highlight utilities (pure, no DOM)
-│   │   └── segmenter.ts    # Overlap segmentation algorithm
+│   ├── highlights/         # Highlight rendering utilities
+│   │   ├── index.ts        # Module exports
+│   │   ├── segmenter.ts    # Overlap segmentation algorithm (PR-07)
+│   │   ├── canonicalCursor.ts  # DOM-to-canonical-text mapping (PR-08)
+│   │   ├── applySegments.ts    # Highlight DOM application (PR-08)
+│   │   └── highlights.css     # Highlight styles
 │   └── supabase/
 │       ├── server.ts       # Server-side Supabase client
 │       └── middleware.ts   # Session refresh + auth redirects
@@ -163,7 +167,34 @@ npm run typecheck
 
 ## Highlight Libraries
 
-### `lib/highlights/segmenter.ts`
+The highlights module (`lib/highlights/`) provides everything needed for rendering highlights on web articles.
+
+### Module Overview
+
+```typescript
+// Import everything from the module index
+import {
+  // Segmenter (PR-07)
+  segmentHighlights,
+  HIGHLIGHT_COLORS,
+  type NormalizedHighlight,
+  type Segment,
+  
+  // Canonical cursor (PR-08)
+  buildCanonicalCursor,
+  validateCanonicalText,
+  codepointLength,
+  BLOCK_ELEMENTS,
+  
+  // Apply highlights (PR-08)
+  applyHighlightsToHtml,
+  applyHighlightsToHtmlMemoized,
+  clearHighlightCache,
+  type HighlightInput,
+} from '@/lib/highlights';
+```
+
+### `segmenter.ts` - Overlap Segmentation (PR-07)
 
 A pure, deterministic overlap segmenter for highlights. This module:
 
@@ -173,8 +204,6 @@ A pure, deterministic overlap segmenter for highlights. This module:
 - Has no DOM or backend dependencies (used by rendering and interaction code)
 
 ```typescript
-import { segmentHighlights, NormalizedHighlight, HIGHLIGHT_COLORS } from '@/lib/highlights/segmenter';
-
 const result = segmentHighlights(textLen, highlights);
 // result.segments: Segment[] - disjoint highlighted ranges
 // result.droppedIds: string[] - invalid highlights that were ignored
@@ -188,6 +217,74 @@ const result = segmentHighlights(textLen, highlights);
 5. Output is deterministic regardless of input order
 6. No adjacent segments with identical active sets
 7. Coverage equals union of valid highlight ranges
+
+### `canonicalCursor.ts` - DOM-to-Offset Mapping (PR-08)
+
+Builds a mapping from DOM text nodes to codepoint offsets in canonical text. **Must match backend canonicalization exactly** (`python/nexus/services/canonicalize.py`).
+
+```typescript
+const result = buildCanonicalCursor(rootElement);
+// result.nodes: CanonicalNode[] - text nodes with start/end offsets
+// result.emitted: string - reconstructed canonical text
+// result.length: number - codepoint length
+
+// Validate against backend canonical_text
+const isValid = validateCanonicalText(result, fragment.canonical_text, fragmentId);
+```
+
+**Canonicalization rules (matching backend):**
+- Unicode NFC normalization
+- Whitespace collapse (all Unicode whitespace → single space)
+- Block boundaries insert `\n`
+- `<br>` inserts `\n`
+- Exclude `script`, `style`, hidden elements, `aria-hidden="true"`
+
+### `applySegments.ts` - Highlight Rendering (PR-08)
+
+Applies highlight segments to sanitized HTML by wrapping text in `<span>` elements.
+
+```typescript
+// Simple usage
+const result = applyHighlightsToHtml(
+  fragment.html_sanitized,
+  fragment.canonical_text,
+  fragment.id,
+  highlights
+);
+// result.html: string - transformed HTML with highlight spans
+// result.failedIds: string[] - highlights that couldn't be rendered
+// result.validationPassed: boolean - canonical text matched
+
+// With memoization (recommended for React)
+const result = applyHighlightsToHtmlMemoized(
+  fragment.html_sanitized,
+  fragment.canonical_text,
+  fragment.id,
+  highlights
+);
+```
+
+**HTML output:**
+```html
+<!-- Highlight spans -->
+<span data-highlight-ids="h1,h2" data-highlight-top="h1" class="hl-yellow">
+  highlighted text
+</span>
+
+<!-- Highlight anchors (for positioning) -->
+<span data-highlight-anchor="h1"></span>
+```
+
+### `highlights.css` - Styles (PR-08)
+
+CSS classes for highlight colors:
+- `.hl-yellow` - Default yellow highlight
+- `.hl-green` - Green highlight
+- `.hl-blue` - Blue highlight
+- `.hl-pink` - Pink highlight
+- `.hl-purple` - Purple highlight
+
+Anchors are invisible zero-width spans used for positioning the linked-items pane.
 
 ## Linting
 

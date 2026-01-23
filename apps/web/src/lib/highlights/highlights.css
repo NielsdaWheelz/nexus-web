@@ -1,0 +1,147 @@
+/**
+ * Highlight styles for read-only highlight rendering.
+ *
+ * These styles are applied to <span> elements wrapping highlighted text.
+ * Each span has:
+ * - data-highlight-ids: comma-separated list of active highlight IDs
+ * - data-highlight-top: the topmost (visible) highlight ID
+ * - class: hl-{color} where color is one of the palette colors
+ *
+ * Anchors are zero-width spans for positioning linked-items.
+ *
+ * @see docs/v1/s2/s2_prs/s2_pr08.md §11
+ */
+
+/* =============================================================================
+   Base Highlight Styles
+   ============================================================================= */
+
+/**
+ * All highlight spans share these base styles.
+ * Using attribute selector to target any element with data-highlight-ids.
+ */
+[data-highlight-ids] {
+  /* Subtle rounding for softer appearance */
+  border-radius: 2px;
+  /* Ensure text remains selectable */
+  cursor: text;
+  /* Smooth transitions for hover states (future PR-09) */
+  transition: background-color 150ms ease;
+}
+
+/* =============================================================================
+   Highlight Color Palette
+   ============================================================================= */
+
+/**
+ * Yellow highlight - default color
+ * Warm, high-contrast background good for primary highlights
+ */
+.hl-yellow {
+  background: rgba(255, 235, 59, 0.5);
+}
+
+/**
+ * Green highlight
+ * Natural, calming color for secondary importance
+ */
+.hl-green {
+  background: rgba(76, 175, 80, 0.4);
+}
+
+/**
+ * Blue highlight
+ * Cool, professional color for informational content
+ */
+.hl-blue {
+  background: rgba(33, 150, 243, 0.35);
+}
+
+/**
+ * Pink highlight
+ * Vibrant color for emphasis or personal notes
+ */
+.hl-pink {
+  background: rgba(233, 30, 99, 0.35);
+}
+
+/**
+ * Purple highlight
+ * Rich color for special or important content
+ */
+.hl-purple {
+  background: rgba(156, 39, 176, 0.35);
+}
+
+/* =============================================================================
+   Highlight Anchors
+   ============================================================================= */
+
+/**
+ * Highlight anchors are zero-width inline elements used for:
+ * - Positioning linked-items pane entries (PR-10)
+ * - Scrolling to highlight locations
+ *
+ * They MUST be invisible and not affect layout.
+ */
+[data-highlight-anchor] {
+  display: inline;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  /* Prevent any visual impact */
+  border: none;
+  margin: 0;
+  padding: 0;
+  /* Ensure it doesn't interfere with text selection */
+  user-select: none;
+  pointer-events: none;
+}
+
+/* =============================================================================
+   Dark Theme Adjustments
+   ============================================================================= */
+
+/**
+ * On dark backgrounds, we may need to adjust opacity for readability.
+ * These can be customized per-theme or via CSS custom properties.
+ *
+ * The current theme (Dracula-inspired) works well with the default opacities.
+ */
+
+/* Example dark theme override (currently commented out):
+@media (prefers-color-scheme: dark) {
+  .hl-yellow {
+    background: rgba(255, 235, 59, 0.4);
+  }
+  .hl-green {
+    background: rgba(76, 175, 80, 0.35);
+  }
+  .hl-blue {
+    background: rgba(33, 150, 243, 0.3);
+  }
+  .hl-pink {
+    background: rgba(233, 30, 99, 0.3);
+  }
+  .hl-purple {
+    background: rgba(156, 39, 176, 0.3);
+  }
+}
+*/
+
+/* =============================================================================
+   Constraints per Spec
+   ============================================================================= */
+
+/**
+ * Per spec §11:
+ * - No borders or outlines in v1
+ * - No pointer-events changes (must not break text selection)
+ * - Colors are suggestions; may be adjusted for theme consistency
+ * - Keep styling minimal and overridable
+ *
+ * Future PRs may add:
+ * - Hover states for highlight interaction (PR-09)
+ * - Focus states for keyboard navigation
+ * - Active/selected states
+ */
