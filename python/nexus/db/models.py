@@ -347,8 +347,11 @@ class Fragment(Base):
 
     __table_args__ = (UniqueConstraint("media_id", "idx", name="uq_fragments_media_idx"),)
 
-    # Relationship
-    media: Mapped["Media"] = relationship("Media", back_populates="fragments")
+    # Relationships
+    media: Mapped["Media"] = relationship("Media", back_populates="fragments", lazy="joined")
+    highlights: Mapped[list["Highlight"]] = relationship(
+        "Highlight", back_populates="fragment", cascade="all, delete-orphan"
+    )
 
 
 class LibraryMedia(Base):
@@ -447,7 +450,17 @@ class Highlight(Base):
         ),
     )
 
-    # Note: Relationships deferred to PR-06 per PR-01 spec (keep schema-only)
+    # Relationships (PR-06)
+    fragment: Mapped["Fragment"] = relationship(
+        "Fragment", back_populates="highlights", lazy="joined"
+    )
+    annotation: Mapped["Annotation | None"] = relationship(
+        "Annotation",
+        uselist=False,
+        back_populates="highlight",
+        lazy="joined",
+        passive_deletes=True,  # Let database handle ON DELETE CASCADE
+    )
 
 
 class Annotation(Base):
@@ -491,4 +504,5 @@ class Annotation(Base):
         ),
     )
 
-    # Note: Relationships deferred to PR-06 per PR-01 spec (keep schema-only)
+    # Relationships (PR-06)
+    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="annotation")
