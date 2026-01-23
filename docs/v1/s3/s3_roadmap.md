@@ -9,7 +9,7 @@ Compressed: 7 core PRs + 2 optional follow-ups.
 
 ---
 
-## PR-A: Slice 3 Schema Mega-Migration + Core Utilities
+## PR-01: Slice 3 Schema Mega-Migration + Core Utilities
 
 **Backend only — big but it's only schema + helpers, no routes**
 
@@ -69,7 +69,7 @@ Alembic `0004_slice3_schema.py` adds all S3 tables:
 - Compute blocks from canonicalization output (block elements already identified)
 
 **Services scaffolds** (impl details in later PRs):
-- `services/shares.py` — share invariants (impl in PR-B)
+- `services/shares.py` — share invariants (impl in PR-02)
 - `services/contexts.py` — context insertion + `conversation_media` management
 
 ### Tests
@@ -87,7 +87,7 @@ Alembic `0004_slice3_schema.py` adds all S3 tables:
 
 ---
 
-## PR-B: Conversations + Messages CRUD Endpoints
+## PR-02: Conversations + Messages CRUD Endpoints
 
 **Backend**
 
@@ -133,11 +133,11 @@ Alembic `0004_slice3_schema.py` adds all S3 tables:
 - Service rejects mismatched `target_type`
 
 **Non-goals:**
-- **No `POST /conversations/:id/messages`** — message creation reserved for PR-E (prevents dual codepaths for seq/idempotency/contexts)
+- **No `POST /conversations/:id/messages`** — message creation reserved for PR-05 (prevents dual codepaths for seq/idempotency/contexts)
 
 ---
 
-## PR-C: Models + API Keys Endpoints
+## PR-03: Models + API Keys Endpoints
 
 **Backend**
 
@@ -153,7 +153,7 @@ Alembic `0004_slice3_schema.py` adds all S3 tables:
 
 - Key upsert-by-provider logic
 - Key status updates (valid/invalid/unknown)
-- Integration with crypto module from PR-A
+- Integration with crypto module from PR-01
 
 ### Tests
 
@@ -162,11 +162,11 @@ Alembic `0004_slice3_schema.py` adds all S3 tables:
 - Revoke sets `revoked_at`
 - Test endpoint updates status on success/failure
 
-**Note:** Test endpoint requires at least one provider adapter stub. Either mock HTTP at router level, or add this route in PR-D instead.
+**Note:** Test endpoint requires at least one provider adapter stub. Either mock HTTP at router level, or add this route in PR-04 instead.
 
 ---
 
-## PR-D: LLM Adapter Layer (All 3 Providers)
+## PR-04: LLM Adapter Layer (All 3 Providers)
 
 **Backend — one "heavy" PR but self-contained**
 
@@ -214,7 +214,7 @@ class LLMAdapter(ABC):
 ### Prompt Renderer
 
 - System prompt v1
-- Context blocks using `get_context_window()` from PR-A
+- Context blocks using `get_context_window()` from PR-01
 
 ### Feature Flags
 
@@ -230,9 +230,9 @@ class LLMAdapter(ABC):
 
 ---
 
-## PR-E: Send-Message Endpoint + Idempotency + Rate Limits + Token Budget
+## PR-05: Send-Message Endpoint + Idempotency + Rate Limits + Token Budget
 
-**Backend — depends on PR-A + PR-D**
+**Backend — depends on PR-01 + PR-04**
 
 ### Route
 
@@ -305,9 +305,9 @@ Return 4xx, **no pending assistant created, no `message_llm` row:**
 
 ---
 
-## PR-F: Keyword Search Endpoint
+## PR-06: Keyword Search Endpoint
 
-**Backend — GIN indexes already exist from PR-A**
+**Backend — GIN indexes already exist from PR-01**
 
 ### Visibility CTE
 
@@ -337,7 +337,7 @@ Add `services/visibility.py`:
 
 ---
 
-## PR-G: Frontend — Chat UI + Quote-to-Chat + BFF Routes
+## PR-07: Frontend — Chat UI + Quote-to-Chat + BFF Routes
 
 **Frontend — combines BFF + basic UI + quote wiring**
 
@@ -379,7 +379,7 @@ Add `services/visibility.py`:
 
 ---
 
-## PR-H (Optional): Streaming End-to-End
+## PR-08 (Optional): Streaming End-to-End
 
 **Backend + BFF + UI — ship non-streaming first, add this as follow-up**
 
@@ -392,7 +392,7 @@ Server-Sent Events (SSE) — `text/event-stream`
 ### Backend
 
 - `POST /.../messages?stream=1` returns SSE response
-- Router calls `adapter.generate_stream()` (defined in PR-D)
+- Router calls `adapter.generate_stream()` (defined in PR-04)
 - Wraps chunks in SSE format
 
 ### BFF
@@ -419,9 +419,9 @@ Server-Sent Events (SSE) — `text/event-stream`
 
 ---
 
-## PR-I (Optional): Pending Assistant Cleanup Task
+## PR-09 (Optional): Pending Assistant Cleanup Task
 
-**Backend + Tasks — can fold into PR-E if fewer PRs desired**
+**Backend + Tasks — can fold into PR-05 if fewer PRs desired**
 
 ### Celery Beat Task
 
@@ -448,15 +448,15 @@ Server-Sent Events (SSE) — `text/event-stream`
 
 | # | PR | Scope | Key Content |
 |---|-----|-------|-------------|
-| 1 | PR-A | Backend | Schema mega-migration + seq/crypto/context helpers + ingestion hook |
-| 2 | PR-B | Backend | Conversations/messages CRUD + shares service + context service |
-| 3 | PR-C | Backend | Models + API keys endpoints |
-| 4 | PR-D | Backend | LLM adapter layer (all 3 providers) + error normalization |
-| 5 | PR-E | Backend | Send-message endpoint + idempotency + rate limits + token budget |
-| 6 | PR-F | Backend | Keyword search endpoint + visibility CTE |
-| 7 | PR-G | Frontend | BFF routes + chat UI + quote-to-chat |
-| 8 | PR-H | Full stack | (Optional) Streaming end-to-end |
-| 9 | PR-I | Backend | (Optional) Pending cleanup task + metrics |
+| 1 | PR-01 | Backend | Schema mega-migration + seq/crypto/context helpers + ingestion hook |
+| 2 | PR-02 | Backend | Conversations/messages CRUD + shares service + context service |
+| 3 | PR-03 | Backend | Models + API keys endpoints |
+| 4 | PR-04 | Backend | LLM adapter layer (all 3 providers) + error normalization |
+| 5 | PR-05 | Backend | Send-message endpoint + idempotency + rate limits + token budget |
+| 6 | PR-06 | Backend | Keyword search endpoint + visibility CTE |
+| 7 | PR-07 | Frontend | BFF routes + chat UI + quote-to-chat |
+| 8 | PR-08 | Full stack | (Optional) Streaming end-to-end |
+| 9 | PR-09 | Backend | (Optional) Pending cleanup task + metrics |
 
 **Key Decisions:**
 - One migration (0004) for all S3 schema
