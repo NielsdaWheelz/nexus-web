@@ -11,7 +11,7 @@ No domain logic or raw DB access in routes.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
@@ -24,27 +24,34 @@ from nexus.services import upload as upload_service
 router = APIRouter()
 
 
-@router.post("/media/from_url", status_code=201)
+@router.post("/media/from_url", status_code=202)
 def create_from_url(
-    request: FromUrlRequest,
+    request_body: FromUrlRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    request: Request,
 ) -> dict:
-    """Create a provisional web_article from a URL.
+    """Create a web_article from a URL and enqueue ingestion.
 
-    Creates a media row with processing_status='pending' and attaches it
-    to the viewer's default library. No fetching or parsing occurs.
+    Per PR-04: Creates a provisional media row, attaches it to the viewer's
+    default library, and enqueues a Celery task for asynchronous ingestion.
 
-    Returns:
+    Returns 202 Accepted with:
         - media_id: UUID of the created media
-        - duplicate: Always false in PR-03 (true dedup in PR-04)
-        - processing_status: Always 'pending'
-        - ingest_enqueued: Always false (ingestion not implemented yet)
+        - duplicate: Always false at creation (dedup during ingestion)
+        - processing_status: 'pending'
+        - ingest_enqueued: True if task was enqueued
+
+    Clients should poll GET /media/{id} for status updates.
     """
-    result = media_service.create_provisional_web_article(
+    # Get request_id from state if available (set by request-id middleware)
+    request_id = getattr(request.state, "request_id", None)
+
+    result = media_service.enqueue_web_article_from_url(
         db=db,
         viewer_id=viewer.user_id,
-        url=request.url,
+        url=request_body.url,
+        request_id=request_id,
     )
     return success_response(result.model_dump(mode="json"))
 

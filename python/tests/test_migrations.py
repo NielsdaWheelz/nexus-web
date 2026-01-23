@@ -1124,9 +1124,9 @@ class TestCeleryAndRedis:
 
     def test_celery_app_initializes(self):
         """Worker app can be imported without error."""
-        from apps.worker.main import app
+        from apps.worker.main import celery_app
 
-        assert app is not None
+        assert celery_app is not None
         # Just check the broker URL is configured (may be None in test env without REDIS_URL)
         # The app should still initialize
 

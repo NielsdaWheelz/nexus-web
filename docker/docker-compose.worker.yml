@@ -1,0 +1,56 @@
+# Docker Compose for running the Celery worker locally
+# Use in addition to the main docker-compose.yml (for Redis)
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d
+#
+# Or build and run worker separately:
+#   docker build -f docker/Dockerfile.worker -t nexus-worker .
+#   docker run -e DATABASE_URL=... -e REDIS_URL=... nexus-worker
+#
+# Environment variables (required):
+#   DATABASE_URL - PostgreSQL connection string
+#   REDIS_URL - Redis connection string
+#   SUPABASE_JWKS_URL - Supabase JWKS endpoint
+#   SUPABASE_ISSUER - JWT issuer
+#   SUPABASE_AUDIENCES - JWT audiences
+
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:postgres@host.docker.internal:54322/postgres}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - SUPABASE_JWKS_URL=${SUPABASE_JWKS_URL:-http://host.docker.internal:54321/auth/v1/.well-known/jwks.json}
+      - SUPABASE_ISSUER=${SUPABASE_ISSUER:-http://localhost:54321/auth/v1}
+      - SUPABASE_AUDIENCES=${SUPABASE_AUDIENCES:-authenticated}
+      - NEXUS_ENV=${NEXUS_ENV:-local}
+    depends_on:
+      - redis
+    # Limit resources due to Chromium memory usage
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # Redis from main docker-compose.yml
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redis_data:

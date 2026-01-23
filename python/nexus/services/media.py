@@ -11,11 +11,15 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
+from nexus.config import Environment, get_settings
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.logging import get_logger
 from nexus.schemas.media import FragmentOut, FromUrlResponse, MediaOut
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
+
+logger = get_logger(__name__)
 
 
 def get_media_for_viewer(
@@ -145,6 +149,9 @@ def create_provisional_web_article(
     db: Session,
     viewer_id: UUID,
     url: str,
+    *,
+    enqueue_task: bool = False,
+    request_id: str | None = None,
 ) -> FromUrlResponse:
     """Create a provisional web_article media row from a URL.
 
@@ -152,23 +159,22 @@ def create_provisional_web_article(
     - kind = 'web_article'
     - processing_status = 'pending'
     - requested_url = exactly as provided
-    - canonical_url = NULL (set in PR-04 after redirect resolution)
+    - canonical_url = NULL (set after redirect resolution during ingestion)
     - canonical_source_url = normalize_url_for_display(url)
     - title = truncated URL or 'Untitled'
 
     The media is immediately attached to the viewer's default library.
 
-    No fetching, parsing, or deduplication occurs in this function.
-    Those happen in PR-04 during ingestion.
-
     Args:
         db: Database session.
         viewer_id: The ID of the viewer creating the media.
         url: The URL to create a provisional media row for.
+        enqueue_task: If True, enqueue ingestion task after creating media.
+        request_id: Optional request ID for task correlation.
 
     Returns:
         FromUrlResponse with media_id, duplicate=False, processing_status='pending',
-        ingest_enqueued=False.
+        and ingest_enqueued reflecting whether task was enqueued.
 
     Raises:
         InvalidRequestError: If URL validation fails.
@@ -193,7 +199,7 @@ def create_provisional_web_article(
         kind=MediaKind.web_article.value,
         title=title,
         requested_url=url,
-        canonical_url=None,  # Not set until PR-04 after redirect resolution
+        canonical_url=None,  # Not set until ingestion resolves redirects
         canonical_source_url=canonical_source,
         processing_status=ProcessingStatus.pending,
         created_by_user_id=viewer_id,
@@ -208,12 +214,92 @@ def create_provisional_web_article(
 
     db.commit()
 
+    # Enqueue task if requested
+    ingest_enqueued = False
+    if enqueue_task:
+        ingest_enqueued = _enqueue_ingest_task(media.id, viewer_id, request_id)
+
     return FromUrlResponse(
         media_id=media.id,
-        duplicate=False,  # Always false in PR-03; true dedup in PR-04
+        duplicate=False,  # Always false at creation; dedup happens during ingestion
         processing_status=ProcessingStatus.pending.value,
-        ingest_enqueued=False,  # Always false in PR-03; ingestion not implemented
+        ingest_enqueued=ingest_enqueued,
     )
+
+
+def enqueue_web_article_from_url(
+    db: Session,
+    viewer_id: UUID,
+    url: str,
+    request_id: str | None = None,
+) -> FromUrlResponse:
+    """Create a provisional web_article and enqueue ingestion.
+
+    Per PR-04 spec, this is the main entry point for /media/from_url:
+    - Creates provisional media row
+    - Attaches to viewer's default library
+    - Enqueues Celery task for ingestion
+
+    Args:
+        db: Database session.
+        viewer_id: The ID of the viewer creating the media.
+        url: The URL to ingest.
+        request_id: Optional request ID for task correlation.
+
+    Returns:
+        FromUrlResponse with ingest_enqueued=True.
+    """
+    return create_provisional_web_article(
+        db,
+        viewer_id,
+        url,
+        enqueue_task=True,
+        request_id=request_id,
+    )
+
+
+def _enqueue_ingest_task(
+    media_id: UUID,
+    actor_user_id: UUID,
+    request_id: str | None,
+) -> bool:
+    """Enqueue the ingest_web_article Celery task.
+
+    In test/dev mode, runs synchronously if Celery is not available.
+
+    Returns:
+        True if task was enqueued/executed, False otherwise.
+    """
+    settings = get_settings()
+
+    # In test environment, don't enqueue - let tests call task directly
+    if settings.nexus_env == Environment.TEST:
+        logger.debug("skipping_task_enqueue", reason="test_environment")
+        return False
+
+    try:
+        from nexus.tasks import ingest_web_article
+
+        ingest_web_article.apply_async(
+            args=[str(media_id), str(actor_user_id)],
+            kwargs={"request_id": request_id},
+            queue="ingest",
+        )
+        logger.info(
+            "ingest_task_enqueued",
+            media_id=str(media_id),
+            actor_user_id=str(actor_user_id),
+            request_id=request_id,
+        )
+        return True
+    except Exception as e:
+        # Log but don't fail - task can be retried manually
+        logger.warning(
+            "ingest_task_enqueue_failed",
+            media_id=str(media_id),
+            error=str(e),
+        )
+        return False
 
 
 def list_fragments_for_viewer(

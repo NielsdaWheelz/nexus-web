@@ -36,9 +36,14 @@ nexus/
 ├── supabase/                    # Supabase local configuration
 │   └── config.toml              # Ports: API=54321, DB=54322
 │
+├── node/                        # Node.js packages
+│   └── ingest/                  # Web article ingestion (Playwright + Readability)
+│
 ├── docker/                      # Docker configs
 │   ├── docker-compose.yml       # Local dev services (redis only)
-│   └── Dockerfile.api
+│   ├── docker-compose.worker.yml # Worker service config
+│   ├── Dockerfile.api
+│   └── Dockerfile.worker        # Worker image (Python + Node.js + Chromium)
 │
 ├── .github/workflows/           # CI configuration
 │   └── ci.yml                   # GitHub Actions CI pipeline
@@ -288,6 +293,43 @@ supabase status
 
 # View Supabase logs
 supabase logs
+```
+
+## Web Article Ingestion
+
+The system supports ingesting web articles by URL with asynchronous processing:
+
+### Workflow
+
+1. **API Request**: `POST /media/from_url` with `{"url": "https://..."}`
+2. **Immediate Response**: Returns 202 Accepted with `media_id` and `ingest_enqueued: true`
+3. **Background Processing**: Celery worker:
+   - Fetches page via Playwright (JS-enabled browser)
+   - Extracts content using Mozilla Readability
+   - Sanitizes HTML (XSS protection, image proxy rewriting)
+   - Generates canonical text for highlighting
+   - Handles deduplication by canonical URL
+4. **Poll for Status**: `GET /media/{id}` returns `processing_status`
+
+### Running the Worker
+
+```bash
+# Terminal 3: Start Celery worker for ingestion
+make worker
+```
+
+The worker requires Node.js 20+ and Playwright Chromium. On first run:
+```bash
+cd node/ingest
+npm ci
+npx playwright install chromium
+```
+
+### Docker Worker
+
+```bash
+# Build and run worker with docker-compose
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d
 ```
 
 ## API Documentation

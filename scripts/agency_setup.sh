@@ -68,6 +68,7 @@ check_tool() {
 echo "Checking required tools..."
 check_tool uv
 check_tool docker
+check_tool node
 check_tool npm
 check_tool supabase
 echo "Required tools found"
@@ -155,6 +156,15 @@ echo "Installing frontend dependencies..."
 cd "$PROJECT_ROOT/apps/web"
 npm install
 echo "Frontend dependencies installed"
+echo ""
+
+# Install node ingest worker dependencies (Playwright + Readability)
+echo "Installing node ingest worker dependencies..."
+cd "$PROJECT_ROOT/node/ingest"
+npm install
+echo "Installing Playwright browsers (Chromium)..."
+npx playwright install chromium
+echo "Node ingest worker dependencies installed"
 echo ""
 
 # Database URLs using Supabase local Postgres
