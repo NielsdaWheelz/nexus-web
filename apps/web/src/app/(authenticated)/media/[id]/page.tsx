@@ -3,11 +3,12 @@
  *
  * This page displays a media item with:
  * - Content pane: Rendered HTML with highlights
- * - Linked-items pane: Highlight list with editing
+ * - Linked-items pane: Vertically aligned highlight rows (PR-10)
  * - Selection popover for creating highlights
  * - Full highlight interaction (focus, cycling, edit bounds)
  *
  * @see docs/v1/s2/s2_prs/s2_pr09.md
+ * @see docs/v1/s2/s2_prs/s2_pr10.md
  */
 
 "use client";
@@ -20,6 +21,7 @@ import PaneContainer from "@/components/PaneContainer";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import SelectionPopover from "@/components/SelectionPopover";
 import HighlightEditor, { type Highlight } from "@/components/HighlightEditor";
+import LinkedItemsPane from "@/components/LinkedItemsPane";
 import {
   applyHighlightsToHtmlMemoized,
   clearHighlightCache,
@@ -167,7 +169,6 @@ export default function MediaViewPage({
     clearFocus,
     startEditBounds,
     cancelEditBounds,
-    isHighlightFocused,
   } = useHighlightInteraction();
 
   // Selection state for creating highlights
@@ -683,63 +684,39 @@ export default function MediaViewPage({
         </div>
       </Pane>
 
-      {/* Linked Items Pane */}
+      {/* Linked Items Pane - Vertically aligned with highlights (PR-10) */}
       {canRead && (
         <Pane title="Highlights" defaultWidth={360} minWidth={280}>
-          <div className={styles.linkedItems}>
-            {highlights.length === 0 ? (
-              <div className={styles.noHighlights}>
-                <p>No highlights yet.</p>
-                <p className={styles.hint}>
-                  Select text to create a highlight.
-                </p>
-              </div>
-            ) : (
-              <div className={styles.highlightList}>
-                {highlights.map((h) => (
-                  <div
-                    key={h.id}
-                    className={`${styles.highlightItem} ${
-                      isHighlightFocused(h.id) ? styles.focused : ""
-                    }`}
-                    onClick={() => focusHighlight(h.id)}
-                  >
-                    {isHighlightFocused(h.id) ? (
-                      <HighlightEditor
-                        highlight={h}
-                        isEditingBounds={focusState.editingBounds}
-                        onStartEditBounds={startEditBounds}
-                        onCancelEditBounds={cancelEditBounds}
-                        onColorChange={handleColorChange}
-                        onDelete={handleDelete}
-                        onAnnotationSave={handleAnnotationSave}
-                        onAnnotationDelete={handleAnnotationDelete}
-                      />
-                    ) : (
-                      <div className={styles.highlightPreview}>
-                        <mark
-                          className={`${styles.previewMark} ${
-                            styles[`color-${h.color}`]
-                          }`}
-                        >
-                          {h.exact.length > 100
-                            ? `${h.exact.slice(0, 100)}...`
-                            : h.exact}
-                        </mark>
-                        {h.annotation && (
-                          <p className={styles.annotationPreview}>
-                            {h.annotation.body.length > 50
-                              ? `${h.annotation.body.slice(0, 50)}...`
-                              : h.annotation.body}
-                          </p>
-                        )}
-                      </div>
-                    )}
+          {focusState.focusedId ? (
+            // When a highlight is focused, show the editor
+            <div className={styles.linkedItems}>
+              {highlights
+                .filter((h) => h.id === focusState.focusedId)
+                .map((h) => (
+                  <div key={h.id} className={`${styles.highlightItem} ${styles.focused}`}>
+                    <HighlightEditor
+                      highlight={h}
+                      isEditingBounds={focusState.editingBounds}
+                      onStartEditBounds={startEditBounds}
+                      onCancelEditBounds={cancelEditBounds}
+                      onColorChange={handleColorChange}
+                      onDelete={handleDelete}
+                      onAnnotationSave={handleAnnotationSave}
+                      onAnnotationDelete={handleAnnotationDelete}
+                    />
                   </div>
                 ))}
-              </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            // When no highlight is focused, show aligned rows
+            <LinkedItemsPane
+              highlights={highlights}
+              contentRef={contentRef}
+              focusedId={focusState.focusedId}
+              onHighlightClick={focusHighlight}
+              highlightsVersion={highlightsVersion}
+            />
+          )}
         </Pane>
       )}
 

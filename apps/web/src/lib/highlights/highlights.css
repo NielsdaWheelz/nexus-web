@@ -3,13 +3,14 @@
  *
  * These styles are applied to <span> elements wrapping highlighted text.
  * Each span has:
- * - data-highlight-ids: comma-separated list of active highlight IDs
+ * - data-active-highlight-ids: space-separated list of active highlight IDs (PR-10)
  * - data-highlight-top: the topmost (visible) highlight ID
  * - class: hl-{color} where color is one of the palette colors
  *
  * Anchors are zero-width spans for positioning linked-items.
  *
  * @see docs/v1/s2/s2_prs/s2_pr08.md §11
+ * @see docs/v1/s2/s2_prs/s2_pr10.md §15 (attribute name change)
  */
 
 /* =============================================================================
@@ -18,15 +19,16 @@
 
 /**
  * All highlight spans share these base styles.
- * Using attribute selector to target any element with data-highlight-ids.
+ * Using attribute selector to target any element with data-active-highlight-ids.
+ * PR-10: Changed from data-highlight-ids (comma) to data-active-highlight-ids (space).
  */
-[data-highlight-ids] {
+[data-active-highlight-ids] {
   /* Subtle rounding for softer appearance */
   border-radius: 2px;
   /* Ensure text remains selectable */
   cursor: text;
-  /* Smooth transitions for hover states (future PR-09) */
-  transition: background-color 150ms ease;
+  /* Smooth transitions for hover states */
+  transition: background-color 150ms ease, outline 150ms ease;
 }
 
 /* =============================================================================
@@ -143,16 +145,34 @@
 }
 
 /* =============================================================================
-   Hover States (PR-09)
+   Hover States (PR-09, updated PR-10)
    ============================================================================= */
 
 /**
  * Hover state for highlighted text.
  * Shows cursor is interactive for highlight cycling.
+ * PR-10: Changed to data-active-highlight-ids.
  */
-[data-highlight-ids]:hover {
+[data-active-highlight-ids]:hover {
   cursor: pointer;
   filter: brightness(0.95);
+}
+
+/* =============================================================================
+   Linked-Items Hover Outline (PR-10)
+   ============================================================================= */
+
+/**
+ * When hovering a linked-item row, outline all DOM segments
+ * belonging to that highlight.
+ *
+ * Applied via JS using the ~= selector for efficient token matching:
+ *   querySelectorAll('[data-active-highlight-ids~="highlightId"]')
+ */
+.hl-hover-outline {
+  outline: 2px solid var(--color-accent, #7aa2f7);
+  outline-offset: 1px;
+  border-radius: 3px;
 }
 
 /* =============================================================================
@@ -167,4 +187,8 @@
  * PR-09 additions:
  * - Hover states for highlight interaction
  * - Focus states via .hl-focused class
+ *
+ * PR-10 additions:
+ * - Changed data-highlight-ids to data-active-highlight-ids (space-delimited)
+ * - Added .hl-hover-outline for linked-items row hover
  */

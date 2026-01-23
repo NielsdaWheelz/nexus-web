@@ -13,10 +13,14 @@
  *
  * Overlap cycling:
  * - First click on segment focuses data-highlight-top
- * - Subsequent clicks on same segment cycle through data-highlight-ids
+ * - Subsequent clicks on same segment cycle through data-active-highlight-ids
  * - Clicking different segment resets cycling
  *
+ * PR-10: Changed from data-highlight-ids (comma-delimited) to
+ * data-active-highlight-ids (space-delimited) for efficient CSS ~= selector.
+ *
  * @see docs/v1/s2/s2_prs/s2_pr09.md §9
+ * @see docs/v1/s2/s2_prs/s2_pr10.md §15
  */
 
 import { useState, useCallback, useRef } from "react";
@@ -90,7 +94,7 @@ export type UseHighlightInteractionReturn = {
  * // In highlight span click handler:
  * const onClick = (e: React.MouseEvent) => {
  *   const target = e.target as Element;
- *   const ids = target.getAttribute('data-highlight-ids')?.split(',') || [];
+ *   const ids = target.getAttribute('data-active-highlight-ids')?.split(' ') || [];
  *   const topId = target.getAttribute('data-highlight-top') || ids[0];
  *   handleHighlightClick({ highlightIds: ids, topmostId: topId, element: target });
  * };
@@ -244,16 +248,20 @@ export function useHighlightInteraction(
 /**
  * Parse highlight data from a DOM element's data attributes.
  *
- * @param element - Element with data-highlight-ids and data-highlight-top
+ * PR-10: Uses data-active-highlight-ids (space-delimited) instead of
+ * data-highlight-ids (comma-delimited) for efficient CSS ~= selector.
+ *
+ * @param element - Element with data-active-highlight-ids and data-highlight-top
  * @returns HighlightClickData or null if not a highlight span
  */
 export function parseHighlightElement(element: Element): HighlightClickData | null {
-  const idsAttr = element.getAttribute("data-highlight-ids");
+  const idsAttr = element.getAttribute("data-active-highlight-ids");
   if (!idsAttr) {
     return null;
   }
 
-  const highlightIds = idsAttr.split(",").filter(Boolean);
+  // Space-delimited per PR-10
+  const highlightIds = idsAttr.split(" ").filter(Boolean);
   if (highlightIds.length === 0) {
     return null;
   }
@@ -270,12 +278,14 @@ export function parseHighlightElement(element: Element): HighlightClickData | nu
 /**
  * Find the closest ancestor with highlight data attributes.
  *
+ * PR-10: Uses data-active-highlight-ids instead of data-highlight-ids.
+ *
  * @param element - Starting element
  * @returns Element with highlight data or null
  */
 export function findHighlightElement(element: Element | null): Element | null {
   while (element) {
-    if (element.hasAttribute("data-highlight-ids")) {
+    if (element.hasAttribute("data-active-highlight-ids")) {
       return element;
     }
     element = element.parentElement;
@@ -288,6 +298,9 @@ export function findHighlightElement(element: Element | null): Element | null {
  *
  * This is a DOM-based approach that doesn't require re-rendering.
  * Call this when focus changes to update visual state.
+ *
+ * PR-10: Uses data-active-highlight-ids with ~= selector for efficient
+ * space-delimited token matching.
  *
  * @param container - The container element to search within
  * @param highlightId - The highlight ID to focus (or null to clear)
@@ -303,16 +316,11 @@ export function applyFocusClass(
   focusedElements.forEach((el) => el.classList.remove(focusClass));
 
   // Add focus class to elements containing the focused highlight
+  // Using ~= selector for O(1) space-delimited token matching (PR-10)
   if (highlightId) {
-    const selector = `[data-highlight-ids*="${highlightId}"]`;
+    const selector = `[data-active-highlight-ids~="${highlightId}"]`;
     const elements = container.querySelectorAll(selector);
-    elements.forEach((el) => {
-      // Verify the ID is actually in the list (not a substring match)
-      const ids = el.getAttribute("data-highlight-ids")?.split(",") || [];
-      if (ids.includes(highlightId)) {
-        el.classList.add(focusClass);
-      }
-    });
+    elements.forEach((el) => el.classList.add(focusClass));
   }
 }
 

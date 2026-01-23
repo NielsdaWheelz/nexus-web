@@ -115,6 +115,8 @@ src/
 │   ├── SelectionPopover.tsx    # Highlight color picker (PR-09)
 │   ├── HighlightEditor.tsx     # Highlight edit/delete UI (PR-09)
 │   ├── AnnotationEditor.tsx    # Note editor (PR-09)
+│   ├── LinkedItemsPane.tsx     # Aligned linked-items container (PR-10)
+│   ├── LinkedItemRow.tsx       # Linked-item row component (PR-10)
 │   ├── Navbar.tsx
 │   ├── Pane.tsx
 │   └── ...
@@ -128,6 +130,7 @@ src/
 │   │   ├── applySegments.ts    # Highlight DOM application (PR-08)
 │   │   ├── selectionToOffsets.ts   # Selection conversion (PR-09)
 │   │   ├── useHighlightInteraction.ts  # Focus/cycling hook (PR-09)
+│   │   ├── alignmentEngine.ts  # Vertical alignment logic (PR-10)
 │   │   └── highlights.css      # Highlight styles
 │   └── supabase/
 │       ├── server.ts       # Server-side Supabase client
@@ -215,6 +218,19 @@ import {
   findHighlightElement,
   applyFocusClass,
   reconcileFocusAfterRefetch,
+  
+  // Alignment engine (PR-10)
+  measureAnchorPositions,
+  computeAlignedRows,
+  computeScrollTarget,
+  createMeasureScheduler,
+  createScrollHandler,
+  ROW_HEIGHT,
+  ROW_GAP,
+  SCROLL_TARGET_FRACTION,
+  MEASURE_DEBOUNCE_MS,
+  type AlignmentHighlight,
+  type AlignedRow,
 } from '@/lib/highlights';
 ```
 
@@ -290,12 +306,12 @@ const result = applyHighlightsToHtmlMemoized(
 
 **HTML output:**
 ```html
-<!-- Highlight spans -->
-<span data-highlight-ids="h1,h2" data-highlight-top="h1" class="hl-yellow">
+<!-- Highlight spans (PR-10: space-delimited IDs) -->
+<span data-active-highlight-ids="h1 h2" data-highlight-top="h1" class="hl-yellow">
   highlighted text
 </span>
 
-<!-- Highlight anchors (for positioning) -->
+<!-- Highlight anchors (for positioning linked-items) -->
 <span data-highlight-anchor="h1"></span>
 ```
 
@@ -359,7 +375,50 @@ applyFocusClass(containerRef.current, focusState.focusedId);
 - Subsequent clicks on the same segment cycle through overlapping highlights
 - Clicking a different segment resets cycling
 
-### `highlights.css` - Styles (PR-08/09)
+### `alignmentEngine.ts` - Vertical Alignment (PR-10)
+
+Core logic for aligning linked-items pane rows to highlight anchors in the content pane.
+
+```typescript
+import {
+  measureAnchorPositions,
+  computeAlignedRows,
+  computeScrollTarget,
+  createMeasureScheduler,
+  createScrollHandler,
+  ROW_HEIGHT,
+  ROW_GAP,
+} from '@/lib/highlights';
+
+// Phase 1: Measure anchor positions (expensive, call on mount/resize/image load)
+const positions = measureAnchorPositions(contentElement, highlights);
+
+// Phase 2: Compute aligned rows (cheap, call on scroll)
+const { rows, missingAnchorIds } = computeAlignedRows(highlights, positions, scrollTop);
+
+// Each row has: highlight, desiredY (from anchor), top (after collision resolution)
+rows.forEach(row => {
+  const el = rowRefs.get(row.highlight.id);
+  if (el) el.style.transform = `translateY(${row.top}px)`;
+});
+```
+
+**Two-Phase Alignment Model:**
+1. **Measurement Phase** (debounced): Reads DOM to get anchor positions in document space
+2. **Scroll Phase** (per-frame): Computes row positions from cached positions + scrollTop
+
+**Collision Resolution:**
+- Rows sorted by visual position + canonical tie-breakers
+- Push-down stacking with minimum gap ensures rows never overlap
+- Order: `(desiredY ASC, start_offset ASC, end_offset ASC, created_at_ms ASC, id ASC)`
+
+**Constants:**
+- `ROW_HEIGHT = 28px` - Fixed row height
+- `ROW_GAP = 4px` - Minimum gap between rows
+- `SCROLL_TARGET_FRACTION = 0.2` - Fraction from top when scrolling to highlight
+- `MEASURE_DEBOUNCE_MS = 75` - Debounce interval for measurement
+
+### `highlights.css` - Styles (PR-08/09/10)
 
 CSS classes for highlight colors:
 - `.hl-yellow` - Default yellow highlight
@@ -368,14 +427,17 @@ CSS classes for highlight colors:
 - `.hl-pink` - Pink highlight
 - `.hl-purple` - Purple highlight
 - `.hl-focused` - Focus ring for selected highlight (PR-09)
+- `.hl-hover-outline` - Outline for highlight spans when linked-item row is hovered (PR-10)
 
 Anchors are invisible zero-width spans used for positioning the linked-items pane.
 
-### Components (PR-09)
+### Components (PR-09/10)
 
 - `SelectionPopover.tsx` - Color picker popover shown on text selection
 - `HighlightEditor.tsx` - Edit bounds, change color, delete highlights
 - `AnnotationEditor.tsx` - Add/edit/delete notes on highlights
+- `LinkedItemsPane.tsx` - Vertically aligned linked-items container (PR-10)
+- `LinkedItemRow.tsx` - Individual linked-item row with color swatch and text preview (PR-10)
 
 ## Linting
 
