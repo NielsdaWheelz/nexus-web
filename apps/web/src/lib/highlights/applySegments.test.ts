@@ -7,7 +7,7 @@
  * 3. Partial overlaps
  * 4. Deterministic topmost selection
  * 5. Correct <span> wrapping with expected classes
- * 6. data-highlight-ids matches segmenter ordering
+ * 6. data-active-highlight-ids matches segmenter ordering (PR-10: space-delimited)
  * 7. data-highlight-top matches topmostId
  * 8. Exactly one anchor per highlight
  * 9. Anchor at correct position
@@ -16,6 +16,7 @@
  * 12. Canonical mismatch — all highlights skipped
  *
  * @see docs/v1/s2/s2_prs/s2_pr08.md §12
+ * @see docs/v1/s2/s2_prs/s2_pr10.md §15 (attribute name change)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -100,7 +101,8 @@ describe("applyHighlightsToHtml", () => {
       expect(result.failedIds).toHaveLength(0);
 
       // Should contain a span with the right attributes
-      expect(result.html).toContain('data-highlight-ids="h1"');
+      // PR-10: data-active-highlight-ids (space-delimited)
+      expect(result.html).toContain('data-active-highlight-ids="h1"');
       expect(result.html).toContain('data-highlight-top="h1"');
       expect(result.html).toContain('class="hl-yellow"');
     });
@@ -205,7 +207,7 @@ describe("applyHighlightsToHtml", () => {
       expect(result.html).toContain("<span");
     });
 
-    it("includes data-highlight-ids with correct ordering", () => {
+    it("includes data-active-highlight-ids with correct ordering (space-delimited)", () => {
       const html = "<p>ABCD</p>";
       const canonical = "ABCD";
       const highlights = [
@@ -218,7 +220,8 @@ describe("applyHighlightsToHtml", () => {
 
       // IDs should be ordered by (created_at DESC, id ASC)
       // c is newest, so first
-      expect(result.html).toContain('data-highlight-ids="c,b,a"');
+      // PR-10: space-delimited instead of comma
+      expect(result.html).toContain('data-active-highlight-ids="c b a"');
     });
 
     it("produces valid HTML (no broken nesting)", () => {
@@ -265,7 +268,7 @@ describe("applyHighlightsToHtml", () => {
 
       // Anchor should appear before the highlighted span
       const anchorIndex = result.html.indexOf('data-highlight-anchor="h1"');
-      const spanIndex = result.html.indexOf('data-highlight-ids="h1"');
+      const spanIndex = result.html.indexOf('data-active-highlight-ids="h1"');
 
       expect(anchorIndex).toBeGreaterThan(-1);
       expect(spanIndex).toBeGreaterThan(-1);
@@ -301,7 +304,7 @@ describe("applyHighlightsToHtml", () => {
 
       expect(result.failedIds).toContain("invalid");
       // Valid highlight should still work
-      expect(result.html).toContain('data-highlight-ids="valid"');
+      expect(result.html).toContain('data-active-highlight-ids="valid"');
     });
 
     it("aborts all highlights on canonical mismatch", () => {
@@ -362,7 +365,7 @@ describe("applyHighlightsToHtml", () => {
       const result = applyHighlightsToHtml(html, canonical, "frag-1", highlights);
 
       expect(result.validationPassed).toBe(true);
-      expect(result.html).toContain('data-highlight-ids="h1"');
+      expect(result.html).toContain('data-active-highlight-ids="h1"');
     });
 
     it("handles highlight color classes correctly", () => {

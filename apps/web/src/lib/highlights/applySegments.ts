@@ -9,13 +9,17 @@
  * 2. Build canonical cursor (maps text nodes to canonical offsets)
  * 3. Run segmenter on highlights to get disjoint segments
  * 4. Split text nodes at segment boundaries
- * 5. Wrap segments in <span> with data-highlight-ids, data-highlight-top, class
+ * 5. Wrap segments in <span> with data-active-highlight-ids, data-highlight-top, class
  * 6. Insert highlight anchors (one per highlight at its start position)
  * 7. Serialize DOM back to HTML string
  *
  * All DOM work happens on a detached DOM tree, never mutating the live DOM.
  *
+ * PR-10: Changed data-highlight-ids (comma-delimited) to data-active-highlight-ids
+ * (space-delimited) for efficient CSS ~= selector matching.
+ *
  * @see docs/v1/s2/s2_prs/s2_pr08.md §6
+ * @see docs/v1/s2/s2_prs/s2_pr10.md §15
  */
 
 import {
@@ -155,13 +159,17 @@ function codepointToUtf16Offset(text: string, codepointOffset: number): number {
 
 /**
  * Create a highlight span element.
+ *
+ * PR-10 requirement: Use space-delimited IDs in data-active-highlight-ids
+ * for efficient CSS `~=` selector matching in hover interactions.
  */
 function createHighlightSpan(
   doc: Document,
   segment: Segment
 ): HTMLSpanElement {
   const span = doc.createElement("span");
-  span.setAttribute("data-highlight-ids", segment.activeIds.join(","));
+  // Space-delimited for efficient ~= selector (PR-10)
+  span.setAttribute("data-active-highlight-ids", segment.activeIds.join(" "));
   span.setAttribute("data-highlight-top", segment.topmostId);
   span.className = COLOR_CLASSES[segment.topmostColor];
   return span;

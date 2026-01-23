@@ -85,3 +85,21 @@ export {
   type HighlightClickData,
   type UseHighlightInteractionReturn,
 } from "./useHighlightInteraction";
+
+// Re-export from alignment engine (PR-10)
+export {
+  measureAnchorPositions,
+  computeAlignedRows,
+  computeScrollTarget,
+  createMeasureScheduler,
+  createScrollHandler,
+  compareRowsForAlignment,
+  applyCollisionResolution,
+  ROW_HEIGHT,
+  ROW_GAP,
+  SCROLL_TARGET_FRACTION,
+  MEASURE_DEBOUNCE_MS,
+  type AlignmentHighlight,
+  type AlignedRow,
+  type AlignmentResult,
+} from "./alignmentEngine";
