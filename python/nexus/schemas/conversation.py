@@ -91,3 +91,80 @@ class MessageListResponse(BaseModel):
 # Note: CreateConversationRequest is empty in PR-02 (no body required).
 # POST /conversations creates an empty private conversation.
 # This is intentional per the spec.
+
+
+# =============================================================================
+# PR-05: Send Message Schemas
+# =============================================================================
+
+
+# Valid key modes for LLM calls
+KEY_MODES = Literal["auto", "byok_only", "platform_only"]
+
+# Max content length
+MAX_MESSAGE_CONTENT_LENGTH = 20000
+MAX_CONTEXTS = 10
+
+
+class ContextItem(BaseModel):
+    """A context item to include with a message.
+
+    Context items reference objects (media, highlights, annotations) whose
+    content will be included in the LLM prompt.
+    """
+
+    type: Literal["media", "highlight", "annotation"]
+    id: UUID
+
+
+class SendMessageRequest(BaseModel):
+    """Request schema for sending a message.
+
+    Per PR-05 spec:
+    - content: max 20,000 chars
+    - contexts: max 10 items
+    - model_id: must exist and be available to user
+    - key_mode: auto | byok_only | platform_only
+    """
+
+    content: str
+    model_id: UUID
+    key_mode: KEY_MODES = "auto"
+    contexts: list[ContextItem] = []
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
+class SendMessageResponse(BaseModel):
+    """Response schema for send message.
+
+    Returns the conversation (created if new), user message, and assistant message.
+    """
+
+    conversation: ConversationOut
+    user_message: MessageOut
+    assistant_message: MessageOut
+
+
+class StreamMetaEvent(BaseModel):
+    """SSE meta event at stream start."""
+
+    conversation_id: UUID
+    user_message_id: UUID
+    assistant_message_id: UUID
+    model_id: UUID
+    provider: str
+
+
+class StreamDeltaEvent(BaseModel):
+    """SSE delta event with incremental content."""
+
+    delta: str
+
+
+class StreamDoneEvent(BaseModel):
+    """SSE done event at stream end."""
+
+    status: str  # "complete" | "error"
+    usage: dict | None = None
+    error_code: str | None = None

@@ -6,7 +6,9 @@ Routes are transport-only: each calls exactly one service function.
 Per PR-02 spec:
 - Conversations: GET/POST/DELETE
 - Messages: GET (list), DELETE
-- Message creation (POST /conversations/:id/messages) is deferred to PR-05
+
+Per PR-05 spec:
+- Message creation: POST /conversations/{id}/messages (send message + LLM response)
 
 All routes require authentication.
 Response envelope: {"data": ...} or {"data": [...], "page": {...}}
@@ -16,13 +18,19 @@ Error envelope: {"error": {"code": "...", "message": "...", "request_id": "..."}
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.config import get_settings
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
+from nexus.schemas.conversation import SendMessageRequest
 from nexus.services import conversations as conversations_service
+from nexus.services import send_message as send_message_service
+from nexus.services import send_message_stream
 
 router = APIRouter(tags=["conversations"])
 
@@ -170,3 +178,201 @@ def delete_message(
         message_id=message_id,
     )
     return Response(status_code=204)
+
+
+# =============================================================================
+# Send Message Endpoints (PR-05)
+# =============================================================================
+
+
+@router.post("/conversations/messages", status_code=200)
+def send_message_new_conversation(
+    body: SendMessageRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> dict:
+    """Send a message and create a new conversation.
+
+    Creates a new conversation, sends the user message, and returns the
+    assistant response from the selected LLM model.
+
+    Per PR-05 spec, this endpoint:
+    - Creates conversation + user message + assistant message atomically
+    - Executes LLM call outside DB transaction
+    - Supports idempotency via Idempotency-Key header
+    - Enforces rate limits and token budgets
+
+    Errors:
+        E_MESSAGE_TOO_LONG (400): Message exceeds 20,000 char limit.
+        E_CONTEXT_TOO_LARGE (400): Context exceeds limits.
+        E_MODEL_NOT_AVAILABLE (400): Model not found or not available.
+        E_LLM_NO_KEY (400): No API key available for provider.
+        E_RATE_LIMITED (429): Per-user rate limit exceeded.
+        E_TOKEN_BUDGET_EXCEEDED (429): Platform token budget exceeded.
+        E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409): Key reused with different payload.
+    """
+    # Convert contexts to dicts
+    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
+
+    result = send_message_service.send_message(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=None,  # New conversation
+        content=body.content,
+        model_id=body.model_id,
+        key_mode=body.key_mode,
+        contexts=contexts,
+        idempotency_key=idempotency_key,
+    )
+
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.post("/conversations/{conversation_id}/messages", status_code=200)
+def send_message_existing_conversation(
+    conversation_id: UUID,
+    body: SendMessageRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> dict:
+    """Send a message in an existing conversation.
+
+    Sends the user message in the specified conversation and returns the
+    assistant response from the selected LLM model.
+
+    Per PR-05 spec, this endpoint:
+    - Locks conversation and assigns seq atomically
+    - Executes LLM call outside DB transaction
+    - Supports idempotency via Idempotency-Key header
+    - Enforces rate limits and token budgets
+
+    Errors:
+        E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
+        E_CONVERSATION_BUSY (409): Pending assistant already exists.
+        E_MESSAGE_TOO_LONG (400): Message exceeds 20,000 char limit.
+        E_CONTEXT_TOO_LARGE (400): Context exceeds limits.
+        E_MODEL_NOT_AVAILABLE (400): Model not found or not available.
+        E_LLM_NO_KEY (400): No API key available for provider.
+        E_RATE_LIMITED (429): Per-user rate limit exceeded.
+        E_TOKEN_BUDGET_EXCEEDED (429): Platform token budget exceeded.
+        E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409): Key reused with different payload.
+    """
+    # Convert contexts to dicts
+    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
+
+    result = send_message_service.send_message(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        content=body.content,
+        model_id=body.model_id,
+        key_mode=body.key_mode,
+        contexts=contexts,
+        idempotency_key=idempotency_key,
+    )
+
+    return success_response(result.model_dump(mode="json"))
+
+
+# =============================================================================
+# Streaming Endpoints (Feature-Flagged)
+# =============================================================================
+
+
+@router.post("/conversations/messages/stream")
+def send_message_stream_new(
+    body: SendMessageRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> StreamingResponse:
+    """Send a message with streaming response (new conversation).
+
+    Creates a new conversation and streams the assistant response via SSE.
+
+    Requires ENABLE_STREAMING=true in environment.
+
+    SSE Events:
+    - meta: Initial metadata (conversation_id, message IDs, model, provider)
+    - delta: Incremental content chunks
+    - done: Final status and usage
+
+    Errors:
+        E_FORBIDDEN (403): Streaming is disabled.
+        (Same errors as non-streaming endpoint)
+    """
+    settings = get_settings()
+    if not settings.enable_streaming:
+        raise ApiError(ApiErrorCode.E_FORBIDDEN, "Streaming is disabled")
+
+    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
+
+    return StreamingResponse(
+        send_message_stream.stream_send_message(
+            db=db,
+            viewer_id=viewer.user_id,
+            conversation_id=None,
+            content=body.content,
+            model_id=body.model_id,
+            key_mode=body.key_mode,
+            contexts=contexts,
+            idempotency_key=idempotency_key,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
+
+
+@router.post("/conversations/{conversation_id}/messages/stream")
+def send_message_stream_existing(
+    conversation_id: UUID,
+    body: SendMessageRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> StreamingResponse:
+    """Send a message with streaming response (existing conversation).
+
+    Streams the assistant response via SSE in an existing conversation.
+
+    Requires ENABLE_STREAMING=true in environment.
+
+    SSE Events:
+    - meta: Initial metadata (conversation_id, message IDs, model, provider)
+    - delta: Incremental content chunks
+    - done: Final status and usage
+
+    Errors:
+        E_FORBIDDEN (403): Streaming is disabled.
+        (Same errors as non-streaming endpoint)
+    """
+    settings = get_settings()
+    if not settings.enable_streaming:
+        raise ApiError(ApiErrorCode.E_FORBIDDEN, "Streaming is disabled")
+
+    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
+
+    return StreamingResponse(
+        send_message_stream.stream_send_message(
+            db=db,
+            viewer_id=viewer.user_id,
+            conversation_id=conversation_id,
+            content=body.content,
+            model_id=body.model_id,
+            key_mode=body.key_mode,
+            contexts=contexts,
+            idempotency_key=idempotency_key,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
