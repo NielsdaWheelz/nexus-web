@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
 
+    # S3 PR-04: LLM provider feature flags
+    # Controls whether each provider is available to users
+    # All providers enabled by default; disable in production if needed
+    enable_openai: bool = Field(default=True, alias="ENABLE_OPENAI")
+    enable_anthropic: bool = Field(default=True, alias="ENABLE_ANTHROPIC")
+    enable_gemini: bool = Field(default=True, alias="ENABLE_GEMINI")
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
