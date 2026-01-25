@@ -180,3 +180,65 @@ def clear_master_key_cache() -> None:
     Useful for testing or key rotation scenarios.
     """
     _get_master_key.cache_clear()
+
+
+# =============================================================================
+# High-Level API Key Encryption Functions (per PR-03 spec)
+# =============================================================================
+
+# Current master key version (v1 - no rotation implemented yet)
+CURRENT_MASTER_KEY_VERSION = 1
+
+
+def encrypt_api_key(plaintext: str) -> tuple[bytes, bytes, int, str]:
+    """Encrypt an API key for storage.
+
+    Per PR-03 spec:
+    - Nonce is generated internally (24 random bytes) — never supplied by caller
+    - Fingerprint is last 4 characters of plaintext
+    - master_key_version is always 1 (current version)
+
+    Args:
+        plaintext: The plaintext API key to encrypt.
+
+    Returns:
+        Tuple of (ciphertext, nonce, master_key_version, fingerprint)
+
+    Raises:
+        CryptoError: If encryption fails or master key is not configured.
+    """
+    # Generate unique nonce for this encryption
+    nonce = generate_nonce()
+
+    # Encrypt the key
+    ciphertext = encrypt_secretbox(plaintext.encode("utf-8"), nonce)
+
+    # Compute fingerprint (last 4 chars)
+    fingerprint = compute_key_fingerprint(plaintext)
+
+    return ciphertext, nonce, CURRENT_MASTER_KEY_VERSION, fingerprint
+
+
+def decrypt_api_key(ciphertext: bytes, nonce: bytes, version: int) -> str:
+    """Decrypt an API key from storage.
+
+    Per PR-03 spec:
+    - If version == 1 → use current master key
+    - If version unknown → raise ApiError(E_INTERNAL)
+
+    Args:
+        ciphertext: The encrypted API key.
+        nonce: The 24-byte nonce used during encryption.
+        version: The master key version used for encryption.
+
+    Returns:
+        The decrypted plaintext API key.
+
+    Raises:
+        CryptoError: If version is unknown or decryption fails.
+    """
+    if version != CURRENT_MASTER_KEY_VERSION:
+        raise CryptoError(f"Unknown key version: {version}")
+
+    plaintext_bytes = decrypt_secretbox(ciphertext, nonce)
+    return plaintext_bytes.decode("utf-8")

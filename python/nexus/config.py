@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     # Required in staging/prod, optional in local/test (uses deterministic test key)
     nexus_key_encryption_key: str | None = Field(default=None, alias="NEXUS_KEY_ENCRYPTION_KEY")
 
+    # S3: Platform API keys for LLM providers (optional)
+    # If set, models from that provider are available to all users
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

@@ -834,9 +834,12 @@ class UserApiKey(Base):
         nullable=False,
     )
     provider: Mapped[str] = mapped_column(Text, nullable=False)
-    encrypted_key: Mapped[bytes] = mapped_column(nullable=False)
-    key_nonce: Mapped[bytes] = mapped_column(nullable=False)
-    master_key_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    # These fields are nullable to support secure revocation (wipe to NULL)
+    encrypted_key: Mapped[bytes | None] = mapped_column(nullable=True)
+    key_nonce: Mapped[bytes | None] = mapped_column(nullable=True)
+    master_key_version: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, server_default="1"
+    )
     key_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="untested")
     created_at: Mapped[datetime] = mapped_column(
@@ -853,7 +856,7 @@ class UserApiKey(Base):
             name="ck_user_api_keys_provider",
         ),
         CheckConstraint(
-            "master_key_version > 0",
+            "master_key_version IS NULL OR master_key_version > 0",
             name="ck_user_api_keys_master_key_version",
         ),
         CheckConstraint(
@@ -861,7 +864,7 @@ class UserApiKey(Base):
             name="ck_user_api_keys_status",
         ),
         CheckConstraint(
-            "octet_length(key_nonce) = 24",
+            "key_nonce IS NULL OR octet_length(key_nonce) = 24",
             name="ck_user_api_keys_nonce_len",
         ),
         UniqueConstraint("user_id", "provider", name="uix_user_api_keys_user_provider"),
