@@ -56,6 +56,16 @@ nexus/
 │   ├── user_keys.py     # User API key management (S3)
 │   ├── models.py        # LLM model registry and availability (S3)
 │   └── search.py        # Keyword search with visibility filtering (S3, PR-06)
+│   └── llm/             # LLM adapter layer (S3 PR-04)
+│       ├── __init__.py       # Public exports
+│       ├── types.py          # Turn, LLMRequest, LLMResponse, LLMChunk, LLMUsage
+│       ├── errors.py         # LLMError, LLMErrorClass, error classification
+│       ├── adapter.py        # Abstract LLMAdapter base class
+│       ├── router.py         # Adapter selection + error normalization
+│       ├── prompt.py         # Provider-agnostic prompt rendering
+│       ├── openai_adapter.py # OpenAI implementation
+│       ├── anthropic_adapter.py # Anthropic implementation
+│       └── gemini_adapter.py # Gemini implementation
 └── storage/       # Supabase Storage client
     ├── client.py    # StorageClient abstraction + FakeStorageClient
     └── paths.py     # Storage path building utilities
@@ -201,6 +211,88 @@ Capabilities:
 - `can_search` - included in search results
 - `can_play` - has playable external URL
 - `can_download_file` - can download original file
+
+### LLM Adapter Layer (S3 PR-04)
+
+Provider-agnostic LLM integration supporting OpenAI, Anthropic, and Gemini:
+
+```python
+from nexus.services.llm import LLMRouter, LLMRequest, Turn
+import httpx
+
+# Create router with feature flags
+async with httpx.AsyncClient() as client:
+    router = LLMRouter(
+        client,
+        enable_openai=True,
+        enable_anthropic=True,
+        enable_gemini=True,
+    )
+    
+    # Build request
+    request = LLMRequest(
+        model_name="gpt-4",
+        messages=[
+            Turn(role="system", content="You are helpful."),
+            Turn(role="user", content="Hello!"),
+        ],
+        max_tokens=100,
+        temperature=0.7,
+    )
+    
+    # Non-streaming generation
+    response = await router.generate("openai", request, api_key="sk-...")
+    print(response.text)
+    
+    # Streaming generation
+    async for chunk in router.generate_stream("openai", request, api_key="sk-..."):
+        print(chunk.delta_text, end="")
+        if chunk.done:
+            print(f"\nUsage: {chunk.usage}")
+```
+
+**Prompt Rendering:**
+
+```python
+from nexus.services.llm import render_prompt, validate_prompt_size, Turn
+
+# Render prompt with context
+turns = render_prompt(
+    user_content="What does this mean?",
+    history=[Turn(role="user", content="Previous question")],
+    context_blocks=["Context block 1", "Context block 2"],
+)
+
+# Validate size before sending
+validate_prompt_size(turns)  # Raises PromptTooLargeError if > 100k chars
+```
+
+**Error Handling:**
+
+```python
+from nexus.services.llm import LLMError, LLMErrorClass
+
+try:
+    response = await router.generate("openai", request, api_key="sk-...")
+except LLMError as e:
+    if e.error_class == LLMErrorClass.RATE_LIMIT:
+        # Handle rate limit
+    elif e.error_class == LLMErrorClass.INVALID_KEY:
+        # Handle invalid key
+```
+
+Error classes: `INVALID_KEY`, `RATE_LIMIT`, `CONTEXT_TOO_LARGE`, `TIMEOUT`, `PROVIDER_DOWN`, `MODEL_NOT_AVAILABLE`
+
+**Configuration (environment variables):**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ENABLE_OPENAI` | Enable OpenAI provider | `true` |
+| `ENABLE_ANTHROPIC` | Enable Anthropic provider | `true` |
+| `ENABLE_GEMINI` | Enable Gemini provider | `true` |
+| `OPENAI_API_KEY` | Platform OpenAI key | - |
+| `ANTHROPIC_API_KEY` | Platform Anthropic key | - |
+| `GEMINI_API_KEY` | Platform Gemini key | - |
 
 ### Storage Client
 
