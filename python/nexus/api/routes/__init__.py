@@ -15,6 +15,7 @@ from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
 from nexus.api.routes.models import router as models_router
+from nexus.api.routes.search import router as search_router
 
 
 def create_api_router(include_test_routes: bool = False) -> APIRouter:
@@ -35,6 +36,7 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router.include_router(conversations_router, tags=["conversations"])
     api_router.include_router(models_router, tags=["models"])
     api_router.include_router(keys_router, tags=["keys"])
+    api_router.include_router(search_router, tags=["search"])
 
     if include_test_routes:
         from nexus.api.routes.test import router as test_router
