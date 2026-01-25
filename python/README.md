@@ -14,11 +14,12 @@ nexus/
 ├── api/           # HTTP routers
 │   ├── deps.py    # FastAPI dependencies
 │   └── routes/    # Route handlers
-│       ├── health.py    # Health check
-│       ├── me.py        # Current user endpoint
-│       ├── libraries.py # Library CRUD + library-media
-│       ├── media.py     # Media read endpoints
-│       └── highlights.py # Highlight/annotation CRUD (S2)
+│       ├── health.py        # Health check
+│       ├── me.py            # Current user endpoint
+│       ├── libraries.py     # Library CRUD + library-media
+│       ├── media.py         # Media read endpoints
+│       ├── highlights.py    # Highlight/annotation CRUD (S2)
+│       └── conversations.py # Conversation/message CRUD (S3)
 ├── auth/          # Authentication
 │   ├── middleware.py  # Auth middleware
 │   ├── permissions.py # Authorization predicates (can_read_media, etc.)
@@ -28,12 +29,13 @@ nexus/
 │   └── request_id.py  # X-Request-ID generation and logging
 ├── db/            # Database layer
 │   ├── engine.py  # SQLAlchemy engine
-│   ├── models.py  # SQLAlchemy ORM models
+│   ├── models.py  # SQLAlchemy ORM models (incl. S3 conversation models)
 │   └── session.py # Session management
 ├── schemas/       # Pydantic request/response models
-│   ├── library.py    # Library schemas
-│   ├── media.py      # Media and fragment schemas
-│   └── highlights.py # Highlight and annotation schemas (S2)
+│   ├── library.py      # Library schemas
+│   ├── media.py        # Media and fragment schemas
+│   ├── highlights.py   # Highlight and annotation schemas (S2)
+│   └── conversation.py # Conversation and message schemas (S3)
 ├── services/      # Business logic
 │   ├── bootstrap.py     # User/library bootstrap
 │   ├── capabilities.py  # Media capabilities derivation
@@ -41,7 +43,10 @@ nexus/
 │   ├── libraries.py     # Library domain logic
 │   ├── media.py         # Media visibility + retrieval + URL-based creation
 │   ├── upload.py        # File upload + ingest logic
-│   └── url_normalize.py # URL validation and normalization (S2)
+│   ├── url_normalize.py # URL validation and normalization (S2)
+│   ├── conversations.py # Conversation/message CRUD (S3)
+│   ├── shares.py        # Conversation sharing invariants (S3)
+│   └── contexts.py      # Message context management (S3)
 └── storage/       # Supabase Storage client
     ├── client.py    # StorageClient abstraction + FakeStorageClient
     └── paths.py     # Storage path building utilities
@@ -74,6 +79,12 @@ nexus/
 | DELETE | `/highlights/{id}` | Delete highlight (S2) |
 | PUT | `/highlights/{id}/annotation` | Upsert annotation (S2) |
 | DELETE | `/highlights/{id}/annotation` | Delete annotation (S2) |
+| GET | `/conversations` | List viewer's conversations (S3) |
+| POST | `/conversations` | Create a new conversation (S3) |
+| GET | `/conversations/{id}` | Get conversation by ID (S3) |
+| DELETE | `/conversations/{id}` | Delete conversation (S3) |
+| GET | `/conversations/{id}/messages` | List messages in conversation (S3) |
+| DELETE | `/messages/{id}` | Delete a message (S3) |
 
 ### Public Endpoints
 

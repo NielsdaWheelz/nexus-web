@@ -63,6 +63,7 @@ nexus/
 - **Auth Flow**: Supabase auth → Next.js session cookies → Bearer token to FastAPI.
 - **Visibility Enforcement**: All authorization happens in FastAPI, never in Next.js.
 - **JWT Verification**: All environments use Supabase JWKS for token verification.
+- **Chat Infrastructure** (S3): Conversations, messages, and LLM integration for AI-assisted reading.
 
 ## Quick Start
 
@@ -378,6 +379,19 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml 
 When running locally:
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
+
+### Key API Endpoints
+
+| Category | Endpoints |
+|----------|-----------|
+| Libraries | `GET/POST /libraries`, `PATCH/DELETE /libraries/{id}` |
+| Media | `GET /media/{id}`, `POST /media/from_url`, `POST /media/upload/init` |
+| Highlights | `POST/GET /fragments/{id}/highlights`, `PATCH/DELETE /highlights/{id}` |
+| Annotations | `PUT/DELETE /highlights/{id}/annotation` |
+| Conversations | `GET/POST /conversations`, `GET/DELETE /conversations/{id}` |
+| Messages | `GET /conversations/{id}/messages`, `DELETE /messages/{id}` |
+
+See `python/README.md` for the complete endpoint reference.
 
 ## Testing
 

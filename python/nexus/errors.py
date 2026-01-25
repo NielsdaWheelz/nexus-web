@@ -25,6 +25,8 @@ class ApiErrorCode(str, Enum):
     E_NOT_FOUND = "E_NOT_FOUND"
     E_LIBRARY_NOT_FOUND = "E_LIBRARY_NOT_FOUND"
     E_MEDIA_NOT_FOUND = "E_MEDIA_NOT_FOUND"
+    E_CONVERSATION_NOT_FOUND = "E_CONVERSATION_NOT_FOUND"
+    E_MESSAGE_NOT_FOUND = "E_MESSAGE_NOT_FOUND"
 
     # Validation errors (400)
     E_INVALID_REQUEST = "E_INVALID_REQUEST"
@@ -34,6 +36,11 @@ class ApiErrorCode(str, Enum):
     E_FILE_TOO_LARGE = "E_FILE_TOO_LARGE"
     E_INVALID_FILE_TYPE = "E_INVALID_FILE_TYPE"
     E_STORAGE_MISSING = "E_STORAGE_MISSING"
+    E_INVALID_CURSOR = "E_INVALID_CURSOR"
+
+    # Conflict errors (409)
+    E_SHARE_REQUIRED = "E_SHARE_REQUIRED"
+    E_SHARES_NOT_ALLOWED = "E_SHARES_NOT_ALLOWED"
 
     # Highlight errors (400/409)
     E_HIGHLIGHT_INVALID_RANGE = "E_HIGHLIGHT_INVALID_RANGE"  # 400
@@ -71,6 +78,8 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_NOT_FOUND: 404,
     ApiErrorCode.E_LIBRARY_NOT_FOUND: 404,
     ApiErrorCode.E_MEDIA_NOT_FOUND: 404,
+    ApiErrorCode.E_CONVERSATION_NOT_FOUND: 404,
+    ApiErrorCode.E_MESSAGE_NOT_FOUND: 404,
     # Validation errors
     ApiErrorCode.E_INVALID_REQUEST: 400,
     ApiErrorCode.E_NAME_INVALID: 400,
@@ -79,6 +88,10 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_FILE_TOO_LARGE: 400,
     ApiErrorCode.E_INVALID_FILE_TYPE: 400,
     ApiErrorCode.E_STORAGE_MISSING: 400,
+    ApiErrorCode.E_INVALID_CURSOR: 400,
+    # Conflict errors
+    ApiErrorCode.E_SHARE_REQUIRED: 409,
+    ApiErrorCode.E_SHARES_NOT_ALLOWED: 409,
     # Highlight errors
     ApiErrorCode.E_HIGHLIGHT_INVALID_RANGE: 400,
     ApiErrorCode.E_HIGHLIGHT_CONFLICT: 409,
