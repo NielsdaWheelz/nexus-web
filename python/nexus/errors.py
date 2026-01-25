@@ -52,6 +52,23 @@ class ApiErrorCode(str, Enum):
     E_KEY_INVALID_FORMAT = "E_KEY_INVALID_FORMAT"  # 400 - Key too short or contains whitespace
     E_KEY_NOT_FOUND = "E_KEY_NOT_FOUND"  # 404 - Key doesn't exist or not owned by viewer
 
+    # LLM errors (PR-05)
+    E_LLM_NO_KEY = "E_LLM_NO_KEY"  # 400 - No API key available for provider
+    E_LLM_RATE_LIMIT = "E_LLM_RATE_LIMIT"  # 429 - Provider rate limit exceeded
+    E_LLM_INVALID_KEY = "E_LLM_INVALID_KEY"  # 400 - API key is invalid or revoked
+    E_LLM_PROVIDER_DOWN = "E_LLM_PROVIDER_DOWN"  # 503 - Provider service unavailable
+    E_LLM_TIMEOUT = "E_LLM_TIMEOUT"  # 504 - Provider request timed out
+    E_LLM_CONTEXT_TOO_LARGE = "E_LLM_CONTEXT_TOO_LARGE"  # 400 - Context too large for model
+    E_MESSAGE_TOO_LONG = "E_MESSAGE_TOO_LONG"  # 400 - Message exceeds 20,000 char limit
+    E_CONTEXT_TOO_LARGE = "E_CONTEXT_TOO_LARGE"  # 400 - Context exceeds 25,000 char limit
+    E_MODEL_NOT_AVAILABLE = "E_MODEL_NOT_AVAILABLE"  # 400 - Model not available to user
+    E_CONVERSATION_BUSY = "E_CONVERSATION_BUSY"  # 409 - Pending assistant already exists
+    E_RATE_LIMITED = "E_RATE_LIMITED"  # 429 - Per-user rate limit exceeded
+    E_TOKEN_BUDGET_EXCEEDED = "E_TOKEN_BUDGET_EXCEEDED"  # 429 - Platform token budget exceeded
+    E_IDEMPOTENCY_KEY_REPLAY_MISMATCH = (
+        "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"  # 409 - Key reused with different payload
+    )
+
     # Ingestion errors (502/504)
     E_INGEST_FAILED = "E_INGEST_FAILED"  # 502
     E_INGEST_TIMEOUT = "E_INGEST_TIMEOUT"  # 504
@@ -105,6 +122,20 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_KEY_PROVIDER_INVALID: 400,
     ApiErrorCode.E_KEY_INVALID_FORMAT: 400,
     ApiErrorCode.E_KEY_NOT_FOUND: 404,
+    # LLM errors (PR-05)
+    ApiErrorCode.E_LLM_NO_KEY: 400,
+    ApiErrorCode.E_LLM_RATE_LIMIT: 429,
+    ApiErrorCode.E_LLM_INVALID_KEY: 400,
+    ApiErrorCode.E_LLM_PROVIDER_DOWN: 503,
+    ApiErrorCode.E_LLM_TIMEOUT: 504,
+    ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE: 400,
+    ApiErrorCode.E_MESSAGE_TOO_LONG: 400,
+    ApiErrorCode.E_CONTEXT_TOO_LARGE: 400,
+    ApiErrorCode.E_MODEL_NOT_AVAILABLE: 400,
+    ApiErrorCode.E_CONVERSATION_BUSY: 409,
+    ApiErrorCode.E_RATE_LIMITED: 429,
+    ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED: 429,
+    ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH: 409,
     # Ingestion errors
     ApiErrorCode.E_INGEST_FAILED: 502,
     ApiErrorCode.E_INGEST_TIMEOUT: 504,

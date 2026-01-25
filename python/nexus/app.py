@@ -23,11 +23,18 @@ Actual execution order per request:
 3. Route handler
 4. AuthMiddleware (returns response)
 5. RequestIDMiddleware (logs, sets response header)
+
+LLM Client Lifecycle (PR-04 spec):
+- httpx.AsyncClient is created at startup, stored in app.state
+- LLMRouter wraps the shared client for connection pooling
+- Client is closed gracefully at shutdown
 """
 
 import json
+from contextlib import asynccontextmanager
 from uuid import UUID
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -48,6 +55,7 @@ from nexus.responses import (
     unhandled_exception_handler,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.llm import LLMRouter
 
 # Configure structured logging at import time
 configure_logging()
@@ -91,6 +99,45 @@ def create_token_verifier():
     )
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifecycle resources.
+
+    Per PR-04 spec Section 8:
+    - Creates shared httpx.AsyncClient for connection pooling
+    - Initializes LLMRouter with feature flags
+    - Cleans up on shutdown
+    """
+    settings = get_settings()
+
+    # Create shared HTTP client for LLM calls
+    app.state.httpx_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(60.0, connect=10.0),
+        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+    )
+
+    # Create LLM router with shared client
+    app.state.llm_router = LLMRouter(
+        app.state.httpx_client,
+        enable_openai=settings.enable_openai,
+        enable_anthropic=settings.enable_anthropic,
+        enable_gemini=settings.enable_gemini,
+    )
+
+    logger.info(
+        "llm_router_initialized",
+        enable_openai=settings.enable_openai,
+        enable_anthropic=settings.enable_anthropic,
+        enable_gemini=settings.enable_gemini,
+    )
+
+    yield
+
+    # Shutdown: close HTTP client
+    await app.state.httpx_client.aclose()
+    logger.info("httpx_client_closed")
+
+
 def create_app(
     skip_auth_middleware: bool = False,
     token_verifier=None,
@@ -112,6 +159,7 @@ def create_app(
         version="0.1.0",
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=lifespan,
     )
 
     # Register exception handlers

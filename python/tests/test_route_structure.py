@@ -238,8 +238,12 @@ class TestRouteFileStructure:
                     if is_route_handler:
                         # Route handlers should have a return type annotation
                         if node.returns:
-                            # Accept dict, Response, or Any
+                            # Accept dict, Response, StreamingResponse, or Any
                             if isinstance(node.returns, ast.Name):
-                                assert node.returns.id in ("dict", "Response"), (
-                                    f"{route_file.name}:{node.name} should return dict or Response"
+                                assert node.returns.id in (
+                                    "dict",
+                                    "Response",
+                                    "StreamingResponse",
+                                ), (
+                                    f"{route_file.name}:{node.name} should return dict, Response, or StreamingResponse"
                                 )

@@ -64,6 +64,8 @@ nexus/
 - **Visibility Enforcement**: All authorization happens in FastAPI, never in Next.js.
 - **JWT Verification**: All environments use Supabase JWKS for token verification.
 - **Chat Infrastructure** (S3): Conversations, messages, and LLM integration for AI-assisted reading.
+- **Send Message Flow**: Three-phase execution (Prepare → Execute → Finalize) to avoid holding DB transactions during LLM calls.
+- **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations.
 
 ## Quick Start
 
@@ -211,13 +213,17 @@ This file is:
 | `MAX_EPUB_BYTES` | No | Max EPUB upload size (default: 50 MB) |
 | `STORAGE_TEST_PREFIX` | For tests | Test storage path prefix (e.g., `test_runs/{run_id}/`) |
 
-#### LLM / Encryption (S3+)
+#### LLM / Chat (S3+)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `NEXUS_KEY_ENCRYPTION_KEY` | For BYOK | Base64-encoded 32-byte key for encrypting user API keys |
+| `OPENAI_API_KEY` | For OpenAI | Platform API key for OpenAI models |
+| `ANTHROPIC_API_KEY` | For Anthropic | Platform API key for Anthropic models |
+| `GEMINI_API_KEY` | For Gemini | Platform API key for Gemini models |
+| `ENABLE_STREAMING` | No | Enable SSE streaming endpoints (default: false) |
 
-To generate a key:
+To generate an encryption key:
 ```bash
 python -c "import os, base64; print(base64.b64encode(os.urandom(32)).decode())"
 ```
@@ -374,6 +380,62 @@ npx playwright install chromium
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d
 ```
 
+## Chat / Send Message
+
+The platform supports AI-assisted reading through conversational LLM interactions:
+
+### Sending Messages
+
+```bash
+# Send a message (creates new conversation)
+POST /conversations/messages
+{
+  "content": "What is this about?",
+  "model_id": "<model-uuid>",
+  "key_mode": "auto",  # "auto" | "byok_only" | "platform_only"
+  "contexts": [
+    {"type": "highlight", "id": "<highlight-uuid>"},
+    {"type": "media", "id": "<media-uuid>"}
+  ]
+}
+
+# Send to existing conversation
+POST /conversations/{id}/messages
+```
+
+### Key Modes
+
+- **auto** (default): Use user's BYOK key if available, fall back to platform key
+- **byok_only**: Only use user's own API key (fails if not configured)
+- **platform_only**: Only use platform's API key (counts against daily budget)
+
+### Rate Limits
+
+| Limit | Value | Scope |
+|-------|-------|-------|
+| Requests per minute | 20 | Per user |
+| Concurrent sends | 3 | Per user |
+| Daily token budget | 100,000 | Per user (platform keys only) |
+
+### Idempotency
+
+Include `Idempotency-Key` header to prevent duplicate execution on retries:
+```bash
+curl -X POST /conversations/messages \
+  -H "Idempotency-Key: unique-request-id-123" \
+  -d '{"content": "...", "model_id": "..."}'
+```
+
+### Streaming (Optional)
+
+When `ENABLE_STREAMING=true`, SSE endpoints are available:
+```bash
+POST /conversations/messages/stream
+POST /conversations/{id}/messages/stream
+```
+
+Events: `meta` (IDs), `delta` (content chunks), `done` (final status)
+
 ## API Documentation
 
 When running locally:
@@ -390,6 +452,8 @@ When running locally:
 | Annotations | `PUT/DELETE /highlights/{id}/annotation` |
 | Conversations | `GET/POST /conversations`, `GET/DELETE /conversations/{id}` |
 | Messages | `GET /conversations/{id}/messages`, `DELETE /messages/{id}` |
+| Send Message | `POST /conversations/messages`, `POST /conversations/{id}/messages` |
+| Models & Keys | `GET /models`, `GET/POST/DELETE /keys` |
 
 See `python/README.md` for the complete endpoint reference.
 

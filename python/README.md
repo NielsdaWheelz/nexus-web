@@ -53,16 +53,21 @@ nexus/
 │   ├── crypto.py        # XChaCha20-Poly1305 encryption for BYOK keys (S3)
 │   ├── user_keys.py     # User API key management (S3)
 │   ├── models.py        # LLM model registry and availability (S3)
+│   ├── send_message.py  # Core send-message three-phase flow (S3 PR-05)
+│   ├── send_message_stream.py  # SSE streaming send-message (S3 PR-05)
+│   ├── rate_limit.py    # Redis-based rate limiting and token budgets (S3 PR-05)
+│   ├── context_rendering.py  # Context rendering for prompts (S3 PR-05)
+│   ├── api_key_resolver.py   # API key resolution for LLM calls (S3 PR-05)
 │   └── llm/             # LLM adapter layer (S3 PR-04)
 │       ├── __init__.py       # Public exports
 │       ├── types.py          # Turn, LLMRequest, LLMResponse, LLMChunk, LLMUsage
 │       ├── errors.py         # LLMError, LLMErrorClass, error classification
-│       ├── adapter.py        # Abstract LLMAdapter base class
+│       ├── adapter.py        # Abstract LLMAdapter base class (async)
 │       ├── router.py         # Adapter selection + error normalization
 │       ├── prompt.py         # Provider-agnostic prompt rendering
-│       ├── openai_adapter.py # OpenAI implementation
-│       ├── anthropic_adapter.py # Anthropic implementation
-│       └── gemini_adapter.py # Gemini implementation
+│       ├── openai_adapter.py # OpenAI implementation (async)
+│       ├── anthropic_adapter.py # Anthropic implementation (async)
+│       └── gemini_adapter.py # Gemini implementation (async)
 └── storage/       # Supabase Storage client
     ├── client.py    # StorageClient abstraction + FakeStorageClient
     └── paths.py     # Storage path building utilities
@@ -101,6 +106,10 @@ nexus/
 | DELETE | `/conversations/{id}` | Delete conversation (S3) |
 | GET | `/conversations/{id}/messages` | List messages in conversation (S3) |
 | DELETE | `/messages/{id}` | Delete a message (S3) |
+| POST | `/conversations/messages` | Send message, create new conversation (S3 PR-05) |
+| POST | `/conversations/{id}/messages` | Send message to existing conversation (S3 PR-05) |
+| POST | `/conversations/messages/stream` | Send message with SSE streaming (S3 PR-05) |
+| POST | `/conversations/{id}/messages/stream` | Send message to existing with SSE (S3 PR-05) |
 | GET | `/models` | List available LLM models for current user (S3) |
 | GET | `/keys` | List user's API keys (safe fields only) (S3) |
 | POST | `/keys` | Add or update API key for provider (S3) |
@@ -311,6 +320,36 @@ path = build_storage_path(media_id, "pdf")
 # Production: media/{id}/original.pdf
 # Test: test_runs/{run_id}/media/{id}/original.pdf
 ```
+
+### Send Message Architecture (PR-05)
+
+The send-message flow uses three-phase execution to avoid holding DB transactions during LLM calls:
+
+```
+Phase 0: Pre-Validation (read-only)
+  └── Model, key, rate limits, conversation busy checks
+
+Phase 1: Prepare (single transaction)
+  ├── Lock conversation row (FOR UPDATE)
+  ├── Create user message (status=complete)
+  ├── Create assistant placeholder (status=pending)
+  └── Insert idempotency record
+
+Phase 2: Execute (no transaction held)
+  ├── Resolve API key (BYOK or platform)
+  ├── Render prompt with context
+  └── Call LLM adapter (up to 45s timeout)
+
+Phase 3: Finalize (single transaction)
+  ├── Update assistant content and status
+  ├── Record usage in message_llm
+  └── Charge token budget (platform keys)
+```
+
+Rate limiting uses Redis:
+- RPM: 20/min per user (sliding window)
+- Concurrent: 3 in-flight per user
+- Budget: 100k tokens/day for platform keys
 
 ### Service/Route Separation
 
