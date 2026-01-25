@@ -3,6 +3,13 @@
 All schemas are re-exported here for convenient imports.
 """
 
+from nexus.schemas.conversation import (
+    ConversationListResponse,
+    ConversationOut,
+    MessageListResponse,
+    MessageOut,
+    PageInfo,
+)
 from nexus.schemas.highlights import (
     AnnotationOut,
     CreateHighlightRequest,
@@ -35,4 +42,10 @@ __all__ = [
     "CreateHighlightRequest",
     "UpdateHighlightRequest",
     "UpsertAnnotationRequest",
+    # Conversation schemas (Slice 3)
+    "ConversationOut",
+    "MessageOut",
+    "ConversationListResponse",
+    "MessageListResponse",
+    "PageInfo",
 ]

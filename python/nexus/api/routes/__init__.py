@@ -7,6 +7,7 @@ variables to be configured upfront.
 
 from fastapi import APIRouter
 
+from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.health import router as health_router
 from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.libraries import router as libraries_router
@@ -29,6 +30,7 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router.include_router(libraries_router, tags=["libraries"])
     api_router.include_router(media_router, tags=["media"])
     api_router.include_router(highlights_router, tags=["highlights"])
+    api_router.include_router(conversations_router, tags=["conversations"])
 
     if include_test_routes:
         from nexus.api.routes.test import router as test_router
