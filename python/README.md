@@ -21,7 +21,8 @@ nexus/
 │       ├── highlights.py    # Highlight/annotation CRUD (S2)
 │       ├── conversations.py # Conversation/message CRUD (S3)
 │       ├── keys.py          # User API key management (S3)
-│       └── models.py        # LLM model registry (S3)
+│       ├── models.py        # LLM model registry (S3)
+│       └── search.py        # Keyword search (S3, PR-06)
 ├── auth/          # Authentication
 │   ├── middleware.py  # Auth middleware
 │   ├── permissions.py # Authorization predicates (can_read_media, etc.)
@@ -38,7 +39,8 @@ nexus/
 │   ├── media.py        # Media and fragment schemas
 │   ├── highlights.py   # Highlight and annotation schemas (S2)
 │   ├── conversation.py # Conversation and message schemas (S3)
-│   └── keys.py         # Model registry and user API key schemas (S3)
+│   ├── keys.py         # Model registry and user API key schemas (S3)
+│   └── search.py       # Search result schemas (S3, PR-06)
 ├── services/      # Business logic
 │   ├── bootstrap.py     # User/library bootstrap
 │   ├── capabilities.py  # Media capabilities derivation
@@ -53,6 +55,7 @@ nexus/
 │   ├── crypto.py        # XChaCha20-Poly1305 encryption for BYOK keys (S3)
 │   ├── user_keys.py     # User API key management (S3)
 │   ├── models.py        # LLM model registry and availability (S3)
+│   ├── search.py        # Keyword search with visibility filtering (S3, PR-06)
 │   ├── send_message.py  # Core send-message three-phase flow (S3 PR-05)
 │   ├── send_message_stream.py  # SSE streaming send-message (S3 PR-05)
 │   ├── rate_limit.py    # Redis-based rate limiting and token budgets (S3 PR-05)
@@ -115,6 +118,7 @@ nexus/
 | POST | `/keys` | Add or update API key for provider (S3) |
 | DELETE | `/keys/{id}` | Revoke an API key (S3) |
 | POST | `/keys/{id}/test` | Test an API key against its provider (S3) |
+| GET | `/search` | Keyword search across visible content (S3, PR-06) |
 
 ### Public Endpoints
 
@@ -379,6 +383,73 @@ When media is added to any library:
 
 When media is removed from default library:
 - Media is also removed from all single-member libraries owned by that user
+
+### Keyword Search (PR-06)
+
+The `/search` endpoint provides PostgreSQL full-text search across all user-visible content:
+
+```python
+# Search with default parameters
+GET /search?q=python+programming
+
+# Search with scope and type filtering
+GET /search?q=test&scope=library:UUID&types=media,fragment
+
+# Search with pagination
+GET /search?q=test&limit=10&cursor=BASE64_CURSOR
+```
+
+**Searchable Content Types:**
+- `media` - Media titles
+- `fragment` - Document fragment canonical_text
+- `annotation` - Annotation body text
+- `message` - Conversation message content
+
+**Scopes:**
+- `all` - All visible content (default)
+- `media:<id>` - Content anchored to specific media
+- `library:<id>` - Content in media belonging to library
+- `conversation:<id>` - Messages within specific conversation
+
+**Visibility Enforcement:**
+- Media/fragments: visible via library membership
+- Annotations: owner-only in S3
+- Messages: visible via conversation ownership or sharing
+- Pending messages are never searchable
+- Search never leaks invisible content
+
+**Query Semantics:**
+- Uses PostgreSQL `websearch_to_tsquery` for natural syntax
+- Supports quoted phrases, `-` exclusions, implicit AND
+- Queries < 2 chars return empty results
+- All-stopword queries return empty results
+
+**Response Format:**
+```json
+{
+  "results": [
+    {
+      "type": "media",
+      "id": "uuid",
+      "score": 0.85,
+      "snippet": "...highlighted text...",
+      "title": "Media Title"
+    },
+    {
+      "type": "fragment",
+      "id": "uuid",
+      "score": 0.72,
+      "snippet": "...matched text...",
+      "media_id": "uuid",
+      "idx": 0
+    }
+  ],
+  "page": {
+    "has_more": true,
+    "next_cursor": "encoded_cursor"
+  }
+}
+```
 
 ## Usage
 

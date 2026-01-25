@@ -25,6 +25,11 @@ from nexus.schemas.library import (
     UpdateLibraryRequest,
 )
 from nexus.schemas.media import FragmentOut, MediaOut
+from nexus.schemas.search import (
+    SearchPageInfo,
+    SearchResponse,
+    SearchResultOut,
+)
 
 __all__ = [
     # Library schemas
@@ -48,4 +53,8 @@ __all__ = [
     "ConversationListResponse",
     "MessageListResponse",
     "PageInfo",
+    # Search schemas (Slice 3, PR-06)
+    "SearchResultOut",
+    "SearchPageInfo",
+    "SearchResponse",
 ]
