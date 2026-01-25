@@ -333,9 +333,10 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("provider", sa.Text(), nullable=False),
-        sa.Column("encrypted_key", sa.LargeBinary(), nullable=False),
-        sa.Column("key_nonce", sa.LargeBinary(), nullable=False),
-        sa.Column("master_key_version", sa.Integer(), nullable=False, server_default="1"),
+        # Nullable to support secure revocation (wipe ciphertext to NULL)
+        sa.Column("encrypted_key", sa.LargeBinary(), nullable=True),
+        sa.Column("key_nonce", sa.LargeBinary(), nullable=True),
+        sa.Column("master_key_version", sa.Integer(), nullable=True, server_default="1"),
         sa.Column("key_fingerprint", sa.Text(), nullable=False),
         sa.Column("status", sa.Text(), nullable=False, server_default="untested"),
         sa.Column(
@@ -354,21 +355,22 @@ def upgrade() -> None:
         "user_api_keys",
         "provider IN ('openai', 'anthropic', 'gemini')",
     )
+    # Allow NULL for master_key_version (wiped on revoke)
     op.create_check_constraint(
         "ck_user_api_keys_master_key_version",
         "user_api_keys",
-        "master_key_version > 0",
+        "master_key_version IS NULL OR master_key_version > 0",
     )
     op.create_check_constraint(
         "ck_user_api_keys_status",
         "user_api_keys",
         "status IN ('untested', 'valid', 'invalid', 'revoked')",
     )
-    # Nonce must be exactly 24 bytes for XChaCha20-Poly1305
+    # Nonce must be exactly 24 bytes for XChaCha20-Poly1305, or NULL (wiped on revoke)
     op.create_check_constraint(
         "ck_user_api_keys_nonce_len",
         "user_api_keys",
-        "octet_length(key_nonce) = 24",
+        "key_nonce IS NULL OR octet_length(key_nonce) = 24",
     )
 
     # Unique constraint: one key per provider per user
@@ -673,6 +675,28 @@ def upgrade() -> None:
         "messages",
         ["content_tsv"],
         postgresql_using="gin",
+    )
+
+    # ==========================================================================
+    # Step 13: Seed models table with initial LLM models
+    # Per PR-03 spec: seed rows for models table so GET /models has data
+    # Cost fields left NULL initially (filled in when billing is implemented)
+    # ==========================================================================
+    op.execute(
+        """
+        INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
+        VALUES
+            -- OpenAI models
+            (gen_random_uuid(), 'openai', 'gpt-4o-mini', 128000, true),
+            (gen_random_uuid(), 'openai', 'gpt-4o', 128000, true),
+            -- Anthropic models
+            (gen_random_uuid(), 'anthropic', 'claude-sonnet-4-20250514', 200000, true),
+            (gen_random_uuid(), 'anthropic', 'claude-haiku-4-20250514', 200000, true),
+            -- Gemini models
+            (gen_random_uuid(), 'gemini', 'gemini-2.0-flash', 1000000, true),
+            (gen_random_uuid(), 'gemini', 'gemini-2.5-pro-preview-05-06', 1000000, true)
+        ON CONFLICT DO NOTHING
+        """
     )
 
 
