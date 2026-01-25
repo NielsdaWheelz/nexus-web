@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     ingest_stream_timeout_s: int = Field(default=60, alias="INGEST_STREAM_TIMEOUT_S")
     signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
 
+    # S3: Key encryption for BYOK API keys
+    # Base64-encoded 32-byte key for XChaCha20-Poly1305 encryption
+    # Required in staging/prod, optional in local/test (uses deterministic test key)
+    nexus_key_encryption_key: str | None = Field(default=None, alias="NEXUS_KEY_ENCRYPTION_KEY")
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

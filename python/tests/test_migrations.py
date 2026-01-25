@@ -1142,3 +1142,433 @@ class TestCeleryAndRedis:
 
         r = Redis.from_url(redis_url)
         assert r.ping()
+
+
+class TestS3SchemaConstraints:
+    """Tests for S3-specific schema constraints (chat, conversations, messages, etc.)."""
+
+    def test_conversation_sharing_constraint(self, migrated_engine):
+        """CHECK constraint prevents invalid sharing values."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO conversations (id, owner_user_id, sharing)
+                        VALUES (:id, :user_id, 'invalid_sharing')
+                    """),
+                    {"id": uuid4(), "user_id": user_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_conversations_sharing" in str(exc_info.value)
+
+    def test_conversation_next_seq_positive_constraint(self, migrated_engine):
+        """CHECK constraint prevents next_seq < 1."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                        VALUES (:id, :user_id, 'private', 0)
+                    """),
+                    {"id": uuid4(), "user_id": user_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_conversations_next_seq_positive" in str(exc_info.value)
+
+    def test_message_pending_only_assistant_constraint(self, migrated_engine):
+        """CHECK constraint: pending status only valid for assistant role."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            conversation_id = uuid4()
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                    VALUES (:id, :user_id, 'private', 1)
+                """),
+                {"id": conversation_id, "user_id": user_id},
+            )
+
+            # User message with pending status should fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                        VALUES (:id, :conv_id, 1, 'user', 'test', 'pending')
+                    """),
+                    {"id": uuid4(), "conv_id": conversation_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_messages_pending_only_assistant" in str(exc_info.value)
+
+    def test_message_pending_assistant_allowed(self, migrated_engine):
+        """Assistant message with pending status is allowed."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            conversation_id = uuid4()
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                    VALUES (:id, :user_id, 'private', 2)
+                """),
+                {"id": conversation_id, "user_id": user_id},
+            )
+
+            # Assistant message with pending status should succeed
+            session.execute(
+                text("""
+                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                    VALUES (:id, :conv_id, 1, 'assistant', '', 'pending')
+                """),
+                {"id": uuid4(), "conv_id": conversation_id},
+            )
+            session.commit()
+
+    def test_message_conversation_seq_unique(self, migrated_engine):
+        """UNIQUE constraint on (conversation_id, seq)."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            conversation_id = uuid4()
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                    VALUES (:id, :user_id, 'private', 3)
+                """),
+                {"id": conversation_id, "user_id": user_id},
+            )
+
+            # First message with seq=1
+            session.execute(
+                text("""
+                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                    VALUES (:id, :conv_id, 1, 'user', 'first', 'complete')
+                """),
+                {"id": uuid4(), "conv_id": conversation_id},
+            )
+            session.commit()
+
+            # Duplicate seq should fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                        VALUES (:id, :conv_id, 1, 'user', 'duplicate', 'complete')
+                    """),
+                    {"id": uuid4(), "conv_id": conversation_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "uix_messages_conversation_seq" in str(exc_info.value)
+
+    def test_message_context_one_target_constraint(self, migrated_engine):
+        """CHECK constraint: exactly one FK must be non-null."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            conversation_id = uuid4()
+            message_id = uuid4()
+            media_id = uuid4()
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                    VALUES (:id, :user_id, 'private', 2)
+                """),
+                {"id": conversation_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                    VALUES (:id, :conv_id, 1, 'user', 'test', 'complete')
+                """),
+                {"id": message_id, "conv_id": conversation_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Test', 'ready_for_reading', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.commit()
+
+            # Context with no FK should fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO message_contexts (id, message_id, target_type, ordinal)
+                        VALUES (:id, :msg_id, 'media', 0)
+                    """),
+                    {"id": uuid4(), "msg_id": message_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_message_contexts_one_target" in str(exc_info.value)
+
+    def test_user_api_key_nonce_length_constraint(self, migrated_engine):
+        """CHECK constraint: nonce must be exactly 24 bytes."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            # Nonce with wrong length should fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO user_api_keys (id, user_id, provider, encrypted_key, key_nonce, key_fingerprint)
+                        VALUES (:id, :user_id, 'openai', :key, :nonce, 'xxxx')
+                    """),
+                    {
+                        "id": uuid4(),
+                        "user_id": user_id,
+                        "key": b"encrypted_key_data",
+                        "nonce": b"too_short",  # Not 24 bytes
+                    },
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_user_api_keys_nonce_len" in str(exc_info.value)
+
+    def test_user_api_key_user_provider_unique(self, migrated_engine):
+        """UNIQUE constraint: one key per provider per user."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            valid_nonce = b"x" * 24  # 24 bytes
+
+            # First key
+            session.execute(
+                text("""
+                    INSERT INTO user_api_keys (id, user_id, provider, encrypted_key, key_nonce, key_fingerprint)
+                    VALUES (:id, :user_id, 'openai', :key, :nonce, 'xxxx')
+                """),
+                {
+                    "id": uuid4(),
+                    "user_id": user_id,
+                    "key": b"encrypted_key_1",
+                    "nonce": valid_nonce,
+                },
+            )
+            session.commit()
+
+            # Duplicate key for same provider should fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO user_api_keys (id, user_id, provider, encrypted_key, key_nonce, key_fingerprint)
+                        VALUES (:id, :user_id, 'openai', :key, :nonce, 'yyyy')
+                    """),
+                    {
+                        "id": uuid4(),
+                        "user_id": user_id,
+                        "key": b"encrypted_key_2",
+                        "nonce": valid_nonce,
+                    },
+                )
+                session.commit()
+
+            session.rollback()
+            assert "uix_user_api_keys_user_provider" in str(exc_info.value)
+
+    def test_idempotency_key_length_constraint(self, migrated_engine):
+        """CHECK constraint: key length between 1 and 128."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            conversation_id = uuid4()
+            msg1_id = uuid4()
+            msg2_id = uuid4()
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                    VALUES (:id, :user_id, 'private', 3)
+                """),
+                {"id": conversation_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                    VALUES (:id, :conv_id, 1, 'user', 'test', 'complete')
+                """),
+                {"id": msg1_id, "conv_id": conversation_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                    VALUES (:id, :conv_id, 2, 'assistant', 'response', 'complete')
+                """),
+                {"id": msg2_id, "conv_id": conversation_id},
+            )
+            session.commit()
+
+            # Key too long should fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO idempotency_keys (user_id, key, payload_hash, user_message_id, assistant_message_id, expires_at)
+                        VALUES (:user_id, :key, 'hash', :msg1, :msg2, now() + interval '1 day')
+                    """),
+                    {
+                        "user_id": user_id,
+                        "key": "x" * 129,  # Too long
+                        "msg1": msg1_id,
+                        "msg2": msg2_id,
+                    },
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_idempotency_keys_key_length" in str(exc_info.value)
+
+    def test_fragment_block_offsets_constraint(self, migrated_engine):
+        """CHECK constraint: end_offset >= start_offset."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            fragment_id = uuid4()
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Test', 'ready_for_reading', :user_id)
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'Test', '<p>Test</p>')
+                """),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            session.commit()
+
+            # end < start should fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO fragment_blocks (id, fragment_id, block_idx, start_offset, end_offset)
+                        VALUES (:id, :frag_id, 0, 10, 5)
+                    """),
+                    {"id": uuid4(), "frag_id": fragment_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_fragment_blocks_offsets" in str(exc_info.value)
+
+    def test_generated_tsvector_columns_exist(self, migrated_engine):
+        """Generated tsvector columns exist and are STORED."""
+        with Session(migrated_engine) as session:
+            # Check media.title_tsv
+            result = session.execute(
+                text("""
+                    SELECT is_generated FROM information_schema.columns
+                    WHERE table_name = 'media' AND column_name = 'title_tsv'
+                """)
+            )
+            row = result.fetchone()
+            assert row is not None, "media.title_tsv column should exist"
+            assert row[0] == "ALWAYS", "title_tsv should be a generated column"
+
+            # Check fragments.canonical_text_tsv
+            result = session.execute(
+                text("""
+                    SELECT is_generated FROM information_schema.columns
+                    WHERE table_name = 'fragments' AND column_name = 'canonical_text_tsv'
+                """)
+            )
+            row = result.fetchone()
+            assert row is not None, "fragments.canonical_text_tsv column should exist"
+            assert row[0] == "ALWAYS"
+
+            # Check annotations.body_tsv
+            result = session.execute(
+                text("""
+                    SELECT is_generated FROM information_schema.columns
+                    WHERE table_name = 'annotations' AND column_name = 'body_tsv'
+                """)
+            )
+            row = result.fetchone()
+            assert row is not None, "annotations.body_tsv column should exist"
+            assert row[0] == "ALWAYS"
+
+            # Check messages.content_tsv
+            result = session.execute(
+                text("""
+                    SELECT is_generated FROM information_schema.columns
+                    WHERE table_name = 'messages' AND column_name = 'content_tsv'
+                """)
+            )
+            row = result.fetchone()
+            assert row is not None, "messages.content_tsv column should exist"
+            assert row[0] == "ALWAYS"
+
+    def test_gin_indexes_exist(self, migrated_engine):
+        """GIN indexes exist for tsvector columns."""
+        with Session(migrated_engine) as session:
+            # Check for GIN indexes
+            result = session.execute(
+                text("""
+                    SELECT indexname, indexdef FROM pg_indexes
+                    WHERE tablename IN ('media', 'fragments', 'annotations', 'messages')
+                    AND indexdef LIKE '%gin%'
+                """)
+            )
+            rows = result.fetchall()
+            index_names = [row[0] for row in rows]
+
+            assert "idx_media_title_tsv" in index_names
+            assert "idx_fragments_canonical_text_tsv" in index_names
+            assert "idx_annotations_body_tsv" in index_names
+            assert "idx_messages_content_tsv" in index_names
+
+    def test_models_provider_model_name_unique(self, migrated_engine):
+        """UNIQUE constraint on (provider, model_name)."""
+        with Session(migrated_engine) as session:
+            # First model
+            session.execute(
+                text("""
+                    INSERT INTO models (id, provider, model_name, max_context_tokens)
+                    VALUES (:id, 'openai', 'gpt-4', 8192)
+                """),
+                {"id": uuid4()},
+            )
+            session.commit()
+
+            # Duplicate should fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO models (id, provider, model_name, max_context_tokens)
+                        VALUES (:id, 'openai', 'gpt-4', 8192)
+                    """),
+                    {"id": uuid4()},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "uix_models_provider_model_name" in str(exc_info.value)
