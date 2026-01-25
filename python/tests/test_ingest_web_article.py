@@ -246,6 +246,60 @@ class TestFragmentPersistence:
             assert "Paragraph one" in fragment["canonical_text"]
             assert "Paragraph two" in fragment["canonical_text"]
 
+    def test_fragment_blocks_created_on_ingest(self, db_session: Session, httpserver):
+        """Fragment blocks should be created during ingestion for context windows."""
+        pytest.importorskip("nexus.services.node_ingest")
+        from nexus.tasks.ingest_web_article import run_ingest_sync
+
+        user_id = create_test_user_id()
+        _create_user(db_session, user_id)
+
+        # Create article with multiple paragraphs (will create multiple blocks)
+        httpserver.expect_request("/multiblock").respond_with_data(
+            """
+            <html><body>
+                <h1>Title</h1>
+                <p>First paragraph content.</p>
+                <p>Second paragraph content.</p>
+                <p>Third paragraph content.</p>
+            </body></html>
+            """,
+            content_type="text/html",
+        )
+
+        url = httpserver.url_for("/multiblock")
+        result = create_provisional_web_article(db_session, user_id, url)
+        media_id = result.media_id
+
+        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+
+        if ingest_result.get("status") == "success":
+            db_session.expire_all()
+            fragment = _get_fragment(db_session, media_id)
+            assert fragment is not None
+
+            # Check fragment_blocks were created
+            blocks = _get_fragment_blocks(db_session, fragment["id"])
+            assert len(blocks) > 0, "Fragment blocks should be created during ingestion"
+
+            # Verify block structure
+            for i, block in enumerate(blocks):
+                assert block["block_idx"] == i
+                assert block["start_offset"] >= 0
+                assert block["end_offset"] >= block["start_offset"]
+
+            # Verify contiguity
+            if len(blocks) > 1:
+                for i in range(1, len(blocks)):
+                    assert blocks[i]["start_offset"] == blocks[i - 1]["end_offset"], (
+                        "Blocks must be contiguous"
+                    )
+
+            # Verify coverage
+            canonical_text = fragment["canonical_text"]
+            assert blocks[0]["start_offset"] == 0
+            assert blocks[-1]["end_offset"] == len(canonical_text)
+
 
 class TestProcessingAttempts:
     """Tests for processing_attempts tracking."""
@@ -342,6 +396,31 @@ def _get_fragment(db: Session, media_id: UUID) -> dict | None:
         "html_sanitized": row[3],
         "canonical_text": row[4],
     }
+
+
+def _get_fragment_blocks(db: Session, fragment_id: UUID) -> list[dict]:
+    """Fetch all fragment_blocks for a fragment as list of dicts."""
+    result = db.execute(
+        text("""
+            SELECT id, fragment_id, block_idx, start_offset, end_offset, is_empty
+            FROM fragment_blocks
+            WHERE fragment_id = :fragment_id
+            ORDER BY block_idx
+        """),
+        {"fragment_id": fragment_id},
+    )
+    rows = result.fetchall()
+    return [
+        {
+            "id": row[0],
+            "fragment_id": row[1],
+            "block_idx": row[2],
+            "start_offset": row[3],
+            "end_offset": row[4],
+            "is_empty": row[5],
+        }
+        for row in rows
+    ]
 
 
 # =============================================================================

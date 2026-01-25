@@ -30,7 +30,8 @@ nexus/
 │   │   └── versions/
 │   │       ├── 0001_slice0_schema.py     # S0: users, libraries, memberships, media, fragments
 │   │       ├── 0002_slice1_ingestion_framework.py  # S1: processing lifecycle, storage
-│   │       └── 0003_slice2_highlights_annotations.py  # S2: highlights, annotations
+│   │       ├── 0003_slice2_highlights_annotations.py  # S2: highlights, annotations
+│   │       └── 0004_slice3_schema.py     # S3: conversations, messages, LLM infrastructure
 │   └── alembic.ini
 │
 ├── supabase/                    # Supabase local configuration
@@ -208,6 +209,17 @@ This file is:
 | `MAX_PDF_BYTES` | No | Max PDF upload size (default: 100 MB) |
 | `MAX_EPUB_BYTES` | No | Max EPUB upload size (default: 50 MB) |
 | `STORAGE_TEST_PREFIX` | For tests | Test storage path prefix (e.g., `test_runs/{run_id}/`) |
+
+#### LLM / Encryption (S3+)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `NEXUS_KEY_ENCRYPTION_KEY` | For BYOK | Base64-encoded 32-byte key for encrypting user API keys |
+
+To generate a key:
+```bash
+python -c "import os, base64; print(base64.b64encode(os.urandom(32)).decode())"
+```
 
 #### Frontend (Next.js)
 

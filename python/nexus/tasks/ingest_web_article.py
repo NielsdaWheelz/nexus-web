@@ -27,6 +27,7 @@ from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.canonicalize import generate_canonical_text
+from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.node_ingest import IngestError, IngestResult, run_node_ingest
 from nexus.services.sanitize_html import sanitize_html
 from nexus.services.url_normalize import normalize_url_for_display
@@ -191,6 +192,12 @@ def _do_ingest(
         created_at=now,
     )
     db.add(fragment)
+    db.flush()  # Flush to get fragment.id for block insertion
+
+    # Step 8b: Create fragment blocks for context window computation
+    # Parse canonical_text into blocks based on \n\n separators
+    block_specs = parse_fragment_blocks(canonical_text)
+    insert_fragment_blocks(db, fragment.id, block_specs)
 
     # Update media
     media = db.get(Media, media_id)

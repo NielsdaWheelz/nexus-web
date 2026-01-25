@@ -506,3 +506,540 @@ class Annotation(Base):
 
     # Relationships (PR-06)
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="annotation")
+
+
+# =============================================================================
+# Slice 3: Chat + Conversations + LLM Infrastructure
+# =============================================================================
+
+
+class SharingMode(str, PyEnum):
+    """Sharing modes for social objects (conversations, highlights, annotations)."""
+
+    private = "private"
+    library = "library"
+    public = "public"
+
+
+class MessageRole(str, PyEnum):
+    """Roles for messages in a conversation."""
+
+    user = "user"
+    assistant = "assistant"
+    system = "system"
+
+
+class MessageStatus(str, PyEnum):
+    """Status of a message."""
+
+    pending = "pending"
+    complete = "complete"
+    error = "error"
+
+
+class LLMProvider(str, PyEnum):
+    """Supported LLM providers."""
+
+    openai = "openai"
+    anthropic = "anthropic"
+    gemini = "gemini"
+
+
+class KeyModeRequested(str, PyEnum):
+    """Requested key mode for LLM calls."""
+
+    auto = "auto"
+    byok_only = "byok_only"
+    platform_only = "platform_only"
+
+
+class KeyModeUsed(str, PyEnum):
+    """Actual key mode used for LLM calls."""
+
+    platform = "platform"
+    byok = "byok"
+
+
+class ApiKeyStatus(str, PyEnum):
+    """Status of a user API key."""
+
+    untested = "untested"
+    valid = "valid"
+    invalid = "invalid"
+    revoked = "revoked"
+
+
+class ContextTargetType(str, PyEnum):
+    """Types of context targets for message_context."""
+
+    media = "media"
+    highlight = "highlight"
+    annotation = "annotation"
+
+
+class Conversation(Base):
+    """Conversation model - a thread of messages owned by one user."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    owner_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sharing: Mapped[str] = mapped_column(Text, nullable=False, server_default="private")
+    next_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "sharing IN ('private', 'library', 'public')",
+            name="ck_conversations_sharing",
+        ),
+        CheckConstraint(
+            "next_seq >= 1",
+            name="ck_conversations_next_seq_positive",
+        ),
+    )
+
+    # Relationships
+    owner: Mapped["User"] = relationship("User")
+    messages: Mapped[list["Message"]] = relationship(
+        "Message", back_populates="conversation", cascade="all, delete-orphan"
+    )
+    shares: Mapped[list["ConversationShare"]] = relationship(
+        "ConversationShare", back_populates="conversation", cascade="all, delete-orphan"
+    )
+    conversation_media: Mapped[list["ConversationMedia"]] = relationship(
+        "ConversationMedia", back_populates="conversation", cascade="all, delete-orphan"
+    )
+
+
+class ConversationShare(Base):
+    """ConversationShare model - links conversations to libraries for sharing."""
+
+    __tablename__ = "conversation_shares"
+
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("libraries.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    # Relationships
+    conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="shares")
+    library: Mapped["Library"] = relationship("Library")
+
+
+class Model(Base):
+    """Model registry for LLM models."""
+
+    __tablename__ = "models"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    max_context_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    cost_per_1k_input_tokens_usd: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_per_1k_output_tokens_usd: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_available: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+
+    __table_args__ = (
+        CheckConstraint(
+            "provider IN ('openai', 'anthropic', 'gemini')",
+            name="ck_models_provider",
+        ),
+        CheckConstraint(
+            "max_context_tokens > 0",
+            name="ck_models_max_context_positive",
+        ),
+        UniqueConstraint("provider", "model_name", name="uix_models_provider_model_name"),
+    )
+
+
+class Message(Base):
+    """Message model - a single message in a conversation."""
+
+    __tablename__ = "messages"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="complete")
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("models.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("seq >= 1", name="ck_messages_seq_positive"),
+        CheckConstraint(
+            "role IN ('user', 'assistant', 'system')",
+            name="ck_messages_role",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'complete', 'error')",
+            name="ck_messages_status",
+        ),
+        CheckConstraint(
+            "(status != 'pending' OR role = 'assistant')",
+            name="ck_messages_pending_only_assistant",
+        ),
+        UniqueConstraint("conversation_id", "seq", name="uix_messages_conversation_seq"),
+    )
+
+    # Relationships
+    conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages")
+    model: Mapped["Model | None"] = relationship("Model")
+    llm_metadata: Mapped["MessageLLM | None"] = relationship(
+        "MessageLLM",
+        back_populates="message",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    contexts: Mapped[list["MessageContext"]] = relationship(
+        "MessageContext", back_populates="message", cascade="all, delete-orphan"
+    )
+
+
+class MessageLLM(Base):
+    """MessageLLM model - LLM execution metadata for assistant messages."""
+
+    __tablename__ = "message_llm"
+
+    message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    key_mode_requested: Mapped[str] = mapped_column(Text, nullable=False)
+    key_mode_used: Mapped[str] = mapped_column(Text, nullable=False)
+    cost_usd_micros: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "provider IN ('openai', 'anthropic', 'gemini')",
+            name="ck_message_llm_provider",
+        ),
+        CheckConstraint(
+            "key_mode_requested IN ('auto', 'byok_only', 'platform_only')",
+            name="ck_message_llm_key_mode_requested",
+        ),
+        CheckConstraint(
+            "key_mode_used IN ('platform', 'byok')",
+            name="ck_message_llm_key_mode_used",
+        ),
+        CheckConstraint(
+            "prompt_tokens IS NULL OR prompt_tokens >= 0",
+            name="ck_message_llm_prompt_tokens",
+        ),
+        CheckConstraint(
+            "completion_tokens IS NULL OR completion_tokens >= 0",
+            name="ck_message_llm_completion_tokens",
+        ),
+        CheckConstraint(
+            "total_tokens IS NULL OR total_tokens >= 0",
+            name="ck_message_llm_total_tokens",
+        ),
+        CheckConstraint(
+            "cost_usd_micros IS NULL OR cost_usd_micros >= 0",
+            name="ck_message_llm_cost",
+        ),
+        CheckConstraint(
+            "latency_ms IS NULL OR latency_ms >= 0",
+            name="ck_message_llm_latency",
+        ),
+    )
+
+    # Relationships
+    message: Mapped["Message"] = relationship("Message", back_populates="llm_metadata")
+
+
+class UserApiKey(Base):
+    """UserApiKey model - encrypted BYOK API keys per provider."""
+
+    __tablename__ = "user_api_keys"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    encrypted_key: Mapped[bytes] = mapped_column(nullable=False)
+    key_nonce: Mapped[bytes] = mapped_column(nullable=False)
+    master_key_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    key_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="untested")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    last_tested_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "provider IN ('openai', 'anthropic', 'gemini')",
+            name="ck_user_api_keys_provider",
+        ),
+        CheckConstraint(
+            "master_key_version > 0",
+            name="ck_user_api_keys_master_key_version",
+        ),
+        CheckConstraint(
+            "status IN ('untested', 'valid', 'invalid', 'revoked')",
+            name="ck_user_api_keys_status",
+        ),
+        CheckConstraint(
+            "octet_length(key_nonce) = 24",
+            name="ck_user_api_keys_nonce_len",
+        ),
+        UniqueConstraint("user_id", "provider", name="uix_user_api_keys_user_provider"),
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User")
+
+
+class IdempotencyKey(Base):
+    """IdempotencyKey model - request deduplication for message sends."""
+
+    __tablename__ = "idempotency_keys"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    user_message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    assistant_message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "length(key) >= 1 AND length(key) <= 128",
+            name="ck_idempotency_keys_key_length",
+        ),
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User")
+    user_message: Mapped["Message"] = relationship("Message", foreign_keys=[user_message_id])
+    assistant_message: Mapped["Message"] = relationship(
+        "Message", foreign_keys=[assistant_message_id]
+    )
+
+
+class MessageContext(Base):
+    """MessageContext model - links messages to context objects."""
+
+    __tablename__ = "message_contexts"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_type: Mapped[str] = mapped_column(Text, nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    media_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    highlight_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("highlights.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    annotation_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("annotations.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "target_type IN ('media', 'highlight', 'annotation')",
+            name="ck_message_contexts_target_type",
+        ),
+        CheckConstraint(
+            "ordinal >= 0",
+            name="ck_message_contexts_ordinal_non_negative",
+        ),
+        CheckConstraint(
+            """(
+                (CASE WHEN media_id IS NOT NULL THEN 1 ELSE 0 END) +
+                (CASE WHEN highlight_id IS NOT NULL THEN 1 ELSE 0 END) +
+                (CASE WHEN annotation_id IS NOT NULL THEN 1 ELSE 0 END)
+            ) = 1""",
+            name="ck_message_contexts_one_target",
+        ),
+        UniqueConstraint("message_id", "ordinal", name="uix_message_contexts_message_ordinal"),
+    )
+
+    # Relationships
+    message: Mapped["Message"] = relationship("Message", back_populates="contexts")
+    media: Mapped["Media | None"] = relationship("Media")
+    highlight: Mapped["Highlight | None"] = relationship("Highlight")
+    annotation: Mapped["Annotation | None"] = relationship("Annotation")
+
+
+class ConversationMedia(Base):
+    """ConversationMedia model - derived table linking conversations to media."""
+
+    __tablename__ = "conversation_media"
+
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    last_message_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    # Relationships
+    conversation: Mapped["Conversation"] = relationship(
+        "Conversation", back_populates="conversation_media"
+    )
+    media: Mapped["Media"] = relationship("Media")
+
+
+class FragmentBlock(Base):
+    """FragmentBlock model - block boundary index for context window computation.
+
+    Blocks are contiguous and non-overlapping within a fragment.
+    Block offsets are codepoint indices in canonical_text.
+    Delimiter (\n\n) is included at the END of the preceding block's range.
+    """
+
+    __tablename__ = "fragment_blocks"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    fragment_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("fragments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    block_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    block_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_empty: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
+    __table_args__ = (
+        CheckConstraint("block_idx >= 0", name="ck_fragment_blocks_block_idx"),
+        CheckConstraint("start_offset >= 0", name="ck_fragment_blocks_start_offset"),
+        CheckConstraint("end_offset >= start_offset", name="ck_fragment_blocks_offsets"),
+        UniqueConstraint("fragment_id", "block_idx", name="uix_fragment_blocks_fragment_idx"),
+    )
+
+    # Relationships
+    fragment: Mapped["Fragment"] = relationship("Fragment")
