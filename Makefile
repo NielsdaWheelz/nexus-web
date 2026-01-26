@@ -1,7 +1,7 @@
 # Nexus Development Makefile
 # Run `make help` for available commands
 
-.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations ensure-services lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker migrate migrate-test migrate-down seed verify logs
+.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations ensure-services ensure-node-ingest lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker migrate migrate-test migrate-down seed verify logs
 
 # Load .env file if it exists (created by setup)
 -include .env
@@ -106,6 +106,16 @@ ensure-services:
 		$(MAKE) dev; \
 	fi
 
+# Ensure Node.js ingest worker dependencies are installed (Playwright + Readability)
+# Playwright install is idempotent and fast when browsers already exist
+ensure-node-ingest:
+	@if [ ! -d "node/ingest/node_modules" ]; then \
+		echo "Installing Node.js ingest worker dependencies..."; \
+		cd node/ingest && npm install; \
+	fi
+	@cd node/ingest && npx playwright install chromium >/dev/null 2>&1 || \
+		(echo "Installing Playwright browsers (Chromium)..." && npx playwright install chromium)
+
 test: test-back-and-migrations test-front
 
 test-back-and-migrations:
@@ -116,6 +126,7 @@ test-back:
 
 test-back-no-services:
 	$(MAKE) migrate-test
+	$(MAKE) ensure-node-ingest
 	cd python && NEXUS_ENV=test uv run pytest -v --ignore=tests/test_migrations.py
 
 test-front:
