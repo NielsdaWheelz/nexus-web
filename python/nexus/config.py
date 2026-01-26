@@ -93,6 +93,19 @@ class Settings(BaseSettings):
     enable_anthropic: bool = Field(default=True, alias="ENABLE_ANTHROPIC")
     enable_gemini: bool = Field(default=True, alias="ENABLE_GEMINI")
 
+    # PR-05: Rate limiting settings
+    rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute
+    rate_limit_concurrent: int = Field(default=3, alias="RATE_LIMIT_CONCURRENT")  # Max concurrent
+    token_budget_daily: int = Field(
+        default=100000, alias="TOKEN_BUDGET_DAILY"
+    )  # Daily platform tokens
+
+    # PR-05: Streaming settings
+    enable_streaming: bool = Field(default=False, alias="ENABLE_STREAMING")  # Feature flag
+
+    # PR-05: LLM settings
+    llm_timeout_seconds: float = Field(default=45.0, alias="LLM_TIMEOUT_SECONDS")
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
