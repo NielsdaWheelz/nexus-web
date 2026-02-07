@@ -237,6 +237,7 @@ python -c "import os, base64; print(base64.b64encode(os.urandom(32)).decode())"
 | `NEXUS_ENV` | No | Environment (default: `local`) |
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon key |
+| `NEXT_PUBLIC_ENABLE_STREAMING` | No | Enable SSE streaming chat (default: `0`, set to `1` to enable) |
 
 ## Authentication
 
@@ -267,9 +268,11 @@ All Next.js API routes use a centralized proxy helper (`apps/web/src/lib/api/pro
 - Forwards query strings from the original request
 - Handles binary and text responses correctly
 - Filters request and response headers via allowlists
+- Supports SSE streaming passthrough (`{ expectStream: true }`) without buffering
+- Propagates abort signals for client disconnect cleanup
 - Never exposes cookies, tokens, or internal headers to the browser
 
-**Request header allowlist:** `content-type`, `accept`, `range`, `if-none-match`, `if-modified-since`
+**Request header allowlist:** `content-type`, `accept`, `range`, `if-none-match`, `if-modified-since`, `idempotency-key`
 
 **Response header allowlist:** `x-request-id`, `content-type`, `content-length`, `cache-control`, `etag`, `vary`, `content-disposition`, `location`
 
@@ -426,7 +429,7 @@ curl -X POST /conversations/messages \
   -d '{"content": "...", "model_id": "..."}'
 ```
 
-### Streaming (Optional)
+### Streaming (SSE)
 
 When `ENABLE_STREAMING=true`, SSE endpoints are available:
 ```bash
@@ -434,7 +437,35 @@ POST /conversations/messages/stream
 POST /conversations/{id}/messages/stream
 ```
 
-Events: `meta` (IDs), `delta` (content chunks), `done` (final status)
+Events: `meta` (IDs + provider info), `delta` (content chunks), `done` (final status)
+
+The frontend defaults to streaming when `NEXT_PUBLIC_ENABLE_STREAMING=1` is set and falls back to non-streaming on failure.
+
+### Frontend Chat UI
+
+The chat UI is accessible at `/conversations`:
+- **Conversation list**: sidebar with cursor pagination
+- **Message thread**: paginated history (oldest first), streaming append
+- **Composer**: textarea + model picker + context chips
+- **Quote-to-chat**: "send to chat" button on highlight rows in the linked-items pane
+- **Search**: keyword search at `/search` across media, fragments, annotations, messages
+- **BYOK keys**: manage API keys at `/settings/keys`
+
+### Frontend BFF Routes (S3)
+
+| BFF Route | FastAPI Route | Method |
+|-----------|---------------|--------|
+| `/api/conversations` | `/conversations` | GET, POST |
+| `/api/conversations/[id]` | `/conversations/{id}` | GET, DELETE |
+| `/api/conversations/[id]/messages` | `/conversations/{id}/messages` | GET, POST |
+| `/api/conversations/[id]/messages/stream` | `/conversations/{id}/messages/stream` | POST (SSE) |
+| `/api/conversations/messages` | `/conversations/messages` | POST |
+| `/api/conversations/messages/stream` | `/conversations/messages/stream` | POST (SSE) |
+| `/api/messages/[messageId]` | `/messages/{messageId}` | DELETE |
+| `/api/models` | `/models` | GET |
+| `/api/keys` | `/keys` | GET, POST |
+| `/api/keys/[keyId]` | `/keys/{keyId}` | DELETE |
+| `/api/search` | `/search` | GET |
 
 ## API Documentation
 
@@ -490,6 +521,9 @@ Supabase integration tests start and stop Supabase local by default. Set
   - Query string forwarding
   - Binary response handling
   - Request ID propagation
+  - SSE streaming passthrough (non-buffered delivery)
+  - Idempotency-Key header forwarding
+  - Abort signal propagation
 
 Frontend tests use `proxyToFastAPIWithDeps` for testability with injectable dependencies.
 

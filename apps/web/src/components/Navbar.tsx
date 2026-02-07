@@ -44,6 +44,27 @@ export default function Navbar({ onToggle }: NavbarProps) {
           <span className={styles.icon}>📚</span>
           {!collapsed && <span className={styles.label}>Libraries</span>}
         </Link>
+        <Link
+          href="/conversations"
+          className={`${styles.navItem} ${isActive("/conversations") ? styles.active : ""}`}
+        >
+          <span className={styles.icon}>💬</span>
+          {!collapsed && <span className={styles.label}>Chat</span>}
+        </Link>
+        <Link
+          href="/search"
+          className={`${styles.navItem} ${isActive("/search") ? styles.active : ""}`}
+        >
+          <span className={styles.icon}>🔍</span>
+          {!collapsed && <span className={styles.label}>Search</span>}
+        </Link>
+        <Link
+          href="/settings/keys"
+          className={`${styles.navItem} ${isActive("/settings") ? styles.active : ""}`}
+        >
+          <span className={styles.icon}>🔑</span>
+          {!collapsed && <span className={styles.label}>API Keys</span>}
+        </Link>
       </div>
 
       <div className={styles.footer}>

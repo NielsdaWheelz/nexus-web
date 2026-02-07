@@ -12,7 +12,14 @@
  * - X-Request-ID is generated/forwarded for tracing
  * - Cookie and Set-Cookie are never forwarded
  *
+ * Streaming (SSE) support (S3):
+ * - `expectStream` option enables SSE passthrough without buffering
+ * - SSE responses pipe upstream ReadableStream directly to browser
+ * - Transport headers (cache-control, x-accel-buffering, connection) set for SSE correctness
+ * - Abort propagation: client disconnect cancels upstream fetch
+ *
  * @see docs/v1/s2/s2_prs/s2_pr00.md for full specification
+ * @see docs/v1/s3/s3_prs/s3_pr07.md §4.1 for SSE streaming spec
  */
 
 import { NextResponse } from "next/server";
@@ -24,6 +31,15 @@ import { createClient } from "@/lib/supabase/server";
 export const REQUEST_ID_HEADER = "x-request-id";
 
 /**
+ * Options for proxy behavior.
+ */
+export interface ProxyOptions {
+  /** Hint that the upstream response will be SSE. Forces streaming path
+      even if upstream content-type is mislabeled. */
+  expectStream?: boolean;
+}
+
+/**
  * Request headers allowed to be forwarded from browser to FastAPI.
  * These are copied from the incoming request if present.
  */
@@ -33,6 +49,7 @@ const ALLOWED_REQUEST_HEADERS = new Set([
   "range",
   "if-none-match",
   "if-modified-since",
+  "idempotency-key",
 ]);
 
 /**
@@ -161,7 +178,21 @@ function shouldForwardRequestHeader(headerName: string): boolean {
 function isTextContentType(contentType: string | null): boolean {
   if (!contentType) return false;
   const lower = contentType.toLowerCase();
+  // SSE is text/ but must NOT be buffered — handled separately
+  if (lower.startsWith("text/event-stream")) return false;
   return lower.includes("application/json") || lower.includes("text/");
+}
+
+/**
+ * Check if a response should be treated as SSE streaming.
+ */
+function isStreamingResponse(
+  contentType: string | null,
+  expectStream?: boolean
+): boolean {
+  if (expectStream) return true;
+  if (!contentType) return false;
+  return contentType.toLowerCase().startsWith("text/event-stream");
 }
 
 /**
@@ -202,12 +233,14 @@ async function createDefaultDeps(): Promise<ProxyDeps> {
  * @param request - The incoming Next.js request
  * @param path - The FastAPI path to proxy to (must not contain query string)
  * @param deps - Injectable dependencies
+ * @param options - Proxy options (e.g., streaming hints)
  * @returns Response from FastAPI with filtered headers
  */
 export async function proxyToFastAPIWithDeps(
   request: Request,
   path: string,
-  deps: ProxyDeps
+  deps: ProxyDeps,
+  options?: ProxyOptions
 ): Promise<Response> {
   // Validate path does not contain query string (caller error)
   if (path.includes("?")) {
@@ -267,20 +300,28 @@ export async function proxyToFastAPIWithDeps(
   }
 
   // Forward request body for non-GET/HEAD methods as raw bytes
+  // For streaming routes, forward body as-is (do not call request.json())
   let body: ArrayBuffer | undefined;
   if (request.method !== "GET" && request.method !== "HEAD") {
     body = await request.arrayBuffer();
   }
 
   try {
-    // Make request to FastAPI
+    // Make request to FastAPI with abort signal propagation
     const response = await deps.fetch(url, {
       method: request.method,
       headers,
       body,
+      signal: request.signal,
     });
 
-    // Build filtered response headers
+    // Check if this is an SSE streaming response
+    const upstreamContentType = response.headers.get("content-type");
+    if (isStreamingResponse(upstreamContentType, options?.expectStream)) {
+      return buildStreamingResponse(response, requestId);
+    }
+
+    // Build filtered response headers (non-streaming path)
     const responseHeaders = new Headers();
     response.headers.forEach((value, key) => {
       if (shouldForwardResponseHeader(key)) {
@@ -314,6 +355,11 @@ export async function proxyToFastAPIWithDeps(
       });
     }
   } catch (error) {
+    // Abort errors are expected on client disconnect — do not log as server errors
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return new Response(null, { status: 499 });
+    }
+
     // Network error or FastAPI unavailable
     console.error("FastAPI proxy error:", error);
     return NextResponse.json(
@@ -335,6 +381,46 @@ export async function proxyToFastAPIWithDeps(
 }
 
 /**
+ * Build a streaming SSE response that pipes upstream bytes directly to the browser.
+ *
+ * Transport headers are set directly for SSE correctness per §4.1.3 / §4.1.7.
+ * These are NOT added to ALLOWED_RESPONSE_HEADERS; they apply only to the SSE code path.
+ */
+function buildStreamingResponse(
+  upstream: Response,
+  requestId: string
+): Response {
+  // Preserve upstream content-type or default to event-stream
+  const ct =
+    upstream.headers.get("content-type") ||
+    "text/event-stream; charset=utf-8";
+
+  const sseHeaders = new Headers({
+    "content-type": ct,
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+    [REQUEST_ID_HEADER]: requestId,
+  });
+
+  // If upstream has no body (e.g., error before stream starts), return as-is
+  if (!upstream.body) {
+    return new Response(null, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: sseHeaders,
+    });
+  }
+
+  // Pipe the upstream ReadableStream directly — no transformation, no buffering
+  return new Response(upstream.body, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: sseHeaders,
+  });
+}
+
+/**
  * Proxy a request to FastAPI with proper authentication and headers.
  *
  * This function:
@@ -343,18 +429,21 @@ export async function proxyToFastAPIWithDeps(
  * 3. Attaches Authorization and X-Nexus-Internal headers
  * 4. Forwards the request to FastAPI
  * 5. Filters response headers via allowlist
+ * 6. For SSE: pipes upstream body directly (no buffering)
  *
  * @param request - The incoming Next.js request
  * @param path - The FastAPI path to proxy to (e.g., "/me", "/libraries/123")
  *               Must NOT contain query string - those are extracted from request URL
+ * @param options - Optional proxy options (e.g., `{ expectStream: true }` for SSE)
  * @returns Response from FastAPI with filtered headers
  */
 export async function proxyToFastAPI(
   request: Request,
-  path: string
+  path: string,
+  options?: ProxyOptions
 ): Promise<Response> {
   const deps = await createDefaultDeps();
-  return proxyToFastAPIWithDeps(request, path, deps);
+  return proxyToFastAPIWithDeps(request, path, deps, options);
 }
 
 // Exports for testing
@@ -363,6 +452,8 @@ export {
   shouldForwardRequestHeader as _shouldForwardRequestHeader,
   getOrGenerateRequestId as _getOrGenerateRequestId,
   isTextContentType as _isTextContentType,
+  isStreamingResponse as _isStreamingResponse,
+  buildStreamingResponse as _buildStreamingResponse,
   ALLOWED_REQUEST_HEADERS as _ALLOWED_REQUEST_HEADERS,
   BLOCKED_REQUEST_HEADERS as _BLOCKED_REQUEST_HEADERS,
   ALLOWED_RESPONSE_HEADERS as _ALLOWED_RESPONSE_HEADERS,
