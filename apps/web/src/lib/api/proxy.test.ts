@@ -23,6 +23,7 @@ import {
   _shouldForwardRequestHeader,
   _getOrGenerateRequestId,
   _isTextContentType,
+  _isStreamingResponse,
 } from "./proxy";
 
 // Mock next/server - NextResponse.json for error responses
@@ -258,6 +259,29 @@ describe("proxy helper functions", () => {
 
     it("returns false for null", () => {
       expect(_isTextContentType(null)).toBe(false);
+    });
+
+    it("returns false for text/event-stream (handled by streaming path)", () => {
+      expect(_isTextContentType("text/event-stream")).toBe(false);
+      expect(_isTextContentType("text/event-stream; charset=utf-8")).toBe(false);
+    });
+  });
+
+  describe("_isStreamingResponse", () => {
+    it("returns true when expectStream is true", () => {
+      expect(_isStreamingResponse(null, true)).toBe(true);
+      expect(_isStreamingResponse("application/json", true)).toBe(true);
+    });
+
+    it("returns true for text/event-stream content type", () => {
+      expect(_isStreamingResponse("text/event-stream", false)).toBe(true);
+      expect(_isStreamingResponse("text/event-stream; charset=utf-8", false)).toBe(true);
+    });
+
+    it("returns false for non-SSE content types without hint", () => {
+      expect(_isStreamingResponse("application/json", false)).toBe(false);
+      expect(_isStreamingResponse("text/plain", false)).toBe(false);
+      expect(_isStreamingResponse(null, false)).toBe(false);
     });
   });
 });
@@ -857,6 +881,124 @@ describe("proxyToFastAPIWithDeps - Request ID Propagation", () => {
     const headers = fetchInit.headers as Headers;
 
     expect(headers.get("x-request-id")).toBe("existing-trace-id");
+  });
+});
+
+// ============================================================================
+// SSE Streaming Tests (S3 PR-07)
+// ============================================================================
+
+describe("proxyToFastAPIWithDeps - SSE Streaming", () => {
+  it("returns streaming response when expectStream=true and upstream is SSE", async () => {
+    const sseBody = "event: meta\ndata: {}\n\nevent: delta\ndata: {\"delta\":\"hi\"}\n\n";
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(sseBody));
+        controller.close();
+      },
+    });
+
+    const deps = createMockDeps({
+      fetch: vi.fn().mockResolvedValue(
+        new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/event-stream; charset=utf-8" },
+        })
+      ),
+    });
+
+    const request = createMockRequest({ method: "POST", body: "{}" });
+    const response = await proxyToFastAPIWithDeps(request, "/test", deps, {
+      expectStream: true,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe(
+      "text/event-stream; charset=utf-8"
+    );
+    expect(response.headers.get("cache-control")).toBe(
+      "no-cache, no-transform"
+    );
+    expect(response.headers.get("x-accel-buffering")).toBe("no");
+    expect(response.headers.get("connection")).toBe("keep-alive");
+    expect(response.headers.get("x-request-id")).toBeTruthy();
+
+    // Verify the body is a ReadableStream (not buffered)
+    expect(response.body).toBeTruthy();
+
+    // Read the stream to verify content passes through
+    const text = await response.text();
+    expect(text).toContain("event: meta");
+    expect(text).toContain("event: delta");
+  });
+
+  it("SSE headers are set even when upstream omits them", async () => {
+    const deps = createMockDeps({
+      fetch: vi.fn().mockResolvedValue(
+        new Response("event: done\ndata: {}\n\n", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        })
+      ),
+    });
+
+    const request = createMockRequest({ method: "POST", body: "{}" });
+    const response = await proxyToFastAPIWithDeps(request, "/test", deps, {
+      expectStream: true,
+    });
+
+    expect(response.headers.get("cache-control")).toBe(
+      "no-cache, no-transform"
+    );
+    expect(response.headers.get("x-accel-buffering")).toBe("no");
+    expect(response.headers.get("connection")).toBe("keep-alive");
+  });
+
+  it("forwards idempotency-key header from request", async () => {
+    const deps = createMockDeps();
+
+    const request = createMockRequest({
+      method: "POST",
+      body: "{}",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "test-key-123",
+      },
+    });
+    await proxyToFastAPIWithDeps(request, "/test", deps);
+
+    const [, fetchInit] = (deps.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const headers = fetchInit.headers as Headers;
+    expect(headers.get("idempotency-key")).toBe("test-key-123");
+  });
+
+  it("handles non-SSE error response even when expectStream=true", async () => {
+    const deps = createMockDeps({
+      fetch: vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error: { code: "E_LLM_NO_KEY", message: "No key" },
+          }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          }
+        )
+      ),
+    });
+
+    const request = createMockRequest({ method: "POST", body: "{}" });
+    // expectStream=true but upstream returns JSON error, not SSE
+    // isStreamingResponse: expectStream=true → true
+    // But the upstream returns JSON not SSE, so the streaming path will
+    // return the response body as-is (which is fine — the client handles it)
+    const response = await proxyToFastAPIWithDeps(request, "/test", deps, {
+      expectStream: true,
+    });
+
+    // With expectStream=true, the response is treated as streaming regardless
+    expect(response.status).toBe(400);
   });
 });
 

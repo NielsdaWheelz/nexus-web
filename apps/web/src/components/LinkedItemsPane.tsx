@@ -53,6 +53,8 @@ export interface LinkedItemsPaneProps {
   onHighlightClick: (highlightId: string) => void;
   /** Version number that changes when highlights change (triggers re-measurement) */
   highlightsVersion?: number;
+  /** Callback for quote-to-chat trigger (S3 PR-07). */
+  onSendToChat?: (highlightId: string) => void;
 }
 
 // =============================================================================
@@ -65,6 +67,7 @@ export default function LinkedItemsPane({
   focusedId,
   onHighlightClick,
   highlightsVersion = 0,
+  onSendToChat,
 }: LinkedItemsPaneProps) {
   // Container ref for sizing calculations
   const containerRef = useRef<HTMLDivElement>(null);
@@ -357,6 +360,7 @@ export default function LinkedItemsPane({
             onClick={handleRowClick}
             onMouseEnter={handleRowMouseEnter}
             onMouseLeave={handleRowMouseLeave}
+            onSendToChat={onSendToChat}
           />
         );
       })}

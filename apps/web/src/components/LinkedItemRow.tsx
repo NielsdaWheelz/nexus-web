@@ -39,6 +39,8 @@ export interface LinkedItemRowProps {
   onMouseEnter: (highlightId: string) => void;
   /** Callback when mouse leaves row */
   onMouseLeave: () => void;
+  /** Callback when "send to chat" is clicked (quote-to-chat). */
+  onSendToChat?: (highlightId: string) => void;
 }
 
 // =============================================================================
@@ -60,7 +62,7 @@ const MAX_PREVIEW_LENGTH = 60;
  */
 const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
   function LinkedItemRow(
-    { highlight, isFocused, onClick, onMouseEnter, onMouseLeave },
+    { highlight, isFocused, onClick, onMouseEnter, onMouseLeave, onSendToChat },
     ref
   ) {
     const handleClick = useCallback(() => {
@@ -70,6 +72,14 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
     const handleMouseEnter = useCallback(() => {
       onMouseEnter(highlight.id);
     }, [onMouseEnter, highlight.id]);
+
+    const handleSendToChat = useCallback(
+      (e: React.MouseEvent) => {
+        e.stopPropagation();
+        onSendToChat?.(highlight.id);
+      },
+      [onSendToChat, highlight.id]
+    );
 
     // Truncate text for preview
     const previewText =
@@ -105,6 +115,16 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
           <span className={styles.annotationIndicator} aria-label="Has annotation">
             💬
           </span>
+        )}
+        {onSendToChat && (
+          <button
+            className={styles.sendToChatBtn}
+            onClick={handleSendToChat}
+            aria-label="Send to chat"
+            title="Quote to chat"
+          >
+            →💬
+          </button>
         )}
       </div>
     );

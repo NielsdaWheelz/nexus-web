@@ -15,6 +15,7 @@
 
 import { useEffect, useState, useCallback, useRef, use } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
@@ -153,6 +154,7 @@ export default function MediaViewPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const router = useRouter();
 
   // Core data state
   const [media, setMedia] = useState<Media | null>(null);
@@ -593,6 +595,24 @@ export default function MediaViewPage({
   );
 
   // ==========================================================================
+  // Quote-to-Chat (S3 PR-07)
+  // ==========================================================================
+
+  const handleSendToChat = useCallback(
+    (highlightId: string) => {
+      // Per s3_pr07 §6.2: route determines target.
+      // Since we're on /media/:id (not /conversations/:id), navigate to
+      // /conversations with the highlight pre-attached as a query param.
+      const params = new URLSearchParams({
+        attach_type: "highlight",
+        attach_id: highlightId,
+      });
+      router.push(`/conversations?${params}`);
+    },
+    [router]
+  );
+
+  // ==========================================================================
   // Render
   // ==========================================================================
 
@@ -715,6 +735,7 @@ export default function MediaViewPage({
               focusedId={focusState.focusedId}
               onHighlightClick={focusHighlight}
               highlightsVersion={highlightsVersion}
+              onSendToChat={handleSendToChat}
             />
           )}
         </Pane>
