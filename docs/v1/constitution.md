@@ -55,7 +55,7 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 - no youtube channel subscriptions (explicitly out of scope v1)
 - no word-level timestamps (segment/utterance-level only)
 - no local audio/video uploads (external urls only)
-- no first-class support for non-browser clients (cli, mobile apps); browser traffic always flows through next.js; direct fastapi usage is not a supported public API in v1
+- no first-class support for non-browser clients (cli, mobile apps); browser traffic flows through next.js except for SSE streaming (see §4 streaming exception); direct fastapi usage beyond `/stream/*` is not a supported public API in v1
 
 ---
 
@@ -106,11 +106,16 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
   - transcription requests are processed by jobs
 
 ### request topology (hard constraint)
-- browsers communicate ONLY with the next.js app (same-origin).
-- browsers NEVER call fastapi directly.
+- browsers communicate with the next.js app (same-origin) for all non-streaming requests.
 - next.js route handlers (`/api/*`) act as a thin BFF proxy.
 - next.js forwards authenticated requests to fastapi using `Authorization: Bearer <supabase_access_token>`.
 - fastapi accepts requests ONLY via bearer tokens and never via cookies.
+
+**streaming exception:** browsers MAY call fastapi directly for SSE streaming endpoints only (`/stream/*`). all non-streaming endpoints remain BFF-only. streaming endpoints:
+- use bearer-token auth (short-lived stream token, NOT supabase token, NOT cookies)
+- have a strict CORS origin allowlist (no wildcard)
+- are rate-limited independently
+- this exception exists solely because streaming through vercel proxies is unreliable (60s function timeout, unpredictable buffering). it is not a general-purpose "public API".
 
 ### api ownership (hard constraint)
 - fastapi is the single source of truth for:
@@ -127,10 +132,11 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 ### fastapi exposure model (hard constraint)
 - fastapi is designed to be secure even if publicly reachable.
 - all fastapi endpoints require a valid bearer token.
-- internal secret header is required in production:
+- non-streaming endpoints require an internal secret header in production:
   - next.js always includes a shared internal secret header (`X-Internal-Secret`).
   - fastapi rejects requests missing or mismatching this header in production.
-  - this enforces that only next.js can call fastapi, even if someone has a valid supabase token.
+  - this enforces that only next.js can call non-streaming fastapi endpoints.
+- streaming endpoints (`/stream/*`) do NOT require the internal secret header. they are browser-callable and authenticated via short-lived stream tokens (see streaming exception above).
 
 ### iframe policy (hard constraint)
 - documents: never use iframes (render sanitized html in app dom).
@@ -139,12 +145,13 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 
 ### cors + csrf posture (hard constraint)
 - browser → next.js: same-origin only.
-- next.js → fastapi: server-to-server requests only.
-- fastapi does NOT enable browser CORS.
+- next.js → fastapi: server-to-server requests only (non-streaming).
+- fastapi does NOT enable browser CORS on non-streaming endpoints.
+- fastapi enables CORS on streaming endpoints (`/stream/*`) only, with an explicit origin allowlist (no wildcard, no cookies).
 - next.js enforces CSRF protection on all state-changing `/api/*` routes:
   - same-origin policy
   - `Origin` / `Referer` validation
-- fastapi does NOT implement CSRF protection (bearer-token, non-browser clients only).
+- fastapi does NOT implement CSRF protection (bearer-token auth only; no cookies on any endpoint).
 
 ### jobs and background processing
 - celery workers are trusted internal actors.
@@ -592,8 +599,8 @@ changing any of the following is a constitution change:
 - generic links scope
 - transcript segmentation/immutability rules
 - subscription auto-add semantics
-- request topology (BFF vs direct api)
+- request topology (BFF vs direct api) — note: streaming exception (`/stream/*`) was added; further exceptions require a constitution change
 - auth token flow or storage location
 - fastapi exposure model
-- allowing browsers to call fastapi directly
+- expanding browser-callable fastapi endpoints beyond `/stream/*`
 - supporting non-browser clients as a public API
