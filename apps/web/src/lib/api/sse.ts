@@ -51,6 +51,7 @@ export interface SSEDoneEvent {
   data: {
     status: "complete" | "error";
     error_code: string | null;
+    final_chars?: number;
   };
 }
 
@@ -285,6 +286,105 @@ function processEvent(
       // Unknown event type — ignore per spec
       break;
   }
+}
+
+// ============================================================================
+// Direct-to-FastAPI SSE Client (PR-08)
+// ============================================================================
+
+/**
+ * Send a message via direct browser→fastapi SSE using a stream token.
+ *
+ * Per PR-08 spec §11.1:
+ * 1. Uses stream_base_url + token from fetchStreamToken()
+ * 2. Sends to /stream/conversations/{id}/messages or /stream/conversations/messages
+ * 3. Same event parsing as sseClient
+ *
+ * @param streamBaseUrl - The fastapi base URL for streaming
+ * @param streamToken - The short-lived stream JWT
+ * @param conversationId - Existing conversation ID or null for new
+ * @param body - The send message request body
+ * @param handlers - Event callbacks
+ * @param options - Optional fetch options
+ * @returns Cleanup function to abort the stream
+ */
+export function sseClientDirect(
+  streamBaseUrl: string,
+  streamToken: string,
+  conversationId: string | null,
+  body: SendMessageRequest,
+  handlers: {
+    onEvent: SSEEventHandler;
+    onError: SSEErrorHandler;
+    onComplete?: () => void;
+  },
+  options?: {
+    signal?: AbortSignal;
+    idempotencyKey?: string;
+  }
+): () => void {
+  const controller = new AbortController();
+  const combinedSignal = options?.signal
+    ? combineSignals(options.signal, controller.signal)
+    : controller.signal;
+
+  const url = conversationId
+    ? `${streamBaseUrl}/stream/conversations/${conversationId}/messages`
+    : `${streamBaseUrl}/stream/conversations/messages`;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+    Authorization: `Bearer ${streamToken}`,
+  };
+
+  if (options?.idempotencyKey) {
+    headers["Idempotency-Key"] = options.idempotencyKey;
+  }
+
+  // Start the fetch + parse pipeline
+  (async () => {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: combinedSignal,
+      });
+
+      if (!response.ok) {
+        let errorMessage = `Request failed with status ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          if (errorBody?.error?.message) {
+            errorMessage = errorBody.error.message;
+          }
+        } catch {
+          // ignore parse failures
+        }
+        handlers.onError(new Error(errorMessage));
+        return;
+      }
+
+      if (!response.body) {
+        handlers.onError(new Error("Response body is null"));
+        return;
+      }
+
+      await parseSSEStream(response.body, handlers.onEvent, handlers.onError);
+      handlers.onComplete?.();
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        handlers.onComplete?.();
+        return;
+      }
+      handlers.onError(
+        err instanceof Error ? err : new Error("Unknown SSE error")
+      );
+    }
+  })();
+
+  return () => controller.abort();
 }
 
 // ============================================================================

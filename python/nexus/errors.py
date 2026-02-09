@@ -69,6 +69,15 @@ class ApiErrorCode(str, Enum):
         "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"  # 409 - Key reused with different payload
     )
 
+    # Streaming errors (PR-08)
+    E_CLIENT_DISCONNECT = "E_CLIENT_DISCONNECT"  # stream aborted by client
+    E_ORPHANED_PENDING = "E_ORPHANED_PENDING"  # sweeper cleanup
+    E_STREAM_IN_PROGRESS = "E_STREAM_IN_PROGRESS"  # replay while stream running
+    E_RATE_LIMITER_UNAVAILABLE = "E_RATE_LIMITER_UNAVAILABLE"  # 503 budget system down
+    E_STREAM_TOKEN_EXPIRED = "E_STREAM_TOKEN_EXPIRED"  # 401 token past expiry
+    E_STREAM_TOKEN_REPLAYED = "E_STREAM_TOKEN_REPLAYED"  # 401 jti already used
+    E_STREAM_TOKEN_INVALID = "E_STREAM_TOKEN_INVALID"  # 401 signature or claims failed
+
     # Ingestion errors (502/504)
     E_INGEST_FAILED = "E_INGEST_FAILED"  # 502
     E_INGEST_TIMEOUT = "E_INGEST_TIMEOUT"  # 504
@@ -136,6 +145,14 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_RATE_LIMITED: 429,
     ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED: 429,
     ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH: 409,
+    # Streaming errors (PR-08)
+    ApiErrorCode.E_CLIENT_DISCONNECT: 499,
+    ApiErrorCode.E_ORPHANED_PENDING: 500,
+    ApiErrorCode.E_STREAM_IN_PROGRESS: 409,
+    ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE: 503,
+    ApiErrorCode.E_STREAM_TOKEN_EXPIRED: 401,
+    ApiErrorCode.E_STREAM_TOKEN_REPLAYED: 401,
+    ApiErrorCode.E_STREAM_TOKEN_INVALID: 401,
     # Ingestion errors
     ApiErrorCode.E_INGEST_FAILED: 502,
     ApiErrorCode.E_INGEST_TIMEOUT: 504,

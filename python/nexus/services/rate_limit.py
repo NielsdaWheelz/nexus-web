@@ -291,6 +291,187 @@ class RateLimiter:
                 error=str(e),
             )
 
+    # =========================================================================
+    # PR-08: Token budget reservation for streaming (platform key)
+    # =========================================================================
+
+    def reserve_token_budget(
+        self,
+        user_id: UUID,
+        reservation_id: UUID,
+        est_tokens: int,
+        ttl: int = 300,
+    ) -> None:
+        """Reserve tokens from the daily budget before a streaming LLM call.
+
+        Check: spent + reserved >= budget → reject.
+        Reservation keyed by assistant_message_id.
+
+        Args:
+            user_id: User whose budget to reserve against.
+            reservation_id: The assistant_message_id (unique per stream).
+            est_tokens: Estimated tokens to reserve.
+            ttl: Reservation TTL in seconds (auto-released if not committed).
+
+        Raises:
+            ApiError(E_TOKEN_BUDGET_EXCEEDED): If budget would be exceeded.
+            ApiError(E_RATE_LIMITER_UNAVAILABLE): If Redis is unavailable.
+        """
+        if not self.redis_available:
+            logger.warning("token_budget_reserve_redis_unavailable")
+            raise ApiError(
+                ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
+                "Rate limiting service unavailable",
+            )
+
+        if est_tokens <= 0:
+            return
+
+        try:
+            date = datetime.now(UTC).strftime("%Y-%m-%d")
+            spent_key = f"budget:{user_id}:{date}"
+            reserved_key = f"reserved:{user_id}:{date}"
+            res_detail_key = f"reservation:{reservation_id}"
+
+            pipe = self._redis.pipeline()
+            pipe.get(spent_key)
+            pipe.get(reserved_key)
+            results = pipe.execute()
+
+            spent = int(results[0]) if results[0] else 0
+            reserved = int(results[1]) if results[1] else 0
+
+            if spent + reserved + est_tokens > self._token_budget:
+                raise ApiError(
+                    ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
+                    f"Daily token budget would be exceeded (spent={spent}, reserved={reserved}, "
+                    f"requested={est_tokens}, budget={self._token_budget})",
+                )
+
+            # Reserve
+            pipe2 = self._redis.pipeline()
+            pipe2.incrby(reserved_key, est_tokens)
+            pipe2.expire(reserved_key, BUDGET_TTL_SECONDS)
+            pipe2.set(res_detail_key, str(est_tokens), ex=ttl)
+            pipe2.execute()
+
+            logger.debug(
+                "token_budget_reserved",
+                user_id=str(user_id),
+                reservation_id=str(reservation_id),
+                est_tokens=est_tokens,
+            )
+
+        except ApiError:
+            raise
+        except Exception as e:
+            logger.warning("token_budget_reserve_failed", error=str(e))
+            raise ApiError(
+                ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
+                "Rate limiting service unavailable",
+            ) from e
+
+    def commit_token_budget(
+        self,
+        user_id: UUID,
+        reservation_id: UUID,
+        actual_tokens: int,
+    ) -> None:
+        """Commit a reservation: decrement reserved, increment spent.
+
+        Called at stream finalize with actual token count.
+        """
+        if not self.redis_available:
+            return
+
+        try:
+            date = datetime.now(UTC).strftime("%Y-%m-%d")
+            spent_key = f"budget:{user_id}:{date}"
+            reserved_key = f"reserved:{user_id}:{date}"
+            res_detail_key = f"reservation:{reservation_id}"
+
+            # Get the original reservation amount
+            est_raw = self._redis.get(res_detail_key)
+            est_tokens = int(est_raw) if est_raw else 0
+
+            pipe = self._redis.pipeline()
+            # Decrement reserved by the original estimate
+            if est_tokens > 0:
+                pipe.decrby(reserved_key, est_tokens)
+            # Increment spent by actual
+            if actual_tokens > 0:
+                pipe.incrby(spent_key, actual_tokens)
+                pipe.expire(spent_key, BUDGET_TTL_SECONDS)
+            # Clean up reservation detail
+            pipe.delete(res_detail_key)
+            pipe.execute()
+
+            # Ensure reserved doesn't go negative
+            current_reserved = self._redis.get(reserved_key)
+            if current_reserved and int(current_reserved) < 0:
+                self._redis.set(reserved_key, 0, ex=BUDGET_TTL_SECONDS)
+
+            logger.debug(
+                "token_budget_committed",
+                user_id=str(user_id),
+                reservation_id=str(reservation_id),
+                est_tokens=est_tokens,
+                actual_tokens=actual_tokens,
+            )
+
+        except Exception as e:
+            logger.warning(
+                "token_budget_commit_failed",
+                user_id=str(user_id),
+                reservation_id=str(reservation_id),
+                error=str(e),
+            )
+
+    def release_token_budget(
+        self,
+        user_id: UUID,
+        reservation_id: UUID,
+    ) -> None:
+        """Release a reservation without spending (early failure before provider call)."""
+        if not self.redis_available:
+            return
+
+        try:
+            date = datetime.now(UTC).strftime("%Y-%m-%d")
+            reserved_key = f"reserved:{user_id}:{date}"
+            res_detail_key = f"reservation:{reservation_id}"
+
+            est_raw = self._redis.get(res_detail_key)
+            est_tokens = int(est_raw) if est_raw else 0
+
+            if est_tokens > 0:
+                pipe = self._redis.pipeline()
+                pipe.decrby(reserved_key, est_tokens)
+                pipe.delete(res_detail_key)
+                pipe.execute()
+
+                # Ensure reserved doesn't go negative
+                current_reserved = self._redis.get(reserved_key)
+                if current_reserved and int(current_reserved) < 0:
+                    self._redis.set(reserved_key, 0, ex=BUDGET_TTL_SECONDS)
+            else:
+                self._redis.delete(res_detail_key)
+
+            logger.debug(
+                "token_budget_released",
+                user_id=str(user_id),
+                reservation_id=str(reservation_id),
+                est_tokens=est_tokens,
+            )
+
+        except Exception as e:
+            logger.warning(
+                "token_budget_release_failed",
+                user_id=str(user_id),
+                reservation_id=str(reservation_id),
+                error=str(e),
+            )
+
     def get_budget_remaining(self, user_id: UUID) -> int | None:
         """Get remaining token budget for today.
 

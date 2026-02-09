@@ -41,6 +41,8 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from nexus.api.routes import create_api_router
+from nexus.api.routes.stream import router as stream_router
+from nexus.api.routes.stream_tokens import router as stream_tokens_router
 from nexus.auth.middleware import AuthMiddleware
 from nexus.auth.verifier import SupabaseJwksVerifier
 from nexus.config import Environment, get_settings
@@ -48,6 +50,7 @@ from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import configure_logging, get_logger
 from nexus.middleware.request_id import RequestIDMiddleware
+from nexus.middleware.stream_cors import StreamCORSMiddleware
 from nexus.responses import (
     api_error_handler,
     error_response,
@@ -131,10 +134,43 @@ async def lifespan(app: FastAPI):
         enable_gemini=settings.enable_gemini,
     )
 
+    # PR-08: Initialize Redis client for stream token jti, liveness, budget
+    redis_client = None
+    if settings.redis_url:
+        try:
+            import redis
+
+            redis_client = redis.Redis.from_url(
+                settings.redis_url, decode_responses=True, socket_timeout=5
+            )
+            redis_client.ping()
+            logger.info("redis_client_initialized", redis_url=settings.redis_url[:30] + "...")
+        except Exception as e:
+            logger.warning("redis_client_init_failed", error=str(e))
+            redis_client = None
+
+    app.state.redis_client = redis_client
+
+    # Initialize rate limiter with redis client
+    from nexus.services.rate_limit import RateLimiter, set_rate_limiter
+
+    rate_limiter = RateLimiter(
+        redis_client=redis_client,
+        rpm_limit=settings.rate_limit_rpm,
+        concurrent_limit=settings.rate_limit_concurrent,
+        token_budget=settings.token_budget_daily,
+    )
+    set_rate_limiter(rate_limiter)
+
     yield
 
-    # Shutdown: close HTTP client
+    # Shutdown: close HTTP client and Redis
     await app.state.httpx_client.aclose()
+    if redis_client:
+        try:
+            redis_client.close()
+        except Exception:
+            pass
     logger.info("httpx_client_closed")
 
 
@@ -203,6 +239,12 @@ def create_app(
     api_router = create_api_router(include_test_routes=settings.nexus_env == Environment.TEST)
     app.include_router(api_router)
 
+    # PR-08: Include stream router (/stream/*) — browser-callable, stream token auth
+    app.include_router(stream_router)
+
+    # PR-08: Include stream token minting route (/internal/stream-tokens) — BFF-only
+    app.include_router(stream_tokens_router)
+
     # Add auth middleware (runs on all requests except public paths)
     if not skip_auth_middleware:
         verifier = token_verifier or create_token_verifier()
@@ -221,6 +263,13 @@ def create_app(
             env=settings.nexus_env.value,
             internal_header_required=settings.requires_internal_header,
         )
+
+    # PR-08: Add StreamCORSMiddleware for /stream/* routes
+    # Must be added AFTER auth middleware (runs before it in the stack)
+    cors_origins = settings.stream_cors_origin_list
+    if cors_origins:
+        app.add_middleware(StreamCORSMiddleware, allowed_origins=cors_origins)
+        logger.info("stream_cors_middleware_enabled", origins=cors_origins)
 
     return app
 

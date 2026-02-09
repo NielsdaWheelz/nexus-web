@@ -698,6 +698,13 @@ All operations must preserve consistency.
 | `E_SHARE_REQUIRED` | 409 | State conflict: cannot have sharing=library with 0 shares |
 | `E_IDEMPOTENCY_KEY_REPLAY_MISMATCH` | 409 | Same idempotency key with different payload |
 | `E_KEY_INVALID` | 400 | User API key failed validation |
+| `E_CLIENT_DISCONNECT` | N/A | Client disconnected during streaming (internal status, no HTTP response) |
+| `E_ORPHANED_PENDING` | N/A | Pending message orphaned (sweeper cleanup, no HTTP response) |
+| `E_STREAM_IN_PROGRESS` | 409 | Stream already in progress for this idempotency key |
+| `E_RATE_LIMITER_UNAVAILABLE` | 503 | Redis rate limiter unavailable |
+| `E_STREAM_TOKEN_EXPIRED` | 401 | Stream token has expired |
+| `E_STREAM_TOKEN_REPLAYED` | 401 | Stream token JTI already used |
+| `E_STREAM_TOKEN_INVALID` | 401 | Stream token is malformed or has invalid claims |
 
 ---
 
@@ -735,6 +742,14 @@ All operations must preserve consistency.
 |--------|------|-------------|
 | `GET` | `/search` | Keyword search across visible content |
 
+### 10.5 Streaming (PR-08)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/stream/conversations/messages` | Send message + stream SSE (new conversation, browser-callable) |
+| `POST` | `/stream/conversations/:id/messages` | Send message + stream SSE (existing conversation, browser-callable) |
+| `POST` | `/internal/stream-tokens` | Mint stream token (BFF-only, requires internal header) |
+
 ---
 
 ## 11) Acceptance Criteria
@@ -759,6 +774,15 @@ All operations must preserve consistency.
 - [ ] `message_llm` records all LLM calls
 - [ ] Stale pending messages cleaned up
 - [ ] Last-share deletion auto-transitions to private
+- [ ] Direct browser→FastAPI streaming works without BFF proxy
+- [ ] Stream token auth prevents unauthorized direct access
+- [ ] Stream token JTI replay protection prevents reuse
+- [ ] CORS only applies to /stream/* paths
+- [ ] Client disconnect finalizes assistant as error within seconds
+- [ ] Keepalive pings prevent proxy/ALB timeout during slow generation
+- [ ] Token budget pre-reservation prevents concurrent overspend
+- [ ] Liveness markers prevent sweeper from killing active streams
+- [ ] Orphaned pending messages cleaned up by sweeper after 5min
 
 ---
 

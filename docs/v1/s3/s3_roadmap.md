@@ -379,68 +379,91 @@ Add `services/visibility.py`:
 
 ---
 
-## PR-08 (Optional): Streaming End-to-End
+## PR-08: Streaming Hardening ✅
 
-**Backend + BFF + UI — ship non-streaming first, add this as follow-up**
+**Full stack — direct browser→FastAPI streaming, replacing BFF proxy**
 
-### Protocol
+PR-08 was originally optional; it is now implemented as a hardening pass that fixes the fundamental reliability issues with BFF-proxied SSE.
 
-Server-Sent Events (SSE) — `text/event-stream`
-- Event format: `data: {"content": "...", "done": false}\n\n`
-- Final event: `data: {"content": "", "done": true, "message_id": "..."}\n\n`
+### Architecture Change
 
-### Backend
+**Before (PR-07):** Browser → Next.js BFF → FastAPI (SSE proxied through Vercel)
+**After (PR-08):** Browser → FastAPI directly for SSE (BFF only mints stream tokens)
 
-- `POST /.../messages?stream=1` returns SSE response
-- Router calls `adapter.generate_stream()` (defined in PR-04)
-- Wraps chunks in SSE format
+### Stream Token Auth
 
-### BFF
+- BFF mints short-lived HS256 JWTs (60s TTL) via `POST /internal/stream-tokens`
+- Browser sends token as `Authorization: Bearer <stream_token>` to `/stream/*`
+- FastAPI verifies: iss, aud, scope, exp, JTI replay (Redis SETNX)
+- One-time use per token (JTI stored in Redis with TTL)
 
-- `POST /api/conversations/:id/messages?stream=1` — streaming proxy
-- Header allowlist: include `text/event-stream`
-- Must NOT buffer whole response
+### CORS
 
-### UI
+- Custom ASGI middleware (`StreamCORSMiddleware`) on `/stream/*` only
+- Explicit origin allowlist (no wildcard, no cookies)
+- Non-buffering: injects headers without accumulating response body
 
-- Streaming display (append chunks as they arrive)
-- Handle SSE events
+### Streaming Correctness
 
-### Storage
+- Async generator (`stream_send_message_async`) replaces sync generator + thread bridge
+- `httpx.AsyncClient().stream` for provider calls (proper `aclose()` on disconnect)
+- `run_in_threadpool` for all synchronous DB operations
+- Keepalive pings (`: keepalive\n\n`) every ~15s
+- Conditional finalize (`WHERE status='pending'`) for exactly-once semantics
+- `GeneratorExit` / `CancelledError` → finalize as `E_CLIENT_DISCONNECT`
 
-- Finalize assistant content once at stream end
-- No partial DB writes in v1
+### Liveness + Sweeper
+
+- Redis liveness markers (`stream_active:{msg_id}`, 90s TTL, refreshed every 30s)
+- Celery beat sweeper: finds `status='pending'` messages >5 min old, checks liveness, finalizes orphans as `E_ORPHANED_PENDING`
+
+### Token Budget Pre-Reservation
+
+- `reserve_token_budget()` pre-allocates estimated tokens before LLM call
+- `commit_token_budget()` reconciles actual vs reserved after stream completes
+- `release_token_budget()` frees reservation on failure
+- Prevents concurrent streams from exceeding daily budget
+
+### Endpoints
+
+```
+POST /stream/conversations/messages         # New conversation (browser-callable)
+POST /stream/conversations/{id}/messages    # Existing conversation (browser-callable)
+POST /internal/stream-tokens                # Mint stream token (BFF-only, internal auth)
+```
+
+### Frontend
+
+- `fetchStreamToken()` → BFF `/api/stream-token` → FastAPI `/internal/stream-tokens`
+- `sseClientDirect()` connects directly to FastAPI with stream token
+- Fallback to old BFF `sseClient` if token fetch fails
+- `pollForCompletion()` handles `E_STREAM_IN_PROGRESS` gracefully
+- Legacy BFF streaming routes return 410 Gone
 
 ### Tests
 
-- Backend unit test for streaming generator
-- Node-level BFF integration test (verify chunks arrive incrementally)
-- Streaming display test (mock SSE events)
+- Stream token mint/verify (expiry, replay, wrong scope)
+- OpenAI adapter usage invariant (usage only on terminal chunk)
+- Stream liveness operations
+- Budget reservation logic
+- CORS middleware behavior
+- SSE event formatting
 
 ---
 
-## PR-09 (Optional): Pending Assistant Cleanup Task
+## PR-09 (Optional): Observability
 
-**Backend + Tasks — can fold into PR-05 if fewer PRs desired**
+**Backend — sweeper folded into PR-08, only observability remains**
 
-### Celery Beat Task
+Note: The pending assistant cleanup task (Celery beat sweeper) was implemented in PR-08 as part of streaming hardening. It includes Redis liveness checks to avoid killing active streams.
 
-- Query `message WHERE status='pending' AND created_at < now() - interval '5 min'`
-- Update to `status='error'`, `content='Request timed out'`
-- Log cleanup count
-
-### Observability
+### Observability (Remaining)
 
 - Logging fields: `provider`, `model_name`, `key_mode`, `latency_ms`, `tokens_total`
 - Metrics hooks (optional, for future Prometheus/DataDog):
   - `llm_request_total` counter
   - `llm_request_duration_seconds` histogram
   - `llm_tokens_total` counter
-
-### Tests
-
-- Cleanup task marks stale pending as error
-- Cleanup task ignores recent pending
 
 ---
 
@@ -455,8 +478,8 @@ Server-Sent Events (SSE) — `text/event-stream`
 | 5 | PR-05 | Backend | Send-message endpoint + idempotency + rate limits + token budget |
 | 6 | PR-06 | Backend | Keyword search endpoint + visibility CTE |
 | 7 | PR-07 | Frontend | BFF routes + chat UI + quote-to-chat |
-| 8 | PR-08 | Full stack | (Optional) Streaming end-to-end |
-| 9 | PR-09 | Backend | (Optional) Pending cleanup task + metrics |
+| 8 | PR-08 | Full stack | Streaming hardening: direct browser→FastAPI SSE, stream tokens, CORS, liveness, sweeper, budget reservation |
+| 9 | PR-09 | Backend | (Optional) Observability (sweeper folded into PR-08) |
 
 **Key Decisions:**
 - One migration (0004) for all S3 schema
