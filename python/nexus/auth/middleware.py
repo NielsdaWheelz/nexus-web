@@ -90,6 +90,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in PUBLIC_PATHS:
             return await call_next(request)
 
+        # PR-08: Skip supabase auth + internal header for /stream/* paths.
+        # Stream routes use Depends(verify_stream_token) instead.
+        # The iss/aud requirement on stream tokens prevents accidental acceptance
+        # of supabase JWTs even if someone hits /stream/* with regular auth.
+        if request.url.path.startswith("/stream/"):
+            return await call_next(request)
+
         # Step 1: Check internal header if required
         if self.requires_internal_header:
             error_response_obj = self._verify_internal_header(request)

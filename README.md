@@ -58,9 +58,11 @@ nexus/
 
 ### Architecture
 
-- **BFF Pattern**: Browser → Next.js → FastAPI. Browser never calls FastAPI directly.
+- **BFF Pattern**: Browser → Next.js → FastAPI for non-streaming requests.
+- **Direct Streaming** (PR-08): Browser → FastAPI for SSE streaming (bypasses BFF for reliability).
 - **Single Python Package**: `python/nexus/` is imported by both API and worker.
 - **Auth Flow**: Supabase auth → Next.js session cookies → Bearer token to FastAPI.
+- **Stream Token Auth** (PR-08): Short-lived HS256 JWTs for direct browser→FastAPI SSE connections.
 - **Visibility Enforcement**: All authorization happens in FastAPI, never in Next.js.
 - **JWT Verification**: All environments use Supabase JWKS for token verification.
 - **Chat Infrastructure** (S3): Conversations, messages, and LLM integration for AI-assisted reading.
@@ -222,6 +224,10 @@ This file is:
 | `ANTHROPIC_API_KEY` | For Anthropic | Platform API key for Anthropic models |
 | `GEMINI_API_KEY` | For Gemini | Platform API key for Gemini models |
 | `ENABLE_STREAMING` | No | Enable SSE streaming endpoints (default: false) |
+| `STREAM_TOKEN_SIGNING_KEY` | staging/prod | Base64-encoded 32-byte key for stream token JWTs |
+| `STREAM_BASE_URL` | No | Public URL for /stream/* (default: http://localhost:8000) |
+| `STREAM_CORS_ORIGINS` | No | Comma-separated CORS origins for /stream/* (no wildcard) |
+| `STREAM_MAX_OUTPUT_TOKENS_DEFAULT` | No | Default output ceiling for budget reservation (default: 1024) |
 
 To generate an encryption key:
 ```bash
@@ -429,17 +435,43 @@ curl -X POST /conversations/messages \
   -d '{"content": "...", "model_id": "..."}'
 ```
 
-### Streaming (SSE)
+### Streaming (SSE) — PR-08 Direct Browser→FastAPI
 
-When `ENABLE_STREAMING=true`, SSE endpoints are available:
-```bash
-POST /conversations/messages/stream
-POST /conversations/{id}/messages/stream
+When `ENABLE_STREAMING=true`, the frontend streams directly to FastAPI (bypassing the BFF proxy):
+
+**Flow:**
+1. Browser calls `POST /api/stream-token` (BFF, supabase cookie auth)
+2. BFF proxies to `POST /internal/stream-tokens` (FastAPI mints HS256 JWT, 60s TTL)
+3. Browser opens SSE: `POST {stream_base_url}/stream/conversations/{id}/messages` with `Authorization: Bearer <stream_token>`
+4. FastAPI verifies stream token (iss/aud/scope/jti), streams response
+
+**Why direct:** Vercel has a 60s function timeout and unpredictable SSE buffering. Direct connections eliminate this class of issues.
+
+**Endpoints:**
+```
+POST /stream/conversations/messages         # New conversation (browser-callable)
+POST /stream/conversations/{id}/messages    # Existing conversation (browser-callable)
+POST /internal/stream-tokens                # Mint stream token (BFF-only)
 ```
 
-Events: `meta` (IDs + provider info), `delta` (content chunks), `done` (final status)
+**Events:** `meta` (IDs + provider info), `delta` (content chunks), `done` (final status + optional `final_chars`)
 
-The frontend defaults to streaming when `NEXT_PUBLIC_ENABLE_STREAMING=1` is set and falls back to non-streaming on failure.
+**Hardening features:**
+- Keepalive pings every ~15s during idle (SSE comment `: keepalive`)
+- Disconnect detection → finalize assistant as error within 5s
+- Token budget pre-reservation for platform keys (prevents concurrent overspend)
+- Liveness markers in Redis for orphan detection
+- Sweeper task cleans stale pending messages (>5min, no liveness marker)
+- CORS on `/stream/*` only (explicit origin allowlist, no cookies)
+- Conditional finalize (exactly-once via `WHERE status='pending'`)
+
+**Legacy endpoints (deprecated, return 410 Gone):**
+```
+POST /api/conversations/messages/stream
+POST /api/conversations/{id}/messages/stream
+```
+
+The frontend falls back to non-streaming on stream token fetch failure.
 
 ### Frontend Chat UI
 
@@ -458,9 +490,10 @@ The chat UI is accessible at `/conversations`:
 | `/api/conversations` | `/conversations` | GET, POST |
 | `/api/conversations/[id]` | `/conversations/{id}` | GET, DELETE |
 | `/api/conversations/[id]/messages` | `/conversations/{id}/messages` | GET, POST |
-| `/api/conversations/[id]/messages/stream` | `/conversations/{id}/messages/stream` | POST (SSE) |
+| `/api/conversations/[id]/messages/stream` | ~~deprecated~~ | POST (410 Gone) |
 | `/api/conversations/messages` | `/conversations/messages` | POST |
-| `/api/conversations/messages/stream` | `/conversations/messages/stream` | POST (SSE) |
+| `/api/conversations/messages/stream` | ~~deprecated~~ | POST (410 Gone) |
+| `/api/stream-token` | `/internal/stream-tokens` | POST |
 | `/api/messages/[messageId]` | `/messages/{messageId}` | DELETE |
 | `/api/models` | `/models` | GET |
 | `/api/keys` | `/keys` | GET, POST |

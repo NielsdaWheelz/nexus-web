@@ -23,10 +23,12 @@ import { useRouter } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
   sseClient,
+  sseClientDirect,
   type SSEEvent,
   type ContextItem,
   type SendMessageRequest,
 } from "@/lib/api/sse";
+import { fetchStreamToken } from "@/lib/api/streamToken";
 import styles from "@/app/(authenticated)/conversations/page.module.css";
 
 // ============================================================================
@@ -190,6 +192,40 @@ export default function ChatComposer({
   ]);
 
   // --------------------------------------------------------------------------
+  // PR-08 §11.3: Poll for E_STREAM_IN_PROGRESS completion
+  // --------------------------------------------------------------------------
+
+  const pollForCompletion = useCallback(
+    async (assistantMessageId: string) => {
+      if (!conversationId) return;
+
+      const maxAttempts = 15; // 30s total (2s intervals)
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const res = await apiFetch<{
+            data: Message[];
+          }>(`/api/conversations/${conversationId}/messages?limit=5`);
+          const messages = res.data;
+          const found = messages.find(
+            (m) => m.id === assistantMessageId && m.status === "complete"
+          );
+          if (found) {
+            onDone?.(assistantMessageId, "complete", null);
+            onMessageSent?.();
+            return;
+          }
+        } catch {
+          // Ignore polling errors
+        }
+      }
+      // Timed out — show message
+      setError("Message is still generating — please wait and try again.");
+    },
+    [conversationId, onDone, onMessageSent]
+  );
+
+  // --------------------------------------------------------------------------
   // Streaming send
   // --------------------------------------------------------------------------
 
@@ -229,70 +265,107 @@ export default function ChatComposer({
     let currentAsstId = tempAsstId;
     let receivedMeta = false;
 
-    const url = conversationId
-      ? `/api/conversations/${conversationId}/messages/stream`
-      : `/api/conversations/messages/stream`;
+    // PR-08: Direct-to-fastapi streaming via stream token
+    // Fetch a short-lived stream token, then open SSE directly to fastapi
+    let streamBaseUrl: string | null = null;
+    let streamToken: string | null = null;
+
+    try {
+      const tokenResponse = await fetchStreamToken();
+      streamBaseUrl = tokenResponse.stream_base_url;
+      streamToken = tokenResponse.token;
+    } catch (tokenErr) {
+      // Token fetch failed — fall back to BFF streaming
+      console.warn("Stream token fetch failed, falling back to BFF:", tokenErr);
+    }
+
+    // Choose direct or BFF path based on token availability
+    const useDirect = streamBaseUrl && streamToken;
+
+    // Shared event handlers for both direct and BFF paths
+    const eventHandlers = {
+      onEvent: (event: SSEEvent) => {
+        switch (event.type) {
+          case "meta": {
+            receivedMeta = true;
+            const { conversation_id, user_message_id, assistant_message_id } =
+              event.data;
+
+            onMetaReceived?.(
+              tempUserId,
+              user_message_id,
+              tempAsstId,
+              assistant_message_id
+            );
+            currentAsstId = assistant_message_id;
+
+            if (!conversationId) {
+              onConversationCreated?.(conversation_id);
+              router.replace(`/conversations/${conversation_id}`);
+            }
+            break;
+          }
+          case "delta": {
+            onDelta?.(currentAsstId, event.data.delta);
+            break;
+          }
+          case "done": {
+            // PR-08 §11.3: E_STREAM_IN_PROGRESS handling
+            if (event.data.error_code === "E_STREAM_IN_PROGRESS") {
+              // Don't show error — poll for completion
+              pollForCompletion(currentAsstId);
+            }
+            onDone?.(
+              currentAsstId,
+              event.data.status,
+              event.data.error_code
+            );
+            break;
+          }
+        }
+      },
+      onError: (err: Error) => {
+        if (!receivedMeta) {
+          setError(`Stream error: ${err.message}. Trying non-streaming...`);
+        } else {
+          onDone?.(currentAsstId, "error", "E_STREAM_INTERRUPTED");
+        }
+      },
+      onComplete: () => {},
+    };
 
     return new Promise<void>((resolve) => {
-      const abort = sseClient(
-        url,
-        body,
-        {
-          onEvent: (event: SSEEvent) => {
-            switch (event.type) {
-              case "meta": {
-                receivedMeta = true;
-                const { conversation_id, user_message_id, assistant_message_id } =
-                  event.data;
-
-                // Patch temp IDs to real IDs
-                onMetaReceived?.(
-                  tempUserId,
-                  user_message_id,
-                  tempAsstId,
-                  assistant_message_id
-                );
-                currentAsstId = assistant_message_id;
-
-                // For new conversations, update URL immediately
-                if (!conversationId) {
-                  onConversationCreated?.(conversation_id);
-                  router.replace(`/conversations/${conversation_id}`);
-                }
-                break;
-              }
-              case "delta": {
-                onDelta?.(currentAsstId, event.data.delta);
-                break;
-              }
-              case "done": {
-                onDone?.(
-                  currentAsstId,
-                  event.data.status,
-                  event.data.error_code
-                );
-                resolve();
-                break;
-              }
-            }
-          },
-          onError: (err) => {
-            if (!receivedMeta) {
-              // Failed before meta — fall back to non-streaming
-              // Remove optimistic messages first (they have temp IDs)
-              setError(`Stream error: ${err.message}. Trying non-streaming...`);
-            } else {
-              // Failed after meta — show error on assistant bubble
-              onDone?.(currentAsstId, "error", "E_STREAM_INTERRUPTED");
-            }
-            resolve();
-          },
-          onComplete: () => {
-            resolve();
-          },
+      const wrappedHandlers = {
+        ...eventHandlers,
+        onError: (err: Error) => {
+          eventHandlers.onError(err);
+          resolve();
         },
-        { idempotencyKey }
-      );
+        onComplete: () => {
+          resolve();
+        },
+        onEvent: (event: SSEEvent) => {
+          eventHandlers.onEvent(event);
+          if (event.type === "done") resolve();
+        },
+      };
+
+      let abort: () => void;
+      if (useDirect) {
+        abort = sseClientDirect(
+          streamBaseUrl!,
+          streamToken!,
+          conversationId,
+          body,
+          wrappedHandlers,
+          { idempotencyKey }
+        );
+      } else {
+        const bffUrl = conversationId
+          ? `/api/conversations/${conversationId}/messages/stream`
+          : `/api/conversations/messages/stream`;
+        abort = sseClient(bffUrl, body, wrappedHandlers, { idempotencyKey });
+      }
 
       abortRef.current = abort;
     });

@@ -103,6 +103,11 @@ class OpenAIAdapter(LLMAdapter):
             provider_request_id = response.headers.get("x-request-id")
             received_done = False
 
+            # PR-08 §4.1: Accumulate usage into local vars during stream.
+            # Non-terminal chunks MUST have usage=None (frozen dataclass enforces this).
+            # Only the terminal chunk ([DONE]) carries accumulated usage.
+            accumulated_usage: LLMUsage | None = None
+
             async for line in response.aiter_lines():
                 if not line:
                     continue
@@ -118,7 +123,7 @@ class OpenAIAdapter(LLMAdapter):
                     yield LLMChunk(
                         delta_text="",
                         done=True,
-                        usage=None,  # Usage comes in preceding chunks
+                        usage=accumulated_usage,
                         provider_request_id=provider_request_id,
                     )
                     break
@@ -131,6 +136,14 @@ class OpenAIAdapter(LLMAdapter):
                 # Extract delta content
                 choices = data.get("choices", [])
                 if not choices:
+                    # May be a usage-only chunk (no choices) — accumulate and skip
+                    if "usage" in data:
+                        usage_data = data["usage"]
+                        accumulated_usage = LLMUsage(
+                            prompt_tokens=usage_data.get("prompt_tokens"),
+                            completion_tokens=usage_data.get("completion_tokens"),
+                            total_tokens=usage_data.get("total_tokens"),
+                        )
                     continue
 
                 delta = choices[0].get("delta", {})
@@ -139,24 +152,22 @@ class OpenAIAdapter(LLMAdapter):
                 # Check for finish_reason
                 finish_reason = choices[0].get("finish_reason")
 
-                # Extract usage if present (OpenAI includes it in stream with stream_options)
-                usage = None
+                # Accumulate usage if present (OpenAI may include in stream chunks)
                 if "usage" in data:
                     usage_data = data["usage"]
-                    usage = LLMUsage(
+                    accumulated_usage = LLMUsage(
                         prompt_tokens=usage_data.get("prompt_tokens"),
                         completion_tokens=usage_data.get("completion_tokens"),
                         total_tokens=usage_data.get("total_tokens"),
                     )
 
+                # Non-terminal chunks: usage=None (invariant)
                 if finish_reason:
-                    # This is the last content chunk before [DONE]
-                    # Continue yielding - [DONE] will mark done=True
-                    if delta_text or usage:
-                        yield LLMChunk(delta_text=delta_text, done=False, usage=usage)
+                    if delta_text:
+                        yield LLMChunk(delta_text=delta_text, done=False, usage=None)
                 else:
                     if delta_text:
-                        yield LLMChunk(delta_text=delta_text, done=False, usage=usage)
+                        yield LLMChunk(delta_text=delta_text, done=False, usage=None)
 
             if not received_done:
                 raise LLMError(

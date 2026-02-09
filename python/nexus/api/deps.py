@@ -5,10 +5,10 @@ Common dependencies like database sessions, authentication, etc.
 
 from fastapi import Request
 
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_session_factory
 from nexus.services.llm import LLMRouter
 
-__all__ = ["get_db", "get_llm_router"]
+__all__ = ["get_db", "get_llm_router", "get_session_factory"]
 
 
 def get_llm_router(request: Request) -> LLMRouter:

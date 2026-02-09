@@ -106,6 +106,19 @@ class Settings(BaseSettings):
     # PR-05: LLM settings
     llm_timeout_seconds: float = Field(default=45.0, alias="LLM_TIMEOUT_SECONDS")
 
+    # PR-08: Stream token auth
+    # HS256 signing key for short-lived stream tokens (base64-encoded 32+ bytes)
+    # Required in staging/prod; auto-generated deterministic key in local/test
+    stream_token_signing_key: str | None = Field(default=None, alias="STREAM_TOKEN_SIGNING_KEY")
+    # Public URL browsers use for /stream/* (e.g. https://api.nexus.example.com)
+    stream_base_url: str | None = Field(default=None, alias="STREAM_BASE_URL")
+    # Comma-separated list of allowed CORS origins for /stream/* endpoints
+    stream_cors_origins: str | None = Field(default=None, alias="STREAM_CORS_ORIGINS")
+    # Default max output tokens for budget reservation
+    stream_max_output_tokens_default: int = Field(
+        default=1024, alias="STREAM_MAX_OUTPUT_TOKENS_DEFAULT"
+    )
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
@@ -157,6 +170,27 @@ class Settings(BaseSettings):
         if self.supabase_issuer:
             return self.supabase_issuer.rstrip("/")
         return None
+
+    @property
+    def stream_cors_origin_list(self) -> list[str]:
+        """Parse comma-separated CORS origins into a list."""
+        if self.stream_cors_origins:
+            return [o.strip() for o in self.stream_cors_origins.split(",") if o.strip()]
+        return []
+
+    @property
+    def effective_stream_base_url(self) -> str:
+        """Return stream base URL, falling back to FASTAPI_BASE_URL-style default."""
+        return self.stream_base_url or "http://localhost:8000"
+
+    @property
+    def effective_stream_token_signing_key(self) -> str:
+        """Return stream token signing key, using deterministic test key for local/test."""
+        if self.stream_token_signing_key:
+            return self.stream_token_signing_key
+        if self.nexus_env in (Environment.LOCAL, Environment.TEST):
+            return "dGVzdC1zdHJlYW0tdG9rZW4tc2lnbmluZy1rZXktMzJieXRlcw=="  # test key
+        raise ValueError("STREAM_TOKEN_SIGNING_KEY is required in staging/prod")
 
     @property
     def effective_celery_broker_url(self) -> str | None:
