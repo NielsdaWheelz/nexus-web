@@ -21,7 +21,7 @@ from nexus.api.deps import get_session_factory
 from nexus.auth.stream_token import verify_stream_token
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.logging import get_logger
+from nexus.logging import get_logger, set_stream_jti
 from nexus.schemas.conversation import SendMessageRequest
 from nexus.services.send_message_stream import stream_send_message_async
 
@@ -35,6 +35,8 @@ def get_stream_viewer(request: Request) -> UUID:
 
     Extracts bearer token from Authorization header, verifies it
     using stream token verification (HS256, iss/aud/scope/jti checks).
+
+    PR-09: Also sets stream_jti in logging context for correlation.
     """
     auth_header = request.headers.get("authorization", "")
     if not auth_header.lower().startswith("bearer "):
@@ -53,7 +55,13 @@ def get_stream_viewer(request: Request) -> UUID:
     # Get redis client from app state (may be None in tests)
     redis_client = getattr(request.app.state, "redis_client", None)
 
-    return verify_stream_token(token, redis_client=redis_client)
+    user_id, jti = verify_stream_token(token, redis_client=redis_client)
+
+    # PR-09: Set stream_jti in logging context
+    if jti:
+        set_stream_jti(jti)
+
+    return user_id
 
 
 @router.post("/conversations/{conversation_id}/messages")

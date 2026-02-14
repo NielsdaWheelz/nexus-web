@@ -21,6 +21,7 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from nexus.logging import clear_request_context, get_logger, set_request_context
+from nexus.services.redact import safe_kv
 
 REQUEST_ID_HEADER = "X-Request-ID"
 MAX_REQUEST_ID_LENGTH = 128
@@ -118,8 +119,13 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         # Attach to request state for downstream middleware/routes
         request.state.request_id = request_id
 
-        # Set logging context (available to all subsequent log calls)
-        set_request_context(request_id)
+        # Set logging context with path and method (available to all subsequent log calls)
+        # Note: route_template is NOT available here (before routing); set downstream.
+        set_request_context(
+            request_id,
+            path=request.url.path,
+            method=request.method,
+        )
 
         try:
             # Process request through the rest of the middleware stack
@@ -134,22 +140,22 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             # Always echo request ID in response
             response.headers[REQUEST_ID_HEADER] = request_id
 
-            # Log access entry
+            # Log access entry (renamed per PR-09 event taxonomy: http.request.completed)
             if self.log_requests:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 logger.info(
-                    "request_completed",
-                    method=request.method,
-                    path=request.url.path,
-                    status_code=response.status_code,
-                    duration_ms=round(duration_ms, 2),
+                    "http.request.completed",
+                    **safe_kv(
+                        status_code=response.status_code,
+                        duration_ms=round(duration_ms, 2),
+                    ),
                 )
 
             return response
 
         except Exception:
             # Log and re-raise - unhandled_exception_handler will catch this
-            logger.exception("request_failed", method=request.method, path=request.url.path)
+            logger.exception("http.request.failed")
             raise
 
         finally:

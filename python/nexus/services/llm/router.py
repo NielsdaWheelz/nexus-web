@@ -6,6 +6,11 @@ Per PR-04 spec section 6:
 - Wraps adapter calls with error normalization
 - Centralizes error classification (one place, not per adapter)
 
+PR-09: Observability instrumentation:
+- Emits llm.request.started / llm.request.finished / llm.request.failed events
+- All events use safe_kv() to prevent sensitive data leakage
+- Events include LLMOperation context for field requirements
+
 Error handling:
 - Provider 401/403 → E_LLM_INVALID_KEY
 - Provider 429 → E_LLM_RATE_LIMIT
@@ -14,6 +19,7 @@ Error handling:
 - Other → E_LLM_PROVIDER_DOWN
 """
 
+import time
 from collections.abc import AsyncIterator
 
 import httpx
@@ -24,12 +30,42 @@ from nexus.services.llm.anthropic_adapter import AnthropicAdapter
 from nexus.services.llm.errors import LLMError, LLMErrorClass, classify_provider_error
 from nexus.services.llm.gemini_adapter import GeminiAdapter
 from nexus.services.llm.openai_adapter import OpenAIAdapter
-from nexus.services.llm.types import LLMChunk, LLMRequest, LLMResponse
+from nexus.services.llm.types import (
+    LLMCallContext,
+    LLMChunk,
+    LLMOperation,
+    LLMRequest,
+    LLMResponse,
+)
+from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
 # Default timeout for LLM requests in seconds
 DEFAULT_TIMEOUT_S = 45
+
+
+def _base_log_fields(
+    provider: str,
+    req: LLMRequest,
+    key_mode: str,
+    streaming: bool,
+    call_ctx: LLMCallContext | None,
+) -> dict:
+    """Build base log fields for LLM events."""
+    fields: dict = {
+        "provider": provider,
+        "model_name": req.model_name,
+        "key_mode": key_mode,
+        "streaming": streaming,
+        "llm_operation": call_ctx.operation.value if call_ctx else LLMOperation.OTHER.value,
+    }
+    if call_ctx and call_ctx.operation == LLMOperation.CHAT_SEND:
+        if call_ctx.conversation_id:
+            fields["conversation_id"] = call_ctx.conversation_id
+        if call_ctx.assistant_message_id:
+            fields["assistant_message_id"] = call_ctx.assistant_message_id
+    return fields
 
 
 class LLMRouter:
@@ -39,6 +75,7 @@ class LLMRouter:
     - Adapter selection based on provider name
     - Feature flag enforcement
     - Error normalization across all providers
+    - Observability event emission (PR-09)
     """
 
     def __init__(
@@ -119,6 +156,8 @@ class LLMRouter:
         api_key: str,
         *,
         timeout_s: int = DEFAULT_TIMEOUT_S,
+        key_mode: str = "unknown",
+        call_context: LLMCallContext | None = None,
     ) -> LLMResponse:
         """Non-streaming LLM generation with error normalization.
 
@@ -127,6 +166,8 @@ class LLMRouter:
             req: The LLM request.
             api_key: API key for the provider.
             timeout_s: Request timeout in seconds (default 45).
+            key_mode: Key resolution mode for logging (platform/byok).
+            call_context: Observability metadata for this call.
 
         Returns:
             LLMResponse with generated text and usage info.
@@ -135,15 +176,56 @@ class LLMRouter:
             LLMError: With normalized error class on failure.
         """
         adapter = self.resolve_adapter(provider)
+        base = _base_log_fields(provider, req, key_mode, streaming=False, call_ctx=call_context)
+
+        # Compute safe size metrics for logging
+        message_chars = sum(len(m.content) for m in req.messages)
+        context_chars = sum(
+            len(m.content) for m in req.messages if m.role == "user" and m != req.messages[-1]
+        )
+        num_context_items = max(0, sum(1 for m in req.messages if m.role == "user") - 1)
+
+        logger.info(
+            "llm.request.started",
+            **safe_kv(
+                **base,
+                message_chars=message_chars,
+                context_chars=context_chars,
+                num_context_items=num_context_items,
+            ),
+        )
+
+        start = time.monotonic()
 
         try:
-            return await adapter.generate(req, api_key=api_key, timeout_s=timeout_s)
+            response = await adapter.generate(req, api_key=api_key, timeout_s=timeout_s)
+            latency_ms = int((time.monotonic() - start) * 1000)
+
+            usage = response.usage
+            logger.info(
+                "llm.request.finished",
+                **safe_kv(
+                    **base,
+                    outcome="success",
+                    latency_ms=latency_ms,
+                    tokens_input=usage.prompt_tokens if usage else None,
+                    tokens_output=usage.completion_tokens if usage else None,
+                    tokens_total=usage.total_tokens if usage else None,
+                    provider_request_id=response.provider_request_id,
+                ),
+            )
+            return response
 
         except httpx.TimeoutException as e:
-            logger.warning(
-                "llm_request_timeout",
-                provider=provider,
-                model=req.model_name,
+            latency_ms = int((time.monotonic() - start) * 1000)
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **base,
+                    outcome="error",
+                    error_class=LLMErrorClass.TIMEOUT.value,
+                    latency_ms=latency_ms,
+                ),
             )
             raise LLMError(
                 LLMErrorClass.TIMEOUT,
@@ -152,14 +234,21 @@ class LLMRouter:
             ) from e
 
         except httpx.HTTPStatusError as e:
+            latency_ms = int((time.monotonic() - start) * 1000)
             json_body = self._safe_parse_json(e.response)
             error_class = classify_provider_error(provider, e.response.status_code, json_body, None)
-            logger.warning(
-                "llm_request_http_error",
-                provider=provider,
-                model=req.model_name,
-                status_code=e.response.status_code,
-                error_class=error_class.value,
+            provider_req_id = e.response.headers.get("x-request-id") or e.response.headers.get(
+                "request-id"
+            )
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **base,
+                    outcome="error",
+                    error_class=error_class.value,
+                    latency_ms=latency_ms,
+                    provider_request_id=provider_req_id,
+                ),
             )
             raise LLMError(
                 error_class,
@@ -168,11 +257,15 @@ class LLMRouter:
             ) from e
 
         except httpx.NetworkError as e:
-            logger.warning(
-                "llm_request_network_error",
-                provider=provider,
-                model=req.model_name,
-                error=str(e),
+            latency_ms = int((time.monotonic() - start) * 1000)
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **base,
+                    outcome="error",
+                    error_class=LLMErrorClass.PROVIDER_DOWN.value,
+                    latency_ms=latency_ms,
+                ),
             )
             raise LLMError(
                 LLMErrorClass.PROVIDER_DOWN,
@@ -185,12 +278,15 @@ class LLMRouter:
             raise
 
         except Exception as e:
+            latency_ms = int((time.monotonic() - start) * 1000)
             logger.error(
-                "llm_request_unexpected_error",
-                provider=provider,
-                model=req.model_name,
-                error=str(e),
-                error_type=type(e).__name__,
+                "llm.request.failed",
+                **safe_kv(
+                    **base,
+                    outcome="error",
+                    error_class=LLMErrorClass.PROVIDER_DOWN.value,
+                    latency_ms=latency_ms,
+                ),
             )
             raise LLMError(
                 LLMErrorClass.PROVIDER_DOWN,
@@ -205,6 +301,8 @@ class LLMRouter:
         api_key: str,
         *,
         timeout_s: int = DEFAULT_TIMEOUT_S,
+        key_mode: str = "unknown",
+        call_context: LLMCallContext | None = None,
     ) -> AsyncIterator[LLMChunk]:
         """Streaming LLM generation with error normalization.
 
@@ -213,6 +311,8 @@ class LLMRouter:
             req: The LLM request.
             api_key: API key for the provider.
             timeout_s: Request timeout in seconds (default 45).
+            key_mode: Key resolution mode for logging.
+            call_context: Observability metadata for this call.
 
         Yields:
             LLMChunk objects until terminal chunk (done=True).
@@ -221,16 +321,50 @@ class LLMRouter:
             LLMError: With normalized error class on failure.
         """
         adapter = self.resolve_adapter(provider)
+        base = _base_log_fields(provider, req, key_mode, streaming=True, call_ctx=call_context)
+
+        message_chars = sum(len(m.content) for m in req.messages)
+
+        logger.info(
+            "llm.request.started",
+            **safe_kv(
+                **base,
+                message_chars=message_chars,
+            ),
+        )
+
+        start = time.monotonic()
 
         try:
             async for chunk in adapter.generate_stream(req, api_key=api_key, timeout_s=timeout_s):
+                # Emit finished on terminal chunk
+                if chunk.done:
+                    latency_ms = int((time.monotonic() - start) * 1000)
+                    usage = chunk.usage
+                    logger.info(
+                        "llm.request.finished",
+                        **safe_kv(
+                            **base,
+                            outcome="success",
+                            latency_ms=latency_ms,
+                            tokens_input=usage.prompt_tokens if usage else None,
+                            tokens_output=usage.completion_tokens if usage else None,
+                            tokens_total=usage.total_tokens if usage else None,
+                            provider_request_id=chunk.provider_request_id,
+                        ),
+                    )
                 yield chunk
 
         except httpx.TimeoutException as e:
-            logger.warning(
-                "llm_stream_timeout",
-                provider=provider,
-                model=req.model_name,
+            latency_ms = int((time.monotonic() - start) * 1000)
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **base,
+                    outcome="error",
+                    error_class=LLMErrorClass.TIMEOUT.value,
+                    latency_ms=latency_ms,
+                ),
             )
             raise LLMError(
                 LLMErrorClass.TIMEOUT,
@@ -239,14 +373,17 @@ class LLMRouter:
             ) from e
 
         except httpx.HTTPStatusError as e:
+            latency_ms = int((time.monotonic() - start) * 1000)
             json_body = self._safe_parse_json(e.response)
             error_class = classify_provider_error(provider, e.response.status_code, json_body, None)
-            logger.warning(
-                "llm_stream_http_error",
-                provider=provider,
-                model=req.model_name,
-                status_code=e.response.status_code,
-                error_class=error_class.value,
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **base,
+                    outcome="error",
+                    error_class=error_class.value,
+                    latency_ms=latency_ms,
+                ),
             )
             raise LLMError(
                 error_class,
@@ -255,11 +392,15 @@ class LLMRouter:
             ) from e
 
         except httpx.NetworkError as e:
-            logger.warning(
-                "llm_stream_network_error",
-                provider=provider,
-                model=req.model_name,
-                error=str(e),
+            latency_ms = int((time.monotonic() - start) * 1000)
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **base,
+                    outcome="error",
+                    error_class=LLMErrorClass.PROVIDER_DOWN.value,
+                    latency_ms=latency_ms,
+                ),
             )
             raise LLMError(
                 LLMErrorClass.PROVIDER_DOWN,
@@ -272,12 +413,15 @@ class LLMRouter:
             raise
 
         except Exception as e:
+            latency_ms = int((time.monotonic() - start) * 1000)
             logger.error(
-                "llm_stream_unexpected_error",
-                provider=provider,
-                model=req.model_name,
-                error=str(e),
-                error_type=type(e).__name__,
+                "llm.request.failed",
+                **safe_kv(
+                    **base,
+                    outcome="error",
+                    error_class=LLMErrorClass.PROVIDER_DOWN.value,
+                    latency_ms=latency_ms,
+                ),
             )
             raise LLMError(
                 LLMErrorClass.PROVIDER_DOWN,

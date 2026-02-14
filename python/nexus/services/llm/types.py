@@ -15,6 +15,7 @@ Streaming invariants:
 """
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal
 
 
@@ -106,3 +107,32 @@ class LLMChunk:
         """Validate streaming invariants."""
         if not self.done and self.usage is not None:
             raise ValueError("Non-terminal chunks (done=False) must have usage=None")
+
+
+class LLMOperation(str, Enum):
+    """Distinguishes the purpose of an LLM call for observability.
+
+    Controls which fields are required in log events:
+    - chat_send: requires conversation_id, assistant_message_id, flow_id
+    - key_test: no conversation/message context needed
+    - other: future non-chat LLM usage
+    """
+
+    CHAT_SEND = "chat_send"
+    KEY_TEST = "key_test"
+    OTHER = "other"
+
+
+@dataclass(frozen=True)
+class LLMCallContext:
+    """Observability metadata passed to LLMRouter for structured logging.
+
+    Attributes:
+        operation: The purpose of this LLM call.
+        conversation_id: Conversation UUID (required for chat_send).
+        assistant_message_id: Assistant message UUID (required for chat_send).
+    """
+
+    operation: LLMOperation = LLMOperation.OTHER
+    conversation_id: str | None = None
+    assistant_message_id: str | None = None

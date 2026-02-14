@@ -114,8 +114,9 @@ class TestStreamTokenVerify:
 
     def test_valid_token(self, test_user_id, mock_redis):
         result = mint_stream_token(test_user_id)
-        uid = verify_stream_token(result["token"], redis_client=mock_redis)
+        uid, jti = verify_stream_token(result["token"], redis_client=mock_redis)
         assert uid == test_user_id
+        assert isinstance(jti, str) and len(jti) > 0
 
     def test_expired_token_rejected(self, test_user_id):
         key = _get_signing_key_bytes()
@@ -169,8 +170,9 @@ class TestStreamTokenVerify:
         # First use: SETNX returns True (key was set)
         mock_redis.set.return_value = True
         result = mint_stream_token(test_user_id)
-        uid = verify_stream_token(result["token"], redis_client=mock_redis)
+        uid, jti = verify_stream_token(result["token"], redis_client=mock_redis)
         assert uid == test_user_id
+        assert isinstance(jti, str) and len(jti) > 0
 
         # Second use: SETNX returns False (key already exists)
         mock_redis.set.return_value = False

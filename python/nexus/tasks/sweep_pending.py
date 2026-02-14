@@ -15,6 +15,7 @@ from sqlalchemy import text as sa_text
 
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
+from nexus.services.redact import safe_kv
 from nexus.services.stream_liveness import check_liveness_marker
 
 logger = get_logger(__name__)
@@ -111,10 +112,14 @@ def sweep_pending_messages(redis_client=None) -> int:
                 )
                 finalized_count += 1
 
-                logger.info(
-                    "sweeper_finalized",
-                    message_id=str(message_id),
-                    age_seconds=int(age_seconds),
+                # PR-09: Emit structured sweeper event
+                logger.warning(
+                    "sweeper.orphaned_pending_finalized",
+                    **safe_kv(
+                        assistant_message_id=str(message_id),
+                        age_seconds=int(age_seconds),
+                        origin="unknown",
+                    ),
                 )
 
         db.commit()

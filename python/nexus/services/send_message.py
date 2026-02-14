@@ -45,7 +45,7 @@ import hashlib
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from sqlalchemy.orm import Session
@@ -62,7 +62,7 @@ from nexus.db.models import (
     Model,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.logging import get_logger
+from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import (
     MAX_CONTEXTS,
     MAX_MESSAGE_CONTENT_LENGTH,
@@ -80,9 +80,10 @@ from nexus.services.conversations import conversation_to_out, get_message_count,
 from nexus.services.llm import LLMRouter
 from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.prompt import DEFAULT_SYSTEM_PROMPT, render_prompt
-from nexus.services.llm.types import LLMRequest, LLMResponse
+from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMResponse
 from nexus.services.media import can_read_media
 from nexus.services.rate_limit import get_rate_limiter
+from nexus.services.redact import safe_kv
 from nexus.services.seq import assign_next_message_seq
 
 logger = get_logger(__name__)
@@ -111,6 +112,8 @@ def generate(
     api_key: str,
     timeout_s: int = 45,
     router: LLMRouter | None = None,
+    key_mode: str = "unknown",
+    call_context: LLMCallContext | None = None,
 ) -> LLMResponse:
     """Sync wrapper for LLM generation.
 
@@ -123,6 +126,8 @@ def generate(
         timeout_s: Timeout in seconds.
         router: Optional shared LLMRouter (from app.state). If None, creates a
                 temporary client (less efficient, used in tests).
+        key_mode: Key resolution mode for logging.
+        call_context: Observability metadata.
 
     Returns:
         LLMResponse from the provider.
@@ -130,7 +135,14 @@ def generate(
     if router is not None:
         # Use provided router (from app.state) - async call wrapped in sync
         async def _call_with_router():
-            return await router.generate(provider, request, api_key, timeout_s=timeout_s)
+            return await router.generate(
+                provider,
+                request,
+                api_key,
+                timeout_s=timeout_s,
+                key_mode=key_mode,
+                call_context=call_context,
+            )
 
         return asyncio.run(_call_with_router())
 
@@ -145,7 +157,14 @@ def generate(
                 enable_anthropic=settings.enable_anthropic,
                 enable_gemini=settings.enable_gemini,
             )
-            return await temp_router.generate(provider, request, api_key, timeout_s=timeout_s)
+            return await temp_router.generate(
+                provider,
+                request,
+                api_key,
+                timeout_s=timeout_s,
+                key_mode=key_mode,
+                call_context=call_context,
+            )
 
     return asyncio.run(_call())
 
@@ -222,6 +241,14 @@ def check_idempotency(
 
     # Check payload match
     if record.payload_hash != payload_hash:
+        # PR-09: Emit idempotency.replay_mismatch event
+        logger.warning(
+            "idempotency.replay_mismatch",
+            **safe_kv(
+                idempotency_key=idempotency_key,
+                viewer_id=str(user_id),
+            ),
+        )
         raise ApiError(
             ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
             "Idempotency key reused with different payload",
@@ -488,6 +515,7 @@ def phase2_execute(
     key_mode: str,
     contexts: list[dict],
     router: LLMRouter | None = None,
+    call_context: LLMCallContext | None = None,
 ) -> tuple[ExecuteResult, ResolvedKey]:
     """Phase 2: Execute (no DB transaction held).
 
@@ -501,6 +529,7 @@ def phase2_execute(
         key_mode: Key resolution mode.
         contexts: Context items.
         router: Optional shared LLMRouter from app.state.
+        call_context: Observability metadata for the LLM call.
 
     Returns:
         Tuple of (ExecuteResult, ResolvedKey).
@@ -547,6 +576,8 @@ def phase2_execute(
             resolved_key.api_key,
             int(LLM_TIMEOUT_SECONDS),
             router=router,
+            key_mode=resolved_key.mode,
+            call_context=call_context,
         )
         latency_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -600,7 +631,7 @@ def phase3_finalize(
         completion_tokens = usage.completion_tokens if usage else None
         total_tokens = usage.total_tokens if usage else None
 
-        # Insert message_llm
+        # Insert message_llm (with provider_request_id from PR-09)
         message_llm = MessageLLM(
             message_id=assistant_message.id,
             provider=model.provider,
@@ -611,6 +642,7 @@ def phase3_finalize(
             key_mode_requested=key_mode,
             key_mode_used=resolved_key.mode,
             latency_ms=execute_result.latency_ms,
+            provider_request_id=response.provider_request_id,
             prompt_version=PROMPT_VERSION,
         )
         db.add(message_llm)
@@ -697,83 +729,131 @@ def send_message(
     contexts = contexts or []
     rate_limiter = get_rate_limiter()
 
-    # Compute payload hash for idempotency
-    context_dicts = [{"type": c.get("type"), "id": str(c.get("id"))} for c in contexts]
-    payload_hash = compute_payload_hash(content, model_id, key_mode, context_dicts)
-
-    # Check idempotency replay
-    replay = check_idempotency(db, viewer_id, idempotency_key, payload_hash)
-    if replay:
-        user_message, assistant_message, conversation = replay
-        message_count = get_message_count(db, conversation.id)
-
-        return SendMessageResponse(
-            conversation=conversation_to_out(conversation, message_count),
-            user_message=message_to_out(user_message),
-            assistant_message=message_to_out(assistant_message),
-        )
-
-    # Determine if using platform key
-    model = get_model_by_id(db, model_id)
-    if not model:
-        raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model not found")
+    # PR-09: Generate flow_id for phase correlation
+    flow_id = str(uuid4())
+    set_flow_id(flow_id)
+    total_start = time.monotonic()
 
     try:
-        resolved = resolve_api_key(db, viewer_id, model.provider, key_mode)
-        use_platform_key = resolved.mode == "platform"
-    except LLMError:
-        use_platform_key = False
+        # Compute payload hash for idempotency
+        context_dicts = [{"type": c.get("type"), "id": str(c.get("id"))} for c in contexts]
+        payload_hash = compute_payload_hash(content, model_id, key_mode, context_dicts)
 
-    # Phase 0: Pre-validation
-    model = validate_pre_phase(
-        db, viewer_id, conversation_id, content, model_id, key_mode, contexts, use_platform_key
-    )
+        # Check idempotency replay
+        replay = check_idempotency(db, viewer_id, idempotency_key, payload_hash)
+        if replay:
+            user_message, assistant_message, conversation = replay
+            message_count = get_message_count(db, conversation.id)
 
-    # Increment in-flight counter
-    rate_limiter.increment_inflight(viewer_id)
+            return SendMessageResponse(
+                conversation=conversation_to_out(conversation, message_count),
+                user_message=message_to_out(user_message),
+                assistant_message=message_to_out(assistant_message),
+            )
 
-    try:
-        # Phase 1: Prepare
-        prepare_result = phase1_prepare(
-            db,
-            viewer_id,
-            conversation_id,
-            content,
-            model_id,
-            contexts,
-            idempotency_key,
-            payload_hash,
+        # Determine if using platform key
+        model = get_model_by_id(db, model_id)
+        if not model:
+            raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model not found")
+
+        try:
+            resolved = resolve_api_key(db, viewer_id, model.provider, key_mode)
+            use_platform_key = resolved.mode == "platform"
+        except LLMError:
+            use_platform_key = False
+
+        # Phase 0: Pre-validation
+        model = validate_pre_phase(
+            db, viewer_id, conversation_id, content, model_id, key_mode, contexts, use_platform_key
         )
 
-        # Phase 2: Execute
-        execute_result, resolved_key = phase2_execute(
-            db, viewer_id, model, content, key_mode, contexts, router=router
-        )
+        # Increment in-flight counter
+        rate_limiter.increment_inflight(viewer_id)
 
-        # Phase 3: Finalize
-        phase3_finalize(
-            db,
-            viewer_id,
-            prepare_result.assistant_message,
-            model,
-            execute_result,
-            resolved_key,
-            key_mode,
-        )
+        try:
+            # Phase 1: Prepare
+            phase1_start = time.monotonic()
+            prepare_result = phase1_prepare(
+                db,
+                viewer_id,
+                conversation_id,
+                content,
+                model_id,
+                contexts,
+                idempotency_key,
+                payload_hash,
+            )
+            phase1_ms = int((time.monotonic() - phase1_start) * 1000)
 
-        # Refresh to get updated data
-        db.refresh(prepare_result.conversation)
-        db.refresh(prepare_result.user_message)
-        db.refresh(prepare_result.assistant_message)
+            # Build LLM call context for observability
+            call_ctx = LLMCallContext(
+                operation=LLMOperation.CHAT_SEND,
+                conversation_id=str(prepare_result.conversation.id),
+                assistant_message_id=str(prepare_result.assistant_message.id),
+            )
 
-        message_count = get_message_count(db, prepare_result.conversation.id)
+            # Phase 2: Execute
+            phase2_start = time.monotonic()
+            execute_result, resolved_key = phase2_execute(
+                db,
+                viewer_id,
+                model,
+                content,
+                key_mode,
+                contexts,
+                router=router,
+                call_context=call_ctx,
+            )
+            phase2_ms = int((time.monotonic() - phase2_start) * 1000)
 
-        return SendMessageResponse(
-            conversation=conversation_to_out(prepare_result.conversation, message_count),
-            user_message=message_to_out(prepare_result.user_message),
-            assistant_message=message_to_out(prepare_result.assistant_message),
-        )
+            # Phase 3: Finalize
+            phase3_start = time.monotonic()
+            phase3_finalize(
+                db,
+                viewer_id,
+                prepare_result.assistant_message,
+                model,
+                execute_result,
+                resolved_key,
+                key_mode,
+            )
+            phase3_ms = int((time.monotonic() - phase3_start) * 1000)
+
+            # Refresh to get updated data
+            db.refresh(prepare_result.conversation)
+            db.refresh(prepare_result.user_message)
+            db.refresh(prepare_result.assistant_message)
+
+            outcome = "success" if execute_result.success else "error"
+            total_ms = int((time.monotonic() - total_start) * 1000)
+
+            # PR-09: Emit send.completed event
+            log_fn = logger.info if outcome == "success" else logger.error
+            log_fn(
+                "send.completed",
+                **safe_kv(
+                    conversation_id=str(prepare_result.conversation.id),
+                    assistant_message_id=str(prepare_result.assistant_message.id),
+                    outcome=outcome,
+                    phase1_db_ms=phase1_ms,
+                    phase2_provider_ms=phase2_ms,
+                    phase3_finalize_ms=phase3_ms,
+                    total_ms=total_ms,
+                ),
+            )
+
+            message_count = get_message_count(db, prepare_result.conversation.id)
+
+            return SendMessageResponse(
+                conversation=conversation_to_out(prepare_result.conversation, message_count),
+                user_message=message_to_out(prepare_result.user_message),
+                assistant_message=message_to_out(prepare_result.assistant_message),
+            )
+
+        finally:
+            # Decrement in-flight counter
+            rate_limiter.decrement_inflight(viewer_id)
 
     finally:
-        # Decrement in-flight counter
-        rate_limiter.decrement_inflight(viewer_id)
+        # PR-09: Clear flow_id
+        set_flow_id(None)

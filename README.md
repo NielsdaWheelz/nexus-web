@@ -20,7 +20,8 @@ nexus/
 │   │   ├── api/                 # HTTP routers
 │   │   ├── auth/                # Authentication (JWT verifiers, middleware)
 │   │   ├── db/                  # Database layer + ORM models
-│   │   └── services/            # Business logic services
+│   │   ├── logging.py            # structlog + ContextVars (request, flow, stream)
+│   │   └── services/            # Business logic services (incl. redact.py)
 │   ├── tests/                   # Python tests
 │   ├── pyproject.toml
 │   └── uv.lock
@@ -31,7 +32,9 @@ nexus/
 │   │       ├── 0001_slice0_schema.py     # S0: users, libraries, memberships, media, fragments
 │   │       ├── 0002_slice1_ingestion_framework.py  # S1: processing lifecycle, storage
 │   │       ├── 0003_slice2_highlights_annotations.py  # S2: highlights, annotations
-│   │       └── 0004_slice3_schema.py     # S3: conversations, messages, LLM infrastructure
+│   │       ├── 0004_slice3_schema.py     # S3: conversations, messages, LLM infrastructure
+│   │       ├── 0005_*.py                # S3: tsvector/search indexes
+│   │       └── 0006_pr09_provider_request_id.py  # S3: message_llm.provider_request_id
 │   └── alembic.ini
 │
 ├── supabase/                    # Supabase local configuration
@@ -281,6 +284,31 @@ All Next.js API routes use a centralized proxy helper (`apps/web/src/lib/api/pro
 **Request header allowlist:** `content-type`, `accept`, `range`, `if-none-match`, `if-modified-since`, `idempotency-key`
 
 **Response header allowlist:** `x-request-id`, `content-type`, `content-length`, `cache-control`, `etag`, `vary`, `content-disposition`, `location`
+
+### Observability (PR-09)
+
+All backend logging uses `structlog` with JSON output and automatic context injection.
+
+**Log context (auto-injected via ContextVars):**
+- `request_id`, `user_id` — per-request identity
+- `path`, `method`, `route_template` — HTTP request metadata
+- `flow_id` — correlates all events in a send-message or stream flow
+- `stream_jti` — stream token JTI for streaming requests
+
+**Event taxonomy (stable dotted names):**
+- `http.request.completed` / `http.request.failed` — access logs
+- `llm.request.started` / `llm.request.finished` / `llm.request.failed` — LLM calls with `latency_ms`, `tokens_*`, `provider_request_id`
+- `stream.started` / `stream.first_delta` / `stream.completed` / `stream.client_disconnected` — streaming lifecycle with `ttft_ms`, `chunks_count`
+- `send.completed` — end-to-end send with phase timings
+- `rate_limit.blocked`, `token_budget.exceeded` — throttling events
+- `sweeper.orphaned_pending_finalized` — cleanup events
+- `stream.jti_replay_blocked`, `stream.double_finalize_detected`, `idempotency.replay_mismatch` — invariant violations
+
+**Redaction (security invariant):**
+- `safe_kv()` guard wraps all logging keyword args
+- Forbidden keys (`prompt`, `content`, `api_key`, `messages`, etc.) raise `ValueError` in dev/test, emit warning in production
+- `hash_text()` for SHA-256 digests of sensitive strings
+- `redact_text()` for partial masking (e.g., `sk-a***`)
 
 ### Request Tracing
 

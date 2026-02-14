@@ -451,19 +451,24 @@ POST /internal/stream-tokens                # Mint stream token (BFF-only, inter
 
 ---
 
-## PR-09 (Optional): Observability
+## PR-09: Observability, Structured Logging, Redaction ✅
 
-**Backend — sweeper folded into PR-08, only observability remains**
+**Backend — comprehensive observability instrumentation**
 
-Note: The pending assistant cleanup task (Celery beat sweeper) was implemented in PR-08 as part of streaming hardening. It includes Redis liveness checks to avoid killing active streams.
+### Implemented
 
-### Observability (Remaining)
-
-- Logging fields: `provider`, `model_name`, `key_mode`, `latency_ms`, `tokens_total`
-- Metrics hooks (optional, for future Prometheus/DataDog):
-  - `llm_request_total` counter
-  - `llm_request_duration_seconds` histogram
-  - `llm_tokens_total` counter
+- **Structured logging standardization**: All events follow stable dotted-namespace taxonomy (`llm.request.*`, `stream.*`, `send.*`, `sweeper.*`, etc.)
+- **ContextVar enrichment**: `path`, `method`, `route_template`, `flow_id`, `stream_jti` auto-injected into all log events
+- **Redaction module** (`services/redact.py`): `hash_text`, `redact_text`, `safe_kv()` guard prevents accidental logging of prompts, API keys, content
+- **LLM observability**: `llm.request.started` / `llm.request.finished` / `llm.request.failed` emitted by router with `outcome`, `latency_ms`, `tokens_*`, `provider_request_id`
+- **LLMOperation enum**: Distinguishes `chat_send` / `key_test` / `other` for field requirements
+- **Streaming diagnostics**: `stream.started`, `stream.first_delta` (with `ttft_ms`), `stream.completed`, `stream.client_disconnected`, `stream.finalized_error`, `stream.phases`
+- **Phase timing**: `send.completed` with per-phase timing (`phase1_db_ms`, `phase2_provider_ms`, `phase3_finalize_ms`)
+- **Invariant monitoring**: `stream.double_finalize_detected`, `stream.jti_replay_blocked`, `sweeper.orphaned_pending_finalized`, `idempotency.replay_mismatch`
+- **Rate limit / budget events**: `rate_limit.blocked`, `token_budget.exceeded` with `route_template` (not raw path)
+- **HTTP access log rename**: `request_completed` → `http.request.completed`
+- **Provider request ID**: Captured from adapter response headers, stored in `message_llm.provider_request_id` (new nullable column via migration 0006)
+- **Schema change**: `message_llm.provider_request_id` (TEXT, nullable) added via Alembic migration 0006
 
 ---
 
@@ -479,7 +484,7 @@ Note: The pending assistant cleanup task (Celery beat sweeper) was implemented i
 | 6 | PR-06 | Backend | Keyword search endpoint + visibility CTE |
 | 7 | PR-07 | Frontend | BFF routes + chat UI + quote-to-chat |
 | 8 | PR-08 | Full stack | Streaming hardening: direct browser→FastAPI SSE, stream tokens, CORS, liveness, sweeper, budget reservation |
-| 9 | PR-09 | Backend | (Optional) Observability (sweeper folded into PR-08) |
+| 9 | PR-09 | Backend | Observability: structured logging, redaction, phase timing, provider_request_id |
 
 **Key Decisions:**
 - One migration (0004) for all S3 schema
