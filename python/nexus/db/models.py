@@ -772,6 +772,7 @@ class MessageLLM(Base):
     cost_usd_micros: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

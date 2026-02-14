@@ -21,7 +21,7 @@ import json
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
@@ -30,7 +30,7 @@ from starlette.concurrency import run_in_threadpool
 from nexus.config import get_settings
 from nexus.db.models import MessageLLM, Model
 from nexus.errors import ApiError
-from nexus.logging import get_logger
+from nexus.logging import get_logger, set_flow_id
 from nexus.services.api_key_resolver import (
     ResolvedKey,
     get_model_by_id,
@@ -41,8 +41,9 @@ from nexus.services.context_rendering import PROMPT_VERSION, render_context_bloc
 from nexus.services.llm import LLMRouter
 from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.prompt import DEFAULT_SYSTEM_PROMPT
-from nexus.services.llm.types import LLMRequest, LLMUsage, Turn
+from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMUsage, Turn
 from nexus.services.rate_limit import get_rate_limiter
+from nexus.services.redact import safe_kv
 from nexus.services.send_message import (
     ERROR_CLASS_TO_MESSAGE,
     MAX_ASSISTANT_CONTENT_LENGTH,
@@ -83,6 +84,7 @@ def _finalize_stream_conditional(
     usage: LLMUsage | None,
     viewer_id: UUID,
     redis_client=None,
+    provider_request_id: str | None = None,
 ) -> bool:
     """Finalize the assistant message with conditional update (exactly-once).
 
@@ -131,9 +133,14 @@ def _finalize_stream_conditional(
 
     if result.rowcount == 0:
         # Already finalized (sweeper or another path got there first)
-        logger.info(
-            "finalize_skipped_already_done",
-            assistant_message_id=str(assistant_message_id),
+        # PR-09: Emit stream.double_finalize_detected
+        logger.error(
+            "stream.double_finalize_detected",
+            **safe_kv(
+                assistant_message_id=str(assistant_message_id),
+                attempted_status=status,
+                reason="status_not_pending",
+            ),
         )
         db.rollback()
         return False
@@ -155,6 +162,7 @@ def _finalize_stream_conditional(
             key_mode_used=resolved_key.mode,
             latency_ms=latency_ms,
             error_class=error_code if status == "error" else None,
+            provider_request_id=provider_request_id,
             prompt_version=PROMPT_VERSION,
         )
         db.add(message_llm)
@@ -231,6 +239,10 @@ async def stream_send_message_async(
     rate_limiter = get_rate_limiter()
     settings = get_settings()
     db = db_factory()
+
+    # PR-09: Generate flow_id for phase correlation
+    flow_id = str(uuid4())
+    set_flow_id(flow_id)
 
     # Compute payload hash for idempotency
     context_dicts = [{"type": c.get("type"), "id": str(c.get("id"))} for c in contexts]
@@ -399,9 +411,14 @@ async def stream_send_message_async(
     prepare_result = None
     budget_reserved = False
     start_time = time.monotonic()
+    phase1_ms: int = 0
+    chunks_count: int = 0
+    first_delta_emitted = False
+    provider_request_id: str | None = None
 
     try:
         # --- Phase 1: Prepare (sync DB) ---
+        phase1_start = time.monotonic()
         prepare_result = await run_in_threadpool(
             phase1_prepare,
             db,
@@ -414,6 +431,7 @@ async def stream_send_message_async(
             payload_hash,
         )
         assistant_message_id = prepare_result.assistant_message.id
+        phase1_ms = int((time.monotonic() - phase1_start) * 1000)
 
         # Resolve key
         resolved_key = await run_in_threadpool(
@@ -487,6 +505,17 @@ async def stream_send_message_async(
             },
         )
 
+        # PR-09: Emit stream.started
+        logger.info(
+            "stream.started",
+            **safe_kv(
+                assistant_message_id=str(assistant_message_id),
+                provider=model.provider,
+                model_name=model.model_name,
+            ),
+        )
+        stream_start_time = time.monotonic()
+
         # --- Phase 2: Stream from provider (async, same event loop) ---
         context_text, _ = await run_in_threadpool(render_context_blocks, db, contexts)
 
@@ -514,6 +543,13 @@ async def stream_send_message_async(
                 message="LLM router not available",
             )
 
+        # Build LLM call context for observability
+        call_ctx = LLMCallContext(
+            operation=LLMOperation.CHAT_SEND,
+            conversation_id=str(prepare_result.conversation.id),
+            assistant_message_id=str(assistant_message_id),
+        )
+
         last_keepalive = time.monotonic()
 
         async for chunk in llm_router.generate_stream(
@@ -521,15 +557,33 @@ async def stream_send_message_async(
             llm_request,
             resolved_key.api_key,
             timeout_s=int(LLM_TIMEOUT_SECONDS),
+            key_mode=resolved_key.mode,
+            call_context=call_ctx,
         ):
             if chunk.done:
                 usage = chunk.usage
+                provider_request_id = chunk.provider_request_id
                 break
 
             if chunk.delta_text:
                 full_content += chunk.delta_text
+                chunks_count += 1
                 yield format_sse_event("delta", {"delta": chunk.delta_text})
                 await refresh_liveness_marker(redis_client, assistant_message_id)
+
+                # PR-09: Emit stream.first_delta exactly once
+                if not first_delta_emitted:
+                    first_delta_emitted = True
+                    ttft_ms = int((time.monotonic() - stream_start_time) * 1000)
+                    logger.info(
+                        "stream.first_delta",
+                        **safe_kv(
+                            assistant_message_id=str(assistant_message_id),
+                            ttft_ms=ttft_ms,
+                            provider=model.provider,
+                            model_name=model.model_name,
+                        ),
+                    )
 
                 # Truncation check
                 if len(full_content) > MAX_ASSISTANT_CONTENT_LENGTH:
@@ -545,23 +599,16 @@ async def stream_send_message_async(
 
     except LLMError as e:
         error = e
-        logger.warning(
-            "stream_llm_error",
-            error_class=e.error_class.value,
-            message=e.message,
-        )
     except asyncio.CancelledError:
         error = Exception("E_CLIENT_DISCONNECT")
-        logger.info("stream_client_disconnect", assistant_message_id=str(assistant_message_id))
     except GeneratorExit:
         error = Exception("E_CLIENT_DISCONNECT")
-        logger.info("stream_generator_exit", assistant_message_id=str(assistant_message_id))
     except Exception as e:
         error = e
-        logger.error("stream_unexpected_error", error=str(e))
     finally:
         # --- Phase 3: Finalize (sync DB, never skip) ---
         latency_ms = int((time.monotonic() - start_time) * 1000)
+        finalize_start = time.monotonic()
 
         if assistant_message_id and resolved_key and model:
             if error:
@@ -585,6 +632,7 @@ async def stream_send_message_async(
                     usage,
                     viewer_id,
                     redis_client,
+                    provider_request_id,
                 )
             else:
                 await run_in_threadpool(
@@ -601,32 +649,75 @@ async def stream_send_message_async(
                     usage,
                     viewer_id,
                     redis_client,
+                    provider_request_id,
                 )
 
             # Release budget if reserved but not committed through finalize
             if budget_reserved and error and resolved_key.mode == "platform":
                 rate_limiter.release_token_budget(viewer_id, assistant_message_id)
 
+        finalize_ms = int((time.monotonic() - finalize_start) * 1000)
         await clear_liveness_marker(redis_client, assistant_message_id)
         rate_limiter.decrement_inflight(viewer_id)
         db.close()
 
-        # Log stream end
+        # PR-09: Emit terminal stream event + phase timing
+        is_disconnect = error and "E_CLIENT_DISCONNECT" in str(error)
+        is_llm_error = isinstance(error, LLMError)
+
+        if error:
+            if is_disconnect:
+                outcome = "client_disconnect"
+                logger.warning(
+                    "stream.client_disconnected",
+                    **safe_kv(
+                        assistant_message_id=str(assistant_message_id),
+                        duration_ms=latency_ms,
+                        chunks_count=chunks_count,
+                        outcome=outcome,
+                    ),
+                )
+            else:
+                outcome = "error"
+                err_class = error.error_class.value if is_llm_error else "E_INTERNAL"
+                logger.error(
+                    "stream.finalized_error",
+                    **safe_kv(
+                        assistant_message_id=str(assistant_message_id),
+                        error_class=err_class,
+                        duration_ms=latency_ms,
+                        chunks_count=chunks_count,
+                        outcome=outcome,
+                        provider_request_id=provider_request_id,
+                    ),
+                )
+        else:
+            outcome = "success"
+            total_tokens = usage.total_tokens if usage else None
+            logger.info(
+                "stream.completed",
+                **safe_kv(
+                    assistant_message_id=str(assistant_message_id),
+                    duration_ms=latency_ms,
+                    chunks_count=chunks_count,
+                    tokens_total=total_tokens,
+                    outcome=outcome,
+                    provider_request_id=provider_request_id,
+                ),
+            )
+
+        # PR-09: Emit stream.phases timing
         logger.info(
-            "stream_end",
-            assistant_message_id=str(assistant_message_id),
-            viewer_user_id=str(viewer_id),
-            provider=model.provider if model else None,
-            model_id=str(model_id),
-            key_mode=key_mode,
-            total_ms=latency_ms,
-            chars_generated=len(full_content),
-            status="error" if error else "complete",
-            error_code=getattr(error, "error_class", {}).value
-            if isinstance(error, LLMError)
-            else ("E_CLIENT_DISCONNECT" if error and "E_CLIENT_DISCONNECT" in str(error) else None),
-            disconnect_detected="E_CLIENT_DISCONNECT" in str(error) if error else False,
+            "stream.phases",
+            **safe_kv(
+                phase1_db_ms=phase1_ms,
+                provider_stream_duration_ms=latency_ms - phase1_ms - finalize_ms,
+                finalize_ms=finalize_ms,
+            ),
         )
+
+        # PR-09: Clear flow_id
+        set_flow_id(None)
 
     # Yield done event (after finally, if generator wasn't cancelled)
     if error:

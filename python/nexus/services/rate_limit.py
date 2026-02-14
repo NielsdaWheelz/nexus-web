@@ -22,6 +22,7 @@ from uuid import UUID
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
@@ -108,12 +109,12 @@ class RateLimiter:
             count = results[2]
 
             if count > self._rpm_limit:
-                logger.info(
-                    "rate_limit_exceeded",
-                    user_id=str(user_id),
-                    limit_type="rpm",
-                    count=count,
-                    limit=self._rpm_limit,
+                # PR-09: Emit rate_limit.blocked event
+                logger.warning(
+                    "rate_limit.blocked",
+                    **safe_kv(
+                        limit_type="rpm",
+                    ),
                 )
                 raise ApiError(
                     ApiErrorCode.E_RATE_LIMITED,
@@ -144,12 +145,12 @@ class RateLimiter:
             count = int(count) if count else 0
 
             if count >= self._concurrent_limit:
-                logger.info(
-                    "rate_limit_exceeded",
-                    user_id=str(user_id),
-                    limit_type="concurrent",
-                    count=count,
-                    limit=self._concurrent_limit,
+                # PR-09: Emit rate_limit.blocked event
+                logger.warning(
+                    "rate_limit.blocked",
+                    **safe_kv(
+                        limit_type="concurrent",
+                    ),
                 )
                 raise ApiError(
                     ApiErrorCode.E_RATE_LIMITED,
@@ -211,11 +212,12 @@ class RateLimiter:
             current = int(current) if current else 0
 
             if current >= self._token_budget:
-                logger.info(
-                    "token_budget_exceeded",
-                    user_id=str(user_id),
-                    current=current,
-                    budget=self._token_budget,
+                # PR-09: Emit token_budget.exceeded event
+                logger.warning(
+                    "token_budget.exceeded",
+                    **safe_kv(
+                        key_mode="platform",
+                    ),
                 )
                 raise ApiError(
                     ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,

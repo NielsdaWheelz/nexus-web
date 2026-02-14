@@ -37,7 +37,15 @@ from nexus.services.llm.prompt import (
     validate_prompt_size,
 )
 from nexus.services.llm.router import LLMRouter
-from nexus.services.llm.types import LLMChunk, LLMRequest, LLMResponse, LLMUsage, Turn
+from nexus.services.llm.types import (
+    LLMCallContext,
+    LLMChunk,
+    LLMOperation,
+    LLMRequest,
+    LLMResponse,
+    LLMUsage,
+    Turn,
+)
 
 __all__ = [
     # Core types
@@ -46,6 +54,8 @@ __all__ = [
     "LLMResponse",
     "LLMChunk",
     "LLMUsage",
+    "LLMOperation",
+    "LLMCallContext",
     # Adapter interface
     "LLMAdapter",
     # Router

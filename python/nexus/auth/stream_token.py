@@ -17,6 +17,7 @@ import jwt
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
@@ -76,15 +77,15 @@ def mint_stream_token(user_id: UUID) -> dict:
     }
 
 
-def verify_stream_token(token: str, redis_client=None) -> UUID:
-    """Verify a stream token and return the user_id.
+def verify_stream_token(token: str, redis_client=None) -> tuple[UUID, str | None]:
+    """Verify a stream token and return the user_id and jti.
 
     Args:
         token: The JWT string from Authorization header.
         redis_client: Redis client for jti replay check. If None, skip replay check.
 
     Returns:
-        The user_id (UUID) from the sub claim.
+        Tuple of (user_id UUID, jti string or None).
 
     Raises:
         ApiError: On any verification failure.
@@ -128,6 +129,11 @@ def verify_stream_token(token: str, redis_client=None) -> UUID:
             # SETNX returns True if key was set (new), False if already exists (replay)
             was_set = redis_client.set(f"jti:{jti}", "1", nx=True, ex=ttl)
             if not was_set:
+                # PR-09: Emit stream.jti_replay_blocked event
+                logger.warning(
+                    "stream.jti_replay_blocked",
+                    **safe_kv(jti=jti),
+                )
                 raise ApiError(
                     ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
                     "Stream token has already been used",
@@ -139,4 +145,4 @@ def verify_stream_token(token: str, redis_client=None) -> UUID:
             logger.warning("stream_token_jti_check_failed", error=str(e))
 
     user_id = UUID(payload["sub"])
-    return user_id
+    return user_id, jti

@@ -418,6 +418,9 @@ Context:
 - Never log decrypted key material.
 - Log only `key_fingerprint` (last 4 chars) for debugging.
 - Redact any key-like strings in error messages.
+- All logging calls use `safe_kv()` guard from `services/redact.py` to prevent forbidden keys from appearing in log events.
+- Forbidden keys: `prompt`, `content`, `messages`, `api_key`, `secret`, `password`, `token`, `authorization`, `key_material`, `decrypted`, `plaintext`.
+- Use `hash_text()` for SHA-256 digests, `redact_text()` for partial masking.
 
 ---
 
@@ -783,6 +786,13 @@ All operations must preserve consistency.
 - [ ] Token budget pre-reservation prevents concurrent overspend
 - [ ] Liveness markers prevent sweeper from killing active streams
 - [ ] Orphaned pending messages cleaned up by sweeper after 5min
+- [ ] All log events use stable dotted taxonomy (`llm.request.*`, `stream.*`, `send.*`)
+- [ ] Sensitive data (prompts, API keys, message content) never appears in logs
+- [ ] `safe_kv` guard blocks forbidden keys in dev/test (raises), warns in production
+- [ ] ContextVars (`request_id`, `user_id`, `path`, `method`, `route_template`, `flow_id`, `stream_jti`) injected into all log events
+- [ ] LLM calls emit started/finished/failed events with `latency_ms`, `tokens_*`, `provider_request_id`
+- [ ] Streaming emits `ttft_ms`, `chunks_count`, phase timings
+- [ ] `provider_request_id` stored in `message_llm` table
 
 ---
 

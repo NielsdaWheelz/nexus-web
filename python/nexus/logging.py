@@ -3,6 +3,12 @@
 Provides JSON-formatted logs with consistent context including:
 - request_id: Correlation ID for request tracing
 - user_id: Authenticated user (when available)
+- path: Raw request path (never includes query string)
+- method: HTTP method
+- route_template: FastAPI route template (when available after routing)
+- flow_id: Correlation ID for multi-phase send-message flows
+- stream_jti: JWT ID from stream token (streaming only)
+- task_name / task_id: Celery task context
 - timestamp: ISO8601 formatted timestamp
 
 Usage:
@@ -37,13 +43,28 @@ user_id_var: ContextVar[str | None] = ContextVar("user_id", default=None)
 task_name_var: ContextVar[str | None] = ContextVar("task_name", default=None)
 task_id_var: ContextVar[str | None] = ContextVar("task_id", default=None)
 
+# PR-09: Additional context variables for observability
+path_var: ContextVar[str | None] = ContextVar("path", default=None)
+method_var: ContextVar[str | None] = ContextVar("method", default=None)
+route_template_var: ContextVar[str | None] = ContextVar("route_template", default=None)
+flow_id_var: ContextVar[str | None] = ContextVar("flow_id", default=None)
+stream_jti_var: ContextVar[str | None] = ContextVar("stream_jti", default=None)
+
 
 def add_request_context(logger: logging.Logger, method_name: str, event_dict: dict) -> dict:
-    """Add request context (request_id, user_id, task_name, task_id) to all log entries."""
+    """Add request context to all log entries.
+
+    Injects all non-None ContextVar values into the log event dict.
+    """
     request_id = request_id_var.get()
     user_id = user_id_var.get()
     task_name = task_name_var.get()
     task_id = task_id_var.get()
+    path = path_var.get()
+    method = method_var.get()
+    route_template = route_template_var.get()
+    flow_id = flow_id_var.get()
+    stream_jti = stream_jti_var.get()
 
     if request_id:
         event_dict["request_id"] = request_id
@@ -53,6 +74,16 @@ def add_request_context(logger: logging.Logger, method_name: str, event_dict: di
         event_dict["task_name"] = task_name
     if task_id:
         event_dict["task_id"] = task_id
+    if path:
+        event_dict["path"] = path
+    if method:
+        event_dict["method"] = method
+    if route_template:
+        event_dict["route_template"] = route_template
+    if flow_id:
+        event_dict["flow_id"] = flow_id
+    if stream_jti:
+        event_dict["stream_jti"] = stream_jti
 
     return event_dict
 
@@ -127,21 +158,68 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     return structlog.get_logger(name)
 
 
-def set_request_context(request_id: str | None, user_id: str | None = None) -> None:
+def set_request_context(
+    request_id: str | None,
+    user_id: str | None = None,
+    path: str | None = None,
+    method: str | None = None,
+) -> None:
     """Set request context for the current async context.
 
     Args:
         request_id: The request correlation ID.
         user_id: The authenticated user ID (optional).
+        path: Raw request path (optional, no query string).
+        method: HTTP method (optional).
     """
     request_id_var.set(request_id)
-    user_id_var.set(user_id)
+    if user_id is not None:
+        user_id_var.set(user_id)
+    if path is not None:
+        path_var.set(path)
+    if method is not None:
+        method_var.set(method)
+
+
+def set_route_template(template: str | None) -> None:
+    """Set route template after routing has matched.
+
+    Called downstream (in route handlers or dependencies) once
+    the FastAPI route path template is known.
+
+    Args:
+        template: The route path template (e.g., "/conversations/{id}/messages").
+    """
+    route_template_var.set(template)
+
+
+def set_flow_id(flow_id: str | None) -> None:
+    """Set flow_id for multi-phase send-message correlation.
+
+    Args:
+        flow_id: UUID string for the current send flow.
+    """
+    flow_id_var.set(flow_id)
+
+
+def set_stream_jti(jti: str | None) -> None:
+    """Set stream JTI for stream token correlation.
+
+    Args:
+        jti: JWT ID from verified stream token.
+    """
+    stream_jti_var.set(jti)
 
 
 def clear_request_context() -> None:
-    """Clear request context at the end of a request."""
+    """Clear all request-scoped context at the end of a request."""
     request_id_var.set(None)
     user_id_var.set(None)
+    path_var.set(None)
+    method_var.set(None)
+    route_template_var.set(None)
+    flow_id_var.set(None)
+    stream_jti_var.set(None)
 
 
 def get_request_id() -> str | None:
