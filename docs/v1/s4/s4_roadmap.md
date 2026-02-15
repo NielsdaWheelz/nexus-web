@@ -30,9 +30,10 @@ implements `docs/v1/s4/s4_spec.md` in a dependency-safe sequence.
 | s4 migration `0007` + new tables + indexes + seed | pr-01 |
 | s4 error codes | pr-01 |
 | canonical visibility predicates and helper replacement | pr-02 |
+| rollout-safe default-library intrinsic write-through on existing writer touchpoints | pr-02 |
 | library delete owner-only + member management + transfer ownership | pr-03 |
 | library invite lifecycle endpoints | pr-04 |
-| closure/intrinsic/backfill job mechanics across all writer paths | pr-05 |
+| closure-edge materialization + backfill job mechanics across writer paths | pr-05 |
 | internal requeue endpoint `/internal/libraries/backfill-jobs/requeue` | pr-05 |
 | conversation read scopes + share endpoints + `ConversationOut` additive fields | pr-06 |
 | highlight shared read + mine_only default + `HighlightOut` additive fields | pr-07 |
@@ -98,7 +99,7 @@ non-goals:
 
 ## pr-02: canonical visibility predicates + auth base refactor
 
-goal: define one authoritative read-auth path per domain and remove ambiguous owner-only read gating.
+goal: land the internal auth kernel for s4 visibility so later prs can switch public read contracts without duplicated auth logic.
 
 dependencies: pr-01.
 
@@ -106,22 +107,35 @@ primary surfaces:
 - `python/nexus/auth/permissions.py`
 - `python/nexus/services/conversations.py`
 - `python/nexus/services/highlights.py`
+- `python/nexus/services/search.py` (helper coupling cleanup only; no behavior change)
+- `python/nexus/services/upload.py`
+- `python/nexus/services/libraries.py`
+- `python/nexus/tasks/ingest_web_article.py`
 - shared predicate helpers (new service module if needed)
 
 acceptance:
 - `can_read_media` implements s4 provenance rules (non-default membership, intrinsic, active closure edge).
 - conversation helper split is complete:
-  - visible-read helper for list/get/messages/search scope auth.
-  - owner-write helper for mutation endpoints.
+  - canonical visible-read helper exists for conversation/message visibility checks.
+  - owner-write helper exists for mutation endpoints.
 - highlight helper split is complete:
-  - visible-read helper for list/get.
+  - canonical visible-read helper exists for highlight/annotation visibility checks.
   - author-write helper for mutations.
-- strict revocation is proven with tests: membership/share revocation denies subsequent reads immediately.
-- `python/tests/test_permissions.py` and affected conversation/highlight tests pass.
+- strict revocation is proven with internal tests: membership/share revocation flips helper/predicate outcomes immediately after commit.
+- no duplicate owner-only read helper paths remain for domains touched in this pr.
+- `python/nexus/services/search.py` no longer depends on deprecated/ambiguous conversation read helper names.
+- search behavior remains unchanged in pr-02 (no scope/query/output contract changes).
+- default-library writer touchpoints touched in this pr are intrinsic-write-through safe:
+  - upload init + dedupe winner ensure path
+  - provisional from-url media creation path
+  - ingest dedupe winner attach path
+  - explicit default-library add/remove path in libraries service
+- `python/tests/test_permissions.py` and new/updated helper-level tests pass.
 
 non-goals:
+- no public endpoint contract/behavior changes yet (`/conversations*`, `/highlights*`, `/search` remain externally unchanged in this pr).
 - no invite/member routes yet.
-- no search query behavior changes yet.
+- no response schema shape changes yet.
 
 ## pr-03: library governance (owner boundary + members + transfer)
 
@@ -185,7 +199,7 @@ non-goals:
 
 goal: make closure invariants true across all writer paths and make failure recovery operational.
 
-dependencies: pr-01, pr-04.
+dependencies: pr-01, pr-02, pr-04.
 
 primary surfaces:
 - `python/nexus/services/libraries.py`
@@ -196,7 +210,8 @@ primary surfaces:
 - new internal route module + app registration
 
 acceptance:
-- all default-library writer touchpoints are updated together (no mixed old/new closure behavior).
+- all remaining closure-edge/backfill writer touchpoints are updated together (no mixed old/new closure behavior).
+- builds on pr-02 intrinsic write-through baseline; does not regress pr-02 rollout safety.
 - membership accept/remove and library media add/remove enforce intrinsic/closure/gc rules from spec.
 - backfill worker task implements idempotent materialization and state transitions.
 - automatic retries follow fixed delay schedule exactly.
@@ -230,6 +245,7 @@ acceptance:
 - `GET /conversations` supports `scope=mine|all|shared`, default `mine`.
 - `GET /conversations/{id}` and `GET /conversations/{id}/messages` allow shared readers via canonical visibility.
 - write/send/delete endpoints remain owner-only.
+- conversation endpoints consume pr-02 canonical helpers; no ad-hoc duplicate read-auth sql paths.
 - share endpoints implemented:
   - `GET /conversations/{conversation_id}/shares`
   - `PUT /conversations/{conversation_id}/shares`
@@ -257,6 +273,7 @@ acceptance:
 - `mine_only=false` returns visible shared highlights under canonical predicate.
 - `GET /highlights/{highlight_id}` supports shared readers under canonical predicate.
 - mutation endpoints remain author-only with masked 404 semantics.
+- highlight endpoints consume pr-02 canonical helpers; no ad-hoc duplicate read-auth sql paths.
 - `HighlightOut` includes `author_user_id` and `is_owner`.
 - tests updated in `python/tests/test_highlights.py` and `python/tests/test_web_article_highlight_e2e.py`.
 
