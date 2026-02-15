@@ -20,7 +20,9 @@ from nexus.schemas.highlights import (
 from nexus.schemas.library import (
     AddMediaRequest,
     CreateLibraryRequest,
+    LibraryInvitationOut,
     LibraryMediaOut,
+    LibraryMemberOut,
     LibraryOut,
     UpdateLibraryRequest,
 )
@@ -38,6 +40,9 @@ __all__ = [
     "AddMediaRequest",
     "LibraryOut",
     "LibraryMediaOut",
+    # S4 Library schemas
+    "LibraryMemberOut",
+    "LibraryInvitationOut",
     # Media schemas
     "MediaOut",
     "FragmentOut",

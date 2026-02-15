@@ -1,16 +1,21 @@
 """Library-related Pydantic schemas.
 
 Contains request and response models for library endpoints.
-All schemas must match s0_spec.md exactly.
 """
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 # MediaOut is defined in schemas/media.py - import from there
 from nexus.schemas.media import MediaOut
+
+# --- S4 typed aliases ---
+
+LibraryRole = Literal["admin", "member"]
+LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
 
 __all__ = [
     "CreateLibraryRequest",
@@ -19,6 +24,11 @@ __all__ = [
     "LibraryOut",
     "LibraryMediaOut",
     "MediaOut",
+    # S4 types
+    "LibraryRole",
+    "LibraryInvitationStatusValue",
+    "LibraryMemberOut",
+    "LibraryInvitationOut",
 ]
 
 # =============================================================================
@@ -75,5 +85,36 @@ class LibraryMediaOut(BaseModel):
     library_id: UUID
     media_id: UUID
     created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# =============================================================================
+# S4 Response Schemas
+# =============================================================================
+
+
+class LibraryMemberOut(BaseModel):
+    """Response schema for a library member."""
+
+    user_id: UUID
+    role: LibraryRole
+    is_owner: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LibraryInvitationOut(BaseModel):
+    """Response schema for a library invitation."""
+
+    id: UUID
+    library_id: UUID
+    inviter_user_id: UUID
+    invitee_user_id: UUID
+    role: LibraryRole
+    status: LibraryInvitationStatusValue
+    created_at: datetime
+    responded_at: datetime | None
 
     model_config = ConfigDict(from_attributes=True)

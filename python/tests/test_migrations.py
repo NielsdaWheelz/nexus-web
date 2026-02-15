@@ -1144,6 +1144,585 @@ class TestCeleryAndRedis:
         assert r.ping()
 
 
+class TestS4Migration0007:
+    """Tests for S4 migration 0007 — library sharing schema.
+
+    Each test self-manages migration state (downgrade base -> upgrade target).
+    Does NOT rely on the module-level migrated_engine fixture.
+    """
+
+    @pytest.fixture(autouse=True)
+    def isolate_migration(self):
+        """Start and end each test at a clean base state, restore to head."""
+        run_alembic_command("downgrade base")
+        yield
+        run_alembic_command("downgrade base")
+        run_alembic_command("upgrade head")
+
+    @pytest.fixture
+    def s4_engine(self):
+        """Provide a dedicated engine for S4 tests."""
+        database_url = get_test_database_url()
+        engine = create_engine(database_url)
+        yield engine
+        engine.dispose()
+
+    def test_upgrade_0006_to_0007_seeds_edges_and_intrinsics(self, s4_engine):
+        """Seed transform produces correct closure edges and intrinsics."""
+        result = run_alembic_command("upgrade 0006")
+        assert result.returncode == 0, f"upgrade 0006 failed: {result.stderr}"
+
+        u1 = uuid4()
+        d1 = uuid4()  # default library for u1
+        l1 = uuid4()  # non-default library
+        m_edge = uuid4()  # media in l1 AND d1
+        m_intrinsic_only = uuid4()  # media in d1 only
+
+        with Session(s4_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": u1})
+
+            # Default library for u1
+            session.execute(
+                text(
+                    "INSERT INTO libraries (id, owner_user_id, name, is_default) "
+                    "VALUES (:id, :owner, 'Default', true)"
+                ),
+                {"id": d1, "owner": u1},
+            )
+            # Non-default library
+            session.execute(
+                text(
+                    "INSERT INTO libraries (id, owner_user_id, name, is_default) "
+                    "VALUES (:id, :owner, 'Shared', false)"
+                ),
+                {"id": l1, "owner": u1},
+            )
+
+            # u1 is member of both libraries
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role) "
+                    "VALUES (:lib, :user, 'admin')"
+                ),
+                {"lib": d1, "user": u1},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role) "
+                    "VALUES (:lib, :user, 'admin')"
+                ),
+                {"lib": l1, "user": u1},
+            )
+
+            # Media m_edge in l1 AND d1
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status, created_by_user_id) "
+                    "VALUES (:id, 'web_article', 'Edge Article', 'ready_for_reading', :user)"
+                ),
+                {"id": m_edge, "user": u1},
+            )
+            session.execute(
+                text("INSERT INTO library_media (library_id, media_id) VALUES (:lib, :med)"),
+                {"lib": l1, "med": m_edge},
+            )
+            session.execute(
+                text("INSERT INTO library_media (library_id, media_id) VALUES (:lib, :med)"),
+                {"lib": d1, "med": m_edge},
+            )
+
+            # Media m_intrinsic_only in d1 only
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status, created_by_user_id) "
+                    "VALUES (:id, 'web_article', 'Intrinsic Article', 'ready_for_reading', :user)"
+                ),
+                {"id": m_intrinsic_only, "user": u1},
+            )
+            session.execute(
+                text("INSERT INTO library_media (library_id, media_id) VALUES (:lib, :med)"),
+                {"lib": d1, "med": m_intrinsic_only},
+            )
+
+            session.commit()
+
+        # Upgrade to 0007 — seed runs
+        result = run_alembic_command("upgrade 0007")
+        assert result.returncode == 0, f"upgrade 0007 failed: {result.stderr}"
+
+        # Assert seed results
+        with Session(s4_engine) as session:
+            # Closure edge: (d1, m_edge, l1) must exist
+            edge_count = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM default_library_closure_edges "
+                    "WHERE default_library_id = :d AND media_id = :m "
+                    "AND source_library_id = :s"
+                ),
+                {"d": d1, "m": m_edge, "s": l1},
+            ).scalar()
+            assert edge_count == 1
+
+            # Intrinsic: (d1, m_intrinsic_only) must exist
+            intrinsic_count = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM default_library_intrinsics "
+                    "WHERE default_library_id = :d AND media_id = :m"
+                ),
+                {"d": d1, "m": m_intrinsic_only},
+            ).scalar()
+            assert intrinsic_count == 1
+
+            # Intrinsic: (d1, m_edge) must NOT exist (covered by closure edge)
+            edge_intrinsic = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM default_library_intrinsics "
+                    "WHERE default_library_id = :d AND media_id = :m"
+                ),
+                {"d": d1, "m": m_edge},
+            ).scalar()
+            assert edge_intrinsic == 0
+
+            # Backfill jobs: 0 rows
+            job_count = session.execute(
+                text("SELECT COUNT(*) FROM default_library_backfill_jobs")
+            ).scalar()
+            assert job_count == 0
+
+    def test_upgrade_0006_to_0007_fails_when_member_has_no_default_library(self, s4_engine):
+        """Upgrade hard-fails with sentinel when default library is missing."""
+        result = run_alembic_command("upgrade 0006")
+        assert result.returncode == 0
+
+        u_owner = uuid4()
+        u_member = uuid4()
+        l1 = uuid4()
+        m1 = uuid4()
+
+        with Session(s4_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": u_owner})
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": u_member})
+
+            # Owner has a default library
+            owner_default = uuid4()
+            session.execute(
+                text(
+                    "INSERT INTO libraries (id, owner_user_id, name, is_default) "
+                    "VALUES (:id, :owner, 'Owner Default', true)"
+                ),
+                {"id": owner_default, "owner": u_owner},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role) "
+                    "VALUES (:lib, :user, 'admin')"
+                ),
+                {"lib": owner_default, "user": u_owner},
+            )
+
+            # Non-default library owned by u_owner
+            session.execute(
+                text(
+                    "INSERT INTO libraries (id, owner_user_id, name, is_default) "
+                    "VALUES (:id, :owner, 'Shared Lib', false)"
+                ),
+                {"id": l1, "owner": u_owner},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role) "
+                    "VALUES (:lib, :user, 'admin')"
+                ),
+                {"lib": l1, "user": u_owner},
+            )
+
+            # u_member is member of l1 but has NO default library
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role) "
+                    "VALUES (:lib, :user, 'member')"
+                ),
+                {"lib": l1, "user": u_member},
+            )
+
+            # Media in l1
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status, created_by_user_id) "
+                    "VALUES (:id, 'web_article', 'Article', 'ready_for_reading', :user)"
+                ),
+                {"id": m1, "user": u_owner},
+            )
+            session.execute(
+                text("INSERT INTO library_media (library_id, media_id) VALUES (:lib, :med)"),
+                {"lib": l1, "med": m1},
+            )
+
+            session.commit()
+
+        # Upgrade should fail
+        result = run_alembic_command("upgrade 0007")
+        assert result.returncode != 0
+        combined = result.stdout + result.stderr
+        assert "S4_0007_MISSING_DEFAULT_LIBRARY" in combined
+
+    def test_upgrade_0006_to_0007_seed_is_idempotent_after_downgrade_round_trip(self, s4_engine):
+        """Seeded PK tuple sets are identical after downgrade + re-upgrade."""
+        result = run_alembic_command("upgrade 0006")
+        assert result.returncode == 0
+
+        u1 = uuid4()
+        d1 = uuid4()
+        l1 = uuid4()
+        m_edge = uuid4()
+        m_intrinsic_only = uuid4()
+
+        with Session(s4_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": u1})
+            session.execute(
+                text(
+                    "INSERT INTO libraries (id, owner_user_id, name, is_default) "
+                    "VALUES (:id, :owner, 'Default', true)"
+                ),
+                {"id": d1, "owner": u1},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO libraries (id, owner_user_id, name, is_default) "
+                    "VALUES (:id, :owner, 'Shared', false)"
+                ),
+                {"id": l1, "owner": u1},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role) "
+                    "VALUES (:lib, :user, 'admin')"
+                ),
+                {"lib": d1, "user": u1},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role) "
+                    "VALUES (:lib, :user, 'admin')"
+                ),
+                {"lib": l1, "user": u1},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status, created_by_user_id) "
+                    "VALUES (:id, 'web_article', 'Edge', 'ready_for_reading', :user)"
+                ),
+                {"id": m_edge, "user": u1},
+            )
+            session.execute(
+                text("INSERT INTO library_media (library_id, media_id) VALUES (:lib, :med)"),
+                {"lib": l1, "med": m_edge},
+            )
+            session.execute(
+                text("INSERT INTO library_media (library_id, media_id) VALUES (:lib, :med)"),
+                {"lib": d1, "med": m_edge},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status, created_by_user_id) "
+                    "VALUES (:id, 'web_article', 'Intrinsic', 'ready_for_reading', :user)"
+                ),
+                {"id": m_intrinsic_only, "user": u1},
+            )
+            session.execute(
+                text("INSERT INTO library_media (library_id, media_id) VALUES (:lib, :med)"),
+                {"lib": d1, "med": m_intrinsic_only},
+            )
+            session.commit()
+
+        # First upgrade
+        result = run_alembic_command("upgrade 0007")
+        assert result.returncode == 0
+
+        with Session(s4_engine) as session:
+            edges_first = set(
+                session.execute(
+                    text(
+                        "SELECT default_library_id, media_id, source_library_id "
+                        "FROM default_library_closure_edges"
+                    )
+                ).fetchall()
+            )
+            intrinsics_first = set(
+                session.execute(
+                    text("SELECT default_library_id, media_id FROM default_library_intrinsics")
+                ).fetchall()
+            )
+
+        # Downgrade back to 0006
+        result = run_alembic_command("downgrade 0006")
+        assert result.returncode == 0
+
+        # Second upgrade
+        result = run_alembic_command("upgrade 0007")
+        assert result.returncode == 0
+
+        with Session(s4_engine) as session:
+            edges_second = set(
+                session.execute(
+                    text(
+                        "SELECT default_library_id, media_id, source_library_id "
+                        "FROM default_library_closure_edges"
+                    )
+                ).fetchall()
+            )
+            intrinsics_second = set(
+                session.execute(
+                    text("SELECT default_library_id, media_id FROM default_library_intrinsics")
+                ).fetchall()
+            )
+
+        assert edges_first == edges_second
+        assert intrinsics_first == intrinsics_second
+
+    def test_0007_supporting_indexes_exist(self, s4_engine):
+        """All expected 0007 index names exist in pg_indexes."""
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0
+
+        expected_indexes = [
+            # library_invitations
+            "uix_library_invitations_pending_once",
+            "idx_library_invitations_library_status_created",
+            "idx_library_invitations_invitee_status_created",
+            # default_library_intrinsics
+            "idx_default_library_intrinsics_media",
+            # default_library_closure_edges
+            "idx_default_library_closure_edges_source",
+            "idx_default_library_closure_edges_default_media",
+            # default_library_backfill_jobs
+            "idx_default_library_backfill_jobs_status_updated",
+            # existing-table supporting indexes
+            "idx_memberships_user_library_role",
+            "idx_library_media_media_library",
+            "idx_conversation_shares_library_conversation",
+        ]
+
+        with Session(s4_engine) as session:
+            result = session.execute(
+                text("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'")
+            )
+            existing = {row[0] for row in result.fetchall()}
+
+        for idx_name in expected_indexes:
+            assert idx_name in existing, f"Index {idx_name} not found"
+
+    def test_library_invitations_pending_unique_partial_index(self, s4_engine):
+        """Partial unique index prevents duplicate pending invites."""
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0
+
+        inviter = uuid4()
+        invitee = uuid4()
+        library_id = uuid4()
+
+        with Session(s4_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": inviter})
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": invitee})
+            session.execute(
+                text(
+                    "INSERT INTO libraries (id, owner_user_id, name, is_default) "
+                    "VALUES (:id, :owner, 'Test', false)"
+                ),
+                {"id": library_id, "owner": inviter},
+            )
+
+            # First pending invite
+            session.execute(
+                text(
+                    "INSERT INTO library_invitations "
+                    "(id, library_id, inviter_user_id, invitee_user_id, role, status) "
+                    "VALUES (:id, :lib, :inviter, :invitee, 'member', 'pending')"
+                ),
+                {"id": uuid4(), "lib": library_id, "inviter": inviter, "invitee": invitee},
+            )
+            session.commit()
+
+            # Duplicate pending invite should fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO library_invitations "
+                        "(id, library_id, inviter_user_id, invitee_user_id, role, status) "
+                        "VALUES (:id, :lib, :inviter, :invitee, 'member', 'pending')"
+                    ),
+                    {
+                        "id": uuid4(),
+                        "lib": library_id,
+                        "inviter": inviter,
+                        "invitee": invitee,
+                    },
+                )
+                session.commit()
+
+            session.rollback()
+            assert "uix_library_invitations_pending_once" in str(exc_info.value)
+
+    def test_library_invitations_responded_at_check_constraint(self, s4_engine):
+        """Check constraint enforces responded_at/status consistency."""
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0
+
+        inviter = uuid4()
+        invitee = uuid4()
+        library_id = uuid4()
+
+        with Session(s4_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": inviter})
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": invitee})
+            session.execute(
+                text(
+                    "INSERT INTO libraries (id, owner_user_id, name, is_default) "
+                    "VALUES (:id, :owner, 'Test', false)"
+                ),
+                {"id": library_id, "owner": inviter},
+            )
+            session.commit()
+
+            # pending with non-null responded_at → must fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO library_invitations "
+                        "(id, library_id, inviter_user_id, invitee_user_id, role, status, responded_at) "
+                        "VALUES (:id, :lib, :inviter, :invitee, 'member', 'pending', now())"
+                    ),
+                    {"id": uuid4(), "lib": library_id, "inviter": inviter, "invitee": invitee},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_library_invitations_responded_at" in str(exc_info.value)
+
+            # accepted with null responded_at → must fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO library_invitations "
+                        "(id, library_id, inviter_user_id, invitee_user_id, role, status, responded_at) "
+                        "VALUES (:id, :lib, :inviter, :invitee, 'member', 'accepted', NULL)"
+                    ),
+                    {"id": uuid4(), "lib": library_id, "inviter": inviter, "invitee": invitee},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_library_invitations_responded_at" in str(exc_info.value)
+
+            # valid terminal: accepted with non-null responded_at → must succeed
+            session.execute(
+                text(
+                    "INSERT INTO library_invitations "
+                    "(id, library_id, inviter_user_id, invitee_user_id, role, status, responded_at) "
+                    "VALUES (:id, :lib, :inviter, :invitee, 'member', 'accepted', now())"
+                ),
+                {"id": uuid4(), "lib": library_id, "inviter": inviter, "invitee": invitee},
+            )
+            session.commit()
+
+    def test_library_invitations_not_self_check_constraint(self, s4_engine):
+        """Check constraint prevents self-invitations."""
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0
+
+        user = uuid4()
+        library_id = uuid4()
+
+        with Session(s4_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user})
+            session.execute(
+                text(
+                    "INSERT INTO libraries (id, owner_user_id, name, is_default) "
+                    "VALUES (:id, :owner, 'Test', false)"
+                ),
+                {"id": library_id, "owner": user},
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO library_invitations "
+                        "(id, library_id, inviter_user_id, invitee_user_id, role, status) "
+                        "VALUES (:id, :lib, :user, :user, 'member', 'pending')"
+                    ),
+                    {"id": uuid4(), "lib": library_id, "user": user},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_library_invitations_not_self" in str(exc_info.value)
+
+    def test_default_library_backfill_jobs_finished_at_state_constraint(self, s4_engine):
+        """Check constraint enforces finished_at/status consistency for backfill jobs."""
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0
+
+        user = uuid4()
+        default_lib = uuid4()
+        source_lib = uuid4()
+
+        with Session(s4_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user})
+            session.execute(
+                text(
+                    "INSERT INTO libraries (id, owner_user_id, name, is_default) "
+                    "VALUES (:id, :owner, 'Default', true)"
+                ),
+                {"id": default_lib, "owner": user},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO libraries (id, owner_user_id, name, is_default) "
+                    "VALUES (:id, :owner, 'Source', false)"
+                ),
+                {"id": source_lib, "owner": user},
+            )
+            session.commit()
+
+            # pending with non-null finished_at → must fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO default_library_backfill_jobs "
+                        "(default_library_id, source_library_id, user_id, status, finished_at) "
+                        "VALUES (:dl, :sl, :u, 'pending', now())"
+                    ),
+                    {"dl": default_lib, "sl": source_lib, "u": user},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_default_library_backfill_jobs_finished_at_state" in str(exc_info.value)
+
+            # completed with null finished_at → must fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO default_library_backfill_jobs "
+                        "(default_library_id, source_library_id, user_id, status, finished_at) "
+                        "VALUES (:dl, :sl, :u, 'completed', NULL)"
+                    ),
+                    {"dl": default_lib, "sl": source_lib, "u": user},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_default_library_backfill_jobs_finished_at_state" in str(exc_info.value)
+
+            # valid: completed with non-null finished_at → must succeed
+            session.execute(
+                text(
+                    "INSERT INTO default_library_backfill_jobs "
+                    "(default_library_id, source_library_id, user_id, status, finished_at) "
+                    "VALUES (:dl, :sl, :u, 'completed', now())"
+                ),
+                {"dl": default_lib, "sl": source_lib, "u": user},
+            )
+            session.commit()
+
+
 class TestS3SchemaConstraints:
     """Tests for S3-specific schema constraints (chat, conversations, messages, etc.)."""
 
