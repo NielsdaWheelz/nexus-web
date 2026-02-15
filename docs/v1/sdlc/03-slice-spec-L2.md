@@ -237,4 +237,4 @@ If you don't write invariants, you'll discover them as bugs later.
 
 ---
 
-See also: [L2 Example — Bookmark Manager](./examples/bookmark-manager/slice-2-bookmark-crud.md) | Next: [L3: PR Spec](./04-pr-spec-L3.md)
+See also: [L2 Example — Bookmark Manager](./examples/bookmark-manager/slice-2-bookmark-crud.md) | Next: [PR Roadmap](./04-pr-roadmap.md)

@@ -169,4 +169,4 @@ Return E_RUN_NOT_FOUND as defined in s1_spec.md section 5.1.
 
 ---
 
-See also: [Philosophy](./00-philosophy.md) | [Quick Reference](./07-quick-reference.md)
+See also: [Philosophy](./00-philosophy.md) | [Quick Reference](./08-quick-reference.md)

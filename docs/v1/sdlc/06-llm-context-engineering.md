@@ -354,4 +354,4 @@ If a piece of context does neither, remove it. It's noise.
 
 ---
 
-See also: [L3: PR Spec](./04-pr-spec-L3.md) | Next: [Workflow](./06-workflow.md)
+See also: [L3: PR Spec](./05-pr-spec-L3.md) | Next: [Workflow](./07-workflow.md)

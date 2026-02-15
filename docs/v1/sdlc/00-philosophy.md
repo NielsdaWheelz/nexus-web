@@ -89,4 +89,4 @@ If a document doesn't constrain anything, it's not pulling its weight. Delete it
 
 ---
 
-Next: [L0: Constitution](./01-constitution-L0.md) | [Quick Reference](./07-quick-reference.md)
+Next: [L0: Constitution](./01-constitution-L0.md) | [Quick Reference](./08-quick-reference.md)

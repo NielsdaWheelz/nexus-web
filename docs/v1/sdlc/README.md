@@ -22,10 +22,11 @@ L4: CODE (the actual implementation)
 | [L0: Constitution](./01-constitution-L0.md) | System-wide constraints that rarely change | Architect / CTO | Project inception |
 | [L1: Roadmap](./02-roadmap-L1.md) | Slice ordering, dependencies, sequencing | Product + Tech Lead | Planning cycles |
 | [L2: Slice Spec](./03-slice-spec-L2.md) | Feature contracts: schemas, APIs, state machines | Spec Writer / Senior Eng | Starting a slice |
-| [L3: PR Spec](./04-pr-spec-L3.md) | Scoping a single PR with exact deliverables | Implementer | Before writing code |
-| [LLM Context Engineering](./05-llm-context-engineering.md) | Constructing prompts from specs for AI | Anyone using AI | Prompting AI to implement |
-| [Workflow](./06-workflow.md) | Spec-first discipline, doc lifecycle, references | Everyone | Ongoing |
-| [Quick Reference](./07-quick-reference.md) | Summary tables, decision tests, blast radius | Everyone | Quick lookup |
+| [PR Roadmap](./04-pr-roadmap.md) | Decomposing a slice into ordered PRs | Engineer starting a slice | After slice spec, before PR specs |
+| [L3: PR Spec](./05-pr-spec-L3.md) | Scoping a single PR with exact deliverables | Implementer | Before writing code |
+| [LLM Context Engineering](./06-llm-context-engineering.md) | Constructing prompts from specs for AI | Anyone using AI | Prompting AI to implement |
+| [Workflow](./07-workflow.md) | Spec-first discipline, doc lifecycle, references | Everyone | Ongoing |
+| [Quick Reference](./08-quick-reference.md) | Summary tables, decision tests, blast radius | Everyone | Quick lookup |
 
 ## Examples
 
@@ -41,9 +42,10 @@ Complete worked example across all four layers: [Bookmark Manager](./examples/bo
 - Making a system-wide decision? → [L0](./01-constitution-L0.md)
 - Deciding what to build next? → [L1](./02-roadmap-L1.md)
 - Specifying a feature for multiple PRs? → [L2](./03-slice-spec-L2.md)
-- About to write code or hand off to AI? → [L3](./04-pr-spec-L3.md)
-- Constructing a prompt for an LLM? → [LLM Context](./05-llm-context-engineering.md)
-- Unsure about the overall process? → [Workflow](./06-workflow.md)
+- Breaking a slice into PRs? → [PR Roadmap](./04-pr-roadmap.md)
+- About to write code or hand off to AI? → [L3](./05-pr-spec-L3.md)
+- Constructing a prompt for an LLM? → [LLM Context](./06-llm-context-engineering.md)
+- Unsure about the overall process? → [Workflow](./07-workflow.md)
 
 ## Agent / Skill Mapping
 
@@ -51,5 +53,6 @@ Complete worked example across all four layers: [Bookmark Manager](./examples/bo
 |------|----------------|----------------|
 | Architect (CTO/Staff) | `00-philosophy` + `01-constitution-L0` + `02-roadmap-L1` | System design, constitution, slice ordering |
 | Spec Writer (L2) | `03-slice-spec-L2` + constitution summary | Schemas, APIs, state machines, error codes |
-| Implementer (L3) | `04-pr-spec-L3` + `05-llm-context-engineering` + slice spec | PR specs, code generation |
-| Reviewer | `07-quick-reference` + relevant layer doc | Validate work against specs |
+| Decomposer | `04-pr-roadmap` + slice spec | Break slice into ordered PRs |
+| Implementer (L3) | `05-pr-spec-L3` + `06-llm-context-engineering` + slice spec | PR specs, code generation |
+| Reviewer | `08-quick-reference` + relevant layer doc | Validate work against specs |

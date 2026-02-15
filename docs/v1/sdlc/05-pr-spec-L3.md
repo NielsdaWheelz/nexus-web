@@ -289,4 +289,4 @@ Now if there's a bug where users can access resources they shouldn't, you know i
 
 ---
 
-See also: [L3 Example — Bookmark Manager](./examples/bookmark-manager/pr-01-bookmark-model.md) | Next: [LLM Context Engineering](./05-llm-context-engineering.md)
+See also: [L3 Example — Bookmark Manager](./examples/bookmark-manager/pr-01-bookmark-model.md) | Next: [LLM Context Engineering](./06-llm-context-engineering.md)
