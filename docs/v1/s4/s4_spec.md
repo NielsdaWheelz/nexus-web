@@ -57,6 +57,10 @@ enable users to collaborate through shared libraries without weakening visibilit
 15. masking policy is strict: not-visible resource -> masked `404`; visible-but-not-allowed -> `403`; bad transition/state -> `409`.
 16. conversation list default remains `mine` for backward compatibility; shared visibility is opt-in via `scope`.
 17. search `scope=library:*` includes message results for conversations shared to that library (not empty set).
+18. `GET /search` response shape is preserved for backward compatibility in s4 (`results` + `page`), not envelope-migrated in this slice.
+19. backfill requeue is supported via internal operator path in s4; manual database edits are not the primary recovery path.
+20. stale duplicate visibility helpers are not allowed at slice completion; canonical predicates are the only merged read-auth path.
+21. search scope masking preserves existing typed 404 behavior: unauthorized `media:*|library:*` -> `E_NOT_FOUND`; unauthorized `conversation:*` -> `E_CONVERSATION_NOT_FOUND`.
 
 ---
 
@@ -390,6 +394,10 @@ write operations remain owner-only.
 all responses use existing envelope conventions:
 - success: `{ "data": ... }`
 - error: `{ "error": { "code": "E_...", "message": "...", "request_id": "..." } }`
+
+exception:
+- `GET /search` keeps existing response shape in s4 for compatibility:
+  - `{ "results": [...], "page": {...} }`
 
 list endpoints in this slice use:
 - new s4 list endpoints introduced in this slice use:
@@ -779,6 +787,15 @@ response keeps existing shape:
 
 search visibility must align with section 5 predicates.
 
+response compatibility:
+- preserve existing non-envelope response shape in s4:
+```json
+{
+  "results": ["SearchResultOut", "..."],
+  "page": { "next_cursor": null, "has_more": false }
+}
+```
+
 required updates:
 - conversation scope authorization must use shared-read visibility (owner/public/library-share), not owner-only helper.
 - annotation search visibility must match section 5.2 (not viewer-owner-only filter).
@@ -787,7 +804,51 @@ required updates:
   - include message row only if its conversation is shared to `scope_library_id`.
   - still enforce section 5.3 conversation visibility predicate.
   - do not include owner/public conversations that are not shared to `scope_library_id`.
-- unauthorized scope objects remain masked (`404`) per existing search contract.
+- unauthorized scope objects remain masked (`404`) with preserved codes:
+  - unauthorized `media:*` scope -> `404 E_NOT_FOUND`
+  - unauthorized `library:*` scope -> `404 E_NOT_FOUND`
+  - unauthorized `conversation:*` scope -> `404 E_CONVERSATION_NOT_FOUND`
+
+### 6.9 backfill operator endpoint contract
+
+#### `POST /internal/libraries/backfill-jobs/requeue`
+
+purpose:
+- explicit operator recovery path for failed backfill jobs.
+
+auth:
+- internal-only route; not exposed through public user bff routes.
+- caller must satisfy existing internal service authentication policy.
+- no next.js `/api/*` proxy route is added for this endpoint in s4.
+
+request:
+```json
+{
+  "default_library_id": "uuid",
+  "source_library_id": "uuid",
+  "user_id": "uuid"
+}
+```
+
+behavior:
+1. lock target job row.
+2. if row missing, return `404 E_NOT_FOUND`.
+3. if current status is `running`, return `200` idempotent no-op with current status.
+4. otherwise transition `pending|failed|completed -> pending`.
+5. reset `attempts=0`, clear `last_error_code`, clear `finished_at`, update `updated_at`.
+6. commit and enqueue worker task (enqueue failure does not roll back committed state).
+
+response `200`:
+```json
+{
+  "data": {
+    "default_library_id": "uuid",
+    "source_library_id": "uuid",
+    "user_id": "uuid",
+    "status": "pending"
+  }
+}
+```
 
 ---
 
@@ -1130,6 +1191,7 @@ then:
 - all closure and backfill writes must be idempotent (`ON CONFLICT DO NOTHING` where applicable).
 - no db triggers for business logic in v1; service layer owns invariants.
 - preserve existing request/response envelope contract.
+- preserve existing `/search` response shape in this slice; defer envelope normalization to a future versioned change.
 - preserve single-author conversation write model.
 - `can_read_media` in `auth/permissions.py` remains the single authorization source for media readability.
 - provenance/closure updates must be applied across every default-library writer path in the same release:
@@ -1138,4 +1200,6 @@ then:
   - provisional from-url media creation path
   - ingest dedupe winner attach path
 - conversation read authorization must be centralized so `/conversations*`, `/search scope=conversation:*`, and `/search scope=library:*` use identical base visibility logic with scope-specific filters layered on top.
+- by end of slice, old owner-only visibility helpers that conflict with s4 shared-read semantics must be removed or rewritten; duplicate auth paths are not allowed.
+- backfill recovery uses explicit operator requeue flow, not ad-hoc database edits.
 - preserve existing public pagination contracts for conversation/message lists unless explicitly changed in this spec.
