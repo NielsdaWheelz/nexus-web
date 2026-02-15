@@ -101,6 +101,18 @@ def create_test_media(
         {"media_id": media_id, "user_id": user_id},
     )
 
+    # S4: seed intrinsic provenance for default-library media
+    session.execute(
+        text("""
+            INSERT INTO default_library_intrinsics (default_library_id, media_id)
+            SELECT l.id, :media_id
+            FROM libraries l
+            WHERE l.owner_user_id = :user_id AND l.is_default = true
+            ON CONFLICT DO NOTHING
+        """),
+        {"media_id": media_id, "user_id": user_id},
+    )
+
     session.commit()
     return media_id
 

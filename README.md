@@ -70,7 +70,7 @@ nexus/
 - **Visibility Enforcement**: All authorization happens in FastAPI, never in Next.js.
 - **JWT Verification**: All environments use Supabase JWKS for token verification.
 - **Chat Infrastructure** (S3): Conversations, messages, and LLM integration for AI-assisted reading.
-- **Library Sharing** (S4): Multi-user library membership, invitations, and shared visibility.
+- **Library Sharing** (S4): Multi-user library membership, invitations, and shared visibility. Canonical visibility predicates enforce S4 provenance rules for media (non-default membership, intrinsic, active closure edge), conversations (owner/public/library-shared with dual membership), and highlights (media visibility + library intersection).
 - **Send Message Flow**: Three-phase execution (Prepare → Execute → Finalize) to avoid holding DB transactions during LLM calls.
 - **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations.
 

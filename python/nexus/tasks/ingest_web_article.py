@@ -322,6 +322,16 @@ def _handle_duplicate(
             {"lib_id": library_id, "media_id": winner_id},
         )
 
+        # S4 rollout-safety: upsert intrinsic provenance for winner in actor default library
+        db.execute(
+            text("""
+                INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                VALUES (:lib_id, :media_id)
+                ON CONFLICT (default_library_id, media_id) DO NOTHING
+            """),
+            {"lib_id": library_id, "media_id": winner_id},
+        )
+
     # Delete loser (cascades library_media entries)
     db.execute(text("DELETE FROM media WHERE id = :id"), {"id": loser_id})
     db.commit()
