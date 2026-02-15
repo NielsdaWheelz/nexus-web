@@ -34,7 +34,8 @@ nexus/
 │   │       ├── 0003_slice2_highlights_annotations.py  # S2: highlights, annotations
 │   │       ├── 0004_slice3_schema.py     # S3: conversations, messages, LLM infrastructure
 │   │       ├── 0005_*.py                # S3: tsvector/search indexes
-│   │       └── 0006_pr09_provider_request_id.py  # S3: message_llm.provider_request_id
+│   │       ├── 0006_pr09_provider_request_id.py  # S3: message_llm.provider_request_id
+│   │       └── 0007_slice4_library_sharing.py    # S4: library sharing schema + provenance
 │   └── alembic.ini
 │
 ├── supabase/                    # Supabase local configuration
@@ -69,6 +70,7 @@ nexus/
 - **Visibility Enforcement**: All authorization happens in FastAPI, never in Next.js.
 - **JWT Verification**: All environments use Supabase JWKS for token verification.
 - **Chat Infrastructure** (S3): Conversations, messages, and LLM integration for AI-assisted reading.
+- **Library Sharing** (S4): Multi-user library membership, invitations, and shared visibility.
 - **Send Message Flow**: Three-phase execution (Prepare → Execute → Finalize) to avoid holding DB transactions during LLM calls.
 - **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations.
 
@@ -538,7 +540,7 @@ When running locally:
 
 | Category | Endpoints |
 |----------|-----------|
-| Libraries | `GET/POST /libraries`, `PATCH/DELETE /libraries/{id}` |
+| Libraries | `GET/POST /libraries`, `PATCH/DELETE /libraries/{id}`, members, invites, transfer (S4) |
 | Media | `GET /media/{id}`, `POST /media/from_url`, `POST /media/upload/init` |
 | Highlights | `POST/GET /fragments/{id}/highlights`, `PATCH/DELETE /highlights/{id}` |
 | Annotations | `PUT/DELETE /highlights/{id}/annotation` |

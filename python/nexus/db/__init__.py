@@ -6,9 +6,16 @@ Provides engine creation, session management, transaction helpers, and ORM model
 from nexus.db.engine import create_db_engine, get_engine
 from nexus.db.models import (
     Base,
+    DefaultLibraryBackfillJob,
+    DefaultLibraryBackfillJobStatus,
+    DefaultLibraryClosureEdge,
+    DefaultLibraryIntrinsic,
     FailureStage,
     Fragment,
     Library,
+    LibraryInvitation,
+    LibraryInvitationRole,
+    LibraryInvitationStatus,
     LibraryMedia,
     Media,
     MediaFile,
@@ -33,6 +40,10 @@ __all__ = [
     "FailureStage",
     "MediaKind",
     "MembershipRole",
+    # S4 Enums
+    "LibraryInvitationRole",
+    "LibraryInvitationStatus",
+    "DefaultLibraryBackfillJobStatus",
     # Models
     "User",
     "Library",
@@ -41,4 +52,9 @@ __all__ = [
     "MediaFile",
     "Fragment",
     "LibraryMedia",
+    # S4 Models
+    "LibraryInvitation",
+    "DefaultLibraryIntrinsic",
+    "DefaultLibraryClosureEdge",
+    "DefaultLibraryBackfillJob",
 ]

@@ -85,6 +85,34 @@ class MembershipRole(str, PyEnum):
     member = "member"
 
 
+# --- Slice 4: Library Sharing Enums ---
+
+
+class LibraryInvitationRole(str, PyEnum):
+    """Role assigned to a library invitation."""
+
+    admin = "admin"
+    member = "member"
+
+
+class LibraryInvitationStatus(str, PyEnum):
+    """Lifecycle states for a library invitation."""
+
+    pending = "pending"
+    accepted = "accepted"
+    declined = "declined"
+    revoked = "revoked"
+
+
+class DefaultLibraryBackfillJobStatus(str, PyEnum):
+    """States for default-library closure backfill jobs."""
+
+    pending = "pending"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
 # =============================================================================
 # Models
 # =============================================================================
@@ -1010,6 +1038,192 @@ class ConversationMedia(Base):
         "Conversation", back_populates="conversation_media"
     )
     media: Mapped["Media"] = relationship("Media")
+
+
+# =============================================================================
+# Slice 4: Library Sharing
+# =============================================================================
+
+
+class LibraryInvitation(Base):
+    """Library invitation model - user-id invite for library membership."""
+
+    __tablename__ = "library_invitations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("libraries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    inviter_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    invitee_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    responded_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('admin', 'member')",
+            name="ck_library_invitations_role",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'accepted', 'declined', 'revoked')",
+            name="ck_library_invitations_status",
+        ),
+        CheckConstraint(
+            "inviter_user_id <> invitee_user_id",
+            name="ck_library_invitations_not_self",
+        ),
+        CheckConstraint(
+            "(status = 'pending' AND responded_at IS NULL) "
+            "OR (status <> 'pending' AND responded_at IS NOT NULL)",
+            name="ck_library_invitations_responded_at",
+        ),
+    )
+
+    # Relationships
+    library: Mapped["Library"] = relationship("Library")
+    inviter: Mapped["User"] = relationship("User", foreign_keys=[inviter_user_id])
+    invitee: Mapped["User"] = relationship("User", foreign_keys=[invitee_user_id])
+
+
+class DefaultLibraryIntrinsic(Base):
+    """Tracks media intentionally present in a user's default library.
+
+    Independent of closure edges — represents direct user intent (e.g. upload,
+    from-url creation, or legacy pre-S4 presence).
+    """
+
+    __tablename__ = "default_library_intrinsics"
+
+    default_library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("libraries.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+
+class DefaultLibraryClosureEdge(Base):
+    """Tracks which shared libraries justify default-library materialization.
+
+    An edge (default_library_id, media_id, source_library_id) means: media_id
+    should be materialized in default_library_id because source_library_id
+    contains media_id and the default library's owner is a member of
+    source_library_id.
+    """
+
+    __tablename__ = "default_library_closure_edges"
+
+    default_library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("libraries.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    source_library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("libraries.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+
+class DefaultLibraryBackfillJob(Base):
+    """Durable backfill intent for default-library closure materialization.
+
+    Created when an invite is accepted.  A worker picks up pending jobs and
+    materializes closure edges + default library_media rows.
+    """
+
+    __tablename__ = "default_library_backfill_jobs"
+
+    default_library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("libraries.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    source_library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("libraries.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'failed')",
+            name="ck_default_library_backfill_jobs_status",
+        ),
+        CheckConstraint(
+            "attempts >= 0",
+            name="ck_default_library_backfill_jobs_attempts",
+        ),
+        CheckConstraint(
+            "(status IN ('pending', 'running') AND finished_at IS NULL) "
+            "OR (status IN ('completed', 'failed') AND finished_at IS NOT NULL)",
+            name="ck_default_library_backfill_jobs_finished_at_state",
+        ),
+    )
 
 
 class FragmentBlock(Base):

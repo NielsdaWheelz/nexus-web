@@ -65,9 +65,11 @@ automatic retry orchestration for backfill jobs is worker-driven and determinist
 
 ## pr sequence
 
-## pr-01: schema + error contract
+## pr-01: schema + error contract ✅
 
 goal: land s4 data contract atomically and make errors/types available to later prs.
+
+status: **implemented**. migration 0007, ORM models, error codes, schemas, and all 8 migration tests pass.
 
 dependencies: none.
 
