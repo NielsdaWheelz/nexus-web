@@ -19,6 +19,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_conversation
 from nexus.db.models import Conversation, Message
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
@@ -123,10 +124,30 @@ def clamp_limit(limit: int) -> int:
     return min(max(limit, MIN_LIMIT), MAX_LIMIT)
 
 
-def get_conversation_for_viewer_or_404(
+def get_conversation_for_visible_read_or_404(
     db: Session, viewer_id: UUID, conversation_id: UUID
 ) -> Conversation:
-    """Load conversation and verify ownership.
+    """Load conversation and verify read visibility under s4 rules.
+
+    Visible iff viewer is owner, or conversation is public, or conversation is
+    library-shared with both viewer and owner as members of a share-target library.
+
+    Raises:
+        NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
+            or viewer cannot read it.
+    """
+    conversation = db.get(Conversation, conversation_id)
+    if conversation is None:
+        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
+    if not can_read_conversation(db, viewer_id, conversation_id):
+        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
+    return conversation
+
+
+def get_conversation_for_owner_write_or_404(
+    db: Session, viewer_id: UUID, conversation_id: UUID
+) -> Conversation:
+    """Load conversation and verify owner-only write access.
 
     Raises:
         NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
@@ -214,7 +235,7 @@ def get_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> Con
         NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
             or viewer is not the owner.
     """
-    conversation = get_conversation_for_viewer_or_404(db, viewer_id, conversation_id)
+    conversation = get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
     message_count = get_message_count(db, conversation_id)
     return conversation_to_out(conversation, message_count)
 
@@ -325,8 +346,8 @@ def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> 
         NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
             or viewer is not the owner.
     """
-    # Verify ownership
-    get_conversation_for_viewer_or_404(db, viewer_id, conversation_id)
+    # Verify ownership (write = owner-only)
+    get_conversation_for_owner_write_or_404(db, viewer_id, conversation_id)
 
     # Delete via raw SQL to let CASCADE do its work
     db.execute(delete(Conversation).where(Conversation.id == conversation_id))
@@ -358,8 +379,8 @@ def list_messages(
             or viewer is not the owner.
         InvalidRequestError(E_INVALID_CURSOR): If cursor is malformed.
     """
-    # Verify ownership
-    get_conversation_for_viewer_or_404(db, viewer_id, conversation_id)
+    # Verify read visibility (shared readers can list messages too)
+    get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
 
     limit = clamp_limit(limit)
 

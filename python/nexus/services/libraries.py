@@ -327,7 +327,7 @@ def add_media_to_library(
         if membership is None:
             raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
-        role = membership[0]
+        role = membership[0]  # membership[1] = is_default, used below
         if role != "admin":
             raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
 
@@ -338,6 +338,8 @@ def add_media_to_library(
         )
         if result.fetchone() is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+        is_default_library = membership[1]
 
         # Step 3: Insert into target library
         result = db.execute(
@@ -350,6 +352,17 @@ def add_media_to_library(
             {"library_id": library_id, "media_id": media_id},
         )
         row = result.fetchone()
+
+        # S4: If adding to default library, also create intrinsic provenance row
+        if is_default_library:
+            db.execute(
+                text("""
+                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                    VALUES (:library_id, :media_id)
+                    ON CONFLICT (default_library_id, media_id) DO NOTHING
+                """),
+                {"library_id": library_id, "media_id": media_id},
+            )
 
         # Step 4: Enforce default library closure for all members of this library
         db.execute(
@@ -474,6 +487,15 @@ def remove_media_from_library(
                     )
                 """),
                 {"media_id": media_id, "viewer_id": viewer_id},
+            )
+
+            # S4: Remove intrinsic provenance row
+            db.execute(
+                text("""
+                    DELETE FROM default_library_intrinsics
+                    WHERE default_library_id = :library_id AND media_id = :media_id
+                """),
+                {"library_id": library_id, "media_id": media_id},
             )
 
             # Now remove from default library

@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_highlight, can_read_media
 from nexus.db.models import Annotation, Fragment, Highlight
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
@@ -121,11 +121,33 @@ def map_integrity_error(e: IntegrityError) -> ApiError:
     return ApiError(ApiErrorCode.E_INTERNAL, "Database constraint violation")
 
 
-def get_highlight_for_viewer_or_404(db: Session, viewer_id: UUID, highlight_id: UUID) -> Highlight:
-    """Load highlight with relationships, enforce ownership and media readability.
+def get_highlight_for_visible_read_or_404(
+    db: Session, viewer_id: UUID, highlight_id: UUID
+) -> Highlight:
+    """Load highlight with relationships, enforce s4 read visibility.
+
+    Visible iff viewer can read anchor media AND exists a library containing
+    that media where both viewer and highlight author are members.
 
     Raises:
-        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or media not readable.
+        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist or not visible.
+    """
+    highlight = db.get(Highlight, highlight_id)
+    if highlight is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    if not can_read_highlight(db, viewer_id, highlight_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    return highlight
+
+
+def get_highlight_for_author_write_or_404(
+    db: Session, viewer_id: UUID, highlight_id: UUID
+) -> Highlight:
+    """Load highlight with relationships, enforce author-only write access.
+
+    Raises:
+        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not authored by viewer,
+            or media not readable.
     """
     highlight = db.get(Highlight, highlight_id)
     if highlight is None or highlight.user_id != viewer_id:
@@ -286,7 +308,7 @@ def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> Highlight
     Raises:
         NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
     """
-    highlight = get_highlight_for_viewer_or_404(db, viewer_id, highlight_id)
+    highlight = get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
     return _highlight_to_out(highlight)
 
 
@@ -313,7 +335,7 @@ def update_highlight(
         ApiError(E_HIGHLIGHT_CONFLICT): If new offsets conflict with existing highlight.
     """
     # 1. Get highlight with ownership and readability check
-    highlight = get_highlight_for_viewer_or_404(db, viewer_id, highlight_id)
+    highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
     # 2. Require media ready for any mutation
     require_media_ready_or_409(highlight.fragment.media.processing_status.value)
@@ -386,7 +408,7 @@ def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
         NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
     """
     # Verify highlight exists and is owned by viewer
-    get_highlight_for_viewer_or_404(db, viewer_id, highlight_id)
+    get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
     # Use raw DELETE to let the database handle ON DELETE CASCADE properly
     # This avoids SQLAlchemy ORM trying to manage the annotation relationship
@@ -416,7 +438,7 @@ def upsert_annotation_for_highlight(
         ApiError(E_MEDIA_NOT_READY): If media not in ready state.
     """
     # 1. Get highlight with ownership and readability check
-    highlight = get_highlight_for_viewer_or_404(db, viewer_id, highlight_id)
+    highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
     # 2. Require media ready
     require_media_ready_or_409(highlight.fragment.media.processing_status.value)
@@ -483,7 +505,7 @@ def delete_annotation_for_highlight(db: Session, viewer_id: UUID, highlight_id: 
         NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
     """
     # Verify highlight ownership and readability (no ready check)
-    get_highlight_for_viewer_or_404(db, viewer_id, highlight_id)
+    get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
     # Delete annotation if exists (idempotent)
     db.execute(delete(Annotation).where(Annotation.highlight_id == highlight_id))

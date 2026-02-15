@@ -28,7 +28,7 @@ from nexus.auth.permissions import can_read_media, is_library_member
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.search import SearchPageInfo, SearchResponse, SearchResultOut
-from nexus.services.conversations import get_conversation_for_viewer_or_404
+from nexus.services.conversations import get_conversation_for_owner_write_or_404
 
 logger = get_logger(__name__)
 
@@ -169,8 +169,8 @@ def authorize_scope(
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Library not found")
 
     elif scope_type == "conversation":
-        # Uses existing helper that checks owner or sharing
-        get_conversation_for_viewer_or_404(db, viewer_id, scope_id)
+        # Uses owner-write helper for scope auth (behavior change deferred to pr-08)
+        get_conversation_for_owner_write_or_404(db, viewer_id, scope_id)
 
 
 # =============================================================================

@@ -97,9 +97,11 @@ non-goals:
 - no endpoint behavior changes.
 - no visibility predicate rewrites.
 
-## pr-02: canonical visibility predicates + auth base refactor
+## pr-02: canonical visibility predicates + auth base refactor ✅
 
 goal: land the internal auth kernel for s4 visibility so later prs can switch public read contracts without duplicated auth logic.
+
+status: **implemented**. s4 provenance predicates, helper split, intrinsic write-through, and all acceptance tests pass (816 passed).
 
 dependencies: pr-01.
 
@@ -111,7 +113,6 @@ primary surfaces:
 - `python/nexus/services/upload.py`
 - `python/nexus/services/libraries.py`
 - `python/nexus/tasks/ingest_web_article.py`
-- shared predicate helpers (new service module if needed)
 
 acceptance:
 - `can_read_media` implements s4 provenance rules (non-default membership, intrinsic, active closure edge).

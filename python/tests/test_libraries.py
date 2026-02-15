@@ -851,6 +851,93 @@ class TestDefaultLibraryClosure:
             )
             assert result.fetchone() is not None
 
+    def test_add_media_to_default_library_creates_intrinsic(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Adding media to default library creates intrinsic provenance row."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # Get default library
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        default_library_id = me_resp.json()["data"]["default_library_id"]
+
+        # Add media to default library
+        resp = auth_client.post(
+            f"/libraries/{default_library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 201
+
+        # Verify intrinsic row exists
+        with direct_db.session() as session:
+            result = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_intrinsics
+                    WHERE default_library_id = :dl AND media_id = :m
+                """),
+                {"dl": default_library_id, "m": media_id},
+            )
+            assert result.fetchone() is not None
+
+    def test_remove_media_from_default_library_removes_intrinsic(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Removing media from default library removes intrinsic provenance row."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        default_library_id = me_resp.json()["data"]["default_library_id"]
+
+        # Add media to default library (creates intrinsic)
+        auth_client.post(
+            f"/libraries/{default_library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        # Verify intrinsic row exists
+        with direct_db.session() as session:
+            result = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_intrinsics
+                    WHERE default_library_id = :dl AND media_id = :m
+                """),
+                {"dl": default_library_id, "m": media_id},
+            )
+            assert result.fetchone() is not None
+
+        # Remove from default library
+        auth_client.delete(
+            f"/libraries/{default_library_id}/media/{media_id}",
+            headers=auth_headers(user_id),
+        )
+
+        # Verify intrinsic row removed
+        with direct_db.session() as session:
+            result = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_intrinsics
+                    WHERE default_library_id = :dl AND media_id = :m
+                """),
+                {"dl": default_library_id, "m": media_id},
+            )
+            assert result.fetchone() is None
+
 
 # =============================================================================
 # Visibility Tests
