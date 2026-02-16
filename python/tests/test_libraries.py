@@ -2360,9 +2360,7 @@ class TestLibraryInviteCreateList:
                 headers=auth_headers(owner_id),
             )
 
-        response = auth_client.get(
-            "/libraries/invites", headers=auth_headers(invitee_id)
-        )
+        response = auth_client.get("/libraries/invites", headers=auth_headers(invitee_id))
         assert response.status_code == 200
         data = response.json()["data"]
         assert len(data) == 2
@@ -2389,13 +2387,9 @@ class TestLibraryInviteCreateList:
         )
 
         # Accept it
-        inv_resp = auth_client.get(
-            "/libraries/invites", headers=auth_headers(invitee_id)
-        )
+        inv_resp = auth_client.get("/libraries/invites", headers=auth_headers(invitee_id))
         invite_id = inv_resp.json()["data"][0]["id"]
-        auth_client.post(
-            f"/libraries/invites/{invite_id}/accept", headers=auth_headers(invitee_id)
-        )
+        auth_client.post(f"/libraries/invites/{invite_id}/accept", headers=auth_headers(invitee_id))
 
         # Pending should be empty
         response = auth_client.get(
@@ -2945,9 +2939,7 @@ class TestLibraryInviteRevoke:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_INVITE_NOT_FOUND"
 
-    def test_revoke_invite_non_admin_forbidden(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
+    def test_revoke_invite_non_admin_forbidden(self, auth_client, direct_db: DirectSessionManager):
         """Non-admin member trying to revoke gets 403."""
         owner_id = create_test_user_id()
         member_id = create_test_user_id()

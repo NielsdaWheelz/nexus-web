@@ -43,16 +43,16 @@ router = APIRouter()
 def list_viewer_invites(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    status: Annotated[LibraryInvitationStatusValue, Query(description="Filter by invite status")] = "pending",
+    status: Annotated[
+        LibraryInvitationStatusValue, Query(description="Filter by invite status")
+    ] = "pending",
     limit: Annotated[int, Query(ge=1, description="Maximum results (clamped to 200)")] = 100,
 ) -> dict:
     """List invitations addressed to the current viewer.
 
     Returns invites where invitee_user_id = viewer, ordered by created_at DESC.
     """
-    result = libraries_service.list_viewer_invites(
-        db, viewer.user_id, status=status, limit=limit
-    )
+    result = libraries_service.list_viewer_invites(db, viewer.user_id, status=status, limit=limit)
     return success_response([inv.model_dump(mode="json") for inv in result])
 
 
@@ -200,7 +200,9 @@ def list_library_invites(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    status: Annotated[LibraryInvitationStatusValue, Query(description="Filter by invite status")] = "pending",
+    status: Annotated[
+        LibraryInvitationStatusValue, Query(description="Filter by invite status")
+    ] = "pending",
     limit: Annotated[int, Query(ge=1, description="Maximum results (clamped to 200)")] = 100,
 ) -> dict:
     """List invitations for a library.

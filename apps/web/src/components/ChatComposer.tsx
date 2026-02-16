@@ -188,6 +188,8 @@ export default function ChatComposer({
     selectedModelId,
     attachedContexts,
     streamingEnabled,
+    sendNonStreaming,
+    sendStreaming,
     onMessageSent,
   ]);
 

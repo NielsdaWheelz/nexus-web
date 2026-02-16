@@ -1058,9 +1058,7 @@ def create_library_invite(
             {"lid": library_id, "uid": invitee_user_id},
         ).fetchone()
         if member_exists is not None:
-            raise ConflictError(
-                ApiErrorCode.E_INVITE_MEMBER_EXISTS, "User is already a member"
-            )
+            raise ConflictError(ApiErrorCode.E_INVITE_MEMBER_EXISTS, "User is already a member")
 
         # Check existing pending invite
         pending_exists = db.execute(
@@ -1234,9 +1232,7 @@ def accept_library_invite(
 
         # Step 3: Non-pending is conflict
         if current_status != "pending":
-            raise ConflictError(
-                ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending"
-            )
+            raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
 
         # Step 4: Defensive guard — target library must be non-default
         lib_check = db.execute(
@@ -1323,9 +1319,7 @@ def accept_library_invite(
 
     # Step 9: Post-commit best-effort enqueue (non-fatal)
     if default_lib is not None:
-        _enqueue_default_library_backfill_job(
-            default_lib[0], invite_library_id, viewer_id
-        )
+        _enqueue_default_library_backfill_job(default_lib[0], invite_library_id, viewer_id)
 
     return AcceptLibraryInviteResponse(
         invite=invite_out,
@@ -1375,9 +1369,7 @@ def decline_library_invite(
             )
 
         if current_status != "pending":
-            raise ConflictError(
-                ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending"
-            )
+            raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
 
         now = datetime.now(UTC)
         db.execute(
@@ -1462,9 +1454,7 @@ def revoke_library_invite(
             return
 
         if current_status != "pending":
-            raise ConflictError(
-                ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending"
-            )
+            raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
 
         now = datetime.now(UTC)
         db.execute(

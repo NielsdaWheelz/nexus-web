@@ -148,7 +148,9 @@ class CreateLibraryInviteRequest(BaseModel):
     """Request body for creating a library invitation."""
 
     invitee_user_id: UUID = Field(..., description="User ID of the invitee")
-    role: LibraryRole = Field(..., description="Role to assign to the invitee ('admin' or 'member')")
+    role: LibraryRole = Field(
+        ..., description="Role to assign to the invitee ('admin' or 'member')"
+    )
 
 
 class InviteAcceptMembershipOut(BaseModel):
