@@ -230,17 +230,29 @@ acceptance:
 - all remaining closure-edge/backfill writer touchpoints are updated together (no mixed old/new closure behavior).
 - builds on pr-02 intrinsic write-through baseline; does not regress pr-02 rollout safety.
 - membership accept/remove and library media add/remove enforce intrinsic/closure/gc rules from spec.
-- backfill worker task implements idempotent materialization and state transitions.
-- automatic retries follow fixed delay schedule exactly.
+- backfill worker task implements idempotent materialization and state transitions with:
+  - atomic single-statement claim (`pending -> running`)
+  - status-guarded completion/failure updates (`WHERE status='running'`)
+- worker enforces tuple integrity and strict-revocation lock protocol:
+  - `(default_library_id, source_library_id, user_id)` must be structurally valid
+  - membership lock/read gates closure materialization to prevent revoke race reintroduction
+- automatic retries follow fixed delay schedule exactly with delay index semantics `delay[attempts-1]` after increment.
+- queue topology remains `ingest` for s4 mvp, with explicit backlog guardrails:
+  - degraded if pending age p95 > 900s for 15m, or pending count > 500 for 15m.
 - internal operator endpoint implemented:
   - `POST /internal/libraries/backfill-jobs/requeue`
 - requeue endpoint semantics are explicit:
-  - `running` job -> `200` idempotent no-op
+  - `running` job -> `200` idempotent no-op (`idempotent=true`, `enqueue_dispatched=false`)
   - `pending|failed|completed` -> `pending` + attempts reset + re-enqueue attempt
+- requeue response exposes operator state fields:
+  - `status`, `attempts`, `last_error_code`, `updated_at`, `finished_at`, `idempotent`, `enqueue_dispatched`
 - internal endpoint requires normal internal-header auth path; no public bff proxy route added.
 - tests cover:
   - writer-path consistency (`test_libraries.py`, `test_upload.py`, `test_from_url.py`, `test_ingest_web_article.py`)
-  - backfill state machine/requeue behavior (new dedicated test module)
+  - backfill state machine/requeue behavior (new dedicated test module), including:
+    - tuple-integrity failures
+    - enqueue-failure-after-state-commit behavior
+    - no-public-bff-proxy assertion for internal requeue route
 
 non-goals:
 - no frontend/ux operator tooling.

@@ -833,10 +833,11 @@ request:
 behavior:
 1. lock target job row.
 2. if row missing, return `404 E_NOT_FOUND`.
-3. if current status is `running`, return `200` idempotent no-op with current status.
+3. if current status is `running`, return `200` idempotent no-op with current job state and `enqueue_dispatched=false`.
 4. otherwise transition `pending|failed|completed -> pending`.
 5. reset `attempts=0`, clear `last_error_code`, clear `finished_at`, update `updated_at`.
-6. commit and enqueue worker task (enqueue failure does not roll back committed state).
+6. commit and enqueue worker task.
+7. enqueue failure does not roll back committed state; response still returns `200` with `enqueue_dispatched=false`.
 
 response `200`:
 ```json
@@ -845,10 +846,21 @@ response `200`:
     "default_library_id": "uuid",
     "source_library_id": "uuid",
     "user_id": "uuid",
-    "status": "pending"
+    "status": "pending",
+    "attempts": 0,
+    "last_error_code": null,
+    "updated_at": "timestamp",
+    "finished_at": null,
+    "idempotent": false,
+    "enqueue_dispatched": true
   }
 }
 ```
+
+running no-op response uses the same shape with:
+- `status = "running"`
+- `idempotent = true`
+- `enqueue_dispatched = false`
 
 ---
 
@@ -890,6 +902,7 @@ on invite accept:
 on membership revoke/remove:
 - delete closure edges for `(d(user), *, source_library_id)`.
 - gc default materialized rows where neither intrinsic nor remaining closure edge exists.
+- delete matching durable backfill job row `(d(user), source_library_id, user_id)` if present.
 
 ### 7.3 gc rule (normative)
 
@@ -904,16 +917,28 @@ task name:
 - `backfill_default_library_closure_job(default_library_id, source_library_id, user_id, request_id=None)`
 
 worker behavior:
-1. claim pending job row (`pending -> running`).
-2. insert missing closure edges for all media currently in source library.
-3. insert corresponding default `library_media` rows.
-4. set job `completed` with `finished_at`.
-5. on failure set `failed`, increment `attempts`, set `last_error_code`.
+1. claim pending job row using a single atomic transition:
+   - `UPDATE ... SET status='running' ... WHERE status='pending' RETURNING ...`.
+   - if no row is returned, task is idempotent no-op.
+2. validate tuple invariants for claimed `(default_library_id, source_library_id, user_id)`:
+   - row exists in `default_library_backfill_jobs`,
+   - `default_library_id` is a default library owned by `user_id`,
+   - `source_library_id` is non-default.
+   - invalid tuple is terminal failed (no closure/materialization writes).
+3. lock membership row for `(source_library_id, user_id)` before materialization:
+   - if membership is absent, do zero inserts and mark job `completed`.
+4. insert missing closure edges for all media currently in source library.
+5. insert corresponding default `library_media` rows.
+6. set job `completed` with `finished_at`, guarded by `WHERE status='running'`.
+7. on failure set `failed`, increment `attempts`, set `last_error_code`, guarded by `WHERE status='running'`.
 
 retry policy:
 - automatic retries use fixed delays: `1m, 5m, 15m, 1h, 6h`.
-- after 5 failed attempts, job remains `failed` until explicit requeue.
-- explicit requeue transitions `failed -> pending` and resets attempt counter.
+- after each failure, increment `attempts` first, then select delay index `attempts-1`.
+- if `attempts < 5`, transition `failed -> pending`, clear `finished_at`, enqueue with countdown from fixed schedule.
+- if `attempts >= 5`, job remains `failed` until explicit requeue.
+- explicit requeue transitions `pending|failed|completed -> pending` and resets attempt counter.
+- enqueue failure after state commit is non-fatal (state remains committed and recoverable via requeue).
 
 idempotency:
 - all inserts use `ON CONFLICT DO NOTHING`.
@@ -1202,4 +1227,8 @@ then:
 - conversation read authorization must be centralized so `/conversations*`, `/search scope=conversation:*`, and `/search scope=library:*` use identical base visibility logic with scope-specific filters layered on top.
 - by end of slice, old owner-only visibility helpers that conflict with s4 shared-read semantics must be removed or rewritten; duplicate auth paths are not allowed.
 - backfill recovery uses explicit operator requeue flow, not ad-hoc database edits.
+- backfill tasks are routed to queue `ingest` in s4 mvp.
+- backlog guardrail for s4 mvp: treat `pending` backlog as degraded if either condition holds for 15 minutes:
+  - pending age p95 > 900 seconds, or
+  - pending job count > 500.
 - preserve existing public pagination contracts for conversation/message lists unless explicitly changed in this spec.
