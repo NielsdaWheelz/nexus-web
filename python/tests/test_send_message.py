@@ -1346,3 +1346,91 @@ class TestSendMessageValidation:
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_CONVERSATION_NOT_FOUND"
+
+
+# =============================================================================
+# S4 PR-06: Send message response includes owner fields
+# =============================================================================
+
+
+class TestSendMessageOwnerFields:
+    """Tests that send-message response includes owner_user_id and is_owner."""
+
+    def test_send_message_new_conversation_includes_owner_fields(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        mock_llm_response,
+    ):
+        """POST /conversations/messages response includes owner fields."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+
+        with (
+            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
+            patch("nexus.services.send_message.generate") as mock_generate,
+        ):
+            mock_resolve.return_value = ResolvedKey(
+                api_key="test-key", mode="platform", provider="openai"
+            )
+            mock_generate.return_value = mock_llm_response
+
+            response = auth_client.post(
+                "/conversations/messages",
+                headers=auth_headers(user_id),
+                json={"content": "Hello", "model_id": str(model_id)},
+            )
+
+        assert response.status_code == 200
+        conv_data = response.json()["data"]["conversation"]
+        assert conv_data["owner_user_id"] == str(user_id)
+        assert conv_data["is_owner"] is True
+
+        direct_db.register_cleanup("messages", "conversation_id", conv_data["id"])
+        direct_db.register_cleanup("conversations", "id", conv_data["id"])
+
+    def test_send_message_existing_conversation_includes_owner_fields(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        mock_llm_response,
+    ):
+        """POST /conversations/{id}/messages response includes owner fields."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            create_test_message(session, conversation_id, seq=1, content="First")
+            create_test_message(
+                session, conversation_id, seq=2, role="assistant", content="Response"
+            )
+
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        with (
+            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
+            patch("nexus.services.send_message.generate") as mock_generate,
+        ):
+            mock_resolve.return_value = ResolvedKey(
+                api_key="test-key", mode="platform", provider="openai"
+            )
+            mock_generate.return_value = mock_llm_response
+
+            response = auth_client.post(
+                f"/conversations/{conversation_id}/messages",
+                headers=auth_headers(user_id),
+                json={"content": "Follow up", "model_id": str(model_id)},
+            )
+
+        assert response.status_code == 200
+        conv_data = response.json()["data"]["conversation"]
+        assert conv_data["owner_user_id"] == str(user_id)
+        assert conv_data["is_owner"] is True

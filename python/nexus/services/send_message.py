@@ -746,7 +746,7 @@ def send_message(
             message_count = get_message_count(db, conversation.id)
 
             return SendMessageResponse(
-                conversation=conversation_to_out(conversation, message_count),
+                conversation=conversation_to_out(conversation, message_count, viewer_id=viewer_id),
                 user_message=message_to_out(user_message),
                 assistant_message=message_to_out(assistant_message),
             )
@@ -845,7 +845,9 @@ def send_message(
             message_count = get_message_count(db, prepare_result.conversation.id)
 
             return SendMessageResponse(
-                conversation=conversation_to_out(prepare_result.conversation, message_count),
+                conversation=conversation_to_out(
+                    prepare_result.conversation, message_count, viewer_id=viewer_id
+                ),
                 user_message=message_to_out(prepare_result.user_message),
                 assistant_message=message_to_out(prepare_result.assistant_message),
             )

@@ -704,3 +704,422 @@ class TestVisibility:
 
         assert response.status_code == 200
         assert response.json()["data"]["message_count"] == 3
+
+
+# =============================================================================
+# S4 PR-06: ConversationOut owner fields
+# =============================================================================
+
+
+class TestConversationOutOwnerFields:
+    """Tests that ConversationOut includes owner_user_id and is_owner."""
+
+    def test_get_conversation_response_includes_owner_fields(self, auth_client):
+        """GET /conversations/{id} includes owner_user_id and is_owner."""
+        user_id = create_test_user_id()
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = create_resp.json()["data"]["id"]
+
+        response = auth_client.get(
+            f"/conversations/{conversation_id}", headers=auth_headers(user_id)
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["owner_user_id"] == str(user_id)
+        assert data["is_owner"] is True
+
+    def test_list_conversations_response_includes_owner_fields(self, auth_client):
+        """GET /conversations includes owner_user_id and is_owner in each item."""
+        user_id = create_test_user_id()
+        auth_client.post("/conversations", headers=auth_headers(user_id))
+
+        response = auth_client.get("/conversations", headers=auth_headers(user_id))
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) >= 1
+        assert data[0]["owner_user_id"] == str(user_id)
+        assert data[0]["is_owner"] is True
+
+    def test_create_conversation_response_includes_owner_fields(self, auth_client):
+        """POST /conversations includes owner_user_id and is_owner."""
+        user_id = create_test_user_id()
+        response = auth_client.post("/conversations", headers=auth_headers(user_id))
+        assert response.status_code == 201
+        data = response.json()["data"]
+        assert data["owner_user_id"] == str(user_id)
+        assert data["is_owner"] is True
+
+
+# =============================================================================
+# S4 PR-06: Conversation Scope Tests
+# =============================================================================
+
+
+def create_shared_library(session: Session, owner_user_id: UUID) -> UUID:
+    """Create a non-default library with owner as admin member."""
+    lib_id = uuid4()
+    session.execute(
+        text("""
+            INSERT INTO libraries (id, owner_user_id, name, is_default)
+            VALUES (:id, :owner_user_id, 'Shared Lib', false)
+        """),
+        {"id": lib_id, "owner_user_id": owner_user_id},
+    )
+    session.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:library_id, :user_id, 'admin')
+        """),
+        {"library_id": lib_id, "user_id": owner_user_id},
+    )
+    session.commit()
+    return lib_id
+
+
+def add_member_to_library(session: Session, library_id: UUID, user_id: UUID) -> None:
+    """Add a user as member of a library."""
+    session.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:library_id, :user_id, 'member')
+            ON CONFLICT DO NOTHING
+        """),
+        {"library_id": library_id, "user_id": user_id},
+    )
+    session.commit()
+
+
+def share_conversation_to_library(
+    session: Session, conversation_id: UUID, library_id: UUID
+) -> None:
+    """Share a conversation to a library and set sharing='library'."""
+    session.execute(
+        text("""
+            INSERT INTO conversation_shares (conversation_id, library_id)
+            VALUES (:conversation_id, :library_id)
+            ON CONFLICT DO NOTHING
+        """),
+        {"conversation_id": conversation_id, "library_id": library_id},
+    )
+    session.execute(
+        text("""
+            UPDATE conversations SET sharing = 'library' WHERE id = :id
+        """),
+        {"id": conversation_id},
+    )
+    session.commit()
+
+
+def make_conversation_public(session: Session, conversation_id: UUID) -> None:
+    """Set a conversation to public sharing."""
+    session.execute(
+        text("UPDATE conversations SET sharing = 'public' WHERE id = :id"),
+        {"id": conversation_id},
+    )
+    session.commit()
+
+
+class TestListConversationsScope:
+    """Tests for GET /conversations scope parameter."""
+
+    def test_list_conversations_default_scope_is_mine(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Default scope returns only owned conversations, not shared ones."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            # A creates a conversation and shares it with B via a library
+            lib_id = create_shared_library(session, user_a)
+            add_member_to_library(session, lib_id, user_b)
+            conv_a = create_test_conversation(session, user_a)
+            share_conversation_to_library(session, conv_a, lib_id)
+
+            # B creates their own conversation
+            conv_b = create_test_conversation(session, user_b)
+
+        direct_db.register_cleanup("conversation_shares", "conversation_id", conv_a)
+        direct_db.register_cleanup("conversations", "id", conv_a)
+        direct_db.register_cleanup("conversations", "id", conv_b)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+
+        # B lists with no scope (defaults to mine) - should only see conv_b
+        response = auth_client.get("/conversations", headers=auth_headers(user_b))
+        assert response.status_code == 200
+        ids = [c["id"] for c in response.json()["data"]]
+        assert str(conv_b) in ids
+        assert str(conv_a) not in ids
+
+    def test_list_conversations_invalid_scope_returns_400_e_invalid_request_not_422(
+        self, auth_client
+    ):
+        """Invalid scope values return 400 E_INVALID_REQUEST, never 422."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        for invalid_scope in ["ALL", "invalid", "Mine", "SHARED", ""]:
+            response = auth_client.get(
+                f"/conversations?scope={invalid_scope}", headers=auth_headers(user_id)
+            )
+            assert response.status_code == 400, f"scope={invalid_scope} got {response.status_code}"
+            assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_list_conversations_scope_all_includes_visible_non_owned(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """scope=all returns owned + shared + public conversations."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library(session, user_a)
+            add_member_to_library(session, lib_id, user_b)
+
+            conv_owned = create_test_conversation(session, user_b)
+            conv_shared = create_test_conversation(session, user_a)
+            share_conversation_to_library(session, conv_shared, lib_id)
+            conv_public = create_test_conversation(session, user_a)
+            make_conversation_public(session, conv_public)
+
+        direct_db.register_cleanup("conversation_shares", "conversation_id", conv_shared)
+        direct_db.register_cleanup("conversations", "id", conv_owned)
+        direct_db.register_cleanup("conversations", "id", conv_shared)
+        direct_db.register_cleanup("conversations", "id", conv_public)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+
+        response = auth_client.get("/conversations?scope=all", headers=auth_headers(user_b))
+        assert response.status_code == 200
+        ids = {c["id"] for c in response.json()["data"]}
+        assert str(conv_owned) in ids
+        assert str(conv_shared) in ids
+        assert str(conv_public) in ids
+
+    def test_list_conversations_scope_shared_returns_visible_non_owned_only(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """scope=shared returns only visible non-owned conversations."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library(session, user_a)
+            add_member_to_library(session, lib_id, user_b)
+
+            conv_owned = create_test_conversation(session, user_b)
+            conv_shared = create_test_conversation(session, user_a)
+            share_conversation_to_library(session, conv_shared, lib_id)
+
+        direct_db.register_cleanup("conversation_shares", "conversation_id", conv_shared)
+        direct_db.register_cleanup("conversations", "id", conv_owned)
+        direct_db.register_cleanup("conversations", "id", conv_shared)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+
+        response = auth_client.get("/conversations?scope=shared", headers=auth_headers(user_b))
+        assert response.status_code == 200
+        ids = {c["id"] for c in response.json()["data"]}
+        assert str(conv_shared) in ids
+        assert str(conv_owned) not in ids
+
+    def test_get_conversation_shared_reader_succeeds(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Shared reader can GET a conversation they don't own."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library(session, user_a)
+            add_member_to_library(session, lib_id, user_b)
+            conv_id = create_test_conversation(session, user_a)
+            share_conversation_to_library(session, conv_id, lib_id)
+
+        direct_db.register_cleanup("conversation_shares", "conversation_id", conv_id)
+        direct_db.register_cleanup("conversations", "id", conv_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+
+        response = auth_client.get(f"/conversations/{conv_id}", headers=auth_headers(user_b))
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["owner_user_id"] == str(user_a)
+        assert data["is_owner"] is False
+
+    def test_list_messages_shared_reader_succeeds(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Shared reader can list messages of a shared conversation."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library(session, user_a)
+            add_member_to_library(session, lib_id, user_b)
+            conv_id = create_test_conversation(session, user_a)
+            create_test_message(session, conv_id, seq=1, content="Hello")
+            share_conversation_to_library(session, conv_id, lib_id)
+
+        direct_db.register_cleanup("messages", "conversation_id", conv_id)
+        direct_db.register_cleanup("conversation_shares", "conversation_id", conv_id)
+        direct_db.register_cleanup("conversations", "id", conv_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+
+        response = auth_client.get(
+            f"/conversations/{conv_id}/messages", headers=auth_headers(user_b)
+        )
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 1
+
+    def test_delete_conversation_shared_reader_still_masked_404(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Shared reader cannot delete conversation (masked 404)."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library(session, user_a)
+            add_member_to_library(session, lib_id, user_b)
+            conv_id = create_test_conversation(session, user_a)
+            share_conversation_to_library(session, conv_id, lib_id)
+
+        direct_db.register_cleanup("conversation_shares", "conversation_id", conv_id)
+        direct_db.register_cleanup("conversations", "id", conv_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+
+        response = auth_client.delete(f"/conversations/{conv_id}", headers=auth_headers(user_b))
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_CONVERSATION_NOT_FOUND"
+
+    def test_delete_message_shared_reader_still_masked_404(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Shared reader cannot delete a message (masked 404)."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library(session, user_a)
+            add_member_to_library(session, lib_id, user_b)
+            conv_id = create_test_conversation(session, user_a)
+            msg_id = create_test_message(session, conv_id, seq=1)
+            share_conversation_to_library(session, conv_id, lib_id)
+
+        direct_db.register_cleanup("messages", "conversation_id", conv_id)
+        direct_db.register_cleanup("conversation_shares", "conversation_id", conv_id)
+        direct_db.register_cleanup("conversations", "id", conv_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+
+        response = auth_client.delete(f"/messages/{msg_id}", headers=auth_headers(user_b))
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_MESSAGE_NOT_FOUND"
+
+    # NOTE: test_send_message_existing_conversation_non_owner_still_masked_404
+    # is covered by test_send_message.py::TestSendMessageValidation::test_conversation_not_owned_returns_404
+    # (requires lifespan-aware TestClient for llm_router setup)
+
+    def test_list_conversations_scope_all_cursor_is_stable_across_mixed_visibility(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Paginated scope=all traversal has no duplicates/skips."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library(session, user_a)
+            add_member_to_library(session, lib_id, user_b)
+
+            conv_ids = []
+            # Create 5 conversations: 3 owned by B, 2 shared from A
+            for _ in range(3):
+                conv_ids.append(create_test_conversation(session, user_b))
+            for _ in range(2):
+                cid = create_test_conversation(session, user_a)
+                share_conversation_to_library(session, cid, lib_id)
+                conv_ids.append(cid)
+
+        for cid in conv_ids:
+            direct_db.register_cleanup("conversation_shares", "conversation_id", cid)
+            direct_db.register_cleanup("conversations", "id", cid)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+
+        all_ids = []
+        cursor = None
+        for _ in range(10):  # safety bound
+            url = "/conversations?scope=all&limit=2"
+            if cursor:
+                url += f"&cursor={cursor}"
+            response = auth_client.get(url, headers=auth_headers(user_b))
+            assert response.status_code == 200
+            page_data = response.json()
+            all_ids.extend(c["id"] for c in page_data["data"])
+            cursor = page_data["page"]["next_cursor"]
+            if not cursor:
+                break
+
+        assert len(all_ids) == len(set(all_ids)), "Duplicate IDs in paginated traversal"
+        assert len(all_ids) == 5
+
+    def test_list_conversations_scope_all_matches_visibility_matrix(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """scope=all includes only allowed rows and excludes revoked paths."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        user_c = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+        auth_client.get("/me", headers=auth_headers(user_c))
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library(session, user_a)
+            add_member_to_library(session, lib_id, user_b)
+
+            # Visible: B owns
+            conv_owned = create_test_conversation(session, user_b)
+            # Visible: shared to B via library
+            conv_shared = create_test_conversation(session, user_a)
+            share_conversation_to_library(session, conv_shared, lib_id)
+            # Visible: public
+            conv_public = create_test_conversation(session, user_c)
+            make_conversation_public(session, conv_public)
+            # NOT visible: private conversation owned by C
+            conv_private_c = create_test_conversation(session, user_c)
+
+        direct_db.register_cleanup("conversation_shares", "conversation_id", conv_shared)
+        for cid in [conv_owned, conv_shared, conv_public, conv_private_c]:
+            direct_db.register_cleanup("conversations", "id", cid)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+
+        response = auth_client.get("/conversations?scope=all", headers=auth_headers(user_b))
+        assert response.status_code == 200
+        ids = {c["id"] for c in response.json()["data"]}
+
+        assert str(conv_owned) in ids
+        assert str(conv_shared) in ids
+        assert str(conv_public) in ids
+        assert str(conv_private_c) not in ids
