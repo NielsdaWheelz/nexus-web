@@ -31,6 +31,11 @@ __all__ = [
     "LibraryInvitationStatusValue",
     "LibraryMemberOut",
     "LibraryInvitationOut",
+    # S4 PR-04 invite request/response schemas
+    "CreateLibraryInviteRequest",
+    "InviteAcceptMembershipOut",
+    "AcceptLibraryInviteResponse",
+    "DeclineLibraryInviteResponse",
 ]
 
 # =============================================================================
@@ -130,5 +135,47 @@ class LibraryInvitationOut(BaseModel):
     status: LibraryInvitationStatusValue
     created_at: datetime
     responded_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# =============================================================================
+# S4 PR-04 Invite Request/Response Schemas
+# =============================================================================
+
+
+class CreateLibraryInviteRequest(BaseModel):
+    """Request body for creating a library invitation."""
+
+    invitee_user_id: UUID = Field(..., description="User ID of the invitee")
+    role: LibraryRole = Field(..., description="Role to assign to the invitee ('admin' or 'member')")
+
+
+class InviteAcceptMembershipOut(BaseModel):
+    """Membership info returned after accepting an invite."""
+
+    library_id: UUID
+    user_id: UUID
+    role: LibraryRole
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AcceptLibraryInviteResponse(BaseModel):
+    """Response for accepting a library invitation."""
+
+    invite: LibraryInvitationOut
+    membership: InviteAcceptMembershipOut
+    idempotent: bool
+    backfill_job_status: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DeclineLibraryInviteResponse(BaseModel):
+    """Response for declining a library invitation."""
+
+    invite: LibraryInvitationOut
+    idempotent: bool
 
     model_config = ConfigDict(from_attributes=True)

@@ -2044,6 +2044,942 @@ class TestVisibility:
 # =============================================================================
 
 
+# =============================================================================
+# S4 PR-04: Invitation Lifecycle Tests
+# =============================================================================
+
+
+class TestLibraryInviteCreateList:
+    """Tests for POST /libraries/{library_id}/invites and GET invite list endpoints."""
+
+    def test_create_invite_success_returns_201(self, auth_client, direct_db: DirectSessionManager):
+        """Admin creates invite for existing non-member user; returns 201."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        # Bootstrap invitee
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        response = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+
+        assert response.status_code == 201
+        data = response.json()["data"]
+        assert data["status"] == "pending"
+        assert data["invitee_user_id"] == str(invitee_id)
+        assert data["inviter_user_id"] == str(owner_id)
+        assert data["library_id"] == library_id
+        assert data["role"] == "member"
+        assert data["responded_at"] is None
+
+    def test_create_invite_non_admin_forbidden(self, auth_client, direct_db: DirectSessionManager):
+        """Non-admin member cannot create invites."""
+        owner_id = create_test_user_id()
+        member_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        auth_client.get("/me", headers=auth_headers(member_id))
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:lid, :uid, 'member') ON CONFLICT DO NOTHING
+                """),
+                {"lid": library_id, "uid": member_id},
+            )
+            session.commit()
+
+        response = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            headers=auth_headers(member_id),
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "E_FORBIDDEN"
+
+    def test_create_invite_non_member_masked_not_found(self, auth_client):
+        """Non-member gets masked 404 when trying to invite."""
+        owner_id = create_test_user_id()
+        outsider_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        auth_client.get("/me", headers=auth_headers(outsider_id))
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        response = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            headers=auth_headers(outsider_id),
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
+
+    def test_create_invite_default_library_forbidden(self, auth_client):
+        """Cannot invite to default library."""
+        user_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        default_library_id = me_resp.json()["data"]["default_library_id"]
+
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        response = auth_client.post(
+            f"/libraries/{default_library_id}/invites",
+            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "E_DEFAULT_LIBRARY_FORBIDDEN"
+
+    def test_create_invite_user_not_found(self, auth_client):
+        """Invite for non-existent user returns 404 E_USER_NOT_FOUND."""
+        owner_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        response = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(uuid4()), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_USER_NOT_FOUND"
+
+    def test_create_invite_member_exists_conflict(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Inviting existing member returns 409 E_INVITE_MEMBER_EXISTS."""
+        owner_id = create_test_user_id()
+        member_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        auth_client.get("/me", headers=auth_headers(member_id))
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:lid, :uid, 'member') ON CONFLICT DO NOTHING
+                """),
+                {"lid": library_id, "uid": member_id},
+            )
+            session.commit()
+
+        response = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(member_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "E_INVITE_MEMBER_EXISTS"
+
+    def test_create_invite_self_conflicts_as_member_exists(self, auth_client):
+        """Self-invite is caught by membership check (owner is a member)."""
+        owner_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        response = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(owner_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "E_INVITE_MEMBER_EXISTS"
+
+    def test_create_invite_pending_duplicate_conflict(self, auth_client):
+        """Creating a second pending invite for the same invitee returns 409."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        # First invite
+        resp1 = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+        assert resp1.status_code == 201
+
+        # Second invite — duplicate
+        resp2 = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_id), "role": "admin"},
+            headers=auth_headers(owner_id),
+        )
+        assert resp2.status_code == 409
+        assert resp2.json()["error"]["code"] == "E_INVITE_ALREADY_EXISTS"
+
+    def test_list_library_invites_success_sorted_desc(self, auth_client):
+        """List library invites returns ordered by created_at DESC, id DESC."""
+        owner_id = create_test_user_id()
+        invitee_a = create_test_user_id()
+        invitee_b = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        auth_client.get("/me", headers=auth_headers(invitee_a))
+        auth_client.get("/me", headers=auth_headers(invitee_b))
+
+        auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_a), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+        auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_b), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+
+        response = auth_client.get(
+            f"/libraries/{library_id}/invites", headers=auth_headers(owner_id)
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) == 2
+        # DESC order: last created first
+        assert data[0]["created_at"] >= data[1]["created_at"]
+        for inv in data:
+            assert inv["library_id"] == library_id
+            assert inv["status"] == "pending"
+
+    def test_list_library_invites_status_filter_default_pending(self, auth_client):
+        """Default status filter is pending."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+
+        # Decline the invite
+        list_resp = auth_client.get(
+            f"/libraries/{library_id}/invites", headers=auth_headers(owner_id)
+        )
+        invite_id = list_resp.json()["data"][0]["id"]
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/decline", headers=auth_headers(invitee_id)
+        )
+
+        # Default list (pending) should be empty
+        response = auth_client.get(
+            f"/libraries/{library_id}/invites", headers=auth_headers(owner_id)
+        )
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 0
+
+        # Explicitly filter declined
+        response = auth_client.get(
+            f"/libraries/{library_id}/invites?status=declined",
+            headers=auth_headers(owner_id),
+        )
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 1
+
+    def test_list_library_invites_non_member_masked_not_found(self, auth_client):
+        """Non-member listing library invites gets masked 404."""
+        owner_id = create_test_user_id()
+        outsider_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(outsider_id))
+
+        response = auth_client.get(
+            f"/libraries/{library_id}/invites", headers=auth_headers(outsider_id)
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
+
+    def test_list_viewer_invites_success(self, auth_client):
+        """Viewer can list their own pending invites across libraries."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        # Create two libraries and invite the same user
+        for name in ("Lib A", "Lib B"):
+            create_resp = auth_client.post(
+                "/libraries", json={"name": name}, headers=auth_headers(owner_id)
+            )
+            lib_id = create_resp.json()["data"]["id"]
+            auth_client.post(
+                f"/libraries/{lib_id}/invites",
+                json={"invitee_user_id": str(invitee_id), "role": "member"},
+                headers=auth_headers(owner_id),
+            )
+
+        response = auth_client.get(
+            "/libraries/invites", headers=auth_headers(invitee_id)
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) == 2
+        for inv in data:
+            assert inv["invitee_user_id"] == str(invitee_id)
+            assert inv["status"] == "pending"
+
+    def test_list_viewer_invites_status_filter_and_order(self, auth_client):
+        """Viewer invite list respects status filter and order."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+
+        # Accept it
+        inv_resp = auth_client.get(
+            "/libraries/invites", headers=auth_headers(invitee_id)
+        )
+        invite_id = inv_resp.json()["data"][0]["id"]
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/accept", headers=auth_headers(invitee_id)
+        )
+
+        # Pending should be empty
+        response = auth_client.get(
+            "/libraries/invites?status=pending", headers=auth_headers(invitee_id)
+        )
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 0
+
+        # Accepted should have 1
+        response = auth_client.get(
+            "/libraries/invites?status=accepted", headers=auth_headers(invitee_id)
+        )
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 1
+
+
+class TestLibraryInviteAccept:
+    """Tests for POST /libraries/invites/{invite_id}/accept endpoint."""
+
+    def _create_invite(self, auth_client, owner_id, invitee_id, library_id):
+        """Helper to create a pending invite and return its ID."""
+        resp = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+        assert resp.status_code == 201
+        return resp.json()["data"]["id"]
+
+    def test_accept_invite_happy_path_returns_200(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Invitee accepts pending invite; returns 200 with correct shape."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        response = auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(invitee_id),
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["invite"]["status"] == "accepted"
+        assert data["invite"]["responded_at"] is not None
+        assert data["membership"]["library_id"] == library_id
+        assert data["membership"]["user_id"] == str(invitee_id)
+        assert data["membership"]["role"] == "member"
+        assert data["idempotent"] is False
+        assert data["backfill_job_status"] == "pending"
+
+    def test_accept_invite_transaction_creates_membership_updates_invite_and_upserts_backfill_job(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Accept atomically creates membership, updates invite, and upserts backfill job."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        # Create library with media
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(owner_id),
+        )
+
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        # Accept
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(invitee_id),
+        )
+
+        # Verify membership
+        with direct_db.session() as session:
+            result = session.execute(
+                text("""
+                    SELECT role FROM memberships
+                    WHERE library_id = :lid AND user_id = :uid
+                """),
+                {"lid": library_id, "uid": invitee_id},
+            )
+            row = result.fetchone()
+            assert row is not None
+            assert row[0] == "member"
+
+        # Verify invite status
+        with direct_db.session() as session:
+            result = session.execute(
+                text("""
+                    SELECT status, responded_at FROM library_invitations WHERE id = :iid
+                """),
+                {"iid": invite_id},
+            )
+            row = result.fetchone()
+            assert row[0] == "accepted"
+            assert row[1] is not None
+
+        # Verify backfill job row
+        with direct_db.session() as session:
+            # Get invitee default library
+            dl = session.execute(
+                text("""
+                    SELECT id FROM libraries
+                    WHERE owner_user_id = :uid AND is_default = true
+                """),
+                {"uid": invitee_id},
+            ).fetchone()
+            assert dl is not None
+
+            result = session.execute(
+                text("""
+                    SELECT status FROM default_library_backfill_jobs
+                    WHERE default_library_id = :dlid AND source_library_id = :slid
+                          AND user_id = :uid
+                """),
+                {"dlid": dl[0], "slid": library_id, "uid": invitee_id},
+            )
+            job_row = result.fetchone()
+            assert job_row is not None
+            assert job_row[0] == "pending"
+
+    def test_accept_invite_grants_immediate_media_access_before_backfill_worker(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Invitee can read source library media immediately after accept (no backfill needed)."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(owner_id),
+        )
+
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(invitee_id),
+        )
+
+        # Invitee can immediately list media in the source library
+        response = auth_client.get(
+            f"/libraries/{library_id}/media", headers=auth_headers(invitee_id)
+        )
+        assert response.status_code == 200
+        media_ids = [m["id"] for m in response.json()["data"]]
+        assert str(media_id) in media_ids
+
+    def test_accept_invite_idempotent_when_already_accepted(self, auth_client):
+        """Accept on already accepted invite returns 200 idempotent no-op."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        # Accept first time
+        resp1 = auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(invitee_id),
+        )
+        assert resp1.status_code == 200
+        assert resp1.json()["data"]["idempotent"] is False
+
+        # Accept second time — idempotent
+        resp2 = auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(invitee_id),
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["data"]["idempotent"] is True
+
+    def test_accept_invite_non_pending_returns_invite_not_pending(self, auth_client):
+        """Accept on declined/revoked invite returns 409 E_INVITE_NOT_PENDING."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        # Decline it
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/decline",
+            headers=auth_headers(invitee_id),
+        )
+
+        # Try to accept
+        response = auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(invitee_id),
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "E_INVITE_NOT_PENDING"
+
+    def test_accept_invite_masked_not_found_for_non_invitee(self, auth_client):
+        """Non-invitee calling accept gets masked 404."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+        other_user = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+        auth_client.get("/me", headers=auth_headers(other_user))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        response = auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(other_user),
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_INVITE_NOT_FOUND"
+
+    def test_accept_invite_default_library_forbidden_defense(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Defensive guard: invite targeting default library returns 403."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        me_resp = auth_client.get("/me", headers=auth_headers(owner_id))
+        default_library_id = me_resp.json()["data"]["default_library_id"]
+
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        # Insert invite row directly (bypassing create endpoint guard)
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO library_invitations
+                        (library_id, inviter_user_id, invitee_user_id, role, status)
+                    VALUES (:lid, :inviter, :invitee, 'member', 'pending')
+                """),
+                {"lid": default_library_id, "inviter": owner_id, "invitee": invitee_id},
+            )
+            session.commit()
+
+            inv = session.execute(
+                text("""
+                    SELECT id FROM library_invitations
+                    WHERE library_id = :lid AND invitee_user_id = :uid AND status = 'pending'
+                """),
+                {"lid": default_library_id, "uid": invitee_id},
+            ).fetchone()
+            invite_id = str(inv[0])
+
+        response = auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(invitee_id),
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "E_DEFAULT_LIBRARY_FORBIDDEN"
+
+    def test_accept_invite_membership_upsert_is_no_duplicate(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """If membership already exists before accept, no duplicate is created."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        # Pre-create membership directly
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:lid, :uid, 'member') ON CONFLICT DO NOTHING
+                """),
+                {"lid": library_id, "uid": invitee_id},
+            )
+            session.commit()
+
+        # Accept still succeeds
+        response = auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(invitee_id),
+        )
+        assert response.status_code == 200
+
+        # Verify cardinality = 1
+        with direct_db.session() as session:
+            result = session.execute(
+                text("""
+                    SELECT COUNT(*) FROM memberships
+                    WHERE library_id = :lid AND user_id = :uid
+                """),
+                {"lid": library_id, "uid": invitee_id},
+            )
+            assert result.scalar() == 1
+
+
+class TestLibraryInviteDecline:
+    """Tests for POST /libraries/invites/{invite_id}/decline endpoint."""
+
+    def _create_invite(self, auth_client, owner_id, invitee_id, library_id):
+        resp = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+        assert resp.status_code == 201
+        return resp.json()["data"]["id"]
+
+    def test_decline_invite_pending_to_declined(self, auth_client):
+        """Invitee declines pending invite; invite becomes declined."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        response = auth_client.post(
+            f"/libraries/invites/{invite_id}/decline",
+            headers=auth_headers(invitee_id),
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["invite"]["status"] == "declined"
+        assert data["invite"]["responded_at"] is not None
+        assert data["idempotent"] is False
+
+    def test_decline_invite_idempotent_when_already_declined(self, auth_client):
+        """Decline on already declined invite returns 200 idempotent."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        # Decline first time
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/decline",
+            headers=auth_headers(invitee_id),
+        )
+
+        # Decline second time
+        resp2 = auth_client.post(
+            f"/libraries/invites/{invite_id}/decline",
+            headers=auth_headers(invitee_id),
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["data"]["idempotent"] is True
+
+    def test_decline_invite_non_pending_returns_invite_not_pending(self, auth_client):
+        """Decline on accepted/revoked invite returns 409."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        # Accept first
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(invitee_id),
+        )
+
+        # Try to decline
+        response = auth_client.post(
+            f"/libraries/invites/{invite_id}/decline",
+            headers=auth_headers(invitee_id),
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "E_INVITE_NOT_PENDING"
+
+    def test_decline_invite_unknown_masked_not_found(self, auth_client):
+        """Decline unknown invite returns masked 404."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        response = auth_client.post(
+            f"/libraries/invites/{uuid4()}/decline",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_INVITE_NOT_FOUND"
+
+
+class TestLibraryInviteRevoke:
+    """Tests for DELETE /libraries/invites/{invite_id} endpoint."""
+
+    def _create_invite(self, auth_client, owner_id, invitee_id, library_id):
+        resp = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+        assert resp.status_code == 201
+        return resp.json()["data"]["id"]
+
+    def test_revoke_invite_pending_to_revoked(self, auth_client):
+        """Admin revokes pending invite; returns 204."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        response = auth_client.delete(
+            f"/libraries/invites/{invite_id}",
+            headers=auth_headers(owner_id),
+        )
+        assert response.status_code == 204
+
+    def test_revoke_invite_idempotent_when_already_revoked(self, auth_client):
+        """Revoke on already revoked invite returns 204."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        # Revoke first time
+        auth_client.delete(
+            f"/libraries/invites/{invite_id}",
+            headers=auth_headers(owner_id),
+        )
+
+        # Revoke second time
+        response = auth_client.delete(
+            f"/libraries/invites/{invite_id}",
+            headers=auth_headers(owner_id),
+        )
+        assert response.status_code == 204
+
+    def test_revoke_invite_non_pending_returns_invite_not_pending(self, auth_client):
+        """Revoke on accepted/declined invite returns 409."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        # Accept it
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(invitee_id),
+        )
+
+        # Try to revoke
+        response = auth_client.delete(
+            f"/libraries/invites/{invite_id}",
+            headers=auth_headers(owner_id),
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "E_INVITE_NOT_PENDING"
+
+    def test_revoke_invite_non_member_masked_not_found(self, auth_client):
+        """Non-member trying to revoke gets masked 404."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+        outsider_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+        auth_client.get("/me", headers=auth_headers(outsider_id))
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        response = auth_client.delete(
+            f"/libraries/invites/{invite_id}",
+            headers=auth_headers(outsider_id),
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_INVITE_NOT_FOUND"
+
+    def test_revoke_invite_non_admin_forbidden(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Non-admin member trying to revoke gets 403."""
+        owner_id = create_test_user_id()
+        member_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        auth_client.get("/me", headers=auth_headers(member_id))
+        auth_client.get("/me", headers=auth_headers(invitee_id))
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:lid, :uid, 'member') ON CONFLICT DO NOTHING
+                """),
+                {"lid": library_id, "uid": member_id},
+            )
+            session.commit()
+
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        response = auth_client.delete(
+            f"/libraries/invites/{invite_id}",
+            headers=auth_headers(member_id),
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "E_FORBIDDEN"
+
+
 class TestVisibilityClosureScenarios:
     """Tests for spec-defined visibility closure scenarios (V1-V6)."""
 

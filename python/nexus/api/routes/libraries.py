@@ -6,6 +6,9 @@ Routes are transport-only:
 - Return success(...) or raise ApiError
 
 No domain logic or raw DB access in routes.
+
+IMPORTANT: Static routes (/libraries/invites) must be registered BEFORE
+dynamic routes (/libraries/{library_id}) to prevent UUID path capture.
 """
 
 from typing import Annotated
@@ -19,7 +22,9 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.library import (
     AddMediaRequest,
+    CreateLibraryInviteRequest,
     CreateLibraryRequest,
+    LibraryInvitationStatusValue,
     TransferLibraryOwnershipRequest,
     UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
@@ -27,6 +32,76 @@ from nexus.schemas.library import (
 from nexus.services import libraries as libraries_service
 
 router = APIRouter()
+
+
+# =============================================================================
+# Static invite routes (MUST be before /libraries/{library_id} routes)
+# =============================================================================
+
+
+@router.get("/libraries/invites")
+def list_viewer_invites(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    status: Annotated[LibraryInvitationStatusValue, Query(description="Filter by invite status")] = "pending",
+    limit: Annotated[int, Query(ge=1, description="Maximum results (clamped to 200)")] = 100,
+) -> dict:
+    """List invitations addressed to the current viewer.
+
+    Returns invites where invitee_user_id = viewer, ordered by created_at DESC.
+    """
+    result = libraries_service.list_viewer_invites(
+        db, viewer.user_id, status=status, limit=limit
+    )
+    return success_response([inv.model_dump(mode="json") for inv in result])
+
+
+@router.post("/libraries/invites/{invite_id}/accept")
+def accept_library_invite(
+    invite_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Accept a library invitation.
+
+    Invitee-only. Transactionally creates membership and upserts backfill job.
+    Idempotent when already accepted.
+    """
+    result = libraries_service.accept_library_invite(db, viewer.user_id, invite_id)
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.post("/libraries/invites/{invite_id}/decline")
+def decline_library_invite(
+    invite_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Decline a library invitation.
+
+    Invitee-only. Idempotent when already declined.
+    """
+    result = libraries_service.decline_library_invite(db, viewer.user_id, invite_id)
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.delete("/libraries/invites/{invite_id}", status_code=204)
+def revoke_library_invite(
+    invite_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Revoke a pending library invitation.
+
+    Admin/owner of the invite's library only. Idempotent when already revoked.
+    """
+    libraries_service.revoke_library_invite(db, viewer.user_id, invite_id)
+    return Response(status_code=204)
+
+
+# =============================================================================
+# Standard library routes
+# =============================================================================
 
 
 @router.get("/libraries")
@@ -98,6 +173,44 @@ def delete_library(
     """
     libraries_service.delete_library(db, viewer.user_id, library_id)
     return Response(status_code=204)
+
+
+# ---- Library-scoped Invites ----
+
+
+@router.post("/libraries/{library_id}/invites", status_code=201)
+def create_library_invite(
+    library_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    body: CreateLibraryInviteRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Create an invitation to a library.
+
+    Admin/owner only. Invitee must exist. Default library targets forbidden.
+    """
+    result = libraries_service.create_library_invite(
+        db, viewer.user_id, library_id, body.invitee_user_id, body.role
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.get("/libraries/{library_id}/invites")
+def list_library_invites(
+    library_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    status: Annotated[LibraryInvitationStatusValue, Query(description="Filter by invite status")] = "pending",
+    limit: Annotated[int, Query(ge=1, description="Maximum results (clamped to 200)")] = 100,
+) -> dict:
+    """List invitations for a library.
+
+    Admin/owner only. Ordered by created_at DESC, id DESC.
+    """
+    result = libraries_service.list_library_invites(
+        db, viewer.user_id, library_id, status=status, limit=limit
+    )
+    return success_response([inv.model_dump(mode="json") for inv in result])
 
 
 # ---- Members ----

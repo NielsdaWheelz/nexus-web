@@ -173,16 +173,26 @@ non-goals:
 - no invite lifecycle endpoints.
 - no closure backfill worker logic.
 
-## pr-04: invitation lifecycle
+## pr-04: invitation lifecycle ✅
 
 goal: implement user-id invite lifecycle with atomic accept semantics.
+
+status: **implemented**. all 6 invite endpoints, atomic accept with backfill job upsert, idempotent state transitions, BFF proxy routes, and 30 integration tests pass (878 total backend passed).
 
 dependencies: pr-01, pr-03.
 
 primary surfaces:
-- `python/nexus/services/libraries.py` (or dedicated invite service)
-- `python/nexus/api/routes/libraries.py`
-- `apps/web/src/app/api/libraries/**` (invite bff proxy routes)
+- `python/nexus/schemas/library.py` (new invite request/response schemas)
+- `python/nexus/schemas/__init__.py` (re-exports)
+- `python/nexus/services/libraries.py` (invite service functions)
+- `python/nexus/api/routes/libraries.py` (invite route handlers)
+- `apps/web/src/app/api/libraries/[id]/invites/route.ts` (BFF proxy)
+- `apps/web/src/app/api/libraries/invites/route.ts` (BFF proxy)
+- `apps/web/src/app/api/libraries/invites/[inviteId]/accept/route.ts` (BFF proxy)
+- `apps/web/src/app/api/libraries/invites/[inviteId]/decline/route.ts` (BFF proxy)
+- `apps/web/src/app/api/libraries/invites/[inviteId]/route.ts` (BFF proxy)
+- `apps/web/src/app/api/libraries/invites-routes.test.ts` (BFF proxy tests)
+- `python/tests/test_libraries.py` (30 new invite tests)
 
 acceptance:
 - implement endpoints:

@@ -18,8 +18,12 @@ from nexus.schemas.highlights import (
     UpsertAnnotationRequest,
 )
 from nexus.schemas.library import (
+    AcceptLibraryInviteResponse,
     AddMediaRequest,
+    CreateLibraryInviteRequest,
     CreateLibraryRequest,
+    DeclineLibraryInviteResponse,
+    InviteAcceptMembershipOut,
     LibraryInvitationOut,
     LibraryMediaOut,
     LibraryMemberOut,
@@ -47,6 +51,11 @@ __all__ = [
     "LibraryInvitationOut",
     "UpdateLibraryMemberRequest",
     "TransferLibraryOwnershipRequest",
+    # S4 PR-04 invite schemas
+    "CreateLibraryInviteRequest",
+    "AcceptLibraryInviteResponse",
+    "DeclineLibraryInviteResponse",
+    "InviteAcceptMembershipOut",
     # Media schemas
     "MediaOut",
     "FragmentOut",
