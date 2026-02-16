@@ -11,8 +11,14 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
-from nexus.schemas.library import LibraryMediaOut, LibraryOut
+from nexus.errors import (
+    ApiErrorCode,
+    ConflictError,
+    ForbiddenError,
+    InvalidRequestError,
+    NotFoundError,
+)
+from nexus.schemas.library import LibraryMediaOut, LibraryMemberOut, LibraryOut
 from nexus.schemas.media import MediaOut
 from nexus.services.capabilities import derive_capabilities
 
@@ -145,6 +151,9 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
 def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     """Delete a library.
 
+    S4 rule: only the current owner can delete a non-default library.
+    Non-owner admins get E_OWNER_REQUIRED. Non-members get masked 404.
+
     Args:
         db: Database session.
         viewer_id: The ID of the user deleting the library.
@@ -152,13 +161,12 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
 
     Raises:
         NotFoundError: If library not found or viewer is not a member.
-        ForbiddenError: If viewer is not admin, library is default, or library has multiple members.
+        ForbiddenError: If library is default or viewer is not owner.
     """
     with transaction(db):
-        # Fetch library with membership check (FOR UPDATE to lock)
         result = db.execute(
             text("""
-                SELECT l.id, l.is_default, m.role
+                SELECT l.id, l.is_default, l.owner_user_id, m.role
                 FROM libraries l
                 JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
                 WHERE l.id = :library_id
@@ -172,31 +180,18 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
         is_default = row[1]
-        role = row[2]
+        owner_user_id = row[2]
 
         if is_default:
             raise ForbiddenError(
                 ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN, "Cannot delete default library"
             )
 
-        if role != "admin":
-            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
-
-        # Check membership count - only allow deletion if single-member
-        result = db.execute(
-            text("""
-                SELECT COUNT(*) FROM memberships WHERE library_id = :library_id
-            """),
-            {"library_id": library_id},
-        )
-        member_count = result.scalar()
-
-        if member_count > 1:
+        if owner_user_id != viewer_id:
             raise ForbiddenError(
-                ApiErrorCode.E_FORBIDDEN, "Cannot delete library with multiple members"
+                ApiErrorCode.E_OWNER_REQUIRED, "Only the library owner can delete it"
             )
 
-        # Delete library (CASCADE handles library_media and memberships)
         db.execute(
             text("DELETE FROM libraries WHERE id = :library_id"),
             {"library_id": library_id},
@@ -598,3 +593,392 @@ def list_library_media(
             )
         )
     return media_list
+
+
+# =============================================================================
+# S4 PR-03: Library governance
+# =============================================================================
+
+
+def _fetch_library_with_membership(
+    db: Session, viewer_id: UUID, library_id: UUID, *, lock: bool = False
+) -> tuple:
+    """Fetch library row joined with viewer membership.
+
+    Returns (library_id, is_default, owner_user_id, created_at, updated_at, name, role)
+    or raises masked 404 if not found or viewer is not a member.
+    """
+    lock_clause = "FOR UPDATE OF l" if lock else ""
+    result = db.execute(
+        text(f"""
+            SELECT l.id, l.is_default, l.owner_user_id, l.created_at, l.updated_at,
+                   l.name, m.role
+            FROM libraries l
+            JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+            WHERE l.id = :library_id
+            {lock_clause}
+        """),
+        {"library_id": library_id, "viewer_id": viewer_id},
+    )
+    row = result.fetchone()
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
+    return row
+
+
+def _require_admin(role: str) -> None:
+    """Raise E_FORBIDDEN if role is not admin."""
+    if role != "admin":
+        raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
+
+
+def _require_non_default(is_default: bool) -> None:
+    """Raise E_DEFAULT_LIBRARY_FORBIDDEN if library is default."""
+    if is_default:
+        raise ForbiddenError(
+            ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN,
+            "Operation not allowed on default library",
+        )
+
+
+def _repair_owner_admin_invariant(db: Session, library_id: UUID, owner_user_id: UUID) -> None:
+    """Ensure the owner has an admin membership row. Create or promote if needed."""
+    db.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:library_id, :owner_user_id, 'admin')
+            ON CONFLICT (library_id, user_id)
+            DO UPDATE SET role = 'admin'
+        """),
+        {"library_id": library_id, "owner_user_id": owner_user_id},
+    )
+
+
+def list_library_members(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    limit: int = 100,
+) -> list[LibraryMemberOut]:
+    """List members of a library.
+
+    Auth: viewer must be admin member. Non-member -> masked 404. Non-admin -> 403.
+    Ordering: owner first, then admin, then member, then created_at ASC, user_id ASC.
+
+    Args:
+        db: Database session.
+        viewer_id: The ID of the viewer.
+        library_id: The ID of the library.
+        limit: Maximum results (default 100, clamped to 200).
+
+    Returns:
+        List of LibraryMemberOut.
+    """
+    if limit <= 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    limit = min(limit, 200)
+
+    row = _fetch_library_with_membership(db, viewer_id, library_id)
+    _require_admin(row[6])
+
+    owner_user_id = row[2]
+
+    result = db.execute(
+        text("""
+            SELECT m.user_id, m.role, m.created_at
+            FROM memberships m
+            WHERE m.library_id = :library_id
+            ORDER BY
+                (m.user_id = :owner_user_id) DESC,
+                (CASE WHEN m.role = 'admin' THEN 0 ELSE 1 END) ASC,
+                m.created_at ASC,
+                m.user_id ASC
+            LIMIT :limit
+        """),
+        {"library_id": library_id, "owner_user_id": owner_user_id, "limit": limit},
+    )
+
+    return [
+        LibraryMemberOut(
+            user_id=r[0],
+            role=r[1],
+            is_owner=(r[0] == owner_user_id),
+            created_at=r[2],
+        )
+        for r in result.fetchall()
+    ]
+
+
+def update_library_member_role(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    target_user_id: UUID,
+    role: str,
+) -> LibraryMemberOut:
+    """Update a library member's role.
+
+    Auth: viewer must be admin member. Cannot change owner's role. Cannot demote last admin.
+    Default library forbidden. Idempotent when role unchanged.
+    """
+    with transaction(db):
+        lib_row = _fetch_library_with_membership(db, viewer_id, library_id, lock=True)
+        _require_admin(lib_row[6])
+        _require_non_default(lib_row[1])
+
+        owner_user_id = lib_row[2]
+
+        # Lock all memberships for this library to prevent races
+        db.execute(
+            text("SELECT 1 FROM memberships WHERE library_id = :lid FOR UPDATE"),
+            {"lid": library_id},
+        )
+
+        # Repair owner-admin invariant if dirty
+        _repair_owner_admin_invariant(db, library_id, owner_user_id)
+
+        # Cannot change owner's role via this endpoint
+        if target_user_id == owner_user_id:
+            raise ForbiddenError(
+                ApiErrorCode.E_OWNER_EXIT_FORBIDDEN,
+                "Cannot change owner role; transfer ownership first",
+            )
+
+        # Find target membership
+        result = db.execute(
+            text("""
+                SELECT user_id, role, created_at FROM memberships
+                WHERE library_id = :lid AND user_id = :uid
+            """),
+            {"lid": library_id, "uid": target_user_id},
+        )
+        target = result.fetchone()
+        if target is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Member not found")
+
+        current_role = target[1]
+
+        # Idempotent
+        if current_role == role:
+            return LibraryMemberOut(
+                user_id=target[0],
+                role=current_role,
+                is_owner=False,
+                created_at=target[2],
+            )
+
+        # Demoting an admin: check last-admin constraint
+        if current_role == "admin" and role == "member":
+            admin_count = db.execute(
+                text("""
+                    SELECT COUNT(*) FROM memberships
+                    WHERE library_id = :lid AND role = 'admin'
+                """),
+                {"lid": library_id},
+            ).scalar()
+            if admin_count <= 1:
+                raise ForbiddenError(
+                    ApiErrorCode.E_LAST_ADMIN_FORBIDDEN,
+                    "Cannot demote last admin",
+                )
+
+        db.execute(
+            text("""
+                UPDATE memberships SET role = :role
+                WHERE library_id = :lid AND user_id = :uid
+            """),
+            {"role": role, "lid": library_id, "uid": target_user_id},
+        )
+
+    return LibraryMemberOut(
+        user_id=target[0],
+        role=role,
+        is_owner=False,
+        created_at=target[2],
+    )
+
+
+def remove_library_member(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    target_user_id: UUID,
+) -> None:
+    """Remove a member from a library.
+
+    Auth: viewer must be admin member. Cannot remove owner. Cannot remove last admin.
+    Default library forbidden. Idempotent: absent target -> silent 204.
+    """
+    with transaction(db):
+        lib_row = _fetch_library_with_membership(db, viewer_id, library_id, lock=True)
+        _require_admin(lib_row[6])
+        _require_non_default(lib_row[1])
+
+        owner_user_id = lib_row[2]
+
+        # Lock memberships
+        db.execute(
+            text("SELECT 1 FROM memberships WHERE library_id = :lid FOR UPDATE"),
+            {"lid": library_id},
+        )
+
+        _repair_owner_admin_invariant(db, library_id, owner_user_id)
+
+        # Cannot remove owner
+        if target_user_id == owner_user_id:
+            raise ForbiddenError(
+                ApiErrorCode.E_OWNER_EXIT_FORBIDDEN,
+                "Cannot remove owner; transfer ownership first",
+            )
+
+        # Check target exists
+        result = db.execute(
+            text("""
+                SELECT role FROM memberships
+                WHERE library_id = :lid AND user_id = :uid
+            """),
+            {"lid": library_id, "uid": target_user_id},
+        )
+        target = result.fetchone()
+
+        # Idempotent: absent target is no-op
+        if target is None:
+            return
+
+        target_role = target[0]
+
+        # Last-admin check
+        if target_role == "admin":
+            admin_count = db.execute(
+                text("""
+                    SELECT COUNT(*) FROM memberships
+                    WHERE library_id = :lid AND role = 'admin'
+                """),
+                {"lid": library_id},
+            ).scalar()
+            if admin_count <= 1:
+                raise ForbiddenError(
+                    ApiErrorCode.E_LAST_ADMIN_FORBIDDEN,
+                    "Cannot remove last admin",
+                )
+
+        db.execute(
+            text("""
+                DELETE FROM memberships
+                WHERE library_id = :lid AND user_id = :uid
+            """),
+            {"lid": library_id, "uid": target_user_id},
+        )
+
+
+def transfer_library_ownership(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    new_owner_user_id: UUID,
+) -> LibraryOut:
+    """Transfer library ownership to another member.
+
+    Owner-only. Target must be existing member. Previous owner stays admin.
+    Default library forbidden. Idempotent when target is current owner.
+    """
+    with transaction(db):
+        # Lock library and fetch with viewer membership
+        result = db.execute(
+            text("""
+                SELECT l.id, l.name, l.owner_user_id, l.is_default, l.created_at,
+                       l.updated_at, m.role
+                FROM libraries l
+                LEFT JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+                WHERE l.id = :library_id
+                FOR UPDATE OF l
+            """),
+            {"library_id": library_id, "viewer_id": viewer_id},
+        )
+        row = result.fetchone()
+
+        if row is None or row[6] is None:
+            raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
+
+        is_default = row[3]
+        current_owner = row[2]
+        viewer_role = row[6]
+
+        _require_non_default(is_default)
+
+        # Must be current owner
+        if current_owner != viewer_id:
+            if viewer_role:
+                raise ForbiddenError(
+                    ApiErrorCode.E_OWNER_REQUIRED,
+                    "Only the library owner can transfer ownership",
+                )
+            raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
+
+        # Lock memberships
+        db.execute(
+            text("SELECT 1 FROM memberships WHERE library_id = :lid FOR UPDATE"),
+            {"lid": library_id},
+        )
+
+        _repair_owner_admin_invariant(db, library_id, current_owner)
+
+        # Idempotent: transfer to self
+        if new_owner_user_id == current_owner:
+            return LibraryOut(
+                id=row[0],
+                name=row[1],
+                owner_user_id=row[2],
+                is_default=row[3],
+                created_at=row[4],
+                updated_at=row[5],
+                role=viewer_role,
+            )
+
+        # Target must be existing member
+        target_result = db.execute(
+            text("""
+                SELECT role FROM memberships
+                WHERE library_id = :lid AND user_id = :uid
+            """),
+            {"lid": library_id, "uid": new_owner_user_id},
+        )
+        target_membership = target_result.fetchone()
+        if target_membership is None:
+            raise ConflictError(
+                ApiErrorCode.E_OWNERSHIP_TRANSFER_INVALID,
+                "Transfer target must be an existing member",
+            )
+
+        # Ensure target is admin
+        if target_membership[0] != "admin":
+            db.execute(
+                text("""
+                    UPDATE memberships SET role = 'admin'
+                    WHERE library_id = :lid AND user_id = :uid
+                """),
+                {"lid": library_id, "uid": new_owner_user_id},
+            )
+
+        # Transfer ownership
+        now = datetime.now(UTC)
+        db.execute(
+            text("""
+                UPDATE libraries SET owner_user_id = :new_owner, updated_at = :now
+                WHERE id = :lid
+            """),
+            {"new_owner": new_owner_user_id, "now": now, "lid": library_id},
+        )
+
+        # Previous owner stays admin
+        _repair_owner_admin_invariant(db, library_id, viewer_id)
+
+    return LibraryOut(
+        id=row[0],
+        name=row[1],
+        owner_user_id=new_owner_user_id,
+        is_default=row[3],
+        created_at=row[4],
+        updated_at=now,
+        role="admin",
+    )

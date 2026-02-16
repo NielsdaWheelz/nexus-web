@@ -21,6 +21,8 @@ __all__ = [
     "CreateLibraryRequest",
     "UpdateLibraryRequest",
     "AddMediaRequest",
+    "UpdateLibraryMemberRequest",
+    "TransferLibraryOwnershipRequest",
     "LibraryOut",
     "LibraryMediaOut",
     "MediaOut",
@@ -54,6 +56,18 @@ class AddMediaRequest(BaseModel):
     """Request body for adding media to a library."""
 
     media_id: UUID = Field(..., description="ID of the media to add")
+
+
+class UpdateLibraryMemberRequest(BaseModel):
+    """Request body for updating a library member's role."""
+
+    role: LibraryRole = Field(..., description="New role for the member ('admin' or 'member')")
+
+
+class TransferLibraryOwnershipRequest(BaseModel):
+    """Request body for transferring library ownership."""
+
+    new_owner_user_id: UUID = Field(..., description="User ID of the new owner")
 
 
 # =============================================================================

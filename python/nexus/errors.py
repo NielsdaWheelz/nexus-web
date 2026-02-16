@@ -220,6 +220,17 @@ class ForbiddenError(ApiError):
         super().__init__(code, message)
 
 
+class ConflictError(ApiError):
+    """Conflict error (409)."""
+
+    def __init__(
+        self,
+        code: ApiErrorCode = ApiErrorCode.E_INVITE_NOT_PENDING,
+        message: str = "Conflict",
+    ):
+        super().__init__(code, message)
+
+
 class InvalidRequestError(ApiError):
     """Invalid request error."""
 

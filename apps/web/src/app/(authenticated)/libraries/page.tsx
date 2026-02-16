@@ -18,17 +18,27 @@ interface Library {
   updated_at: string;
 }
 
+interface MeResponse {
+  user_id: string;
+  default_library_id: string;
+}
+
 export default function LibrariesPage() {
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newLibraryName, setNewLibraryName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [viewerUserId, setViewerUserId] = useState<string | null>(null);
 
   const fetchLibraries = async () => {
     try {
-      const data = await apiFetch<Library[]>("/api/libraries");
+      const [data, me] = await Promise.all([
+        apiFetch<Library[]>("/api/libraries"),
+        apiFetch<MeResponse>("/api/me"),
+      ]);
       setLibraries(data);
+      setViewerUserId(me.user_id);
       setError(null);
     } catch (err) {
       if (isApiError(err)) {
@@ -129,7 +139,7 @@ export default function LibrariesPage() {
                       <span className={styles.badge}>Default</span>
                     )}
                   </Link>
-                  {!library.is_default && library.role === "admin" && (
+                  {!library.is_default && viewerUserId && library.owner_user_id === viewerUserId && (
                     <button
                       className={styles.deleteBtn}
                       onClick={() => handleDeleteLibrary(library)}

@@ -513,10 +513,13 @@ The chat UI is accessible at `/conversations`:
 - **Search**: keyword search at `/search` across media, fragments, annotations, messages
 - **BYOK keys**: manage API keys at `/settings/keys`
 
-### Frontend BFF Routes (S3)
+### Frontend BFF Routes (S3+S4)
 
 | BFF Route | FastAPI Route | Method |
 |-----------|---------------|--------|
+| `/api/libraries/[id]/members` | `/libraries/{id}/members` | GET |
+| `/api/libraries/[id]/members/[userId]` | `/libraries/{id}/members/{userId}` | PATCH, DELETE |
+| `/api/libraries/[id]/transfer-ownership` | `/libraries/{id}/transfer-ownership` | POST |
 | `/api/conversations` | `/conversations` | GET, POST |
 | `/api/conversations/[id]` | `/conversations/{id}` | GET, DELETE |
 | `/api/conversations/[id]/messages` | `/conversations/{id}/messages` | GET, POST |
