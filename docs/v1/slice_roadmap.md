@@ -311,7 +311,7 @@ Two test suites are introduced early and reused by every later slice:
 
 **Outcome:** Multiple users can be members of the same library with role-based access; highlights and conversations become visible via library intersection.
 
-**Progress:** PR-01 (schema) and PR-02 (visibility auth kernel) are implemented. Canonical visibility predicates, helper splits, and rollout-safe intrinsic write-through are in place.
+**Progress:** PR-01 (schema), PR-02 (visibility auth kernel), PR-03 (library governance), and PR-04 (invitation lifecycle) are implemented. Canonical visibility predicates, helper splits, rollout-safe intrinsic write-through, owner-only delete, member management, ownership transfer, and invite lifecycle with atomic accept semantics are in place.
 
 ### Includes
 - Invite user to library (by email or user id)

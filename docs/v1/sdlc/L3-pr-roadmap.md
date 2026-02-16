@@ -1,79 +1,125 @@
 # L3: PR Roadmap
 
-> Decompose a slice spec into an ordered sequence of PRs.
+> decompose one slice contract into merge-safe prs with explicit ownership.
 
-## Identity
+## identity
 
-You are the **decomposer**. You take the contract defined in L2 and break it into the smallest independently-mergeable PRs, ordered so each builds on what's already merged.
+you are the decomposer. your job is ordering and ownership, not implementation detail.
 
-## Input
+## input
 
-You receive:
-- **L2 Slice Spec**: schemas, APIs, state machines, error codes, invariants
-- **L0 Constitution**: conventions and architecture (for stack awareness)
+you receive:
+- **l2 slice spec** (normative contract).
+- **l0 constitution** (architecture constraints).
+- **merged codebase baseline** (for realistic sequencing).
 
-## Output
+## output
 
-You produce: a **PR roadmap** (markdown) listing every PR with goal, dependencies, and acceptance. Target length: 1-2 pages.
+you produce:
+- one roadmap: `{slice}_roadmap.md`.
+- one ownership ledger: `{slice}_roadmap_ownership.md` (optional but recommended).
 
-## Process
+target length: 1-3 pages.
 
-1. Identify the stack layers touched by this slice (types, storage, logic, API, UI/CLI).
-2. Choose a **decomposition strategy**:
-   - **Layered** (most common): types → storage → logic → API → UI. Each PR only depends on the one above. Best for CRUD-style features.
-   - **Vertical thin-slice**: one complete path first (create), then add breadth (list, update, delete). Each PR touches more files but delivers a working feature sooner.
-   - **Contract-first**: API stubs first, then real implementation. Good when frontend and backend must work in parallel.
-3. Draw the **dependency graph** — which PRs must be merged before others can start.
-4. For each PR, write a one-line goal, list dependencies, and define acceptance criteria.
-5. **Size check**: each PR should be reviewable in ~15 minutes (~400 lines max). One logical unit, independently testable, independently mergeable.
-6. Verify: the PR roadmap contains zero implementation details (no function signatures, no test cases, no file paths). Those belong in L4.
+## process (mandatory)
 
-## Template
+### phase 1: contract inventory
+
+extract contract clusters from l2:
+- model/storage clusters
+- state transition clusters
+- api surface clusters
+- error/invariant clusters
+
+each cluster must have one owning pr.
+
+### phase 2: ownership matrix
+
+build an ownership matrix before writing pr entries.
+
+rules:
+- one cluster -> one owner pr.
+- if cross-pr coordination is unavoidable, split the cluster into finer clusters.
+- no duplicate ownership.
+
+### phase 3: dependency graph
+
+build a DAG that respects:
+- data-first constraints (types/storage before behavior that depends on them).
+- auth/visibility kernel before endpoint expansion.
+- invariants before broad rollout.
+
+### phase 4: pr entries
+
+for each pr, write:
+- one-line goal.
+- explicit dependencies.
+- acceptance bullets at roadmap granularity.
+- non-goals when necessary to prevent overlap.
+
+### phase 5: hardening passes
+
+1. ownership completeness: every l2 cluster has exactly one owner.
+2. ordering correctness: no pr requires unmerged behavior.
+3. acceptance completeness: every l2 acceptance scenario is covered by at least one pr.
+4. scope purity: no l4 detail (file paths, tests, signatures).
+
+## required template
 
 ```markdown
-# {Slice Name} — PR Roadmap
+# {slice name} — pr roadmap
 
-## Dependency graph
+## 1. dependency graph
 
-{ASCII DAG showing PR ordering}
+{ascii DAG}
 
-## PRs
+## 2. ownership matrix
 
-### PR-01: {Name}
-- **Goal**: {one sentence}
-- **Dependencies**: None (slice N-1 complete)
-- **Acceptance**: {how we know it's done}
+| contract cluster (from l2) | owning pr |
+|---|---|
+| {cluster} | pr-0n |
 
-### PR-02: {Name}
-- **Goal**: {one sentence}
-- **Dependencies**: PR-01
-- **Acceptance**: {how we know it's done}
+## 3. acceptance coverage map
 
-### PR-NN: ...
+| l2 acceptance scenario | owning pr(s) |
+|---|---|
+| {scenario} | pr-0n |
+
+## 4. prs
+
+### pr-01: {name}
+- **goal**: {one sentence}
+- **dependencies**: {none or list}
+- **acceptance**:
+  - {roadmap-level bullet}
+- **non-goals**:
+  - {optional boundary bullet}
+
+### pr-02: {name}
+- ...
 ```
 
-## Quality criteria
+## quality criteria
 
-Your output is valid when:
-- Each PR is one logical unit (not "add X and also refactor Y")
-- Each PR is independently testable without unmerged PRs
-- Each PR is independently mergeable without breaking the build
-- Dependencies form a DAG (no cycles)
-- No PR is too large (>400 lines) or too small (not meaningful alone)
-- Zero implementation details (no function signatures, test cases, or file paths)
-- Every schema, API, and error code from L2 is covered by at least one PR
+your output is valid when:
+- dependency graph is acyclic.
+- every contract cluster in l2 has exactly one owning pr.
+- every l2 acceptance scenario appears in coverage map.
+- each pr is independently mergeable and reviewable.
+- no implementation-level detail appears.
 
-## Anti-patterns
+## anti-patterns
 
-- **Over-parallelizing**: more parallel PRs = more merge conflicts. Prefer a linear chain unless the slice is large enough to justify parallel work.
-- **Missing dependencies**: without explicit ordering, PRs get reviewed and merged in random order, causing conflicts.
-- **Mixing decomposition with specification**: the PR roadmap says *what PRs exist and in what order*. It does not say *what each PR contains in detail*. That's L4's job.
+- **ownership overlap**: same behavior owned by multiple prs.
+- **hidden dependency**: pr depends on behavior not listed in dependencies.
+- **fake parallelism**: parallel prs that mutate the same contract surface.
+- **l4 leakage**: adding file paths, function signatures, or test names.
 
-## Upstream context
+## upstream context package
 
-When invoking this skill, include:
-- L2 section headings and the schemas/APIs/errors they define (so you know what to distribute across PRs)
-- L0 architecture stack (so you know the layer order: types → storage → logic → API → UI)
-- Which slices are already complete (so PR-01 knows what exists)
+when invoking this layer, include:
+- l2 section headings and acceptance scenarios.
+- l0 stack constraints.
+- merged-state notes relevant to sequencing.
 
-See also: [L3 Example — Bookmark Manager](./examples/bookmark-manager/pr-roadmap-slice-2.md) | Next: [L4: PR Spec](./L4-pr-spec.md)
+see also: [l4: pr spec](./L4-pr-spec.md)

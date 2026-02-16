@@ -1,204 +1,191 @@
 # Software Development Lifecycle
 
-> Each layer constrains the next, narrowing the solution space until implementation becomes unambiguous.
+> each layer constrains the next, narrowing the solution space until implementation is unambiguous.
 
-## The hierarchy
+## hierarchy
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  L0  CONSTITUTION        system-wide constraints (rarely changes) │
+│  l0  constitution        system-wide constraints (rarely changes) │
 └───────────────────────────────┬─────────────────────────────────┘
                                 ▼
         ┌───────────────────────────────────────────┐
-        │  L1  SLICE ROADMAP     ordered slices      │
+        │  l1  slice roadmap     ordered slices      │
         └───────────────────┬───────────────────────┘
                             ▼
               ┌─────────────────────────────┐
-              │  L2  SLICE SPEC   contract  │
+              │  l2  slice spec   contract  │
               └─────────┬───────────────────┘
                         ▼
                 ┌───────────────────┐
-                │  L3  PR ROADMAP   │
+                │  l3  pr roadmap   │
                 └───────┬───────────┘
                         ▼
                   ┌───────────┐
-                  │  L4  PR   │
-                  │  SPEC     │
+                  │  l4  pr   │
+                  │  spec     │
                   └─────┬─────┘
                         ▼
                     ┌──────┐
-                    │ CODE │
+                    │ code │
                     └──────┘
 ```
 
-Spec layers (L0, L2, L4) define contracts. Decomposition layers (L1, L3) break a contract into ordered children.
+spec layers (l0, l2, l4) define contracts. decomposition layers (l1, l3) break contracts into ordered children.
 
-## Core principle
+## core operating rules
 
-Each document exists to constrain the document below it. If it doesn't narrow the next layer's decisions, delete it. Explicitly state what is **not** in scope — negative space prevents drift and hallucination.
+- never skip layers: `l0 -> l1 -> l2 -> l3 -> l4 -> code`.
+- never code ahead of spec.
+- never silently deviate from spec.
+- never leave scope boundaries implicit.
+- every claim in l2/l4 must be testable.
 
-## Documents
+## orchestrator role
 
-| Layer | Skill doc | What | When |
-|-------|-----------|------|------|
-| L0 | [Constitution](./L0-constitution.md) | System-wide constraints, architecture, conventions | Project inception |
-| L1 | [Slice Roadmap](./L1-slice-roadmap.md) | Ordered slices with dependencies | Planning cycles |
-| L2 | [Slice Spec](./L2-slice-spec.md) | Feature contract: schemas, APIs, state machines | Starting a slice |
-| L3 | [PR Roadmap](./L3-pr-roadmap.md) | Ordered PRs for one slice | After slice spec |
-| L4 | [PR Spec](./L4-pr-spec.md) | Exact deliverables for one PR | Before writing code |
+you are the orchestrator. you select the next layer, assemble minimal context, and run that layer's skill. you do not mix layers in one output.
 
-## Orchestrator
-
-You are the **orchestrator**. You decide which skill to invoke next, assemble its input context, and route its output downstream. You never write specs or code yourself — you dispatch to the right skill agent.
-
-### Decision logic
+### dispatch logic
 
 ```
-START:
-  if no L0 exists        → invoke L0 (architect)
-  if no L1 exists        → invoke L1 (planner)
-  if next slice has no L2 → invoke L2 (spec writer)
-  if L2 has no L3         → invoke L3 (decomposer)
-  if next PR has no L4    → invoke L4 (implementer's guide)
-  if L4 exists            → implement PR, then:
-      if more PRs in L3   → loop to L4
-      if slice complete   → loop to L2 (next slice)
-      if all slices done  → DONE
+start:
+  if no l0 exists             -> run l0
+  if no l1 exists             -> run l1
+  if next slice has no l2     -> run l2
+  if slice has no l3          -> run l3
+  if next pr has no l4        -> run l4
+  if l4 exists                -> implement pr
+  after merge                 -> repeat l4 until l3 complete
+  after slice complete        -> repeat l2 for next slice
 ```
 
-### Rules
+## bounded-context authoring protocol (mandatory for l2/l3/l4)
 
-- Never write code that isn't specified. Spec-first means edge cases surface during writing, not debugging.
-- Never skip a layer. L0 → L1 → L2 → L3 → L4 → code. Every time.
-- When assembling input for a skill, follow the handoff protocol below — extract minimum viable context, never dump entire upstream docs.
+this protocol is required to avoid context-window failure and spec drift.
 
-## Handoff protocol
+authoring is not `gather all info -> ask all questions -> decide all things`.
+authoring is iterative and section-local.
 
-Each skill passes context to the next. Never duplicate — always reference.
+### phase 1: skeleton first
 
-| From | To | What to pass |
-|------|----|-------------|
-| L0 → L1 | Constitution summary | Non-scope, core abstractions, architecture components |
-| L1 → L2 | Roadmap entry | Slice goal, dependencies, acceptance criteria |
-| L0 + L2 → L3 | Constitution + Slice spec | Conventions, schemas, APIs, state machines, error codes |
-| L2 + L3 → L4 | Slice spec + PR roadmap entry | Relevant schemas, PR goal, dependencies, acceptance |
+write the document skeleton from upstream contracts only:
+- l2: core 7 contract sections + traceability/default sections.
+- l3: dependency graph + pr list.
+- l4: goal/context/dependencies/deliverables/tests/non-goals/constraints.
 
-### Context assembly (for LLM invocations)
+no detailed implementation decisions in this phase.
 
-Goal: **minimum viable context that uniquely determines the correct output.** Too little → hallucination. Too much → confusion. Wrong context → confidently wrong.
+### phase 2: contract cluster loop
 
-**Include:**
+for each acceptance cluster (one cluster at a time):
+1. gather only code facts needed for that cluster.
+2. extract only forced questions.
+3. make explicit decisions (or explicit temporary defaults).
+4. patch the spec immediately.
+5. log evidence and decision in companion artifacts.
 
-| What | Why |
-|------|-----|
-| Exact type definitions from L2 | LLM matches them precisely |
-| Exact function signatures from L4 | No room for invention |
-| Exact error codes from L2 | Consistent error handling |
-| Existing code patterns (paste one example) | LLM imitates style |
-| Explicit non-goals from L4 | Prevents scope creep |
-| L0 conventions as bullet points | Constrains naming, format, patterns |
+never batch all clusters in one pass.
 
-**Exclude:**
+### phase 3: hardening passes
 
-| What | Why |
-|------|-----|
-| Full constitution | Too long, dilutes focus |
-| Other slices' specs | Irrelevant, confusing |
-| Historical context ("we used to...") | Noise |
-| Justifications ("we chose X because...") | Doesn't help implementation |
-| Future plans ("later we'll...") | Invites premature implementation |
+run these passes in order:
+1. completeness pass: every upstream acceptance item is covered.
+2. consistency pass: no contradictions across sections.
+3. traceability pass: every contract maps to deliverables and tests.
+4. boundary pass: remove anything owned by another pr/slice.
+5. ambiguity pass: remove vague language, add exact behavior.
 
-**Validation — check output against each layer:**
-1. **L0 check**: conventions followed? Naming correct? No forbidden patterns?
-2. **L2 check**: schemas match exactly? State machine correct? All error codes present?
-3. **L4 check**: all deliverables present? All tests present? No extra files or functions?
+## required companion artifacts
 
-## Iteration protocol
+l2/l3/l4 specs must maintain companion files during drafting:
 
-Specs are hypotheses. Implementation reveals truth. When reality diverges from spec, feed back up — don't silently deviate.
+| artifact | purpose | minimum contents |
+|---|---|---|
+| `{doc}_worklog.md` | context memory | code facts with file:line evidence |
+| `{doc}_decisions.md` | decision control | question, decision, rationale, fallback/default, owner |
+| `{doc}.md` | normative contract | only finalized contract language |
 
-| Trigger | Action | Cascade |
-|---------|--------|---------|
-| PR implementation reveals L4 spec was wrong | Fix L4, re-implement | None — L4 is disposable |
-| PR reveals L2 schema/API needs to change | **Stop.** Update L2, then re-derive L3 and affected L4s | All unstarted PRs in this slice re-spec |
-| Slice work reveals L1 ordering was wrong | Update L1, re-plan affected slices | Downstream L2/L3/L4 for reordered slices |
-| Anything reveals L0 constraint was wrong | **Full stop.** Update L0, audit all downstream docs | Potentially everything — this is rare by design |
+rules:
+- unresolved questions are allowed only if they include a temporary default behavior.
+- every temporary default has an owner and a deadline (or owning next pr).
 
-### Rules for feedback
+## handoff protocol
 
-1. **Never silently deviate.** If the code doesn't match the spec, either the code is wrong or the spec is wrong. Decide which, then fix the source of truth.
-2. **Fix at the highest affected layer.** If the root cause is in L2, don't patch L4 — fix L2 and let changes cascade down.
-3. **Re-derive, don't patch.** After updating a spec, re-run the downstream skill (don't hand-edit its output). The skill's process ensures consistency.
-4. **Completed PRs are done.** Only re-open merged PRs if the L2 change invalidates their correctness. Otherwise, fix forward in new PRs.
+each layer passes minimum viable context downstream.
 
-## Decision tests
+| from | to | must pass |
+|---|---|---|
+| l0 -> l1 | constitution summary | hard constraints, non-scope, architecture axes |
+| l1 -> l2 | slice entry | goal, dependencies, acceptance |
+| l0 + l2 -> l3 | constitution + slice contract | contract clusters, invariants, error model |
+| l2 + l3 -> l4 | slice contract + pr entry | exact relevant contracts, pr ownership, acceptance |
 
-| Question | Answer |
-|----------|--------|
-| Affects all features? | L0 |
-| Orders work across the whole system? | L1 |
-| Affects multiple PRs within one feature? | L2 |
-| Orders PRs within one slice? | L3 |
-| Internal to one branch? | L4 |
-| If this changes, does most code change? | L0 |
-| If this changes, does the timeline change? | L1 |
-| If this changes, do multiple PRs break? | L2 |
-| If this changes, does PR order change? | L3 |
-| If this changes, does only this branch change? | L4 |
+## context assembly standard
 
-## Blast radius
+goal: enough context to force the right output, no more.
 
-| Layer | Mistake cost |
-|-------|-------------|
-| L0 | Entire project |
-| L1 | Timeline, multiple slices |
-| L2 | Multiple PRs within slice |
-| L3 | PR ordering within slice |
-| L4 | One branch |
+include:
+- exact upstream contract snippets.
+- exact existing code patterns.
+- exact accepted error codes and status mappings.
+- explicit non-goals and boundaries.
 
-## Structural validation
+exclude:
+- whole-document dumps when section excerpts suffice.
+- unrelated slices/prs.
+- historical rationales that do not change behavior.
 
-Each layer's output must pass these machine-checkable rules. A linter or review agent can verify them.
+## decision quality bar
 
-**L0 (Constitution):**
-- Has all sections: Vision, Core Abstractions, Architecture, Hard Constraints, Conventions, Invariants
-- Non-Scope lists >= 5 items
-- Conventions contain copy-pasteable patterns (not prose descriptions)
-- Contains no table schemas, API request/response bodies, or file paths
+every decision in l2/l3/l4 must satisfy:
+- explicit problem statement.
+- chosen behavior.
+- rejected alternatives (short).
+- invariant impact.
+- test impact.
 
-**L1 (Slice Roadmap):**
-- Has a dependency graph (ASCII or list)
-- Every slice has: Goal, Outcome, Dependencies, Acceptance
-- Contains no schemas, endpoints, function names, or file paths
-- Every L0 scope item maps to at least one slice
+if any item is missing, decision is not accepted.
 
-**L2 (Slice Spec):**
-- Has all sections: Goal & Scope, Domain Models, State Machine (if stateful), API Contracts, Error Codes, Invariants, Acceptance Scenarios
-- Every field definition has: name, type, constraints
-- Every API contract has: method, path, request shape, response shape, error codes
-- Every error has an `E_` prefixed code
-- Contains no file paths, helper functions, or library choices
+## iteration + escalation protocol
 
-**L3 (PR Roadmap):**
-- Has a dependency graph
-- Every PR has: Goal, Dependencies, Acceptance
-- Dependencies form a DAG (no cycles)
-- Contains no function signatures, test cases, or file paths
+| trigger | action | cascade |
+|---|---|---|
+| l4 is wrong | fix l4 and re-implement | none |
+| l2 contract is wrong | stop, fix l2, regenerate l3 and affected l4s | all unstarted prs in slice |
+| l1 ordering is wrong | fix l1, re-plan affected slices | downstream slice docs |
+| l0 constraint is wrong | full stop, revise l0, audit all layers | potentially whole project |
 
-**L4 (PR Spec):**
-- Has all sections: Goal, Context, Deliverables, Acceptance Tests, Non-Goals, Constraints
-- Goal is one sentence (no "and")
-- Every deliverable has an exact file path
-- Every test has exact inputs and exact expected outputs
-- Non-Goals lists >= 3 items
-- References only merged code, never unmerged PRs
+rules:
+1. never silently deviate.
+2. fix at highest affected layer.
+3. regenerate downstream layers, do not hand-patch them.
+4. merged prs are reopened only when contract-invalid, otherwise fix forward.
 
-## Examples
+## structural validation
 
-Complete worked example across all five layers: [Bookmark Manager](./examples/bookmark-manager/)
+**l2 must pass:**
+- all core contract sections exist and required l2 appendices are present.
+- every acceptance scenario maps to concrete api/model/invariant items.
+- no unresolved ambiguity without default behavior.
+- no file paths or helper-level implementation details.
 
-- [L0: Constitution](./examples/bookmark-manager/constitution.md)
-- [L1: Roadmap](./examples/bookmark-manager/roadmap.md)
-- [L2: Slice Spec](./examples/bookmark-manager/slice-2-bookmark-crud.md)
-- [L3: PR Roadmap](./examples/bookmark-manager/pr-roadmap-slice-2.md)
-- [L4: PR Spec](./examples/bookmark-manager/pr-01-bookmark-model.md)
+**l3 must pass:**
+- dependency graph is a DAG.
+- each l2 contract cluster has exactly one owning pr.
+- acceptance coverage exists for every cluster.
+- no file paths, signatures, or test-case detail.
+
+**l4 must pass:**
+- includes decision ledger and traceability matrix.
+- every l3 acceptance bullet maps to at least one deliverable and one test.
+- every behavior-changing decision has test coverage.
+- all dependencies reference merged state only.
+
+## examples
+
+complete worked example across layers:
+- [l0: constitution](./examples/bookmark-manager/constitution.md)
+- [l1: roadmap](./examples/bookmark-manager/roadmap.md)
+- [l2: slice spec](./examples/bookmark-manager/slice-2-bookmark-crud.md)
+- [l3: pr roadmap](./examples/bookmark-manager/pr-roadmap-slice-2.md)
+- [l4: pr spec](./examples/bookmark-manager/pr-01-bookmark-model.md)

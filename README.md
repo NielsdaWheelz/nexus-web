@@ -543,7 +543,8 @@ When running locally:
 
 | Category | Endpoints |
 |----------|-----------|
-| Libraries | `GET/POST /libraries`, `PATCH/DELETE /libraries/{id}`, members, invites, transfer (S4) |
+| Libraries | `GET/POST /libraries`, `PATCH/DELETE /libraries/{id}`, members, transfer-ownership (S4 PR-03) |
+| Invitations | `POST/GET /libraries/{id}/invites`, `GET /libraries/invites`, accept/decline/revoke (S4 PR-04) |
 | Media | `GET /media/{id}`, `POST /media/from_url`, `POST /media/upload/init` |
 | Highlights | `POST/GET /fragments/{id}/highlights`, `PATCH/DELETE /highlights/{id}` |
 | Annotations | `PUT/DELETE /highlights/{id}/annotation` |

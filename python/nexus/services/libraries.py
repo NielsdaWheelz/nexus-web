@@ -4,10 +4,12 @@ All library-domain business logic lives here.
 Routes may not contain domain logic or raw DB access - they must call these functions.
 """
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.db.session import transaction
@@ -18,9 +20,21 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.schemas.library import LibraryMediaOut, LibraryMemberOut, LibraryOut
+from nexus.schemas.library import (
+    AcceptLibraryInviteResponse,
+    DeclineLibraryInviteResponse,
+    InviteAcceptMembershipOut,
+    LibraryInvitationOut,
+    LibraryInvitationStatusValue,
+    LibraryMediaOut,
+    LibraryMemberOut,
+    LibraryOut,
+    LibraryRole,
+)
 from nexus.schemas.media import MediaOut
 from nexus.services.capabilities import derive_capabilities
+
+logger = logging.getLogger(__name__)
 
 
 def create_library(db: Session, viewer_id: UUID, name: str) -> LibraryOut:
@@ -982,3 +996,506 @@ def transfer_library_ownership(
         updated_at=now,
         role="admin",
     )
+
+
+# =============================================================================
+# S4 PR-04: Invitation Lifecycle
+# =============================================================================
+
+
+def _invitation_row_to_out(row: tuple) -> LibraryInvitationOut:
+    """Convert a raw invite query row to LibraryInvitationOut."""
+    return LibraryInvitationOut(
+        id=row[0],
+        library_id=row[1],
+        inviter_user_id=row[2],
+        invitee_user_id=row[3],
+        role=row[4],
+        status=row[5],
+        created_at=row[6],
+        responded_at=row[7],
+    )
+
+
+def create_library_invite(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    invitee_user_id: UUID,
+    role: LibraryRole,
+) -> LibraryInvitationOut:
+    """Create an invitation to a library.
+
+    Auth: viewer must be admin/owner of target library.
+    Default library targets are forbidden.
+    Invitee must exist. Existing members and pending invites are conflicts.
+
+    Raises:
+        NotFoundError: Library not found or viewer not member (masked 404).
+        ForbiddenError: Viewer not admin, or default library target.
+        ConflictError: Invitee already member or pending invite exists.
+        NotFoundError: Invitee user not found.
+    """
+    with transaction(db):
+        lib_row = _fetch_library_with_membership(db, viewer_id, library_id)
+        _require_admin(lib_row[6])
+        _require_non_default(lib_row[1])
+
+        # Invitee must exist
+        invitee_exists = db.execute(
+            text("SELECT 1 FROM users WHERE id = :uid"),
+            {"uid": invitee_user_id},
+        ).fetchone()
+        if invitee_exists is None:
+            raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
+
+        # Check existing membership (catches self-invite via same path)
+        member_exists = db.execute(
+            text("""
+                SELECT 1 FROM memberships
+                WHERE library_id = :lid AND user_id = :uid
+            """),
+            {"lid": library_id, "uid": invitee_user_id},
+        ).fetchone()
+        if member_exists is not None:
+            raise ConflictError(ApiErrorCode.E_INVITE_MEMBER_EXISTS, "User is already a member")
+
+        # Check existing pending invite
+        pending_exists = db.execute(
+            text("""
+                SELECT 1 FROM library_invitations
+                WHERE library_id = :lid AND invitee_user_id = :uid AND status = 'pending'
+            """),
+            {"lid": library_id, "uid": invitee_user_id},
+        ).fetchone()
+        if pending_exists is not None:
+            raise ConflictError(
+                ApiErrorCode.E_INVITE_ALREADY_EXISTS,
+                "Pending invitation already exists",
+            )
+
+        # Insert invite row; handle unique-index race
+        try:
+            result = db.execute(
+                text("""
+                    INSERT INTO library_invitations
+                        (library_id, inviter_user_id, invitee_user_id, role, status)
+                    VALUES (:lid, :inviter, :invitee, :role, 'pending')
+                    RETURNING id, library_id, inviter_user_id, invitee_user_id,
+                              role, status, created_at, responded_at
+                """),
+                {
+                    "lid": library_id,
+                    "inviter": viewer_id,
+                    "invitee": invitee_user_id,
+                    "role": role,
+                },
+            )
+            row = result.fetchone()
+        except IntegrityError as exc:
+            db.rollback()
+            constraint_name = getattr(exc.orig, "constraint_name", "") or ""
+            if "uix_library_invitations_pending_once" in str(exc) or (
+                "uix_library_invitations_pending_once" in constraint_name
+            ):
+                raise ConflictError(
+                    ApiErrorCode.E_INVITE_ALREADY_EXISTS,
+                    "Pending invitation already exists",
+                ) from exc
+            raise
+
+    return _invitation_row_to_out(row)
+
+
+def list_library_invites(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    status: LibraryInvitationStatusValue = "pending",
+    limit: int = 100,
+) -> list[LibraryInvitationOut]:
+    """List invitations for a library.
+
+    Auth: viewer must be admin/owner of the library.
+    Order: created_at DESC, id DESC.
+    """
+    if limit <= 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    limit = min(limit, 200)
+
+    lib_row = _fetch_library_with_membership(db, viewer_id, library_id)
+    _require_admin(lib_row[6])
+
+    result = db.execute(
+        text("""
+            SELECT id, library_id, inviter_user_id, invitee_user_id,
+                   role, status, created_at, responded_at
+            FROM library_invitations
+            WHERE library_id = :lid AND status = :status
+            ORDER BY created_at DESC, id DESC
+            LIMIT :limit
+        """),
+        {"lid": library_id, "status": status, "limit": limit},
+    )
+
+    return [_invitation_row_to_out(r) for r in result.fetchall()]
+
+
+def list_viewer_invites(
+    db: Session,
+    viewer_id: UUID,
+    status: LibraryInvitationStatusValue = "pending",
+    limit: int = 100,
+) -> list[LibraryInvitationOut]:
+    """List invitations addressed to the viewer.
+
+    Auth: authenticated viewer only (sees own invites).
+    Order: created_at DESC, id DESC.
+    """
+    if limit <= 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    limit = min(limit, 200)
+
+    result = db.execute(
+        text("""
+            SELECT id, library_id, inviter_user_id, invitee_user_id,
+                   role, status, created_at, responded_at
+            FROM library_invitations
+            WHERE invitee_user_id = :uid AND status = :status
+            ORDER BY created_at DESC, id DESC
+            LIMIT :limit
+        """),
+        {"uid": viewer_id, "status": status, "limit": limit},
+    )
+
+    return [_invitation_row_to_out(r) for r in result.fetchall()]
+
+
+def accept_library_invite(
+    db: Session,
+    viewer_id: UUID,
+    invite_id: UUID,
+) -> AcceptLibraryInviteResponse:
+    """Accept a library invitation.
+
+    Transactional: lock invite -> state check -> membership upsert ->
+    invite update -> backfill-job upsert -> commit.
+
+    Raises:
+        NotFoundError: Invite not found or not for viewer (masked).
+        ConflictError: Invite not in pending state (unless idempotent accepted).
+        ForbiddenError: Target library is default (defensive guard).
+    """
+    with transaction(db):
+        # Step 1: Lock invite row by id + invitee
+        result = db.execute(
+            text("""
+                SELECT id, library_id, inviter_user_id, invitee_user_id,
+                       role, status, created_at, responded_at
+                FROM library_invitations
+                WHERE id = :invite_id AND invitee_user_id = :uid
+                FOR UPDATE
+            """),
+            {"invite_id": invite_id, "uid": viewer_id},
+        )
+        inv = result.fetchone()
+
+        if inv is None:
+            raise NotFoundError(ApiErrorCode.E_INVITE_NOT_FOUND, "Invitation not found")
+
+        current_status = inv[5]
+        invite_library_id = inv[1]
+        invite_role = inv[4]
+
+        # Step 2: Idempotent on already accepted
+        if current_status == "accepted":
+            invite_out = _invitation_row_to_out(inv)
+            # Fetch current membership to return
+            mem = db.execute(
+                text("""
+                    SELECT library_id, user_id, role FROM memberships
+                    WHERE library_id = :lid AND user_id = :uid
+                """),
+                {"lid": invite_library_id, "uid": viewer_id},
+            ).fetchone()
+            membership_out = InviteAcceptMembershipOut(
+                library_id=mem[0] if mem else invite_library_id,
+                user_id=viewer_id,
+                role=mem[2] if mem else invite_role,
+            )
+            return AcceptLibraryInviteResponse(
+                invite=invite_out,
+                membership=membership_out,
+                idempotent=True,
+                backfill_job_status="completed",
+            )
+
+        # Step 3: Non-pending is conflict
+        if current_status != "pending":
+            raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
+
+        # Step 4: Defensive guard — target library must be non-default
+        lib_check = db.execute(
+            text("SELECT is_default FROM libraries WHERE id = :lid"),
+            {"lid": invite_library_id},
+        ).fetchone()
+        if lib_check is None or lib_check[0]:
+            raise ForbiddenError(
+                ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN,
+                "Cannot accept invite to default library",
+            )
+
+        # Step 5: Membership upsert (ON CONFLICT DO NOTHING)
+        db.execute(
+            text("""
+                INSERT INTO memberships (library_id, user_id, role)
+                VALUES (:lid, :uid, :role)
+                ON CONFLICT (library_id, user_id) DO NOTHING
+            """),
+            {"lid": invite_library_id, "uid": viewer_id, "role": invite_role},
+        )
+
+        # Step 6: Update invite to accepted
+        now = datetime.now(UTC)
+        db.execute(
+            text("""
+                UPDATE library_invitations
+                SET status = 'accepted', responded_at = :now
+                WHERE id = :invite_id
+            """),
+            {"invite_id": invite_id, "now": now},
+        )
+
+        # Step 7: Upsert durable backfill job
+        # Find the invitee's default library
+        default_lib = db.execute(
+            text("""
+                SELECT id FROM libraries
+                WHERE owner_user_id = :uid AND is_default = true
+            """),
+            {"uid": viewer_id},
+        ).fetchone()
+
+        backfill_job_status = "pending"
+        if default_lib is not None:
+            db.execute(
+                text("""
+                    INSERT INTO default_library_backfill_jobs
+                        (default_library_id, source_library_id, user_id,
+                         status, attempts, last_error_code, updated_at, finished_at)
+                    VALUES (:dlid, :slid, :uid, 'pending', 0, NULL, now(), NULL)
+                    ON CONFLICT (default_library_id, source_library_id, user_id)
+                    DO UPDATE SET
+                        status = 'pending',
+                        attempts = 0,
+                        last_error_code = NULL,
+                        updated_at = now(),
+                        finished_at = NULL
+                """),
+                {
+                    "dlid": default_lib[0],
+                    "slid": invite_library_id,
+                    "uid": viewer_id,
+                },
+            )
+
+        # Refetch updated invite row
+        updated = db.execute(
+            text("""
+                SELECT id, library_id, inviter_user_id, invitee_user_id,
+                       role, status, created_at, responded_at
+                FROM library_invitations
+                WHERE id = :invite_id
+            """),
+            {"invite_id": invite_id},
+        ).fetchone()
+
+    invite_out = _invitation_row_to_out(updated)
+    membership_out = InviteAcceptMembershipOut(
+        library_id=invite_library_id,
+        user_id=viewer_id,
+        role=invite_role,
+    )
+
+    # Step 9: Post-commit best-effort enqueue (non-fatal)
+    if default_lib is not None:
+        _enqueue_default_library_backfill_job(default_lib[0], invite_library_id, viewer_id)
+
+    return AcceptLibraryInviteResponse(
+        invite=invite_out,
+        membership=membership_out,
+        idempotent=False,
+        backfill_job_status=backfill_job_status,
+    )
+
+
+def decline_library_invite(
+    db: Session,
+    viewer_id: UUID,
+    invite_id: UUID,
+) -> DeclineLibraryInviteResponse:
+    """Decline a library invitation.
+
+    pending -> declined. declined -> declined is idempotent.
+    accepted|revoked -> 409.
+
+    Raises:
+        NotFoundError: Invite not found or not for viewer (masked).
+        ConflictError: Invite not in pending state (unless idempotent declined).
+    """
+    with transaction(db):
+        result = db.execute(
+            text("""
+                SELECT id, library_id, inviter_user_id, invitee_user_id,
+                       role, status, created_at, responded_at
+                FROM library_invitations
+                WHERE id = :invite_id AND invitee_user_id = :uid
+                FOR UPDATE
+            """),
+            {"invite_id": invite_id, "uid": viewer_id},
+        )
+        inv = result.fetchone()
+
+        if inv is None:
+            raise NotFoundError(ApiErrorCode.E_INVITE_NOT_FOUND, "Invitation not found")
+
+        current_status = inv[5]
+
+        # Idempotent on already declined
+        if current_status == "declined":
+            return DeclineLibraryInviteResponse(
+                invite=_invitation_row_to_out(inv),
+                idempotent=True,
+            )
+
+        if current_status != "pending":
+            raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
+
+        now = datetime.now(UTC)
+        db.execute(
+            text("""
+                UPDATE library_invitations
+                SET status = 'declined', responded_at = :now
+                WHERE id = :invite_id
+            """),
+            {"invite_id": invite_id, "now": now},
+        )
+
+        updated = db.execute(
+            text("""
+                SELECT id, library_id, inviter_user_id, invitee_user_id,
+                       role, status, created_at, responded_at
+                FROM library_invitations
+                WHERE id = :invite_id
+            """),
+            {"invite_id": invite_id},
+        ).fetchone()
+
+    return DeclineLibraryInviteResponse(
+        invite=_invitation_row_to_out(updated),
+        idempotent=False,
+    )
+
+
+def revoke_library_invite(
+    db: Session,
+    viewer_id: UUID,
+    invite_id: UUID,
+) -> None:
+    """Revoke a library invitation.
+
+    Auth: viewer must be admin/owner of the invite's library.
+    pending -> revoked. revoked -> revoked is idempotent (204).
+    accepted|declined -> 409.
+
+    Raises:
+        NotFoundError: Invite not found or not visible to caller (masked).
+        ForbiddenError: Caller is member but not admin.
+        ConflictError: Invite in terminal non-revoked state.
+    """
+    with transaction(db):
+        # Fetch the invite
+        inv_result = db.execute(
+            text("""
+                SELECT i.id, i.library_id, i.inviter_user_id, i.invitee_user_id,
+                       i.role, i.status, i.created_at, i.responded_at
+                FROM library_invitations i
+                WHERE i.id = :invite_id
+                FOR UPDATE
+            """),
+            {"invite_id": invite_id},
+        )
+        inv = inv_result.fetchone()
+
+        if inv is None:
+            raise NotFoundError(ApiErrorCode.E_INVITE_NOT_FOUND, "Invitation not found")
+
+        invite_library_id = inv[1]
+
+        # Check caller is member of the invite's library
+        membership = db.execute(
+            text("""
+                SELECT role FROM memberships
+                WHERE library_id = :lid AND user_id = :uid
+            """),
+            {"lid": invite_library_id, "uid": viewer_id},
+        ).fetchone()
+
+        if membership is None:
+            raise NotFoundError(ApiErrorCode.E_INVITE_NOT_FOUND, "Invitation not found")
+
+        if membership[0] != "admin":
+            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
+
+        current_status = inv[5]
+
+        # Idempotent on already revoked
+        if current_status == "revoked":
+            return
+
+        if current_status != "pending":
+            raise ConflictError(ApiErrorCode.E_INVITE_NOT_PENDING, "Invitation is not pending")
+
+        now = datetime.now(UTC)
+        db.execute(
+            text("""
+                UPDATE library_invitations
+                SET status = 'revoked', responded_at = :now
+                WHERE id = :invite_id
+            """),
+            {"invite_id": invite_id, "now": now},
+        )
+
+
+def _enqueue_default_library_backfill_job(
+    default_library_id: UUID,
+    source_library_id: UUID,
+    user_id: UUID,
+    request_id: str | None = None,
+) -> bool:
+    """Best-effort enqueue of backfill worker task.
+
+    Logging-only on failure. Returns True if dispatch succeeded.
+    The durable backfill job row is authoritative; this is advisory.
+    Worker task implementation is in PR-05.
+    """
+    try:
+        # PR-05 will register the actual celery task here.
+        # For now, log intent and return False (no worker available).
+        logger.info(
+            "backfill_enqueue: default_library=%s source_library=%s user=%s request_id=%s "
+            "(worker not yet available, durable job row is authoritative)",
+            default_library_id,
+            source_library_id,
+            user_id,
+            request_id,
+        )
+        return False
+    except Exception:
+        logger.exception(
+            "backfill_enqueue_failed: default_library=%s source_library=%s user=%s",
+            default_library_id,
+            source_library_id,
+            user_id,
+        )
+        return False
