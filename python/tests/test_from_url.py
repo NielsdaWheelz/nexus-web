@@ -496,3 +496,62 @@ class TestFromUrlAuth:
 
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "E_UNAUTHENTICATED"
+
+
+# =============================================================================
+# S4 PR-05: Provenance assertions
+# =============================================================================
+
+
+class TestFromUrlProvenance:
+    """Tests for S4 PR-05: intrinsic provenance on from_url creation."""
+
+    def test_from_url_creates_default_library_intrinsic_row(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """POST /media/from_url creates both library_media and intrinsic row."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://example.com/provenance-test"},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 202
+        media_id = UUID(response.json()["data"]["media_id"])
+
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with direct_db.session() as session:
+            # Get default library
+            dl = session.execute(
+                text("""
+                    SELECT id FROM libraries
+                    WHERE owner_user_id = :uid AND is_default = true
+                """),
+                {"uid": user_id},
+            ).fetchone()
+            assert dl is not None
+
+            # Verify library_media exists
+            lm = session.execute(
+                text("""
+                    SELECT 1 FROM library_media
+                    WHERE library_id = :dl AND media_id = :m
+                """),
+                {"dl": dl[0], "m": media_id},
+            ).fetchone()
+            assert lm is not None
+
+            # Verify intrinsic row exists
+            intrinsic = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_intrinsics
+                    WHERE default_library_id = :dl AND media_id = :m
+                """),
+                {"dl": dl[0], "m": media_id},
+            ).fetchone()
+            assert intrinsic is not None

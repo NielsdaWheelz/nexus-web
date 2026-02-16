@@ -751,70 +751,278 @@ class TestDefaultLibraryClosure:
             )
             assert result.fetchone() is not None
 
-    def test_remove_from_default_cascades_to_single_member_libs(
+    def test_add_media_non_default_creates_closure_edges_and_default_materialization(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Removing media from default library cascades to single-member libraries."""
+        """Adding media to non-default library creates closure edges and default rows."""
+        owner_id = create_test_user_id()
+        member_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # Bootstrap member before inviting
+        auth_client.get("/me", headers=auth_headers(member_id))
+
+        # Create non-default library as owner
+        lib_resp = auth_client.post(
+            "/libraries", json={"name": "Shared Lib"}, headers=auth_headers(owner_id)
+        )
+        lib_id = lib_resp.json()["data"]["id"]
+
+        # Add member via invite flow
+        invite_resp = auth_client.post(
+            f"/libraries/{lib_id}/invites",
+            json={"invitee_user_id": str(member_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+        invite_id = invite_resp.json()["data"]["id"]
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(member_id),
+        )
+
+        # Get default library IDs
+        owner_me = auth_client.get("/me", headers=auth_headers(owner_id)).json()
+        member_me = auth_client.get("/me", headers=auth_headers(member_id)).json()
+        owner_dl = owner_me["data"]["default_library_id"]
+        member_dl = member_me["data"]["default_library_id"]
+
+        # Add media to non-default library
+        auth_client.post(
+            f"/libraries/{lib_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(owner_id),
+        )
+
+        # Verify closure edges and materialized rows exist for both members
+        with direct_db.session() as session:
+            for dl_id in [owner_dl, member_dl]:
+                edge = session.execute(
+                    text("""
+                        SELECT 1 FROM default_library_closure_edges
+                        WHERE default_library_id = :dl AND media_id = :m AND source_library_id = :src
+                    """),
+                    {"dl": dl_id, "m": media_id, "src": lib_id},
+                ).fetchone()
+                assert edge is not None, f"Missing closure edge for dl={dl_id}"
+
+                lm = session.execute(
+                    text("""
+                        SELECT 1 FROM library_media
+                        WHERE library_id = :dl AND media_id = :m
+                    """),
+                    {"dl": dl_id, "m": media_id},
+                ).fetchone()
+                assert lm is not None, f"Missing materialized row for dl={dl_id}"
+
+    def test_remove_media_non_default_deletes_source_edges_and_gcs_default_row(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Removing media from non-default library deletes source edges and gcs default row."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        # Get default library
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         default_library_id = me_resp.json()["data"]["default_library_id"]
 
-        # Create a non-default library
-        create_resp = auth_client.post(
-            "/libraries", json={"name": "Other Library"}, headers=auth_headers(user_id)
+        lib_resp = auth_client.post(
+            "/libraries", json={"name": "Non Default"}, headers=auth_headers(user_id)
         )
-        other_library_id = create_resp.json()["data"]["id"]
+        lib_id = lib_resp.json()["data"]["id"]
 
-        # Add media to other library (also goes to default via closure)
+        # Add media to non-default (creates closure edges + default materialization)
         auth_client.post(
-            f"/libraries/{other_library_id}/media",
+            f"/libraries/{lib_id}/media",
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
 
-        # Verify in both
+        # Verify closure edge exists
         with direct_db.session() as session:
-            result = session.execute(
-                text("SELECT library_id FROM library_media WHERE media_id = :media_id"),
-                {"media_id": media_id},
-            )
-            before_ids = {row[0] for row in result.fetchall()}
-            assert UUID(default_library_id) in before_ids
-            assert UUID(other_library_id) in before_ids
+            edge = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_closure_edges
+                    WHERE default_library_id = :dl AND media_id = :m AND source_library_id = :src
+                """),
+                {"dl": default_library_id, "m": media_id, "src": lib_id},
+            ).fetchone()
+            assert edge is not None
 
-        # Remove from default
+        # Remove from non-default
+        auth_client.delete(
+            f"/libraries/{lib_id}/media/{media_id}",
+            headers=auth_headers(user_id),
+        )
+
+        # Verify closure edge deleted and default row gc'd (no intrinsic)
+        with direct_db.session() as session:
+            edge = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_closure_edges
+                    WHERE default_library_id = :dl AND media_id = :m
+                """),
+                {"dl": default_library_id, "m": media_id},
+            ).fetchone()
+            assert edge is None
+
+            lm = session.execute(
+                text("""
+                    SELECT 1 FROM library_media
+                    WHERE library_id = :dl AND media_id = :m
+                """),
+                {"dl": default_library_id, "m": media_id},
+            ).fetchone()
+            assert lm is None
+
+    def test_remove_media_from_default_removes_intrinsic_but_keeps_row_when_closure_exists(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Removing from default removes intrinsic but keeps row when closure edge exists."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        default_library_id = me_resp.json()["data"]["default_library_id"]
+
+        # Add media to default (creates intrinsic)
+        auth_client.post(
+            f"/libraries/{default_library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        # Also add to a non-default library (creates closure edge)
+        lib_resp = auth_client.post(
+            "/libraries", json={"name": "Non Default"}, headers=auth_headers(user_id)
+        )
+        lib_id = lib_resp.json()["data"]["id"]
+        auth_client.post(
+            f"/libraries/{lib_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        # Now remove from default
         auth_client.delete(
             f"/libraries/{default_library_id}/media/{media_id}",
             headers=auth_headers(user_id),
         )
 
-        # Verify removed from both
+        # Intrinsic should be gone
         with direct_db.session() as session:
-            result = session.execute(
-                text("SELECT library_id FROM library_media WHERE media_id = :media_id"),
-                {"media_id": media_id},
-            )
-            after_ids = {row[0] for row in result.fetchall()}
-            assert UUID(default_library_id) not in after_ids
-            assert UUID(other_library_id) not in after_ids
+            intrinsic = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_intrinsics
+                    WHERE default_library_id = :dl AND media_id = :m
+                """),
+                {"dl": default_library_id, "m": media_id},
+            ).fetchone()
+            assert intrinsic is None
 
-    def test_remove_from_non_default_does_not_affect_default(
+            # But library_media should still exist (closure edge remains)
+            lm = session.execute(
+                text("""
+                    SELECT 1 FROM library_media
+                    WHERE library_id = :dl AND media_id = :m
+                """),
+                {"dl": default_library_id, "m": media_id},
+            ).fetchone()
+            assert lm is not None
+
+    def test_remove_media_from_default_row_is_gc_after_closure_removed(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Removing media from non-default library does not affect default library."""
+        """Default row is gc'd once closure edge is also removed."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        default_library_id = me_resp.json()["data"]["default_library_id"]
+
+        # Add to default (intrinsic) and non-default (closure)
+        auth_client.post(
+            f"/libraries/{default_library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+        lib_resp = auth_client.post(
+            "/libraries", json={"name": "ND"}, headers=auth_headers(user_id)
+        )
+        lib_id = lib_resp.json()["data"]["id"]
+        auth_client.post(
+            f"/libraries/{lib_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        # Remove intrinsic first
+        auth_client.delete(
+            f"/libraries/{default_library_id}/media/{media_id}",
+            headers=auth_headers(user_id),
+        )
+        # Row survives (closure edge)
+        with direct_db.session() as session:
+            assert (
+                session.execute(
+                    text("SELECT 1 FROM library_media WHERE library_id = :dl AND media_id = :m"),
+                    {"dl": default_library_id, "m": media_id},
+                ).fetchone()
+                is not None
+            )
+
+        # Now remove closure source
+        auth_client.delete(
+            f"/libraries/{lib_id}/media/{media_id}",
+            headers=auth_headers(user_id),
+        )
+
+        # Now default row should be gc'd
+        with direct_db.session() as session:
+            assert (
+                session.execute(
+                    text("SELECT 1 FROM library_media WHERE library_id = :dl AND media_id = :m"),
+                    {"dl": default_library_id, "m": media_id},
+                ).fetchone()
+                is None
+            )
+
+    def test_remove_from_non_default_gcs_default_when_no_intrinsic(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """S4: Removing media from non-default library GCs default row when no intrinsic."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -827,7 +1035,7 @@ class TestDefaultLibraryClosure:
         )
         other_library_id = create_resp.json()["data"]["id"]
 
-        # Add media to non-default library (which also adds to default via closure)
+        # Add media to non-default library (creates closure edge + materialized default row)
         auth_client.post(
             f"/libraries/{other_library_id}/media",
             json={"media_id": str(media_id)},
@@ -840,7 +1048,7 @@ class TestDefaultLibraryClosure:
             headers=auth_headers(user_id),
         )
 
-        # Verify media is STILL in default library
+        # S4: default row is GC'd because no intrinsic and no remaining closure edge
         with direct_db.session() as session:
             result = session.execute(
                 text("""
@@ -849,7 +1057,7 @@ class TestDefaultLibraryClosure:
                 """),
                 {"library_id": default_library_id, "media_id": media_id},
             )
-            assert result.fetchone() is not None
+            assert result.fetchone() is None
 
     def test_add_media_to_default_library_creates_intrinsic(
         self, auth_client, direct_db: DirectSessionManager
@@ -2972,6 +3180,151 @@ class TestLibraryInviteRevoke:
         assert response.json()["error"]["code"] == "E_FORBIDDEN"
 
 
+class TestRemoveMemberClosureCleanup:
+    """Tests for S4 PR-05: member removal closure cleanup."""
+
+    def test_remove_library_member_deletes_member_closure_edges_and_gcs_rows(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Removing a member deletes their closure edges and gcs unjustified rows."""
+        owner_id = create_test_user_id()
+        member_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("default_library_backfill_jobs", "source_library_id", None)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # Bootstrap member before inviting
+        auth_client.get("/me", headers=auth_headers(member_id))
+
+        # Create shared library + add member
+        lib_resp = auth_client.post(
+            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
+        )
+        lib_id = lib_resp.json()["data"]["id"]
+
+        invite_resp = auth_client.post(
+            f"/libraries/{lib_id}/invites",
+            json={"invitee_user_id": str(member_id), "role": "admin"},
+            headers=auth_headers(owner_id),
+        )
+        invite_id = invite_resp.json()["data"]["id"]
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(member_id),
+        )
+
+        # Add media to shared library (creates closure edges for both)
+        auth_client.post(
+            f"/libraries/{lib_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(owner_id),
+        )
+
+        member_me = auth_client.get("/me", headers=auth_headers(member_id)).json()
+        member_dl = member_me["data"]["default_library_id"]
+
+        # Verify member closure edge exists
+        with direct_db.session() as session:
+            edge = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_closure_edges
+                    WHERE default_library_id = :dl AND media_id = :m AND source_library_id = :src
+                """),
+                {"dl": member_dl, "m": media_id, "src": lib_id},
+            ).fetchone()
+            assert edge is not None
+
+        # Remove member
+        auth_client.delete(
+            f"/libraries/{lib_id}/members/{member_id}",
+            headers=auth_headers(owner_id),
+        )
+
+        # Verify member closure edges deleted and default row gc'd
+        with direct_db.session() as session:
+            edge = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_closure_edges
+                    WHERE default_library_id = :dl AND source_library_id = :src
+                """),
+                {"dl": member_dl, "src": lib_id},
+            ).fetchone()
+            assert edge is None
+
+            lm = session.execute(
+                text("""
+                    SELECT 1 FROM library_media
+                    WHERE library_id = :dl AND media_id = :m
+                """),
+                {"dl": member_dl, "m": media_id},
+            ).fetchone()
+            assert lm is None
+
+    def test_remove_library_member_deletes_matching_backfill_job_row(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Removing member deletes matching backfill job row."""
+        owner_id = create_test_user_id()
+        member_id = create_test_user_id()
+
+        # Bootstrap member before inviting
+        auth_client.get("/me", headers=auth_headers(member_id))
+
+        # Create shared library + add member
+        lib_resp = auth_client.post(
+            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
+        )
+        lib_id = lib_resp.json()["data"]["id"]
+
+        invite_resp = auth_client.post(
+            f"/libraries/{lib_id}/invites",
+            json={"invitee_user_id": str(member_id), "role": "admin"},
+            headers=auth_headers(owner_id),
+        )
+        invite_id = invite_resp.json()["data"]["id"]
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(member_id),
+        )
+
+        member_me = auth_client.get("/me", headers=auth_headers(member_id)).json()
+        member_dl = member_me["data"]["default_library_id"]
+
+        # Verify backfill job was created by accept
+        with direct_db.session() as session:
+            job = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_backfill_jobs
+                    WHERE default_library_id = :dl AND source_library_id = :src AND user_id = :uid
+                """),
+                {"dl": member_dl, "src": lib_id, "uid": str(member_id)},
+            ).fetchone()
+            assert job is not None
+
+        # Remove member
+        auth_client.delete(
+            f"/libraries/{lib_id}/members/{member_id}",
+            headers=auth_headers(owner_id),
+        )
+
+        # Verify backfill job deleted
+        with direct_db.session() as session:
+            job = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_backfill_jobs
+                    WHERE default_library_id = :dl AND source_library_id = :src AND user_id = :uid
+                """),
+                {"dl": member_dl, "src": lib_id, "uid": str(member_id)},
+            ).fetchone()
+            assert job is None
+
+
 class TestVisibilityClosureScenarios:
     """Tests for spec-defined visibility closure scenarios (V1-V6)."""
 
@@ -3062,13 +3415,17 @@ class TestVisibilityClosureScenarios:
         media_ids = [m["id"] for m in response.json()["data"]]
         assert str(media_id) in media_ids
 
-    def test_v4_remove_from_default_cascades(self, auth_client, direct_db: DirectSessionManager):
-        """V4: User A removes M from default library → M removed from all A's single-member libs."""
+    def test_v4_remove_from_default_keeps_closure_backed_row(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """S4: Remove from default removes intrinsic but closure edge keeps media materialized."""
         user_a = create_test_user_id()
 
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -3081,7 +3438,7 @@ class TestVisibilityClosureScenarios:
         )
         other_library = create_resp.json()["data"]["id"]
 
-        # Add media to other library (also goes to default via closure)
+        # Add media to other library (creates closure edge + materialized default row)
         auth_client.post(
             f"/libraries/{other_library}/media",
             json={"media_id": str(media_id)},
@@ -3098,21 +3455,22 @@ class TestVisibilityClosureScenarios:
             assert UUID(default_library) in before_ids
             assert UUID(other_library) in before_ids
 
-        # Remove from default
+        # Remove from default - only removes intrinsic (none existed), closure edge stays
         auth_client.delete(
             f"/libraries/{default_library}/media/{media_id}",
             headers=auth_headers(user_a),
         )
 
-        # Verify removed from both
+        # S4: media STAYS in default because closure edge from other_library justifies it.
+        # Media also stays in other_library (not affected by default removal).
         with direct_db.session() as session:
             result = session.execute(
                 text("SELECT library_id FROM library_media WHERE media_id = :media_id"),
                 {"media_id": media_id},
             )
             after_ids = {row[0] for row in result.fetchall()}
-            assert UUID(default_library) not in after_ids
-            assert UUID(other_library) not in after_ids
+            assert UUID(default_library) in after_ids, "Closure edge keeps media in default"
+            assert UUID(other_library) in after_ids, "Non-default library unaffected"
 
     def test_v5_after_removal_cannot_read(self, auth_client, direct_db: DirectSessionManager):
         """V5: After V4, User A tries to read M → 404 (media not in any of A's libraries)."""

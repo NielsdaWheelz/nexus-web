@@ -716,3 +716,123 @@ class TestMediaWithCapabilities:
         assert caps["can_download_file"] is True
         # But can't quote until text extraction (not in S1)
         assert caps["can_quote"] is False
+
+
+# =============================================================================
+# S4 PR-05: Upload provenance assertions
+# =============================================================================
+
+
+class TestUploadProvenance:
+    """Tests for S4 PR-05: intrinsic provenance on upload init."""
+
+    def test_upload_init_creates_default_library_intrinsic_row(
+        self, upload_client, fake_storage, direct_db: DirectSessionManager
+    ):
+        """Upload init creates both library_media and intrinsic row."""
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+
+        init_response = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "provenance-test.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(PDF_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        ).json()["data"]
+
+        media_id = init_response["media_id"]
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with direct_db.session() as session:
+            dl = session.execute(
+                text("""
+                    SELECT id FROM libraries
+                    WHERE owner_user_id = :uid AND is_default = true
+                """),
+                {"uid": user_id},
+            ).fetchone()
+            assert dl is not None
+
+            intrinsic = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_intrinsics
+                    WHERE default_library_id = :dl AND media_id = :m
+                """),
+                {"dl": dl[0], "m": media_id},
+            ).fetchone()
+            assert intrinsic is not None
+
+    def test_ingest_duplicate_keeps_winner_attached_with_intrinsic(
+        self, upload_client, fake_storage, direct_db: DirectSessionManager
+    ):
+        """Dedup path keeps winner in default library with intrinsic."""
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+
+        # First upload
+        init1 = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "dup1.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(PDF_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        ).json()["data"]
+        media_id_1 = init1["media_id"]
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id_1)
+        direct_db.register_cleanup("library_media", "media_id", media_id_1)
+        direct_db.register_cleanup("media_file", "media_id", media_id_1)
+        direct_db.register_cleanup("media", "id", media_id_1)
+
+        fake_storage.put_object(init1["storage_path"], PDF_CONTENT, "application/pdf")
+        upload_client.post(f"/media/{media_id_1}/ingest", headers=auth_headers(user_id))
+
+        # Second upload (same content = duplicate)
+        init2 = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "dup2.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(PDF_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        ).json()["data"]
+        media_id_2 = init2["media_id"]
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id_2)
+        direct_db.register_cleanup("library_media", "media_id", media_id_2)
+        direct_db.register_cleanup("media_file", "media_id", media_id_2)
+        direct_db.register_cleanup("media", "id", media_id_2)
+
+        fake_storage.put_object(init2["storage_path"], PDF_CONTENT, "application/pdf")
+        resp = upload_client.post(f"/media/{media_id_2}/ingest", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        winner_id = resp.json()["data"]["media_id"]
+
+        # Verify winner has intrinsic
+        with direct_db.session() as session:
+            dl = session.execute(
+                text("""
+                    SELECT id FROM libraries
+                    WHERE owner_user_id = :uid AND is_default = true
+                """),
+                {"uid": user_id},
+            ).fetchone()
+
+            intrinsic = session.execute(
+                text("""
+                    SELECT 1 FROM default_library_intrinsics
+                    WHERE default_library_id = :dl AND media_id = :m
+                """),
+                {"dl": dl[0], "m": winner_id},
+            ).fetchone()
+            assert intrinsic is not None

@@ -37,6 +37,7 @@ celery_app.conf.enable_utc = True
 # Queue routing for ingestion tasks
 celery_app.conf.task_routes = {
     "nexus.tasks.ingest_web_article.*": {"queue": "ingest"},
+    "backfill_default_library_closure_job": {"queue": "ingest"},
 }
 
 # Default queue

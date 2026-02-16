@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.health import router as health_router
 from nexus.api.routes.highlights import router as highlights_router
+from nexus.api.routes.internal_libraries import router as internal_libraries_router
 from nexus.api.routes.keys import router as keys_router
 from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.me import router as me_router
@@ -37,6 +38,7 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router.include_router(models_router, tags=["models"])
     api_router.include_router(keys_router, tags=["keys"])
     api_router.include_router(search_router, tags=["search"])
+    api_router.include_router(internal_libraries_router, tags=["internal"])
 
     if include_test_routes:
         from nexus.api.routes.test import router as test_router
