@@ -24,6 +24,8 @@ from nexus.schemas.library import (
     LibraryMediaOut,
     LibraryMemberOut,
     LibraryOut,
+    TransferLibraryOwnershipRequest,
+    UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
 )
 from nexus.schemas.media import FragmentOut, MediaOut
@@ -43,6 +45,8 @@ __all__ = [
     # S4 Library schemas
     "LibraryMemberOut",
     "LibraryInvitationOut",
+    "UpdateLibraryMemberRequest",
+    "TransferLibraryOwnershipRequest",
     # Media schemas
     "MediaOut",
     "FragmentOut",

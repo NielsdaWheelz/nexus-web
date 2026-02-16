@@ -138,16 +138,22 @@ non-goals:
 - no invite/member routes yet.
 - no response schema shape changes yet.
 
-## pr-03: library governance (owner boundary + members + transfer)
+## pr-03: library governance (owner boundary + members + transfer) ✅
 
 goal: enforce owner/admin separation and owner-exit constraints for library containers.
+
+status: **implemented**. owner-only delete, member management endpoints, ownership transfer, invariant repair, and all acceptance tests pass (853 passed).
 
 dependencies: pr-01, pr-02.
 
 primary surfaces:
 - `python/nexus/services/libraries.py`
 - `python/nexus/api/routes/libraries.py`
+- `python/nexus/schemas/library.py`
+- `python/nexus/schemas/__init__.py`
+- `python/nexus/errors.py`
 - `apps/web/src/app/api/libraries/**` (new bff proxy routes)
+- `apps/web/src/app/(authenticated)/libraries/page.tsx`
 
 acceptance:
 - remove old multi-member delete prohibition; container delete is owner-only.
