@@ -261,7 +261,7 @@ non-goals:
 
 goal: align conversation read contracts with s4 visibility while keeping writes owner-only.
 
-dependencies: pr-02, pr-04.
+dependencies: pr-02.
 
 primary surfaces:
 - `python/nexus/services/conversations.py`
@@ -272,6 +272,8 @@ primary surfaces:
 
 acceptance:
 - `GET /conversations` supports `scope=mine|all|shared`, default `mine`.
+- invalid conversation scope input is deterministic:
+  - `GET /conversations?scope=<invalid>` returns `400 E_INVALID_REQUEST` (not framework `422`).
 - `GET /conversations/{id}` and `GET /conversations/{id}/messages` allow shared readers via canonical visibility.
 - write/send/delete endpoints remain owner-only.
 - conversation endpoints consume pr-02 canonical helpers; no ad-hoc duplicate read-auth sql paths.

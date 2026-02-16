@@ -702,6 +702,12 @@ new `scope` values:
 - `all`: all visible conversations (owned + shared + public)
 - `shared`: visible but not owned
 
+scope validation contract:
+- scope tokens are strict and case-sensitive.
+- only `mine|all|shared` are accepted.
+- invalid scope must return `400 E_INVALID_REQUEST`.
+- implementation must not rely on framework-level enum validation that can emit non-contract `422` responses.
+
 read visibility uses section 5.3 predicate.
 
 response objects use updated `ConversationOut` including `owner_user_id` and `is_owner`.
@@ -976,6 +982,7 @@ existing reused codes remain authoritative where applicable:
 - `E_LIBRARY_NOT_FOUND`
 - `E_CONVERSATION_NOT_FOUND`
 - `E_FORBIDDEN`
+- `E_INVALID_REQUEST`
 - s3 share errors (`E_SHARE_REQUIRED`, `E_SHARES_NOT_ALLOWED`)
 
 ---
