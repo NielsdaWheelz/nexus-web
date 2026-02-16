@@ -311,26 +311,10 @@ def _handle_duplicate(
     if library_row:
         library_id = library_row[0]
 
-        # Single transaction: attach winner, then delete loser
-        # This guarantees actor doesn't lose access
-        db.execute(
-            text("""
-                INSERT INTO library_media (library_id, media_id, created_at)
-                VALUES (:lib_id, :media_id, now())
-                ON CONFLICT DO NOTHING
-            """),
-            {"lib_id": library_id, "media_id": winner_id},
-        )
+        # S4: use shared helper for intrinsic provenance (attach winner to default library)
+        from nexus.services.default_library_closure import ensure_default_intrinsic
 
-        # S4 rollout-safety: upsert intrinsic provenance for winner in actor default library
-        db.execute(
-            text("""
-                INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                VALUES (:lib_id, :media_id)
-                ON CONFLICT (default_library_id, media_id) DO NOTHING
-            """),
-            {"lib_id": library_id, "media_id": winner_id},
-        )
+        ensure_default_intrinsic(db, library_id, winner_id)
 
     # Delete loser (cascades library_media entries)
     db.execute(text("DELETE FROM media WHERE id = :id"), {"id": loser_id})

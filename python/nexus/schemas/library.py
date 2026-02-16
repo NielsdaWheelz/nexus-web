@@ -17,6 +17,8 @@ from nexus.schemas.media import MediaOut
 LibraryRole = Literal["admin", "member"]
 LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
 
+BackfillJobStatusValue = Literal["pending", "running", "completed", "failed"]
+
 __all__ = [
     "CreateLibraryRequest",
     "UpdateLibraryRequest",
@@ -29,6 +31,7 @@ __all__ = [
     # S4 types
     "LibraryRole",
     "LibraryInvitationStatusValue",
+    "BackfillJobStatusValue",
     "LibraryMemberOut",
     "LibraryInvitationOut",
     # S4 PR-04 invite request/response schemas
@@ -36,6 +39,9 @@ __all__ = [
     "InviteAcceptMembershipOut",
     "AcceptLibraryInviteResponse",
     "DeclineLibraryInviteResponse",
+    # S4 PR-05 backfill requeue schemas
+    "RequeueDefaultLibraryBackfillJobRequest",
+    "DefaultLibraryBackfillJobOut",
 ]
 
 # =============================================================================
@@ -179,5 +185,35 @@ class DeclineLibraryInviteResponse(BaseModel):
 
     invite: LibraryInvitationOut
     idempotent: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# =============================================================================
+# S4 PR-05 Internal Backfill Requeue Schemas
+# =============================================================================
+
+
+class RequeueDefaultLibraryBackfillJobRequest(BaseModel):
+    """Request body for requeuing a backfill job (internal operator endpoint)."""
+
+    default_library_id: UUID = Field(..., description="Default library ID")
+    source_library_id: UUID = Field(..., description="Source (non-default) library ID")
+    user_id: UUID = Field(..., description="User ID who owns the default library")
+
+
+class DefaultLibraryBackfillJobOut(BaseModel):
+    """Response for backfill job state (internal operator endpoint)."""
+
+    default_library_id: UUID
+    source_library_id: UUID
+    user_id: UUID
+    status: BackfillJobStatusValue
+    attempts: int
+    last_error_code: str | None
+    updated_at: datetime
+    finished_at: datetime | None
+    idempotent: bool
+    enqueue_dispatched: bool
 
     model_config = ConfigDict(from_attributes=True)

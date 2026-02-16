@@ -22,10 +22,8 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.config import get_settings
 from nexus.db.models import (
-    DefaultLibraryIntrinsic,
     FailureStage,
     Library,
-    LibraryMedia,
     Media,
     MediaFile,
     ProcessingStatus,
@@ -184,25 +182,11 @@ def init_upload(
     )
     db.add(media_file)
 
-    # Add to viewer's default library
-    default_library_id = _get_default_library_id(db, viewer_id)
-    library_media = LibraryMedia(
-        library_id=default_library_id,
-        media_id=media_id,
-        created_at=now,
-    )
-    db.add(library_media)
-
-    # Flush media row first so FK on default_library_intrinsics is satisfied
+    # Flush media + media_file first so FK on closure tables is satisfied
     db.flush()
 
-    # S4 rollout-safety: record intrinsic provenance for default library
-    intrinsic = DefaultLibraryIntrinsic(
-        default_library_id=default_library_id,
-        media_id=media_id,
-        created_at=now,
-    )
-    db.add(intrinsic)
+    # Add to viewer's default library with intrinsic provenance
+    _ensure_in_default_library(db, viewer_id, media_id)
 
     db.commit()
 
@@ -477,42 +461,12 @@ def _mark_failed(
 def _ensure_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> None:
     """Ensure media is in user's default library with intrinsic provenance.
 
-    Idempotent: no-op if already present. Always ensures both library_media
-    and default_library_intrinsics rows exist (s4 rollout-safety).
+    Idempotent: no-op if already present. Delegates to shared closure helper.
     """
+    from nexus.services.default_library_closure import ensure_default_intrinsic
+
     default_library_id = _get_default_library_id(db, user_id)
-    now = datetime.now(UTC)
-
-    # Check if library_media already exists
-    result = db.execute(
-        select(LibraryMedia).where(
-            LibraryMedia.library_id == default_library_id,
-            LibraryMedia.media_id == media_id,
-        )
-    )
-    if not result.scalar():
-        # Add to default library
-        library_media = LibraryMedia(
-            library_id=default_library_id,
-            media_id=media_id,
-            created_at=now,
-        )
-        db.add(library_media)
-
-    # S4 rollout-safety: ensure intrinsic provenance row exists (idempotent)
-    result = db.execute(
-        select(DefaultLibraryIntrinsic).where(
-            DefaultLibraryIntrinsic.default_library_id == default_library_id,
-            DefaultLibraryIntrinsic.media_id == media_id,
-        )
-    )
-    if not result.scalar():
-        intrinsic = DefaultLibraryIntrinsic(
-            default_library_id=default_library_id,
-            media_id=media_id,
-            created_at=now,
-        )
-        db.add(intrinsic)
+    ensure_default_intrinsic(db, default_library_id, media_id)
 
 
 def get_signed_download_url(

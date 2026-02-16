@@ -15,6 +15,7 @@ Usage in API (enqueue):
     )
 """
 
+from nexus.tasks.backfill_default_library_closure import backfill_default_library_closure_job
 from nexus.tasks.ingest_web_article import ingest_web_article
 
-__all__ = ["ingest_web_article"]
+__all__ = ["ingest_web_article", "backfill_default_library_closure_job"]

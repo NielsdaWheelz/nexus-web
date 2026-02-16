@@ -304,7 +304,10 @@ def add_media_to_library(
 ) -> LibraryMediaOut:
     """Add media to a library.
 
-    Enforces default library closure for all members.
+    S4 closure rules:
+    - Default target: ensure intrinsic + library_media, no closure edges.
+    - Non-default target: insert source row, create closure edges + materialized
+      default rows for all current members.
 
     Args:
         db: Database session.
@@ -319,6 +322,11 @@ def add_media_to_library(
         NotFoundError: If library not found, viewer not a member, or media not found.
         ForbiddenError: If viewer is not admin.
     """
+    from nexus.services.default_library_closure import (
+        add_media_to_non_default_closure,
+        ensure_default_intrinsic,
+    )
+
     with transaction(db):
         # Step 1: Verify library exists and viewer is admin
         result = db.execute(
@@ -336,7 +344,7 @@ def add_media_to_library(
         if membership is None:
             raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
-        role = membership[0]  # membership[1] = is_default, used below
+        role = membership[0]
         if role != "admin":
             raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
 
@@ -362,31 +370,11 @@ def add_media_to_library(
         )
         row = result.fetchone()
 
-        # S4: If adding to default library, also create intrinsic provenance row
+        # Step 4: S4 provenance
         if is_default_library:
-            db.execute(
-                text("""
-                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                    VALUES (:library_id, :media_id)
-                    ON CONFLICT (default_library_id, media_id) DO NOTHING
-                """),
-                {"library_id": library_id, "media_id": media_id},
-            )
-
-        # Step 4: Enforce default library closure for all members of this library
-        db.execute(
-            text("""
-                INSERT INTO library_media (library_id, media_id)
-                SELECT default_lib.id, :media_id
-                FROM memberships m
-                JOIN libraries default_lib
-                    ON default_lib.owner_user_id = m.user_id
-                    AND default_lib.is_default = true
-                WHERE m.library_id = :library_id
-                ON CONFLICT (library_id, media_id) DO NOTHING
-            """),
-            {"library_id": library_id, "media_id": media_id},
-        )
+            ensure_default_intrinsic(db, library_id, media_id)
+        else:
+            add_media_to_non_default_closure(db, library_id, media_id)
 
         # If row is None, the association already existed - fetch it
         if row is None:
@@ -415,9 +403,11 @@ def remove_media_from_library(
 ) -> None:
     """Remove media from a library.
 
-    Enforces default library closure rules:
-    - If removing from default library: cascades to single-member libraries owned by viewer
-    - If removing from non-default library: does not affect default library
+    S4 closure rules:
+    - Default target: remove intrinsic; gc materialized row iff no intrinsic
+      and no remaining closure edge. Does NOT cascade to non-default libraries.
+    - Non-default target: remove source row, remove source closure edges, gc
+      affected default rows.
 
     Args:
         db: Database session.
@@ -429,6 +419,11 @@ def remove_media_from_library(
         NotFoundError: If library not found, viewer not a member, or media not in library.
         ForbiddenError: If viewer is not admin.
     """
+    from nexus.services.default_library_closure import (
+        remove_default_intrinsic_and_gc,
+        remove_media_from_non_default_closure,
+    )
+
     with transaction(db):
         # Step 1: Fetch library with lock
         result = db.execute(
@@ -458,7 +453,6 @@ def remove_media_from_library(
         membership = result.fetchone()
 
         if membership is None:
-            # Mask membership check as 404
             raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
         if membership[0] != "admin":
@@ -476,47 +470,10 @@ def remove_media_from_library(
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
 
         if is_default:
-            # Removing from default library: cascade to single-member libraries owned by viewer
-            # Find all libraries where:
-            #   - viewer is the ONLY member (membership count = 1)
-            #   - viewer owns the library (owner_user_id = viewer_id)
-            #   - library is NOT the default library (already handling separately)
-            db.execute(
-                text("""
-                    DELETE FROM library_media
-                    WHERE media_id = :media_id
-                    AND library_id IN (
-                        SELECT l.id
-                        FROM libraries l
-                        JOIN memberships m ON m.library_id = l.id
-                        WHERE l.owner_user_id = :viewer_id
-                        AND l.is_default = false
-                        GROUP BY l.id
-                        HAVING COUNT(*) = 1
-                    )
-                """),
-                {"media_id": media_id, "viewer_id": viewer_id},
-            )
-
-            # S4: Remove intrinsic provenance row
-            db.execute(
-                text("""
-                    DELETE FROM default_library_intrinsics
-                    WHERE default_library_id = :library_id AND media_id = :media_id
-                """),
-                {"library_id": library_id, "media_id": media_id},
-            )
-
-            # Now remove from default library
-            db.execute(
-                text("""
-                    DELETE FROM library_media
-                    WHERE library_id = :library_id AND media_id = :media_id
-                """),
-                {"library_id": library_id, "media_id": media_id},
-            )
+            # S4: remove intrinsic + gc (no cascade to non-default libraries)
+            remove_default_intrinsic_and_gc(db, library_id, media_id)
         else:
-            # Removing from non-default library: does NOT affect default library
+            # Remove from non-default: delete source row, remove closure edges, gc defaults
             db.execute(
                 text("""
                     DELETE FROM library_media
@@ -524,6 +481,7 @@ def remove_media_from_library(
                 """),
                 {"library_id": library_id, "media_id": media_id},
             )
+            remove_media_from_non_default_closure(db, library_id, media_id)
 
 
 def list_library_media(
@@ -822,7 +780,12 @@ def remove_library_member(
 
     Auth: viewer must be admin member. Cannot remove owner. Cannot remove last admin.
     Default library forbidden. Idempotent: absent target -> silent 204.
+
+    S4: on successful delete, run closure cleanup + gc for removed user and
+    delete matching backfill job row.
     """
+    from nexus.services.default_library_closure import remove_member_closure_and_gc
+
     with transaction(db):
         lib_row = _fetch_library_with_membership(db, viewer_id, library_id, lock=True)
         _require_admin(lib_row[6])
@@ -883,6 +846,9 @@ def remove_library_member(
             """),
             {"lid": library_id, "uid": target_user_id},
         )
+
+        # S4: closure cleanup + gc + backfill job deletion
+        remove_member_closure_and_gc(db, library_id, target_user_id)
 
 
 def transfer_library_ownership(
@@ -1475,27 +1441,11 @@ def _enqueue_default_library_backfill_job(
 ) -> bool:
     """Best-effort enqueue of backfill worker task.
 
-    Logging-only on failure. Returns True if dispatch succeeded.
+    Delegates to shared enqueue helper. Never raises.
     The durable backfill job row is authoritative; this is advisory.
-    Worker task implementation is in PR-05.
     """
-    try:
-        # PR-05 will register the actual celery task here.
-        # For now, log intent and return False (no worker available).
-        logger.info(
-            "backfill_enqueue: default_library=%s source_library=%s user=%s request_id=%s "
-            "(worker not yet available, durable job row is authoritative)",
-            default_library_id,
-            source_library_id,
-            user_id,
-            request_id,
-        )
-        return False
-    except Exception:
-        logger.exception(
-            "backfill_enqueue_failed: default_library=%s source_library=%s user=%s",
-            default_library_id,
-            source_library_id,
-            user_id,
-        )
-        return False
+    from nexus.services.default_library_closure import enqueue_backfill_task
+
+    return enqueue_backfill_task(
+        default_library_id, source_library_id, user_id, request_id=request_id
+    )

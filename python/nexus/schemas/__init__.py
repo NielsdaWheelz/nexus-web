@@ -23,11 +23,13 @@ from nexus.schemas.library import (
     CreateLibraryInviteRequest,
     CreateLibraryRequest,
     DeclineLibraryInviteResponse,
+    DefaultLibraryBackfillJobOut,
     InviteAcceptMembershipOut,
     LibraryInvitationOut,
     LibraryMediaOut,
     LibraryMemberOut,
     LibraryOut,
+    RequeueDefaultLibraryBackfillJobRequest,
     TransferLibraryOwnershipRequest,
     UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
@@ -56,6 +58,9 @@ __all__ = [
     "AcceptLibraryInviteResponse",
     "DeclineLibraryInviteResponse",
     "InviteAcceptMembershipOut",
+    # S4 PR-05 backfill requeue schemas
+    "RequeueDefaultLibraryBackfillJobRequest",
+    "DefaultLibraryBackfillJobOut",
     # Media schemas
     "MediaOut",
     "FragmentOut",
