@@ -31,11 +31,14 @@ MESSAGE_STATUSES = Literal["pending", "complete", "error"]
 class ConversationOut(BaseModel):
     """Response schema for a conversation.
 
-    Conversations are owned by exactly one user. In PR-02, only the owner
-    can view their conversations (sharing deferred to S4).
+    Conversations are owned by exactly one user. S4 additive fields:
+    - owner_user_id: UUID of the conversation owner
+    - is_owner: viewer-local convenience flag
     """
 
     id: UUID
+    owner_user_id: UUID
+    is_owner: bool
     sharing: str  # "private" | "library" | "public"
     message_count: int
     created_at: datetime
@@ -168,3 +171,33 @@ class StreamDoneEvent(BaseModel):
     status: str  # "complete" | "error"
     usage: dict | None = None
     error_code: str | None = None
+
+
+# =============================================================================
+# S4 PR-06: Conversation Share Schemas
+# =============================================================================
+
+
+class SetConversationSharesRequest(BaseModel):
+    """Request schema for PUT /conversations/{id}/shares.
+
+    Replaces all share targets atomically. Duplicate library_ids are deduped.
+    """
+
+    sharing: Literal["library"]
+    library_ids: list[UUID]
+
+
+class ConversationShareTargetOut(BaseModel):
+    """A single share target in a conversation share list."""
+
+    library_id: UUID
+    created_at: datetime
+
+
+class ConversationSharesOut(BaseModel):
+    """Response schema for GET/PUT /conversations/{id}/shares."""
+
+    conversation_id: UUID
+    sharing: str
+    shares: list[ConversationShareTargetOut]

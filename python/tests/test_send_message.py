@@ -18,7 +18,6 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
@@ -28,6 +27,15 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.types import LLMResponse, LLMUsage
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
+from tests.factories import (
+    create_test_conversation,
+    create_test_fragment,
+    create_test_highlight,
+    create_test_media_in_library,
+    create_test_message,
+    create_test_model,
+    get_user_library,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
@@ -118,177 +126,6 @@ def mock_llm_response():
         usage=LLMUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
         provider_request_id="test-request-id",
     )
-
-
-def create_test_model(session: Session) -> UUID:
-    """Create or get test model in the database.
-
-    Uses gpt-4o which may already exist from migration seeding.
-    Returns the existing model's ID if it exists.
-    """
-    # First try to get existing model
-    result = session.execute(
-        text("""
-            SELECT id FROM models WHERE provider = 'openai' AND model_name = 'gpt-4o'
-        """)
-    )
-    row = result.fetchone()
-    if row:
-        return row[0]
-
-    # Create new model if not exists
-    model_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
-            VALUES (:id, 'openai', 'gpt-4o', 128000, true)
-        """),
-        {"id": model_id},
-    )
-    session.commit()
-    return model_id
-
-
-def create_test_conversation(
-    session: Session,
-    owner_user_id: UUID,
-    sharing: str = "private",
-) -> UUID:
-    """Create a test conversation directly in the database."""
-    conversation_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
-            VALUES (:id, :owner_user_id, :sharing, 1)
-        """),
-        {"id": conversation_id, "owner_user_id": owner_user_id, "sharing": sharing},
-    )
-    session.commit()
-    return conversation_id
-
-
-def create_test_message(
-    session: Session,
-    conversation_id: UUID,
-    seq: int,
-    role: str = "user",
-    content: str = "Test message",
-    status: str = "complete",
-    model_id: UUID | None = None,
-) -> UUID:
-    """Create a test message directly in the database."""
-    message_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO messages (id, conversation_id, seq, role, content, status, model_id)
-            VALUES (:id, :conversation_id, :seq, :role, :content, :status, :model_id)
-        """),
-        {
-            "id": message_id,
-            "conversation_id": conversation_id,
-            "seq": seq,
-            "role": role,
-            "content": content,
-            "status": status,
-            "model_id": model_id,
-        },
-    )
-    session.execute(
-        text("UPDATE conversations SET next_seq = :next_seq WHERE id = :id"),
-        {"next_seq": seq + 1, "id": conversation_id},
-    )
-    session.commit()
-    return message_id
-
-
-def create_test_media(
-    session: Session,
-    user_id: UUID,
-    library_id: UUID,
-    title: str = "Test Article",
-    status: str = "ready_for_reading",
-) -> UUID:
-    """Create test media in the database."""
-    media_id = uuid4()
-    # Create media
-    session.execute(
-        text("""
-            INSERT INTO media (id, kind, title, canonical_source_url, processing_status)
-            VALUES (:id, 'web_article', :title, 'https://example.com/article', :status)
-        """),
-        {"id": media_id, "title": title, "status": status},
-    )
-    # Link to library
-    session.execute(
-        text("""
-            INSERT INTO library_media (library_id, media_id)
-            VALUES (:library_id, :media_id)
-        """),
-        {"library_id": library_id, "media_id": media_id},
-    )
-    # S4: seed intrinsic provenance when seeding into a default library
-    session.execute(
-        text("""
-            INSERT INTO default_library_intrinsics (default_library_id, media_id)
-            SELECT :library_id, :media_id
-            WHERE EXISTS (
-                SELECT 1 FROM libraries WHERE id = :library_id AND is_default = true
-            )
-            ON CONFLICT DO NOTHING
-        """),
-        {"library_id": library_id, "media_id": media_id},
-    )
-    session.commit()
-    return media_id
-
-
-def create_test_fragment(
-    session: Session, media_id: UUID, content: str = "Fragment content"
-) -> UUID:
-    """Create a test fragment in the database."""
-    fragment_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
-            VALUES (:id, :media_id, 0, :content, :html)
-        """),
-        {"id": fragment_id, "media_id": media_id, "content": content, "html": f"<p>{content}</p>"},
-    )
-    session.commit()
-    return fragment_id
-
-
-def create_test_highlight(
-    session: Session,
-    user_id: UUID,
-    fragment_id: UUID,
-    exact: str = "highlighted text",
-) -> UUID:
-    """Create a test highlight in the database."""
-    highlight_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-            VALUES (:id, :user_id, :fragment_id, 0, 20, 'yellow', :exact, '', '')
-        """),
-        {"id": highlight_id, "user_id": user_id, "fragment_id": fragment_id, "exact": exact},
-    )
-    session.commit()
-    return highlight_id
-
-
-def get_user_library(session: Session, user_id: UUID) -> UUID:
-    """Get user's default library ID."""
-    result = session.execute(
-        text("""
-            SELECT library_id FROM memberships
-            WHERE user_id = :user_id AND role = 'admin'
-            LIMIT 1
-        """),
-        {"user_id": user_id},
-    )
-    row = result.fetchone()
-    return row[0] if row else None
 
 
 # =============================================================================
@@ -757,7 +594,7 @@ class TestSendMessageContext:
         with direct_db.session() as session:
             model_id = create_test_model(session)
             library_id = get_user_library(session, user_id)
-            media_id = create_test_media(session, user_id, library_id)
+            media_id = create_test_media_in_library(session, user_id, library_id)
             fragment_id = create_test_fragment(
                 session, media_id, "This is the full fragment content."
             )
@@ -813,7 +650,7 @@ class TestSendMessageContext:
             model_id = create_test_model(session)
             # Create highlight owned by user A
             library_a = get_user_library(session, user_a)
-            media_id = create_test_media(session, user_a, library_a)
+            media_id = create_test_media_in_library(session, user_a, library_a)
             fragment_id = create_test_fragment(session, media_id)
             highlight_id = create_test_highlight(session, user_a, fragment_id)
 
@@ -1346,3 +1183,91 @@ class TestSendMessageValidation:
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_CONVERSATION_NOT_FOUND"
+
+
+# =============================================================================
+# S4 PR-06: Send message response includes owner fields
+# =============================================================================
+
+
+class TestSendMessageOwnerFields:
+    """Tests that send-message response includes owner_user_id and is_owner."""
+
+    def test_send_message_new_conversation_includes_owner_fields(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        mock_llm_response,
+    ):
+        """POST /conversations/messages response includes owner fields."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+
+        with (
+            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
+            patch("nexus.services.send_message.generate") as mock_generate,
+        ):
+            mock_resolve.return_value = ResolvedKey(
+                api_key="test-key", mode="platform", provider="openai"
+            )
+            mock_generate.return_value = mock_llm_response
+
+            response = auth_client.post(
+                "/conversations/messages",
+                headers=auth_headers(user_id),
+                json={"content": "Hello", "model_id": str(model_id)},
+            )
+
+        assert response.status_code == 200
+        conv_data = response.json()["data"]["conversation"]
+        assert conv_data["owner_user_id"] == str(user_id)
+        assert conv_data["is_owner"] is True
+
+        direct_db.register_cleanup("messages", "conversation_id", conv_data["id"])
+        direct_db.register_cleanup("conversations", "id", conv_data["id"])
+
+    def test_send_message_existing_conversation_includes_owner_fields(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        mock_llm_response,
+    ):
+        """POST /conversations/{id}/messages response includes owner fields."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            create_test_message(session, conversation_id, seq=1, content="First")
+            create_test_message(
+                session, conversation_id, seq=2, role="assistant", content="Response"
+            )
+
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        with (
+            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
+            patch("nexus.services.send_message.generate") as mock_generate,
+        ):
+            mock_resolve.return_value = ResolvedKey(
+                api_key="test-key", mode="platform", provider="openai"
+            )
+            mock_generate.return_value = mock_llm_response
+
+            response = auth_client.post(
+                f"/conversations/{conversation_id}/messages",
+                headers=auth_headers(user_id),
+                json={"content": "Follow up", "model_id": str(model_id)},
+            )
+
+        assert response.status_code == 200
+        conv_data = response.json()["data"]["conversation"]
+        assert conv_data["owner_user_id"] == str(user_id)
+        assert conv_data["is_owner"] is True

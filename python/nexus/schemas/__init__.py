@@ -6,9 +6,12 @@ All schemas are re-exported here for convenient imports.
 from nexus.schemas.conversation import (
     ConversationListResponse,
     ConversationOut,
+    ConversationSharesOut,
+    ConversationShareTargetOut,
     MessageListResponse,
     MessageOut,
     PageInfo,
+    SetConversationSharesRequest,
 )
 from nexus.schemas.highlights import (
     AnnotationOut,
@@ -76,6 +79,10 @@ __all__ = [
     "ConversationListResponse",
     "MessageListResponse",
     "PageInfo",
+    # S4 PR-06 conversation share schemas
+    "SetConversationSharesRequest",
+    "ConversationShareTargetOut",
+    "ConversationSharesOut",
     # Search schemas (Slice 3, PR-06)
     "SearchResultOut",
     "SearchPageInfo",

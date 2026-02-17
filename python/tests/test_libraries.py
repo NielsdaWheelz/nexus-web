@@ -14,12 +14,12 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
+from tests.factories import create_test_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
@@ -53,23 +53,6 @@ def auth_client(engine):
     )
 
     return TestClient(app)
-
-
-def create_test_media(session: Session) -> UUID:
-    """Create a test media item directly in the database.
-
-    Returns the media ID.
-    """
-    media_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO media (id, kind, title, canonical_source_url, processing_status)
-            VALUES (:media_id, 'web_article', 'Test Article', 'https://example.com/test', 'ready_for_reading')
-        """),
-        {"media_id": media_id},
-    )
-    session.commit()
-    return media_id
 
 
 # =============================================================================

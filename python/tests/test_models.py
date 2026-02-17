@@ -17,7 +17,6 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
@@ -25,6 +24,7 @@ from nexus.config import clear_settings_cache
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.crypto import MASTER_KEY_SIZE, clear_master_key_cache
+from tests.factories import seed_test_models
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
@@ -74,29 +74,6 @@ def auth_client(engine):
     )
 
     return TestClient(app)
-
-
-def seed_test_models(session: Session) -> None:
-    """Seed test models if they don't exist."""
-    # Check if models already exist
-    result = session.execute(text("SELECT COUNT(*) FROM models"))
-    if result.scalar() > 0:
-        return
-
-    # Seed test models
-    session.execute(
-        text("""
-            INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
-            VALUES
-                (gen_random_uuid(), 'openai', 'gpt-4o-mini', 128000, true),
-                (gen_random_uuid(), 'openai', 'gpt-4o', 128000, true),
-                (gen_random_uuid(), 'anthropic', 'claude-sonnet-4-20250514', 200000, true),
-                (gen_random_uuid(), 'anthropic', 'claude-haiku-4-20250514', 200000, true),
-                (gen_random_uuid(), 'gemini', 'gemini-2.0-flash', 1000000, true)
-            ON CONFLICT DO NOTHING
-        """)
-    )
-    session.commit()
 
 
 # =============================================================================

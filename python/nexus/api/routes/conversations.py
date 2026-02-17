@@ -27,10 +27,11 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
-from nexus.schemas.conversation import SendMessageRequest
+from nexus.schemas.conversation import SendMessageRequest, SetConversationSharesRequest
 from nexus.services import conversations as conversations_service
 from nexus.services import send_message as send_message_service
 from nexus.services import send_message_stream
+from nexus.services import shares as shares_service
 from nexus.services.llm import LLMRouter
 
 router = APIRouter(tags=["conversations"])
@@ -47,20 +48,38 @@ def list_conversations(
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=50, ge=1, le=100, description="Maximum results (1-100)"),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
+    scope: str | None = Query(default=None, description="Scope: mine|all|shared"),
 ) -> dict:
-    """List conversations owned by the viewer.
+    """List conversations with scope-based visibility.
+
+    Scopes:
+    - mine (default): only owned conversations.
+    - all: all visible conversations (owned + shared + public).
+    - shared: visible but not owned.
 
     Returns conversations ordered by updated_at DESC, id DESC.
     Supports cursor-based pagination.
 
     Errors:
+        E_INVALID_REQUEST (400): Invalid scope value.
         E_INVALID_CURSOR (400): Cursor is malformed or unparseable.
     """
+    # Explicit app-level scope validation (no framework enum/422 leakage)
+    effective_scope = scope if scope is not None else "mine"
+    if effective_scope not in ("mine", "all", "shared"):
+        from nexus.errors import InvalidRequestError
+
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Invalid scope: {effective_scope}. Must be one of: mine, all, shared",
+        )
+
     conversations, page = conversations_service.list_conversations(
         db=db,
         viewer_id=viewer.user_id,
         limit=limit,
         cursor=cursor,
+        scope=effective_scope,
     )
     return {
         "data": [c.model_dump(mode="json") for c in conversations],
@@ -122,6 +141,59 @@ def delete_conversation(
         conversation_id=conversation_id,
     )
     return Response(status_code=204)
+
+
+# =============================================================================
+# Conversation Share Endpoints (S4 PR-06)
+# =============================================================================
+
+
+@router.get("/conversations/{conversation_id}/shares")
+def get_conversation_shares(
+    conversation_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Get share targets for a conversation.
+
+    Owner-only. Returns current share target libraries.
+
+    Errors:
+        E_CONVERSATION_NOT_FOUND (404): Not visible to viewer.
+        E_OWNER_REQUIRED (403): Visible but viewer is not owner.
+    """
+    result = shares_service.get_conversation_shares_for_owner(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.put("/conversations/{conversation_id}/shares")
+def set_conversation_shares(
+    conversation_id: UUID,
+    body: SetConversationSharesRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Replace share targets for a conversation atomically.
+
+    Owner-only. Validates all targets before writing.
+
+    Errors:
+        E_CONVERSATION_NOT_FOUND (404): Not visible to viewer.
+        E_OWNER_REQUIRED (403): Visible but viewer is not owner.
+        E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN (403): Default lib target.
+        E_FORBIDDEN (403): Owner not member of target library.
+    """
+    result = shares_service.set_conversation_shares_for_owner(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        library_ids=body.library_ids,
+    )
+    return success_response(result.model_dump(mode="json"))
 
 
 # =============================================================================
