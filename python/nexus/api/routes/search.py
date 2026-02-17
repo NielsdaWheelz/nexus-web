@@ -8,7 +8,7 @@ Routes are transport-only:
 No domain logic or raw DB access in routes.
 
 This endpoint implements keyword search across all user-visible content
-using PostgreSQL full-text search as specified in PR-06.
+using PostgreSQL full-text search. Visibility follows s4 canonical predicates.
 """
 
 from typing import Annotated
@@ -59,9 +59,9 @@ def search(
 
     **Visibility:**
     - Search never returns invisible content
-    - Media/fragments visible via library membership
-    - Annotations are owner-only in S3
-    - Messages visible via conversation ownership/sharing
+    - Media/fragments visible via s4 provenance (non-default membership, intrinsic, closure)
+    - Annotations visible via s4 highlight visibility (media readable + library intersection)
+    - Messages visible via conversation visibility (owner, public, or library-shared dual membership)
     - Pending messages are never searchable
 
     **Query Parsing:**
