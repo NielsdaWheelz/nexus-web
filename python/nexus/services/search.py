@@ -1,18 +1,23 @@
 """Search service layer.
 
 Implements keyword search across all user-visible content using PostgreSQL
-full-text search for Slice 3, PR-06.
+full-text search.
 
-Search enforces strict visibility guarantees:
-- Media/fragments: visible if in any library where viewer is a member
-- Annotations: owner-only in S3 + media visible via library membership
-- Messages: visible if conversation is visible (owner, public, or library-shared)
+Search enforces strict s4 visibility guarantees:
+- Media/fragments: visible via s4 provenance (non-default membership, default
+  intrinsic, or active closure edge with source membership)
+- Annotations: visible if anchor media readable AND viewer/author share a
+  library containing that media (s4 highlight visibility)
+- Messages: visible if conversation is visible (owner, public, or library-shared
+  with active dual membership)
 
 Key design decisions:
 - Visibility filtering occurs inside SQL via CTEs, not post-filter
 - Snippet generation happens only on filtered rows
 - No raw queries logged (only hash for debugging)
 - Ranking uses ts_rank_cd with type-specific multipliers
+- Library-scope message search is constrained to conversations actively shared
+  to the target library (sharing='library' + share row)
 """
 
 import base64
@@ -24,11 +29,10 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media, is_library_member
+from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.search import SearchPageInfo, SearchResponse, SearchResultOut
-from nexus.services.conversations import get_conversation_for_owner_write_or_404
 
 logger = get_logger(__name__)
 
@@ -169,8 +173,8 @@ def authorize_scope(
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Library not found")
 
     elif scope_type == "conversation":
-        # Uses owner-write helper for scope auth (behavior change deferred to pr-08)
-        get_conversation_for_owner_write_or_404(db, viewer_id, scope_id)
+        if not can_read_conversation(db, viewer_id, scope_id):
+            raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
 
 
 # =============================================================================
@@ -179,16 +183,42 @@ def authorize_scope(
 
 
 def visible_media_ids_cte_sql() -> str:
-    """Return SQL for CTE that selects media IDs visible to viewer.
+    """Return SQL for CTE that selects media IDs visible to viewer under s4 provenance.
+
+    Three paths (UNION):
+    1. Non-default library membership: viewer is member of non-default library containing media.
+    2. Default intrinsic: viewer owns default library with intrinsic row for media.
+    3. Default closure: viewer owns default library with closure edge, and viewer is
+       currently a member of the source library.
+
+    Raw presence in library_media for a default library is NOT sufficient without
+    intrinsic or active closure-edge justification.
 
     Requires :viewer_id parameter.
     Returns media_id column.
     """
     return """
-        SELECT DISTINCT lm.media_id
+        SELECT lm.media_id
         FROM library_media lm
         JOIN memberships m ON m.library_id = lm.library_id
-        WHERE m.user_id = :viewer_id
+        JOIN libraries l ON l.id = lm.library_id
+        WHERE m.user_id = :viewer_id AND l.is_default = false
+
+        UNION
+
+        SELECT dli.media_id
+        FROM default_library_intrinsics dli
+        JOIN libraries l ON l.id = dli.default_library_id
+        WHERE l.owner_user_id = :viewer_id AND l.is_default = true
+
+        UNION
+
+        SELECT dlce.media_id
+        FROM default_library_closure_edges dlce
+        JOIN libraries l ON l.id = dlce.default_library_id
+        JOIN memberships m ON m.library_id = dlce.source_library_id
+                           AND m.user_id = :viewer_id
+        WHERE l.owner_user_id = :viewer_id AND l.is_default = true
     """
 
 
@@ -201,8 +231,8 @@ def visible_conversation_ids_cte_sql() -> str:
     A conversation is visible iff:
     - owner_user_id = viewer_id, OR
     - sharing = 'public', OR
-    - sharing = 'library' AND exists conversation_share to a library
-      where viewer is a member
+    - sharing = 'library' AND exists conversation_share to a library where
+      both viewer AND owner are current members (dual membership check).
     """
     return """
         SELECT c.id AS conversation_id
@@ -220,8 +250,11 @@ def visible_conversation_ids_cte_sql() -> str:
         SELECT c.id AS conversation_id
         FROM conversations c
         JOIN conversation_shares cs ON cs.conversation_id = c.id
-        JOIN memberships m ON m.library_id = cs.library_id
-        WHERE c.sharing = 'library' AND m.user_id = :viewer_id
+        JOIN memberships vm ON vm.library_id = cs.library_id
+                            AND vm.user_id = :viewer_id
+        JOIN memberships om ON om.library_id = cs.library_id
+                            AND om.user_id = c.owner_user_id
+        WHERE c.sharing = 'library'
     """
 
 
@@ -482,12 +515,13 @@ def _search_annotations(
     scope_id: UUID | None,
     limit: int,
 ) -> list[dict]:
-    """Search annotation body with visibility filtering.
+    """Search annotation body with s4 highlight visibility filtering.
 
-    In S3, annotations are owner-only: annotation.user_id = viewer_user_id
-    AND media is visible via library membership.
+    An annotation is visible iff:
+    - Anchor media is in the visible-media CTE (s4 provenance), AND
+    - Viewer and highlight author share at least one library containing
+      the anchor media (library intersection check).
     """
-    # Build scope filter
     scope_filter = ""
     params: dict = {"viewer_id": viewer_id, "query": q, "limit": limit}
 
@@ -502,7 +536,6 @@ def _search_annotations(
         """
         params["scope_id"] = scope_id
     elif scope_type == "conversation":
-        # Annotation search doesn't apply to conversation scope
         return []
 
     query = f"""
@@ -519,7 +552,15 @@ def _search_annotations(
         JOIN fragments f ON f.id = h.fragment_id
         JOIN visible_media vm ON vm.media_id = f.media_id
         WHERE a.body_tsv @@ websearch_to_tsquery('english', :query)
-          AND h.user_id = :viewer_id  -- Owner-only in S3
+          AND EXISTS (
+              SELECT 1
+              FROM library_media lm_ann
+              JOIN memberships vm_ann ON vm_ann.library_id = lm_ann.library_id
+                                      AND vm_ann.user_id = :viewer_id
+              JOIN memberships am_ann ON am_ann.library_id = lm_ann.library_id
+                                      AND am_ann.user_id = h.user_id
+              WHERE lm_ann.media_id = f.media_id
+          )
         {scope_filter}
         ORDER BY score DESC, a.id ASC
         LIMIT :limit
@@ -551,20 +592,29 @@ def _search_messages(
 ) -> list[dict]:
     """Search message content with visibility filtering.
 
-    Message visibility follows conversation visibility.
+    Message visibility follows conversation visibility (canonical s4 CTE).
     Pending messages are never searchable.
+
+    Library scope includes only messages from conversations actively shared
+    to the target library (sharing='library' + share row to scope library).
+    Owner/public conversations not shared to the target library are excluded.
     """
-    # Build scope filter
     scope_filter = ""
     params: dict = {"viewer_id": viewer_id, "query": q, "limit": limit}
 
     if scope_type == "media":
-        # Message search doesn't apply to media scope
         return []
     elif scope_type == "library":
-        # Message search doesn't apply to library scope in S3
-        # (conversations are not shared to libraries via search in S3)
-        return []
+        scope_filter = """
+            AND m.conversation_id IN (
+                SELECT cs.conversation_id
+                FROM conversation_shares cs
+                JOIN conversations conv ON conv.id = cs.conversation_id
+                WHERE cs.library_id = :scope_id
+                  AND conv.sharing = 'library'
+            )
+        """
+        params["scope_id"] = scope_id
     elif scope_type == "conversation":
         scope_filter = "AND m.conversation_id = :scope_id"
         params["scope_id"] = scope_id

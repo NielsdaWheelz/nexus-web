@@ -392,6 +392,116 @@ def create_test_library(session: Session, user_id: UUID, name: str = "Test Libra
 
 
 # =============================================================================
+# Shared Library / Conversation Topologies (search-test helpers)
+# =============================================================================
+
+
+def add_library_member(
+    session: Session,
+    library_id: UUID,
+    user_id: UUID,
+    role: str = "member",
+) -> None:
+    """Add a user as a member of a library (idempotent)."""
+    session.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:library_id, :user_id, :role)
+            ON CONFLICT DO NOTHING
+        """),
+        {"library_id": library_id, "user_id": user_id, "role": role},
+    )
+    session.commit()
+
+
+def share_conversation_to_library(
+    session: Session,
+    conversation_id: UUID,
+    library_id: UUID,
+) -> None:
+    """Create a conversation_share row linking a conversation to a library.
+
+    Also sets conversation.sharing = 'library' if not already set.
+    Idempotent.
+    """
+    session.execute(
+        text("""
+            UPDATE conversations SET sharing = 'library'
+            WHERE id = :conversation_id AND sharing != 'library'
+        """),
+        {"conversation_id": conversation_id},
+    )
+    session.execute(
+        text("""
+            INSERT INTO conversation_shares (conversation_id, library_id)
+            VALUES (:conversation_id, :library_id)
+            ON CONFLICT DO NOTHING
+        """),
+        {"conversation_id": conversation_id, "library_id": library_id},
+    )
+    session.commit()
+
+
+def create_searchable_media_in_library(
+    session: Session,
+    user_id: UUID,
+    library_id: UUID,
+    *,
+    title: str = "Test Article",
+) -> UUID:
+    """Create media with a fragment, linked to a specific non-default library.
+
+    Unlike create_searchable_media, does NOT create intrinsic rows for the
+    user's default library.  Visibility comes solely from membership in
+    the target library.
+    """
+    media_id = uuid4()
+    fragment_id = uuid4()
+
+    session.execute(
+        text("""
+            INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+            VALUES (:id, 'web_article', :title, 'ready_for_reading', :user_id)
+        """),
+        {"id": media_id, "title": title, "user_id": user_id},
+    )
+    session.execute(
+        text("""
+            INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+            VALUES (:id, :media_id, 0, '<p>Test content</p>', :text)
+        """),
+        {
+            "id": fragment_id,
+            "media_id": media_id,
+            "text": f"This is the canonical text for {title}. It contains searchable content about various topics.",
+        },
+    )
+    session.execute(
+        text("""
+            INSERT INTO library_media (library_id, media_id)
+            VALUES (:library_id, :media_id)
+            ON CONFLICT DO NOTHING
+        """),
+        {"library_id": library_id, "media_id": media_id},
+    )
+    session.commit()
+    return media_id
+
+
+def get_user_default_library(session: Session, user_id: UUID) -> UUID:
+    """Get a user's default library ID."""
+    result = session.execute(
+        text("""
+            SELECT id FROM libraries
+            WHERE owner_user_id = :user_id AND is_default = true
+        """),
+        {"user_id": user_id},
+    )
+    row = result.fetchone()
+    return row[0] if row else None
+
+
+# =============================================================================
 # Helpers
 # =============================================================================
 
