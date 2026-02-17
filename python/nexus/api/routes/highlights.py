@@ -14,11 +14,12 @@ Per PR-06 spec:
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.highlights import (
     CreateHighlightRequest,
@@ -67,23 +68,39 @@ def create_highlight(
 @router.get("/fragments/{fragment_id}/highlights")
 def list_highlights(
     fragment_id: UUID,
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """List all highlights for a fragment owned by the viewer.
+    """List highlights for a fragment.
 
-    Returns highlights ordered by start_offset ASC, created_at ASC.
+    Returns highlights ordered by start_offset ASC, created_at ASC, id ASC.
     Each highlight includes its annotation if present.
+
+    Query params:
+        mine_only: 'true' (default) returns only viewer-authored highlights.
+            'false' returns all highlights visible under s4 canonical predicate.
+            Strict token validation: only 'true' or 'false' accepted.
 
     Does NOT require media to be in ready state (read-only operation).
 
     Errors:
         E_MEDIA_NOT_FOUND (404): Fragment doesn't exist or viewer cannot read it.
+        E_INVALID_REQUEST (400): Invalid mine_only value.
     """
+    mine_only_raw = request.query_params.get("mine_only", "true")
+    if mine_only_raw not in ("true", "false"):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "mine_only must be 'true' or 'false'",
+        )
+    mine_only = mine_only_raw == "true"
+
     result = highlights_service.list_highlights_for_fragment(
         db=db,
         viewer_id=viewer.user_id,
         fragment_id=fragment_id,
+        mine_only=mine_only,
     )
     return success_response({"highlights": [h.model_dump(mode="json") for h in result]})
 

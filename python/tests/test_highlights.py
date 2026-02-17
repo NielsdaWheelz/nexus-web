@@ -1,21 +1,22 @@
 """Integration tests for highlight and annotation endpoints.
 
-Tests cover all scenarios from PR-06 spec:
-1. create_highlight_success - POST create with valid range
-2. create_highlight_out_of_bounds - returns 400 E_HIGHLIGHT_INVALID_RANGE
-3. create_highlight_duplicate_conflict - returns 409 E_HIGHLIGHT_CONFLICT
-4. create_overlapping_allowed - overlapping highlights both succeed
-5. list_highlights_includes_annotations - list returns highlight with embedded annotation
-6. get_highlight_owner_only - different user gets 404 masked
-7. update_color_only_updates_updated_at - created_at unchanged, updated_at changes
-8. update_offsets_recomputes_exact - exact/prefix/suffix updated
-9. delete_highlight_cascades_annotation - annotation removed with highlight
-10. delete_annotation_idempotent - returns 204 even when missing
-11. media_not_ready_blocks_create_update_upsert - 409 E_MEDIA_NOT_READY
-12. media_not_ready_allows_list_get_delete - still works
-13. emoji_codepoint_slicing - validates Unicode codepoint handling
-14. cannot_highlight_without_library_membership - 404 E_MEDIA_NOT_FOUND
-15. annotation_upsert_returns_correct_status - 201 vs 200
+Tests cover scenarios from PR-06 spec (retained) and PR-07 spec (s4 shared-read):
+
+PR-06 (retained):
+1-15. See original test docstrings below.
+
+PR-07 (s4 highlight shared-read contract):
+- test_list_highlights_defaults_to_mine_only_true
+- test_list_highlights_mine_only_false_returns_visible_shared
+- test_list_and_get_highlight_visibility_match_canonical_predicate
+- test_list_highlights_invalid_mine_only_returns_400_e_invalid_request_not_422
+- test_get_highlight_shared_reader_visible_success
+- test_get_highlight_shared_reader_revoked_membership_masked_404
+- test_update_highlight_non_author_masked_404
+- test_delete_highlight_non_author_masked_404
+- test_annotation_upsert_non_author_masked_404
+- test_highlight_out_includes_author_fields
+- test_list_highlights_order_is_deterministic_with_created_at_ties
 """
 
 import time
@@ -971,3 +972,636 @@ class TestEdgeCases:
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+
+# =============================================================================
+# PR-07 Shared-Library Helpers
+# =============================================================================
+
+
+def create_shared_library_with_media(
+    session: Session,
+    owner_id: UUID,
+    member_id: UUID,
+    media_id: UUID,
+) -> UUID:
+    """Create a non-default library, add owner+member, add media.
+
+    Returns the library id.
+    """
+    lib_id = uuid4()
+    session.execute(
+        text("""
+            INSERT INTO libraries (id, owner_user_id, name, is_default)
+            VALUES (:id, :owner_id, 'Shared Test Library', false)
+        """),
+        {"id": lib_id, "owner_id": owner_id},
+    )
+    # Owner is admin member
+    session.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:lib_id, :user_id, 'admin')
+            ON CONFLICT DO NOTHING
+        """),
+        {"lib_id": lib_id, "user_id": owner_id},
+    )
+    # Other user is member
+    session.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:lib_id, :user_id, 'member')
+            ON CONFLICT DO NOTHING
+        """),
+        {"lib_id": lib_id, "user_id": member_id},
+    )
+    # Add media to shared library
+    session.execute(
+        text("""
+            INSERT INTO library_media (library_id, media_id)
+            VALUES (:lib_id, :media_id)
+            ON CONFLICT DO NOTHING
+        """),
+        {"lib_id": lib_id, "media_id": media_id},
+    )
+    session.commit()
+    return lib_id
+
+
+def create_highlight_directly(
+    session: Session,
+    user_id: UUID,
+    fragment_id: UUID,
+    start_offset: int = 0,
+    end_offset: int = 5,
+    color: str = "yellow",
+) -> UUID:
+    """Insert a highlight row directly and return its id."""
+    h_id = uuid4()
+    session.execute(
+        text("""
+            INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
+                                    color, exact, prefix, suffix)
+            VALUES (:id, :user_id, :fragment_id, :start_offset, :end_offset,
+                    :color, 'Hello', '', ' World')
+        """),
+        {
+            "id": h_id,
+            "user_id": user_id,
+            "fragment_id": fragment_id,
+            "start_offset": start_offset,
+            "end_offset": end_offset,
+            "color": color,
+        },
+    )
+    session.commit()
+    return h_id
+
+
+# =============================================================================
+# PR-07 Tests: Highlight Shared-Read Contract
+# =============================================================================
+
+
+class TestHighlightSharedRead:
+    """PR-07: Shared-read tests for highlights across shared library members."""
+
+    def test_list_highlights_defaults_to_mine_only_true(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Default mine_only=true: only viewer-authored highlights returned."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        # Bootstrap both users
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        # Add media to both users' default libraries
+        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, user_b, media_id)
+
+        # Create shared library with both users
+        with direct_db.session() as session:
+            lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # User A creates a highlight
+        auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_a),
+        )
+
+        # User B creates a highlight (different range)
+        auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 6, "end_offset": 11, "color": "green"},
+            headers=auth_headers(user_b),
+        )
+
+        # User B lists without mine_only param -> defaults to true
+        list_resp = auth_client.get(
+            f"/fragments/{fragment_id}/highlights",
+            headers=auth_headers(user_b),
+        )
+        assert list_resp.status_code == 200
+        highlights = list_resp.json()["data"]["highlights"]
+        assert len(highlights) == 1
+        assert highlights[0]["start_offset"] == 6  # User B's highlight only
+
+    def test_list_highlights_mine_only_false_returns_visible_shared(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """mine_only=false returns all visible highlights from shared library members."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, user_b, media_id)
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # User A creates a highlight
+        resp_a = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_a),
+        )
+        assert resp_a.status_code == 201
+
+        # User B creates a highlight
+        resp_b = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 6, "end_offset": 11, "color": "green"},
+            headers=auth_headers(user_b),
+        )
+        assert resp_b.status_code == 201
+
+        # User B lists with mine_only=false -> sees both
+        list_resp = auth_client.get(
+            f"/fragments/{fragment_id}/highlights?mine_only=false",
+            headers=auth_headers(user_b),
+        )
+        assert list_resp.status_code == 200
+        highlights = list_resp.json()["data"]["highlights"]
+        assert len(highlights) == 2
+
+        # Verify both authors are represented
+        author_ids = {h["author_user_id"] for h in highlights}
+        assert str(user_a) in author_ids
+        assert str(user_b) in author_ids
+
+    def test_list_and_get_highlight_visibility_match_canonical_predicate(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Matrix: shared present -> visible, absent -> invisible, revoked -> invisible."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, user_b, media_id)
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # User A creates highlight
+        resp_a = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_a),
+        )
+        hl_id = resp_a.json()["data"]["id"]
+
+        # (a) Intersection present: B can see A's highlight
+        list_resp = auth_client.get(
+            f"/fragments/{fragment_id}/highlights?mine_only=false",
+            headers=auth_headers(user_b),
+        )
+        assert len(list_resp.json()["data"]["highlights"]) == 1
+
+        get_resp = auth_client.get(
+            f"/highlights/{hl_id}",
+            headers=auth_headers(user_b),
+        )
+        assert get_resp.status_code == 200
+
+        # (c) Revoke B's membership -> intersection gone
+        with direct_db.session() as session:
+            session.execute(
+                text("DELETE FROM memberships WHERE library_id = :l AND user_id = :u"),
+                {"l": lib_id, "u": user_b},
+            )
+            session.commit()
+
+        # list mine_only=false should now return empty (no intersection)
+        list_resp2 = auth_client.get(
+            f"/fragments/{fragment_id}/highlights?mine_only=false",
+            headers=auth_headers(user_b),
+        )
+        assert list_resp2.status_code == 200
+        highlights_b = [
+            h for h in list_resp2.json()["data"]["highlights"] if h["author_user_id"] == str(user_a)
+        ]
+        assert len(highlights_b) == 0
+
+        # get by id should also fail
+        get_resp2 = auth_client.get(
+            f"/highlights/{hl_id}",
+            headers=auth_headers(user_b),
+        )
+        assert get_resp2.status_code == 404
+
+    def test_list_highlights_invalid_mine_only_returns_400_e_invalid_request_not_422(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Invalid mine_only tokens return 400 E_INVALID_REQUEST, never 422."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        for bad_val in ["TRUE", "1", "invalid", "True", "False", "yes", ""]:
+            resp = auth_client.get(
+                f"/fragments/{fragment_id}/highlights?mine_only={bad_val}",
+                headers=auth_headers(user_id),
+            )
+            assert resp.status_code == 400, (
+                f"Expected 400 for mine_only={bad_val!r}, got {resp.status_code}"
+            )
+            assert resp.json()["error"]["code"] == "E_INVALID_REQUEST", (
+                f"Expected E_INVALID_REQUEST for mine_only={bad_val!r}"
+            )
+
+    def test_get_highlight_shared_reader_visible_success(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Shared reader (not author) can GET /highlights/{id} via canonical visibility."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, user_b, media_id)
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # A creates highlight
+        resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_a),
+        )
+        hl_id = resp.json()["data"]["id"]
+
+        # B can read it
+        get_resp = auth_client.get(
+            f"/highlights/{hl_id}",
+            headers=auth_headers(user_b),
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["author_user_id"] == str(user_a)
+        assert get_resp.json()["data"]["is_owner"] is False
+
+    def test_get_highlight_shared_reader_revoked_membership_masked_404(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """After membership revocation, shared reader gets masked 404 immediately."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, user_b, media_id)
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_a),
+        )
+        hl_id = resp.json()["data"]["id"]
+
+        # B can read before revocation
+        assert (
+            auth_client.get(f"/highlights/{hl_id}", headers=auth_headers(user_b)).status_code == 200
+        )
+
+        # Revoke B's membership
+        with direct_db.session() as session:
+            session.execute(
+                text("DELETE FROM memberships WHERE library_id = :l AND user_id = :u"),
+                {"l": lib_id, "u": user_b},
+            )
+            session.commit()
+
+        # B now gets 404
+        get_resp = auth_client.get(f"/highlights/{hl_id}", headers=auth_headers(user_b))
+        assert get_resp.status_code == 404
+        assert get_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    def test_update_highlight_non_author_masked_404(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Shared reader cannot PATCH highlight they don't author -> masked 404."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, user_b, media_id)
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_a),
+        )
+        hl_id = resp.json()["data"]["id"]
+
+        # B tries to update A's highlight
+        patch_resp = auth_client.patch(
+            f"/highlights/{hl_id}",
+            json={"color": "green"},
+            headers=auth_headers(user_b),
+        )
+        assert patch_resp.status_code == 404
+        assert patch_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    def test_delete_highlight_non_author_masked_404(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Shared reader cannot DELETE highlight they don't author -> masked 404."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, user_b, media_id)
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_a),
+        )
+        hl_id = resp.json()["data"]["id"]
+
+        # B tries to delete A's highlight
+        del_resp = auth_client.delete(
+            f"/highlights/{hl_id}",
+            headers=auth_headers(user_b),
+        )
+        assert del_resp.status_code == 404
+        assert del_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    def test_annotation_upsert_non_author_masked_404(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Shared reader cannot PUT annotation on highlight they don't author -> masked 404."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, user_b, media_id)
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
+
+        direct_db.register_cleanup("annotations", "highlight_id", None)
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_a),
+        )
+        hl_id = resp.json()["data"]["id"]
+
+        # B tries to upsert annotation on A's highlight
+        put_resp = auth_client.put(
+            f"/highlights/{hl_id}/annotation",
+            json={"body": "Not my highlight"},
+            headers=auth_headers(user_b),
+        )
+        assert put_resp.status_code == 404
+        assert put_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    def test_highlight_out_includes_author_fields(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """author_user_id and is_owner present in create/list/get/update responses."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        # CREATE
+        create_resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert create_resp.status_code == 201
+        create_data = create_resp.json()["data"]
+        assert create_data["author_user_id"] == str(user_id)
+        assert create_data["is_owner"] is True
+        hl_id = create_data["id"]
+
+        # LIST
+        list_resp = auth_client.get(
+            f"/fragments/{fragment_id}/highlights",
+            headers=auth_headers(user_id),
+        )
+        list_data = list_resp.json()["data"]["highlights"][0]
+        assert list_data["author_user_id"] == str(user_id)
+        assert list_data["is_owner"] is True
+
+        # GET
+        get_resp = auth_client.get(
+            f"/highlights/{hl_id}",
+            headers=auth_headers(user_id),
+        )
+        get_data = get_resp.json()["data"]
+        assert get_data["author_user_id"] == str(user_id)
+        assert get_data["is_owner"] is True
+
+        # UPDATE
+        update_resp = auth_client.patch(
+            f"/highlights/{hl_id}",
+            json={"color": "green"},
+            headers=auth_headers(user_id),
+        )
+        update_data = update_resp.json()["data"]
+        assert update_data["author_user_id"] == str(user_id)
+        assert update_data["is_owner"] is True
+
+    def test_list_highlights_order_is_deterministic_with_created_at_ties(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Deterministic ordering under timestamp ties: id ASC tie-break."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        # Insert highlights with forced identical start_offset and created_at
+        # but different end_offset to satisfy uniqueness constraint
+        with direct_db.session() as session:
+            ids = sorted([uuid4() for _ in range(3)])
+            for i, h_id in enumerate(ids):
+                end = 5 + i  # 5, 6, 7 - each unique
+                session.execute(
+                    text("""
+                        INSERT INTO highlights
+                            (id, user_id, fragment_id, start_offset, end_offset,
+                             color, exact, prefix, suffix, created_at)
+                        VALUES
+                            (:id, :uid, :fid, 0, :end_offset, 'yellow', 'Hello', '', ' World',
+                             '2026-01-01 00:00:00+00')
+                    """),
+                    {"id": h_id, "uid": user_id, "fid": fragment_id, "end_offset": end},
+                )
+            session.commit()
+
+        list_resp = auth_client.get(
+            f"/fragments/{fragment_id}/highlights",
+            headers=auth_headers(user_id),
+        )
+        highlights = list_resp.json()["data"]["highlights"]
+        assert len(highlights) == 3
+
+        returned_ids = [h["id"] for h in highlights]
+        assert returned_ids == sorted(returned_ids), (
+            "Highlights with tied start_offset+created_at must be ordered by id ASC"
+        )

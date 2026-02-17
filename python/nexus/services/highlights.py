@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_highlight, can_read_media
+from nexus.auth.permissions import can_read_highlight, can_read_media, highlight_visibility_filter
 from nexus.db.models import Annotation, Fragment, Highlight
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
@@ -157,8 +157,13 @@ def get_highlight_for_author_write_or_404(
     return highlight  # highlight.fragment.media and highlight.annotation available
 
 
-def _highlight_to_out(highlight: Highlight) -> HighlightOut:
-    """Convert Highlight ORM model to HighlightOut schema."""
+def _highlight_to_out(highlight: Highlight, viewer_id: UUID) -> HighlightOut:
+    """Convert Highlight ORM model to HighlightOut schema.
+
+    Args:
+        highlight: The ORM highlight instance.
+        viewer_id: The current viewer's user ID (for is_owner computation).
+    """
     annotation_out = None
     if highlight.annotation is not None:
         annotation_out = AnnotationOut(
@@ -181,6 +186,8 @@ def _highlight_to_out(highlight: Highlight) -> HighlightOut:
         created_at=highlight.created_at,
         updated_at=highlight.updated_at,
         annotation=annotation_out,
+        author_user_id=highlight.user_id,
+        is_owner=(highlight.user_id == viewer_id),
     )
 
 
@@ -257,13 +264,15 @@ def create_highlight_for_fragment(
         created_at=highlight.created_at,
         updated_at=highlight.updated_at,
         annotation=None,
+        author_user_id=highlight.user_id,
+        is_owner=True,
     )
 
 
 def list_highlights_for_fragment(
-    db: Session, viewer_id: UUID, fragment_id: UUID
+    db: Session, viewer_id: UUID, fragment_id: UUID, mine_only: bool = True
 ) -> list[HighlightOut]:
-    """List all highlights for a fragment owned by the viewer.
+    """List highlights for a fragment.
 
     NO ready check - read-only operation.
 
@@ -271,31 +280,38 @@ def list_highlights_for_fragment(
         db: Database session.
         viewer_id: The ID of the viewer.
         fragment_id: The ID of the fragment.
+        mine_only: If True (default), return only viewer-authored highlights.
+            If False, return all highlights visible under s4 canonical predicate.
 
     Returns:
-        List of highlights ordered by start_offset ASC, created_at ASC.
+        List of highlights ordered by start_offset ASC, created_at ASC, id ASC.
 
     Raises:
         NotFoundError(E_MEDIA_NOT_FOUND): If fragment doesn't exist or not readable.
     """
-    # Check readability (no ready check for list)
-    get_fragment_for_viewer_or_404(db, viewer_id, fragment_id)
+    fragment = get_fragment_for_viewer_or_404(db, viewer_id, fragment_id)
 
-    # Query highlights for this user and fragment
-    highlights = (
-        db.query(Highlight)
-        .filter(Highlight.user_id == viewer_id, Highlight.fragment_id == fragment_id)
-        .order_by(Highlight.start_offset.asc(), Highlight.created_at.asc())
-        .all()
-    )
+    query = db.query(Highlight).filter(Highlight.fragment_id == fragment_id)
 
-    return [_highlight_to_out(h) for h in highlights]
+    if mine_only:
+        query = query.filter(Highlight.user_id == viewer_id)
+    else:
+        query = query.filter(highlight_visibility_filter(viewer_id, fragment.media_id))
+
+    highlights = query.order_by(
+        Highlight.start_offset.asc(),
+        Highlight.created_at.asc(),
+        Highlight.id.asc(),
+    ).all()
+
+    return [_highlight_to_out(h, viewer_id) for h in highlights]
 
 
 def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> HighlightOut:
     """Get a single highlight by ID.
 
     NO ready check - read-only operation.
+    Visible to shared readers under s4 canonical predicate.
 
     Args:
         db: Database session.
@@ -306,10 +322,10 @@ def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> Highlight
         The highlight including annotation if present.
 
     Raises:
-        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
+        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist or not visible.
     """
     highlight = get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
-    return _highlight_to_out(highlight)
+    return _highlight_to_out(highlight, viewer_id)
 
 
 def update_highlight(
@@ -351,7 +367,7 @@ def update_highlight(
 
     if not offsets_changed and not color_changed:
         # Nothing to update, return current state
-        return _highlight_to_out(highlight)
+        return _highlight_to_out(highlight, viewer_id)
 
     # 5. Build update values
     update_values: dict = {"updated_at": func.now()}
@@ -390,7 +406,7 @@ def update_highlight(
 
     # 7. Refresh and return
     db.refresh(highlight)
-    return _highlight_to_out(highlight)
+    return _highlight_to_out(highlight, viewer_id)
 
 
 def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:

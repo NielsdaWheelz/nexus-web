@@ -46,6 +46,10 @@ class HighlightOut(BaseModel):
 
     The annotation field is included when fetching highlights - it will be
     None if no annotation exists, or the annotation object if one exists.
+
+    S4 additive fields (PR-07):
+    - author_user_id: UUID of the highlight author
+    - is_owner: viewer-local convenience boolean (True iff viewer authored this highlight)
     """
 
     id: UUID
@@ -59,6 +63,8 @@ class HighlightOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     annotation: AnnotationOut | None = None
+    author_user_id: UUID
+    is_owner: bool
 
     model_config = ConfigDict(from_attributes=True)
 
