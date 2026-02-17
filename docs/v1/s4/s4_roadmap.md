@@ -22,6 +22,9 @@ implements `docs/v1/s4/s4_spec.md` in a dependency-safe sequence.
 4. internal operator requeue endpoint is implemented in fastapi; no next.js `/api/*` proxy route for it in s4.
 5. all new public fastapi endpoints get matching next.js bff proxy routes in the same pr.
 6. no stale duplicate visibility helpers at slice end.
+7. pr-09 is hardening-only:
+  - minimal blocking drift fixes are allowed only when required to make an acceptance/compatibility/helper audit pass.
+  - any feature-level churn or contract expansion discovered in pr-09 is pushed back to the owning pr and roadmap/l4 docs are updated there.
 
 ## ownership matrix (endpoint/table/helper -> pr)
 
@@ -349,6 +352,11 @@ acceptance:
   - search response shape unchanged
   - additive-only response evolution honored
 - helper retirement audit confirms no stale duplicate visibility helpers remain.
+- drift triage is explicit and enforced:
+  - blocking drift: fixed minimally in pr-09 with direct audit assertions.
+  - non-blocking feature churn: rejected in pr-09 and reassigned to owner prs with roadmap pointer updates.
+- blocking cross-surface invariant drift is closed where present:
+  - default-library conversation-share prohibition is enforced across remaining callable share service entry points, not only owner-route surfaces.
 - a short handoff note lists final `l4` spec inputs per pr (files, invariants, tests, non-goals).
 
 non-goals:
