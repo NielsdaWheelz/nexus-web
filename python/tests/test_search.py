@@ -17,12 +17,17 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
 from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
+from tests.factories import (
+    create_searchable_media,
+    create_test_annotation,
+    create_test_conversation_with_message,
+    create_test_library,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
@@ -56,188 +61,6 @@ def auth_client(engine):
     )
 
     return TestClient(app)
-
-
-def create_test_media(
-    session: Session,
-    user_id: UUID,
-    title: str = "Test Article",
-) -> UUID:
-    """Create a test media item with fragment, adding to user's default library."""
-    media_id = uuid4()
-    fragment_id = uuid4()
-
-    # Create media
-    session.execute(
-        text("""
-            INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
-            VALUES (:id, 'web_article', :title, 'ready_for_reading', :user_id)
-        """),
-        {"id": media_id, "title": title, "user_id": user_id},
-    )
-
-    # Create fragment with canonical_text containing searchable content
-    session.execute(
-        text("""
-            INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-            VALUES (:id, :media_id, 0, '<p>Test content</p>', :text)
-        """),
-        {
-            "id": fragment_id,
-            "media_id": media_id,
-            "text": f"This is the canonical text for {title}. It contains searchable content about various topics.",
-        },
-    )
-
-    # Add to user's default library
-    session.execute(
-        text("""
-            INSERT INTO library_media (library_id, media_id)
-            SELECT l.id, :media_id
-            FROM libraries l
-            WHERE l.owner_user_id = :user_id AND l.is_default = true
-            ON CONFLICT DO NOTHING
-        """),
-        {"media_id": media_id, "user_id": user_id},
-    )
-
-    # S4: seed intrinsic provenance for default-library media
-    session.execute(
-        text("""
-            INSERT INTO default_library_intrinsics (default_library_id, media_id)
-            SELECT l.id, :media_id
-            FROM libraries l
-            WHERE l.owner_user_id = :user_id AND l.is_default = true
-            ON CONFLICT DO NOTHING
-        """),
-        {"media_id": media_id, "user_id": user_id},
-    )
-
-    session.commit()
-    return media_id
-
-
-def create_test_annotation(
-    session: Session,
-    user_id: UUID,
-    media_id: UUID,
-    body: str = "Test annotation body",
-) -> tuple[UUID, UUID]:
-    """Create a highlight and annotation for a media item.
-
-    Returns (highlight_id, annotation_id).
-    """
-    highlight_id = uuid4()
-    annotation_id = uuid4()
-
-    # Get fragment_id for this media
-    result = session.execute(
-        text("SELECT id FROM fragments WHERE media_id = :media_id LIMIT 1"),
-        {"media_id": media_id},
-    )
-    row = result.fetchone()
-    if not row:
-        raise ValueError(f"No fragment found for media {media_id}")
-    fragment_id = row[0]
-
-    # Create highlight
-    session.execute(
-        text("""
-            INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
-                                    color, exact, prefix, suffix)
-            VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'test exact', 'prefix', 'suffix')
-        """),
-        {"id": highlight_id, "user_id": user_id, "fragment_id": fragment_id},
-    )
-
-    # Create annotation
-    session.execute(
-        text("""
-            INSERT INTO annotations (id, highlight_id, body)
-            VALUES (:id, :highlight_id, :body)
-        """),
-        {"id": annotation_id, "highlight_id": highlight_id, "body": body},
-    )
-
-    session.commit()
-    return highlight_id, annotation_id
-
-
-def create_test_conversation_with_message(
-    session: Session,
-    user_id: UUID,
-    content: str = "Test message content",
-    status: str = "complete",
-    role: str = "user",
-) -> tuple[UUID, UUID]:
-    """Create a conversation with a message.
-
-    Args:
-        session: Database session.
-        user_id: Owner user ID.
-        content: Message content.
-        status: Message status (complete, pending, etc.). Note: only assistant messages
-                can have pending status due to DB constraint.
-        role: Message role (user or assistant).
-
-    Returns:
-        Tuple of (conversation_id, message_id).
-    """
-    conversation_id = uuid4()
-    message_id = uuid4()
-
-    # Create conversation
-    session.execute(
-        text("""
-            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
-            VALUES (:id, :user_id, 'private', 2)
-        """),
-        {"id": conversation_id, "user_id": user_id},
-    )
-
-    # Create message
-    session.execute(
-        text("""
-            INSERT INTO messages (id, conversation_id, seq, role, content, status)
-            VALUES (:id, :conversation_id, 1, :role, :content, :status)
-        """),
-        {
-            "id": message_id,
-            "conversation_id": conversation_id,
-            "content": content,
-            "status": status,
-            "role": role,
-        },
-    )
-
-    session.commit()
-    return conversation_id, message_id
-
-
-def create_test_library(session: Session, user_id: UUID, name: str = "Test Library") -> UUID:
-    """Create a non-default library with the user as admin."""
-    library_id = uuid4()
-
-    # Create library
-    session.execute(
-        text("""
-            INSERT INTO libraries (id, owner_user_id, name, is_default)
-            VALUES (:id, :user_id, :name, false)
-        """),
-        {"id": library_id, "user_id": user_id, "name": name},
-    )
-
-    # Add membership
-    session.execute(
-        text("""
-            INSERT INTO memberships (library_id, user_id, role)
-            VALUES (:library_id, :user_id, 'admin')
-        """),
-        {"library_id": library_id, "user_id": user_id},
-    )
-
-    session.commit()
-    return library_id
 
 
 # =============================================================================
@@ -275,7 +98,7 @@ class TestBasicSearch:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media_id = create_test_media(session, user_id, title="Python Programming Guide")
+            media_id = create_searchable_media(session, user_id, title="Python Programming Guide")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -298,7 +121,7 @@ class TestBasicSearch:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media_id = create_test_media(session, user_id, title="Test Article")
+            media_id = create_searchable_media(session, user_id, title="Test Article")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -318,7 +141,7 @@ class TestBasicSearch:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media_id = create_test_media(session, user_id, title="Test Article")
+            media_id = create_searchable_media(session, user_id, title="Test Article")
             highlight_id, annotation_id = create_test_annotation(
                 session, user_id, media_id, body="My unique annotation about databases"
             )
@@ -377,7 +200,7 @@ class TestSearchVisibility:
 
         # User B creates media
         with direct_db.session() as session:
-            media_id = create_test_media(session, user_b, title="Secret Private Document")
+            media_id = create_searchable_media(session, user_b, title="Secret Private Document")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -406,7 +229,7 @@ class TestSearchVisibility:
 
         # User B creates media and annotation
         with direct_db.session() as session:
-            media_id = create_test_media(session, user_b, title="Shared Article")
+            media_id = create_searchable_media(session, user_b, title="Shared Article")
             highlight_id, annotation_id = create_test_annotation(
                 session, user_b, media_id, body="User B private annotation notes"
             )
@@ -498,8 +321,8 @@ class TestSearchScopes:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media1 = create_test_media(session, user_id, title="Programming Python Basics")
-            media2 = create_test_media(session, user_id, title="Advanced Python Topics")
+            media1 = create_searchable_media(session, user_id, title="Programming Python Basics")
+            media2 = create_searchable_media(session, user_id, title="Advanced Python Topics")
 
         direct_db.register_cleanup("fragments", "media_id", media1)
         direct_db.register_cleanup("fragments", "media_id", media2)
@@ -544,7 +367,7 @@ class TestSearchScopes:
             library_id = create_test_library(session, user_id, "Research Library")
 
             # Create media and add to library
-            media_id = create_test_media(session, user_id, title="Research Paper on AI")
+            media_id = create_searchable_media(session, user_id, title="Research Paper on AI")
 
             # Also add to the non-default library
             session.execute(
@@ -653,7 +476,9 @@ class TestSearchTypeFiltering:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media_id = create_test_media(session, user_id, title="Python Programming Tutorial")
+            media_id = create_searchable_media(
+                session, user_id, title="Python Programming Tutorial"
+            )
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -673,7 +498,7 @@ class TestSearchTypeFiltering:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media_id = create_test_media(session, user_id, title="Test Content Article")
+            media_id = create_searchable_media(session, user_id, title="Test Content Article")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -695,7 +520,7 @@ class TestSearchTypeFiltering:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media_id = create_test_media(session, user_id, title="Test Article")
+            media_id = create_searchable_media(session, user_id, title="Test Article")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -726,7 +551,7 @@ class TestSearchPagination:
         media_ids = []
         with direct_db.session() as session:
             for i in range(25):
-                media_id = create_test_media(session, user_id, title=f"Test Article {i}")
+                media_id = create_searchable_media(session, user_id, title=f"Test Article {i}")
                 media_ids.append(media_id)
 
         for mid in media_ids:
@@ -752,7 +577,7 @@ class TestSearchPagination:
         media_ids = []
         with direct_db.session() as session:
             for i in range(10):
-                media_id = create_test_media(session, user_id, title=f"Searchable Item {i}")
+                media_id = create_searchable_media(session, user_id, title=f"Searchable Item {i}")
                 media_ids.append(media_id)
 
         for mid in media_ids:
@@ -820,7 +645,7 @@ class TestSearchResultFormat:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media_id = create_test_media(session, user_id, title="Unique Title For Test")
+            media_id = create_searchable_media(session, user_id, title="Unique Title For Test")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -850,7 +675,7 @@ class TestSearchResultFormat:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media_id = create_test_media(session, user_id, title="Test Article")
+            media_id = create_searchable_media(session, user_id, title="Test Article")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -901,7 +726,7 @@ class TestSearchResultFormat:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media_id = create_test_media(session, user_id, title="Test")
+            media_id = create_searchable_media(session, user_id, title="Test")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)

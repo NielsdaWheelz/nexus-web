@@ -20,6 +20,7 @@ from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
+from tests.factories import create_test_conversation, create_test_message
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
@@ -53,57 +54,6 @@ def auth_client(engine):
     )
 
     return TestClient(app)
-
-
-def create_test_conversation(
-    session: Session,
-    owner_user_id: UUID,
-    sharing: str = "private",
-) -> UUID:
-    """Create a test conversation directly in the database."""
-    conversation_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
-            VALUES (:id, :owner_user_id, :sharing, 1)
-        """),
-        {"id": conversation_id, "owner_user_id": owner_user_id, "sharing": sharing},
-    )
-    session.commit()
-    return conversation_id
-
-
-def create_test_message(
-    session: Session,
-    conversation_id: UUID,
-    seq: int,
-    role: str = "user",
-    content: str = "Test message",
-) -> UUID:
-    """Create a test message directly in the database."""
-    message_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO messages (id, conversation_id, seq, role, content, status)
-            VALUES (:id, :conversation_id, :seq, :role, :content, 'complete')
-        """),
-        {
-            "id": message_id,
-            "conversation_id": conversation_id,
-            "seq": seq,
-            "role": role,
-            "content": content,
-        },
-    )
-    # Update next_seq
-    session.execute(
-        text("""
-            UPDATE conversations SET next_seq = :next_seq WHERE id = :id
-        """),
-        {"next_seq": seq + 1, "id": conversation_id},
-    )
-    session.commit()
-    return message_id
 
 
 # =============================================================================
