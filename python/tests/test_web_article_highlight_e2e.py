@@ -294,25 +294,24 @@ class TestWebArticleHighlightE2E:
         assert refetched_canonical == original_canonical_text, "canonical_text must be immutable"
 
 
-class TestOwnershipIsolation:
-    """Test that highlights are isolated by user ownership.
+class TestSharedHighlightVisibility:
+    """S4 PR-07: Test shared highlight read visibility and author-only mutation.
 
-    Per PR-11 spec section 3.8.
+    Replaces original PR-11 ownership isolation tests with s4-compatible contract:
+    - Shared reader CAN list/get highlights from shared library members.
+    - Shared reader CANNOT mutate (patch/delete/annotation put) -> masked 404.
+    - Non-member still gets 404.
     """
 
-    def test_different_user_cannot_see_highlights(
+    def test_shared_reader_can_list_and_get_highlights_but_cannot_mutate(
         self,
         e2e_client: TestClient,
         direct_db: DirectSessionManager,
     ):
-        """Different user cannot see another user's highlights.
-
-        Prevents regression where user filter is accidentally removed from query.
-        """
+        """User B in shared library can read User A's highlights but not mutate them."""
         user_a = create_test_user_id()
         user_b = create_test_user_id()
 
-        # Create media with fragment
         media_id = uuid4()
         fragment_id = uuid4()
         canonical_text = "Hello World! This is test content."
@@ -339,7 +338,7 @@ class TestOwnershipIsolation:
         direct_db.register_cleanup("library_media", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        # User A adds media to their library
+        # Bootstrap both users
         me_a = e2e_client.get("/me", headers=auth_headers(user_a))
         lib_a_id = me_a.json()["data"]["default_library_id"]
         e2e_client.post(
@@ -347,6 +346,54 @@ class TestOwnershipIsolation:
             json={"media_id": str(media_id)},
             headers=auth_headers(user_a),
         )
+
+        me_b = e2e_client.get("/me", headers=auth_headers(user_b))
+        lib_b_id = me_b.json()["data"]["default_library_id"]
+        e2e_client.post(
+            f"/libraries/{lib_b_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_b),
+        )
+
+        # Create shared non-default library with both users and media
+        shared_lib_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO libraries (id, owner_user_id, name, is_default)
+                    VALUES (:id, :owner, 'Shared E2E Lib', false)
+                """),
+                {"id": shared_lib_id, "owner": user_a},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:lib, :uid, 'admin')
+                    ON CONFLICT DO NOTHING
+                """),
+                {"lib": shared_lib_id, "uid": user_a},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:lib, :uid, 'member')
+                    ON CONFLICT DO NOTHING
+                """),
+                {"lib": shared_lib_id, "uid": user_b},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO library_media (library_id, media_id)
+                    VALUES (:lib, :mid)
+                    ON CONFLICT DO NOTHING
+                """),
+                {"lib": shared_lib_id, "mid": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "library_id", shared_lib_id)
+        direct_db.register_cleanup("memberships", "library_id", shared_lib_id)
+        direct_db.register_cleanup("libraries", "id", shared_lib_id)
 
         # User A creates a highlight
         hl_response = e2e_client.post(
@@ -357,24 +404,122 @@ class TestOwnershipIsolation:
         assert hl_response.status_code == 201
         highlight_id = hl_response.json()["data"]["id"]
 
-        # User B bootstraps (no access to media)
-        e2e_client.get("/me", headers=auth_headers(user_b))
+        # User B can list A's highlights with mine_only=false
+        list_resp = e2e_client.get(
+            f"/fragments/{fragment_id}/highlights?mine_only=false",
+            headers=auth_headers(user_b),
+        )
+        assert list_resp.status_code == 200
+        highlights = list_resp.json()["data"]["highlights"]
+        assert len(highlights) == 1
+        assert highlights[0]["author_user_id"] == str(user_a)
+        assert highlights[0]["is_owner"] is False
 
-        # User B tries to access User A's highlight - should get 404
-        get_response = e2e_client.get(
+        # User B can GET A's highlight by ID
+        get_resp = e2e_client.get(
             f"/highlights/{highlight_id}",
             headers=auth_headers(user_b),
         )
-        assert get_response.status_code == 404
-        assert get_response.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["author_user_id"] == str(user_a)
+        assert get_resp.json()["data"]["is_owner"] is False
 
-        # User B tries to list highlights on the fragment - should get 404
-        list_response = e2e_client.get(
+        # User B CANNOT PATCH A's highlight -> masked 404
+        patch_resp = e2e_client.patch(
+            f"/highlights/{highlight_id}",
+            json={"color": "green"},
+            headers=auth_headers(user_b),
+        )
+        assert patch_resp.status_code == 404
+        assert patch_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+        # User B CANNOT DELETE A's highlight -> masked 404
+        del_resp = e2e_client.delete(
+            f"/highlights/{highlight_id}",
+            headers=auth_headers(user_b),
+        )
+        assert del_resp.status_code == 404
+        assert del_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+        # User B CANNOT upsert annotation on A's highlight -> masked 404
+        ann_resp = e2e_client.put(
+            f"/highlights/{highlight_id}/annotation",
+            json={"body": "Nope"},
+            headers=auth_headers(user_b),
+        )
+        assert ann_resp.status_code == 404
+        assert ann_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    def test_non_member_cannot_list_or_get_highlights(
+        self,
+        e2e_client: TestClient,
+        direct_db: DirectSessionManager,
+    ):
+        """User with no media visibility gets 404 on list and get."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        media_id = uuid4()
+        fragment_id = uuid4()
+        canonical_text = "Hello World! This is test content."
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:media_id, 'web_article', 'Test', 'ready_for_reading')
+                """),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                    VALUES (:fragment_id, :media_id, 0, '<p>Hello World!</p>', :text)
+                """),
+                {"fragment_id": fragment_id, "media_id": media_id, "text": canonical_text},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # User A adds media and creates highlight
+        me_a = e2e_client.get("/me", headers=auth_headers(user_a))
+        lib_a_id = me_a.json()["data"]["default_library_id"]
+        e2e_client.post(
+            f"/libraries/{lib_a_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_a),
+        )
+
+        hl_response = e2e_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_a),
+        )
+        assert hl_response.status_code == 201
+        highlight_id = hl_response.json()["data"]["id"]
+
+        # User B bootstraps but has NO access to media (no shared library)
+        e2e_client.get("/me", headers=auth_headers(user_b))
+
+        # User B cannot list highlights -> 404
+        list_resp = e2e_client.get(
             f"/fragments/{fragment_id}/highlights",
             headers=auth_headers(user_b),
         )
-        assert list_response.status_code == 404
-        assert list_response.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+        assert list_resp.status_code == 404
+        assert list_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+        # User B cannot get highlight by ID -> 404
+        get_resp = e2e_client.get(
+            f"/highlights/{highlight_id}",
+            headers=auth_headers(user_b),
+        )
+        assert get_resp.status_code == 404
+        assert get_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
 
 
 # =============================================================================

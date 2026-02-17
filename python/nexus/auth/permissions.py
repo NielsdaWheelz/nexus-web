@@ -208,39 +208,36 @@ def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_i
     return bool(result.scalar())
 
 
-def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUID) -> bool:
-    """Check if viewer can read a highlight under s4 visibility rules.
+def _highlight_library_intersection_exists(
+    viewer_user_id: UUID,
+    author_user_id_expr,
+    media_id: UUID,
+):
+    """Core SQL exists expression for highlight library intersection check.
 
-    True iff:
-    - Viewer can read the anchor media (via can_read_media), AND
-    - Exists a library containing that media where both viewer and highlight author are members.
+    Returns an exists() expression checking if viewer and highlight author share
+    membership in at least one library containing the given media.
 
-    Returns False if highlight_id does not exist (no existence leak).
+    Args:
+        viewer_user_id: UUID of the viewer.
+        author_user_id_expr: UUID for point reads, or a column expression
+            like Highlight.user_id for correlated list-query filters.
+        media_id: UUID of the anchor media.
+
+    Returns:
+        An exists() SQL expression usable in .where() or select().
     """
-    # Load highlight to get author and fragment->media chain
-    highlight = session.get(Highlight, highlight_id)
-    if highlight is None:
-        return False
+    viewer_m = Membership.__table__.alias("hl_viewer_m")
+    author_m = Membership.__table__.alias("hl_author_m")
 
-    author_id = highlight.user_id
-    media_id = highlight.fragment.media_id
-
-    # Check 1: viewer can read the anchor media
-    if not can_read_media(session, viewer_user_id, media_id):
-        return False
-
-    # Check 2: exists a library containing media where both viewer and author are members
-    viewer_m = Membership.__table__.alias("viewer_m")
-    author_m = Membership.__table__.alias("author_m")
-
-    intersection_q = (
+    return (
         select(literal(1))
         .select_from(LibraryMedia.__table__)
         .join(viewer_m, viewer_m.c.library_id == LibraryMedia.__table__.c.library_id)
         .join(
             author_m,
             (author_m.c.library_id == LibraryMedia.__table__.c.library_id)
-            & (author_m.c.user_id == author_id),
+            & (author_m.c.user_id == author_user_id_expr),
         )
         .where(
             LibraryMedia.__table__.c.media_id == media_id,
@@ -249,7 +246,53 @@ def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUI
         .exists()
     )
 
-    result = session.execute(select(intersection_q))
+
+def highlight_visibility_filter(viewer_user_id: UUID, media_id: UUID):
+    """SQL filter expression for visible highlights in list queries.
+
+    Evaluates to True for highlights where viewer and highlight author share
+    membership in at least one library containing the given media.
+
+    For use in .where() clauses on queries selecting from Highlight.
+    Correlates with Highlight.user_id from the outer query.
+
+    Caller must separately verify viewer can read the anchor media
+    (e.g. via get_fragment_for_viewer_or_404).
+    """
+    return _highlight_library_intersection_exists(
+        viewer_user_id=viewer_user_id,
+        author_user_id_expr=Highlight.user_id,
+        media_id=media_id,
+    )
+
+
+def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUID) -> bool:
+    """Check if viewer can read a highlight under s4 visibility rules.
+
+    True iff:
+    - Viewer can read the anchor media (via can_read_media), AND
+    - Exists a library containing that media where both viewer and highlight author are members.
+
+    Returns False if highlight_id does not exist (no existence leak).
+
+    Consumes canonical _highlight_library_intersection_exists helper.
+    """
+    highlight = session.get(Highlight, highlight_id)
+    if highlight is None:
+        return False
+
+    author_id = highlight.user_id
+    media_id = highlight.fragment.media_id
+
+    if not can_read_media(session, viewer_user_id, media_id):
+        return False
+
+    intersection_expr = _highlight_library_intersection_exists(
+        viewer_user_id=viewer_user_id,
+        author_user_id_expr=author_id,
+        media_id=media_id,
+    )
+    result = session.execute(select(intersection_expr))
     return bool(result.scalar())
 
 
