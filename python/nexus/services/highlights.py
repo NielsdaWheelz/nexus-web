@@ -1,12 +1,16 @@
 """Highlight and Annotation service layer.
 
-Implements highlight + annotation CRUD for web article fragments per Slice 2 L2 spec.
+Read visibility: shared read allowed under canonical highlight visibility predicate
+(media readable + library intersection between author and viewer per S4 spec §5.2).
+Write boundary: author-only for all mutation operations.
 
-All operations:
-- Enforce owner-only access + can_read_media visibility
-- Use E_MEDIA_NOT_FOUND consistently for all 404s (prevent probing attacks)
-- Require media ready status for create/update/upsert mutations
-- Allow list/get/delete operations even if media status drifts
+Error masking: E_MEDIA_NOT_FOUND consistently for all 404s (prevent probing attacks).
+Mutation guard: media ready status required for create/update/upsert; list/get/delete
+allowed even if media status drifts.
+
+Helper split (S4):
+- get_highlight_for_visible_read_or_404: read path (visibility predicate)
+- get_highlight_for_author_write_or_404: write path (author-only)
 
 Service functions correspond 1:1 with route handlers.
 Routes are transport-only and call exactly one service function.
