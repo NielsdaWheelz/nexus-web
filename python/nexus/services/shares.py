@@ -116,9 +116,15 @@ def set_sharing_mode(
                 ApiErrorCode.E_SHARE_REQUIRED, "At least one library is required for sharing"
             )
 
-        # Validate owner is member of all libraries
+        # Validate owner is member of all libraries; reject default-library targets (S4)
         owner_id = conversation.owner_user_id
         for lib_id in library_ids:
+            lib = db.get(Library, lib_id)
+            if lib is not None and lib.is_default:
+                raise ForbiddenError(
+                    ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN,
+                    "Cannot share conversations to a default library",
+                )
             if not is_member_of_library(db, owner_id, lib_id):
                 raise ApiError(
                     ApiErrorCode.E_FORBIDDEN, f"Owner must be a member of library {lib_id}"
@@ -171,6 +177,14 @@ def add_share(db: Session, conversation_id: UUID, library_id: UUID) -> Conversat
     if conversation.sharing == "private":
         raise ApiError(
             ApiErrorCode.E_SHARES_NOT_ALLOWED, "Cannot add shares to a private conversation"
+        )
+
+    # Reject default-library targets (S4)
+    lib = db.get(Library, library_id)
+    if lib is not None and lib.is_default:
+        raise ForbiddenError(
+            ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN,
+            "Cannot share conversations to a default library",
         )
 
     # Validate owner is member of library
@@ -274,9 +288,15 @@ def set_shares(db: Session, conversation_id: UUID, library_ids: list[UUID]) -> C
     """
     conversation = get_conversation_or_404(db, conversation_id)
 
-    # Validate owner is member of all new libraries
+    # Validate owner is member of all new libraries; reject default-library targets (S4)
     owner_id = conversation.owner_user_id
     for lib_id in library_ids:
+        lib = db.get(Library, lib_id)
+        if lib is not None and lib.is_default:
+            raise ForbiddenError(
+                ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN,
+                "Cannot share conversations to a default library",
+            )
         if not is_member_of_library(db, owner_id, lib_id):
             raise ApiError(ApiErrorCode.E_FORBIDDEN, f"Owner must be a member of library {lib_id}")
 

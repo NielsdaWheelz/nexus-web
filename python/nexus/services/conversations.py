@@ -1,11 +1,15 @@
 """Conversation and Message service layer.
 
-Implements conversation and message CRUD for Slice 3, PR-02.
+Read visibility: shared read allowed via canonical visibility predicate
+(owner, public, or library-shared with active dual membership per S4 spec §5.3).
+Write boundary: owner-only for all mutation operations.
 
-All operations:
-- Enforce owner-only access (sharing UI deferred to S4)
-- Use E_CONVERSATION_NOT_FOUND / E_MESSAGE_NOT_FOUND consistently (prevent probing)
-- Support cursor-based pagination
+Error masking: E_CONVERSATION_NOT_FOUND / E_MESSAGE_NOT_FOUND consistently (prevent probing).
+Pagination: cursor-based, ordered by updated_at DESC, id DESC.
+
+Helper split (S4):
+- get_conversation_for_visible_read_or_404: read path (visibility predicate)
+- get_conversation_for_owner_write_or_404: write path (owner-only)
 
 Service functions correspond 1:1 with route handlers.
 Routes are transport-only and call exactly one service function.

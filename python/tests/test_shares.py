@@ -123,13 +123,13 @@ class TestSharingInvariants:
         assert exc_info.value.code == ApiErrorCode.E_SHARE_REQUIRED
 
     def test_set_sharing_library_with_libraries_succeeds(
-        self, db_session: Session, conversation: tuple
+        self, db_session: Session, conversation: tuple, extra_library
     ):
-        """Can set sharing='library' with valid library_ids."""
+        """Can set sharing='library' with valid non-default library_ids."""
         conversation_id, user_id, default_library_id = conversation
 
         result = shares_service.set_sharing_mode(
-            db_session, conversation_id, "library", library_ids=[default_library_id]
+            db_session, conversation_id, "library", library_ids=[extra_library]
         )
 
         assert result.sharing == "library"
@@ -137,7 +137,7 @@ class TestSharingInvariants:
         # Verify share exists
         shares = shares_service.get_shares(db_session, conversation_id)
         assert len(shares) == 1
-        assert shares[0].library_id == default_library_id
+        assert shares[0].library_id == extra_library
 
     def test_owner_must_be_member_of_library(self, db_session: Session, conversation: tuple):
         """Owner must be a member of the library to share with it."""
@@ -173,14 +173,14 @@ class TestSharingInvariants:
         assert exc_info.value.code == ApiErrorCode.E_FORBIDDEN
 
     def test_delete_last_share_transitions_to_private(
-        self, db_session: Session, conversation: tuple
+        self, db_session: Session, conversation: tuple, extra_library
     ):
         """Deleting the last share auto-transitions sharing to 'private'."""
         conversation_id, user_id, default_library_id = conversation
 
-        # First, set to library sharing
+        # First, set to library sharing with a non-default library
         shares_service.set_sharing_mode(
-            db_session, conversation_id, "library", library_ids=[default_library_id]
+            db_session, conversation_id, "library", library_ids=[extra_library]
         )
 
         # Verify sharing is 'library'
@@ -191,7 +191,7 @@ class TestSharingInvariants:
         assert result.scalar() == "library"
 
         # Delete the share
-        updated = shares_service.delete_share(db_session, conversation_id, default_library_id)
+        updated = shares_service.delete_share(db_session, conversation_id, extra_library)
 
         # Verify auto-transition to private
         assert updated.sharing == "private"
@@ -207,28 +207,46 @@ class TestSharingInvariants:
         conversation_id, user_id, default_library_id = conversation
         extra_library_id = extra_library
 
-        # Set initial share
+        # Create a second non-default library for replacement test
+        second_library_id = uuid4()
+        db_session.execute(
+            text("""
+                INSERT INTO libraries (id, owner_user_id, name, is_default)
+                VALUES (:id, :owner_user_id, 'Second Lib', false)
+            """),
+            {"id": second_library_id, "owner_user_id": user_id},
+        )
+        db_session.execute(
+            text("""
+                INSERT INTO memberships (library_id, user_id, role)
+                VALUES (:library_id, :user_id, 'admin')
+            """),
+            {"library_id": second_library_id, "user_id": user_id},
+        )
+        db_session.flush()
+
+        # Set initial share with non-default library
         shares_service.set_sharing_mode(
-            db_session, conversation_id, "library", library_ids=[default_library_id]
+            db_session, conversation_id, "library", library_ids=[extra_library_id]
         )
 
-        # Replace with different library
-        shares_service.set_shares(db_session, conversation_id, [extra_library_id])
+        # Replace with different non-default library
+        shares_service.set_shares(db_session, conversation_id, [second_library_id])
 
         # Verify only new library is shared
         shares = shares_service.get_shares(db_session, conversation_id)
         assert len(shares) == 1
-        assert shares[0].library_id == extra_library_id
+        assert shares[0].library_id == second_library_id
 
     def test_set_shares_empty_list_transitions_to_private(
-        self, db_session: Session, conversation: tuple
+        self, db_session: Session, conversation: tuple, extra_library
     ):
         """set_shares with empty list transitions sharing='library' to 'private'."""
         conversation_id, user_id, default_library_id = conversation
 
-        # Set initial share
+        # Set initial share with non-default library
         shares_service.set_sharing_mode(
-            db_session, conversation_id, "library", library_ids=[default_library_id]
+            db_session, conversation_id, "library", library_ids=[extra_library]
         )
 
         # Clear all shares
@@ -244,12 +262,30 @@ class TestSharingInvariants:
         conversation_id, user_id, default_library_id = conversation
         extra_library_id = extra_library
 
-        # Set multiple shares
+        # Create a second non-default library for multi-share test
+        second_library_id = uuid4()
+        db_session.execute(
+            text("""
+                INSERT INTO libraries (id, owner_user_id, name, is_default)
+                VALUES (:id, :owner_user_id, 'Second Library', false)
+            """),
+            {"id": second_library_id, "owner_user_id": user_id},
+        )
+        db_session.execute(
+            text("""
+                INSERT INTO memberships (library_id, user_id, role)
+                VALUES (:library_id, :user_id, 'admin')
+            """),
+            {"library_id": second_library_id, "user_id": user_id},
+        )
+        db_session.flush()
+
+        # Set multiple shares with non-default libraries
         shares_service.set_sharing_mode(
             db_session,
             conversation_id,
             "library",
-            library_ids=[default_library_id, extra_library_id],
+            library_ids=[extra_library_id, second_library_id],
         )
 
         # Verify shares exist
@@ -279,6 +315,50 @@ class TestSharingInvariants:
 
         with pytest.raises(NotFoundError):
             shares_service.get_shares(db_session, fake_id)
+
+    def test_set_sharing_mode_default_library_forbidden(
+        self, db_session: Session, conversation: tuple
+    ):
+        """set_sharing_mode rejects default library as share target."""
+        conversation_id, user_id, default_library_id = conversation
+
+        from nexus.errors import ForbiddenError
+
+        with pytest.raises(ForbiddenError) as exc_info:
+            shares_service.set_sharing_mode(
+                db_session, conversation_id, "library", library_ids=[default_library_id]
+            )
+
+        assert exc_info.value.code == ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN
+
+    def test_add_share_default_library_forbidden(
+        self, db_session: Session, conversation: tuple, extra_library
+    ):
+        """add_share rejects default library as share target."""
+        conversation_id, user_id, default_library_id = conversation
+
+        # First set conversation to library sharing with a non-default library
+        shares_service.set_sharing_mode(
+            db_session, conversation_id, "library", library_ids=[extra_library]
+        )
+
+        from nexus.errors import ForbiddenError
+
+        with pytest.raises(ForbiddenError) as exc_info:
+            shares_service.add_share(db_session, conversation_id, default_library_id)
+
+        assert exc_info.value.code == ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN
+
+    def test_set_shares_default_library_forbidden(self, db_session: Session, conversation: tuple):
+        """set_shares rejects default library as share target."""
+        conversation_id, user_id, default_library_id = conversation
+
+        from nexus.errors import ForbiddenError
+
+        with pytest.raises(ForbiddenError) as exc_info:
+            shares_service.set_shares(db_session, conversation_id, [default_library_id])
+
+        assert exc_info.value.code == ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN
 
 
 # =============================================================================

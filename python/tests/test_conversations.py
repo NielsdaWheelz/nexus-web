@@ -1073,3 +1073,81 @@ class TestListConversationsScope:
         assert str(conv_shared) in ids
         assert str(conv_public) in ids
         assert str(conv_private_c) not in ids
+
+    def test_list_conversations_scope_all_order_is_updated_at_desc_id_desc(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """scope=all order is strictly updated_at DESC, id DESC with deterministic tie-break."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library(session, user_a)
+            add_member_to_library(session, lib_id, user_b)
+
+            conv_owned = create_test_conversation(session, user_b)
+            conv_shared = create_test_conversation(session, user_a)
+            share_conversation_to_library(session, conv_shared, lib_id)
+            conv_public = create_test_conversation(session, user_a)
+            make_conversation_public(session, conv_public)
+
+            # Force controlled timestamps: conv_owned and conv_shared share the
+            # same updated_at so tie-break must use id DESC.
+            tied_ts = "2026-01-15T12:00:00+00:00"
+            older_ts = "2026-01-14T12:00:00+00:00"
+            session.execute(
+                text("UPDATE conversations SET updated_at = :ts WHERE id = :id"),
+                {"ts": tied_ts, "id": str(conv_owned)},
+            )
+            session.execute(
+                text("UPDATE conversations SET updated_at = :ts WHERE id = :id"),
+                {"ts": tied_ts, "id": str(conv_shared)},
+            )
+            session.execute(
+                text("UPDATE conversations SET updated_at = :ts WHERE id = :id"),
+                {"ts": older_ts, "id": str(conv_public)},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversation_shares", "conversation_id", conv_shared)
+        direct_db.register_cleanup("conversations", "id", conv_owned)
+        direct_db.register_cleanup("conversations", "id", conv_shared)
+        direct_db.register_cleanup("conversations", "id", conv_public)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+
+        response = auth_client.get("/conversations?scope=all", headers=auth_headers(user_b))
+        assert response.status_code == 200
+        rows = response.json()["data"]
+        returned_ids = [c["id"] for c in rows]
+
+        assert len(returned_ids) >= 3
+        assert str(conv_owned) in returned_ids
+        assert str(conv_shared) in returned_ids
+        assert str(conv_public) in returned_ids
+
+        # Verify strict updated_at DESC ordering
+        timestamps = [c["updated_at"] for c in rows]
+        for i in range(len(timestamps) - 1):
+            assert timestamps[i] >= timestamps[i + 1], (
+                f"Ordering violated: row {i} updated_at={timestamps[i]} "
+                f"< row {i + 1} updated_at={timestamps[i + 1]}"
+            )
+
+        # Verify tie-break: among rows with equal updated_at, id DESC must hold
+        tied_rows = [c for c in rows if c["updated_at"] == rows[0]["updated_at"]]
+        if len(tied_rows) > 1:
+            tied_ids = [c["id"] for c in tied_rows]
+            assert tied_ids == sorted(tied_ids, reverse=True), (
+                f"Tie-break ordering violated: {tied_ids} is not id DESC"
+            )
+
+        # The two tied conversations (conv_owned, conv_shared) should come before
+        # conv_public (older timestamp).
+        owned_idx = returned_ids.index(str(conv_owned))
+        shared_idx = returned_ids.index(str(conv_shared))
+        public_idx = returned_ids.index(str(conv_public))
+        assert owned_idx < public_idx
+        assert shared_idx < public_idx

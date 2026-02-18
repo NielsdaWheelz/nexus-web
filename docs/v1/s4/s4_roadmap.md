@@ -338,9 +338,11 @@ acceptance:
 non-goals:
 - no ranking/weighting/snippet algorithm changes.
 
-## pr-09: hardening + acceptance matrix + l4 handoff gate
+## pr-09: hardening + acceptance matrix + l4 handoff gate ✅
 
 goal: prove s4 contract end-to-end and freeze clean handoff boundaries for individual pr specs.
+
+status: **implemented**. acceptance matrix, compatibility audit, helper-retirement audit, legacy share service default-library prohibition, scenario 11 ordering test, and handoff note complete. all tests pass.
 
 dependencies: pr-01 through pr-08.
 
