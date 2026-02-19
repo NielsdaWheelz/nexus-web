@@ -33,12 +33,12 @@ export default function LibrariesPage() {
 
   const fetchLibraries = async () => {
     try {
-      const [data, me] = await Promise.all([
-        apiFetch<Library[]>("/api/libraries"),
-        apiFetch<MeResponse>("/api/me"),
+      const [libsResponse, me] = await Promise.all([
+        apiFetch<{ data: Library[] }>("/api/libraries"),
+        apiFetch<{ data: MeResponse }>("/api/me"),
       ]);
-      setLibraries(data);
-      setViewerUserId(me.user_id);
+      setLibraries(libsResponse.data);
+      setViewerUserId(me.data.user_id);
       setError(null);
     } catch (err) {
       if (isApiError(err)) {
