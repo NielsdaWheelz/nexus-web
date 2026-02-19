@@ -19,8 +19,8 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 ### v1 (must ship)
 - media ingestion + reading:
   - web articles by url (headless browser → mozilla readability)
-  - epubs uploaded or via url (fully extracted into html rendered by us)
-  - pdfs uploaded or via url (processed by pymupdf; rendered via pdf.js)
+  - epubs uploaded (fully extracted into html rendered by us)
+  - pdfs uploaded (processed by pymupdf; rendered via pdf.js)
 - podcasts:
   - podcast discovery via podcastindex search + rss fetch
   - subscribe/unsubscribe podcasts
@@ -43,6 +43,8 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 - advanced players + deep media controls
 - "enterprise" hardening: full local ephemeral infra parity, perf tuning, deep observability, advanced rate limiting, extensive admin tooling
 - perfect migration tooling / backfills for old ingestion formats
+- epub ingest-from-url
+- pdf ingest-from-url
 
 ### explicit non-scope (for all v1)
 - no multi-user conversations (no mixed authors in a conversation)
@@ -55,6 +57,7 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 - no youtube channel subscriptions (explicitly out of scope v1)
 - no word-level timestamps (segment/utterance-level only)
 - no local audio/video uploads (external urls only)
+- no epub/pdf ingest-from-url in v1 (deferred to v2)
 - no first-class support for non-browser clients (cli, mobile apps); browser traffic flows through next.js except for SSE streaming (see §4 streaming exception); direct fastapi usage beyond `/stream/*` is not a supported public API in v1
 
 ---

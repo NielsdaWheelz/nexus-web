@@ -143,7 +143,7 @@ Two test suites are introduced early and reused by every later slice:
 - Media row moves through states deterministically
 - Failure is visible and retryable
 - No duplicate partial data after retry
-- URL-based media: same URL returns existing media (global)
+- URL-based media (`web_article` / `video` / `podcast_episode`): same URL returns existing media (global)
 - File uploads: same file by same user returns existing; different users get separate rows
 - Upload stores file in private bucket
 - Download returns signed URL only if viewer can read media
@@ -364,6 +364,7 @@ Two test suites are introduced early and reused by every later slice:
 
 ### Excludes
 - Full EPUB navigation polish
+- EPUB ingest-from-URL (deferred to v2)
 
 ### Acceptance Criteria
 - Chapter fragment immutability holds
@@ -393,6 +394,7 @@ Two test suites are introduced early and reused by every later slice:
 
 ### Excludes
 - Perfect text ↔ geometry reconciliation
+- PDF ingest-from-URL (deferred to v2)
 
 ### Acceptance Criteria
 - Selection creates stable highlight
