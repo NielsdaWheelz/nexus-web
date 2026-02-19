@@ -198,12 +198,12 @@ export default function MediaViewPage({
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [mediaData, fragmentsData] = await Promise.all([
-          apiFetch<Media>(`/api/media/${id}`),
-          apiFetch<Fragment[]>(`/api/media/${id}/fragments`),
+        const [mediaResp, fragmentsResp] = await Promise.all([
+          apiFetch<{ data: Media }>(`/api/media/${id}`),
+          apiFetch<{ data: Fragment[] }>(`/api/media/${id}/fragments`),
         ]);
-        setMedia(mediaData);
-        setFragments(fragmentsData);
+        setMedia(mediaResp.data);
+        setFragments(fragmentsResp.data);
         setError(null);
       } catch (err) {
         if (isApiError(err)) {

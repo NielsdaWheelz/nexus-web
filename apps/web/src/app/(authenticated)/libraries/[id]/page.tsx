@@ -42,18 +42,18 @@ export default function LibraryDetailPage({
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [libs, mediaList] = await Promise.all([
-          apiFetch<Library[]>("/api/libraries"),
-          apiFetch<Media[]>(`/api/libraries/${id}/media`),
+        const [libsResp, mediaResp] = await Promise.all([
+          apiFetch<{ data: Library[] }>("/api/libraries"),
+          apiFetch<{ data: Media[] }>(`/api/libraries/${id}/media`),
         ]);
-        const lib = libs.find((l) => l.id === id);
+        const lib = libsResp.data.find((l) => l.id === id);
         if (!lib) {
           setError("Library not found");
           return;
         }
         setLibrary(lib);
         setNewName(lib.name);
-        setMedia(mediaList);
+        setMedia(mediaResp.data);
         setError(null);
       } catch (err) {
         if (isApiError(err)) {
