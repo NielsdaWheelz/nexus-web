@@ -111,6 +111,11 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_OWNER_EXIT_FORBIDDEN, 403),
             (ApiErrorCode.E_OWNERSHIP_TRANSFER_INVALID, 409),
             (ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN, 403),
+            # S5 error codes
+            (ApiErrorCode.E_RETRY_INVALID_STATE, 409),
+            (ApiErrorCode.E_RETRY_NOT_ALLOWED, 409),
+            (ApiErrorCode.E_CHAPTER_NOT_FOUND, 404),
+            (ApiErrorCode.E_ARCHIVE_UNSAFE, 400),
         ],
     )
     def test_error_code_maps_to_correct_status(self, code: ApiErrorCode, expected_status: int):

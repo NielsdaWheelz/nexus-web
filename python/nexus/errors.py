@@ -89,6 +89,12 @@ class ApiErrorCode(str, Enum):
     E_STREAM_TOKEN_REPLAYED = "E_STREAM_TOKEN_REPLAYED"  # 401 jti already used
     E_STREAM_TOKEN_INVALID = "E_STREAM_TOKEN_INVALID"  # 401 signature or claims failed
 
+    # S5 EPUB errors (400/404/409)
+    E_RETRY_INVALID_STATE = "E_RETRY_INVALID_STATE"  # 409
+    E_RETRY_NOT_ALLOWED = "E_RETRY_NOT_ALLOWED"  # 409
+    E_CHAPTER_NOT_FOUND = "E_CHAPTER_NOT_FOUND"  # 404
+    E_ARCHIVE_UNSAFE = "E_ARCHIVE_UNSAFE"  # 400
+
     # Ingestion errors (502/504)
     E_INGEST_FAILED = "E_INGEST_FAILED"  # 502
     E_INGEST_TIMEOUT = "E_INGEST_TIMEOUT"  # 504
@@ -173,6 +179,11 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_STREAM_TOKEN_EXPIRED: 401,
     ApiErrorCode.E_STREAM_TOKEN_REPLAYED: 401,
     ApiErrorCode.E_STREAM_TOKEN_INVALID: 401,
+    # S5 EPUB errors
+    ApiErrorCode.E_RETRY_INVALID_STATE: 409,
+    ApiErrorCode.E_RETRY_NOT_ALLOWED: 409,
+    ApiErrorCode.E_CHAPTER_NOT_FOUND: 404,
+    ApiErrorCode.E_ARCHIVE_UNSAFE: 400,
     # Ingestion errors
     ApiErrorCode.E_INGEST_FAILED: 502,
     ApiErrorCode.E_INGEST_TIMEOUT: 504,

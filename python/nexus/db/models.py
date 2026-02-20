@@ -1226,6 +1226,70 @@ class DefaultLibraryBackfillJob(Base):
     )
 
 
+# =============================================================================
+# Slice 5: EPUB
+# =============================================================================
+
+
+class EpubTocNode(Base):
+    """Persisted TOC snapshot for EPUB media.
+
+    Immutable after media reaches ready_for_reading (except full rebuild on retry).
+    Node ordering is deterministic via order_key (dddd(.dddd)* format).
+    """
+
+    __tablename__ = "epub_toc_nodes"
+
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+    node_id: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
+    parent_node_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    href: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fragment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    order_key: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(node_id) BETWEEN 1 AND 255",
+            name="ck_epub_toc_nodes_node_id_nonempty",
+        ),
+        CheckConstraint(
+            "parent_node_id IS NULL OR parent_node_id <> node_id",
+            name="ck_epub_toc_nodes_parent_nonself",
+        ),
+        CheckConstraint(
+            "char_length(trim(label)) BETWEEN 1 AND 512",
+            name="ck_epub_toc_nodes_label_nonempty",
+        ),
+        CheckConstraint(
+            "depth >= 0 AND depth <= 16",
+            name="ck_epub_toc_nodes_depth_range",
+        ),
+        CheckConstraint(
+            "fragment_idx IS NULL OR fragment_idx >= 0",
+            name="ck_epub_toc_nodes_fragment_idx_nonneg",
+        ),
+        CheckConstraint(
+            r"order_key ~ '^[0-9]{4}([.][0-9]{4})*$'",
+            name="ck_epub_toc_nodes_order_key_format",
+        ),
+    )
+
+    # Relationships
+    media: Mapped["Media"] = relationship("Media")
+
+
 class FragmentBlock(Base):
     """FragmentBlock model - block boundary index for context window computation.
 
