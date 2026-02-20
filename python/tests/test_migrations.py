@@ -1723,6 +1723,273 @@ class TestS4Migration0007:
             session.commit()
 
 
+class TestS5Migration0008:
+    """Tests for S5 migration 0008 — epub_toc_nodes schema.
+
+    Each test self-manages migration state (downgrade base -> upgrade target).
+    Does NOT rely on the module-level migrated_engine fixture.
+    """
+
+    @pytest.fixture(autouse=True)
+    def isolate_migration(self):
+        """Start and end each test at a clean base state, restore to head."""
+        run_alembic_command("downgrade base")
+        yield
+        run_alembic_command("downgrade base")
+        run_alembic_command("upgrade head")
+
+    @pytest.fixture
+    def s5_engine(self):
+        """Provide a dedicated engine for S5 tests."""
+        database_url = get_test_database_url()
+        engine = create_engine(database_url)
+        yield engine
+        engine.dispose()
+
+    def _create_epub_fixtures(self, session):
+        """Insert user + epub media + fragment fixtures, return their ids."""
+        user_id = uuid4()
+        media_id = uuid4()
+        fragment_id = uuid4()
+
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        session.execute(
+            text(
+                "INSERT INTO media (id, kind, title, processing_status, created_by_user_id) "
+                "VALUES (:id, 'epub', 'Test EPUB', 'extracting', :user_id)"
+            ),
+            {"id": media_id, "user_id": user_id},
+        )
+        session.execute(
+            text(
+                "INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized) "
+                "VALUES (:id, :media_id, 0, 'Chapter one text', '<p>Chapter one</p>')"
+            ),
+            {"id": fragment_id, "media_id": media_id},
+        )
+        session.commit()
+        return user_id, media_id, fragment_id
+
+    def test_0008_epub_toc_nodes_table_and_indexes_exist(self, s5_engine):
+        """Table epub_toc_nodes and its indexes exist after upgrade to head."""
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade failed: {result.stderr}"
+
+        with Session(s5_engine) as session:
+            # Table exists
+            table_result = session.execute(
+                text(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = 'epub_toc_nodes'"
+                )
+            )
+            assert table_result.fetchone() is not None, "epub_toc_nodes table must exist"
+
+            # Indexes exist
+            idx_result = session.execute(
+                text(
+                    "SELECT indexname FROM pg_indexes "
+                    "WHERE schemaname = 'public' AND tablename = 'epub_toc_nodes'"
+                )
+            )
+            index_names = {row[0] for row in idx_result.fetchall()}
+            assert "uix_epub_toc_nodes_media_order" in index_names
+            assert "idx_epub_toc_nodes_media_fragment" in index_names
+
+    def test_0008_epub_toc_nodes_constraints_enforced(self, s5_engine):
+        """Check and FK constraints on epub_toc_nodes reject invalid data."""
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade failed: {result.stderr}"
+
+        with Session(s5_engine) as session:
+            _, media_id, _ = self._create_epub_fixtures(session)
+
+            # node_id empty -> fail ck_epub_toc_nodes_node_id_nonempty
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO epub_toc_nodes "
+                        "(media_id, node_id, label, depth, order_key) "
+                        "VALUES (:mid, '', 'Label', 0, '0001')"
+                    ),
+                    {"mid": media_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_epub_toc_nodes_node_id_nonempty" in str(exc_info.value)
+
+            # label whitespace-only -> fail ck_epub_toc_nodes_label_nonempty
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO epub_toc_nodes "
+                        "(media_id, node_id, label, depth, order_key) "
+                        "VALUES (:mid, 'n1', '   ', 0, '0001')"
+                    ),
+                    {"mid": media_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_epub_toc_nodes_label_nonempty" in str(exc_info.value)
+
+            # parent_node_id == node_id -> fail ck_epub_toc_nodes_parent_nonself
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO epub_toc_nodes "
+                        "(media_id, node_id, parent_node_id, label, depth, order_key) "
+                        "VALUES (:mid, 'self', 'self', 'Label', 0, '0001')"
+                    ),
+                    {"mid": media_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_epub_toc_nodes_parent_nonself" in str(exc_info.value)
+
+            # depth negative -> fail ck_epub_toc_nodes_depth_range
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO epub_toc_nodes "
+                        "(media_id, node_id, label, depth, order_key) "
+                        "VALUES (:mid, 'n2', 'Label', -1, '0001')"
+                    ),
+                    {"mid": media_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_epub_toc_nodes_depth_range" in str(exc_info.value)
+
+            # depth too large -> fail ck_epub_toc_nodes_depth_range
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO epub_toc_nodes "
+                        "(media_id, node_id, label, depth, order_key) "
+                        "VALUES (:mid, 'n3', 'Label', 17, '0001')"
+                    ),
+                    {"mid": media_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_epub_toc_nodes_depth_range" in str(exc_info.value)
+
+            # fragment_idx negative -> fail ck_epub_toc_nodes_fragment_idx_nonneg
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO epub_toc_nodes "
+                        "(media_id, node_id, label, depth, order_key, fragment_idx) "
+                        "VALUES (:mid, 'n4', 'Label', 0, '0001', -1)"
+                    ),
+                    {"mid": media_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_epub_toc_nodes_fragment_idx_nonneg" in str(exc_info.value)
+
+            # parent FK referencing nonexistent parent -> fail
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO epub_toc_nodes "
+                        "(media_id, node_id, parent_node_id, label, depth, order_key) "
+                        "VALUES (:mid, 'child', 'nonexistent_parent', 'Label', 1, '0001')"
+                    ),
+                    {"mid": media_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "fk_epub_toc_nodes_parent" in str(exc_info.value)
+
+            # Valid insert with fragment_idx=0 (references existing fragment)
+            session.execute(
+                text(
+                    "INSERT INTO epub_toc_nodes "
+                    "(media_id, node_id, label, depth, order_key, fragment_idx) "
+                    "VALUES (:mid, 'valid', 'Chapter 1', 0, '0001', 0)"
+                ),
+                {"mid": media_id},
+            )
+            session.commit()
+
+            # Verify the row was inserted
+            count = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM epub_toc_nodes "
+                    "WHERE media_id = :mid AND node_id = 'valid'"
+                ),
+                {"mid": media_id},
+            ).scalar()
+            assert count == 1
+
+    def test_0008_order_key_format_constraint(self, s5_engine):
+        """ck_epub_toc_nodes_order_key_format accepts valid and rejects invalid keys."""
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade failed: {result.stderr}"
+
+        with Session(s5_engine) as session:
+            _, media_id, _ = self._create_epub_fixtures(session)
+
+            valid_keys = ["0001", "0001.0002", "0010.0001.0003"]
+            for i, key in enumerate(valid_keys):
+                session.execute(
+                    text(
+                        "INSERT INTO epub_toc_nodes "
+                        "(media_id, node_id, label, depth, order_key) "
+                        "VALUES (:mid, :nid, 'Label', 0, :key)"
+                    ),
+                    {"mid": media_id, "nid": f"valid_{i}", "key": key},
+                )
+            session.commit()
+
+            invalid_keys = ["1", "0001.2", "0001.000A", ".0001", "0001."]
+            for i, key in enumerate(invalid_keys):
+                with pytest.raises(IntegrityError) as exc_info:
+                    session.execute(
+                        text(
+                            "INSERT INTO epub_toc_nodes "
+                            "(media_id, node_id, label, depth, order_key) "
+                            "VALUES (:mid, :nid, 'Label', 0, :key)"
+                        ),
+                        {"mid": media_id, "nid": f"invalid_{i}", "key": key},
+                    )
+                    session.commit()
+                session.rollback()
+                assert "ck_epub_toc_nodes_order_key_format" in str(exc_info.value)
+
+    def test_0008_unique_media_order_key_enforced(self, s5_engine):
+        """uix_epub_toc_nodes_media_order rejects duplicate order_key within same media."""
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade failed: {result.stderr}"
+
+        with Session(s5_engine) as session:
+            _, media_id, _ = self._create_epub_fixtures(session)
+
+            session.execute(
+                text(
+                    "INSERT INTO epub_toc_nodes "
+                    "(media_id, node_id, label, depth, order_key) "
+                    "VALUES (:mid, 'a', 'First', 0, '0001')"
+                ),
+                {"mid": media_id},
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        "INSERT INTO epub_toc_nodes "
+                        "(media_id, node_id, label, depth, order_key) "
+                        "VALUES (:mid, 'b', 'Second', 0, '0001')"
+                    ),
+                    {"mid": media_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "uix_epub_toc_nodes_media_order" in str(exc_info.value)
+
+
 class TestS3SchemaConstraints:
     """Tests for S3-specific schema constraints (chat, conversations, messages, etc.)."""
 

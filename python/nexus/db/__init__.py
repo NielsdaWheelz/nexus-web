@@ -10,6 +10,7 @@ from nexus.db.models import (
     DefaultLibraryBackfillJobStatus,
     DefaultLibraryClosureEdge,
     DefaultLibraryIntrinsic,
+    EpubTocNode,
     FailureStage,
     Fragment,
     Library,
@@ -57,4 +58,6 @@ __all__ = [
     "DefaultLibraryIntrinsic",
     "DefaultLibraryClosureEdge",
     "DefaultLibraryBackfillJob",
+    # S5 Models
+    "EpubTocNode",
 ]
