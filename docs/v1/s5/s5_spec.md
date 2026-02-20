@@ -113,6 +113,8 @@ CREATE TABLE epub_toc_nodes (
     CHECK (depth >= 0 AND depth <= 16),
   CONSTRAINT ck_epub_toc_nodes_fragment_idx_nonneg
     CHECK (fragment_idx IS NULL OR fragment_idx >= 0),
+  CONSTRAINT ck_epub_toc_nodes_order_key_format
+    CHECK (order_key ~ '^[0-9]{4}([.][0-9]{4})*$'),
 
   CONSTRAINT fk_epub_toc_nodes_parent
     FOREIGN KEY (media_id, parent_node_id)

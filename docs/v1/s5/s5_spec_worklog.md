@@ -73,6 +73,7 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 ### 2026-02-19 - Hardening Pass: Final Determinism/Recovery Closure
 - `docs/v1/slice_roadmap.md:126` and `docs/v1/slice_roadmap.md:130` require coherent retry UX/state semantics; S5 now explicitly marks `E_ARCHIVE_UNSAFE` as terminal in-row and defines fresh-upload remediation.
 - `docs/v1/s5/s5_spec_decisions.md:9` requires deterministic TOC ordering; S5 now formalizes canonical `order_key` generation/comparison and tie-break rules to eliminate parser-dependent ordering drift.
+- Final alignment pass (2026-02-20) identified that deterministic `order_key` format must be DB-enforced, not semantics-only; S5 DDL now includes named constraint `ck_epub_toc_nodes_order_key_format`.
 
 ## Evidence-Driven Conclusions Applied in Spec
 - Upload confirmation must stay creator-authorized and hash-dedupe compatible.
@@ -89,3 +90,4 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 - Archive safety limits and failure code (`E_ARCHIVE_UNSAFE`) are now normative in S5.
 - `E_ARCHIVE_UNSAFE` retry behavior is now fully explicit (`E_RETRY_NOT_ALLOWED` terminal in-row; remediation is fresh upload).
 - TOC `order_key` now has a normative canonical format and generation/comparison algorithm.
+- TOC `order_key` format is now enforced at the DB layer via named check constraint for drift resistance.

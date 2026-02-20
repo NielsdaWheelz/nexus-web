@@ -33,7 +33,7 @@ PR-01 -> PR-02 -> PR-03 -> PR-04
 | contract cluster (from L2) | owning pr |
 |---|---|
 | `epub_toc_nodes` persistence contract and deterministic `order_key` storage constraints (sections 2.2, 6.4, 6.13) | PR-01 |
-| S5 API/error primitive contract registration (`E_RETRY_INVALID_STATE`, `E_RETRY_NOT_ALLOWED`, `E_CHAPTER_NOT_FOUND`, archive-safety error usage) (sections 2.3, 5, 6.14-6.16) | PR-01 |
+| S5 API/error primitive contract registration (`E_RETRY_INVALID_STATE`, `E_RETRY_NOT_ALLOWED`, `E_CHAPTER_NOT_FOUND`, archive-safety error usage) (section 5) | PR-01 |
 | EPUB extraction artifact pipeline: spine-order chapter fragments, fragment block generation, TOC snapshot materialization, title fallback, resource rewrite + safe degradation, archive safety validation (sections 2.1-2.6, 3.1 guards, 6.1-6.3, 6.10, 6.12, 6.15-6.16) | PR-02 |
 | Upload-init/ingest/retry lifecycle behavior for EPUB, including cleanup/reset and terminal retry blocking semantics (sections 3.1, 4.1-4.3, 6.10, 6.16) | PR-03 |
 | EPUB chapter and TOC read API contract (`/chapters`, `/chapters/{idx}`, `/toc`), including deterministic ordering, pagination envelope, visibility/readiness/kind guards, and BFF transport parity for browser path (sections 4.4-4.6, 6.5, 6.9, 6.11, 6.13-6.14) | PR-04 |
