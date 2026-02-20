@@ -75,6 +75,18 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 - `docs/v1/s5/s5_spec_decisions.md:9` requires deterministic TOC ordering; S5 now formalizes canonical `order_key` generation/comparison and tie-break rules to eliminate parser-dependent ordering drift.
 - Final alignment pass (2026-02-20) identified that deterministic `order_key` format must be DB-enforced, not semantics-only; S5 DDL now includes named constraint `ck_epub_toc_nodes_order_key_format`.
 
+### 2026-02-20 - Hardening Pass: Canonical EPUB Asset Fetch Path Closure
+- `docs/v1/s5/s5_spec.md:231` previously required safe fetch paths for rewritten internal resources but did not define a canonical retrieval contract.
+- `python/nexus/api/routes/media.py:35` confirms existing binary fetch route pattern (`/media/image`) already exists under transport-only route constraints.
+- `python/tests/test_route_structure.py:30` confirms route architecture constraints for new media routes (service-owned domain logic, no raw DB access in routes).
+- Outcome: S5 now defines canonical internal asset route `GET /media/{media_id}/assets/{asset_key}` with deterministic key semantics, visibility masking, and explicit no-private-storage-URL exposure.
+
+### 2026-02-20 - Hardening Pass: Final Contract Hygiene
+- `docs/v1/s5/s5_roadmap.md:37` and `docs/v1/s5/s5_roadmap_ownership.md:18-19` had C3/C4 citation overlap on retry cleanup invariant 6.10; ownership citations were tightened so retry cleanup remains C4/PR-03 while C3/PR-02 remains extraction-output focused.
+- `docs/v1/s5/s5_spec.md:339` and `docs/v1/s5/s5_spec.md:592` now explicitly scope envelope rules to JSON responses and document binary endpoint exception semantics for canonical asset fetch.
+- `docs/v1/s5/s5_spec.md:21-31` and `docs/v1/s5/s5_spec_decisions.md:8` now align scope language to explicitly defer EPUB/PDF URL ingestion to v2.
+- `docs/v1/s5/s5_spec.md:760` now maps resource rewrite traceability to invariant 6.17 (asset fetch safety) rather than archive-safety invariant 6.15.
+
 ## Evidence-Driven Conclusions Applied in Spec
 - Upload confirmation must stay creator-authorized and hash-dedupe compatible.
 - Chapter navigation requires dedicated lightweight APIs while preserving existing fragments endpoint.
@@ -91,3 +103,6 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 - `E_ARCHIVE_UNSAFE` retry behavior is now fully explicit (`E_RETRY_NOT_ALLOWED` terminal in-row; remediation is fresh upload).
 - TOC `order_key` now has a normative canonical format and generation/comparison algorithm.
 - TOC `order_key` format is now enforced at the DB layer via named check constraint for drift resistance.
+- EPUB-internal rewritten resource retrieval is now contractized with canonical safe fetch path semantics (`/media/{id}/assets/{asset_key}`), closing prior implementation ambiguity.
+- PR ownership citations are now boundary-clean between extraction outputs (PR-02) and retry cleanup orchestration (PR-03).
+- JSON envelope contract now explicitly documents binary endpoint exception semantics for EPUB asset fetch.

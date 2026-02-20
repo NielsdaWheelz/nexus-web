@@ -21,12 +21,14 @@ This contract is normative for all S5 implementation PRs.
 **Out of scope**:
 - Full EPUB navigation polish (advanced reader UX)
 - EPUB ingest-from-URL API surface in this slice (upload-first in S5; URL ingest deferred to v2)
+- PDF ingest-from-URL API surface in this slice (deferred to v2)
 - PDF extraction/geometry logic (S6)
 - Sharing semantics changes (already owned by S4)
 - Semantic retrieval/ranking changes (S9)
 
 **Scope guardrail (v1 consistency)**:
 - EPUB ingest-from-URL is deferred to v2 and is not a v1 requirement.
+- PDF ingest-from-URL is deferred to v2 and is not a v1 requirement.
 - Ingestion architecture in S5 MUST remain source-agnostic: future URL EPUB ingest (v2) must converge into the same stored-file extraction pipeline and produce identical artifact contracts.
 
 ---
@@ -232,13 +234,19 @@ Type contract:
 
 For each chapter fragment persisted in S5:
 1. Relative `href`/`src` references from EPUB content MUST be rewritten using EPUB resource mapping.
-2. Rewritten EPUB-internal resource URLs MUST resolve through server-controlled safe fetch paths (no direct browser access to private storage objects).
-3. External image `src` values MUST be rewritten to the platform image-proxy path; direct external image origins MUST NOT remain in persisted `html_sanitized`.
-4. Unresolvable EPUB-internal resources MUST degrade safely:
+2. Rewritten EPUB-internal resource URLs MUST use canonical safe path format:
+   - `/media/{media_id}/assets/{asset_key}`
+3. `asset_key` derivation MUST be deterministic for identical EPUB bytes:
+   - based on normalized EPUB-internal resource path (fragment stripped)
+   - path traversal and absolute/drive-qualified forms are rejected
+   - collisions are disambiguated deterministically
+4. Canonical asset URLs MUST resolve through server-controlled fetch paths (no direct browser access to private storage objects).
+5. External image `src` values MUST be rewritten to the platform image-proxy path; direct external image origins MUST NOT remain in persisted `html_sanitized`.
+6. Unresolvable EPUB-internal resources MUST degrade safely:
    - links: may remain as inert/non-resolving UI links
    - images/media: may be omitted or rendered as missing without failing chapter read
-5. Resource resolution defects alone do not block `ready_for_reading` when textual chapter extraction is valid.
-6. Active content is always removed by sanitization (scripts/forms/unsafe attrs/protocols), consistent with L0 sanitizer rules.
+7. Resource resolution defects alone do not block `ready_for_reading` when textual chapter extraction is valid.
+8. Active content is always removed by sanitization (scripts/forms/unsafe attrs/protocols), consistent with L0 sanitizer rules.
 
 ### 2.5 EPUB Title Resolution Contract
 
@@ -328,7 +336,8 @@ Illegal transitions (explicit):
 
 ## 4. API Contracts
 
-All responses use success envelope `{ "data": ... }` and error envelope `{ "error": { "code": "...", "message": "..." } }`.
+All JSON responses use success envelope `{ "data": ... }` and error envelope `{ "error": { "code": "...", "message": "..." } }`.
+Binary endpoints explicitly document non-JSON response semantics.
 
 ### 4.1 `POST /media/upload/init` (EPUB path)
 
@@ -580,6 +589,33 @@ TOC semantics:
 - No API shape change in S5.
 - EPUB highlight contexts render via existing fragment-based context-window logic.
 
+### 4.8 `GET /media/{media_id}/assets/{asset_key}`
+
+Returns extracted EPUB-internal asset bytes through the canonical safe fetch path used by rewritten chapter HTML.
+
+**request**:
+- path params:
+  - `media_id: uuid`
+  - `asset_key: string` (path-safe canonical key generated at extraction time)
+
+**response 200**:
+- binary payload (not JSON envelope) with:
+  - `Content-Type` from persisted extracted asset metadata
+  - cache headers consistent with private authenticated media content
+
+Asset fetch semantics:
+1. Valid only for `media.kind='epub'`.
+2. Valid only when media is readable (`ready_for_reading|embedding|ready`).
+3. Uses canonical visibility predicate; unauthorized access is masked.
+4. Missing/unmapped assets are masked as not found.
+5. Endpoint MUST NOT expose raw private storage URLs in response body or headers.
+
+**errors**:
+- `E_MEDIA_NOT_FOUND` (404): media not visible to caller or asset key is missing/unmapped
+- `E_MEDIA_NOT_READY` (409): media status `< ready_for_reading` or `failed`
+- `E_INVALID_KIND` (400): media kind is not EPUB
+- `E_INVALID_REQUEST` (400): malformed `asset_key`
+
 ---
 
 ## 5. Error Codes (S5 Additions + Uses)
@@ -617,7 +653,7 @@ TOC semantics:
 6. Highlight anchoring for EPUB uses existing canonical offset model `(fragment_id, start_offset, end_offset)` only.
 7. Highlight uniqueness and overlap semantics are unchanged from S2 (`(user_id, fragment_id, start_offset, end_offset)` unique; overlaps allowed).
 8. For fixed `(fragment_id, start_offset, end_offset)`, EPUB quote-to-chat context output is deterministic from immutable `fragment.canonical_text` only (no DOM/TOC-dependent offset behavior).
-9. All EPUB read endpoints enforce canonical media visibility predicate and mask unauthorized access as `404 E_MEDIA_NOT_FOUND`.
+9. EPUB chapter/TOC read endpoints (`/chapters`, `/chapters/{idx}`, `/toc`) enforce canonical media visibility predicate and mask unauthorized access as `404 E_MEDIA_NOT_FOUND`.
 10. Retry always clears old extraction artifacts and any existing chunk/embedding artifacts before writing new ones; mixed-generation artifacts are forbidden.
 11. `GET /media/{id}/chapters` is metadata-only and MUST NOT include `html_sanitized` or `canonical_text` in manifest items.
 12. EPUB media title at `ready_for_reading` is non-empty and produced by deterministic fallback order (`dc:title/title -> filename -> 'Untitled EPUB'`).
@@ -625,6 +661,7 @@ TOC semantics:
 14. Chapter list pagination follows the canonical cursor envelope with both `next_cursor` and `has_more`.
 15. EPUB extraction enforces archive safety controls and fails with `E_ARCHIVE_UNSAFE` when limits/path rules are violated.
 16. `E_ARCHIVE_UNSAFE` is terminal for the media row; retry is rejected with `E_RETRY_NOT_ALLOWED` and remediation is fresh upload to a new row.
+17. EPUB internal asset fetch endpoint (`/media/{id}/assets/{asset_key}`) enforces canonical visibility masking and never exposes direct private storage object URLs.
 
 ---
 
@@ -671,9 +708,9 @@ TOC semantics:
 - **then**: response returns deterministic nested tree order and mapped `fragment_idx` values where resolvable
 
 ### scenario 9: unresolved internal assets degrade safely
-- **given**: EPUB chapter HTML references internal assets that cannot be resolved during rewrite
-- **when**: extraction completes and reader fetches chapter content
-- **then**: media still reaches `ready_for_reading`, chapter text/highlighting remain functional, and unresolved assets do not execute active content
+- **given**: EPUB chapter HTML references both resolvable and unresolvable internal assets
+- **when**: extraction completes and authorized reader fetches chapter content and resolved asset URLs
+- **then**: media reaches `ready_for_reading`, resolved assets are served only via `/media/{id}/assets/{asset_key}`, unresolved assets degrade safely, and active content does not execute
 
 ### scenario 10: deterministic title fallback
 - **given**: uploaded EPUB where OPF title metadata is missing or empty
@@ -720,7 +757,7 @@ TOC semantics:
 | Embedding-failure retry reset | 3.1, 4.3, 6.10, 7.12 |
 | Retry clears all mixed-generation artifacts | 3.1, 4.3, 6.10, 7.6, 7.12 |
 | Chapter/TOC mapping determinism | 2.2, 2.3, 4.4, 4.5, 6.13, 7.7, 7.8 |
-| Resource rewrite + safe degradation | 2.4, 6.15, 7.9 |
+| Resource rewrite + safe degradation | 2.4, 4.8, 6.17, 7.9 |
 | Deterministic title fallback | 2.5, 6.12, 7.10 |
 | Non-EPUB kind guards enforced | 4.4, 4.5, 4.6, 5, 7.13 |
 | Archive safety protections enforced | 2.6, 3.1, 4.2, 4.3, 5, 6.15, 6.16, 7.14, 7.15 |

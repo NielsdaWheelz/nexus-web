@@ -34,7 +34,7 @@ PR-01 -> PR-02 -> PR-03 -> PR-04
 |---|---|
 | `epub_toc_nodes` persistence contract and deterministic `order_key` storage constraints (sections 2.2, 6.4, 6.13) | PR-01 |
 | S5 API/error primitive contract registration (`E_RETRY_INVALID_STATE`, `E_RETRY_NOT_ALLOWED`, `E_CHAPTER_NOT_FOUND`, archive-safety error usage) (section 5) | PR-01 |
-| EPUB extraction artifact pipeline: spine-order chapter fragments, fragment block generation, TOC snapshot materialization, title fallback, resource rewrite + safe degradation, archive safety validation (sections 2.1-2.6, 3.1 guards, 6.1-6.3, 6.10, 6.12, 6.15-6.16) | PR-02 |
+| EPUB extraction artifact pipeline: spine-order chapter fragments, fragment block generation, TOC snapshot materialization, title fallback, resource rewrite + safe degradation, internal asset persistence + safe fetch path (`/media/{id}/assets/{asset_key}`), archive safety validation (sections 2.1-2.6, 3.1 guards, 4.8, 6.1-6.3, 6.12, 6.15-6.17) | PR-02 |
 | Upload-init/ingest/retry lifecycle behavior for EPUB, including cleanup/reset and terminal retry blocking semantics (sections 3.1, 4.1-4.3, 6.10, 6.16) | PR-03 |
 | EPUB chapter and TOC read API contract (`/chapters`, `/chapters/{idx}`, `/toc`), including deterministic ordering, pagination envelope, visibility/readiness/kind guards, and BFF transport parity for browser path (sections 4.4-4.6, 6.5, 6.9, 6.11, 6.13-6.14) | PR-04 |
 | EPUB reader baseline adoption (chapter-first navigation behavior in UI flows) | PR-05 |
@@ -68,6 +68,7 @@ PR-01 -> PR-02 -> PR-03 -> PR-04
 | 4.1 `POST /media/upload/init` EPUB path conformance | PR-03, PR-07 |
 | 4.2 backward-compat semantics for existing ingest clients (`media_id`, `duplicate`) | PR-03, PR-07 |
 | 4.7 existing endpoint compatibility (`/media/{id}/fragments`, highlights, quote-to-chat) | PR-06, PR-07 |
+| 4.8 EPUB internal asset safe fetch path contract (`/media/{id}/assets/{asset_key}`) | PR-02, PR-07 |
 | 3.2 TOC artifact lifecycle (`absent -> materialized -> immutable -> deleted on retry`) | PR-02, PR-03, PR-07 |
 
 ## 4. PRs
@@ -89,7 +90,7 @@ PR-01 -> PR-02 -> PR-03 -> PR-04
   - EPUB extraction materializes contiguous chapter fragments in spine order and generates fragment blocks from immutable canonical text.
   - TOC snapshot persistence is deterministic and supports stable chapter linkage semantics.
   - Title resolution follows deterministic fallback order.
-  - Resource rewriting follows safe resolution rules and unresolved assets degrade without blocking readable output.
+  - Resource rewriting follows safe resolution rules; resolved internal assets are served only via canonical safe fetch path; unresolved assets degrade without blocking readable output.
   - Archive safety controls are enforced and unsafe archives fail deterministically with `E_ARCHIVE_UNSAFE`.
 - **non-goals**:
   - Does not add or change retry endpoint behavior.
