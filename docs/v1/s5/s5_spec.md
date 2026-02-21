@@ -466,7 +466,7 @@ Returns lightweight chapter manifest.
 **request**:
 - query params:
   - `limit` (optional, default `100`, min `1`, max `200`)
-  - `cursor` (optional integer chapter idx; returns items with `idx > cursor`)
+  - `cursor` (optional integer chapter idx, `>= 0`; returns items with `idx > cursor`)
 
 **response 200**:
 ```json
@@ -494,6 +494,7 @@ Ordering and paging:
 2. `next_cursor` is last returned `idx`; `null` when page exhausted.
 3. `has_more=true` iff at least one row exists with `idx > next_cursor`; otherwise `false`.
 4. Response contract: `data` length `<= limit`.
+5. Out-of-range cursor is non-error: when `cursor` is greater than or equal to the current max chapter `idx`, response is `200` with `data: []`, `next_cursor: null`, `has_more: false`.
 
 **errors**:
 - `E_MEDIA_NOT_FOUND` (404): media missing or not visible
@@ -532,6 +533,7 @@ Navigation semantics:
 - `max_idx` is the greatest persisted chapter `idx` for that media (`N-1` by contiguity invariant).
 - `prev_idx = idx-1` when `idx > 0`, else `null`.
 - `next_idx = idx+1` when `idx < max_idx`, else `null`.
+- Payload content is chapter-scoped: response for `/chapters/{idx}` contains exactly the persisted chapter fragment for `idx` and never concatenates adjacent chapters or whole-book content.
 
 **errors**:
 - `E_MEDIA_NOT_FOUND` (404): media missing or not visible
@@ -671,7 +673,7 @@ Asset fetch semantics:
 11. `GET /media/{id}/chapters` is metadata-only and MUST NOT include `html_sanitized` or `canonical_text` in manifest items.
 12. EPUB media title at `ready_for_reading` is non-empty and produced by deterministic fallback order (`dc:title/title -> filename -> 'Untitled EPUB'`).
 13. Chapter TOC summary mapping is deterministic: `has_toc_entry` and `primary_toc_node_id` are computed from `epub_toc_nodes` by `fragment_idx` and minimum `order_key`.
-14. Chapter list pagination follows the canonical cursor envelope with both `next_cursor` and `has_more`.
+14. Chapter list pagination follows the canonical cursor envelope with both `next_cursor` and `has_more`; cursor values in-range but beyond current max chapter `idx` return deterministic exhausted pages (empty `data`, `next_cursor=null`, `has_more=false`) rather than errors.
 15. EPUB extraction enforces archive safety controls and fails with `E_ARCHIVE_UNSAFE` when limits/path rules are violated.
 16. `E_ARCHIVE_UNSAFE` is terminal for the media row; retry is rejected with `E_RETRY_NOT_ALLOWED` and remediation is fresh upload to a new row.
 17. EPUB internal asset fetch endpoint (`/media/{id}/assets/{asset_key}`) enforces canonical visibility masking and never exposes direct private storage object URLs.
@@ -717,6 +719,7 @@ Asset fetch semantics:
 - **given**: EPUB with `N` chapter fragments
 - **when**: client fetches chapter `idx=k`
 - **then**: response always returns `prev_idx`/`next_idx` derived strictly from `idx` and media bounds
+- **and**: chapter payload is scoped to requested `idx` only (no adjacent/whole-book concatenation)
 
 ### scenario 8: TOC persistence and mapping
 - **given**: EPUB with nested TOC entries

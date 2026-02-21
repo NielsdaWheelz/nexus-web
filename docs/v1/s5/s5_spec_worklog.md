@@ -93,6 +93,12 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 - `docs/v1/s5/s5_spec.md:431-447` previously omitted retry source-integrity preconditions and associated deterministic error surface now required by PR-03.
 - `docs/v1/s5/s5_roadmap.md:99-107` acceptance wording was broadened to explicitly include ingest idempotent re-entry and retry source-integrity precondition behavior.
 
+### 2026-02-21 - Hardening Pass: PR-04 Read Semantics Closure
+- Final PR-04 hardening introduced deterministic read semantics that were explicit in PR-04 L4 docs but partially implicit in L2.
+- `docs/v1/s5/s5_spec.md:462-503` now explicitly defines chapter-list cursor domain (`>= 0`) and exhausted-page behavior for out-of-range cursor values.
+- `docs/v1/s5/s5_spec.md:531-535` now explicitly guards `/chapters/{idx}` as single-chapter scoped (no adjacent/whole-book concatenation in payload).
+- `docs/v1/s5/s5_spec_decisions.md` now records these as explicit slice-level decisions (S5-D23, S5-D24) to prevent future L4-only drift.
+
 ## Evidence-Driven Conclusions Applied in Spec
 - Upload confirmation must stay creator-authorized and hash-dedupe compatible.
 - Chapter navigation requires dedicated lightweight APIs while preserving existing fragments endpoint.
