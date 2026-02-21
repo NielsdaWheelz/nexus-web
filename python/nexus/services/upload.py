@@ -469,6 +469,65 @@ def _ensure_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> No
     ensure_default_intrinsic(db, default_library_id, media_id)
 
 
+def validate_source_integrity(
+    storage_client,
+    media_file: MediaFile,
+    kind: str,
+    *,
+    expected_sha256: str | None = None,
+) -> None:
+    """Validate stored file integrity for retry/re-extraction source preconditions.
+
+    Checks object exists, magic bytes match, size within limits, and optionally
+    that stored hash matches expected.  Raises on any failure — caller can rely
+    on deterministic error semantics with zero side-effects on the media row.
+    """
+    settings = get_settings()
+
+    metadata = storage_client.head_object(media_file.storage_path)
+    if metadata is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_STORAGE_MISSING,
+            "Source file not found in storage.",
+        )
+
+    max_size = settings.max_pdf_bytes if kind == "pdf" else settings.max_epub_bytes
+    try:
+        hasher = hashlib.sha256()
+        total_bytes = 0
+        first_chunk = True
+
+        for chunk in storage_client.stream_object(media_file.storage_path):
+            if first_chunk:
+                if not _validate_magic_bytes(chunk, kind):
+                    raise InvalidRequestError(
+                        ApiErrorCode.E_INVALID_FILE_TYPE,
+                        f"Invalid file type. Expected {kind}.",
+                    )
+                first_chunk = False
+
+            total_bytes += len(chunk)
+            if total_bytes > max_size:
+                raise InvalidRequestError(
+                    ApiErrorCode.E_FILE_TOO_LARGE,
+                    f"File size exceeds maximum {max_size} bytes for {kind}.",
+                )
+            hasher.update(chunk)
+
+        if expected_sha256 is not None:
+            computed = hasher.hexdigest()
+            if computed != expected_sha256:
+                raise InvalidRequestError(
+                    ApiErrorCode.E_STORAGE_MISSING,
+                    "Source integrity mismatch: stored hash does not match source bytes.",
+                )
+
+    except StorageError as e:
+        raise ApiError(
+            ApiErrorCode.E_STORAGE_ERROR, f"Failed to read source file: {e.message}"
+        ) from e
+
+
 def get_signed_download_url(
     db: Session,
     viewer_id: UUID,

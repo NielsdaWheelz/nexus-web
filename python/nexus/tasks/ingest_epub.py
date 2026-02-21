@@ -1,17 +1,15 @@
 """Celery task for EPUB extraction.
 
-Parallel to ingest_web_article.py structure.  Calls the EPUB extraction
-domain executor and returns a structured outcome payload for PR-03
-orchestration consumption.
-
-PR-02 scope: extraction execution only.  Does NOT mutate
-processing_status, retry policy fields, or endpoint-facing lifecycle
-semantics (owned by PR-03).
+Owns async completion-state transitions for EPUB extraction:
+extracting -> ready_for_reading (success) or extracting -> failed (error).
+Service routes own entry transitions and dispatch.
 """
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from nexus.celery import celery_app
+from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services.epub_ingest import (
@@ -23,6 +21,8 @@ from nexus.storage import get_storage_client
 
 logger = get_logger(__name__)
 
+_MAX_ERROR_MSG_LEN = 1000
+
 
 @celery_app.task(bind=True, max_retries=0, name="ingest_epub")
 def ingest_epub(
@@ -30,10 +30,7 @@ def ingest_epub(
     media_id: str,
     request_id: str | None = None,
 ) -> dict:
-    """Execute EPUB extraction asynchronously.
-
-    Returns structured extraction outcome for PR-03 orchestration.
-    """
+    """Execute EPUB extraction and commit lifecycle transition."""
     media_uuid = UUID(media_id)
 
     logger.info(
@@ -47,10 +44,34 @@ def ingest_epub(
     storage_client = get_storage_client()
 
     try:
+        media = db.get(Media, media_uuid)
+        if media is None or media.processing_status != ProcessingStatus.extracting:
+            logger.info(
+                "ingest_epub_skipped",
+                media_id=media_id,
+                reason="not_extracting",
+                request_id=request_id,
+            )
+            return {"status": "skipped", "reason": "not_extracting"}
+
         result = extract_epub_artifacts(db, media_uuid, storage_client)
-        db.commit()
+
+        media = db.get(Media, media_uuid)
+        if media is None or media.processing_status != ProcessingStatus.extracting:
+            db.commit()
+            return {"status": "skipped", "reason": "state_changed"}
+
+        now = datetime.now(UTC)
 
         if isinstance(result, EpubExtractionError):
+            media.processing_status = ProcessingStatus.failed
+            media.failure_stage = FailureStage.extract
+            media.last_error_code = result.error_code
+            media.last_error_message = (result.error_message or "")[:_MAX_ERROR_MSG_LEN]
+            media.failed_at = now
+            media.updated_at = now
+            db.commit()
+
             logger.warning(
                 "ingest_epub_extraction_failed",
                 media_id=media_id,
@@ -66,6 +87,16 @@ def ingest_epub(
             }
 
         assert isinstance(result, EpubExtractionResult)
+
+        media.processing_status = ProcessingStatus.ready_for_reading
+        media.processing_completed_at = now
+        media.failure_stage = None
+        media.last_error_code = None
+        media.last_error_message = None
+        media.failed_at = None
+        media.updated_at = now
+        db.commit()
+
         logger.info(
             "ingest_epub_completed",
             media_id=media_id,
@@ -90,14 +121,22 @@ def ingest_epub(
             error=str(e),
             request_id=request_id,
         )
+        try:
+            media = db.get(Media, media_uuid)
+            if media and media.processing_status == ProcessingStatus.extracting:
+                now = datetime.now(UTC)
+                media.processing_status = ProcessingStatus.failed
+                media.failure_stage = FailureStage.extract
+                media.last_error_code = "E_INGEST_FAILED"
+                media.last_error_message = str(e)[:_MAX_ERROR_MSG_LEN]
+                media.failed_at = now
+                media.updated_at = now
+                db.commit()
+        except Exception:
+            logger.exception("ingest_epub_failed_to_mark_failed", media_id=media_id)
         raise
     finally:
         db.close()
-
-
-# ---------------------------------------------------------------------------
-# Synchronous execution helper (for tests and dev mode)
-# ---------------------------------------------------------------------------
 
 
 def run_epub_ingest_sync(
@@ -107,13 +146,7 @@ def run_epub_ingest_sync(
 ) -> EpubExtractionResult | EpubExtractionError:
     """Run EPUB extraction synchronously using provided session.
 
-    Args:
-        db: Database session to use.
-        media_id: UUID of the media to extract.
-        storage_client: Optional storage client (defaults to get_storage_client()).
-
-    Returns:
-        EpubExtractionResult on success, EpubExtractionError on failure.
+    Does NOT perform lifecycle transitions — caller is responsible.
     """
     sc = storage_client or get_storage_client()
     return extract_epub_artifacts(db, media_id, sc)

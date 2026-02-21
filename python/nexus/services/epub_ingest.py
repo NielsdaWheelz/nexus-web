@@ -180,7 +180,7 @@ def extract_epub_artifacts(
         )
 
     # ---- archive safety gate -----------------------------------------------
-    safety_err = _check_archive_safety(epub_bytes, safety_cfg)
+    safety_err = check_archive_safety(epub_bytes, safety_cfg)
     if safety_err is not None:
         return safety_err
 
@@ -368,10 +368,23 @@ def extract_epub_artifacts(
 # ---------------------------------------------------------------------------
 
 
-def _check_archive_safety(
+def check_archive_safety(
     data: bytes,
-    cfg: _ArchiveSafetyConfig,
+    cfg: _ArchiveSafetyConfig | None = None,
 ) -> EpubExtractionError | None:
+    """Shared archive-safety gate for EPUB bytes.
+
+    Consumed by both extraction executor and lifecycle preflight path.
+    """
+    if cfg is None:
+        settings = get_settings()
+        cfg = _ArchiveSafetyConfig(
+            max_entries=settings.max_epub_archive_entries,
+            max_total_uncompressed_bytes=settings.max_epub_archive_total_uncompressed_bytes,
+            max_single_entry_uncompressed_bytes=settings.max_epub_archive_single_entry_uncompressed_bytes,
+            max_compression_ratio=settings.max_epub_archive_compression_ratio,
+            max_parse_time_ms=settings.max_epub_archive_parse_time_ms,
+        )
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except (zipfile.BadZipFile, Exception) as exc:

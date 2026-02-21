@@ -19,7 +19,7 @@ from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.media import FromUrlRequest, UploadInitRequest
-from nexus.services import image_proxy
+from nexus.services import epub_lifecycle, image_proxy
 from nexus.services import media as media_service
 from nexus.services import upload as upload_service
 
@@ -192,22 +192,53 @@ def confirm_ingest(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    request: Request,
 ) -> dict:
     """Confirm upload and process file.
 
     Validates the uploaded file, computes SHA-256 hash, and handles deduplication.
+    For EPUB: runs archive safety preflight and dispatches extraction.
     Only the creator can confirm their upload.
-
-    NOTE: In S1, no tasks are enqueued. Media stays in 'pending' status.
 
     Returns:
         - media_id: UUID of the media (may differ if duplicate detected)
         - duplicate: True if an existing duplicate was found
+        - processing_status: Current processing status snapshot
+        - ingest_enqueued: True if extraction task was dispatched
     """
-    result = upload_service.confirm_ingest(
+    request_id = getattr(request.state, "request_id", None)
+    result = epub_lifecycle.confirm_ingest_for_viewer(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
+        request_id=request_id,
+    )
+    return success_response(result)
+
+
+@router.post("/media/{media_id}/retry", status_code=202)
+def retry_ingest(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+) -> dict:
+    """Retry failed EPUB extraction.
+
+    Enforces legal-state preconditions, clears old artifacts, and
+    dispatches re-extraction. Only the creator can retry.
+
+    Returns 202 with:
+        - media_id: UUID of the media
+        - processing_status: 'extracting'
+        - retry_enqueued: True if extraction task was dispatched
+    """
+    request_id = getattr(request.state, "request_id", None)
+    result = epub_lifecycle.retry_epub_ingest_for_viewer(
+        db=db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        request_id=request_id,
     )
     return success_response(result)
 
