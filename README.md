@@ -74,6 +74,7 @@ nexus/
 - **Send Message Flow**: Three-phase execution (Prepare → Execute → Finalize) to avoid holding DB transactions during LLM calls.
 - **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations.
 - **EPUB Extraction** (S5): Deterministic chapter fragment materialization from EPUB archives with TOC snapshot, title fallback, resource rewriting, and archive safety enforcement. Chapter + TOC read APIs with cursor pagination and BFF parity.
+- **EPUB Reader** (S5 PR-05): Chapter-based EPUB reader in the media view page. Chapter manifest navigation, URL-addressable chapter deep links, collapsible TOC with navigable/non-clickable node states, request-version guards for stale response protection, and deterministic error recovery matrix. Non-EPUB reader flow preserved unchanged.
 
 ## Quick Start
 
