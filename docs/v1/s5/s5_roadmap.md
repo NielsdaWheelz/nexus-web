@@ -2,7 +2,9 @@
 
 Implements `docs/v1/s5/s5_spec.md` in a merge-safe sequence.
 
-## Baseline We Are Building From
+## Baseline We Started From (Historical Kickoff Snapshot)
+
+These baseline statements reflect the pre-implementation state at roadmap kickoff and are retained as historical context.
 
 - Upload init and confirm-ingest already exist for file-backed media, but confirm-ingest currently returns only duplicate identity semantics.
 - There is no public EPUB retry endpoint today.
