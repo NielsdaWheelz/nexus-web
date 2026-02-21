@@ -99,6 +99,12 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 - `docs/v1/s5/s5_spec.md:531-535` now explicitly guards `/chapters/{idx}` as single-chapter scoped (no adjacent/whole-book concatenation in payload).
 - `docs/v1/s5/s5_spec_decisions.md` now records these as explicit slice-level decisions (S5-D23, S5-D24) to prevent future L4-only drift.
 
+### 2026-02-21 - Hardening Pass: 4.7 Quote-to-Chat Compatibility Closure
+- `docs/v1/s3/s3_spec.md:553-562` defines masked quote-to-chat gate behavior over context targets and readiness.
+- `docs/v1/s3/s3_prs/s3_pr07.md:297-303` defines route-bound attach target semantics for highlight-to-chat handoff with no global target state.
+- `python/nexus/services/send_message.py:345-379` confirms current masked context visibility behavior returns `E_NOT_FOUND` for invisible/missing context targets.
+- Outcome: S5 section 4.7 now makes these compatibility semantics explicit (masked `404 E_NOT_FOUND` + route-bound attach handoff), removing prior L2 ambiguity.
+
 ## Evidence-Driven Conclusions Applied in Spec
 - Upload confirmation must stay creator-authorized and hash-dedupe compatible.
 - Chapter navigation requires dedicated lightweight APIs while preserving existing fragments endpoint.
@@ -120,3 +126,4 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 - JSON envelope contract now explicitly documents binary endpoint exception semantics for EPUB asset fetch.
 - `/ingest` now explicitly codifies idempotent re-entry behavior for non-duplicate non-pending rows (no redispatch and no attempt inflation).
 - `/retry` now explicitly codifies source-integrity preconditions before cleanup/reset with deterministic non-mutating failure behavior.
+- Quote-to-chat compatibility now explicitly codifies masked `E_NOT_FOUND` semantics and route-bound attach handoff behavior under S5 section 4.7.

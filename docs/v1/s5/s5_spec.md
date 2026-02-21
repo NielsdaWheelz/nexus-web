@@ -603,6 +603,8 @@ TOC semantics:
 #### Quote-to-chat (`POST /conversations/messages` with context type `highlight`)
 - No API shape change in S5.
 - EPUB highlight contexts render via existing fragment-based context-window logic.
+- Visibility/masking semantics are unchanged from S3: invisible or missing highlight contexts return masked `404 E_NOT_FOUND`.
+- Client attach handoff semantics are preserved: route state determines target (`/conversations/{id}` attaches to that conversation; otherwise `/conversations` opens new-chat attach state) with no cross-page global target memory.
 
 ### 4.8 `GET /media/{media_id}/assets/{asset_key}`
 
@@ -641,6 +643,7 @@ Asset fetch semantics:
 | E_RETRY_NOT_ALLOWED | 409 | Retry requested for terminal failure reason that cannot be remediated in-row. |
 | E_CHAPTER_NOT_FOUND | 404 | Requested chapter index does not exist for the EPUB media. |
 | E_MEDIA_NOT_FOUND | 404 | Media not found or not visible to viewer (masked existence). |
+| E_NOT_FOUND | 404 | Context target not found or not visible in quote-to-chat compatibility paths (masked existence). |
 | E_FORBIDDEN | 403 | Caller can see media but is not authorized to mutate ingest/retry state. |
 | E_MEDIA_NOT_READY | 409 | Media exists but has not reached readable status. |
 | E_INVALID_KIND | 400 | Operation not valid for non-EPUB media. |
@@ -690,7 +693,7 @@ Asset fetch semantics:
 - **then**: each fragment's `html_sanitized` and `canonical_text` remain byte-for-byte unchanged
 
 ### scenario 2: highlights scoped to fragment
-- **given**: an EPUB with at least two chapter fragments
+- **given**: an EPUB with at least three chapter fragments
 - **when**: user creates a highlight in chapter `idx=1`
 - **then**: highlight anchors to that chapter fragment only and does not appear on chapter `idx=0` or `idx=2`
 

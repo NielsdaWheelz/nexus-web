@@ -19,7 +19,7 @@ This ledger is normative for PR ownership boundaries in `docs/v1/s5/s5_roadmap.m
 | C4 | Upload-init/ingest/retry lifecycle orchestration and cleanup/reset semantics | 3.1, 4.1-4.3, 6.10, 6.16, 6.18-6.19 | PR-03 | PR-02 owns extraction behavior; PR-03 owns when/how extraction is entered and retried, including ingest idempotent re-entry and retry source-integrity gates, and how ingest/retry contracts are exposed. |
 | C5 | Chapter + TOC read API behavior (ordering, pagination, navigation, readiness, visibility, kind guards) plus required BFF transport parity for non-streaming browser path | 4.4-4.6, 6.5, 6.9, 6.11, 6.13-6.14, L0 request topology | PR-04 | PR-05 consumes this surface in UI flows; it does not redefine endpoint/BFF contracts. |
 | C6 | EPUB reader baseline UX adoption of chapter-first navigation | S5 goal/outcome alignment + read contracts | PR-05 | PR-05 is UI adoption only and must not change backend endpoint semantics. |
-| C7 | Highlight/chat compatibility reuse on EPUB fragments | 4.7, 6.6-6.8 | PR-06 | PR-06 preserves existing contracts; any feature expansion is out of scope. |
+| C7 | Highlight/chat compatibility reuse on EPUB fragments | 4.7, 6.6-6.8 | PR-06 | PR-06 preserves existing contracts, including route-bound quote-to-chat attach handoff compatibility; any feature expansion is out of scope. |
 | C8 | Slice-level acceptance closure and freeze gates | 6, 7, 8 | PR-07 | PR-07 is hardening-only and may only make minimal blocking fixes. |
 
 ## Dependency Commitments

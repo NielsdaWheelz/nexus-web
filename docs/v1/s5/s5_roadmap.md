@@ -70,7 +70,7 @@ PR-01 -> PR-02 -> PR-03 -> PR-04
 | 4.1 `POST /media/upload/init` EPUB path conformance | PR-03, PR-07 |
 | 4.2 backward-compat semantics for existing ingest clients (`media_id`, `duplicate`) plus idempotent non-redispatch re-entry behavior for repeat `/ingest` | PR-03, PR-07 |
 | 4.3 retry source-integrity precondition before cleanup/reset (no-mutation failure semantics) | PR-03, PR-07 |
-| 4.7 existing endpoint compatibility (`/media/{id}/fragments`, highlights, quote-to-chat) | PR-06, PR-07 |
+| 4.7 existing endpoint compatibility (`/media/{id}/fragments`, highlights, quote-to-chat, route-bound attach handoff semantics) | PR-06, PR-07 |
 | 4.8 EPUB internal asset safe fetch path contract (`/media/{id}/assets/{asset_key}`) | PR-02, PR-07 |
 | 3.2 TOC artifact lifecycle (`absent -> materialized -> immutable -> deleted on retry`) | PR-02, PR-03, PR-07 |
 
@@ -144,6 +144,7 @@ PR-01 -> PR-02 -> PR-03 -> PR-04
   - Highlight anchoring remains fragment-offset based with no EPUB-specific offset model.
   - Existing highlight APIs and behavior apply to EPUB chapter fragments without contract drift.
   - Quote-to-chat context for EPUB highlights is derived from immutable fragment canonical text via existing context-window semantics.
+  - Route-bound quote-to-chat attach handoff semantics are preserved for `/conversations` and `/conversations/{id}` without cross-page global target state.
   - Existing `/media/{id}/fragments` compatibility remains intact.
 - **non-goals**:
   - Does not introduce new highlight or chat features.
