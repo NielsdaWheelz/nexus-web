@@ -758,3 +758,424 @@ class TestGetEpubAssetKindAndReadyGuards:
         )
         assert resp.status_code == 409
         assert resp.json()["error"]["code"] == "E_MEDIA_NOT_READY"
+
+
+# =============================================================================
+# S5 PR-03: EPUB Retry Endpoint Tests
+# =============================================================================
+
+
+def _create_failed_epub(
+    session,
+    user_id,
+    *,
+    last_error_code="E_INGEST_FAILED",
+    with_file=True,
+    file_sha256="abc123",
+):
+    """Insert a failed EPUB media row suitable for retry tests."""
+    media_id = uuid4()
+    session.execute(
+        text("""
+            INSERT INTO media (
+                id, kind, title, processing_status, created_by_user_id,
+                failure_stage, last_error_code, last_error_message, failed_at,
+                file_sha256, processing_attempts
+            )
+            VALUES (
+                :id, 'epub', 'Failed EPUB', 'failed', :uid,
+                'extract', :err, 'test failure', now(),
+                :sha, 1
+            )
+        """),
+        {
+            "id": media_id,
+            "uid": user_id,
+            "err": last_error_code,
+            "sha": file_sha256,
+        },
+    )
+    if with_file:
+        session.execute(
+            text("""
+                INSERT INTO media_file (media_id, storage_path, content_type, size_bytes)
+                VALUES (:mid, :sp, 'application/epub+zip', 1000)
+            """),
+            {"mid": media_id, "sp": f"media/{media_id}/original.epub"},
+        )
+    session.commit()
+    return media_id
+
+
+class TestRetryEpubEndpoint:
+    """S5 PR-03: POST /media/{id}/retry tests."""
+
+    def test_retry_epub_failed_resets_and_dispatches(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake_storage = FakeStorageClient()
+        epub_bytes = b"PK\x03\x04" + b"\x00" * 200
+        import hashlib
+
+        sha = hashlib.sha256(epub_bytes).hexdigest()
+
+        with direct_db.session() as session:
+            media_id = _create_failed_epub(session, user_id, file_sha256=sha)
+
+        fake_storage.put_object(
+            f"media/{media_id}/original.epub", epub_bytes, "application/epub+zip"
+        )
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        from unittest.mock import MagicMock, patch
+
+        mock_dispatch = MagicMock()
+
+        with (
+            patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
+            patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", mock_dispatch),
+        ):
+            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert data["processing_status"] == "extracting"
+        assert data["retry_enqueued"] is True
+
+        mock_dispatch.assert_called_once()
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    "SELECT processing_status, processing_attempts, last_error_code FROM media WHERE id = :id"
+                ),
+                {"id": media_id},
+            ).fetchone()
+            assert row[0] == "extracting"
+            assert row[1] == 2
+            assert row[2] is None
+
+    def test_retry_invalid_state_returns_409(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'epub', 'Not Failed', 'pending', :uid)
+                """),
+                {"id": media_id, "uid": user_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "E_RETRY_INVALID_STATE"
+
+    def test_retry_terminal_archive_failure_blocked(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = _create_failed_epub(session, user_id, last_error_code="E_ARCHIVE_UNSAFE")
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
+
+    def test_retry_kind_guard_and_auth(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        # non-EPUB
+        non_epub_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Article', 'failed', :uid)
+                """),
+                {"id": non_epub_id, "uid": user_a},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", non_epub_id)
+        direct_db.register_cleanup("media", "id", non_epub_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_a))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(non_epub_id)},
+            headers=auth_headers(user_a),
+        )
+
+        resp = auth_client.post(f"/media/{non_epub_id}/retry", headers=auth_headers(user_a))
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "E_INVALID_KIND"
+
+        # non-creator
+        with direct_db.session() as session:
+            epub_id = _create_failed_epub(session, user_a)
+
+        direct_db.register_cleanup("library_media", "media_id", epub_id)
+        direct_db.register_cleanup("media_file", "media_id", epub_id)
+        direct_db.register_cleanup("media", "id", epub_id)
+
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(epub_id)},
+            headers=auth_headers(user_a),
+        )
+
+        me_b = auth_client.get("/me", headers=auth_headers(user_b))
+        lib_b = me_b.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{lib_b}/media",
+            json={"media_id": str(epub_id)},
+            headers=auth_headers(user_b),
+        )
+
+        resp = auth_client.post(f"/media/{epub_id}/retry", headers=auth_headers(user_b))
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] == "E_FORBIDDEN"
+
+    def test_retry_visibility_masking(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            media_id = _create_failed_epub(session, user_a)
+
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_b))
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    def test_retry_source_integrity_precondition_failure_no_mutation(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = _create_failed_epub(session, user_id, file_sha256="deadbeef")
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake_storage = FakeStorageClient()
+
+        from unittest.mock import patch
+
+        with patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage):
+            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "E_STORAGE_MISSING"
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("SELECT processing_status, processing_attempts FROM media WHERE id = :id"),
+                {"id": media_id},
+            ).fetchone()
+            assert row[0] == "failed"
+            assert row[1] == 1
+
+    def test_retry_preserves_source_identity_fields(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake_storage = FakeStorageClient()
+        epub_bytes = b"PK\x03\x04" + b"\x00" * 200
+        import hashlib
+
+        sha = hashlib.sha256(epub_bytes).hexdigest()
+
+        with direct_db.session() as session:
+            media_id = _create_failed_epub(session, user_id, file_sha256=sha)
+
+        storage_path = f"media/{media_id}/original.epub"
+        fake_storage.put_object(storage_path, epub_bytes, "application/epub+zip")
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        from unittest.mock import MagicMock, patch
+
+        with (
+            patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
+            patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", MagicMock()),
+        ):
+            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 202
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("SELECT file_sha256 FROM media WHERE id = :id"),
+                {"id": media_id},
+            ).fetchone()
+            assert row[0] == sha
+
+            mf = session.execute(
+                text("SELECT storage_path FROM media_file WHERE media_id = :id"),
+                {"id": media_id},
+            ).fetchone()
+            assert mf[0] == storage_path
+
+    def test_retry_dispatch_failure_rolls_back_state(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake_storage = FakeStorageClient()
+        epub_bytes = b"PK\x03\x04" + b"\x00" * 200
+        import hashlib
+
+        sha = hashlib.sha256(epub_bytes).hexdigest()
+
+        with direct_db.session() as session:
+            media_id = _create_failed_epub(session, user_id, file_sha256=sha)
+
+        fake_storage.put_object(
+            f"media/{media_id}/original.epub", epub_bytes, "application/epub+zip"
+        )
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        from unittest.mock import patch
+
+        def boom(*a, **kw):
+            raise RuntimeError("broker down")
+
+        with (
+            patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
+            patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", side_effect=boom),
+        ):
+            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 500
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("SELECT processing_status FROM media WHERE id = :id"),
+                {"id": media_id},
+            ).fetchone()
+            assert row[0] != "extracting"

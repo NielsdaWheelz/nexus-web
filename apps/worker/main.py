@@ -31,6 +31,7 @@ from nexus.logging import configure_logging, get_logger
 # Import tasks to register them with Celery
 # Each import registers the task with the celery_app
 from nexus.tasks import backfill_default_library_closure_job  # noqa: F401
+from nexus.tasks import ingest_epub  # noqa: F401
 from nexus.tasks import ingest_web_article  # noqa: F401
 
 # =============================================================================

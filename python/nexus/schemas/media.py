@@ -87,10 +87,25 @@ class UploadInitResponse(BaseModel):
 
 
 class IngestResponse(BaseModel):
-    """Response schema for POST /media/{id}/ingest."""
+    """Response schema for POST /media/{id}/ingest.
+
+    Extended in S5 PR-03 with processing_status and ingest_enqueued.
+    Defaults preserve backward compatibility: clients reading only
+    media_id and duplicate remain valid.
+    """
 
     media_id: str
     duplicate: bool
+    processing_status: str = "pending"
+    ingest_enqueued: bool = False
+
+
+class RetryResponse(BaseModel):
+    """Response schema for POST /media/{id}/retry."""
+
+    media_id: str
+    processing_status: str
+    retry_enqueued: bool
 
 
 class FileDownloadResponse(BaseModel):

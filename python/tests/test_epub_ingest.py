@@ -608,6 +608,135 @@ class TestEpubExtractFailureClassificationMatrix:
         assert result.error_code == ApiErrorCode.E_INGEST_FAILED.value
 
 
+class TestIngestEpubTaskMarksReadyForReadingOnSuccess:
+    """test_ingest_epub_task_marks_ready_for_reading_on_success"""
+
+    def test_success_transitions_to_ready_for_reading(self, db_session: Session):
+        storage = FakeStorageClient()
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[
+                        ("ch1", "chapter1.xhtml", "application/xhtml+xml"),
+                    ],
+                ),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml("<p>Chapter One content here.</p>"),
+            },
+        )
+        mid = _create_media_with_epub(db_session, storage, epub)
+
+        db_session.execute(
+            text("UPDATE media SET processing_status = 'extracting' WHERE id = :id"),
+            {"id": mid},
+        )
+        db_session.flush()
+
+        from nexus.tasks.ingest_epub import ingest_epub
+
+        with (
+            patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
+            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
+            patch.object(db_session, "close"),
+        ):
+            result = ingest_epub(str(mid))
+
+        assert result["status"] == "success"
+
+        media = db_session.get(Media, mid)
+        assert media.processing_status.value == "ready_for_reading"
+        assert media.processing_completed_at is not None
+        assert media.failure_stage is None
+        assert media.last_error_code is None
+
+
+class TestIngestEpubTaskMarksFailedOnExtractionError:
+    """test_ingest_epub_task_marks_failed_on_extraction_error"""
+
+    def test_error_transitions_to_failed(self, db_session: Session):
+        storage = FakeStorageClient()
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[("ch1", "chapter1.xhtml", "application/xhtml+xml")],
+                ),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml("<p>Some content.</p>"),
+            },
+        )
+        mid = _create_media_with_epub(db_session, storage, epub)
+
+        db_session.execute(
+            text("UPDATE media SET processing_status = 'extracting' WHERE id = :id"),
+            {"id": mid},
+        )
+        db_session.flush()
+
+        from nexus.tasks.ingest_epub import ingest_epub
+
+        with (
+            patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
+            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
+            patch(
+                "nexus.tasks.ingest_epub.extract_epub_artifacts",
+                return_value=EpubExtractionError(
+                    error_code="E_INGEST_FAILED", error_message="forced test failure"
+                ),
+            ),
+            patch.object(db_session, "close"),
+        ):
+            result = ingest_epub(str(mid))
+
+        assert result["status"] == "failed"
+
+        media = db_session.get(Media, mid)
+        assert media.processing_status.value == "failed"
+        assert media.failure_stage.value == "extract"
+        assert media.last_error_code == "E_INGEST_FAILED"
+        assert media.failed_at is not None
+
+
+class TestIngestEpubTaskIdempotentOnMissingOrNonextractingMedia:
+    """test_ingest_epub_task_idempotent_on_missing_or_nonextracting_media"""
+
+    def test_deleted_media_noop(self, db_session: Session):
+        fake_mid = uuid4()
+        from nexus.tasks.ingest_epub import ingest_epub
+
+        with (
+            patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
+            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=FakeStorageClient()),
+            patch.object(db_session, "close"),
+        ):
+            result = ingest_epub(str(fake_mid))
+
+        assert result["status"] == "skipped"
+
+    def test_pending_media_noop(self, db_session: Session):
+        storage = FakeStorageClient()
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[("ch1", "ch.xhtml", "application/xhtml+xml")],
+                ),
+                "OEBPS/ch.xhtml": _build_chapter_xhtml("<p>Text.</p>"),
+            },
+        )
+        mid = _create_media_with_epub(db_session, storage, epub)
+
+        from nexus.tasks.ingest_epub import ingest_epub
+
+        with (
+            patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
+            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
+            patch.object(db_session, "close"),
+        ):
+            result = ingest_epub(str(mid))
+
+        assert result["status"] == "skipped"
+
+        media = db_session.get(Media, mid)
+        assert media.processing_status.value == "pending"
+
+
 class TestEpubExtractCommitsArtifactsAtomically:
     """test_epub_extract_commits_artifacts_atomically"""
 
