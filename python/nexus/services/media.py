@@ -4,8 +4,17 @@ All media-domain business logic lives here.
 Routes may not contain domain logic or raw DB access - they must call these functions.
 """
 
+from __future__ import annotations
+
+import posixpath
+import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from nexus.storage.client import StorageClientBase
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -13,7 +22,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media as _can_read_media
 from nexus.config import Environment, get_settings
 from nexus.db.models import Media, MediaKind, ProcessingStatus
-from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.media import FragmentOut, FromUrlResponse, MediaOut
 from nexus.services.capabilities import derive_capabilities
@@ -350,3 +359,82 @@ def list_fragments_for_viewer(
         )
         for row in result.fetchall()
     ]
+
+
+# ---------------------------------------------------------------------------
+# EPUB asset fetch (S5 PR-02)
+# ---------------------------------------------------------------------------
+
+_ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./ -]+$")
+
+# Allowlist of content types served for EPUB-internal assets.
+# Intentionally restrictive — only known-safe static asset types.
+_EPUB_ASSET_CONTENT_TYPES: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".css": "text/css",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".otf": "font/otf",
+}
+
+
+@dataclass(frozen=True)
+class EpubAssetOut:
+    data: bytes
+    content_type: str
+
+
+def get_epub_asset_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    asset_key: str,
+    storage_client: StorageClientBase | None = None,
+) -> EpubAssetOut:
+    """Fetch an EPUB internal asset for an authorized viewer.
+
+    Enforces visibility, kind, readiness, and key-format guards.
+    Returns binary payload without exposing raw private storage URLs.
+    """
+    from nexus.errors import ApiError
+    from nexus.storage import get_storage_client
+
+    if not _can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    media = db.get(Media, media_id)
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    if media.kind != MediaKind.epub.value:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Endpoint only supports EPUB media")
+
+    ready_states = {
+        ProcessingStatus.ready_for_reading,
+        ProcessingStatus.embedding,
+        ProcessingStatus.ready,
+    }
+    if media.processing_status not in ready_states:
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
+
+    if not asset_key or not _ASSET_KEY_RE.match(asset_key):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid asset key format")
+
+    sc = storage_client or get_storage_client()
+    storage_path = f"media/{media_id}/assets/{asset_key}"
+
+    try:
+        data = b"".join(sc.stream_object(storage_path))
+    except Exception as exc:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found") from exc
+
+    ext = posixpath.splitext(asset_key)[1].lower()
+    content_type = _EPUB_ASSET_CONTENT_TYPES.get(ext, "application/octet-stream")
+
+    return EpubAssetOut(data=data, content_type=content_type)

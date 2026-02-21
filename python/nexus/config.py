@@ -75,6 +75,21 @@ class Settings(BaseSettings):
     ingest_stream_timeout_s: int = Field(default=60, alias="INGEST_STREAM_TIMEOUT_S")
     signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
 
+    # S5: EPUB archive safety limits (L2 baseline = ceiling; may be stricter, never weaker)
+    max_epub_archive_entries: int = Field(default=10_000, alias="MAX_EPUB_ARCHIVE_ENTRIES")
+    max_epub_archive_total_uncompressed_bytes: int = Field(
+        default=536_870_912, alias="MAX_EPUB_ARCHIVE_TOTAL_UNCOMPRESSED_BYTES"
+    )  # 512 MB
+    max_epub_archive_single_entry_uncompressed_bytes: int = Field(
+        default=67_108_864, alias="MAX_EPUB_ARCHIVE_SINGLE_ENTRY_UNCOMPRESSED_BYTES"
+    )  # 64 MB
+    max_epub_archive_compression_ratio: int = Field(
+        default=100, alias="MAX_EPUB_ARCHIVE_COMPRESSION_RATIO"
+    )
+    max_epub_archive_parse_time_ms: int = Field(
+        default=30_000, alias="MAX_EPUB_ARCHIVE_PARSE_TIME_MS"
+    )
+
     # S3: Key encryption for BYOK API keys
     # Base64-encoded 32-byte key for XChaCha20-Poly1305 encryption
     # Required in staging/prod, optional in local/test (uses deterministic test key)
@@ -125,6 +140,15 @@ class Settings(BaseSettings):
         "extra": "ignore",
     }
 
+    # L2 baseline ceilings for archive safety (used by floor validator)
+    _EPUB_ARCHIVE_BASELINE = {
+        "max_epub_archive_entries": 10_000,
+        "max_epub_archive_total_uncompressed_bytes": 536_870_912,
+        "max_epub_archive_single_entry_uncompressed_bytes": 67_108_864,
+        "max_epub_archive_compression_ratio": 100,
+        "max_epub_archive_parse_time_ms": 30_000,
+    }
+
     @model_validator(mode="after")
     def validate_required_settings(self) -> "Settings":
         """Ensure required settings are set for all environments."""
@@ -149,6 +173,17 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"NEXUS_INTERNAL_SECRET is required for NEXUS_ENV={self.nexus_env.value}"
                 )
+
+        # S5: EPUB archive safety floor validation
+        for field_name, baseline in self._EPUB_ARCHIVE_BASELINE.items():
+            value = getattr(self, field_name)
+            if value > baseline:
+                raise ValueError(
+                    f"{field_name.upper()}={value} exceeds L2 baseline ceiling {baseline}. "
+                    "Runtime values may be stricter (lower) but never weaker than L2 baseline."
+                )
+            if value < 1:
+                raise ValueError(f"{field_name.upper()}={value} must be >= 1.")
 
         return self
 
