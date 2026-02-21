@@ -87,6 +87,12 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 - `docs/v1/s5/s5_spec.md:21-31` and `docs/v1/s5/s5_spec_decisions.md:8` now align scope language to explicitly defer EPUB/PDF URL ingestion to v2.
 - `docs/v1/s5/s5_spec.md:760` now maps resource rewrite traceability to invariant 6.17 (asset fetch safety) rather than archive-safety invariant 6.15.
 
+### 2026-02-21 - Hardening Pass: L2/L3/L4 Lifecycle Contract Alignment
+- `docs/v1/s5/s5_spec.md:393-447` and `docs/v1/s5/s5_prs/s5_pr03.md:40-82` had drift on `/ingest` re-entry behavior and `/retry` pre-cleanup source-integrity semantics.
+- `docs/v1/s5/s5_spec.md:398-401` previously constrained `ingest_enqueued=false` to synchronous/internal execution only; approved PR-03 idempotent non-dispatch snapshot behavior required explicit L2 alignment.
+- `docs/v1/s5/s5_spec.md:431-447` previously omitted retry source-integrity preconditions and associated deterministic error surface now required by PR-03.
+- `docs/v1/s5/s5_roadmap.md:99-107` acceptance wording was broadened to explicitly include ingest idempotent re-entry and retry source-integrity precondition behavior.
+
 ## Evidence-Driven Conclusions Applied in Spec
 - Upload confirmation must stay creator-authorized and hash-dedupe compatible.
 - Chapter navigation requires dedicated lightweight APIs while preserving existing fragments endpoint.
@@ -106,3 +112,5 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 - EPUB-internal rewritten resource retrieval is now contractized with canonical safe fetch path semantics (`/media/{id}/assets/{asset_key}`), closing prior implementation ambiguity.
 - PR ownership citations are now boundary-clean between extraction outputs (PR-02) and retry cleanup orchestration (PR-03).
 - JSON envelope contract now explicitly documents binary endpoint exception semantics for EPUB asset fetch.
+- `/ingest` now explicitly codifies idempotent re-entry behavior for non-duplicate non-pending rows (no redispatch and no attempt inflation).
+- `/retry` now explicitly codifies source-integrity preconditions before cleanup/reset with deterministic non-mutating failure behavior.

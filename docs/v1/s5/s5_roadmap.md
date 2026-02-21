@@ -66,7 +66,8 @@ PR-01 -> PR-02 -> PR-03 -> PR-04
 | L2 contract surface not directly named in scenarios | owning PR(s) |
 |---|---|
 | 4.1 `POST /media/upload/init` EPUB path conformance | PR-03, PR-07 |
-| 4.2 backward-compat semantics for existing ingest clients (`media_id`, `duplicate`) | PR-03, PR-07 |
+| 4.2 backward-compat semantics for existing ingest clients (`media_id`, `duplicate`) plus idempotent non-redispatch re-entry behavior for repeat `/ingest` | PR-03, PR-07 |
+| 4.3 retry source-integrity precondition before cleanup/reset (no-mutation failure semantics) | PR-03, PR-07 |
 | 4.7 existing endpoint compatibility (`/media/{id}/fragments`, highlights, quote-to-chat) | PR-06, PR-07 |
 | 4.8 EPUB internal asset safe fetch path contract (`/media/{id}/assets/{asset_key}`) | PR-02, PR-07 |
 | 3.2 TOC artifact lifecycle (`absent -> materialized -> immutable -> deleted on retry`) | PR-02, PR-03, PR-07 |
@@ -102,8 +103,10 @@ PR-01 -> PR-02 -> PR-03 -> PR-04
 - **acceptance**:
   - Upload-init/ingest EPUB behavior conforms to S5 request/response/error contracts without breaking existing duplicate-client compatibility.
   - `POST /media/{media_id}/ingest` exposes EPUB-ready dispatch/status semantics while preserving existing duplicate behavior compatibility.
+  - Repeat `POST /media/{media_id}/ingest` on non-duplicate media is idempotent after dispatch/state advance (no redispatch, no attempt inflation).
   - Processing transitions (`pending -> extracting -> ready_for_reading`, embedding paths, and failure transitions) follow S5 contract.
   - `POST /media/{media_id}/retry` enforces legal-state preconditions and full artifact cleanup before re-extraction.
+  - Retry enforces source-integrity preconditions before cleanup/reset; precondition failures are deterministic and non-mutating.
   - Retry for terminal archive failures is rejected with `409 E_RETRY_NOT_ALLOWED`.
 - **non-goals**:
   - Does not add EPUB chapter or TOC reader endpoints.

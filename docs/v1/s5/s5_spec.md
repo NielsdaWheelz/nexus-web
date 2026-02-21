@@ -373,7 +373,7 @@ Binary endpoints explicitly document non-JSON response semantics.
 ### 4.2 `POST /media/{media_id}/ingest` (EPUB extension)
 
 This endpoint remains the upload confirmation + dedupe commit entrypoint.
-For EPUB in S5, extraction is triggered after confirmation.
+For EPUB in S5, extraction is triggered after confirmation only when transition guards allow `pending -> extracting`.
 
 **request**:
 - empty body
@@ -396,10 +396,14 @@ Response semantics:
    - `ingest_enqueued=false`
    - `processing_status` is winner status snapshot
 2. `duplicate=false`:
-   - extraction is triggered for this media
-   - `ingest_enqueued=true` for async dispatch; may be `false` only when execution mode is synchronous/internal
-   - `processing_status` is snapshot (`pending|extracting|ready_for_reading|failed`)
+   - if media is in `pending`, extraction is triggered for this media
+   - `ingest_enqueued=true` for successful async dispatch from `pending`
+   - `ingest_enqueued=false` for idempotent non-dispatch snapshots (`extracting|ready_for_reading|embedding|ready|failed`) and for explicit synchronous/internal execution mode
+   - `processing_status` is current state snapshot (`pending|extracting|ready_for_reading|embedding|ready|failed`)
 3. Backward compatibility: existing clients that only read `media_id` and `duplicate` remain valid.
+4. Re-entry/idempotency guard:
+   - repeated `/ingest` on the same non-duplicate media row after dispatch/state advance MUST NOT enqueue again and MUST NOT increment `processing_attempts`.
+   - `failed` rows are remediated through `POST /media/{media_id}/retry`, not by redispatch through `/ingest`.
 
 **errors**:
 - `E_MEDIA_NOT_FOUND` (404): media missing or not visible
@@ -430,14 +434,19 @@ Manual retry for failed EPUB extraction.
 
 Retry semantics:
 1. Valid only when `media.kind='epub'`, `processing_status='failed'`, and `last_error_code != 'E_ARCHIVE_UNSAFE'`.
-2. Before re-extraction, delete existing extraction artifacts for this media:
+2. Before any cleanup/reset mutation, enforce source-integrity preconditions:
+   - `media_file` exists and source object exists in storage.
+   - source bytes pass EPUB type/size validation.
+   - when `media.file_sha256` is present, source bytes must match the stored hash (integrity mismatch is treated as source-missing/corrupt failure for retry semantics).
+3. Before re-extraction, delete existing extraction artifacts for this media:
    - `fragments`
    - `fragment_blocks`
    - `epub_toc_nodes`
    - any existing chunk/embedding artifacts for this media
-3. Increment `processing_attempts`.
-4. Clear `failure_stage`, `last_error_code`, `last_error_message`, `failed_at`.
-5. Transition to `extracting` and dispatch extraction.
+4. Increment `processing_attempts`.
+5. Clear `failure_stage`, `last_error_code`, `last_error_message`, `failed_at`.
+6. Transition to `extracting` and dispatch extraction.
+7. If source-integrity precondition fails, return deterministic error and perform no artifact cleanup, no lifecycle mutation, and no dispatch.
 
 **errors**:
 - `E_MEDIA_NOT_FOUND` (404): media missing or not visible
@@ -445,6 +454,10 @@ Retry semantics:
 - `E_RETRY_INVALID_STATE` (409): media is not in `failed`
 - `E_RETRY_NOT_ALLOWED` (409): retry blocked for terminal failure reason (`E_ARCHIVE_UNSAFE`)
 - `E_INVALID_KIND` (400): media kind is not EPUB
+- `E_STORAGE_MISSING` (400): source file metadata/object missing or source integrity mismatch before retry reset
+- `E_INVALID_FILE_TYPE` (400): source bytes fail EPUB file-type validation before retry reset
+- `E_FILE_TOO_LARGE` (400): source bytes exceed EPUB size cap before retry reset
+- `E_STORAGE_ERROR` (500): storage read failure while validating source before retry reset
 
 ### 4.4 `GET /media/{media_id}/chapters`
 
@@ -631,12 +644,12 @@ Asset fetch semantics:
 | E_INVALID_KIND | 400 | Operation not valid for non-EPUB media. |
 | E_INVALID_CONTENT_TYPE | 400 | Upload init content type is not valid for EPUB. |
 | E_INVALID_REQUEST | 400 | Invalid query/body shape (e.g., invalid chapter cursor/limit). |
-| E_STORAGE_MISSING | 400 | File metadata/object missing at confirm-ingest time. |
-| E_INVALID_FILE_TYPE | 400 | Uploaded bytes do not match EPUB file type validation. |
+| E_STORAGE_MISSING | 400 | File metadata/object missing, or source-integrity precondition failure in ingest/retry validation. |
+| E_INVALID_FILE_TYPE | 400 | Uploaded/source bytes do not match EPUB file-type validation. |
 | E_ARCHIVE_UNSAFE | 400 | EPUB archive violates safety constraints (path traversal/size/compression/time limits). |
-| E_FILE_TOO_LARGE | 400 | Uploaded bytes exceed configured EPUB size limit. |
+| E_FILE_TOO_LARGE | 400 | Uploaded/source bytes exceed configured EPUB size limit. |
 | E_SIGN_UPLOAD_FAILED | 500 | Upload init could not mint signed upload token. |
-| E_STORAGE_ERROR | 500 | Storage read/write failure during ingest operations. |
+| E_STORAGE_ERROR | 500 | Storage read/write failure during ingest/retry operations. |
 | E_INGEST_FAILED | 502 | Extraction pipeline failed for non-timeout ingestion failure. |
 | E_INGEST_TIMEOUT | 504 | Extraction pipeline timed out. |
 | E_SANITIZATION_FAILED | 500 | Sanitization or canonicalization step failed during extraction. |
@@ -662,6 +675,8 @@ Asset fetch semantics:
 15. EPUB extraction enforces archive safety controls and fails with `E_ARCHIVE_UNSAFE` when limits/path rules are violated.
 16. `E_ARCHIVE_UNSAFE` is terminal for the media row; retry is rejected with `E_RETRY_NOT_ALLOWED` and remediation is fresh upload to a new row.
 17. EPUB internal asset fetch endpoint (`/media/{id}/assets/{asset_key}`) enforces canonical visibility masking and never exposes direct private storage object URLs.
+18. `POST /media/{id}/ingest` is idempotent for non-duplicate rows once state has advanced beyond dispatch eligibility: no redispatch, `ingest_enqueued=false`, and no `processing_attempts` increment on repeat calls.
+19. `POST /media/{id}/retry` enforces source-integrity preconditions before cleanup/reset; precondition failure performs no artifact cleanup, no lifecycle mutation, and no dispatch.
 
 ---
 
@@ -689,13 +704,14 @@ Asset fetch semantics:
 
 ### scenario 5: processing-state suite passes for EPUB
 - **given**: upload-confirmed EPUB media in `pending`
-- **when**: extraction succeeds
-- **then**: state transitions `pending -> extracting -> ready_for_reading` and chapter/TOC artifacts exist
+- **when**: extraction succeeds and clients issue repeat `POST /media/{id}/ingest` calls after initial dispatch/state advance
+- **then**: state transitions `pending -> extracting -> ready_for_reading` and chapter/TOC artifacts exist, and repeat ingest calls are idempotent snapshots (no redispatch, no additional attempt increment)
 
 ### scenario 6: retry from failed extraction
 - **given**: EPUB media in `failed` with old partial extraction/chunk artifacts
 - **when**: authorized caller invokes `POST /media/{id}/retry`
-- **then**: old extraction/chunk artifacts are deleted, attempts increment, state transitions to `extracting`, and re-extraction is triggered
+- **then**: source-integrity preconditions are checked before cleanup/reset; with valid source bytes old extraction/chunk artifacts are deleted, attempts increment, state transitions to `extracting`, and re-extraction is triggered
+- **and**: if source-integrity preconditions fail, retry returns deterministic validation/storage error and media/artifacts remain unchanged
 
 ### scenario 7: chapter navigation determinism
 - **given**: EPUB with `N` chapter fragments
@@ -752,7 +768,7 @@ Asset fetch semantics:
 | Highlights scoped to fragment | 2.1, 4.7, 6.6, 7.2 |
 | Reuse all document logic | 2.1, 2.3, 4.7, 6.6, 6.8, 7.3 |
 | Visibility test suite passes | 4.4, 4.5, 4.6, 6.9, 7.4 |
-| Processing-state test suite passes | 3.1, 4.2, 4.3, 6.10, 7.5, 7.6, 7.11, 7.12 |
+| Processing-state test suite passes | 3.1, 4.2, 4.3, 6.10, 6.18, 6.19, 7.5, 7.6, 7.11, 7.12 |
 | Embedding path transition coverage | 3.1, 6.1, 7.11 |
 | Embedding-failure retry reset | 3.1, 4.3, 6.10, 7.12 |
 | Retry clears all mixed-generation artifacts | 3.1, 4.3, 6.10, 7.6, 7.12 |
