@@ -1179,3 +1179,612 @@ class TestRetryEpubEndpoint:
                 {"id": media_id},
             ).fetchone()
             assert row[0] != "extracting"
+
+
+# =============================================================================
+# S5 PR-04: EPUB Chapter + TOC Read API Tests
+# =============================================================================
+
+
+def _create_ready_epub(session, *, num_chapters=3, with_toc=True):
+    """Insert a ready EPUB with contiguous chapter fragments and optional TOC nodes.
+
+    Returns (media_id, [fragment_ids]).
+    """
+    media_id = uuid4()
+    session.execute(
+        text("""
+            INSERT INTO media (id, kind, title, processing_status)
+            VALUES (:id, 'epub', 'Test EPUB Book', 'ready_for_reading')
+        """),
+        {"id": media_id},
+    )
+
+    frag_ids = []
+    for i in range(num_chapters):
+        fid = uuid4()
+        frag_ids.append(fid)
+        html = f"<h2>Chapter {i + 1} Title</h2><p>Sentinel content for chapter {i}.</p>"
+        canon = f"Chapter {i + 1} Title\nSentinel content for chapter {i}."
+        session.execute(
+            text("""
+                INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                VALUES (:fid, :mid, :idx, :html, :canon)
+            """),
+            {"fid": fid, "mid": media_id, "idx": i, "html": html, "canon": canon},
+        )
+
+    if with_toc:
+        for i in range(num_chapters):
+            node_id = f"ch{i}"
+            order_key = f"{i + 1:04d}"
+            session.execute(
+                text("""
+                    INSERT INTO epub_toc_nodes
+                        (media_id, node_id, parent_node_id, label, href, fragment_idx,
+                         depth, order_key)
+                    VALUES (:mid, :nid, NULL, :label, :href, :fidx, 0, :ok)
+                """),
+                {
+                    "mid": media_id,
+                    "nid": node_id,
+                    "label": f"TOC Chapter {i + 1}",
+                    "href": f"ch{i}.xhtml",
+                    "fidx": i,
+                    "ok": order_key,
+                },
+            )
+
+    session.commit()
+    return media_id, frag_ids
+
+
+def _add_media_to_user_library(auth_client, user_id, media_id):
+    """Bootstrap user and add media to their default library. Returns library_id."""
+    me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+    library_id = me_resp.json()["data"]["default_library_id"]
+    auth_client.post(
+        f"/libraries/{library_id}/media",
+        json={"media_id": str(media_id)},
+        headers=auth_headers(user_id),
+    )
+    return library_id
+
+
+class TestGetEpubChaptersManifestPaginationIsDeterministic:
+    """test_get_epub_chapters_manifest_pagination_is_deterministic"""
+
+    def test_paginate_chapters(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, frag_ids = _create_ready_epub(session, num_chapters=5)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        # Page 1: limit=2
+        resp1 = auth_client.get(
+            f"/media/{media_id}/chapters?limit=2", headers=auth_headers(user_id)
+        )
+        assert resp1.status_code == 200
+        body1 = resp1.json()
+        items1 = body1["data"]
+        assert len(items1) == 2
+        assert items1[0]["idx"] == 0
+        assert items1[1]["idx"] == 1
+        assert body1["page"]["has_more"] is True
+        assert body1["page"]["next_cursor"] == 1
+
+        # Page 2: cursor=1, limit=2
+        resp2 = auth_client.get(
+            f"/media/{media_id}/chapters?limit=2&cursor=1", headers=auth_headers(user_id)
+        )
+        assert resp2.status_code == 200
+        body2 = resp2.json()
+        items2 = body2["data"]
+        assert len(items2) == 2
+        assert items2[0]["idx"] == 2
+        assert items2[1]["idx"] == 3
+        assert body2["page"]["has_more"] is True
+
+        # Page 3: cursor=3, limit=2
+        resp3 = auth_client.get(
+            f"/media/{media_id}/chapters?limit=2&cursor=3", headers=auth_headers(user_id)
+        )
+        assert resp3.status_code == 200
+        body3 = resp3.json()
+        items3 = body3["data"]
+        assert len(items3) == 1
+        assert items3[0]["idx"] == 4
+        assert body3["page"]["has_more"] is False
+        assert body3["page"]["next_cursor"] is None
+
+        # No cross-page duplicates
+        all_idxs = (
+            [c["idx"] for c in items1] + [c["idx"] for c in items2] + [c["idx"] for c in items3]
+        )
+        assert all_idxs == [0, 1, 2, 3, 4]
+
+
+class TestGetEpubChaptersCursorOutOfRangeReturnsEmptyPage:
+    """test_get_epub_chapters_cursor_out_of_range_returns_empty_page"""
+
+    def test_cursor_beyond_max(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_epub(session, num_chapters=3)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/chapters?cursor=99", headers=auth_headers(user_id)
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"] == []
+        assert body["page"]["next_cursor"] is None
+        assert body["page"]["has_more"] is False
+
+    def test_cursor_equal_to_max(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_epub(session, num_chapters=3)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/chapters?cursor=2", headers=auth_headers(user_id)
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"] == []
+        assert body["page"]["next_cursor"] is None
+        assert body["page"]["has_more"] is False
+
+
+class TestGetEpubChaptersManifestIsMetadataOnly:
+    """test_get_epub_chapters_manifest_is_metadata_only"""
+
+    def test_no_heavy_columns(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_epub(session, num_chapters=2)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}/chapters", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        items = resp.json()["data"]
+        assert len(items) > 0
+        for item in items:
+            assert "html_sanitized" not in item
+            assert "canonical_text" not in item
+            assert "idx" in item
+            assert "fragment_id" in item
+            assert "title" in item
+            assert "char_count" in item
+            assert "word_count" in item
+            assert "has_toc_entry" in item
+            assert "primary_toc_node_id" in item
+
+
+class TestGetEpubChaptersProjectionExcludesHeavyColumns:
+    """test_get_epub_chapters_projection_excludes_heavy_columns
+
+    Verifies the service layer does not return html_sanitized/canonical_text
+    in the manifest items (serialization-level check).
+    """
+
+    def test_serialized_output_excludes_content(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_epub(session, num_chapters=1)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}/chapters", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        raw = resp.text
+        assert "html_sanitized" not in raw
+        assert "canonical_text" not in raw
+
+
+class TestGetEpubChaptersPrimaryTocNodeUsesMinOrderKey:
+    """test_get_epub_chapters_primary_toc_node_uses_min_order_key"""
+
+    def test_multiple_toc_nodes_same_chapter(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:id, 'epub', 'Multi-TOC EPUB', 'ready_for_reading')
+                """),
+                {"id": media_id},
+            )
+            fid = uuid4()
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                    VALUES (:fid, :mid, 0, '<p>Content</p>', 'Content')
+                """),
+                {"fid": fid, "mid": media_id},
+            )
+            # Two TOC nodes both pointing to fragment_idx=0, different order_keys
+            session.execute(
+                text("""
+                    INSERT INTO epub_toc_nodes
+                        (media_id, node_id, parent_node_id, label, href, fragment_idx,
+                         depth, order_key)
+                    VALUES
+                        (:mid, 'second', NULL, 'Second Label', NULL, 0, 0, '0002'),
+                        (:mid, 'first', NULL, 'First Label', NULL, 0, 0, '0001')
+                """),
+                {"mid": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}/chapters", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        items = resp.json()["data"]
+        assert len(items) == 1
+        ch = items[0]
+        assert ch["primary_toc_node_id"] == "first"
+        assert ch["title"] == "First Label"
+        assert ch["has_toc_entry"] is True
+
+
+class TestGetEpubChapterByIdxReturnsPayloadAndNavigation:
+    """test_get_epub_chapter_by_idx_returns_payload_and_navigation"""
+
+    def test_navigation_pointers(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, frag_ids = _create_ready_epub(session, num_chapters=3)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        # First chapter: prev_idx=null, next_idx=1
+        resp0 = auth_client.get(f"/media/{media_id}/chapters/0", headers=auth_headers(user_id))
+        assert resp0.status_code == 200
+        ch0 = resp0.json()["data"]
+        assert ch0["idx"] == 0
+        assert ch0["prev_idx"] is None
+        assert ch0["next_idx"] == 1
+        assert ch0["fragment_id"] == str(frag_ids[0])
+        assert "html_sanitized" in ch0
+        assert "canonical_text" in ch0
+        assert "created_at" in ch0
+
+        # Middle chapter: prev_idx=0, next_idx=2
+        resp1 = auth_client.get(f"/media/{media_id}/chapters/1", headers=auth_headers(user_id))
+        ch1 = resp1.json()["data"]
+        assert ch1["prev_idx"] == 0
+        assert ch1["next_idx"] == 2
+
+        # Last chapter: prev_idx=1, next_idx=null
+        resp2 = auth_client.get(f"/media/{media_id}/chapters/2", headers=auth_headers(user_id))
+        ch2 = resp2.json()["data"]
+        assert ch2["prev_idx"] == 1
+        assert ch2["next_idx"] is None
+
+
+class TestGetEpubChapterReturnsSingleChapterNotConcatenated:
+    """test_get_epub_chapter_returns_single_chapter_not_concatenated"""
+
+    def test_no_adjacent_content(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_epub(session, num_chapters=3)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}/chapters/1", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        ch = resp.json()["data"]
+        # Should contain sentinel for chapter 1 only
+        assert "Sentinel content for chapter 1" in ch["canonical_text"]
+        assert "Sentinel content for chapter 0" not in ch["canonical_text"]
+        assert "Sentinel content for chapter 2" not in ch["canonical_text"]
+
+
+class TestGetEpubChapterMissingIdxReturns404:
+    """test_get_epub_chapter_missing_idx_returns_404"""
+
+    def test_nonexistent_idx(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_epub(session, num_chapters=2)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}/chapters/99", headers=auth_headers(user_id))
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "E_CHAPTER_NOT_FOUND"
+
+
+class TestGetEpubTocReturnsNestedTreeOrderedByOrderKey:
+    """test_get_epub_toc_returns_nested_tree_ordered_by_order_key"""
+
+    def test_nested_toc_ordering(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:id, 'epub', 'Nested TOC EPUB', 'ready_for_reading')
+                """),
+                {"id": media_id},
+            )
+            # Create a fragment for linking
+            fid = uuid4()
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                    VALUES (:fid, :mid, 0, '<p>Content</p>', 'Content')
+                """),
+                {"fid": fid, "mid": media_id},
+            )
+            # Insert TOC nodes out of order to test deterministic ordering
+            nodes = [
+                ("root2", None, "Part II", None, None, 0, "0002"),
+                ("root1", None, "Part I", None, None, 0, "0001"),
+                ("child1_2", "root1", "Chapter 1.2", None, 0, 1, "0001.0002"),
+                ("child1_1", "root1", "Chapter 1.1", None, 0, 1, "0001.0001"),
+            ]
+            for nid, pid, label, href, fidx, depth, ok in nodes:
+                session.execute(
+                    text("""
+                        INSERT INTO epub_toc_nodes
+                            (media_id, node_id, parent_node_id, label, href,
+                             fragment_idx, depth, order_key)
+                        VALUES (:mid, :nid, :pid, :label, :href, :fidx, :depth, :ok)
+                    """),
+                    {
+                        "mid": media_id,
+                        "nid": nid,
+                        "pid": pid,
+                        "label": label,
+                        "href": href,
+                        "fidx": fidx,
+                        "depth": depth,
+                        "ok": ok,
+                    },
+                )
+            session.commit()
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}/toc", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        nodes_out = resp.json()["data"]["nodes"]
+
+        # Root ordering
+        assert len(nodes_out) == 2
+        assert nodes_out[0]["node_id"] == "root1"
+        assert nodes_out[0]["order_key"] == "0001"
+        assert nodes_out[1]["node_id"] == "root2"
+        assert nodes_out[1]["order_key"] == "0002"
+
+        # Children of root1 ordered
+        children = nodes_out[0]["children"]
+        assert len(children) == 2
+        assert children[0]["node_id"] == "child1_1"
+        assert children[0]["order_key"] == "0001.0001"
+        assert children[1]["node_id"] == "child1_2"
+        assert children[1]["order_key"] == "0001.0002"
+
+        # root2 has no children
+        assert nodes_out[1]["children"] == []
+
+
+class TestGetEpubTocEmptyReturnsNodesEmpty:
+    """test_get_epub_toc_empty_returns_nodes_empty"""
+
+    def test_epub_without_toc(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_epub(session, num_chapters=1, with_toc=False)
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}/toc", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        assert resp.json()["data"]["nodes"] == []
+
+
+class TestGetEpubReadEndpointsVisibilityMasking:
+    """test_get_epub_read_endpoints_visibility_masking"""
+
+    def test_unreadable_user_gets_404(self, auth_client, direct_db: DirectSessionManager):
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_epub(session, num_chapters=2)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # Only user A gets the media
+        _add_media_to_user_library(auth_client, user_a, media_id)
+        # Bootstrap user B (no media)
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        # User B should get 404 on all three endpoints (visibility masking)
+        for path in [
+            f"/media/{media_id}/chapters",
+            f"/media/{media_id}/chapters/0",
+            f"/media/{media_id}/toc",
+        ]:
+            resp = auth_client.get(path, headers=auth_headers(user_b))
+            assert resp.status_code == 404, f"Expected 404 for {path}, got {resp.status_code}"
+            body = resp.json()
+            assert body["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+
+class TestGetEpubReadEndpointsKindAndReadinessGuards:
+    """test_get_epub_read_endpoints_kind_and_readiness_guards"""
+
+    def test_non_epub_returns_400(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:id, 'web_article', 'An Article', 'ready_for_reading')
+                """),
+                {"id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        for path in [
+            f"/media/{media_id}/chapters",
+            f"/media/{media_id}/chapters/0",
+            f"/media/{media_id}/toc",
+        ]:
+            resp = auth_client.get(path, headers=auth_headers(user_id))
+            assert resp.status_code == 400, f"Expected 400 for {path}"
+            assert resp.json()["error"]["code"] == "E_INVALID_KIND"
+
+    def test_non_ready_epub_returns_409(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:id, 'epub', 'Pending EPUB', 'pending')
+                """),
+                {"id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        for path in [
+            f"/media/{media_id}/chapters",
+            f"/media/{media_id}/chapters/0",
+            f"/media/{media_id}/toc",
+        ]:
+            resp = auth_client.get(path, headers=auth_headers(user_id))
+            assert resp.status_code == 409, f"Expected 409 for {path}"
+            assert resp.json()["error"]["code"] == "E_MEDIA_NOT_READY"
+
+
+class TestGetEpubChaptersInvalidLimitCursorAndIdxAre400:
+    """test_get_epub_chapters_invalid_limit_cursor_and_idx_are_400"""
+
+    def test_invalid_params(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_epub(session, num_chapters=1)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        # Invalid limit: 0
+        resp = auth_client.get(f"/media/{media_id}/chapters?limit=0", headers=auth_headers(user_id))
+        assert resp.status_code == 400
+
+        # Invalid limit: 201
+        resp = auth_client.get(
+            f"/media/{media_id}/chapters?limit=201", headers=auth_headers(user_id)
+        )
+        assert resp.status_code == 400
+
+        # Invalid cursor: -1
+        resp = auth_client.get(
+            f"/media/{media_id}/chapters?cursor=-1", headers=auth_headers(user_id)
+        )
+        assert resp.status_code == 400
+
+        # Invalid chapter idx: -1
+        resp = auth_client.get(f"/media/{media_id}/chapters/-1", headers=auth_headers(user_id))
+        assert resp.status_code == 400

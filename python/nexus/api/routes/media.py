@@ -19,7 +19,7 @@ from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.media import FromUrlRequest, UploadInitRequest
-from nexus.services import epub_lifecycle, image_proxy
+from nexus.services import epub_lifecycle, epub_read, image_proxy
 from nexus.services import media as media_service
 from nexus.services import upload as upload_service
 
@@ -263,6 +263,63 @@ def get_epub_asset(
             "Cache-Control": "private, max-age=86400, immutable",
         },
     )
+
+
+# =============================================================================
+# EPUB Chapter + TOC Read Endpoints (S5 PR-04)
+# =============================================================================
+
+
+@router.get("/media/{media_id}/chapters")
+def get_epub_chapters(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    limit: int = 100,
+    cursor: int | None = None,
+) -> dict:
+    """Get paginated chapter manifest for an EPUB media item.
+
+    Returns metadata-only chapter summaries ordered by idx ASC.
+    Does not include html_sanitized or canonical_text.
+
+    Paginated response follows L0 convention:
+    { "data": [...], "page": { "next_cursor": ..., "has_more": ... } }
+    """
+    result = epub_read.list_epub_chapters_for_viewer(
+        db, viewer.user_id, media_id, limit=limit, cursor=cursor
+    )
+    return result.model_dump(mode="json")
+
+
+@router.get("/media/{media_id}/chapters/{idx}")
+def get_epub_chapter(
+    media_id: UUID,
+    idx: int,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Get a single EPUB chapter with content and navigation pointers.
+
+    Returns full chapter payload scoped to the requested idx only.
+    """
+    result = epub_read.get_epub_chapter_for_viewer(db, viewer.user_id, media_id, idx)
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.get("/media/{media_id}/toc")
+def get_epub_toc(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Get the persisted TOC tree for an EPUB media item.
+
+    Returns a nested tree with deterministic ordering by order_key.
+    EPUBs without TOC entries return an empty nodes list.
+    """
+    result = epub_read.get_epub_toc_for_viewer(db, viewer.user_id, media_id)
+    return success_response(result.model_dump(mode="json"))
 
 
 @router.get("/media/{media_id}/file")

@@ -147,3 +147,70 @@ class FromUrlResponse(BaseModel):
     duplicate: bool
     processing_status: str
     ingest_enqueued: bool
+
+
+# =============================================================================
+# S5 PR-04: EPUB Chapter + TOC Read API Schemas
+# =============================================================================
+
+
+class EpubChapterSummaryOut(BaseModel):
+    """Metadata-only chapter summary for chapter manifest."""
+
+    idx: int
+    fragment_id: UUID
+    title: str
+    char_count: int
+    word_count: int
+    has_toc_entry: bool
+    primary_toc_node_id: str | None
+
+
+class EpubChapterOut(BaseModel):
+    """Full chapter payload with content and navigation pointers."""
+
+    idx: int
+    fragment_id: UUID
+    title: str
+    html_sanitized: str
+    canonical_text: str
+    char_count: int
+    word_count: int
+    has_toc_entry: bool
+    primary_toc_node_id: str | None
+    prev_idx: int | None
+    next_idx: int | None
+    created_at: datetime
+
+
+class EpubTocNodeOut(BaseModel):
+    """Single TOC node with recursive children."""
+
+    node_id: str
+    parent_node_id: str | None
+    label: str
+    href: str | None
+    fragment_idx: int | None
+    depth: int
+    order_key: str
+    children: list["EpubTocNodeOut"]
+
+
+class EpubChapterPageInfoOut(BaseModel):
+    """Pagination envelope for chapter manifest."""
+
+    next_cursor: int | None
+    has_more: bool
+
+
+class EpubChapterListOut(BaseModel):
+    """Paginated chapter manifest response."""
+
+    data: list[EpubChapterSummaryOut]
+    page: EpubChapterPageInfoOut
+
+
+class EpubTocOut(BaseModel):
+    """TOC tree response."""
+
+    nodes: list[EpubTocNodeOut]
