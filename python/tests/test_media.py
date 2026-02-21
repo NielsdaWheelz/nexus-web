@@ -573,3 +573,188 @@ class TestTimestampSerialization:
             ts = fragment["created_at"]
             parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             assert parsed is not None
+
+
+# =============================================================================
+# S5 PR-02: EPUB Asset Endpoint Tests
+# =============================================================================
+
+
+class TestGetEpubAssetSuccessAndMasking:
+    """test_get_epub_asset_success_and_masking"""
+
+    def test_resolved_asset_returns_binary(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        asset_content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:id, 'epub', 'Test EPUB', 'ready_for_reading')
+                """),
+                {"id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        # Put asset into fake storage
+        from nexus.storage.client import FakeStorageClient
+
+        fake = FakeStorageClient()
+        fake.put_object(f"media/{media_id}/assets/images/fig1.png", asset_content, "image/png")
+
+        from unittest.mock import patch
+
+        with patch("nexus.storage.get_storage_client", return_value=fake):
+            resp = auth_client.get(
+                f"/media/{media_id}/assets/images/fig1.png",
+                headers=auth_headers(user_id),
+            )
+
+        assert resp.status_code == 200
+        assert resp.content == asset_content
+        assert "image/png" in resp.headers.get("content-type", "")
+
+    def test_unauthorized_viewer_gets_404(self, auth_client, direct_db: DirectSessionManager):
+        other_user = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:id, 'epub', 'Test EPUB', 'ready_for_reading')
+                """),
+                {"id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("media", "id", media_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/assets/images/fig1.png",
+            headers=auth_headers(other_user),
+        )
+        assert resp.status_code == 404
+
+    def test_missing_asset_returns_404(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:id, 'epub', 'Test EPUB', 'ready_for_reading')
+                """),
+                {"id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        from unittest.mock import patch
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake = FakeStorageClient()
+
+        with patch("nexus.storage.get_storage_client", return_value=fake):
+            resp = auth_client.get(
+                f"/media/{media_id}/assets/nonexistent.png",
+                headers=auth_headers(user_id),
+            )
+        assert resp.status_code == 404
+
+
+class TestGetEpubAssetKindAndReadyGuards:
+    """test_get_epub_asset_kind_and_ready_guards"""
+
+    def test_non_epub_returns_400(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:id, 'web_article', 'Article', 'ready_for_reading')
+                """),
+                {"id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        resp = auth_client.get(
+            f"/media/{media_id}/assets/test.png",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "E_INVALID_KIND"
+
+    def test_non_ready_epub_returns_409(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:id, 'epub', 'Pending EPUB', 'pending')
+                """),
+                {"id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        resp = auth_client.get(
+            f"/media/{media_id}/assets/test.png",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "E_MEDIA_NOT_READY"

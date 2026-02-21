@@ -836,3 +836,36 @@ class TestUploadProvenance:
                 {"dl": dl[0], "m": winner_id},
             ).fetchone()
             assert intrinsic is not None
+
+
+class TestIngestResponseShapeRemainsDuplicateCompatOnly:
+    """PR-02 regression: response keys remain exactly {media_id, duplicate}."""
+
+    def test_ingest_response_keys(self, upload_client, fake_storage, direct_db):
+        user_id = create_test_user_id()
+
+        resp = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "epub",
+                "filename": "shape_test.epub",
+                "content_type": "application/epub+zip",
+                "size_bytes": len(EPUB_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 200
+        init_data = resp.json()["data"]
+        media_id = init_data["media_id"]
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        fake_storage.put_object(init_data["storage_path"], EPUB_CONTENT, "application/epub+zip")
+
+        resp = upload_client.post(f"/media/{media_id}/ingest", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+
+        data = resp.json()["data"]
+        assert set(data.keys()) == {"media_id", "duplicate"}

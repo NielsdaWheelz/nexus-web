@@ -212,6 +212,28 @@ def confirm_ingest(
     return success_response(result)
 
 
+@router.get("/media/{media_id}/assets/{asset_key:path}")
+def get_epub_asset(
+    media_id: UUID,
+    asset_key: str,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Serve an EPUB-internal asset (image, font, css) through canonical safe fetch path.
+
+    Returns binary payload with resolved content type and cache headers.
+    Visibility, kind, readiness, and key-format guards enforced by service layer.
+    """
+    result = media_service.get_epub_asset_for_viewer(db, viewer.user_id, media_id, asset_key)
+    return Response(
+        content=result.data,
+        media_type=result.content_type,
+        headers={
+            "Cache-Control": "private, max-age=86400, immutable",
+        },
+    )
+
+
 @router.get("/media/{media_id}/file")
 def get_media_file(
     media_id: UUID,

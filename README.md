@@ -73,6 +73,7 @@ nexus/
 - **Library Sharing** (S4): Multi-user library membership, invitations, and shared visibility. Canonical visibility predicates enforce S4 provenance rules for media (non-default membership, intrinsic, active closure edge), conversations (owner/public/library-shared with dual membership), and highlights (media visibility + library intersection).
 - **Send Message Flow**: Three-phase execution (Prepare → Execute → Finalize) to avoid holding DB transactions during LLM calls.
 - **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations.
+- **EPUB Extraction** (S5): Deterministic chapter fragment materialization from EPUB archives with TOC snapshot, title fallback, resource rewriting, and archive safety enforcement.
 
 ## Quick Start
 
@@ -218,6 +219,11 @@ This file is:
 | `STORAGE_BUCKET` | No | Storage bucket name (default: `media`) |
 | `MAX_PDF_BYTES` | No | Max PDF upload size (default: 100 MB) |
 | `MAX_EPUB_BYTES` | No | Max EPUB upload size (default: 50 MB) |
+| `MAX_EPUB_ARCHIVE_ENTRIES` | No | Max ZIP entries in EPUB (default: 10000, L2 ceiling) |
+| `MAX_EPUB_ARCHIVE_TOTAL_UNCOMPRESSED_BYTES` | No | Max total uncompressed size (default: 512 MB) |
+| `MAX_EPUB_ARCHIVE_SINGLE_ENTRY_UNCOMPRESSED_BYTES` | No | Max single entry size (default: 64 MB) |
+| `MAX_EPUB_ARCHIVE_COMPRESSION_RATIO` | No | Max compression ratio (default: 100) |
+| `MAX_EPUB_ARCHIVE_PARSE_TIME_MS` | No | Max parse time in ms (default: 30000) |
 | `STORAGE_TEST_PREFIX` | For tests | Test storage path prefix (e.g., `test_runs/{run_id}/`) |
 
 #### LLM / Chat (S3+)
@@ -546,6 +552,7 @@ When running locally:
 | Libraries | `GET/POST /libraries`, `PATCH/DELETE /libraries/{id}`, members, transfer-ownership (S4 PR-03) |
 | Invitations | `POST/GET /libraries/{id}/invites`, `GET /libraries/invites`, accept/decline/revoke (S4 PR-04) |
 | Media | `GET /media/{id}`, `POST /media/from_url`, `POST /media/upload/init` |
+| EPUB Assets | `GET /media/{id}/assets/{asset_key}` (S5 PR-02: EPUB internal asset safe fetch) |
 | Highlights | `POST/GET /fragments/{id}/highlights`, `PATCH/DELETE /highlights/{id}` |
 | Annotations | `PUT/DELETE /highlights/{id}/annotation` |
 | Conversations | `GET/POST /conversations`, `GET/DELETE /conversations/{id}` |
