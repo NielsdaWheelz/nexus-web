@@ -749,6 +749,10 @@ Asset fetch semantics:
 - **when**: authorized caller invokes `POST /media/{id}/retry`
 - **then**: chunk/embedding artifacts and extraction artifacts are cleared before transition to `extracting`
 
+**ownership note (s5 vs future slices)**:
+- S5 validates EPUB lifecycle compatibility/state-transition semantics for these embedding-related scenarios (`7.11`, `7.12`) and retry cleanup behavior.
+- Production embedding orchestration and persisted chunk/embedding artifact pipelines are owned by Slice 9 (Semantic Search).
+
 ### scenario 13: non-epub kind guards on chapter/toc endpoints
 - **given**: media row exists with kind not equal to `epub`
 - **when**: caller invokes `/media/{id}/chapters`, `/media/{id}/chapters/{idx}`, or `/media/{id}/toc`

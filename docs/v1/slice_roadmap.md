@@ -522,12 +522,15 @@ Two test suites are introduced early and reused by every later slice:
 ### Includes
 - Chunking per media type
 - Embeddings
+- Embedding production orchestration integrated with media lifecycle transitions (`ready_for_reading -> embedding -> ready` where applicable, plus `E_EMBEDDING_FAILED` failure handling)
+- Persisted chunk/embedding artifact lifecycle management, including retry/reset cleanup to prevent mixed-generation search artifacts
 - Semantic ranking
 - Hybrid keyword + semantic UX
 
 ### Acceptance Criteria
 - Semantic search never leaks invisible content
 - Partial results handled gracefully
+- Embedding pipeline transitions and retry/reset flows are lifecycle-safe (no mixed-generation persisted chunk/embedding artifacts after retry)
 - Visibility test suite passes
 
 ---

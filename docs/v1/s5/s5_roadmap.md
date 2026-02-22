@@ -160,6 +160,7 @@ PR-01 -> PR-02 -> PR-03 -> PR-04
 - **non-goals**:
   - Does not expand product scope beyond S5 contract.
   - Does not add v2 features (including EPUB/PDF URL ingestion).
+  - Does not implement production embedding pipeline/orchestration or new persisted embedding artifact stores (deferred to S9).
 
 ## Global Non-Goals
 
