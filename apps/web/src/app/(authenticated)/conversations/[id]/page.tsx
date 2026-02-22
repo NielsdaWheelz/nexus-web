@@ -7,9 +7,15 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useRef, use } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, use } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import type { ContextItem } from "@/lib/api/sse";
+import {
+  parseAttachContext,
+  stripAttachParams,
+} from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
 import styles from "../page.module.css";
 
@@ -51,6 +57,8 @@ export default function ConversationPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,6 +67,28 @@ export default function ConversationPage({
 
   const messageListRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
+
+  const initialAttach = useMemo(
+    () => parseAttachContext(searchParams),
+    [searchParams],
+  );
+  const [attachedContexts, setAttachedContexts] =
+    useState<ContextItem[]>(initialAttach);
+
+  useEffect(() => {
+    setAttachedContexts(initialAttach);
+  }, [initialAttach]);
+
+  const handleRemoveContext = useCallback((index: number) => {
+    setAttachedContexts((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const clearAttachState = useCallback(() => {
+    setAttachedContexts([]);
+    const cleaned = stripAttachParams(searchParams);
+    const qs = cleaned.toString();
+    router.replace(qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`);
+  }, [router, searchParams, id]);
 
   // --------------------------------------------------------------------------
   // Data fetching
@@ -239,12 +269,14 @@ export default function ConversationPage({
           {/* Composer */}
           <ChatComposer
             conversationId={id}
+            attachedContexts={attachedContexts}
+            onRemoveContext={handleRemoveContext}
             onOptimisticMessages={handleOptimisticMessages}
             onMetaReceived={handleMetaReceived}
             onDelta={handleDelta}
             onDone={handleDone}
             onNonStreamMessages={handleNonStreamMessages}
-            onMessageSent={() => {}}
+            onMessageSent={clearAttachState}
           />
         </div>
       </div>

@@ -502,6 +502,83 @@ def get_user_default_library(session: Session, user_id: UUID) -> UUID:
 
 
 # =============================================================================
+# EPUB Media + Fragments
+# =============================================================================
+
+
+def create_epub_media_in_library(
+    session: Session,
+    user_id: UUID,
+    library_id: UUID,
+    *,
+    title: str = "Test EPUB",
+    status: str = "ready_for_reading",
+) -> UUID:
+    """Create an EPUB media row linked to a library.
+
+    Returns media_id.
+    """
+    media_id = uuid4()
+    session.execute(
+        text("""
+            INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+            VALUES (:id, 'epub', :title, :status, :user_id)
+        """),
+        {"id": media_id, "title": title, "status": status, "user_id": user_id},
+    )
+    session.execute(
+        text("""
+            INSERT INTO library_media (library_id, media_id)
+            VALUES (:library_id, :media_id)
+        """),
+        {"library_id": library_id, "media_id": media_id},
+    )
+    session.execute(
+        text("""
+            INSERT INTO default_library_intrinsics (default_library_id, media_id)
+            SELECT :library_id, :media_id
+            WHERE EXISTS (
+                SELECT 1 FROM libraries WHERE id = :library_id AND is_default = true
+            )
+            ON CONFLICT DO NOTHING
+        """),
+        {"library_id": library_id, "media_id": media_id},
+    )
+    session.commit()
+    return media_id
+
+
+def create_epub_chapter_fragment(
+    session: Session,
+    media_id: UUID,
+    idx: int,
+    canonical_text: str,
+    html_sanitized: str | None = None,
+) -> UUID:
+    """Create a chapter fragment for an EPUB media item.
+
+    Returns fragment_id.
+    """
+    fragment_id = uuid4()
+    html = html_sanitized or f"<section>{canonical_text}</section>"
+    session.execute(
+        text("""
+            INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+            VALUES (:id, :media_id, :idx, :text, :html)
+        """),
+        {
+            "id": fragment_id,
+            "media_id": media_id,
+            "idx": idx,
+            "text": canonical_text,
+            "html": html,
+        },
+    )
+    session.commit()
+    return fragment_id
+
+
+# =============================================================================
 # Helpers
 # =============================================================================
 
