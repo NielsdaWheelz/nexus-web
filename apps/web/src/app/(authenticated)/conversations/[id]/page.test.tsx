@@ -146,18 +146,77 @@ describe("ConversationDetailPage attach-context", () => {
   });
 
   it("send includes attached context and clears after success", async () => {
-    await renderDetailPage(`attach_type=highlight&attach_id=${VALID_UUID}`);
+    mockSearchParams = new URLSearchParams(`attach_type=highlight&attach_id=${VALID_UUID}&extra=keep`);
 
-    // Composer receives attached contexts
+    mockApiFetch.mockImplementation(async (url: string, opts?: RequestInit) => {
+      // Handle the send POST
+      if (
+        url.includes(`/conversations/${CONV_ID}/messages`) &&
+        !url.includes("?") &&
+        opts?.method === "POST"
+      ) {
+        const body = JSON.parse(opts.body as string);
+        expect(body.contexts).toBeDefined();
+        expect(body.contexts[0].type).toBe("highlight");
+        expect(body.contexts[0].id).toBe(VALID_UUID);
+
+        return {
+          data: {
+            conversation: { id: CONV_ID },
+            user_message: {
+              id: "msg-u2",
+              seq: 2,
+              role: "user",
+              content: body.content,
+              status: "complete",
+              error_code: null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+            assistant_message: {
+              id: "msg-a2",
+              seq: 3,
+              role: "assistant",
+              content: "OK",
+              status: "complete",
+              error_code: null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          },
+        };
+      }
+      return defaultApiHandler(url);
+    });
+
+    const paramsPromise = Promise.resolve({ id: CONV_ID });
+    await act(async () => {
+      render(
+        <Suspense fallback={<div>Loading...</div>}>
+          <ConversationPage params={paramsPromise} />
+        </Suspense>,
+      );
+    });
+
     await waitFor(() => {
       expect(screen.queryAllByText(/highlight:/i).length).toBeGreaterThanOrEqual(1);
     });
 
-    // Verify UUID is present in chip
     expect(screen.getByText(new RegExp(VALID_UUID.slice(0, 8)))).toBeTruthy();
 
-    // Composer textarea is present (ChatComposer is wired for this conversation)
-    expect(screen.getByPlaceholderText(/type a message/i)).toBeTruthy();
+    const textarea = screen.getByPlaceholderText(/type a message/i);
+    const user = (await import("@testing-library/user-event")).default.setup();
+    await user.type(textarea, "test message");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalled();
+    });
+
+    const replaceUrl = mockReplace.mock.calls[0][0] as string;
+    expect(replaceUrl).not.toContain("attach_type");
+    expect(replaceUrl).not.toContain("attach_id");
+    expect(replaceUrl).toContain(`/conversations/${CONV_ID}`);
   });
 
   it("send failure retains attach state", async () => {

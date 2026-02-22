@@ -580,6 +580,271 @@ class TestTimestampSerialization:
 # =============================================================================
 
 
+# =============================================================================
+# S5 PR-07: Hardening / Freeze Tests
+# =============================================================================
+
+
+class TestEpubChapterFragmentsImmutableAcrossReadsAndHighlightChurn:
+    """Scenario 1: chapter fragment immutability across reads + highlight churn."""
+
+    def test_epub_chapter_fragments_immutable_across_reads_and_highlight_churn(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, frag_ids = _create_ready_epub(session, num_chapters=3)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("highlights", "fragment_id", frag_ids[1])
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        # Snapshot baseline fragment content from DB
+        with direct_db.session() as session:
+            baseline = session.execute(
+                text(
+                    "SELECT idx, html_sanitized, canonical_text "
+                    "FROM fragments WHERE media_id = :mid ORDER BY idx"
+                ),
+                {"mid": media_id},
+            ).fetchall()
+        assert len(baseline) == 3
+
+        # Read chapters repeatedly via manifest + detail endpoints
+        for _ in range(3):
+            resp = auth_client.get(f"/media/{media_id}/chapters", headers=auth_headers(user_id))
+            assert resp.status_code == 200
+            for idx in range(3):
+                resp = auth_client.get(
+                    f"/media/{media_id}/chapters/{idx}", headers=auth_headers(user_id)
+                )
+                assert resp.status_code == 200
+
+        # Create and delete a highlight on chapter idx=1
+        hl_resp = auth_client.post(
+            f"/fragments/{frag_ids[1]}/highlights",
+            json={"start_offset": 0, "end_offset": 10, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert hl_resp.status_code == 201
+        highlight_id = hl_resp.json()["data"]["id"]
+
+        del_resp = auth_client.delete(f"/highlights/{highlight_id}", headers=auth_headers(user_id))
+        assert del_resp.status_code == 204
+
+        # Assert fragment content unchanged
+        with direct_db.session() as session:
+            after = session.execute(
+                text(
+                    "SELECT idx, html_sanitized, canonical_text "
+                    "FROM fragments WHERE media_id = :mid ORDER BY idx"
+                ),
+                {"mid": media_id},
+            ).fetchall()
+
+        assert len(after) == len(baseline)
+        for (b_idx, b_html, b_text), (a_idx, a_html, a_text) in zip(baseline, after, strict=True):
+            assert b_idx == a_idx
+            assert b_html == a_html, f"html_sanitized changed for chapter {b_idx}"
+            assert b_text == a_text, f"canonical_text changed for chapter {b_idx}"
+
+
+class TestEpubFragmentContentStableAcrossEmbeddingStatusTransition:
+    """Scenario 11: embedding path transition coverage.
+
+    Verifies EPUB read endpoints remain readable in embedding/ready states
+    and fragment content is byte-for-byte stable across status changes.
+    """
+
+    def test_epub_fragment_content_stable_across_embedding_status_transition(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, frag_ids = _create_ready_epub(session, num_chapters=2)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        # Snapshot baseline in ready_for_reading
+        with direct_db.session() as session:
+            baseline = session.execute(
+                text(
+                    "SELECT idx, html_sanitized, canonical_text "
+                    "FROM fragments WHERE media_id = :mid ORDER BY idx"
+                ),
+                {"mid": media_id},
+            ).fetchall()
+        assert len(baseline) == 2
+
+        for target_status in ("embedding", "ready"):
+            with direct_db.session() as session:
+                session.execute(
+                    text("UPDATE media SET processing_status = :s WHERE id = :id"),
+                    {"s": target_status, "id": media_id},
+                )
+                session.commit()
+
+            # Read endpoints remain readable
+            resp_manifest = auth_client.get(
+                f"/media/{media_id}/chapters", headers=auth_headers(user_id)
+            )
+            assert resp_manifest.status_code == 200
+            assert len(resp_manifest.json()["data"]) == 2
+
+            for idx in range(2):
+                resp_ch = auth_client.get(
+                    f"/media/{media_id}/chapters/{idx}", headers=auth_headers(user_id)
+                )
+                assert resp_ch.status_code == 200
+
+            # DB fragment content unchanged
+            with direct_db.session() as session:
+                current = session.execute(
+                    text(
+                        "SELECT idx, html_sanitized, canonical_text "
+                        "FROM fragments WHERE media_id = :mid ORDER BY idx"
+                    ),
+                    {"mid": media_id},
+                ).fetchall()
+
+            for (b_idx, b_html, b_text), (c_idx, c_html, c_text) in zip(
+                baseline, current, strict=True
+            ):
+                assert b_idx == c_idx
+                assert b_html == c_html, (
+                    f"html_sanitized changed at status={target_status} ch={b_idx}"
+                )
+                assert b_text == c_text, (
+                    f"canonical_text changed at status={target_status} ch={b_idx}"
+                )
+
+
+class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
+    """Scenarios 6/12: retry cleanup clears all extraction artifacts."""
+
+    def test_retry_epub_failed_clears_persisted_epub_artifacts_before_dispatch(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake_storage = FakeStorageClient()
+        epub_bytes = b"PK\x03\x04" + b"\x00" * 200
+        import hashlib
+
+        sha = hashlib.sha256(epub_bytes).hexdigest()
+
+        with direct_db.session() as session:
+            media_id = _create_failed_epub(session, user_id, file_sha256=sha)
+
+        fake_storage.put_object(
+            f"media/{media_id}/original.epub", epub_bytes, "application/epub+zip"
+        )
+
+        # Seed extraction artifacts that should be cleaned up on retry
+        with direct_db.session() as session:
+            frag_id = uuid4()
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                    VALUES (:fid, :mid, 0, '<p>stale</p>', 'stale')
+                """),
+                {"fid": frag_id, "mid": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragment_blocks (fragment_id, block_idx, start_offset, end_offset)
+                    VALUES (:fid, 0, 0, 5)
+                """),
+                {"fid": frag_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO epub_toc_nodes
+                        (media_id, node_id, parent_node_id, label, href,
+                         fragment_idx, depth, order_key)
+                    VALUES (:mid, 'stale', NULL, 'Stale Node', NULL, 0, 0, '0001')
+                """),
+                {"mid": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragment_blocks", "fragment_id", frag_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        from unittest.mock import MagicMock, patch
+
+        mock_dispatch = MagicMock()
+
+        with (
+            patch(
+                "nexus.services.epub_lifecycle.get_storage_client",
+                return_value=fake_storage,
+            ),
+            patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", mock_dispatch),
+        ):
+            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert data["processing_status"] == "extracting"
+        assert data["retry_enqueued"] is True
+        mock_dispatch.assert_called_once()
+
+        # Artifacts must be gone after retry reset
+        with direct_db.session() as session:
+            frag_count = session.execute(
+                text("SELECT COUNT(*) FROM fragments WHERE media_id = :mid"),
+                {"mid": media_id},
+            ).scalar()
+            assert frag_count == 0, "fragments not cleaned up"
+
+            toc_count = session.execute(
+                text("SELECT COUNT(*) FROM epub_toc_nodes WHERE media_id = :mid"),
+                {"mid": media_id},
+            ).scalar()
+            assert toc_count == 0, "epub_toc_nodes not cleaned up"
+
+            # fragment_blocks implicitly gone since fragments deleted
+            row = session.execute(
+                text(
+                    "SELECT processing_status, processing_attempts, last_error_code "
+                    "FROM media WHERE id = :id"
+                ),
+                {"id": media_id},
+            ).fetchone()
+            assert row[0] == "extracting"
+            assert row[1] == 2
+            assert row[2] is None
+
+
 class TestGetEpubAssetSuccessAndMasking:
     """test_get_epub_asset_success_and_masking"""
 
@@ -1031,6 +1296,29 @@ class TestRetryEpubEndpoint:
         with direct_db.session() as session:
             media_id = _create_failed_epub(session, user_id, file_sha256="deadbeef")
 
+        # Seed extraction artifacts that must survive precondition failure
+        with direct_db.session() as session:
+            frag_id = uuid4()
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                    VALUES (:fid, :mid, 0, '<p>preserved</p>', 'preserved')
+                """),
+                {"fid": frag_id, "mid": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO epub_toc_nodes
+                        (media_id, node_id, parent_node_id, label, href,
+                         fragment_idx, depth, order_key)
+                    VALUES (:mid, 'kept', NULL, 'Kept', NULL, 0, 0, '0001')
+                """),
+                {"mid": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_media", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1062,6 +1350,19 @@ class TestRetryEpubEndpoint:
             ).fetchone()
             assert row[0] == "failed"
             assert row[1] == 1
+
+            # Artifacts must be preserved when precondition fails
+            frag_count = session.execute(
+                text("SELECT COUNT(*) FROM fragments WHERE media_id = :mid"),
+                {"mid": media_id},
+            ).scalar()
+            assert frag_count == 1, "artifacts deleted despite precondition failure"
+
+            toc_count = session.execute(
+                text("SELECT COUNT(*) FROM epub_toc_nodes WHERE media_id = :mid"),
+                {"mid": media_id},
+            ).scalar()
+            assert toc_count == 1, "TOC nodes deleted despite precondition failure"
 
     def test_retry_preserves_source_identity_fields(
         self,

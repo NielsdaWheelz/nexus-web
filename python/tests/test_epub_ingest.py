@@ -479,6 +479,10 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
             '<p>External: <img src="https://example.com/photo.jpg" alt="ext"/></p>'
             '<p>Broken: <img src="images/missing.png" alt="gone"/></p>'
             '<p>Link: <a href="chapter2.xhtml#sec1">Jump</a></p>'
+            '<p onclick="alert(1)">Handler test</p>'
+            '<p><a href="javascript:void(0)">JS link</a></p>'
+            '<script>alert("xss")</script>'
+            '<img src="x" onerror="alert(1)"/>'
         )
 
         epub = _make_epub(
@@ -514,8 +518,14 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         assert "/media/image?url=" in html
         # broken ref degraded (src removed or empty)
         assert "images/missing.png" not in html
-        # no active content survived
+        # active content stripped: script tags
         assert "<script" not in html
+        assert "alert" not in html.lower()
+        # inline event handlers stripped
+        assert "onclick" not in html.lower()
+        assert "onerror" not in html.lower()
+        # javascript: protocol stripped from href
+        assert "javascript:" not in html.lower()
 
 
 class TestEpubExtractRejectsUnsafeArchiveWithTerminalCode:
