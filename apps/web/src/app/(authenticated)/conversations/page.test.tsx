@@ -113,24 +113,75 @@ describe("ConversationsPage attach-context", () => {
   });
 
   it("send includes attached context and clears state", async () => {
-    // Verify the ChatComposer receives attached contexts by checking the DOM
-    // then verify that removing a chip changes the state.
-    // The full send flow (API call with contexts payload) is covered by
-    // ChatComposer's own integration with the SSE module and by the backend
-    // EPUB quote-to-chat tests.
-    renderPage(`attach_type=highlight&attach_id=${VALID_UUID}`);
+    const CONV_ID = "new-conv-00-1111-2222-333344445555";
+    renderPage(`attach_type=highlight&attach_id=${VALID_UUID}&extra=keep`);
 
-    // Composer is active with chip
     await waitFor(() => {
       expect(screen.queryAllByText(/highlight:/i).length).toBeGreaterThanOrEqual(1);
     });
 
-    // Verify the UUID is rendered in the chip
     expect(screen.getByText(new RegExp(VALID_UUID.slice(0, 8)))).toBeTruthy();
 
-    // Send button exists and textarea is available (composer is wired)
+    // Override apiFetch to handle the send POST (non-streaming path)
+    mockApiFetch.mockImplementation(async (url: string, opts?: RequestInit) => {
+      if (url.startsWith("/api/conversations/messages") && opts?.method === "POST") {
+        const body = JSON.parse(opts.body as string);
+        expect(body.contexts).toBeDefined();
+        expect(body.contexts[0].type).toBe("highlight");
+        expect(body.contexts[0].id).toBe(VALID_UUID);
+
+        return {
+          data: {
+            conversation: { id: CONV_ID },
+            user_message: {
+              id: "msg-u",
+              seq: 1,
+              role: "user",
+              content: body.content,
+              status: "complete",
+              error_code: null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+            assistant_message: {
+              id: "msg-a",
+              seq: 2,
+              role: "assistant",
+              content: "Reply",
+              status: "complete",
+              error_code: null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          },
+        };
+      }
+      if (url.startsWith("/api/conversations")) {
+        return { data: [], page: { next_cursor: null } };
+      }
+      if (url.startsWith("/api/models")) {
+        return {
+          data: [{ id: "model-1", provider: "openai", model_name: "gpt-4o", max_context_tokens: 128000 }],
+        };
+      }
+      return { data: [] };
+    });
+
     const textarea = screen.getByPlaceholderText(/type a message/i);
-    expect(textarea).toBeTruthy();
+    await userEvent.type(textarea, "hello");
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalled();
+    });
+
+    // router.replace strips attach params; extra params preserved
+    const replaceUrl = mockReplace.mock.calls[0][0] as string;
+    expect(replaceUrl).not.toContain("attach_type");
+    expect(replaceUrl).not.toContain("attach_id");
+
+    // router.push navigates to new conversation
+    expect(mockPush).toHaveBeenCalledWith(`/conversations/${CONV_ID}`);
   });
 
   it("send failure retains attach state", async () => {

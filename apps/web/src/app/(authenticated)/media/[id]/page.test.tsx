@@ -93,6 +93,7 @@ vi.mock("@/components/PaneContainer", () => ({
   ),
 }));
 
+/* eslint-disable react/no-danger */
 vi.mock("@/components/HtmlRenderer", () => ({
   default: ({
     htmlSanitized,
@@ -100,16 +101,15 @@ vi.mock("@/components/HtmlRenderer", () => ({
   }: {
     htmlSanitized: string;
     className?: string;
-  }) => {
-    const div = document.createElement("div");
-    div.setAttribute("data-testid", "html-renderer");
-    if (className) div.className = className;
-    div.innerHTML = htmlSanitized;
-    return <div data-testid="html-renderer" className={className} ref={(el) => {
-      if (el) el.innerHTML = htmlSanitized;
-    }} />;
-  },
+  }) => (
+    <div
+      data-testid="html-renderer"
+      className={className}
+      dangerouslySetInnerHTML={{ __html: htmlSanitized }}
+    />
+  ),
 }));
+/* eslint-enable react/no-danger */
 
 vi.mock("@/components/SelectionPopover", () => ({
   default: () => null,
@@ -560,7 +560,9 @@ describe("EPUB reader", () => {
   });
 
   it("uses server sanitized chapter HTML without extra client rewrite", async () => {
-    const customHtml = "<p>Server sanitized content</p>";
+    const customHtml =
+      '<p>Server <strong>sanitized</strong> content</p>' +
+      '<img src="/media/test-id/assets/images/fig.png" alt="fig"/>';
     const detail = {
       ...makeChapterDetail(0, null, 1),
       html_sanitized: customHtml,
@@ -570,11 +572,15 @@ describe("EPUB reader", () => {
     await renderPage("chapter=0");
 
     await waitFor(() => {
-      expect(screen.getByText("Server sanitized content")).toBeInTheDocument();
+      expect(screen.getByText(/Server/)).toBeInTheDocument();
     });
 
     const renderer = screen.getByTestId("html-renderer");
-    expect(renderer.innerHTML).toContain("Server sanitized content");
+    // dangerouslySetInnerHTML renders the exact server HTML
+    expect(renderer.innerHTML).toContain("<p>Server <strong>sanitized</strong> content</p>");
+    expect(renderer.innerHTML).toContain('/media/test-id/assets/images/fig.png');
+    // No client-side rewrite artifacts
+    expect(renderer.innerHTML).not.toContain("data-rewritten");
   });
 
   it("chapter switch refetches highlights for new fragment", async () => {
