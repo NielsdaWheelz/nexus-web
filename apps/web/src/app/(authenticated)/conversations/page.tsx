@@ -7,10 +7,15 @@
 
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Suspense, useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import type { ContextItem } from "@/lib/api/sse";
+import {
+  parseAttachContext,
+  stripAttachParams,
+} from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
 import styles from "./page.module.css";
 
@@ -36,12 +41,46 @@ interface ConversationsResponse {
 // ============================================================================
 
 export default function ConversationsPage() {
+  return (
+    <Suspense fallback={<div className={styles.loading}>Loading...</div>}>
+      <ConversationsPageInner />
+    </Suspense>
+  );
+}
+
+function ConversationsPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [showNewChat, setShowNewChat] = useState(false);
+
+  const initialAttach = useMemo(
+    () => parseAttachContext(searchParams),
+    [searchParams],
+  );
+  const [attachedContexts, setAttachedContexts] =
+    useState<ContextItem[]>(initialAttach);
+
+  useEffect(() => {
+    if (initialAttach.length > 0) {
+      setAttachedContexts(initialAttach);
+      setShowNewChat(true);
+    }
+  }, [initialAttach]);
+
+  const handleRemoveContext = useCallback((index: number) => {
+    setAttachedContexts((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const clearAttachState = useCallback(() => {
+    setAttachedContexts([]);
+    const cleaned = stripAttachParams(searchParams);
+    const qs = cleaned.toString();
+    router.replace(qs ? `/conversations?${qs}` : "/conversations");
+  }, [router, searchParams]);
 
   // Fetch conversations
   const fetchConversations = useCallback(
@@ -79,9 +118,10 @@ export default function ConversationsPage() {
 
   const handleNewConversation = useCallback(
     (conversationId: string) => {
+      clearAttachState();
       router.push(`/conversations/${conversationId}`);
     },
-    [router]
+    [router, clearAttachState]
   );
 
   return (
@@ -140,6 +180,8 @@ export default function ConversationsPage() {
             </div>
             <ChatComposer
               conversationId={null}
+              attachedContexts={attachedContexts}
+              onRemoveContext={handleRemoveContext}
               onConversationCreated={handleNewConversation}
               onMessageSent={() => fetchConversations()}
             />

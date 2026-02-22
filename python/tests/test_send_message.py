@@ -28,12 +28,15 @@ from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.types import LLMResponse, LLMUsage
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 from tests.factories import (
+    create_epub_chapter_fragment,
+    create_epub_media_in_library,
     create_test_conversation,
     create_test_fragment,
     create_test_highlight,
     create_test_media_in_library,
     create_test_message,
     create_test_model,
+    get_user_default_library,
     get_user_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
@@ -1271,3 +1274,190 @@ class TestSendMessageOwnerFields:
         conv_data = response.json()["data"]["conversation"]
         assert conv_data["owner_user_id"] == str(user_id)
         assert conv_data["is_owner"] is True
+
+
+# =============================================================================
+# S5 PR-06: EPUB Quote-to-Chat Compatibility Tests
+# =============================================================================
+
+EPUB_QTC_CH0 = "UNIQUE_SENTINEL_CHAPTER_ZERO content alpha."
+EPUB_QTC_CH1 = "UNIQUE_SENTINEL_CHAPTER_ONE content bravo fragment text for quote."
+
+
+class TestSendMessageEpubQuoteToChat:
+    """PR-06: EPUB highlight contexts render via existing fragment logic."""
+
+    def _setup_epub_with_highlight(self, session, user_id):
+        """Create EPUB media, two chapter fragments, highlight on ch1."""
+        lib_id = get_user_default_library(session, user_id)
+        media_id = create_epub_media_in_library(session, user_id, lib_id)
+        frag0 = create_epub_chapter_fragment(session, media_id, 0, EPUB_QTC_CH0)
+        frag1 = create_epub_chapter_fragment(session, media_id, 1, EPUB_QTC_CH1)
+        hl_id = uuid4()
+        exact_text = "UNIQUE_SENTINEL_CHAPTER_ONE"
+        session.execute(
+            text("""
+                INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
+                                        color, exact, prefix, suffix)
+                VALUES (:id, :user_id, :fragment_id, 0, :end_offset, 'yellow', :exact, '', :suffix)
+            """),
+            {
+                "id": hl_id,
+                "user_id": user_id,
+                "fragment_id": frag1,
+                "end_offset": len(exact_text),
+                "exact": exact_text,
+                "suffix": EPUB_QTC_CH1[len(exact_text) : len(exact_text) + 64],
+            },
+        )
+        session.commit()
+        return media_id, frag0, frag1, hl_id
+
+    def test_send_message_with_epub_highlight_context_renders_fragment_based_quote_context(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        mock_llm_response,
+    ):
+        """EPUB highlight context renders quote from fragment canonical text."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id, frag0, frag1, hl_id = self._setup_epub_with_highlight(session, user_id)
+
+        direct_db.register_cleanup("highlights", "id", hl_id)
+        direct_db.register_cleanup("fragments", "id", frag0)
+        direct_db.register_cleanup("fragments", "id", frag1)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        captured_prompts = []
+
+        def capture_generate(*args, **kwargs):
+            if args:
+                captured_prompts.append(args)
+            return mock_llm_response
+
+        with (
+            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
+            patch("nexus.services.send_message.generate") as mock_generate,
+        ):
+            mock_resolve.return_value = ResolvedKey(
+                api_key="test-key", mode="platform", provider="openai"
+            )
+            mock_generate.side_effect = capture_generate
+
+            response = auth_client.post(
+                "/conversations/messages",
+                headers=auth_headers(user_id),
+                json={
+                    "content": "Explain this quote",
+                    "model_id": str(model_id),
+                    "contexts": [{"type": "highlight", "id": str(hl_id)}],
+                },
+            )
+
+        assert response.status_code == 200
+        conv_id = response.json()["data"]["conversation"]["id"]
+        direct_db.register_cleanup("messages", "conversation_id", conv_id)
+        direct_db.register_cleanup("conversations", "id", conv_id)
+
+    def test_send_message_with_epub_highlight_context_is_chapter_local_not_book_global(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        mock_llm_response,
+    ):
+        """Context rendering includes only target chapter, not adjacent chapters."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id, frag0, frag1, hl_id = self._setup_epub_with_highlight(session, user_id)
+
+        direct_db.register_cleanup("highlights", "id", hl_id)
+        direct_db.register_cleanup("fragments", "id", frag0)
+        direct_db.register_cleanup("fragments", "id", frag1)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        captured_system_prompts = []
+
+        def capture_generate(*args, **kwargs):
+            captured_system_prompts.append(args)
+            return mock_llm_response
+
+        with (
+            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
+            patch("nexus.services.send_message.generate") as mock_generate,
+        ):
+            mock_resolve.return_value = ResolvedKey(
+                api_key="test-key", mode="platform", provider="openai"
+            )
+            mock_generate.side_effect = capture_generate
+
+            response = auth_client.post(
+                "/conversations/messages",
+                headers=auth_headers(user_id),
+                json={
+                    "content": "What does this mean?",
+                    "model_id": str(model_id),
+                    "contexts": [{"type": "highlight", "id": str(hl_id)}],
+                },
+            )
+
+        assert response.status_code == 200
+
+        assert len(captured_system_prompts) >= 1
+        all_prompt_text = str(captured_system_prompts)
+        assert "UNIQUE_SENTINEL_CHAPTER_ONE" in all_prompt_text
+        assert "UNIQUE_SENTINEL_CHAPTER_ZERO" not in all_prompt_text
+
+        conv_id = response.json()["data"]["conversation"]["id"]
+        direct_db.register_cleanup("messages", "conversation_id", conv_id)
+        direct_db.register_cleanup("conversations", "id", conv_id)
+
+    def test_send_message_with_epub_highlight_context_not_visible_returns_404_e_not_found(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+    ):
+        """Non-visible EPUB highlight context returns masked 404 E_NOT_FOUND."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id, frag0, frag1, hl_id = self._setup_epub_with_highlight(session, user_a)
+
+        direct_db.register_cleanup("highlights", "id", hl_id)
+        direct_db.register_cleanup("fragments", "id", frag0)
+        direct_db.register_cleanup("fragments", "id", frag1)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
+            mock_resolve.return_value = ResolvedKey(
+                api_key="test-key", mode="platform", provider="openai"
+            )
+
+            response = auth_client.post(
+                "/conversations/messages",
+                headers=auth_headers(user_b),
+                json={
+                    "content": "Explain this",
+                    "model_id": str(model_id),
+                    "contexts": [{"type": "highlight", "id": str(hl_id)}],
+                },
+            )
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_NOT_FOUND"

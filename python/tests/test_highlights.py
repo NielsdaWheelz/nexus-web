@@ -31,6 +31,11 @@ from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
+from tests.factories import (
+    create_epub_chapter_fragment,
+    create_epub_media_in_library,
+    get_user_default_library,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
@@ -1605,3 +1610,136 @@ class TestHighlightSharedRead:
         assert returned_ids == sorted(returned_ids), (
             "Highlights with tied start_offset+created_at must be ordered by id ASC"
         )
+
+
+# =============================================================================
+# S5 PR-06: EPUB Highlight Compatibility Tests
+# =============================================================================
+
+EPUB_CH0_TEXT = "SENTINEL_ZERO Alpha chapter zero content here."
+EPUB_CH1_TEXT = "SENTINEL_ONE Bravo chapter one body text unicode café résumé."
+EPUB_CH2_TEXT = "SENTINEL_TWO Charlie chapter two trailing content."
+
+
+class TestEpubHighlightCompatibility:
+    """PR-06: Prove existing highlight APIs work on EPUB chapter fragments."""
+
+    def _setup_epub(self, session, user_id):
+        """Create ready EPUB with 3 chapter fragments, linked to user library."""
+        lib_id = get_user_default_library(session, user_id)
+        media_id = create_epub_media_in_library(session, user_id, lib_id)
+        frag_ids = []
+        for idx, text_content in enumerate([EPUB_CH0_TEXT, EPUB_CH1_TEXT, EPUB_CH2_TEXT]):
+            fid = create_epub_chapter_fragment(session, media_id, idx, text_content)
+            frag_ids.append(fid)
+        return media_id, frag_ids
+
+    def test_epub_highlight_scopes_to_target_fragment_only(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Highlight on chapter idx=1 does not appear on idx=0 or idx=2."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id, frag_ids = self._setup_epub(session, user_id)
+
+        for fid in frag_ids:
+            direct_db.register_cleanup("highlights", "fragment_id", fid)
+            direct_db.register_cleanup("fragments", "id", fid)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        ch1_frag = frag_ids[1]
+        resp = auth_client.post(
+            f"/fragments/{ch1_frag}/highlights",
+            json={"start_offset": 0, "end_offset": 12, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 201
+        hl_data = resp.json()["data"]
+        assert hl_data["fragment_id"] == str(ch1_frag)
+        assert hl_data["exact"] == "SENTINEL_ONE"
+
+        for other_idx in [0, 2]:
+            other_frag = frag_ids[other_idx]
+            list_resp = auth_client.get(
+                f"/fragments/{other_frag}/highlights",
+                headers=auth_headers(user_id),
+            )
+            assert list_resp.status_code == 200
+            assert len(list_resp.json()["data"]["highlights"]) == 0, (
+                f"Chapter idx={other_idx} should have no highlights"
+            )
+
+    def test_epub_highlight_exact_prefix_suffix_derived_from_chapter_canonical_text(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """exact/prefix/suffix are derived from the chapter fragment's canonical text."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id, frag_ids = self._setup_epub(session, user_id)
+
+        for fid in frag_ids:
+            direct_db.register_cleanup("highlights", "fragment_id", fid)
+            direct_db.register_cleanup("fragments", "id", fid)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # Highlight "café" in chapter 1 text
+        # EPUB_CH1_TEXT = "SENTINEL_ONE Bravo chapter one body text unicode café résumé."
+        cafe_start = EPUB_CH1_TEXT.index("café")
+        cafe_end = cafe_start + len("café")
+
+        resp = auth_client.post(
+            f"/fragments/{frag_ids[1]}/highlights",
+            json={"start_offset": cafe_start, "end_offset": cafe_end, "color": "green"},
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 201
+        data = resp.json()["data"]
+        assert data["exact"] == "café"
+        assert data["start_offset"] == cafe_start
+        assert data["end_offset"] == cafe_end
+        assert len(data["prefix"]) <= 64
+        assert len(data["suffix"]) <= 64
+        # prefix/suffix must come from EPUB_CH1_TEXT, not other chapters
+        if data["prefix"]:
+            assert data["prefix"] in EPUB_CH1_TEXT
+        if data["suffix"]:
+            assert data["suffix"] in EPUB_CH1_TEXT
+
+    def test_epub_highlight_rejects_legacy_global_offsets_as_invalid_range(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Offsets valid only in a concatenated-book domain are rejected."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id, frag_ids = self._setup_epub(session, user_id)
+
+        for fid in frag_ids:
+            direct_db.register_cleanup("highlights", "fragment_id", fid)
+            direct_db.register_cleanup("fragments", "id", fid)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # Chapter 1 has len(EPUB_CH1_TEXT) codepoints.
+        # Use an offset past that range (as if it were a global offset
+        # counting from start of chapter 0).
+        global_offset = len(EPUB_CH0_TEXT) + len(EPUB_CH1_TEXT) + 5
+
+        resp = auth_client.post(
+            f"/fragments/{frag_ids[1]}/highlights",
+            json={
+                "start_offset": len(EPUB_CH1_TEXT) - 2,
+                "end_offset": global_offset,
+                "color": "yellow",
+            },
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "E_HIGHLIGHT_INVALID_RANGE"

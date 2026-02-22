@@ -1788,3 +1788,41 @@ class TestGetEpubChaptersInvalidLimitCursorAndIdxAre400:
         # Invalid chapter idx: -1
         resp = auth_client.get(f"/media/{media_id}/chapters/-1", headers=auth_headers(user_id))
         assert resp.status_code == 400
+
+
+# =============================================================================
+# S5 PR-06: /media/{id}/fragments compatibility on EPUB
+# =============================================================================
+
+
+class TestGetFragmentsEpubReady:
+    """PR-06: existing /media/{id}/fragments returns all EPUB chapters ordered by idx."""
+
+    def test_get_fragments_epub_ready_returns_all_chapters_ordered_by_idx(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, frag_ids = _create_ready_epub(session, num_chapters=4)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}/fragments", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        fragments = resp.json()["data"]
+        assert len(fragments) == 4
+
+        for i, frag in enumerate(fragments):
+            assert frag["idx"] == i
+            assert "html_sanitized" in frag
+            assert "canonical_text" in frag
+            assert frag["id"] == str(frag_ids[i])
+
+        returned_idxs = [f["idx"] for f in fragments]
+        assert returned_idxs == sorted(returned_idxs), "Fragments must be ordered by idx ASC"
