@@ -220,6 +220,7 @@ test-front-unit:
 	cd apps/web && npx vitest run --project unit
 
 test-front-browser:
+	@npx playwright install chromium >/dev/null 2>&1 || npx playwright install chromium
 	cd apps/web && npx vitest run --project browser
 
 test-e2e:
