@@ -5,6 +5,7 @@ Enums are defined as Python enums and mapped to PostgreSQL enum types.
 """
 
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum as PyEnum
 from uuid import UUID
 
@@ -15,6 +16,8 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Integer,
+    Numeric,
+    SmallInteger,
     Text,
     UniqueConstraint,
     text,
@@ -285,6 +288,10 @@ class Media(Base):
         nullable=True,
     )
 
+    # S6 PDF text readiness fields
+    plain_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -312,6 +319,10 @@ class Media(Base):
             "canonical_url IS NULL OR char_length(canonical_url) <= 2048",
             name="ck_media_canonical_url_length",
         ),
+        CheckConstraint(
+            "page_count IS NULL OR page_count >= 1",
+            name="ck_media_page_count_positive",
+        ),
     )
 
     # Relationships
@@ -324,6 +335,9 @@ class Media(Base):
     )
     media_file: Mapped["MediaFile | None"] = relationship(
         "MediaFile", back_populates="media", cascade="all, delete-orphan", uselist=False
+    )
+    pdf_page_text_spans: Mapped[list["PdfPageTextSpan"]] = relationship(
+        "PdfPageTextSpan", back_populates="media", cascade="all, delete-orphan"
     )
 
 
@@ -414,16 +428,18 @@ class LibraryMedia(Base):
 
 
 class Highlight(Base):
-    """Highlight model - a user-owned selection in a fragment.
+    """Highlight model - a user-owned selection anchored to media content.
 
-    Offsets are half-open [start_offset, end_offset) in Unicode codepoints
-    over fragment.canonical_text. Overlapping highlights are allowed.
-    Duplicate highlights at the exact same span by the same user are forbidden.
+    Supports typed anchor subtypes:
+    - fragment_offsets: half-open [start_offset, end_offset) over canonical_text
+    - pdf_page_geometry: page-space geometry (quads/rects) on a PDF page
 
-    The exact, prefix, and suffix fields are server-derived and persisted for:
-    - Cheap reads
-    - Debugging
-    - Future repair tooling (out of scope for v1)
+    Legacy fragment columns (fragment_id, start_offset, end_offset) are a
+    transitional nullable bridge.  For fragment-backed highlights all three
+    are non-NULL; for non-fragment highlights all three are NULL.
+
+    The anchor_kind / anchor_media_id fields are dormant until pr-02 kernel
+    adoption and are NULL for rows created through legacy fragment codepaths.
     """
 
     __tablename__ = "highlights"
@@ -438,13 +454,24 @@ class Highlight(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
-    fragment_id: Mapped[UUID] = mapped_column(
+
+    # Legacy fragment columns — nullable bridge (S6 pr-01)
+    fragment_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("fragments.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
-    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # S6 typed-highlight logical fields (dormant until pr-02)
+    anchor_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
+    anchor_media_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
     color: Mapped[str] = mapped_column(Text, nullable=False)
     exact: Mapped[str] = mapped_column(Text, nullable=False)
     prefix: Mapped[str] = mapped_column(Text, nullable=False)
@@ -462,12 +489,25 @@ class Highlight(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "start_offset >= 0 AND end_offset > start_offset",
-            name="ck_highlights_offsets_valid",
+            "(fragment_id IS NOT NULL AND start_offset IS NOT NULL "
+            "AND end_offset IS NOT NULL AND start_offset >= 0 "
+            "AND end_offset > start_offset) "
+            "OR (fragment_id IS NULL AND start_offset IS NULL "
+            "AND end_offset IS NULL)",
+            name="ck_highlights_fragment_bridge",
         ),
         CheckConstraint(
             "color IN ('yellow','green','blue','pink','purple')",
             name="ck_highlights_color",
+        ),
+        CheckConstraint(
+            "(anchor_kind IS NULL AND anchor_media_id IS NULL) "
+            "OR (anchor_kind IS NOT NULL AND anchor_media_id IS NOT NULL)",
+            name="ck_highlights_anchor_fields_paired_null",
+        ),
+        CheckConstraint(
+            "anchor_kind IS NULL OR anchor_kind IN ('fragment_offsets', 'pdf_page_geometry')",
+            name="ck_highlights_anchor_kind_valid",
         ),
         UniqueConstraint(
             "user_id",
@@ -478,8 +518,8 @@ class Highlight(Base):
         ),
     )
 
-    # Relationships (PR-06)
-    fragment: Mapped["Fragment"] = relationship(
+    # Relationships
+    fragment: Mapped["Fragment | None"] = relationship(
         "Fragment", back_populates="highlights", lazy="joined"
     )
     annotation: Mapped["Annotation | None"] = relationship(
@@ -487,7 +527,27 @@ class Highlight(Base):
         uselist=False,
         back_populates="highlight",
         lazy="joined",
-        passive_deletes=True,  # Let database handle ON DELETE CASCADE
+        passive_deletes=True,
+    )
+    fragment_anchor: Mapped["HighlightFragmentAnchor | None"] = relationship(
+        "HighlightFragmentAnchor",
+        back_populates="highlight",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    pdf_anchor: Mapped["HighlightPdfAnchor | None"] = relationship(
+        "HighlightPdfAnchor",
+        back_populates="highlight",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    pdf_quads: Mapped[list["HighlightPdfQuad"]] = relationship(
+        "HighlightPdfQuad",
+        back_populates="highlight",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -534,6 +594,174 @@ class Annotation(Base):
 
     # Relationships (PR-06)
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="annotation")
+
+
+# =============================================================================
+# Slice 6: Typed Highlight Anchor Subtypes + PDF Text Artifacts
+# =============================================================================
+
+
+class HighlightFragmentAnchor(Base):
+    """Fragment-offset anchor subtype (1:1 with highlights).
+
+    Stores the canonical fragment/offset data for html/epub/transcript
+    highlights.  Dormant in pr-01; pr-02 adopts typed-write paths.
+    """
+
+    __tablename__ = "highlight_fragment_anchors"
+
+    highlight_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("highlights.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    fragment_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("fragments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "start_offset >= 0 AND end_offset > start_offset",
+            name="ck_hfa_offsets_valid",
+        ),
+    )
+
+    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="fragment_anchor")
+    fragment: Mapped["Fragment"] = relationship("Fragment")
+
+
+class HighlightPdfAnchor(Base):
+    """PDF geometry anchor subtype (1:1 with highlights).
+
+    Stores page-space geometry metadata, duplicate-detection fingerprint,
+    and persisted quote-match metadata for PDF highlights.
+    """
+
+    __tablename__ = "highlight_pdf_anchors"
+
+    highlight_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("highlights.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    geometry_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    geometry_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_top: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    sort_left: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    plain_text_match_version: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    plain_text_match_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="pending"
+    )
+    plain_text_start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    plain_text_end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rect_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("page_number >= 1", name="ck_hpa_page_number"),
+        CheckConstraint("geometry_version >= 1", name="ck_hpa_geometry_version"),
+        CheckConstraint("rect_count >= 1", name="ck_hpa_rect_count"),
+        CheckConstraint(
+            "plain_text_match_status IN "
+            "('pending', 'unique', 'ambiguous', 'no_match', 'empty_exact')",
+            name="ck_hpa_match_status",
+        ),
+        CheckConstraint(
+            "plain_text_match_version IS NULL OR plain_text_match_version >= 1",
+            name="ck_hpa_match_version",
+        ),
+        CheckConstraint(
+            "(plain_text_start_offset IS NULL OR plain_text_start_offset >= 0) "
+            "AND (plain_text_end_offset IS NULL OR plain_text_end_offset >= 0)",
+            name="ck_hpa_match_offsets_non_negative",
+        ),
+        CheckConstraint(
+            "(plain_text_start_offset IS NULL AND plain_text_end_offset IS NULL) "
+            "OR (plain_text_start_offset IS NOT NULL "
+            "AND plain_text_end_offset IS NOT NULL)",
+            name="ck_hpa_match_offsets_paired_null",
+        ),
+    )
+
+    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="pdf_anchor")
+    media: Mapped["Media"] = relationship("Media")
+
+
+class HighlightPdfQuad(Base):
+    """PDF geometry segment (quad/rect) for a PDF highlight.
+
+    Composite PK: (highlight_id, quad_idx).
+    Coordinates are in canonical page-space points.
+    """
+
+    __tablename__ = "highlight_pdf_quads"
+
+    highlight_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("highlights.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    quad_idx: Mapped[int] = mapped_column(Integer, primary_key=True)
+    x1: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    y1: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    x2: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    y2: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    x3: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    y3: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    x4: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    y4: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+
+    __table_args__ = (CheckConstraint("quad_idx >= 0", name="ck_hpq_quad_idx"),)
+
+    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="pdf_quads")
+
+
+class PdfPageTextSpan(Base):
+    """Page-indexed offsets into media.plain_text for PDF quote matching.
+
+    Composite PK: (media_id, page_number).
+    Offsets are Unicode codepoint spans in the post-normalization plain_text.
+    """
+
+    __tablename__ = "pdf_page_text_spans"
+
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    page_number: Mapped[int] = mapped_column(Integer, primary_key=True)
+    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    text_extract_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("page_number >= 1", name="ck_ppts_page_number"),
+        CheckConstraint("start_offset >= 0", name="ck_ppts_start_offset"),
+        CheckConstraint("end_offset >= start_offset", name="ck_ppts_offsets_valid"),
+        CheckConstraint("text_extract_version >= 1", name="ck_ppts_extract_version"),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="pdf_page_text_spans")
 
 
 # =============================================================================

@@ -369,3 +369,50 @@ class TestModelsAuth:
 
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "E_UNAUTHENTICATED"
+
+
+# =============================================================================
+# S6 PR-01: ORM Mapper Compatibility
+# =============================================================================
+
+
+class TestS6PR01OrmMapperCompatibility:
+    """ORM mapper tests for S6 typed-highlight data foundation."""
+
+    def test_pr01_orm_models_import_and_map_with_typed_anchor_foundation(self):
+        """Mapper configuration succeeds with S6 models and relationships."""
+        from nexus.db.models import (
+            Annotation,
+            Highlight,
+            HighlightFragmentAnchor,
+            HighlightPdfAnchor,
+            HighlightPdfQuad,
+            Media,
+            PdfPageTextSpan,
+        )
+
+        assert Highlight.__tablename__ == "highlights"
+        assert HighlightFragmentAnchor.__tablename__ == "highlight_fragment_anchors"
+        assert HighlightPdfAnchor.__tablename__ == "highlight_pdf_anchors"
+        assert HighlightPdfQuad.__tablename__ == "highlight_pdf_quads"
+        assert PdfPageTextSpan.__tablename__ == "pdf_page_text_spans"
+
+        # Verify new fields exist on Highlight
+        h_cols = {c.name for c in Highlight.__table__.columns}
+        assert "anchor_kind" in h_cols
+        assert "anchor_media_id" in h_cols
+        assert "fragment_id" in h_cols  # legacy bridge
+
+        # Verify new fields on Media
+        m_cols = {c.name for c in Media.__table__.columns}
+        assert "plain_text" in m_cols
+        assert "page_count" in m_cols
+
+        # Verify relationships don't break existing mappings
+        assert hasattr(Highlight, "fragment_anchor")
+        assert hasattr(Highlight, "pdf_anchor")
+        assert hasattr(Highlight, "pdf_quads")
+        assert hasattr(Highlight, "annotation")
+        assert hasattr(Highlight, "fragment")
+        assert hasattr(Annotation, "highlight")
+        assert hasattr(Media, "pdf_page_text_spans")

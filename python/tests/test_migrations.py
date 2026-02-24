@@ -647,7 +647,12 @@ class TestS2HighlightsAnnotationsConstraints:
             session.commit()
 
     def test_invalid_highlight_offsets_rejected(self, migrated_engine):
-        """CHECK constraint prevents invalid offset ranges."""
+        """CHECK constraint prevents invalid offset ranges.
+
+        After S6 pr-01, the constraint name changed from ck_highlights_offsets_valid
+        to ck_highlights_fragment_bridge (transitional nullable bridge), but the
+        enforcement semantics for fragment rows remain identical.
+        """
         with Session(migrated_engine) as session:
             user_id = uuid4()
             media_id = uuid4()
@@ -683,7 +688,7 @@ class TestS2HighlightsAnnotationsConstraints:
                 session.commit()
 
             session.rollback()
-            assert "ck_highlights_offsets_valid" in str(exc_info.value)
+            assert "ck_highlights_fragment_bridge" in str(exc_info.value)
 
             # Test case 2: end_offset < start_offset
             with pytest.raises(IntegrityError) as exc_info:
@@ -697,7 +702,7 @@ class TestS2HighlightsAnnotationsConstraints:
                 session.commit()
 
             session.rollback()
-            assert "ck_highlights_offsets_valid" in str(exc_info.value)
+            assert "ck_highlights_fragment_bridge" in str(exc_info.value)
 
             # Test case 3: negative start_offset
             with pytest.raises(IntegrityError) as exc_info:
@@ -711,7 +716,7 @@ class TestS2HighlightsAnnotationsConstraints:
                 session.commit()
 
             session.rollback()
-            assert "ck_highlights_offsets_valid" in str(exc_info.value)
+            assert "ck_highlights_fragment_bridge" in str(exc_info.value)
 
             # Clean up
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
@@ -2418,3 +2423,887 @@ class TestS3SchemaConstraints:
 
             session.rollback()
             assert "uix_models_provider_model_name" in str(exc_info.value)
+
+
+# =============================================================================
+# Slice 6 PR-01: Typed-Highlight Data Foundation (migration 0009)
+# =============================================================================
+
+
+class TestS6PR01Migration0009:
+    """Tests for S6 PR-01 migration 0009 — typed-highlight data foundation.
+
+    Each test self-manages migration state (downgrade base -> upgrade target).
+    """
+
+    @pytest.fixture(autouse=True)
+    def isolate_migration(self):
+        """Start and end each test at a clean base state, restore to head."""
+        run_alembic_command("downgrade base")
+        yield
+        run_alembic_command("downgrade base")
+        run_alembic_command("upgrade head")
+
+    @pytest.fixture
+    def s6_engine(self):
+        """Provide a dedicated engine for S6 tests."""
+        database_url = get_test_database_url()
+        engine = create_engine(database_url)
+        yield engine
+        engine.dispose()
+
+    def _upgrade_to_head(self):
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade failed: {result.stderr}"
+
+    def _create_base_fixtures(self, session):
+        """Insert user + web_article media + fragment, return ids."""
+        user_id = uuid4()
+        media_id = uuid4()
+        fragment_id = uuid4()
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        session.execute(
+            text(
+                "INSERT INTO media (id, kind, title, processing_status, "
+                "created_by_user_id) VALUES (:id, 'web_article', 'Test', "
+                "'ready_for_reading', :uid)"
+            ),
+            {"id": media_id, "uid": user_id},
+        )
+        session.execute(
+            text(
+                "INSERT INTO fragments (id, media_id, idx, canonical_text, "
+                "html_sanitized) VALUES (:id, :mid, 0, 'Hello world test', "
+                "'<p>Hello world test</p>')"
+            ),
+            {"id": fragment_id, "mid": media_id},
+        )
+        session.commit()
+        return user_id, media_id, fragment_id
+
+    # ------------------------------------------------------------------
+    # test_pr01_adds_s6_typed_highlight_foundation_tables_and_columns
+    # ------------------------------------------------------------------
+    def test_pr01_adds_s6_typed_highlight_foundation_tables_and_columns(self, s6_engine):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            # New tables exist
+            for tbl in (
+                "highlight_fragment_anchors",
+                "highlight_pdf_anchors",
+                "highlight_pdf_quads",
+                "pdf_page_text_spans",
+            ):
+                row = session.execute(
+                    text("SELECT 1 FROM information_schema.tables WHERE table_name = :t"),
+                    {"t": tbl},
+                ).fetchone()
+                assert row is not None, f"table {tbl} must exist"
+
+            # New columns on media
+            for col in ("plain_text", "page_count"):
+                row = session.execute(
+                    text(
+                        "SELECT is_nullable FROM information_schema.columns "
+                        "WHERE table_name = 'media' AND column_name = :c"
+                    ),
+                    {"c": col},
+                ).fetchone()
+                assert row is not None, f"media.{col} must exist"
+                assert row[0] == "YES", f"media.{col} must be nullable"
+
+            # New columns on highlights
+            for col in ("anchor_kind", "anchor_media_id"):
+                row = session.execute(
+                    text(
+                        "SELECT is_nullable FROM information_schema.columns "
+                        "WHERE table_name = 'highlights' AND column_name = :c"
+                    ),
+                    {"c": col},
+                ).fetchone()
+                assert row is not None, f"highlights.{col} must exist"
+                assert row[0] == "YES", f"highlights.{col} must be nullable"
+
+            # Fragment columns are now nullable
+            for col in ("fragment_id", "start_offset", "end_offset"):
+                row = session.execute(
+                    text(
+                        "SELECT is_nullable FROM information_schema.columns "
+                        "WHERE table_name = 'highlights' AND column_name = :c"
+                    ),
+                    {"c": col},
+                ).fetchone()
+                assert row is not None
+                assert row[0] == "YES", f"highlights.{col} must be nullable"
+
+            # Check constraints exist on highlights
+            constraints = session.execute(
+                text(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE conrelid = 'highlights'::regclass "
+                    "AND contype = 'c'"
+                )
+            ).fetchall()
+            cnames = {r[0] for r in constraints}
+            assert "ck_highlights_fragment_bridge" in cnames
+            assert "ck_highlights_anchor_fields_paired_null" in cnames
+            assert "ck_highlights_anchor_kind_valid" in cnames
+            assert "ck_highlights_color" in cnames
+
+            # Supporting PDF indexes exist
+            indexes = session.execute(
+                text("SELECT indexname FROM pg_indexes WHERE tablename = 'highlight_pdf_anchors'")
+            ).fetchall()
+            inames = {r[0] for r in indexes}
+            assert "ix_hpa_media_page_sort" in inames
+            assert "ix_hpa_geometry_lookup" in inames
+
+    # ------------------------------------------------------------------
+    # test_pr01_media_page_count_domain_check
+    # ------------------------------------------------------------------
+    def test_pr01_media_page_count_domain_check(self, s6_engine):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.commit()
+
+            # NULL is OK
+            mid1 = uuid4()
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status, "
+                    "page_count, created_by_user_id) VALUES "
+                    "(:id, 'pdf', 'A', 'pending', NULL, :uid)"
+                ),
+                {"id": mid1, "uid": user_id},
+            )
+            session.commit()
+
+            # page_count = 1 is OK
+            mid2 = uuid4()
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status, "
+                    "page_count, created_by_user_id) VALUES "
+                    "(:id, 'pdf', 'B', 'pending', 1, :uid)"
+                ),
+                {"id": mid2, "uid": user_id},
+            )
+            session.commit()
+
+            # page_count = 0 rejected
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO media (id, kind, title, processing_status, "
+                        "page_count, created_by_user_id) VALUES "
+                        "(:id, 'pdf', 'C', 'pending', 0, :uid)"
+                    ),
+                    {"id": uuid4(), "uid": user_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_media_page_count_positive" in str(exc.value)
+
+            # page_count = -1 rejected
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO media (id, kind, title, processing_status, "
+                        "page_count, created_by_user_id) VALUES "
+                        "(:id, 'pdf', 'D', 'pending', -1, :uid)"
+                    ),
+                    {"id": uuid4(), "uid": user_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_media_page_count_positive" in str(exc.value)
+
+    # ------------------------------------------------------------------
+    # test_pr01_preserves_legacy_fragment_highlight_constraints_after_migration
+    # ------------------------------------------------------------------
+    def test_pr01_preserves_legacy_fragment_highlight_constraints_after_migration(self, s6_engine):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            uid, mid, fid = self._create_base_fixtures(session)
+
+            # Valid legacy insert succeeds
+            h_id = uuid4()
+            session.execute(
+                text(
+                    "INSERT INTO highlights (id, user_id, fragment_id, "
+                    "start_offset, end_offset, color, exact, prefix, suffix) "
+                    "VALUES (:id, :uid, :fid, 0, 5, 'yellow', 'Hello', '', '')"
+                ),
+                {"id": h_id, "uid": uid, "fid": fid},
+            )
+            session.commit()
+
+            # Invalid color rejected
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlights (id, user_id, fragment_id, "
+                        "start_offset, end_offset, color, exact, prefix, suffix) "
+                        "VALUES (:id, :uid, :fid, 0, 3, 'red', 'Hel', '', '')"
+                    ),
+                    {"id": uuid4(), "uid": uid, "fid": fid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_highlights_color" in str(exc.value)
+
+            # Invalid offsets (end <= start) rejected by bridge check
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlights (id, user_id, fragment_id, "
+                        "start_offset, end_offset, color, exact, prefix, suffix) "
+                        "VALUES (:id, :uid, :fid, 5, 5, 'green', 'x', '', '')"
+                    ),
+                    {"id": uuid4(), "uid": uid, "fid": fid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_highlights_fragment_bridge" in str(exc.value)
+
+            # Duplicate span rejected
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlights (id, user_id, fragment_id, "
+                        "start_offset, end_offset, color, exact, prefix, suffix) "
+                        "VALUES (:id, :uid, :fid, 0, 5, 'blue', 'Hello', '', '')"
+                    ),
+                    {"id": uuid4(), "uid": uid, "fid": fid},
+                )
+                session.commit()
+            session.rollback()
+            assert "uix_highlights_user_fragment_offsets" in str(exc.value)
+
+    # ------------------------------------------------------------------
+    # test_pr01_new_anchor_subtype_cascade_and_uniqueness_constraints
+    # ------------------------------------------------------------------
+    def test_pr01_new_anchor_subtype_cascade_and_uniqueness_constraints(self, s6_engine):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            uid, mid, fid = self._create_base_fixtures(session)
+
+            # Create a logical highlight with fragment bridge + subtype row
+            h_id = uuid4()
+            session.execute(
+                text(
+                    "INSERT INTO highlights (id, user_id, fragment_id, "
+                    "start_offset, end_offset, color, exact, prefix, suffix, "
+                    "anchor_kind, anchor_media_id) VALUES "
+                    "(:id, :uid, :fid, 0, 5, 'yellow', 'Hello', '', '', "
+                    "'fragment_offsets', :mid)"
+                ),
+                {"id": h_id, "uid": uid, "fid": fid, "mid": mid},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO highlight_fragment_anchors "
+                    "(highlight_id, fragment_id, start_offset, end_offset) "
+                    "VALUES (:hid, :fid, 0, 5)"
+                ),
+                {"hid": h_id, "fid": fid},
+            )
+            session.commit()
+
+            # Duplicate 1:1 subtype row rejected (PK violation)
+            with pytest.raises(IntegrityError):
+                session.execute(
+                    text(
+                        "INSERT INTO highlight_fragment_anchors "
+                        "(highlight_id, fragment_id, start_offset, end_offset) "
+                        "VALUES (:hid, :fid, 0, 5)"
+                    ),
+                    {"hid": h_id, "fid": fid},
+                )
+                session.commit()
+            session.rollback()
+
+            # FK violation: non-existent highlight_id
+            with pytest.raises(IntegrityError):
+                session.execute(
+                    text(
+                        "INSERT INTO highlight_fragment_anchors "
+                        "(highlight_id, fragment_id, start_offset, end_offset) "
+                        "VALUES (:hid, :fid, 0, 3)"
+                    ),
+                    {"hid": uuid4(), "fid": fid},
+                )
+                session.commit()
+            session.rollback()
+
+            # Delete core highlight -> cascade to subtype
+            session.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": h_id})
+            session.commit()
+            row = session.execute(
+                text("SELECT 1 FROM highlight_fragment_anchors WHERE highlight_id = :hid"),
+                {"hid": h_id},
+            ).fetchone()
+            assert row is None, "cascade must delete subtype row"
+
+    # ------------------------------------------------------------------
+    # test_pr01_greenfield_defaults_allow_dormant_schema_without_backfill
+    # ------------------------------------------------------------------
+    def test_pr01_greenfield_defaults_allow_dormant_schema_without_backfill(self, s6_engine):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            uid, mid, fid = self._create_base_fixtures(session)
+
+            # Legacy insert works without setting new fields
+            h_id = uuid4()
+            session.execute(
+                text(
+                    "INSERT INTO highlights (id, user_id, fragment_id, "
+                    "start_offset, end_offset, color, exact, prefix, suffix) "
+                    "VALUES (:id, :uid, :fid, 0, 5, 'yellow', 'Hello', '', '')"
+                ),
+                {"id": h_id, "uid": uid, "fid": fid},
+            )
+            session.commit()
+
+            # anchor_kind and anchor_media_id default to NULL
+            row = session.execute(
+                text("SELECT anchor_kind, anchor_media_id FROM highlights WHERE id = :id"),
+                {"id": h_id},
+            ).fetchone()
+            assert row[0] is None
+            assert row[1] is None
+
+            # No fragment subtype row exists (no dual-write)
+            sub = session.execute(
+                text("SELECT 1 FROM highlight_fragment_anchors WHERE highlight_id = :hid"),
+                {"hid": h_id},
+            ).fetchone()
+            assert sub is None
+
+    # ------------------------------------------------------------------
+    # test_pr01_rejects_partial_dormant_logical_anchor_fields_on_highlights
+    # ------------------------------------------------------------------
+    def test_pr01_rejects_partial_dormant_logical_anchor_fields_on_highlights(self, s6_engine):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            uid, mid, fid = self._create_base_fixtures(session)
+
+            # anchor_kind without anchor_media_id -> rejected
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlights (id, user_id, fragment_id, "
+                        "start_offset, end_offset, color, exact, prefix, suffix, "
+                        "anchor_kind) VALUES "
+                        "(:id, :uid, :fid, 0, 5, 'yellow', 'Hello', '', '', "
+                        "'fragment_offsets')"
+                    ),
+                    {"id": uuid4(), "uid": uid, "fid": fid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_highlights_anchor_fields_paired_null" in str(exc.value)
+
+            # anchor_media_id without anchor_kind -> rejected
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlights (id, user_id, fragment_id, "
+                        "start_offset, end_offset, color, exact, prefix, suffix, "
+                        "anchor_media_id) VALUES "
+                        "(:id, :uid, :fid, 0, 5, 'yellow', 'Hello', '', '', :mid)"
+                    ),
+                    {"id": uuid4(), "uid": uid, "fid": fid, "mid": mid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_highlights_anchor_fields_paired_null" in str(exc.value)
+
+            # Invalid anchor_kind value -> rejected
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlights (id, user_id, fragment_id, "
+                        "start_offset, end_offset, color, exact, prefix, suffix, "
+                        "anchor_kind, anchor_media_id) VALUES "
+                        "(:id, :uid, :fid, 0, 5, 'yellow', 'Hello', '', '', "
+                        "'invalid_kind', :mid)"
+                    ),
+                    {"id": uuid4(), "uid": uid, "fid": fid, "mid": mid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_highlights_anchor_kind_valid" in str(exc.value)
+
+    # ------------------------------------------------------------------
+    # test_pr01_does_not_require_fragment_subtype_dual_write_during_dormant_window
+    # ------------------------------------------------------------------
+    def test_pr01_does_not_require_fragment_subtype_dual_write_during_dormant_window(
+        self, s6_engine
+    ):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            uid, mid, fid = self._create_base_fixtures(session)
+
+            h_id = uuid4()
+            session.execute(
+                text(
+                    "INSERT INTO highlights (id, user_id, fragment_id, "
+                    "start_offset, end_offset, color, exact, prefix, suffix) "
+                    "VALUES (:id, :uid, :fid, 0, 5, 'yellow', 'Hello', '', '')"
+                ),
+                {"id": h_id, "uid": uid, "fid": fid},
+            )
+            session.commit()
+
+            row = session.execute(
+                text("SELECT 1 FROM highlight_fragment_anchors WHERE highlight_id = :hid"),
+                {"hid": h_id},
+            ).fetchone()
+            assert row is None, "Legacy insert must succeed without fragment subtype row"
+
+    # ------------------------------------------------------------------
+    # test_pr01_allows_future_non_fragment_logical_rows_to_leave_legacy_fragment_columns_null
+    # ------------------------------------------------------------------
+    def test_pr01_allows_future_non_fragment_logical_rows_to_leave_legacy_fragment_columns_null(
+        self, s6_engine
+    ):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            uid, mid, _ = self._create_base_fixtures(session)
+
+            h_id = uuid4()
+            session.execute(
+                text(
+                    "INSERT INTO highlights (id, user_id, "
+                    "fragment_id, start_offset, end_offset, "
+                    "color, exact, prefix, suffix, "
+                    "anchor_kind, anchor_media_id) VALUES "
+                    "(:id, :uid, NULL, NULL, NULL, "
+                    "'yellow', '', '', '', "
+                    "'pdf_page_geometry', :mid)"
+                ),
+                {"id": h_id, "uid": uid, "mid": mid},
+            )
+            session.commit()
+
+            row = session.execute(
+                text("SELECT fragment_id, start_offset, end_offset FROM highlights WHERE id = :id"),
+                {"id": h_id},
+            ).fetchone()
+            assert row[0] is None
+            assert row[1] is None
+            assert row[2] is None
+
+    # ------------------------------------------------------------------
+    # test_pr01_retained_fragment_unique_index_preserves_duplicate_semantics_under_nullable_bridge
+    # ------------------------------------------------------------------
+    def test_pr01_retained_fragment_unique_index_preserves_duplicate_semantics_under_nullable_bridge(
+        self, s6_engine
+    ):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            uid, mid, fid = self._create_base_fixtures(session)
+
+            # First fragment highlight
+            session.execute(
+                text(
+                    "INSERT INTO highlights (id, user_id, fragment_id, "
+                    "start_offset, end_offset, color, exact, prefix, suffix) "
+                    "VALUES (:id, :uid, :fid, 0, 5, 'yellow', 'Hello', '', '')"
+                ),
+                {"id": uuid4(), "uid": uid, "fid": fid},
+            )
+            session.commit()
+
+            # Duplicate rejected
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlights (id, user_id, fragment_id, "
+                        "start_offset, end_offset, color, exact, prefix, suffix) "
+                        "VALUES (:id, :uid, :fid, 0, 5, 'blue', 'Hello', '', '')"
+                    ),
+                    {"id": uuid4(), "uid": uid, "fid": fid},
+                )
+                session.commit()
+            session.rollback()
+            assert "uix_highlights_user_fragment_offsets" in str(exc.value)
+
+            # Multiple non-fragment rows with NULL fragment columns don't conflict
+            for _ in range(3):
+                session.execute(
+                    text(
+                        "INSERT INTO highlights (id, user_id, "
+                        "fragment_id, start_offset, end_offset, "
+                        "color, exact, prefix, suffix, "
+                        "anchor_kind, anchor_media_id) VALUES "
+                        "(:id, :uid, NULL, NULL, NULL, "
+                        "'yellow', '', '', '', "
+                        "'pdf_page_geometry', :mid)"
+                    ),
+                    {"id": uuid4(), "uid": uid, "mid": mid},
+                )
+            session.commit()
+
+    # ------------------------------------------------------------------
+    # test_pr01_pdf_anchor_supporting_indexes_exist_without_exact_duplicate_uniqueness
+    # ------------------------------------------------------------------
+    def test_pr01_pdf_anchor_supporting_indexes_exist_without_exact_duplicate_uniqueness(
+        self, s6_engine
+    ):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            indexes = session.execute(
+                text(
+                    "SELECT indexname, indexdef FROM pg_indexes "
+                    "WHERE tablename = 'highlight_pdf_anchors'"
+                )
+            ).fetchall()
+            idx_map = {r[0]: r[1] for r in indexes}
+            assert "ix_hpa_media_page_sort" in idx_map
+            assert "ix_hpa_geometry_lookup" in idx_map
+            # Neither is UNIQUE
+            for name in ("ix_hpa_media_page_sort", "ix_hpa_geometry_lookup"):
+                assert "UNIQUE" not in idx_map[name].upper(), f"{name} must not be unique in pr-01"
+
+    # ------------------------------------------------------------------
+    # test_pr01_pdf_page_text_spans_enforces_row_local_validity_but_not_contiguity_lifecycle_rules
+    # ------------------------------------------------------------------
+    def test_pr01_pdf_page_text_spans_enforces_row_local_validity_but_not_contiguity_lifecycle_rules(
+        self, s6_engine
+    ):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            uid = uuid4()
+            mid = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": uid})
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status, "
+                    "page_count, created_by_user_id) VALUES "
+                    "(:id, 'pdf', 'Test PDF', 'extracting', 5, :uid)"
+                ),
+                {"id": mid, "uid": uid},
+            )
+            session.commit()
+
+            # Valid row
+            session.execute(
+                text(
+                    "INSERT INTO pdf_page_text_spans "
+                    "(media_id, page_number, start_offset, end_offset, "
+                    "text_extract_version) VALUES (:mid, 1, 0, 100, 1)"
+                ),
+                {"mid": mid},
+            )
+            session.commit()
+
+            # Duplicate page rejected (PK)
+            with pytest.raises(IntegrityError):
+                session.execute(
+                    text(
+                        "INSERT INTO pdf_page_text_spans "
+                        "(media_id, page_number, start_offset, end_offset, "
+                        "text_extract_version) VALUES (:mid, 1, 0, 50, 1)"
+                    ),
+                    {"mid": mid},
+                )
+                session.commit()
+            session.rollback()
+
+            # Invalid page_number = 0
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO pdf_page_text_spans "
+                        "(media_id, page_number, start_offset, end_offset, "
+                        "text_extract_version) VALUES (:mid, 0, 0, 50, 1)"
+                    ),
+                    {"mid": mid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_ppts_page_number" in str(exc.value)
+
+            # Negative start_offset
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO pdf_page_text_spans "
+                        "(media_id, page_number, start_offset, end_offset, "
+                        "text_extract_version) VALUES (:mid, 2, -1, 50, 1)"
+                    ),
+                    {"mid": mid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_ppts_start_offset" in str(exc.value)
+
+            # end < start
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO pdf_page_text_spans "
+                        "(media_id, page_number, start_offset, end_offset, "
+                        "text_extract_version) VALUES (:mid, 2, 50, 10, 1)"
+                    ),
+                    {"mid": mid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_ppts_offsets_valid" in str(exc.value)
+
+            # Non-contiguous pages are row-valid (contiguity is pr-03 concern)
+            session.execute(
+                text(
+                    "INSERT INTO pdf_page_text_spans "
+                    "(media_id, page_number, start_offset, end_offset, "
+                    "text_extract_version) VALUES (:mid, 4, 500, 600, 1)"
+                ),
+                {"mid": mid},
+            )
+            session.commit()
+
+    # ------------------------------------------------------------------
+    # test_pr01_highlight_pdf_quads_enforces_row_shape_without_canonicalization_semantics
+    # ------------------------------------------------------------------
+    def test_pr01_highlight_pdf_quads_enforces_row_shape_without_canonicalization_semantics(
+        self, s6_engine
+    ):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            uid, mid, _ = self._create_base_fixtures(session)
+
+            h_id = uuid4()
+            session.execute(
+                text(
+                    "INSERT INTO highlights (id, user_id, "
+                    "fragment_id, start_offset, end_offset, "
+                    "color, exact, prefix, suffix, "
+                    "anchor_kind, anchor_media_id) VALUES "
+                    "(:id, :uid, NULL, NULL, NULL, "
+                    "'yellow', '', '', '', "
+                    "'pdf_page_geometry', :mid)"
+                ),
+                {"id": h_id, "uid": uid, "mid": mid},
+            )
+            session.commit()
+
+            # Valid quad
+            session.execute(
+                text(
+                    "INSERT INTO highlight_pdf_quads "
+                    "(highlight_id, quad_idx, x1, y1, x2, y2, "
+                    "x3, y3, x4, y4) VALUES "
+                    "(:hid, 0, 10, 20, 30, 20, 30, 40, 10, 40)"
+                ),
+                {"hid": h_id},
+            )
+            session.commit()
+
+            # Duplicate (highlight_id, quad_idx) rejected
+            with pytest.raises(IntegrityError):
+                session.execute(
+                    text(
+                        "INSERT INTO highlight_pdf_quads "
+                        "(highlight_id, quad_idx, x1, y1, x2, y2, "
+                        "x3, y3, x4, y4) VALUES "
+                        "(:hid, 0, 1, 2, 3, 4, 5, 6, 7, 8)"
+                    ),
+                    {"hid": h_id},
+                )
+                session.commit()
+            session.rollback()
+
+            # Negative quad_idx rejected
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlight_pdf_quads "
+                        "(highlight_id, quad_idx, x1, y1, x2, y2, "
+                        "x3, y3, x4, y4) VALUES "
+                        "(:hid, -1, 1, 2, 3, 4, 5, 6, 7, 8)"
+                    ),
+                    {"hid": h_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_hpq_quad_idx" in str(exc.value)
+
+            # Row-valid but not canonically ordered is accepted in pr-01
+            session.execute(
+                text(
+                    "INSERT INTO highlight_pdf_quads "
+                    "(highlight_id, quad_idx, x1, y1, x2, y2, "
+                    "x3, y3, x4, y4) VALUES "
+                    "(:hid, 5, 99, 99, 1, 1, 50, 50, 0, 0)"
+                ),
+                {"hid": h_id},
+            )
+            session.commit()
+
+    # ------------------------------------------------------------------
+    # test_pr01_highlight_pdf_anchors_enforces_row_local_shape_domains_without_semantic_coherence_rules
+    # ------------------------------------------------------------------
+    def test_pr01_highlight_pdf_anchors_enforces_row_local_shape_domains_without_semantic_coherence_rules(
+        self, s6_engine
+    ):
+        self._upgrade_to_head()
+        with Session(s6_engine) as session:
+            uid, mid, _ = self._create_base_fixtures(session)
+
+            h_id = uuid4()
+            session.execute(
+                text(
+                    "INSERT INTO highlights (id, user_id, "
+                    "fragment_id, start_offset, end_offset, "
+                    "color, exact, prefix, suffix, "
+                    "anchor_kind, anchor_media_id) VALUES "
+                    "(:id, :uid, NULL, NULL, NULL, "
+                    "'yellow', '', '', '', "
+                    "'pdf_page_geometry', :mid)"
+                ),
+                {"id": h_id, "uid": uid, "mid": mid},
+            )
+            session.commit()
+
+            # Valid row
+            session.execute(
+                text(
+                    "INSERT INTO highlight_pdf_anchors "
+                    "(highlight_id, media_id, page_number, geometry_version, "
+                    "geometry_fingerprint, sort_top, sort_left, "
+                    "plain_text_match_status, rect_count) VALUES "
+                    "(:hid, :mid, 1, 1, 'abc123', 10.5, 20.0, 'pending', 1)"
+                ),
+                {"hid": h_id, "mid": mid},
+            )
+            session.commit()
+            session.execute(
+                text("DELETE FROM highlight_pdf_anchors WHERE highlight_id = :hid"),
+                {"hid": h_id},
+            )
+            session.commit()
+
+            # Invalid page_number = 0
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlight_pdf_anchors "
+                        "(highlight_id, media_id, page_number, "
+                        "geometry_version, geometry_fingerprint, "
+                        "sort_top, sort_left, plain_text_match_status, "
+                        "rect_count) VALUES "
+                        "(:hid, :mid, 0, 1, 'x', 0, 0, 'pending', 1)"
+                    ),
+                    {"hid": h_id, "mid": mid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_hpa_page_number" in str(exc.value)
+
+            # Invalid rect_count = 0
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlight_pdf_anchors "
+                        "(highlight_id, media_id, page_number, "
+                        "geometry_version, geometry_fingerprint, "
+                        "sort_top, sort_left, plain_text_match_status, "
+                        "rect_count) VALUES "
+                        "(:hid, :mid, 1, 1, 'x', 0, 0, 'pending', 0)"
+                    ),
+                    {"hid": h_id, "mid": mid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_hpa_rect_count" in str(exc.value)
+
+            # Invalid geometry_version = 0
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlight_pdf_anchors "
+                        "(highlight_id, media_id, page_number, "
+                        "geometry_version, geometry_fingerprint, "
+                        "sort_top, sort_left, plain_text_match_status, "
+                        "rect_count) VALUES "
+                        "(:hid, :mid, 1, 0, 'x', 0, 0, 'pending', 1)"
+                    ),
+                    {"hid": h_id, "mid": mid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_hpa_geometry_version" in str(exc.value)
+
+            # Invalid match_status
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlight_pdf_anchors "
+                        "(highlight_id, media_id, page_number, "
+                        "geometry_version, geometry_fingerprint, "
+                        "sort_top, sort_left, plain_text_match_status, "
+                        "rect_count) VALUES "
+                        "(:hid, :mid, 1, 1, 'x', 0, 0, 'bogus', 1)"
+                    ),
+                    {"hid": h_id, "mid": mid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_hpa_match_status" in str(exc.value)
+
+            # Negative match offset
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlight_pdf_anchors "
+                        "(highlight_id, media_id, page_number, "
+                        "geometry_version, geometry_fingerprint, "
+                        "sort_top, sort_left, plain_text_match_status, "
+                        "plain_text_start_offset, plain_text_end_offset, "
+                        "rect_count) VALUES "
+                        "(:hid, :mid, 1, 1, 'x', 0, 0, 'unique', -1, 5, 1)"
+                    ),
+                    {"hid": h_id, "mid": mid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_hpa_match_offsets_non_negative" in str(exc.value)
+
+            # One-sided offset null
+            with pytest.raises(IntegrityError) as exc:
+                session.execute(
+                    text(
+                        "INSERT INTO highlight_pdf_anchors "
+                        "(highlight_id, media_id, page_number, "
+                        "geometry_version, geometry_fingerprint, "
+                        "sort_top, sort_left, plain_text_match_status, "
+                        "plain_text_start_offset, plain_text_end_offset, "
+                        "rect_count) VALUES "
+                        "(:hid, :mid, 1, 1, 'x', 0, 0, 'unique', 5, NULL, 1)"
+                    ),
+                    {"hid": h_id, "mid": mid},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_hpa_match_offsets_paired_null" in str(exc.value)
+
+            # Semantically unresolved but row-valid (pr-03+)
+            session.execute(
+                text(
+                    "INSERT INTO highlight_pdf_anchors "
+                    "(highlight_id, media_id, page_number, "
+                    "geometry_version, geometry_fingerprint, "
+                    "sort_top, sort_left, plain_text_match_status, "
+                    "plain_text_match_version, "
+                    "plain_text_start_offset, plain_text_end_offset, "
+                    "rect_count) VALUES "
+                    "(:hid, :mid, 1, 1, 'abc', 0, 0, 'unique', 1, 0, 50, 2)"
+                ),
+                {"hid": h_id, "mid": mid},
+            )
+            session.commit()
