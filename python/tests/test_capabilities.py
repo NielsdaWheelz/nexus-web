@@ -11,6 +11,8 @@ import pytest
 
 from nexus.services.capabilities import derive_capabilities
 
+pytestmark = pytest.mark.unit
+
 
 class TestPdfCapabilities:
     """Tests for PDF media capabilities."""

@@ -26,6 +26,8 @@ from nexus.services.fragment_blocks import (
     parse_fragment_blocks,
 )
 
+pytestmark = pytest.mark.integration
+
 
 class TestParseFragmentBlocks:
     """Tests for parse_fragment_blocks function."""

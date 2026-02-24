@@ -20,6 +20,8 @@ from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.services import contexts as contexts_service
 from nexus.services.bootstrap import ensure_user_and_default_library
 
+pytestmark = pytest.mark.integration
+
 # =============================================================================
 # Fixtures
 # =============================================================================

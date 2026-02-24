@@ -20,52 +20,16 @@ Per s2_pr04.md spec:
 from uuid import UUID
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from nexus.app import create_app
-from nexus.auth.middleware import AuthMiddleware
-from nexus.db.session import create_session_factory
-from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.helpers import auth_headers, create_test_user_id
-from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
+
+pytestmark = pytest.mark.integration
 
 # =============================================================================
 # Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-def auth_client(engine):
-    """Create a client with auth + request-id middleware for testing."""
-    from nexus.app import add_request_id_middleware
-
-    session_factory = create_session_factory(engine)
-
-    def bootstrap_callback(user_id: UUID) -> UUID:
-        db = session_factory()
-        try:
-            return ensure_user_and_default_library(db, user_id)
-        finally:
-            db.close()
-
-    verifier = MockJwtVerifier()
-    app = create_app(skip_auth_middleware=True)
-
-    # Add auth middleware first (so it runs second)
-    app.add_middleware(
-        AuthMiddleware,
-        verifier=verifier,
-        requires_internal_header=False,
-        internal_secret=None,
-        bootstrap_callback=bootstrap_callback,
-    )
-
-    # Add request-id middleware LAST (so it runs FIRST, outermost)
-    add_request_id_middleware(app, log_requests=False)
-
-    return TestClient(app)
 
 
 # =============================================================================

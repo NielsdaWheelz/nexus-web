@@ -16,6 +16,8 @@ from nexus.services.url_normalize import (
     validate_requested_url,
 )
 
+pytestmark = pytest.mark.unit
+
 # =============================================================================
 # validate_requested_url() Tests
 # =============================================================================

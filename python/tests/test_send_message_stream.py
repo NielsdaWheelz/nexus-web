@@ -41,6 +41,8 @@ from nexus.services.stream_liveness import (
 )
 from nexus.tasks.sweep_pending import sweep_pending_messages
 
+pytestmark = pytest.mark.integration
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -382,6 +384,8 @@ class TestSweeper:
 
     def test_sweeper_with_no_stale_messages(self):
         """Sweeper returns 0 when no stale messages exist."""
+        # TASK INFRASTRUCTURE: Session factory redirect for test DB isolation.
+        # Sweeper task creates its own session; this redirects to the test DB.
         with patch("nexus.tasks.sweep_pending.get_session_factory") as mock_factory:
             mock_db = MagicMock()
             mock_db.execute.return_value.fetchall.return_value = []
@@ -396,6 +400,8 @@ class TestSweeper:
         mock_redis = MagicMock()
         mock_redis.exists.return_value = True  # Liveness marker active
 
+        # TASK INFRASTRUCTURE: Session factory redirect for test DB isolation.
+        # Sweeper task creates its own session; this redirects to the test DB.
         with patch("nexus.tasks.sweep_pending.get_session_factory") as mock_factory:
             mock_db = MagicMock()
             stale_time = datetime.now(UTC) - timedelta(minutes=10)

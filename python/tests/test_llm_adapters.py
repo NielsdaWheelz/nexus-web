@@ -48,6 +48,8 @@ from nexus.services.llm.errors import classify_provider_error
 from nexus.services.llm.gemini_adapter import GeminiAdapter
 from nexus.services.llm.openai_adapter import OpenAIAdapter
 
+pytestmark = pytest.mark.unit
+
 # Path to test fixtures
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "llm"
 

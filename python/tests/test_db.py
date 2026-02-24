@@ -3,8 +3,11 @@
 Verifies that basic database connectivity works.
 """
 
+import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+pytestmark = pytest.mark.integration
 
 
 class TestDatabaseConnectivity:

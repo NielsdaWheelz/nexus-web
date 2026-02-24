@@ -28,6 +28,8 @@ from tests.helpers import auth_headers, create_test_user_id
 from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
 
+pytestmark = pytest.mark.integration
+
 # Sample file content for testing
 PDF_MAGIC = b"%PDF-1.4"
 PDF_CONTENT = PDF_MAGIC + b"fake pdf content " * 1000  # ~18KB

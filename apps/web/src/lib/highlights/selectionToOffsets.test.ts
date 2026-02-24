@@ -9,7 +9,7 @@
  * - Duplicate highlight detection
  *
  * Note: Some tests that require full Range API behavior are skipped in
- * happy-dom environment. Integration tests cover these scenarios.
+ * the Vitest Browser Mode environment. Integration tests cover these scenarios.
  *
  * @see docs/v1/s2/s2_prs/s2_pr09.md §13
  */
@@ -358,7 +358,7 @@ describe("selection validation logic", () => {
 
 /*
  * Full selectionToOffsets() integration tests require a real browser environment
- * because happy-dom's Range implementation has limitations:
+ * because the test environment's Range implementation has limitations:
  * - Cannot properly set range endpoints on text nodes created from innerHTML
  * - compareBoundaryPoints() behavior differs from browsers
  *

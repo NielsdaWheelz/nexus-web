@@ -15,14 +15,22 @@ Tests scenarios from s0_spec.md:
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.app import create_app
-from nexus.auth.middleware import AuthMiddleware
-from nexus.db.session import create_session_factory
-from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.db.models import (
+    EpubTocNode,
+    Fragment,
+    FragmentBlock,
+    Media,
+    MediaFile,
+    MediaKind,
+    ProcessingStatus,
+)
+from tests.factories import (
+    create_failed_epub_media,
+    create_ready_epub_with_chapters,
+    create_seeded_test_media,
+)
 from tests.fixtures import (
     FIXTURE_CANONICAL_TEXT,
     FIXTURE_FRAGMENT_ID,
@@ -31,44 +39,13 @@ from tests.fixtures import (
     FIXTURE_TITLE,
 )
 from tests.helpers import auth_headers, create_test_user_id
-from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
+
+pytestmark = pytest.mark.integration
 
 # =============================================================================
 # Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-def auth_client(engine):
-    """Create a client with auth + request-id middleware for testing."""
-    from nexus.app import add_request_id_middleware
-
-    session_factory = create_session_factory(engine)
-
-    def bootstrap_callback(user_id: UUID) -> UUID:
-        db = session_factory()
-        try:
-            return ensure_user_and_default_library(db, user_id)
-        finally:
-            db.close()
-
-    verifier = MockJwtVerifier()
-    app = create_app(skip_auth_middleware=True)
-
-    # Add auth middleware first (so it runs second)
-    app.add_middleware(
-        AuthMiddleware,
-        verifier=verifier,
-        requires_internal_header=False,
-        internal_secret=None,
-        bootstrap_callback=bootstrap_callback,
-    )
-
-    # Add request-id middleware LAST (so it runs FIRST, outermost)
-    add_request_id_middleware(app, log_requests=False)
-
-    return TestClient(app)
 
 
 def create_seeded_media(session: Session) -> UUID:
@@ -76,43 +53,14 @@ def create_seeded_media(session: Session) -> UUID:
 
     Returns the media ID.
     """
-    session.execute(
-        text("""
-            INSERT INTO media (id, kind, title, canonical_source_url, processing_status)
-            VALUES (
-                :media_id,
-                'web_article',
-                :title,
-                'https://example.com/test-article',
-                'ready_for_reading'
-            )
-            ON CONFLICT (id) DO NOTHING
-        """),
-        {"media_id": FIXTURE_MEDIA_ID, "title": FIXTURE_TITLE},
+    return create_seeded_test_media(
+        session,
+        title=FIXTURE_TITLE,
+        canonical_text=FIXTURE_CANONICAL_TEXT,
+        html_sanitized=FIXTURE_HTML_SANITIZED,
+        media_id=FIXTURE_MEDIA_ID,
+        fragment_id=FIXTURE_FRAGMENT_ID,
     )
-
-    session.execute(
-        text("""
-            INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-            VALUES (
-                :fragment_id,
-                :media_id,
-                0,
-                :html_sanitized,
-                :canonical_text
-            )
-            ON CONFLICT (id) DO NOTHING
-        """),
-        {
-            "fragment_id": FIXTURE_FRAGMENT_ID,
-            "media_id": FIXTURE_MEDIA_ID,
-            "html_sanitized": FIXTURE_HTML_SANITIZED,
-            "canonical_text": FIXTURE_CANONICAL_TEXT,
-        },
-    )
-
-    session.commit()
-    return FIXTURE_MEDIA_ID
 
 
 # =============================================================================
@@ -377,29 +325,25 @@ class TestGetMediaFragments:
         fragment_ids = [uuid4() for _ in range(3)]
 
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:media_id, 'web_article', 'Multi Fragment', 'ready_for_reading')
-                """),
-                {"media_id": media_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.web_article.value,
+                title="Multi Fragment",
+                processing_status=ProcessingStatus.ready_for_reading,
             )
+            session.add(media)
+            session.flush()
 
             # Insert fragments in reverse order to test ordering
             for i, frag_id in enumerate(reversed(fragment_ids)):
-                session.execute(
-                    text("""
-                        INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-                        VALUES (:frag_id, :media_id, :idx, :html, :text)
-                    """),
-                    {
-                        "frag_id": frag_id,
-                        "media_id": media_id,
-                        "idx": 2 - i,  # Insert as 2, 1, 0
-                        "html": f"<p>Fragment {2 - i}</p>",
-                        "text": f"Fragment {2 - i}",
-                    },
+                frag = Fragment(
+                    id=frag_id,
+                    media_id=media_id,
+                    idx=2 - i,  # Insert as 2, 1, 0
+                    html_sanitized=f"<p>Fragment {2 - i}</p>",
+                    canonical_text=f"Fragment {2 - i}",
                 )
+                session.add(frag)
 
             session.commit()
 
@@ -435,13 +379,13 @@ class TestGetMediaFragments:
         # Create media without fragments
         media_id = uuid4()
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:media_id, 'web_article', 'No Fragments', 'ready_for_reading')
-                """),
-                {"media_id": media_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.web_article.value,
+                title="No Fragments",
+                processing_status=ProcessingStatus.ready_for_reading,
             )
+            session.add(media)
             session.commit()
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -606,13 +550,12 @@ class TestEpubChapterFragmentsImmutableAcrossReadsAndHighlightChurn:
 
         # Snapshot baseline fragment content from DB
         with direct_db.session() as session:
-            baseline = session.execute(
-                text(
-                    "SELECT idx, html_sanitized, canonical_text "
-                    "FROM fragments WHERE media_id = :mid ORDER BY idx"
-                ),
-                {"mid": media_id},
-            ).fetchall()
+            baseline = (
+                session.query(Fragment.idx, Fragment.html_sanitized, Fragment.canonical_text)
+                .filter(Fragment.media_id == media_id)
+                .order_by(Fragment.idx)
+                .all()
+            )
         assert len(baseline) == 3
 
         # Read chapters repeatedly via manifest + detail endpoints
@@ -639,13 +582,12 @@ class TestEpubChapterFragmentsImmutableAcrossReadsAndHighlightChurn:
 
         # Assert fragment content unchanged
         with direct_db.session() as session:
-            after = session.execute(
-                text(
-                    "SELECT idx, html_sanitized, canonical_text "
-                    "FROM fragments WHERE media_id = :mid ORDER BY idx"
-                ),
-                {"mid": media_id},
-            ).fetchall()
+            after = (
+                session.query(Fragment.idx, Fragment.html_sanitized, Fragment.canonical_text)
+                .filter(Fragment.media_id == media_id)
+                .order_by(Fragment.idx)
+                .all()
+            )
 
         assert len(after) == len(baseline)
         for (b_idx, b_html, b_text), (a_idx, a_html, a_text) in zip(baseline, after, strict=True):
@@ -678,21 +620,18 @@ class TestEpubFragmentContentStableAcrossEmbeddingStatusTransition:
 
         # Snapshot baseline in ready_for_reading
         with direct_db.session() as session:
-            baseline = session.execute(
-                text(
-                    "SELECT idx, html_sanitized, canonical_text "
-                    "FROM fragments WHERE media_id = :mid ORDER BY idx"
-                ),
-                {"mid": media_id},
-            ).fetchall()
+            baseline = (
+                session.query(Fragment.idx, Fragment.html_sanitized, Fragment.canonical_text)
+                .filter(Fragment.media_id == media_id)
+                .order_by(Fragment.idx)
+                .all()
+            )
         assert len(baseline) == 2
 
-        for target_status in ("embedding", "ready"):
+        for target_status in (ProcessingStatus.embedding, ProcessingStatus.ready):
             with direct_db.session() as session:
-                session.execute(
-                    text("UPDATE media SET processing_status = :s WHERE id = :id"),
-                    {"s": target_status, "id": media_id},
-                )
+                media_obj = session.get(Media, media_id)
+                media_obj.processing_status = target_status
                 session.commit()
 
             # Read endpoints remain readable
@@ -710,13 +649,12 @@ class TestEpubFragmentContentStableAcrossEmbeddingStatusTransition:
 
             # DB fragment content unchanged
             with direct_db.session() as session:
-                current = session.execute(
-                    text(
-                        "SELECT idx, html_sanitized, canonical_text "
-                        "FROM fragments WHERE media_id = :mid ORDER BY idx"
-                    ),
-                    {"mid": media_id},
-                ).fetchall()
+                current = (
+                    session.query(Fragment.idx, Fragment.html_sanitized, Fragment.canonical_text)
+                    .filter(Fragment.media_id == media_id)
+                    .order_by(Fragment.idx)
+                    .all()
+                )
 
             for (b_idx, b_html, b_text), (c_idx, c_html, c_text) in zip(
                 baseline, current, strict=True
@@ -759,29 +697,34 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         # Seed extraction artifacts that should be cleaned up on retry
         with direct_db.session() as session:
             frag_id = uuid4()
-            session.execute(
-                text("""
-                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-                    VALUES (:fid, :mid, 0, '<p>stale</p>', 'stale')
-                """),
-                {"fid": frag_id, "mid": media_id},
+            frag = Fragment(
+                id=frag_id,
+                media_id=media_id,
+                idx=0,
+                html_sanitized="<p>stale</p>",
+                canonical_text="stale",
             )
-            session.execute(
-                text("""
-                    INSERT INTO fragment_blocks (fragment_id, block_idx, start_offset, end_offset)
-                    VALUES (:fid, 0, 0, 5)
-                """),
-                {"fid": frag_id},
+            session.add(frag)
+            session.flush()
+            block = FragmentBlock(
+                id=uuid4(),
+                fragment_id=frag_id,
+                block_idx=0,
+                start_offset=0,
+                end_offset=5,
             )
-            session.execute(
-                text("""
-                    INSERT INTO epub_toc_nodes
-                        (media_id, node_id, parent_node_id, label, href,
-                         fragment_idx, depth, order_key)
-                    VALUES (:mid, 'stale', NULL, 'Stale Node', NULL, 0, 0, '0001')
-                """),
-                {"mid": media_id},
+            session.add(block)
+            toc_node = EpubTocNode(
+                media_id=media_id,
+                node_id="stale",
+                parent_node_id=None,
+                label="Stale Node",
+                href=None,
+                fragment_idx=0,
+                depth=0,
+                order_key="0001",
             )
+            session.add(toc_node)
             session.commit()
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
@@ -820,29 +763,18 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
 
         # Artifacts must be gone after retry reset
         with direct_db.session() as session:
-            frag_count = session.execute(
-                text("SELECT COUNT(*) FROM fragments WHERE media_id = :mid"),
-                {"mid": media_id},
-            ).scalar()
+            frag_count = session.query(Fragment).filter(Fragment.media_id == media_id).count()
             assert frag_count == 0, "fragments not cleaned up"
 
-            toc_count = session.execute(
-                text("SELECT COUNT(*) FROM epub_toc_nodes WHERE media_id = :mid"),
-                {"mid": media_id},
-            ).scalar()
+            toc_count = session.query(EpubTocNode).filter(EpubTocNode.media_id == media_id).count()
             assert toc_count == 0, "epub_toc_nodes not cleaned up"
 
             # fragment_blocks implicitly gone since fragments deleted
-            row = session.execute(
-                text(
-                    "SELECT processing_status, processing_attempts, last_error_code "
-                    "FROM media WHERE id = :id"
-                ),
-                {"id": media_id},
-            ).fetchone()
-            assert row[0] == "extracting"
-            assert row[1] == 2
-            assert row[2] is None
+            media_row = session.get(Media, media_id)
+            assert media_row is not None
+            assert media_row.processing_status == ProcessingStatus.extracting
+            assert media_row.processing_attempts == 2
+            assert media_row.last_error_code is None
 
 
 class TestGetEpubAssetSuccessAndMasking:
@@ -854,13 +786,13 @@ class TestGetEpubAssetSuccessAndMasking:
         asset_content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
 
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:id, 'epub', 'Test EPUB', 'ready_for_reading')
-                """),
-                {"id": media_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
             )
+            session.add(media)
             session.commit()
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -883,6 +815,10 @@ class TestGetEpubAssetSuccessAndMasking:
 
         from unittest.mock import patch
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
         with patch("nexus.storage.get_storage_client", return_value=fake):
             resp = auth_client.get(
                 f"/media/{media_id}/assets/images/fig1.png",
@@ -898,13 +834,13 @@ class TestGetEpubAssetSuccessAndMasking:
         media_id = uuid4()
 
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:id, 'epub', 'Test EPUB', 'ready_for_reading')
-                """),
-                {"id": media_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
             )
+            session.add(media)
             session.commit()
 
         direct_db.register_cleanup("media", "id", media_id)
@@ -920,13 +856,13 @@ class TestGetEpubAssetSuccessAndMasking:
         media_id = uuid4()
 
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:id, 'epub', 'Test EPUB', 'ready_for_reading')
-                """),
-                {"id": media_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
             )
+            session.add(media)
             session.commit()
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -947,6 +883,10 @@ class TestGetEpubAssetSuccessAndMasking:
 
         fake = FakeStorageClient()
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
         with patch("nexus.storage.get_storage_client", return_value=fake):
             resp = auth_client.get(
                 f"/media/{media_id}/assets/nonexistent.png",
@@ -963,13 +903,13 @@ class TestGetEpubAssetKindAndReadyGuards:
         media_id = uuid4()
 
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:id, 'web_article', 'Article', 'ready_for_reading')
-                """),
-                {"id": media_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.web_article.value,
+                title="Article",
+                processing_status=ProcessingStatus.ready_for_reading,
             )
+            session.add(media)
             session.commit()
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -996,13 +936,13 @@ class TestGetEpubAssetKindAndReadyGuards:
         media_id = uuid4()
 
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:id, 'epub', 'Pending EPUB', 'pending')
-                """),
-                {"id": media_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Pending EPUB",
+                processing_status=ProcessingStatus.pending,
             )
+            session.add(media)
             session.commit()
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -1038,38 +978,18 @@ def _create_failed_epub(
     with_file=True,
     file_sha256="abc123",
 ):
-    """Insert a failed EPUB media row suitable for retry tests."""
-    media_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO media (
-                id, kind, title, processing_status, created_by_user_id,
-                failure_stage, last_error_code, last_error_message, failed_at,
-                file_sha256, processing_attempts
-            )
-            VALUES (
-                :id, 'epub', 'Failed EPUB', 'failed', :uid,
-                'extract', :err, 'test failure', now(),
-                :sha, 1
-            )
-        """),
-        {
-            "id": media_id,
-            "uid": user_id,
-            "err": last_error_code,
-            "sha": file_sha256,
-        },
+    """Insert a failed EPUB media row suitable for retry tests.
+
+    Delegates to create_failed_epub_media factory. The with_file parameter
+    is always True in the factory (media_file row is always created).
+    """
+    return create_failed_epub_media(
+        session,
+        user_id,
+        last_error_code=last_error_code,
+        processing_attempts=1,
+        file_sha256=file_sha256,
     )
-    if with_file:
-        session.execute(
-            text("""
-                INSERT INTO media_file (media_id, storage_path, content_type, size_bytes)
-                VALUES (:mid, :sp, 'application/epub+zip', 1000)
-            """),
-            {"mid": media_id, "sp": f"media/{media_id}/original.epub"},
-        )
-    session.commit()
-    return media_id
 
 
 class TestRetryEpubEndpoint:
@@ -1117,6 +1037,12 @@ class TestRetryEpubEndpoint:
 
         mock_dispatch = MagicMock()
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
+        # DISPATCH SEAM EXCEPTION: Async task dispatch boundary mock.
+        # Prevents real Celery dispatch per testing standards Section 6 (Allowed Mocks).
         with (
             patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
             patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", mock_dispatch),
@@ -1131,15 +1057,11 @@ class TestRetryEpubEndpoint:
         mock_dispatch.assert_called_once()
 
         with direct_db.session() as session:
-            row = session.execute(
-                text(
-                    "SELECT processing_status, processing_attempts, last_error_code FROM media WHERE id = :id"
-                ),
-                {"id": media_id},
-            ).fetchone()
-            assert row[0] == "extracting"
-            assert row[1] == 2
-            assert row[2] is None
+            media_row = session.get(Media, media_id)
+            assert media_row is not None
+            assert media_row.processing_status == ProcessingStatus.extracting
+            assert media_row.processing_attempts == 2
+            assert media_row.last_error_code is None
 
     def test_retry_invalid_state_returns_409(
         self,
@@ -1151,13 +1073,14 @@ class TestRetryEpubEndpoint:
 
         media_id = uuid4()
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
-                    VALUES (:id, 'epub', 'Not Failed', 'pending', :uid)
-                """),
-                {"id": media_id, "uid": user_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Not Failed",
+                processing_status=ProcessingStatus.pending,
+                created_by_user_id=user_id,
             )
+            session.add(media)
             session.commit()
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -1215,13 +1138,14 @@ class TestRetryEpubEndpoint:
         # non-EPUB
         non_epub_id = uuid4()
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
-                    VALUES (:id, 'web_article', 'Article', 'failed', :uid)
-                """),
-                {"id": non_epub_id, "uid": user_a},
+            media = Media(
+                id=non_epub_id,
+                kind=MediaKind.web_article.value,
+                title="Article",
+                processing_status=ProcessingStatus.failed,
+                created_by_user_id=user_a,
             )
+            session.add(media)
             session.commit()
 
         direct_db.register_cleanup("library_media", "media_id", non_epub_id)
@@ -1299,22 +1223,26 @@ class TestRetryEpubEndpoint:
         # Seed extraction artifacts that must survive precondition failure
         with direct_db.session() as session:
             frag_id = uuid4()
-            session.execute(
-                text("""
-                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-                    VALUES (:fid, :mid, 0, '<p>preserved</p>', 'preserved')
-                """),
-                {"fid": frag_id, "mid": media_id},
+            frag = Fragment(
+                id=frag_id,
+                media_id=media_id,
+                idx=0,
+                html_sanitized="<p>preserved</p>",
+                canonical_text="preserved",
             )
-            session.execute(
-                text("""
-                    INSERT INTO epub_toc_nodes
-                        (media_id, node_id, parent_node_id, label, href,
-                         fragment_idx, depth, order_key)
-                    VALUES (:mid, 'kept', NULL, 'Kept', NULL, 0, 0, '0001')
-                """),
-                {"mid": media_id},
+            session.add(frag)
+            session.flush()
+            toc_node = EpubTocNode(
+                media_id=media_id,
+                node_id="kept",
+                parent_node_id=None,
+                label="Kept",
+                href=None,
+                fragment_idx=0,
+                depth=0,
+                order_key="0001",
             )
+            session.add(toc_node)
             session.commit()
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
@@ -1337,6 +1265,10 @@ class TestRetryEpubEndpoint:
 
         from unittest.mock import patch
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
         with patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage):
             resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
 
@@ -1344,24 +1276,16 @@ class TestRetryEpubEndpoint:
         assert resp.json()["error"]["code"] == "E_STORAGE_MISSING"
 
         with direct_db.session() as session:
-            row = session.execute(
-                text("SELECT processing_status, processing_attempts FROM media WHERE id = :id"),
-                {"id": media_id},
-            ).fetchone()
-            assert row[0] == "failed"
-            assert row[1] == 1
+            media_row = session.get(Media, media_id)
+            assert media_row is not None
+            assert media_row.processing_status == ProcessingStatus.failed
+            assert media_row.processing_attempts == 1
 
             # Artifacts must be preserved when precondition fails
-            frag_count = session.execute(
-                text("SELECT COUNT(*) FROM fragments WHERE media_id = :mid"),
-                {"mid": media_id},
-            ).scalar()
+            frag_count = session.query(Fragment).filter(Fragment.media_id == media_id).count()
             assert frag_count == 1, "artifacts deleted despite precondition failure"
 
-            toc_count = session.execute(
-                text("SELECT COUNT(*) FROM epub_toc_nodes WHERE media_id = :mid"),
-                {"mid": media_id},
-            ).scalar()
+            toc_count = session.query(EpubTocNode).filter(EpubTocNode.media_id == media_id).count()
             assert toc_count == 1, "TOC nodes deleted despite precondition failure"
 
     def test_retry_preserves_source_identity_fields(
@@ -1403,6 +1327,12 @@ class TestRetryEpubEndpoint:
 
         from unittest.mock import MagicMock, patch
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
+        # DISPATCH SEAM EXCEPTION: Async task dispatch boundary mock.
+        # Prevents real Celery dispatch per testing standards Section 6 (Allowed Mocks).
         with (
             patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
             patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", MagicMock()),
@@ -1412,17 +1342,13 @@ class TestRetryEpubEndpoint:
         assert resp.status_code == 202
 
         with direct_db.session() as session:
-            row = session.execute(
-                text("SELECT file_sha256 FROM media WHERE id = :id"),
-                {"id": media_id},
-            ).fetchone()
-            assert row[0] == sha
+            media_row = session.get(Media, media_id)
+            assert media_row is not None
+            assert media_row.file_sha256 == sha
 
-            mf = session.execute(
-                text("SELECT storage_path FROM media_file WHERE media_id = :id"),
-                {"id": media_id},
-            ).fetchone()
-            assert mf[0] == storage_path
+            mf = session.get(MediaFile, media_id)
+            assert mf is not None
+            assert mf.storage_path == storage_path
 
     def test_retry_dispatch_failure_rolls_back_state(
         self,
@@ -1466,6 +1392,12 @@ class TestRetryEpubEndpoint:
         def boom(*a, **kw):
             raise RuntimeError("broker down")
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
+        # DISPATCH SEAM EXCEPTION: Async task dispatch boundary mock.
+        # Prevents real Celery dispatch per testing standards Section 6 (Allowed Mocks).
         with (
             patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
             patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", side_effect=boom),
@@ -1475,11 +1407,9 @@ class TestRetryEpubEndpoint:
         assert resp.status_code == 500
 
         with direct_db.session() as session:
-            row = session.execute(
-                text("SELECT processing_status FROM media WHERE id = :id"),
-                {"id": media_id},
-            ).fetchone()
-            assert row[0] != "extracting"
+            media_row = session.get(Media, media_id)
+            assert media_row is not None
+            assert media_row.processing_status != ProcessingStatus.extracting
 
 
 # =============================================================================
@@ -1492,52 +1422,11 @@ def _create_ready_epub(session, *, num_chapters=3, with_toc=True):
 
     Returns (media_id, [fragment_ids]).
     """
-    media_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO media (id, kind, title, processing_status)
-            VALUES (:id, 'epub', 'Test EPUB Book', 'ready_for_reading')
-        """),
-        {"id": media_id},
+    return create_ready_epub_with_chapters(
+        session,
+        num_chapters=num_chapters,
+        with_toc=with_toc,
     )
-
-    frag_ids = []
-    for i in range(num_chapters):
-        fid = uuid4()
-        frag_ids.append(fid)
-        html = f"<h2>Chapter {i + 1} Title</h2><p>Sentinel content for chapter {i}.</p>"
-        canon = f"Chapter {i + 1} Title\nSentinel content for chapter {i}."
-        session.execute(
-            text("""
-                INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-                VALUES (:fid, :mid, :idx, :html, :canon)
-            """),
-            {"fid": fid, "mid": media_id, "idx": i, "html": html, "canon": canon},
-        )
-
-    if with_toc:
-        for i in range(num_chapters):
-            node_id = f"ch{i}"
-            order_key = f"{i + 1:04d}"
-            session.execute(
-                text("""
-                    INSERT INTO epub_toc_nodes
-                        (media_id, node_id, parent_node_id, label, href, fragment_idx,
-                         depth, order_key)
-                    VALUES (:mid, :nid, NULL, :label, :href, :fidx, 0, :ok)
-                """),
-                {
-                    "mid": media_id,
-                    "nid": node_id,
-                    "label": f"TOC Chapter {i + 1}",
-                    "href": f"ch{i}.xhtml",
-                    "fidx": i,
-                    "ok": order_key,
-                },
-            )
-
-    session.commit()
-    return media_id, frag_ids
 
 
 def _add_media_to_user_library(auth_client, user_id, media_id):
@@ -1727,32 +1616,48 @@ class TestGetEpubChaptersPrimaryTocNodeUsesMinOrderKey:
         media_id = uuid4()
 
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:id, 'epub', 'Multi-TOC EPUB', 'ready_for_reading')
-                """),
-                {"id": media_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Multi-TOC EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
             )
+            session.add(media)
+            session.flush()
             fid = uuid4()
-            session.execute(
-                text("""
-                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-                    VALUES (:fid, :mid, 0, '<p>Content</p>', 'Content')
-                """),
-                {"fid": fid, "mid": media_id},
+            frag = Fragment(
+                id=fid,
+                media_id=media_id,
+                idx=0,
+                html_sanitized="<p>Content</p>",
+                canonical_text="Content",
             )
+            session.add(frag)
+            session.flush()
             # Two TOC nodes both pointing to fragment_idx=0, different order_keys
-            session.execute(
-                text("""
-                    INSERT INTO epub_toc_nodes
-                        (media_id, node_id, parent_node_id, label, href, fragment_idx,
-                         depth, order_key)
-                    VALUES
-                        (:mid, 'second', NULL, 'Second Label', NULL, 0, 0, '0002'),
-                        (:mid, 'first', NULL, 'First Label', NULL, 0, 0, '0001')
-                """),
-                {"mid": media_id},
+            session.add(
+                EpubTocNode(
+                    media_id=media_id,
+                    node_id="second",
+                    parent_node_id=None,
+                    label="Second Label",
+                    href=None,
+                    fragment_idx=0,
+                    depth=0,
+                    order_key="0002",
+                )
+            )
+            session.add(
+                EpubTocNode(
+                    media_id=media_id,
+                    node_id="first",
+                    parent_node_id=None,
+                    label="First Label",
+                    href=None,
+                    fragment_idx=0,
+                    depth=0,
+                    order_key="0001",
+                )
             )
             session.commit()
 
@@ -1868,22 +1773,25 @@ class TestGetEpubTocReturnsNestedTreeOrderedByOrderKey:
         media_id = uuid4()
 
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:id, 'epub', 'Nested TOC EPUB', 'ready_for_reading')
-                """),
-                {"id": media_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Nested TOC EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
             )
+            session.add(media)
+            session.flush()
             # Create a fragment for linking
             fid = uuid4()
-            session.execute(
-                text("""
-                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-                    VALUES (:fid, :mid, 0, '<p>Content</p>', 'Content')
-                """),
-                {"fid": fid, "mid": media_id},
+            frag = Fragment(
+                id=fid,
+                media_id=media_id,
+                idx=0,
+                html_sanitized="<p>Content</p>",
+                canonical_text="Content",
             )
+            session.add(frag)
+            session.flush()
             # Insert TOC nodes out of order to test deterministic ordering
             nodes = [
                 ("root2", None, "Part II", None, None, 0, "0002"),
@@ -1892,23 +1800,17 @@ class TestGetEpubTocReturnsNestedTreeOrderedByOrderKey:
                 ("child1_1", "root1", "Chapter 1.1", None, 0, 1, "0001.0001"),
             ]
             for nid, pid, label, href, fidx, depth, ok in nodes:
-                session.execute(
-                    text("""
-                        INSERT INTO epub_toc_nodes
-                            (media_id, node_id, parent_node_id, label, href,
-                             fragment_idx, depth, order_key)
-                        VALUES (:mid, :nid, :pid, :label, :href, :fidx, :depth, :ok)
-                    """),
-                    {
-                        "mid": media_id,
-                        "nid": nid,
-                        "pid": pid,
-                        "label": label,
-                        "href": href,
-                        "fidx": fidx,
-                        "depth": depth,
-                        "ok": ok,
-                    },
+                session.add(
+                    EpubTocNode(
+                        media_id=media_id,
+                        node_id=nid,
+                        parent_node_id=pid,
+                        label=label,
+                        href=href,
+                        fragment_idx=fidx,
+                        depth=depth,
+                        order_key=ok,
+                    )
                 )
             session.commit()
 
@@ -2002,13 +1904,13 @@ class TestGetEpubReadEndpointsKindAndReadinessGuards:
         media_id = uuid4()
 
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:id, 'web_article', 'An Article', 'ready_for_reading')
-                """),
-                {"id": media_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.web_article.value,
+                title="An Article",
+                processing_status=ProcessingStatus.ready_for_reading,
             )
+            session.add(media)
             session.commit()
 
         direct_db.register_cleanup("library_media", "media_id", media_id)
@@ -2030,13 +1932,13 @@ class TestGetEpubReadEndpointsKindAndReadinessGuards:
         media_id = uuid4()
 
         with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:id, 'epub', 'Pending EPUB', 'pending')
-                """),
-                {"id": media_id},
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Pending EPUB",
+                processing_status=ProcessingStatus.pending,
             )
+            session.add(media)
             session.commit()
 
         direct_db.register_cleanup("library_media", "media_id", media_id)

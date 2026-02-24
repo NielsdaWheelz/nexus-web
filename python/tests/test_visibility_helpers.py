@@ -27,6 +27,8 @@ from nexus.services.highlights import (
     get_highlight_for_visible_read_or_404,
 )
 
+pytestmark = pytest.mark.integration
+
 # =============================================================================
 # Helpers
 # =============================================================================

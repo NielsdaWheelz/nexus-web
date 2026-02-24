@@ -88,5 +88,10 @@ secrets/
 # Agency
 .agency/state/
 
+# Playwright E2E auth state
+e2e/.auth/
+e2e/test-results/
+e2e/playwright-report/
+
 # Lock files that shouldn't be edited manually
 # (uv.lock and package-lock.json SHOULD be committed)

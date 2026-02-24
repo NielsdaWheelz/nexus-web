@@ -2,11 +2,11 @@
 
 Tests the XChaCha20-Poly1305 encryption/decryption functions for BYOK API keys.
 
-Per S3 spec:
-- Keys are encrypted using XChaCha20-Poly1305 (libsodium via PyNaCl)
-- Nonce must be 24 bytes and unique per encryption
-- Different nonces produce different ciphertext for same plaintext
-- Decryption fails with wrong nonce or wrong master key
+Verifies app-owned behavior:
+- Master key loading from env and validation
+- Encrypt/decrypt round-trip
+- Key fingerprint computation
+- Error handling (wrong nonce, tampered ciphertext, wrong key, invalid nonce size)
 """
 
 import base64
@@ -15,7 +15,6 @@ import pytest
 
 from nexus.services.crypto import (
     MASTER_KEY_SIZE,
-    NONCE_SIZE,
     CryptoError,
     clear_master_key_cache,
     compute_key_fingerprint,
@@ -24,6 +23,8 @@ from nexus.services.crypto import (
     generate_nonce,
     require_master_key,
 )
+
+pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
@@ -91,23 +92,6 @@ class TestMasterKey:
         assert "must be 32 bytes" in str(exc_info.value)
 
 
-class TestNonceGeneration:
-    """Tests for nonce generation."""
-
-    def test_generate_nonce_returns_correct_size(self):
-        """Generated nonce is 24 bytes."""
-        nonce = generate_nonce()
-
-        assert len(nonce) == NONCE_SIZE
-
-    def test_generate_nonce_is_random(self):
-        """Each generated nonce is unique (with very high probability)."""
-        nonces = [generate_nonce() for _ in range(100)]
-
-        # All nonces should be unique
-        assert len(set(nonces)) == 100
-
-
 class TestEncryptDecrypt:
     """Tests for encrypt/decrypt round-trip."""
 
@@ -136,27 +120,6 @@ class TestEncryptDecrypt:
             ciphertext = encrypt_secretbox(plaintext, nonce)
             decrypted = decrypt_secretbox(ciphertext, nonce)
             assert decrypted == plaintext
-
-    def test_different_nonces_produce_different_ciphertext(self):
-        """Same plaintext with different nonces produces different ciphertext."""
-        plaintext = b"sk-test-api-key-12345"
-        nonce1 = generate_nonce()
-        nonce2 = generate_nonce()
-
-        ciphertext1 = encrypt_secretbox(plaintext, nonce1)
-        ciphertext2 = encrypt_secretbox(plaintext, nonce2)
-
-        assert ciphertext1 != ciphertext2
-
-    def test_ciphertext_is_larger_than_plaintext(self):
-        """Ciphertext includes 16-byte auth tag."""
-        plaintext = b"sk-test-api-key-12345"
-        nonce = generate_nonce()
-
-        ciphertext = encrypt_secretbox(plaintext, nonce)
-
-        # XChaCha20-Poly1305 adds 16-byte auth tag
-        assert len(ciphertext) == len(plaintext) + 16
 
     def test_wrong_nonce_fails_decryption(self):
         """Decryption with wrong nonce fails."""

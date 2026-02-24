@@ -451,8 +451,8 @@ describe("applyFocusClass", () => {
   });
 
   // Note: The ~= CSS selector should NOT match "h" in "h1 h12 h123" because
-  // ~= matches whitespace-separated tokens exactly. However, happy-dom may not
-  // implement ~= correctly. This test verifies that exact token matching works.
+  // ~= matches whitespace-separated tokens exactly. This test verifies that
+  // exact token matching works in the Vitest Browser Mode (Chromium) environment.
   it("matches exact token with ~= selector", () => {
     const container = document.createElement("div");
     const span = document.createElement("span");

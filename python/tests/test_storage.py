@@ -14,6 +14,8 @@ import pytest
 from nexus.storage.client import FakeStorageClient, ObjectMetadata, SignedUpload, compute_sha256
 from nexus.storage.paths import build_storage_path, get_file_extension, parse_storage_path
 
+pytestmark = pytest.mark.unit
+
 
 class TestPathBuilding:
     """Tests for storage path building utilities."""

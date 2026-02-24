@@ -18,6 +18,7 @@ Key invariants tested:
 
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,8 @@ from nexus.auth.permissions import (
     is_library_member,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
+
+pytestmark = pytest.mark.integration
 
 # =============================================================================
 # Helpers

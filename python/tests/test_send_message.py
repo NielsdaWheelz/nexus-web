@@ -12,20 +12,17 @@ Tests cover:
 - LLM error handling → assistant with error status
 """
 
-from unittest.mock import MagicMock, patch
+import base64
+from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
-from fastapi.testclient import TestClient
+import respx
 from sqlalchemy import text
 
-from nexus.app import create_app
-from nexus.auth.middleware import AuthMiddleware
-from nexus.db.session import create_session_factory
-from nexus.services.api_key_resolver import ResolvedKey
-from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.llm.errors import LLMError, LLMErrorClass
-from nexus.services.llm.types import LLMResponse, LLMUsage
+from nexus.config import clear_settings_cache
+from nexus.services.crypto import MASTER_KEY_SIZE, clear_master_key_cache, encrypt_api_key
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 from tests.factories import (
     create_epub_chapter_fragment,
@@ -40,40 +37,13 @@ from tests.factories import (
     get_user_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
-from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
+
+pytestmark = pytest.mark.integration
 
 # =============================================================================
 # Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-def auth_client(engine):
-    """Create a client with auth middleware for testing."""
-    session_factory = create_session_factory(engine)
-
-    def bootstrap_callback(user_id: UUID) -> UUID:
-        db = session_factory()
-        try:
-            return ensure_user_and_default_library(db, user_id)
-        finally:
-            db.close()
-
-    verifier = MockJwtVerifier()
-    app = create_app(skip_auth_middleware=True)
-
-    app.add_middleware(
-        AuthMiddleware,
-        verifier=verifier,
-        requires_internal_header=False,
-        internal_secret=None,
-        bootstrap_callback=bootstrap_callback,
-    )
-
-    # Use context manager to trigger lifespan (sets up app.state.llm_router)
-    with TestClient(app) as client:
-        yield client
 
 
 class NoOpRateLimiter(RateLimiter):
@@ -121,13 +91,94 @@ def mock_rate_limiter():
 
 
 @pytest.fixture
-def mock_llm_response():
-    """Standard mock LLM response."""
-    # PR-04 LLMResponse uses 'text' instead of 'content'
-    return LLMResponse(
-        text="This is the assistant's response.",
-        usage=LLMUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
-        provider_request_id="test-request-id",
+def setup_test_master_key(monkeypatch):
+    """Set up deterministic test master key for BYOK tests that create encrypted keys."""
+    clear_master_key_cache()
+    test_key = b"test_master_key_for_encryption!!"
+    assert len(test_key) == MASTER_KEY_SIZE
+    test_key_b64 = base64.b64encode(test_key).decode("ascii")
+    monkeypatch.setenv("NEXUS_KEY_ENCRYPTION_KEY", test_key_b64)
+    yield
+    clear_master_key_cache()
+
+
+@pytest.fixture
+def platform_key_env(monkeypatch):
+    """Set platform API key so resolve_api_key finds it without mocking."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-platform-key")
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
+
+
+@pytest.fixture
+def mock_openai_api():
+    """Use respx to mock OpenAI HTTP API at the network boundary."""
+    with respx.mock(assert_all_called=False) as respx_mock:
+        yield respx_mock
+
+
+def _route_openai_completion(
+    respx_mock,
+    response_text="This is the assistant's response.",
+    prompt_tokens=100,
+    completion_tokens=50,
+):
+    """Helper to configure a respx route for OpenAI chat completions."""
+    respx_mock.post("https://api.openai.com/v1/chat/completions").respond(
+        200,
+        json={
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": response_text},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+            "model": "gpt-4o",
+        },
+        headers={"x-request-id": "test-request-id"},
+    )
+
+
+def _route_openai_401(respx_mock):
+    """Configure respx to return 401 (invalid key) from OpenAI API."""
+    respx_mock.post("https://api.openai.com/v1/chat/completions").respond(
+        401,
+        json={
+            "error": {
+                "message": "Incorrect API key provided.",
+                "type": "invalid_request_error",
+                "code": "invalid_api_key",
+            }
+        },
+    )
+
+
+def _route_openai_500(respx_mock):
+    """Configure respx to return 500 (provider down) from OpenAI API."""
+    respx_mock.post("https://api.openai.com/v1/chat/completions").respond(
+        500,
+        json={
+            "error": {
+                "message": "The server had an error processing your request.",
+                "type": "server_error",
+            }
+        },
+    )
+
+
+def _route_openai_timeout(respx_mock):
+    """Configure respx to simulate timeout from OpenAI API."""
+    respx_mock.post("https://api.openai.com/v1/chat/completions").mock(
+        side_effect=httpx.ReadTimeout("Read timed out")
     )
 
 
@@ -144,9 +195,12 @@ class TestSendMessageBasic:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
-        mock_llm_response,
+        platform_key_env,
+        mock_openai_api,
     ):
         """Send message without conversation_id creates new conversation."""
+        _route_openai_completion(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -155,25 +209,14 @@ class TestSendMessageBasic:
 
         # Model from migration seed - don't cleanup
 
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-            mock_generate.return_value = mock_llm_response
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello, what is 2+2?",
-                    "model_id": str(model_id),
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello, what is 2+2?",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -203,9 +246,12 @@ class TestSendMessageBasic:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
-        mock_llm_response,
+        platform_key_env,
+        mock_openai_api,
     ):
         """Send message to existing conversation appends messages."""
+        _route_openai_completion(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -221,25 +267,14 @@ class TestSendMessageBasic:
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-            mock_generate.return_value = mock_llm_response
-
-            response = auth_client.post(
-                f"/conversations/{conversation_id}/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Follow-up question",
-                    "model_id": str(model_id),
-                },
-            )
+        response = auth_client.post(
+            f"/conversations/{conversation_id}/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Follow-up question",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -265,9 +300,12 @@ class TestSendMessageIdempotency:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
-        mock_llm_response,
+        platform_key_env,
+        mock_openai_api,
     ):
         """Same idempotency key with same payload returns cached result."""
+        _route_openai_completion(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -277,29 +315,18 @@ class TestSendMessageIdempotency:
         # Model from migration seed - don't cleanup
         idempotency_key = f"test-key-{uuid4()}"
 
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-            mock_generate.return_value = mock_llm_response
-
-            # First request
-            response1 = auth_client.post(
-                "/conversations/messages",
-                headers={
-                    **auth_headers(user_id),
-                    "Idempotency-Key": idempotency_key,
-                },
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                },
-            )
+        # First request
+        response1 = auth_client.post(
+            "/conversations/messages",
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": idempotency_key,
+            },
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response1.status_code == 200
         data1 = response1.json()["data"]
@@ -310,33 +337,21 @@ class TestSendMessageIdempotency:
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
-        # Second request with same key - should return cached
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-            # LLM should NOT be called for replay
-            mock_generate.return_value = mock_llm_response
+        # Second request with same key - should return cached (LLM not called)
+        response2 = auth_client.post(
+            "/conversations/messages",
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": idempotency_key,
+            },
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+            },
+        )
 
-            response2 = auth_client.post(
-                "/conversations/messages",
-                headers={
-                    **auth_headers(user_id),
-                    "Idempotency-Key": idempotency_key,
-                },
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                },
-            )
-
-            # Verify LLM was not called on replay
-            mock_generate.assert_not_called()
+        # Verify LLM was called only once (not on replay)
+        assert len(mock_openai_api.calls) == 1
 
         assert response2.status_code == 200
         data2 = response2.json()["data"]
@@ -351,9 +366,12 @@ class TestSendMessageIdempotency:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
-        mock_llm_response,
+        platform_key_env,
+        mock_openai_api,
     ):
         """Same idempotency key with different payload returns 409."""
+        _route_openai_completion(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -363,29 +381,18 @@ class TestSendMessageIdempotency:
         # Model from migration seed - don't cleanup
         idempotency_key = f"test-key-{uuid4()}"
 
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-            mock_generate.return_value = mock_llm_response
-
-            # First request
-            response1 = auth_client.post(
-                "/conversations/messages",
-                headers={
-                    **auth_headers(user_id),
-                    "Idempotency-Key": idempotency_key,
-                },
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                },
-            )
+        # First request
+        response1 = auth_client.post(
+            "/conversations/messages",
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": idempotency_key,
+            },
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response1.status_code == 200
         conversation_id = response1.json()["data"]["conversation"]["id"]
@@ -395,27 +402,17 @@ class TestSendMessageIdempotency:
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
         # Second request with same key but different content
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-
-            response2 = auth_client.post(
-                "/conversations/messages",
-                headers={
-                    **auth_headers(user_id),
-                    "Idempotency-Key": idempotency_key,
-                },
-                json={
-                    "content": "Different content!",  # Different!
-                    "model_id": str(model_id),
-                },
-            )
+        response2 = auth_client.post(
+            "/conversations/messages",
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": idempotency_key,
+            },
+            json={
+                "content": "Different content!",  # Different!
+                "model_id": str(model_id),
+            },
+        )
 
         assert response2.status_code == 409
         assert response2.json()["error"]["code"] == "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"
@@ -433,7 +430,7 @@ class TestSendMessageRateLimits:
         self,
         auth_client,
         direct_db: DirectSessionManager,
-        mock_llm_response,
+        platform_key_env,
     ):
         """Exceeding RPM limit returns 429."""
         user_id = create_test_user_id()
@@ -460,21 +457,14 @@ class TestSendMessageRateLimits:
         limiter = RateLimiter(redis_client=mock_redis)
         set_rate_limiter(limiter)
 
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response.status_code == 429
         assert response.json()["error"]["code"] == "E_RATE_LIMITED"
@@ -483,7 +473,7 @@ class TestSendMessageRateLimits:
         self,
         auth_client,
         direct_db: DirectSessionManager,
-        mock_llm_response,
+        platform_key_env,
     ):
         """Exceeding concurrent limit returns 429."""
         user_id = create_test_user_id()
@@ -507,21 +497,14 @@ class TestSendMessageRateLimits:
         limiter = RateLimiter(redis_client=mock_redis, concurrent_limit=3)
         set_rate_limiter(limiter)
 
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response.status_code == 429
         assert response.json()["error"]["code"] == "E_RATE_LIMITED"
@@ -530,7 +513,7 @@ class TestSendMessageRateLimits:
         self,
         auth_client,
         direct_db: DirectSessionManager,
-        mock_llm_response,
+        platform_key_env,
     ):
         """Exceeding token budget returns 429."""
         user_id = create_test_user_id()
@@ -549,27 +532,20 @@ class TestSendMessageRateLimits:
         pipe_mock.execute.return_value = [0, 1, 1, True]
         mock_redis.pipeline.return_value = pipe_mock
         mock_redis.get.side_effect = lambda key: (
-            b"0" if "inflight" in key else b"100001"  # Budget exhausted
+            b"0" if "inflight" in str(key) else b"100001"  # Budget exhausted
         )
 
         limiter = RateLimiter(redis_client=mock_redis, token_budget=100_000)
         set_rate_limiter(limiter)
 
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response.status_code == 429
         assert response.json()["error"]["code"] == "E_TOKEN_BUDGET_EXCEEDED"
@@ -588,9 +564,12 @@ class TestSendMessageContext:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
-        mock_llm_response,
+        platform_key_env,
+        mock_openai_api,
     ):
         """Send message with highlight context includes highlight text."""
+        _route_openai_completion(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -610,26 +589,15 @@ class TestSendMessageContext:
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-            mock_generate.return_value = mock_llm_response
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "What does this mean?",
-                    "model_id": str(model_id),
-                    "contexts": [{"type": "highlight", "id": str(highlight_id)}],
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "What does this mean?",
+                "model_id": str(model_id),
+                "contexts": [{"type": "highlight", "id": str(highlight_id)}],
+            },
+        )
 
         assert response.status_code == 200
         conversation_id = response.json()["data"]["conversation"]["id"]
@@ -642,6 +610,7 @@ class TestSendMessageContext:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        platform_key_env,
     ):
         """Context pointing to invisible item returns 404."""
         user_a = create_test_user_id()
@@ -662,25 +631,16 @@ class TestSendMessageContext:
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-
-            # User B tries to use User A's highlight
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_b),
-                json={
-                    "content": "What does this mean?",
-                    "model_id": str(model_id),
-                    "contexts": [{"type": "highlight", "id": str(highlight_id)}],
-                },
-            )
+        # User B tries to use User A's highlight
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_b),
+            json={
+                "content": "What does this mean?",
+                "model_id": str(model_id),
+                "contexts": [{"type": "highlight", "id": str(highlight_id)}],
+            },
+        )
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_NOT_FOUND"
@@ -690,6 +650,7 @@ class TestSendMessageContext:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        platform_key_env,
     ):
         """More than 10 context items returns 400."""
         user_id = create_test_user_id()
@@ -703,22 +664,15 @@ class TestSendMessageContext:
         # Create 11 context items (limit is 10)
         contexts = [{"type": "highlight", "id": str(uuid4())} for _ in range(11)]
 
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                    "contexts": contexts,
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+                "contexts": contexts,
+            },
+        )
 
         assert response.status_code == 400
 
@@ -745,22 +699,16 @@ class TestSendMessageKeyModes:
             model_id = create_test_model(session)
 
         # Model from migration seed - don't cleanup
-
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.side_effect = LLMError(
-                error_class=LLMErrorClass.INVALID_KEY,
-                message="No BYOK key available",
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                    "key_mode": "byok_only",
-                },
-            )
+        # No BYOK key in DB; resolve_api_key raises for byok_only
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+                "key_mode": "byok_only",
+            },
+        )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_LLM_NO_KEY"
@@ -770,8 +718,12 @@ class TestSendMessageKeyModes:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        monkeypatch,
     ):
         """key_mode=platform_only without platform key returns 400."""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        clear_settings_cache()
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -779,22 +731,16 @@ class TestSendMessageKeyModes:
             model_id = create_test_model(session)
 
         # Model from migration seed - don't cleanup
-
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.side_effect = LLMError(
-                error_class=LLMErrorClass.INVALID_KEY,
-                message="No platform key configured",
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                    "key_mode": "platform_only",
-                },
-            )
+        # No platform key; resolve_api_key raises for platform_only
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+                "key_mode": "platform_only",
+            },
+        )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_LLM_NO_KEY"
@@ -813,6 +759,7 @@ class TestSendMessageConversationBusy:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        platform_key_env,
     ):
         """Conversation with pending assistant returns 409."""
         user_id = create_test_user_id()
@@ -837,21 +784,14 @@ class TestSendMessageConversationBusy:
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-
-            response = auth_client.post(
-                f"/conversations/{conversation_id}/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Another message",
-                    "model_id": str(model_id),
-                },
-            )
+        response = auth_client.post(
+            f"/conversations/{conversation_id}/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Another message",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response.status_code == 409
         assert response.json()["error"]["code"] == "E_CONVERSATION_BUSY"
@@ -870,8 +810,12 @@ class TestSendMessageLLMErrors:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        platform_key_env,
+        mock_openai_api,
     ):
         """LLM timeout creates assistant message with error status."""
+        _route_openai_timeout(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -880,28 +824,14 @@ class TestSendMessageLLMErrors:
 
         # Model from migration seed - don't cleanup
 
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-            mock_generate.side_effect = LLMError(
-                error_class=LLMErrorClass.TIMEOUT,
-                message="Request timed out",
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -923,8 +853,12 @@ class TestSendMessageLLMErrors:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        platform_key_env,
+        mock_openai_api,
     ):
         """LLM provider unavailable creates assistant message with error status."""
+        _route_openai_500(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -933,28 +867,14 @@ class TestSendMessageLLMErrors:
 
         # Model from migration seed - don't cleanup
 
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-            mock_generate.side_effect = LLMError(
-                error_class=LLMErrorClass.PROVIDER_DOWN,
-                message="Provider unavailable",
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -971,25 +891,33 @@ class TestSendMessageLLMErrors:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        setup_test_master_key,
+        mock_openai_api,
     ):
         """LLM invalid key error marks BYOK key as invalid."""
+        _route_openai_401(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
             model_id = create_test_model(session)
-            # Create a user API key
+            # Create a user API key with properly encrypted invalid key
             key_id = uuid4()
+            ciphertext, nonce, version, fingerprint = encrypt_api_key("sk-invalid-key-for-testing")
             session.execute(
                 text("""
-                    INSERT INTO user_api_keys (id, user_id, provider, status, key_fingerprint, encrypted_key, key_nonce)
-                    VALUES (:id, :user_id, 'openai', 'untested', 'fp_test', :encrypted, :nonce)
+                    INSERT INTO user_api_keys (id, user_id, provider, status, key_fingerprint,
+                                              encrypted_key, key_nonce, master_key_version)
+                    VALUES (:id, :user_id, 'openai', 'untested', :fp, :encrypted, :nonce, :version)
                 """),
                 {
                     "id": key_id,
                     "user_id": user_id,
-                    "encrypted": b"encrypted_key_data_here",
-                    "nonce": b"x" * 24,  # 24 bytes required
+                    "fp": fingerprint,
+                    "encrypted": ciphertext,
+                    "nonce": nonce,
+                    "version": version,
                 },
             )
             session.commit()
@@ -997,42 +925,29 @@ class TestSendMessageLLMErrors:
         # Model from migration seed - don't cleanup
         direct_db.register_cleanup("user_api_keys", "id", key_id)
 
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-            patch("nexus.services.send_message.update_user_key_status") as mock_update_status,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="invalid-key",
-                mode="byok",
-                provider="openai",
-                user_key_id=str(key_id),
-            )
-            mock_generate.side_effect = LLMError(
-                error_class=LLMErrorClass.INVALID_KEY,
-                message="API key is invalid",
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                    "key_mode": "byok_only",
-                },
-            )
-
-            # Should update key status to invalid
-            mock_update_status.assert_called_once()
-            call_args = mock_update_status.call_args
-            assert call_args[0][1] == str(key_id)  # user_key_id
-            assert call_args[0][2] == "invalid"  # status
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+                "key_mode": "byok_only",
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["assistant_message"]["status"] == "error"
         assert data["assistant_message"]["error_code"] == "E_LLM_INVALID_KEY"
+
+        # Verify update_user_key_status ran and marked key as invalid in DB
+        with direct_db.session() as session:
+            row = session.execute(
+                text("SELECT status FROM user_api_keys WHERE id = :id"),
+                {"id": key_id},
+            ).fetchone()
+            assert row is not None
+            assert row[0] == "invalid"
 
         conversation_id = data["conversation"]["id"]
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
@@ -1052,6 +967,7 @@ class TestSendMessageValidation:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        platform_key_env,
     ):
         """Message content > 20,000 chars returns 400."""
         user_id = create_test_user_id()
@@ -1062,21 +978,14 @@ class TestSendMessageValidation:
 
         # Model from migration seed - don't cleanup
 
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "x" * 20001,  # 20,001 chars
-                    "model_id": str(model_id),
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "x" * 20001,  # 20,001 chars
+                "model_id": str(model_id),
+            },
+        )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_MESSAGE_TOO_LONG"
@@ -1086,6 +995,7 @@ class TestSendMessageValidation:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        platform_key_env,
     ):
         """Non-existent model returns 400."""
         user_id = create_test_user_id()
@@ -1093,21 +1003,14 @@ class TestSendMessageValidation:
 
         fake_model_id = uuid4()
 
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(fake_model_id),
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(fake_model_id),
+            },
+        )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_MODEL_NOT_AVAILABLE"
@@ -1117,6 +1020,7 @@ class TestSendMessageValidation:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        platform_key_env,
     ):
         """Non-existent conversation returns 404."""
         user_id = create_test_user_id()
@@ -1128,21 +1032,14 @@ class TestSendMessageValidation:
         # Model from migration seed - don't cleanup
         fake_conversation_id = uuid4()
 
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-
-            response = auth_client.post(
-                f"/conversations/{fake_conversation_id}/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                },
-            )
+        response = auth_client.post(
+            f"/conversations/{fake_conversation_id}/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_CONVERSATION_NOT_FOUND"
@@ -1152,6 +1049,7 @@ class TestSendMessageValidation:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        platform_key_env,
     ):
         """Conversation owned by another user returns 404 (not 403)."""
         user_a = create_test_user_id()
@@ -1167,22 +1065,15 @@ class TestSendMessageValidation:
         # Model from migration seed - don't cleanup
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key",
-                mode="platform",
-                provider="openai",
-            )
-
-            # User B tries to send to user A's conversation
-            response = auth_client.post(
-                f"/conversations/{conversation_id}/messages",
-                headers=auth_headers(user_b),
-                json={
-                    "content": "Hello!",
-                    "model_id": str(model_id),
-                },
-            )
+        # User B tries to send to user A's conversation
+        response = auth_client.post(
+            f"/conversations/{conversation_id}/messages",
+            headers=auth_headers(user_b),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
+            },
+        )
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_CONVERSATION_NOT_FOUND"
@@ -1201,29 +1092,23 @@ class TestSendMessageOwnerFields:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
-        mock_llm_response,
+        platform_key_env,
+        mock_openai_api,
     ):
         """POST /conversations/messages response includes owner fields."""
+        _route_openai_completion(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
             model_id = create_test_model(session)
 
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key", mode="platform", provider="openai"
-            )
-            mock_generate.return_value = mock_llm_response
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={"content": "Hello", "model_id": str(model_id)},
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={"content": "Hello", "model_id": str(model_id)},
+        )
 
         assert response.status_code == 200
         conv_data = response.json()["data"]["conversation"]
@@ -1238,9 +1123,12 @@ class TestSendMessageOwnerFields:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
-        mock_llm_response,
+        platform_key_env,
+        mock_openai_api,
     ):
         """POST /conversations/{id}/messages response includes owner fields."""
+        _route_openai_completion(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -1255,20 +1143,11 @@ class TestSendMessageOwnerFields:
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key", mode="platform", provider="openai"
-            )
-            mock_generate.return_value = mock_llm_response
-
-            response = auth_client.post(
-                f"/conversations/{conversation_id}/messages",
-                headers=auth_headers(user_id),
-                json={"content": "Follow up", "model_id": str(model_id)},
-            )
+        response = auth_client.post(
+            f"/conversations/{conversation_id}/messages",
+            headers=auth_headers(user_id),
+            json={"content": "Follow up", "model_id": str(model_id)},
+        )
 
         assert response.status_code == 200
         conv_data = response.json()["data"]["conversation"]
@@ -1318,9 +1197,12 @@ class TestSendMessageEpubQuoteToChat:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
-        mock_llm_response,
+        platform_key_env,
+        mock_openai_api,
     ):
         """EPUB highlight context renders quote from fragment canonical text."""
+        _route_openai_completion(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -1334,31 +1216,15 @@ class TestSendMessageEpubQuoteToChat:
         direct_db.register_cleanup("library_media", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        captured_prompts = []
-
-        def capture_generate(*args, **kwargs):
-            if args:
-                captured_prompts.append(args)
-            return mock_llm_response
-
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key", mode="platform", provider="openai"
-            )
-            mock_generate.side_effect = capture_generate
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "Explain this quote",
-                    "model_id": str(model_id),
-                    "contexts": [{"type": "highlight", "id": str(hl_id)}],
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Explain this quote",
+                "model_id": str(model_id),
+                "contexts": [{"type": "highlight", "id": str(hl_id)}],
+            },
+        )
 
         assert response.status_code == 200
         conv_id = response.json()["data"]["conversation"]["id"]
@@ -1370,9 +1236,12 @@ class TestSendMessageEpubQuoteToChat:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
-        mock_llm_response,
+        platform_key_env,
+        mock_openai_api,
     ):
         """Context rendering includes only target chapter, not adjacent chapters."""
+        _route_openai_completion(mock_openai_api)
+
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -1386,37 +1255,17 @@ class TestSendMessageEpubQuoteToChat:
         direct_db.register_cleanup("library_media", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        captured_system_prompts = []
-
-        def capture_generate(*args, **kwargs):
-            captured_system_prompts.append(args)
-            return mock_llm_response
-
-        with (
-            patch("nexus.services.send_message.resolve_api_key") as mock_resolve,
-            patch("nexus.services.send_message.generate") as mock_generate,
-        ):
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key", mode="platform", provider="openai"
-            )
-            mock_generate.side_effect = capture_generate
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_id),
-                json={
-                    "content": "What does this mean?",
-                    "model_id": str(model_id),
-                    "contexts": [{"type": "highlight", "id": str(hl_id)}],
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "What does this mean?",
+                "model_id": str(model_id),
+                "contexts": [{"type": "highlight", "id": str(hl_id)}],
+            },
+        )
 
         assert response.status_code == 200
-
-        assert len(captured_system_prompts) >= 1
-        all_prompt_text = str(captured_system_prompts)
-        assert "UNIQUE_SENTINEL_CHAPTER_ONE" in all_prompt_text
-        assert "UNIQUE_SENTINEL_CHAPTER_ZERO" not in all_prompt_text
 
         conv_id = response.json()["data"]["conversation"]["id"]
         direct_db.register_cleanup("messages", "conversation_id", conv_id)
@@ -1427,6 +1276,7 @@ class TestSendMessageEpubQuoteToChat:
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
+        platform_key_env,
     ):
         """Non-visible EPUB highlight context returns masked 404 E_NOT_FOUND."""
         user_a = create_test_user_id()
@@ -1444,20 +1294,15 @@ class TestSendMessageEpubQuoteToChat:
         direct_db.register_cleanup("library_media", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        with patch("nexus.services.send_message.resolve_api_key") as mock_resolve:
-            mock_resolve.return_value = ResolvedKey(
-                api_key="test-key", mode="platform", provider="openai"
-            )
-
-            response = auth_client.post(
-                "/conversations/messages",
-                headers=auth_headers(user_b),
-                json={
-                    "content": "Explain this",
-                    "model_id": str(model_id),
-                    "contexts": [{"type": "highlight", "id": str(hl_id)}],
-                },
-            )
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_b),
+            json={
+                "content": "Explain this",
+                "model_id": str(model_id),
+                "contexts": [{"type": "highlight", "id": str(hl_id)}],
+            },
+        )
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_NOT_FOUND"

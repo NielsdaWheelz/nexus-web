@@ -8,10 +8,30 @@ When a column is added or a constraint changes, update the
 relevant factory here — not in N test files.
 """
 
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from nexus.db.models import (
+    Annotation,
+    Conversation,
+    ConversationShare,
+    DefaultLibraryIntrinsic,
+    EpubTocNode,
+    FailureStage,
+    Fragment,
+    Highlight,
+    Library,
+    LibraryMedia,
+    Media,
+    MediaFile,
+    MediaKind,
+    Membership,
+    Message,
+    Model,
+    ProcessingStatus,
+)
 
 # =============================================================================
 # Models
@@ -24,43 +44,46 @@ def create_test_model(session: Session) -> UUID:
     Uses the migration-seeded gpt-4o row if it exists,
     otherwise inserts a complete row with all NOT NULL columns.
     """
-    result = session.execute(
-        text("SELECT id FROM models WHERE provider = 'openai' AND model_name = 'gpt-4o'")
+    existing = (
+        session.query(Model)
+        .filter(Model.provider == "openai", Model.model_name == "gpt-4o")
+        .first()
     )
-    row = result.fetchone()
-    if row:
-        return row[0]
+    if existing:
+        return existing.id
 
-    model_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
-            VALUES (:id, 'openai', 'gpt-4o', 128000, true)
-        """),
-        {"id": model_id},
+    model = Model(
+        id=uuid4(),
+        provider="openai",
+        model_name="gpt-4o",
+        max_context_tokens=128000,
+        is_available=True,
     )
+    session.add(model)
     session.commit()
-    return model_id
+    return model.id
 
 
 def seed_test_models(session: Session) -> None:
     """Seed the full set of test models if none exist."""
-    result = session.execute(text("SELECT COUNT(*) FROM models"))
-    if result.scalar() > 0:
+    if session.query(Model).count() > 0:
         return
 
-    session.execute(
-        text("""
-            INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
-            VALUES
-                (gen_random_uuid(), 'openai', 'gpt-4o-mini', 128000, true),
-                (gen_random_uuid(), 'openai', 'gpt-4o', 128000, true),
-                (gen_random_uuid(), 'anthropic', 'claude-sonnet-4-20250514', 200000, true),
-                (gen_random_uuid(), 'anthropic', 'claude-haiku-4-20250514', 200000, true),
-                (gen_random_uuid(), 'gemini', 'gemini-2.0-flash', 1000000, true)
-            ON CONFLICT DO NOTHING
-        """)
-    )
+    for provider, model_name, max_tokens in [
+        ("openai", "gpt-4o-mini", 128000),
+        ("openai", "gpt-4o", 128000),
+        ("anthropic", "claude-sonnet-4-20250514", 200000),
+        ("anthropic", "claude-haiku-4-20250514", 200000),
+        ("gemini", "gemini-2.0-flash", 1000000),
+    ]:
+        session.add(
+            Model(
+                provider=provider,
+                model_name=model_name,
+                max_context_tokens=max_tokens,
+                is_available=True,
+            )
+        )
     session.commit()
 
 
@@ -75,16 +98,15 @@ def create_test_conversation(
     sharing: str = "private",
 ) -> UUID:
     """Create a test conversation."""
-    conversation_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
-            VALUES (:id, :owner_user_id, :sharing, 1)
-        """),
-        {"id": conversation_id, "owner_user_id": owner_user_id, "sharing": sharing},
+    conv = Conversation(
+        id=uuid4(),
+        owner_user_id=owner_user_id,
+        sharing=sharing,
+        next_seq=1,
     )
+    session.add(conv)
     session.commit()
-    return conversation_id
+    return conv.id
 
 
 def create_test_message(
@@ -97,28 +119,21 @@ def create_test_message(
     model_id: UUID | None = None,
 ) -> UUID:
     """Create a test message and bump the conversation's next_seq."""
-    message_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO messages (id, conversation_id, seq, role, content, status, model_id)
-            VALUES (:id, :conversation_id, :seq, :role, :content, :status, :model_id)
-        """),
-        {
-            "id": message_id,
-            "conversation_id": conversation_id,
-            "seq": seq,
-            "role": role,
-            "content": content,
-            "status": status,
-            "model_id": model_id,
-        },
+    msg = Message(
+        id=uuid4(),
+        conversation_id=conversation_id,
+        seq=seq,
+        role=role,
+        content=content,
+        status=status,
+        model_id=model_id,
     )
-    session.execute(
-        text("UPDATE conversations SET next_seq = :next_seq WHERE id = :id"),
-        {"next_seq": seq + 1, "id": conversation_id},
-    )
+    session.add(msg)
+    conv = session.get(Conversation, conversation_id)
+    if conv:
+        conv.next_seq = seq + 1
     session.commit()
-    return message_id
+    return msg.id
 
 
 def create_test_conversation_with_message(
@@ -132,31 +147,25 @@ def create_test_conversation_with_message(
 
     Returns (conversation_id, message_id).
     """
-    conversation_id = uuid4()
-    message_id = uuid4()
-
-    session.execute(
-        text("""
-            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
-            VALUES (:id, :user_id, 'private', 2)
-        """),
-        {"id": conversation_id, "user_id": user_id},
+    conv = Conversation(
+        id=uuid4(),
+        owner_user_id=user_id,
+        sharing="private",
+        next_seq=2,
     )
-    session.execute(
-        text("""
-            INSERT INTO messages (id, conversation_id, seq, role, content, status)
-            VALUES (:id, :conversation_id, 1, :role, :content, :status)
-        """),
-        {
-            "id": message_id,
-            "conversation_id": conversation_id,
-            "content": content,
-            "status": status,
-            "role": role,
-        },
+    session.add(conv)
+    session.flush()
+    msg = Message(
+        id=uuid4(),
+        conversation_id=conv.id,
+        seq=1,
+        role=role,
+        content=content,
+        status=status,
     )
+    session.add(msg)
     session.commit()
-    return conversation_id, message_id
+    return conv.id, msg.id
 
 
 # =============================================================================
@@ -171,16 +180,16 @@ def create_test_media(
     status: str = "ready_for_reading",
 ) -> UUID:
     """Create a bare media row (not linked to any library)."""
-    media_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO media (id, kind, title, canonical_source_url, processing_status)
-            VALUES (:id, 'web_article', :title, 'https://example.com/test', :status)
-        """),
-        {"id": media_id, "title": title, "status": status},
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.web_article.value,
+        title=title,
+        canonical_source_url="https://example.com/test",
+        processing_status=ProcessingStatus(status),
     )
+    session.add(media)
     session.commit()
-    return media_id
+    return media.id
 
 
 def create_test_media_in_library(
@@ -195,34 +204,26 @@ def create_test_media_in_library(
 
     Also seeds default_library_intrinsics if the library is a default library.
     """
-    media_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO media (id, kind, title, canonical_source_url, processing_status)
-            VALUES (:id, 'web_article', :title, 'https://example.com/article', :status)
-        """),
-        {"id": media_id, "title": title, "status": status},
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.web_article.value,
+        title=title,
+        canonical_source_url="https://example.com/article",
+        processing_status=ProcessingStatus(status),
     )
-    session.execute(
-        text("""
-            INSERT INTO library_media (library_id, media_id)
-            VALUES (:library_id, :media_id)
-        """),
-        {"library_id": library_id, "media_id": media_id},
-    )
-    session.execute(
-        text("""
-            INSERT INTO default_library_intrinsics (default_library_id, media_id)
-            SELECT :library_id, :media_id
-            WHERE EXISTS (
-                SELECT 1 FROM libraries WHERE id = :library_id AND is_default = true
+    session.add(media)
+    session.flush()
+    session.add(LibraryMedia(library_id=library_id, media_id=media.id))
+    lib = session.get(Library, library_id)
+    if lib and lib.is_default:
+        session.add(
+            DefaultLibraryIntrinsic(
+                default_library_id=library_id,
+                media_id=media.id,
             )
-            ON CONFLICT DO NOTHING
-        """),
-        {"library_id": library_id, "media_id": media_id},
-    )
+        )
     session.commit()
-    return media_id
+    return media.id
 
 
 def create_searchable_media(
@@ -236,49 +237,42 @@ def create_searchable_media(
     The fragment includes searchable canonical_text derived from the title.
     Intended for search tests that need full-text content.
     """
-    media_id = uuid4()
-    fragment_id = uuid4()
-
-    session.execute(
-        text("""
-            INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
-            VALUES (:id, 'web_article', :title, 'ready_for_reading', :user_id)
-        """),
-        {"id": media_id, "title": title, "user_id": user_id},
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.web_article.value,
+        title=title,
+        processing_status=ProcessingStatus.ready_for_reading,
+        created_by_user_id=user_id,
     )
-    session.execute(
-        text("""
-            INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-            VALUES (:id, :media_id, 0, '<p>Test content</p>', :text)
-        """),
-        {
-            "id": fragment_id,
-            "media_id": media_id,
-            "text": f"This is the canonical text for {title}. It contains searchable content about various topics.",
-        },
+    session.add(media)
+    session.flush()
+    fragment = Fragment(
+        id=uuid4(),
+        media_id=media.id,
+        idx=0,
+        html_sanitized="<p>Test content</p>",
+        canonical_text=f"This is the canonical text for {title}. It contains searchable content about various topics.",
     )
-    session.execute(
-        text("""
-            INSERT INTO library_media (library_id, media_id)
-            SELECT l.id, :media_id
-            FROM libraries l
-            WHERE l.owner_user_id = :user_id AND l.is_default = true
-            ON CONFLICT DO NOTHING
-        """),
-        {"media_id": media_id, "user_id": user_id},
+    session.add(fragment)
+    session.flush()
+    default_libs = (
+        session.query(Library)
+        .filter(
+            Library.owner_user_id == user_id,
+            Library.is_default.is_(True),
+        )
+        .all()
     )
-    session.execute(
-        text("""
-            INSERT INTO default_library_intrinsics (default_library_id, media_id)
-            SELECT l.id, :media_id
-            FROM libraries l
-            WHERE l.owner_user_id = :user_id AND l.is_default = true
-            ON CONFLICT DO NOTHING
-        """),
-        {"media_id": media_id, "user_id": user_id},
-    )
+    for lib in default_libs:
+        session.merge(LibraryMedia(library_id=lib.id, media_id=media.id))
+        session.merge(
+            DefaultLibraryIntrinsic(
+                default_library_id=lib.id,
+                media_id=media.id,
+            )
+        )
     session.commit()
-    return media_id
+    return media.id
 
 
 # =============================================================================
@@ -290,16 +284,16 @@ def create_test_fragment(
     session: Session, media_id: UUID, content: str = "Fragment content"
 ) -> UUID:
     """Create a test fragment for a media item."""
-    fragment_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
-            VALUES (:id, :media_id, 0, :content, :html)
-        """),
-        {"id": fragment_id, "media_id": media_id, "content": content, "html": f"<p>{content}</p>"},
+    fragment = Fragment(
+        id=uuid4(),
+        media_id=media_id,
+        idx=0,
+        canonical_text=content,
+        html_sanitized=f"<p>{content}</p>",
     )
+    session.add(fragment)
     session.commit()
-    return fragment_id
+    return fragment.id
 
 
 def create_test_highlight(
@@ -309,17 +303,20 @@ def create_test_highlight(
     exact: str = "highlighted text",
 ) -> UUID:
     """Create a test highlight on a fragment."""
-    highlight_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
-                                    color, exact, prefix, suffix)
-            VALUES (:id, :user_id, :fragment_id, 0, 20, 'yellow', :exact, '', '')
-        """),
-        {"id": highlight_id, "user_id": user_id, "fragment_id": fragment_id, "exact": exact},
+    highlight = Highlight(
+        id=uuid4(),
+        user_id=user_id,
+        fragment_id=fragment_id,
+        start_offset=0,
+        end_offset=20,
+        color="yellow",
+        exact=exact,
+        prefix="",
+        suffix="",
     )
+    session.add(highlight)
     session.commit()
-    return highlight_id
+    return highlight.id
 
 
 def create_test_annotation(
@@ -333,35 +330,31 @@ def create_test_annotation(
     Looks up the first fragment of the media item automatically.
     Returns (highlight_id, annotation_id).
     """
-    highlight_id = uuid4()
-    annotation_id = uuid4()
-
-    result = session.execute(
-        text("SELECT id FROM fragments WHERE media_id = :media_id LIMIT 1"),
-        {"media_id": media_id},
-    )
-    row = result.fetchone()
-    if not row:
+    fragment = session.query(Fragment).filter(Fragment.media_id == media_id).limit(1).first()
+    if not fragment:
         raise ValueError(f"No fragment found for media {media_id}")
-    fragment_id = row[0]
 
-    session.execute(
-        text("""
-            INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
-                                    color, exact, prefix, suffix)
-            VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'test exact', 'prefix', 'suffix')
-        """),
-        {"id": highlight_id, "user_id": user_id, "fragment_id": fragment_id},
+    highlight = Highlight(
+        id=uuid4(),
+        user_id=user_id,
+        fragment_id=fragment.id,
+        start_offset=0,
+        end_offset=10,
+        color="yellow",
+        exact="test exact",
+        prefix="prefix",
+        suffix="suffix",
     )
-    session.execute(
-        text("""
-            INSERT INTO annotations (id, highlight_id, body)
-            VALUES (:id, :highlight_id, :body)
-        """),
-        {"id": annotation_id, "highlight_id": highlight_id, "body": body},
+    session.add(highlight)
+    session.flush()
+    annotation = Annotation(
+        id=uuid4(),
+        highlight_id=highlight.id,
+        body=body,
     )
+    session.add(annotation)
     session.commit()
-    return highlight_id, annotation_id
+    return highlight.id, annotation.id
 
 
 # =============================================================================
@@ -371,24 +364,23 @@ def create_test_annotation(
 
 def create_test_library(session: Session, user_id: UUID, name: str = "Test Library") -> UUID:
     """Create a non-default library with the user as admin."""
-    library_id = uuid4()
-
-    session.execute(
-        text("""
-            INSERT INTO libraries (id, owner_user_id, name, is_default)
-            VALUES (:id, :user_id, :name, false)
-        """),
-        {"id": library_id, "user_id": user_id, "name": name},
+    library = Library(
+        id=uuid4(),
+        owner_user_id=user_id,
+        name=name,
+        is_default=False,
     )
-    session.execute(
-        text("""
-            INSERT INTO memberships (library_id, user_id, role)
-            VALUES (:library_id, :user_id, 'admin')
-        """),
-        {"library_id": library_id, "user_id": user_id},
+    session.add(library)
+    session.flush()
+    session.add(
+        Membership(
+            library_id=library.id,
+            user_id=user_id,
+            role="admin",
+        )
     )
     session.commit()
-    return library_id
+    return library.id
 
 
 # =============================================================================
@@ -403,13 +395,16 @@ def add_library_member(
     role: str = "member",
 ) -> None:
     """Add a user as a member of a library (idempotent)."""
-    session.execute(
-        text("""
-            INSERT INTO memberships (library_id, user_id, role)
-            VALUES (:library_id, :user_id, :role)
-            ON CONFLICT DO NOTHING
-        """),
-        {"library_id": library_id, "user_id": user_id, "role": role},
+    existing = session.get(Membership, (library_id, user_id))
+    if existing:
+        session.commit()
+        return
+    session.add(
+        Membership(
+            library_id=library_id,
+            user_id=user_id,
+            role=role,
+        )
     )
     session.commit()
 
@@ -424,21 +419,17 @@ def share_conversation_to_library(
     Also sets conversation.sharing = 'library' if not already set.
     Idempotent.
     """
-    session.execute(
-        text("""
-            UPDATE conversations SET sharing = 'library'
-            WHERE id = :conversation_id AND sharing != 'library'
-        """),
-        {"conversation_id": conversation_id},
-    )
-    session.execute(
-        text("""
-            INSERT INTO conversation_shares (conversation_id, library_id)
-            VALUES (:conversation_id, :library_id)
-            ON CONFLICT DO NOTHING
-        """),
-        {"conversation_id": conversation_id, "library_id": library_id},
-    )
+    conv = session.get(Conversation, conversation_id)
+    if conv and conv.sharing != "library":
+        conv.sharing = "library"
+    existing = session.get(ConversationShare, (conversation_id, library_id))
+    if not existing:
+        session.add(
+            ConversationShare(
+                conversation_id=conversation_id,
+                library_id=library_id,
+            )
+        )
     session.commit()
 
 
@@ -455,50 +446,40 @@ def create_searchable_media_in_library(
     user's default library.  Visibility comes solely from membership in
     the target library.
     """
-    media_id = uuid4()
-    fragment_id = uuid4()
-
-    session.execute(
-        text("""
-            INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
-            VALUES (:id, 'web_article', :title, 'ready_for_reading', :user_id)
-        """),
-        {"id": media_id, "title": title, "user_id": user_id},
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.web_article.value,
+        title=title,
+        processing_status=ProcessingStatus.ready_for_reading,
+        created_by_user_id=user_id,
     )
-    session.execute(
-        text("""
-            INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-            VALUES (:id, :media_id, 0, '<p>Test content</p>', :text)
-        """),
-        {
-            "id": fragment_id,
-            "media_id": media_id,
-            "text": f"This is the canonical text for {title}. It contains searchable content about various topics.",
-        },
+    session.add(media)
+    session.flush()
+    fragment = Fragment(
+        id=uuid4(),
+        media_id=media.id,
+        idx=0,
+        html_sanitized="<p>Test content</p>",
+        canonical_text=f"This is the canonical text for {title}. It contains searchable content about various topics.",
     )
-    session.execute(
-        text("""
-            INSERT INTO library_media (library_id, media_id)
-            VALUES (:library_id, :media_id)
-            ON CONFLICT DO NOTHING
-        """),
-        {"library_id": library_id, "media_id": media_id},
-    )
+    session.add(fragment)
+    session.flush()
+    session.merge(LibraryMedia(library_id=library_id, media_id=media.id))
     session.commit()
-    return media_id
+    return media.id
 
 
-def get_user_default_library(session: Session, user_id: UUID) -> UUID:
+def get_user_default_library(session: Session, user_id: UUID) -> UUID | None:
     """Get a user's default library ID."""
-    result = session.execute(
-        text("""
-            SELECT id FROM libraries
-            WHERE owner_user_id = :user_id AND is_default = true
-        """),
-        {"user_id": user_id},
+    lib = (
+        session.query(Library)
+        .filter(
+            Library.owner_user_id == user_id,
+            Library.is_default.is_(True),
+        )
+        .first()
     )
-    row = result.fetchone()
-    return row[0] if row else None
+    return lib.id if lib else None
 
 
 # =============================================================================
@@ -518,34 +499,26 @@ def create_epub_media_in_library(
 
     Returns media_id.
     """
-    media_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
-            VALUES (:id, 'epub', :title, :status, :user_id)
-        """),
-        {"id": media_id, "title": title, "status": status, "user_id": user_id},
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.epub.value,
+        title=title,
+        processing_status=ProcessingStatus(status),
+        created_by_user_id=user_id,
     )
-    session.execute(
-        text("""
-            INSERT INTO library_media (library_id, media_id)
-            VALUES (:library_id, :media_id)
-        """),
-        {"library_id": library_id, "media_id": media_id},
-    )
-    session.execute(
-        text("""
-            INSERT INTO default_library_intrinsics (default_library_id, media_id)
-            SELECT :library_id, :media_id
-            WHERE EXISTS (
-                SELECT 1 FROM libraries WHERE id = :library_id AND is_default = true
+    session.add(media)
+    session.flush()
+    session.add(LibraryMedia(library_id=library_id, media_id=media.id))
+    lib = session.get(Library, library_id)
+    if lib and lib.is_default:
+        session.add(
+            DefaultLibraryIntrinsic(
+                default_library_id=library_id,
+                media_id=media.id,
             )
-            ON CONFLICT DO NOTHING
-        """),
-        {"library_id": library_id, "media_id": media_id},
-    )
+        )
     session.commit()
-    return media_id
+    return media.id
 
 
 def create_epub_chapter_fragment(
@@ -559,23 +532,149 @@ def create_epub_chapter_fragment(
 
     Returns fragment_id.
     """
-    fragment_id = uuid4()
-    html = html_sanitized or f"<section>{canonical_text}</section>"
-    session.execute(
-        text("""
-            INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
-            VALUES (:id, :media_id, :idx, :text, :html)
-        """),
-        {
-            "id": fragment_id,
-            "media_id": media_id,
-            "idx": idx,
-            "text": canonical_text,
-            "html": html,
-        },
+    fragment = Fragment(
+        id=uuid4(),
+        media_id=media_id,
+        idx=idx,
+        canonical_text=canonical_text,
+        html_sanitized=html_sanitized or f"<section>{canonical_text}</section>",
     )
+    session.add(fragment)
     session.commit()
-    return fragment_id
+    return fragment.id
+
+
+def create_failed_epub_media(
+    session: Session,
+    user_id: UUID,
+    *,
+    last_error_code: str = "E_EXTRACT_FAILED",
+    processing_attempts: int = 1,
+    file_sha256: str | None = None,
+) -> UUID:
+    """Create a failed EPUB media row with an optional media_file record.
+
+    Used by retry tests. Returns media_id.
+    """
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.epub.value,
+        title="Failed EPUB",
+        processing_status=ProcessingStatus.failed,
+        created_by_user_id=user_id,
+        failure_stage=FailureStage.extract,
+        last_error_code=last_error_code,
+        last_error_message="test failure",
+        failed_at=datetime.now(UTC),
+        file_sha256=file_sha256,
+        processing_attempts=processing_attempts,
+    )
+    session.add(media)
+    session.flush()
+
+    media_file = MediaFile(
+        media_id=media.id,
+        storage_path=f"media/{media.id}/original.epub",
+        content_type="application/epub+zip",
+        size_bytes=1000,
+    )
+    session.add(media_file)
+    session.commit()
+    return media.id
+
+
+def create_ready_epub_with_chapters(
+    session: Session,
+    *,
+    num_chapters: int = 3,
+    with_toc: bool = True,
+) -> tuple[UUID, list[UUID]]:
+    """Create a ready EPUB with contiguous chapter fragments and optional TOC nodes.
+
+    Returns (media_id, [fragment_ids]).
+    """
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.epub.value,
+        title="Test EPUB Book",
+        processing_status=ProcessingStatus.ready_for_reading,
+    )
+    session.add(media)
+    session.flush()
+
+    frag_ids: list[UUID] = []
+    for i in range(num_chapters):
+        html = f"<h2>Chapter {i + 1} Title</h2><p>Sentinel content for chapter {i}.</p>"
+        canon = f"Chapter {i + 1} Title\nSentinel content for chapter {i}."
+        frag = Fragment(
+            id=uuid4(),
+            media_id=media.id,
+            idx=i,
+            html_sanitized=html,
+            canonical_text=canon,
+        )
+        session.add(frag)
+        session.flush()
+        frag_ids.append(frag.id)
+
+    if with_toc:
+        for i in range(num_chapters):
+            node = EpubTocNode(
+                media_id=media.id,
+                node_id=f"ch{i}",
+                parent_node_id=None,
+                label=f"TOC Chapter {i + 1}",
+                href=f"ch{i}.xhtml",
+                fragment_idx=i,
+                depth=0,
+                order_key=f"{i + 1:04d}",
+            )
+            session.add(node)
+
+    session.commit()
+    return media.id, frag_ids
+
+
+def create_seeded_test_media(
+    session: Session,
+    *,
+    title: str,
+    canonical_text: str,
+    html_sanitized: str,
+    media_id: UUID | None = None,
+    fragment_id: UUID | None = None,
+) -> UUID:
+    """Create media + a single fragment for seeded test data.
+
+    Uses merge() for idempotent inserts (ON CONFLICT DO NOTHING semantics).
+    Returns media_id.
+    """
+    mid = media_id or uuid4()
+    fid = fragment_id or uuid4()
+
+    # Use merge to handle ON CONFLICT DO NOTHING semantics
+    media = Media(
+        id=mid,
+        kind=MediaKind.web_article.value,
+        title=title,
+        canonical_source_url="https://example.com/test-article",
+        processing_status=ProcessingStatus.ready_for_reading,
+    )
+    session.merge(media)
+    session.flush()
+
+    fragment = Fragment(
+        id=fid,
+        media_id=mid,
+        idx=0,
+        html_sanitized=html_sanitized,
+        canonical_text=canonical_text,
+    )
+    session.merge(fragment)
+    session.flush()
+
+    session.commit()
+    return mid
 
 
 # =============================================================================
@@ -583,15 +682,15 @@ def create_epub_chapter_fragment(
 # =============================================================================
 
 
-def get_user_library(session: Session, user_id: UUID) -> UUID:
+def get_user_library(session: Session, user_id: UUID) -> UUID | None:
     """Get a user's default library ID via their admin membership."""
-    result = session.execute(
-        text("""
-            SELECT library_id FROM memberships
-            WHERE user_id = :user_id AND role = 'admin'
-            LIMIT 1
-        """),
-        {"user_id": user_id},
+    membership = (
+        session.query(Membership)
+        .filter(
+            Membership.user_id == user_id,
+            Membership.role == "admin",
+        )
+        .limit(1)
+        .first()
     )
-    row = result.fetchone()
-    return row[0] if row else None
+    return membership.library_id if membership else None

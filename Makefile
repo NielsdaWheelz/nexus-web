@@ -1,7 +1,7 @@
 # Nexus Development Makefile
 # Run `make help` for available commands
 
-.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations ensure-services ensure-node-ingest lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker migrate migrate-test migrate-down seed verify logs
+.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations ensure-services ensure-node-ingest lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker migrate migrate-test migrate-down seed verify verify-fast test-back-unit test-front-unit test-front-browser test-e2e test-e2e-ui _verify-fast-static _verify-fast-tests _verify-tests logs
 
 # Load .env file if it exists (created by setup)
 -include .env
@@ -62,7 +62,15 @@ help:
 	@echo "  make seed           - Seed development data"
 	@echo ""
 	@echo "Verify:"
-	@echo "  make verify         - Run full verification (lint + test)"
+	@echo "  make verify         - Full local verification (static + build + tests, no E2E)"
+	@echo "  make verify-fast    - Fast feedback (static + unit tests only)"
+	@echo ""
+	@echo "Layer targets:"
+	@echo "  make test-back-unit     - Backend unit tests only (no DB)"
+	@echo "  make test-front-unit    - Frontend unit tests (Node)"
+	@echo "  make test-front-browser - Frontend component tests (Vitest Browser Mode)"
+	@echo "  make test-e2e           - Playwright E2E tests"
+	@echo "  make test-e2e-ui        - Playwright E2E in UI mode"
 	@echo ""
 	@echo "Configuration (via environment or .env file):"
 	@echo "  REDIS_PORT          - Redis port (default: 6379)"
@@ -203,9 +211,39 @@ seed:
 	cd python && DATABASE_URL=$(DATABASE_URL) \
 		uv run python ../scripts/seed_dev.py
 
+# === Layer Targets ===
+
+test-back-unit:
+	cd python && NEXUS_ENV=test uv run pytest -v -m unit
+
+test-front-unit:
+	cd apps/web && npx vitest run --project unit
+
+test-front-browser:
+	cd apps/web && npx vitest run --project browser
+
+test-e2e:
+	cd e2e && npx tsx seed-e2e-user.ts && npx playwright install --with-deps chromium && npx playwright test
+
+test-e2e-ui:
+	cd e2e && npx playwright install --with-deps chromium && npx playwright test --ui
+
 # === Verify ===
 
-verify: lint fmt-check typecheck build test
+# Helper targets for parallel execution within verify-fast
+_verify-fast-static: lint fmt-check typecheck
+
+_verify-fast-tests: test-back-unit test-front-unit
+
+# Run with `make -j verify-fast` for parallel static + test execution.
+# Sequential by default for deterministic output.
+verify-fast: _verify-fast-static _verify-fast-tests
+	@echo "=== verify-fast passed ==="
+
+# Helper for parallel test execution within verify
+_verify-tests: test-back-and-migrations test-front-unit test-front-browser
+
+verify: lint fmt-check typecheck build _verify-tests
 	@echo "=== All verification checks passed ==="
 
 fmt-check:

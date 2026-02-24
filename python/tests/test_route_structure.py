@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 
 def get_routes_dir() -> Path:
     """Get the path to the routes directory."""
