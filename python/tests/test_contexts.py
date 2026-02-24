@@ -564,3 +564,105 @@ class TestBatchInsert:
         assert results[0].ordinal == 0
         assert results[1].ordinal == 1
         assert results[2].ordinal == 2
+
+
+# =============================================================================
+# S6 PR-02: Kernel-Based Context Resolution Tests
+# =============================================================================
+
+
+class TestKernelBasedMediaResolution:
+    """PR-02: resolve_media_id_for_context uses kernel for highlight/annotation targets."""
+
+    def test_resolve_highlight_via_kernel(self, db_session: Session, media_with_highlight: tuple):
+        """Highlight resolution goes through kernel and returns media_id."""
+        media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
+
+        resolved = contexts_service.resolve_media_id_for_context(
+            db_session, "highlight", None, highlight_id, None
+        )
+        assert resolved == media_id
+
+    def test_resolve_annotation_via_kernel(self, db_session: Session, media_with_highlight: tuple):
+        """Annotation resolution goes through kernel and returns media_id."""
+        media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
+
+        resolved = contexts_service.resolve_media_id_for_context(
+            db_session, "annotation", None, None, annotation_id
+        )
+        assert resolved == media_id
+
+    def test_resolve_media_direct_unchanged(self, db_session: Session, media_with_highlight: tuple):
+        """Direct media resolution path is unaffected by kernel changes."""
+        media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
+
+        resolved = contexts_service.resolve_media_id_for_context(
+            db_session, "media", media_id, None, None
+        )
+        assert resolved == media_id
+
+
+class TestKernelBasedRecompute:
+    """PR-02: recompute_conversation_media uses hybrid batch strategy with kernel."""
+
+    def test_recompute_with_highlight_context_resolves_via_kernel(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+        media_with_highlight: tuple,
+    ):
+        """Recompute correctly resolves media for highlight context through kernel."""
+        conversation_id, message_id, user_id, default_library_id = conversation_with_message
+        media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
+
+        context_id = uuid4()
+        db_session.execute(
+            text("""
+                INSERT INTO message_contexts (id, message_id, ordinal, target_type, highlight_id)
+                VALUES (:id, :message_id, 0, 'highlight', :highlight_id)
+            """),
+            {"id": context_id, "message_id": message_id, "highlight_id": highlight_id},
+        )
+        db_session.flush()
+
+        contexts_service.recompute_conversation_media(db_session, conversation_id)
+
+        result = db_session.execute(
+            text("""
+                SELECT COUNT(*) FROM conversation_media
+                WHERE conversation_id = :conv_id AND media_id = :media_id
+            """),
+            {"conv_id": conversation_id, "media_id": media_id},
+        )
+        assert result.scalar() == 1
+
+    def test_recompute_with_annotation_context_resolves_via_kernel(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+        media_with_highlight: tuple,
+    ):
+        """Recompute correctly resolves media for annotation context through kernel."""
+        conversation_id, message_id, user_id, default_library_id = conversation_with_message
+        media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
+
+        context_id = uuid4()
+        db_session.execute(
+            text("""
+                INSERT INTO message_contexts (id, message_id, ordinal, target_type, annotation_id)
+                VALUES (:id, :message_id, 0, 'annotation', :annotation_id)
+            """),
+            {"id": context_id, "message_id": message_id, "annotation_id": annotation_id},
+        )
+        db_session.flush()
+
+        contexts_service.recompute_conversation_media(db_session, conversation_id)
+
+        result = db_session.execute(
+            text("""
+                SELECT COUNT(*) FROM conversation_media
+                WHERE conversation_id = :conv_id AND media_id = :media_id
+            """),
+            {"conv_id": conversation_id, "media_id": media_id},
+        )
+        assert result.scalar() == 1

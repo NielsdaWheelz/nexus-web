@@ -12,6 +12,12 @@ Helper split (S4):
 - get_highlight_for_visible_read_or_404: read path (visibility predicate)
 - get_highlight_for_author_write_or_404: write path (author-only)
 
+S6 PR-02 adoption:
+- Fragment create/update uses transactional dual-write (canonical subtype + legacy bridge)
+- Read paths use highlight_kernel for anchor-kind-aware media resolution
+- Dormant-window fragment rows are repaired in explicit write-capable paths
+- Mismatch handling follows D03 path-specific mapping via highlight_kernel
+
 Service functions correspond 1:1 with route handlers.
 Routes are transport-only and call exactly one service function.
 """
@@ -23,7 +29,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_highlight, can_read_media, highlight_visibility_filter
-from nexus.db.models import Annotation, Fragment, Highlight
+from nexus.db.models import Annotation, Fragment, Highlight, HighlightFragmentAnchor
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
@@ -32,6 +38,14 @@ from nexus.schemas.highlights import (
     HighlightOut,
     UpdateHighlightRequest,
     UpsertAnnotationRequest,
+)
+from nexus.services.highlight_kernel import (
+    HighlightKernelIntegrityError,
+    MappingClass,
+    ResolverState,
+    map_mismatch,
+    repair_fragment_highlight,
+    resolve_highlight,
 )
 
 logger = get_logger(__name__)
@@ -110,6 +124,8 @@ def map_integrity_error(e: IntegrityError) -> ApiError:
             "uix_highlights_user_fragment_offsets",
             "ck_highlights_offsets_valid",
             "ck_highlights_color",
+            "ck_highlights_fragment_bridge",
+            "ck_hfa_offsets_valid",
         ):
             if name in msg:
                 constraint_name = name
@@ -117,7 +133,12 @@ def map_integrity_error(e: IntegrityError) -> ApiError:
 
     if constraint_name == "uix_highlights_user_fragment_offsets":
         return ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
-    if constraint_name in ("ck_highlights_offsets_valid", "ck_highlights_color"):
+    if constraint_name in (
+        "ck_highlights_offsets_valid",
+        "ck_highlights_color",
+        "ck_highlights_fragment_bridge",
+        "ck_hfa_offsets_valid",
+    ):
         return ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid highlight data")
 
     # Unknown constraint — internal error
@@ -149,6 +170,9 @@ def get_highlight_for_author_write_or_404(
 ) -> Highlight:
     """Load highlight with relationships, enforce author-only write access.
 
+    Uses highlight_kernel for anchor-kind-aware media resolution (S6 PR-02).
+    Repairs dormant-window fragment highlights transactionally before returning.
+
     Raises:
         NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not authored by viewer,
             or media not readable.
@@ -156,9 +180,38 @@ def get_highlight_for_author_write_or_404(
     highlight = db.get(Highlight, highlight_id)
     if highlight is None or highlight.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    if not can_read_media(db, viewer_id, highlight.fragment.media_id):
+
+    resolution = resolve_highlight(highlight)
+
+    if resolution.state == ResolverState.mismatch:
+        map_mismatch(resolution, MappingClass.masked_not_found, "get_highlight_for_author_write")
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    return highlight  # highlight.fragment.media and highlight.annotation available
+
+    if resolution.state == ResolverState.dormant_repairable:
+        try:
+            resolution = repair_fragment_highlight(db, highlight)
+        except HighlightKernelIntegrityError:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found") from None
+
+    media_id = resolution.anchor_media_id
+    if media_id is None or not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    return highlight
+
+
+def _require_media_ready_for_highlight(db: Session, highlight: Highlight) -> None:
+    """Resolve media for a highlight via kernel and check processing status."""
+    from nexus.db.models import Media
+
+    resolution = resolve_highlight(highlight)
+    media_id = resolution.anchor_media_id
+
+    if highlight.fragment and highlight.fragment.media:
+        require_media_ready_or_409(highlight.fragment.media.processing_status.value)
+    elif media_id:
+        media_obj = db.get(Media, media_id)
+        if media_obj:
+            require_media_ready_or_409(media_obj.processing_status.value)
 
 
 def _highlight_to_out(highlight: Highlight, viewer_id: UUID) -> HighlightOut:
@@ -234,21 +287,32 @@ def create_highlight_for_fragment(
         fragment.canonical_text, req.start_offset, req.end_offset
     )
 
-    # 5. Create highlight
+    # 5. Create highlight with typed logical fields (S6 PR-02 dual-write)
     highlight = Highlight(
         user_id=viewer_id,
         fragment_id=fragment_id,
         start_offset=req.start_offset,
         end_offset=req.end_offset,
+        anchor_kind="fragment_offsets",
+        anchor_media_id=fragment.media_id,
         color=req.color,
         exact=exact,
         prefix=prefix,
         suffix=suffix,
     )
 
-    # 6. Persist with integrity error handling
+    # 6. Persist with integrity error handling + fragment anchor subtype
     try:
         db.add(highlight)
+        db.flush()
+
+        fragment_anchor = HighlightFragmentAnchor(
+            highlight_id=highlight.id,
+            fragment_id=fragment_id,
+            start_offset=req.start_offset,
+            end_offset=req.end_offset,
+        )
+        db.add(fragment_anchor)
         db.flush()
         db.commit()
     except IntegrityError as e:
@@ -358,7 +422,7 @@ def update_highlight(
     highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
     # 2. Require media ready for any mutation
-    require_media_ready_or_409(highlight.fragment.media.processing_status.value)
+    _require_media_ready_for_highlight(db, highlight)
 
     # 3. Compute final offsets
     final_start = req.start_offset if req.start_offset is not None else highlight.start_offset
@@ -398,10 +462,25 @@ def update_highlight(
     if color_changed:
         update_values["color"] = final_color
 
-    # 6. Execute update
+    # 6. Execute update + sync fragment anchor subtype (S6 PR-02 dual-write)
     try:
         stmt = update(Highlight).where(Highlight.id == highlight_id).values(**update_values)
         db.execute(stmt)
+
+        if offsets_changed and highlight.fragment_id is not None:
+            fa = highlight.fragment_anchor
+            if fa is not None:
+                fa.start_offset = final_start
+                fa.end_offset = final_end
+            else:
+                new_fa = HighlightFragmentAnchor(
+                    highlight_id=highlight_id,
+                    fragment_id=highlight.fragment_id,
+                    start_offset=final_start,
+                    end_offset=final_end,
+                )
+                db.add(new_fa)
+
         db.flush()
         db.commit()
     except IntegrityError as e:
@@ -460,8 +539,8 @@ def upsert_annotation_for_highlight(
     # 1. Get highlight with ownership and readability check
     highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
-    # 2. Require media ready
-    require_media_ready_or_409(highlight.fragment.media.processing_status.value)
+    # 2. Require media ready via kernel-resolved media
+    _require_media_ready_for_highlight(db, highlight)
 
     # 3. Check for existing annotation
     existing = db.query(Annotation).filter(Annotation.highlight_id == highlight_id).first()

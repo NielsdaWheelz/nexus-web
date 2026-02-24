@@ -439,3 +439,78 @@ class TestIsLibraryMember:
         non_member_id = uuid4()
         ensure_user_and_default_library(db_session, non_member_id)
         assert is_library_member(db_session, non_member_id, owner_lib) is False
+
+
+# =============================================================================
+# S6 PR-02: can_read_highlight — anchor-kind-aware via kernel
+# =============================================================================
+
+
+class TestCanReadHighlightKernelAware:
+    """PR-02: can_read_highlight uses highlight_kernel for media resolution."""
+
+    def test_can_read_highlight_normalized_fragment_true(self, db_session: Session):
+        """Normalized fragment highlight is readable by author with library access."""
+        from nexus.auth.permissions import can_read_highlight
+        from tests.factories import (
+            create_normalized_fragment_highlight,
+            create_test_fragment,
+            create_test_media_in_library,
+            get_user_default_library,
+        )
+
+        user_id = uuid4()
+        ensure_user_and_default_library(db_session, user_id)
+        lib_id = get_user_default_library(db_session, user_id)
+        media_id = create_test_media_in_library(db_session, user_id, lib_id)
+        frag_id = create_test_fragment(db_session, media_id, content="x" * 30)
+        hl_id = create_normalized_fragment_highlight(db_session, user_id, frag_id, media_id, 0, 10)
+        assert can_read_highlight(db_session, user_id, hl_id) is True
+
+    def test_can_read_highlight_dormant_fragment_true(self, db_session: Session):
+        """Dormant-window fragment highlight is still readable (resolver resolves media)."""
+        from nexus.auth.permissions import can_read_highlight
+        from tests.factories import (
+            create_dormant_fragment_highlight,
+            create_test_fragment,
+            create_test_media_in_library,
+            get_user_default_library,
+        )
+
+        user_id = uuid4()
+        ensure_user_and_default_library(db_session, user_id)
+        lib_id = get_user_default_library(db_session, user_id)
+        media_id = create_test_media_in_library(db_session, user_id, lib_id)
+        frag_id = create_test_fragment(db_session, media_id, content="y" * 30)
+        hl_id = create_dormant_fragment_highlight(db_session, user_id, frag_id, 0, 10)
+        assert can_read_highlight(db_session, user_id, hl_id) is True
+
+    def test_can_read_highlight_mismatch_returns_false(self, db_session: Session):
+        """Mismatched highlight returns False (bool_fail_closed), no existence leak."""
+        from nexus.auth.permissions import can_read_highlight
+        from tests.factories import (
+            create_mismatched_fragment_highlight,
+            create_test_fragment,
+            create_test_media_in_library,
+            get_user_default_library,
+        )
+
+        user_id = uuid4()
+        ensure_user_and_default_library(db_session, user_id)
+        lib_id = get_user_default_library(db_session, user_id)
+        media_id = create_test_media_in_library(db_session, user_id, lib_id)
+        frag1_id = create_test_fragment(db_session, media_id, content="a" * 30)
+        media_id2 = create_test_media_in_library(db_session, user_id, lib_id, title="Other")
+        frag2_id = create_test_fragment(db_session, media_id2, content="b" * 30)
+        hl_id = create_mismatched_fragment_highlight(
+            db_session, user_id, frag1_id, media_id, frag2_id
+        )
+        assert can_read_highlight(db_session, user_id, hl_id) is False
+
+    def test_can_read_highlight_nonexistent_returns_false(self, db_session: Session):
+        """Nonexistent highlight returns False without raising."""
+        from nexus.auth.permissions import can_read_highlight
+
+        user_id = uuid4()
+        ensure_user_and_default_library(db_session, user_id)
+        assert can_read_highlight(db_session, user_id, uuid4()) is False
