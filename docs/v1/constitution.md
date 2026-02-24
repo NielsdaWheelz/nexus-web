@@ -395,6 +395,7 @@ notes:
 ### content security policy (csp)
 - baseline strict csp with youtube embed allowances:
   - `script-src 'self'` plus nonces for next.js inline scripts (next.js requires nonces in production for inline script hydration).
+  - `worker-src 'self'` (required for same-origin PDF.js worker execution in v1; if a `blob:` or third-party worker origin is ever needed, amend this constitution first).
   - `frame-src https://www.youtube.com https://www.youtube-nocookie.com` (youtube embeds only).
   - `img-src 'self' https:` (external images via our proxy only; document content never uses data: urls since we proxy images).
   - `data:` in img-src is allowed only for next/image blur placeholders, not for document content (enforced by sanitizer stripping data: from document img src).

@@ -395,11 +395,12 @@ Two test suites are introduced early and reused by every later slice:
 ### Excludes
 - Perfect text ↔ geometry reconciliation
 - PDF ingest-from-URL (deferred to v2)
+- Full linked-items pane unification across all object types (documents/conversations/etc.) beyond PDF integration needed for S6
 
 ### Acceptance Criteria
 - Selection creates stable highlight
 - Exact text stored at highlight creation
-- `media.plain_text` indexed before quote-to-chat
+- `media.plain_text` persisted and page-indexed (`pdf_page_text_spans`) before quote-to-chat
 - Quote-to-chat works using stored text (not re-extraction)
 - Overlapping PDF highlights supported
 - Visibility test suite passes
