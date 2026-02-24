@@ -19,6 +19,8 @@ from sqlalchemy.orm import Session
 
 from nexus.services.seq import assign_next_message_seq
 
+pytestmark = pytest.mark.integration
+
 
 class TestSeqAssignmentBasic:
     """Basic tests for sequence assignment."""

@@ -21,6 +21,8 @@ from nexus.db.models import MediaKind, ProcessingStatus
 from nexus.services.media import create_provisional_web_article
 from tests.helpers import create_test_user_id
 
+pytestmark = pytest.mark.integration
+
 
 class TestIngestionStateTransitions:
     """Tests for processing state machine transitions."""

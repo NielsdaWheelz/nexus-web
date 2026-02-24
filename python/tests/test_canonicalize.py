@@ -8,7 +8,11 @@ Canonicalization tests:
 - Unicode NFC normalization
 """
 
+import pytest
+
 from nexus.services.canonicalize import generate_canonical_text
+
+pytestmark = pytest.mark.unit
 
 
 class TestBlockBoundaries:

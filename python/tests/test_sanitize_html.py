@@ -15,6 +15,8 @@ import pytest
 
 from nexus.services.sanitize_html import sanitize_html
 
+pytestmark = pytest.mark.unit
+
 
 class TestSecurityFixtures:
     """Tests for XSS and security-related sanitization."""

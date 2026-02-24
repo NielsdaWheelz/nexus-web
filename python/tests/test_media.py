@@ -34,6 +34,8 @@ from tests.helpers import auth_headers, create_test_user_id
 from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
 
+pytestmark = pytest.mark.integration
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -883,6 +885,10 @@ class TestGetEpubAssetSuccessAndMasking:
 
         from unittest.mock import patch
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
         with patch("nexus.storage.get_storage_client", return_value=fake):
             resp = auth_client.get(
                 f"/media/{media_id}/assets/images/fig1.png",
@@ -947,6 +953,10 @@ class TestGetEpubAssetSuccessAndMasking:
 
         fake = FakeStorageClient()
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
         with patch("nexus.storage.get_storage_client", return_value=fake):
             resp = auth_client.get(
                 f"/media/{media_id}/assets/nonexistent.png",
@@ -1117,6 +1127,12 @@ class TestRetryEpubEndpoint:
 
         mock_dispatch = MagicMock()
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
+        # DISPATCH SEAM EXCEPTION: Async task dispatch boundary mock.
+        # Prevents real Celery dispatch per testing standards Section 6 (Allowed Mocks).
         with (
             patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
             patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", mock_dispatch),
@@ -1337,6 +1353,10 @@ class TestRetryEpubEndpoint:
 
         from unittest.mock import patch
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
         with patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage):
             resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
 
@@ -1403,6 +1423,12 @@ class TestRetryEpubEndpoint:
 
         from unittest.mock import MagicMock, patch
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
+        # DISPATCH SEAM EXCEPTION: Async task dispatch boundary mock.
+        # Prevents real Celery dispatch per testing standards Section 6 (Allowed Mocks).
         with (
             patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
             patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", MagicMock()),
@@ -1466,6 +1492,12 @@ class TestRetryEpubEndpoint:
         def boom(*a, **kw):
             raise RuntimeError("broker down")
 
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
+        # DISPATCH SEAM EXCEPTION: Async task dispatch boundary mock.
+        # Prevents real Celery dispatch per testing standards Section 6 (Allowed Mocks).
         with (
             patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
             patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", side_effect=boom),

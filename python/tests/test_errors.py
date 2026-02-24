@@ -25,6 +25,8 @@ from nexus.responses import (
     unhandled_exception_handler,
 )
 
+pytestmark = pytest.mark.unit
+
 
 class TestErrorResponse:
     """Tests for error response envelope format."""

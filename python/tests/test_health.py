@@ -6,7 +6,10 @@ The health endpoint is a liveness check that:
 - Always returns 200 if the process is running
 """
 
+import pytest
 from fastapi.testclient import TestClient
+
+pytestmark = pytest.mark.unit
 
 
 class TestHealthEndpoint:

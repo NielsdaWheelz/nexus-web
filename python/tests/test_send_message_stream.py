@@ -41,6 +41,8 @@ from nexus.services.stream_liveness import (
 )
 from nexus.tasks.sweep_pending import sweep_pending_messages
 
+pytestmark = pytest.mark.integration
+
 # =============================================================================
 # Fixtures
 # =============================================================================

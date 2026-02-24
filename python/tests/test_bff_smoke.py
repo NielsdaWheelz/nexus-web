@@ -17,6 +17,8 @@ from nexus.auth.middleware import AuthMiddleware
 from tests.helpers import auth_headers
 from tests.support.test_verifier import MockJwtVerifier
 
+pytestmark = pytest.mark.integration
+
 
 class TestEchoHeadersEndpoint:
     """Test the /__test/echo_headers endpoint.

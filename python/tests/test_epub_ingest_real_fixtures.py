@@ -19,6 +19,8 @@ from nexus.services.epub_ingest import EpubExtractionResult
 from nexus.storage.client import FakeStorageClient
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
 
+pytestmark = pytest.mark.integration
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "epub"
 
 # ---------------------------------------------------------------------------

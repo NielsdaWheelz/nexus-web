@@ -29,6 +29,8 @@ from tests.helpers import (
 from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
 
+pytestmark = pytest.mark.integration
+
 
 class TestAuthBoundary:
     """Tests for the authentication boundary.

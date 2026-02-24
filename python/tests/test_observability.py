@@ -23,6 +23,8 @@ from nexus.logging import (
 from nexus.services.llm.types import LLMCallContext, LLMOperation
 from nexus.services.redact import FORBIDDEN_KEYS, hash_text, redact_text, safe_kv
 
+pytestmark = pytest.mark.unit
+
 # ─── Redaction Unit Tests ────────────────────────────────────────────────
 
 

@@ -237,6 +237,39 @@ def random_uuid() -> str:
     return str(uuid4())
 
 
+@pytest.fixture
+def auth_client(engine: Engine) -> Generator[TestClient, None, None]:
+    """Provide a FastAPI test client with auth middleware.
+
+    Generic shared fixture for tests that need authenticated API access.
+    Tests requiring extra middleware (e.g. request-id) should define local fixtures.
+    """
+    session_factory = create_session_factory(engine)
+
+    def bootstrap_callback(user_id: UUID) -> UUID:
+        db = session_factory()
+        try:
+            return ensure_user_and_default_library(db, user_id)
+        finally:
+            db.close()
+
+    verifier = MockJwtVerifier()
+    app = create_app(skip_auth_middleware=True)
+
+    from nexus.auth.middleware import AuthMiddleware
+
+    app.add_middleware(
+        AuthMiddleware,
+        verifier=verifier,
+        requires_internal_header=False,
+        internal_secret=None,
+        bootstrap_callback=bootstrap_callback,
+    )
+
+    with TestClient(app) as client:
+        yield client
+
+
 @pytest.fixture(autouse=True)
 def reset_settings_cache():
     """Reset the settings cache before each test."""

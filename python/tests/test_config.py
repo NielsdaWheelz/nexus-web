@@ -5,6 +5,8 @@ from pydantic import ValidationError
 
 from nexus.config import Settings
 
+pytestmark = pytest.mark.unit
+
 
 def _make_settings(**overrides) -> Settings:
     """Build a Settings instance with test defaults + overrides."""

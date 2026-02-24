@@ -26,6 +26,8 @@ from tests.helpers import auth_headers, create_test_user_id
 from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
 
+pytestmark = pytest.mark.integration
+
 # =============================================================================
 # Fixtures
 # =============================================================================

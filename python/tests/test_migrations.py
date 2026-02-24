@@ -16,6 +16,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+pytestmark = pytest.mark.integration
+
 
 def get_test_database_url() -> str:
     """Get the test database URL from environment."""

@@ -9,6 +9,7 @@ import zipfile
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,8 @@ from nexus.services.epub_ingest import (
 )
 from nexus.storage.client import FakeStorageClient
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
+
+pytestmark = pytest.mark.integration
 
 # ---------------------------------------------------------------------------
 # EPUB fixture builders
@@ -592,6 +595,11 @@ class TestEpubExtractFailureClassificationMatrix:
         )
         mid = _create_media_with_epub(db_session, storage, epub)
 
+        # TEMPORARY EXCEPTION: Patching internal function to simulate error condition.
+        # This is an internal seam exception per the test-refactor PR spec decision ledger.
+        # Replacement: E2E test with corrupt EPUB input, or architectural refactor to inject
+        # error simulation at an external boundary.
+        # Remove by: next cleanup PR.
         with patch(
             "nexus.services.epub_ingest._epub_sanitize",
             side_effect=ValueError("Forced sanitization failure"),
@@ -766,12 +774,11 @@ class TestEpubExtractCommitsArtifactsAtomically:
         )
         mid = _create_media_with_epub(db_session, storage, epub)
 
-        # Inject failure via insert_fragment_blocks — called after fragments
-        # are flushed to DB (within the transaction) but before TOC nodes and
-        # the final flush. This seam is chosen over patching db.flush() because
-        # SQLAlchemy's autoflush fires session.flush() during lazy loads,
-        # making flush-call counting unreliable. insert_fragment_blocks is a
-        # stable cross-module service function unlikely to be renamed/removed.
+        # TEMPORARY EXCEPTION: Patching internal function to simulate error condition.
+        # This is an internal seam exception per the test-refactor PR spec decision ledger.
+        # Replacement: E2E test with corrupt EPUB input, or architectural refactor to inject
+        # error simulation at an external boundary.
+        # Remove by: next cleanup PR.
         with patch(
             "nexus.services.epub_ingest.insert_fragment_blocks",
             side_effect=RuntimeError("Forced pre-commit failure"),

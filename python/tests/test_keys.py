@@ -15,16 +15,11 @@ Per PR-03 spec:
 """
 
 import base64
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from nexus.app import create_app
-from nexus.auth.middleware import AuthMiddleware
-from nexus.db.session import create_session_factory
-from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.crypto import (
     CURRENT_MASTER_KEY_VERSION,
     MASTER_KEY_SIZE,
@@ -34,8 +29,9 @@ from nexus.services.crypto import (
     encrypt_api_key,
 )
 from tests.helpers import auth_headers, create_test_user_id
-from tests.support.test_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
+
+pytestmark = pytest.mark.integration
 
 # =============================================================================
 # Fixtures
@@ -56,32 +52,6 @@ def setup_test_master_key(monkeypatch):
     yield
 
     clear_master_key_cache()
-
-
-@pytest.fixture
-def auth_client(engine):
-    """Create a client with auth middleware for testing."""
-    session_factory = create_session_factory(engine)
-
-    def bootstrap_callback(user_id: UUID) -> UUID:
-        db = session_factory()
-        try:
-            return ensure_user_and_default_library(db, user_id)
-        finally:
-            db.close()
-
-    verifier = MockJwtVerifier()
-    app = create_app(skip_auth_middleware=True)
-
-    app.add_middleware(
-        AuthMiddleware,
-        verifier=verifier,
-        requires_internal_header=False,
-        internal_secret=None,
-        bootstrap_callback=bootstrap_callback,
-    )
-
-    return TestClient(app)
 
 
 # =============================================================================

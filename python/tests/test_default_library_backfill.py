@@ -35,6 +35,8 @@ from nexus.services.default_library_closure import (
 )
 from tests.helpers import create_test_user_id
 
+pytestmark = pytest.mark.integration
+
 # =============================================================================
 # Helpers
 # =============================================================================
