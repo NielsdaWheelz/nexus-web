@@ -1,5 +1,7 @@
 # Slice 6 — PR Roadmap
 
+> Maintenance rule: when an L4 PR-spec decision materially changes a later PR's responsibilities or sequencing, patch this roadmap immediately to record the carry-forward ownership/dependency impact.
+
 ## 1. Dependency Graph
 
 ```text
@@ -69,8 +71,14 @@ pr-02 + pr-03 + pr-05 + pr-07
   - The rollout is deploy-safe for a greenfield baseline with zero existing highlight data; no production backfill is required.
   - Existing HTML/EPUB/transcript highlight behavior remains unchanged at the API and UX level.
   - The data foundation is merge-safe and can remain dormant until kernel adoption lands.
+  - `pr-01` uses an expand-only, dormant-field rollout for logical highlight fields on `highlights`; legacy fragment columns/constraints remain the active path until `pr-02`.
+  - `pr-01` converts legacy fragment columns on `highlights` into a transitional nullable compatibility bridge that preserves current fragment-row semantics while allowing future non-fragment logical rows.
+  - `pr-01` retains fragment duplicate semantics under the nullable bridge by preserving the existing fragment duplicate unique-index behavior (explicit partial-index refactor deferred unless later justified).
+  - `pr-01` adds supporting PDF-anchor indexes only; exact race-safe PDF duplicate enforcement is deferred to `pr-04` when PDF highlight writes exist.
 - **non-goals**:
   - No production data backfill/cutover of pre-existing highlight rows (greenfield baseline assumption).
+  - No trigger/service dual-write that populates typed anchor subtype rows during the dormant `pr-01` window.
+  - No PDF metadata/XMP merge, PDF version extraction, or metadata persistence contract changes.
   - No PDF highlight API rollout.
   - No quote-to-chat behavior changes.
   - No frontend PDF reader/highlighting behavior.
@@ -82,6 +90,10 @@ pr-02 + pr-03 + pr-05 + pr-07
   - Shared visibility and context-target resolution operate on logical highlights across anchor kinds.
   - Existing fragment-backed highlight reads, annotations, and quote-context behavior remain functionally unchanged.
   - Existing fragment-route API behavior is preserved while internal typed-highlight canonical paths are adopted for S6 rollout readiness.
+  - `pr-02` adopts and validates `pr-01` dormant logical-highlight fields (`anchor_kind`, `anchor_media_id`) and handles compatibility normalization for rows created while `pr-01` schema was dormant.
+  - `pr-02` tolerates and repairs fragment highlights created during the `pr-01` dormant window that do not yet have `highlight_fragment_anchors` subtype rows.
+  - `pr-02` treats legacy fragment columns on `highlights` as a transitional compatibility bridge and shifts canonical fragment-anchor reads/writes toward subtype rows without changing fragment-route product semantics.
+  - `pr-02` preserves fragment duplicate behavior under the `pr-01` retained compatibility index unless a separately-reviewed index refactor is introduced.
   - Test/fixture expectations are updated for the typed-highlight internal model without changing pre-S6 product semantics.
   - Typed-highlight serializers/service seams are ready for later PDF endpoint expansion.
 - **non-goals**:
@@ -95,6 +107,8 @@ pr-02 + pr-03 + pr-05 + pr-07
 - **acceptance**:
   - PDFs uploaded through the existing upload flow are recognized and routed into the S6 PDF processing lifecycle with the defined readiness/failure transitions.
   - PDF processing can produce `page_count`, normalized `media.plain_text`, and contiguous page-span indexing for quote/search readiness.
+  - `pr-03` enforces/validates contiguous/full-page-set `pdf_page_text_spans` lifecycle invariants (beyond the row-local schema checks introduced in `pr-01`) before quote-capable readiness is considered satisfied.
+  - `pr-03` owns lifecycle/invalidation validation for PDF quote-match metadata on `highlight_pdf_anchors` beyond the row-local schema checks introduced in `pr-01`.
   - `ready_for_reading` and PDF quote/search readiness are correctly split per S6 lifecycle rules.
   - Scanned/image-only and password-protected PDF behaviors follow S6 deterministic degrade/fail semantics.
   - Retry/rebuild paths honor S6 invalidation rules for PDF quote-match metadata and do not rewrite text artifacts on embedding/search-only retries.
@@ -111,6 +125,11 @@ pr-02 + pr-03 + pr-05 + pr-07
   - PDF highlight create/list/update flows are available with 1-based page numbering and canonical page-space geometry payload semantics.
   - Server-side geometry normalization, fingerprinting, duplicate detection, deterministic ordering, and payload bounds follow the S6 contract.
   - Overlapping PDF highlights are supported while exact duplicates are rejected per geometry identity rules.
+  - PDF logical highlight writes use the unified `highlights` core together with the `pr-01` transitional legacy-fragment-column bridge (`fragment_id/start_offset/end_offset` remain `NULL` for PDF rows under bridge constraints).
+  - `pr-04` owns exact race-safe PDF duplicate enforcement for PDF highlight writes (transactional enforcement and/or schema/index refinement), building on `pr-01` supporting indexes.
+  - `pr-04` owns PDF geometry canonicalization semantics (degeneracy rejection, quantization, canonical ordering, fingerprint correctness), building on the `pr-01` `highlight_pdf_quads` row-shape schema.
+  - `pr-04` owns authoritative transactional write-time validation of `highlight_pdf_anchors` cross-table coherence and geometry-derived anchor fields (beyond the row-local domains introduced in `pr-01`), including mismatch rejection without trigger-based enforcement.
+  - Any DB-level hardening for PDF anchor cross-table coherence is explicitly deferred to a later dedicated hardening/contraction step and is not a prerequisite for S6 `pr-04` completion.
   - Generic highlight detail/delete/annotation interactions remain compatible with typed-highlight semantics.
 - **non-goals**:
   - No frontend PDF rendering or selection UI.
@@ -123,6 +142,7 @@ pr-02 + pr-03 + pr-05 + pr-07
   - Quote-to-chat for PDF highlights/annotations uses stored `exact` as authoritative quote text and never re-extracts selection text at quote time.
   - Nearby context is included only for deterministic `unique` PDF matches and omitted safely for ambiguous/missing/empty cases.
   - Pending/invalidation states follow S6 enrichment and safe-degradation rules.
+  - `pr-05` owns quote-semantic validation/coherence of persisted PDF match-status/offset metadata usage (beyond the row-local schema checks introduced in `pr-01`).
   - Visibility and masked-existence semantics remain aligned with S3/S4 expectations for PDF context targets.
 - **non-goals**:
   - No frontend PDF viewer/highlight UI rollout.
@@ -136,6 +156,7 @@ pr-02 + pr-03 + pr-05 + pr-07
   - The end-to-end PDF.js read path is compatible with S6 incremental/range loading expectations through the canonical `GET /media/{id}/file` -> signed URL contract.
   - Viewer file fetch uses the canonical `GET /media/{id}/file` path and handles signed URL expiry recovery during active sessions.
   - PDF.js worker execution remains compatible with the constitution CSP (same-origin worker path under `worker-src 'self'`) without introducing public-storage URL assumptions.
+  - `pr-06` may include the minimal backend/BFF/storage/CSP configuration changes required to satisfy the S6 PDF.js transport contract (range loading, signed URL recovery, worker compatibility), even though the primary deliverable is the frontend reader path.
   - Text-layer readiness and scanned/image-only visual-read-only behavior match S6 reader UI contract expectations.
   - Password-protected/failed PDFs surface deterministic non-success behavior consistent with S6 processing outcomes.
 - **non-goals**:
@@ -159,6 +180,8 @@ pr-02 + pr-03 + pr-05 + pr-07
 - **dependencies**: pr-02, pr-03, pr-05, pr-07
 - **acceptance**:
   - S6 acceptance scenarios are covered end-to-end across merged PR behavior, including upload-to-viewer, quote gating, PDF highlighting, linked-items integration, and retry invalidation recovery.
+  - At least one automated browser/E2E happy-path test covers `upload -> processing -> viewer open -> persistent PDF highlight -> reload -> quote-to-chat` using the merged S6 path.
+  - At least one automated degrade/failure-path test covers either scanned/image-only visual-read-only behavior or password-protected deterministic failure semantics.
   - Visibility and processing-state regression suites pass with PDF behavior included.
   - Integration defects and regression fixes discovered during slice closure are resolved without reassigning primary ownership of C1-C7, changing S6 L2 contract boundaries, or expanding S6 scope.
 - **non-goals**:
