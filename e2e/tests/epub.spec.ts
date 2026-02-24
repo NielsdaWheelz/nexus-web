@@ -2,27 +2,25 @@ import { test, expect } from "@playwright/test";
 
 test.describe("epub", () => {
   test("upload EPUB", async ({ page }) => {
-    await page.goto("/");
-    const addBtn = page.getByRole("button", { name: /add|upload|import|new/i }).first();
-    await addBtn.click();
+    await page.goto("/libraries");
+    // Locate the file upload input for EPUB/PDF files
     const fileInput = page.locator("input[type='file']");
-    if (await fileInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await expect(fileInput).toBeVisible();
-    }
+    const uploadButton = page.getByRole("button", { name: /upload file/i });
+    // At least one upload mechanism should be available on the libraries page
+    await expect(
+      fileInput.or(uploadButton).first()
+    ).toBeAttached();
   });
 
-  test("open reader", async ({ page }) => {
-    await page.goto("/");
-    await expect(page).not.toHaveURL(/login/);
+  test.fixme("open reader", async () => {
+    // Requires seeded EPUB media. Implement when E2E data seeding covers EPUB upload.
   });
 
-  test("navigate chapters and TOC", async ({ page }) => {
-    await page.goto("/");
-    await expect(page).not.toHaveURL(/login/);
+  test.fixme("navigate chapters and TOC", async () => {
+    // Requires seeded EPUB with multiple chapters.
   });
 
-  test("create highlight in epub", async ({ page }) => {
-    await page.goto("/");
-    await expect(page).not.toHaveURL(/login/);
+  test.fixme("create highlight in epub", async () => {
+    // Requires seeded EPUB with readable content for text selection.
   });
 });

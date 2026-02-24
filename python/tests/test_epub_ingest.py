@@ -651,6 +651,9 @@ class TestIngestEpubTaskMarksReadyForReadingOnSuccess:
 
         from nexus.tasks.ingest_epub import ingest_epub
 
+        # TASK INFRASTRUCTURE: Session factory redirect for test DB isolation.
+        # Celery tasks create their own session; this redirects to the test DB.
+        # STORAGE BOUNDARY: External storage mock per testing standards §6.
         with (
             patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
             patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
@@ -690,6 +693,9 @@ class TestIngestEpubTaskMarksFailedOnExtractionError:
 
         from nexus.tasks.ingest_epub import ingest_epub
 
+        # TASK INFRASTRUCTURE: Session factory redirect for test DB isolation.
+        # STORAGE BOUNDARY: External storage mock per testing standards §6.
+        # extract_epub_artifacts mock: simulates extraction failure for error-path testing.
         with (
             patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
             patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
@@ -719,6 +725,8 @@ class TestIngestEpubTaskIdempotentOnMissingOrNonextractingMedia:
         fake_mid = uuid4()
         from nexus.tasks.ingest_epub import ingest_epub
 
+        # TASK INFRASTRUCTURE: Session factory redirect for test DB isolation.
+        # STORAGE BOUNDARY: External storage mock per testing standards §6.
         with (
             patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
             patch("nexus.tasks.ingest_epub.get_storage_client", return_value=FakeStorageClient()),
@@ -742,6 +750,8 @@ class TestIngestEpubTaskIdempotentOnMissingOrNonextractingMedia:
 
         from nexus.tasks.ingest_epub import ingest_epub
 
+        # TASK INFRASTRUCTURE: Session factory redirect for test DB isolation.
+        # STORAGE BOUNDARY: External storage mock per testing standards §6.
         with (
             patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
             patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),

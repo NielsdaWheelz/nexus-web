@@ -1,20 +1,20 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("sharing", () => {
-  test("share conversation", async ({ page }) => {
-    await page.goto("/conversations");
-    await expect(page).not.toHaveURL(/login/);
+  test.fixme("share conversation", async () => {
+    // Requires seeded conversation data. Implement when E2E data seeding covers conversations.
   });
 
-  test("recipient access succeeds", async ({ page }) => {
-    await page.goto("/conversations");
-    await expect(page).not.toHaveURL(/login/);
+  test.fixme("recipient access succeeds", async () => {
+    // Requires multi-user session with shared conversation data.
   });
 
   test("permission enforcement forbidden path", async ({ browser }) => {
     const context = await browser.newContext();
     const page = await context.newPage();
-    await page.goto("/login");
+    // Navigate to a protected route without auth
+    await page.goto("/conversations");
+    // Should redirect to login
     await expect(page).toHaveURL(/login/);
     await context.close();
   });

@@ -3,37 +3,37 @@ import { test, expect } from "@playwright/test";
 test.describe("conversations", () => {
   test("create conversation", async ({ page }) => {
     await page.goto("/conversations");
-    const newBtn = page.getByRole("button", { name: /new|create|start/i }).or(
-      page.getByRole("link", { name: /new|create|start/i })
+    // Click the "+ New" button to start a new conversation
+    const newBtn = page.getByRole("button", { name: /new/i }).or(
+      page.getByRole("link", { name: /new/i })
     );
-    if (await newBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await newBtn.click();
-    }
+    await expect(newBtn).toBeVisible();
+    await newBtn.click();
     await expect(page).toHaveURL(/conversation/i);
   });
 
   test("send message", async ({ page }) => {
     await page.goto("/conversations");
-    const newBtn = page.getByRole("button", { name: /new|create|start/i }).or(
-      page.getByRole("link", { name: /new|create|start/i })
+    // Create a new conversation first
+    const newBtn = page.getByRole("button", { name: /new/i }).or(
+      page.getByRole("link", { name: /new/i })
     );
-    if (await newBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await newBtn.click();
-    }
-    const input = page.getByRole("textbox").or(page.getByPlaceholder(/message|type|ask/i));
-    if (await input.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await input.fill("Hello, this is a test message");
-      await page.getByRole("button", { name: /send/i }).click();
-    }
+    await expect(newBtn).toBeVisible();
+    await newBtn.click();
+    // Fill in the ChatComposer and send
+    const input = page.getByPlaceholder("Type a message...");
+    await expect(input).toBeVisible();
+    await input.fill("Hello, this is a test message");
+    await page.getByRole("button", { name: /send/i }).click();
+    // Verify the message appears in the thread
+    await expect(page.getByText("Hello, this is a test message")).toBeVisible();
   });
 
-  test("streaming response UI", async ({ page }) => {
-    await page.goto("/conversations");
-    await expect(page).not.toHaveURL(/login/);
+  test.fixme("streaming response UI", async () => {
+    // Requires LLM API key configured in E2E environment for real streaming.
   });
 
-  test("attach and use context", async ({ page }) => {
-    await page.goto("/conversations");
-    await expect(page).not.toHaveURL(/login/);
+  test.fixme("attach and use context", async () => {
+    // Requires seeded media content and conversation for context attachment.
   });
 });

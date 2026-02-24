@@ -25,36 +25,6 @@ from tests.support.test_verifier import MockJwtVerifier
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture
-def auth_client(engine: Engine):
-    """Create a client with auth + request-id middleware."""
-    session_factory = create_session_factory(engine)
-
-    def bootstrap_callback(user_id: UUID) -> UUID:
-        db = session_factory()
-        try:
-            return ensure_user_and_default_library(db, user_id)
-        finally:
-            db.close()
-
-    verifier = MockJwtVerifier()
-    app = create_app(skip_auth_middleware=True)
-
-    # Add auth middleware first (so it runs second)
-    app.add_middleware(
-        AuthMiddleware,
-        verifier=verifier,
-        requires_internal_header=False,
-        internal_secret=None,
-        bootstrap_callback=bootstrap_callback,
-    )
-
-    # Add request-id middleware LAST (so it runs FIRST, outermost)
-    add_request_id_middleware(app, log_requests=False)
-
-    return TestClient(app)
-
-
 class TestRequestIdMiddleware:
     """Tests for X-Request-ID middleware."""
 

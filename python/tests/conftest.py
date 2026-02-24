@@ -164,9 +164,10 @@ def test_verifier() -> MockJwtVerifier:
 
 @pytest.fixture
 def authenticated_app(engine: Engine):
-    """Provide a FastAPI app with auth middleware using test verifier.
+    """Provide a FastAPI app with auth + request-id middleware using test verifier.
 
     Uses the test database engine for bootstrap operations.
+    Includes request-id middleware for consistent middleware stack.
     """
     # Create session factory bound to test engine
     session_factory = create_session_factory(engine)
@@ -194,6 +195,11 @@ def authenticated_app(engine: Engine):
         bootstrap_callback=bootstrap_callback,
     )
 
+    # Add request-id middleware (outermost — runs first)
+    from nexus.app import add_request_id_middleware
+
+    add_request_id_middleware(app, log_requests=False)
+
     return app
 
 
@@ -201,10 +207,12 @@ def authenticated_app(engine: Engine):
 def authenticated_client(
     authenticated_app, db_session: Session
 ) -> Generator[TestClient, None, None]:
-    """Provide a FastAPI test client with auth middleware.
+    """Provide a FastAPI test client with auth middleware and savepoint isolation.
 
-    This client uses MockJwtVerifier and can handle authenticated requests.
-    Use auth_headers() to generate valid tokens for requests.
+    Uses db_session for savepoint-based transaction rollback after each test.
+    Prefer this for tests that don't need multiple independent connections.
+
+    For tests using direct_db (multi-connection, manual cleanup), use auth_client instead.
     """
     with TestClient(authenticated_app) as client:
         yield client
@@ -239,10 +247,13 @@ def random_uuid() -> str:
 
 @pytest.fixture
 def auth_client(engine: Engine) -> Generator[TestClient, None, None]:
-    """Provide a FastAPI test client with auth middleware.
+    """Provide a FastAPI test client with auth + request-id middleware.
 
-    Generic shared fixture for tests that need authenticated API access.
-    Tests requiring extra middleware (e.g. request-id) should define local fixtures.
+    No savepoint isolation — tests using this fixture must register manual cleanup
+    via direct_db.register_cleanup(). Use for integration tests that need multiple
+    independent connections (direct_db).
+
+    For tests using db_session (auto-rollback), use authenticated_client instead.
     """
     session_factory = create_session_factory(engine)
 
@@ -265,6 +276,11 @@ def auth_client(engine: Engine) -> Generator[TestClient, None, None]:
         internal_secret=None,
         bootstrap_callback=bootstrap_callback,
     )
+
+    # Add request-id middleware (outermost — runs first)
+    from nexus.app import add_request_id_middleware
+
+    add_request_id_middleware(app, log_requests=False)
 
     with TestClient(app) as client:
         yield client

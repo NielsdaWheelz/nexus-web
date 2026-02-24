@@ -28,7 +28,7 @@ import {
 
 /**
  * Create an HTML element from a string.
- * Uses happy-dom provided by vitest environment.
+ * Uses Vitest Browser Mode (Chromium) for real DOM APIs.
  */
 function html(content: string): HTMLElement {
   const div = document.createElement("div");

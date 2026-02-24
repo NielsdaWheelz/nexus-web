@@ -8,6 +8,7 @@ When a column is added or a constraint changes, update the
 relevant factory here — not in N test files.
 """
 
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
@@ -17,11 +18,14 @@ from nexus.db.models import (
     Conversation,
     ConversationShare,
     DefaultLibraryIntrinsic,
+    EpubTocNode,
+    FailureStage,
     Fragment,
     Highlight,
     Library,
     LibraryMedia,
     Media,
+    MediaFile,
     MediaKind,
     Membership,
     Message,
@@ -538,6 +542,139 @@ def create_epub_chapter_fragment(
     session.add(fragment)
     session.commit()
     return fragment.id
+
+
+def create_failed_epub_media(
+    session: Session,
+    user_id: UUID,
+    *,
+    last_error_code: str = "E_EXTRACT_FAILED",
+    processing_attempts: int = 1,
+    file_sha256: str | None = None,
+) -> UUID:
+    """Create a failed EPUB media row with an optional media_file record.
+
+    Used by retry tests. Returns media_id.
+    """
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.epub.value,
+        title="Failed EPUB",
+        processing_status=ProcessingStatus.failed,
+        created_by_user_id=user_id,
+        failure_stage=FailureStage.extract,
+        last_error_code=last_error_code,
+        last_error_message="test failure",
+        failed_at=datetime.now(UTC),
+        file_sha256=file_sha256,
+        processing_attempts=processing_attempts,
+    )
+    session.add(media)
+    session.flush()
+
+    media_file = MediaFile(
+        media_id=media.id,
+        storage_path=f"media/{media.id}/original.epub",
+        content_type="application/epub+zip",
+        size_bytes=1000,
+    )
+    session.add(media_file)
+    session.commit()
+    return media.id
+
+
+def create_ready_epub_with_chapters(
+    session: Session,
+    *,
+    num_chapters: int = 3,
+    with_toc: bool = True,
+) -> tuple[UUID, list[UUID]]:
+    """Create a ready EPUB with contiguous chapter fragments and optional TOC nodes.
+
+    Returns (media_id, [fragment_ids]).
+    """
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.epub.value,
+        title="Test EPUB Book",
+        processing_status=ProcessingStatus.ready_for_reading,
+    )
+    session.add(media)
+    session.flush()
+
+    frag_ids: list[UUID] = []
+    for i in range(num_chapters):
+        html = f"<h2>Chapter {i + 1} Title</h2><p>Sentinel content for chapter {i}.</p>"
+        canon = f"Chapter {i + 1} Title\nSentinel content for chapter {i}."
+        frag = Fragment(
+            id=uuid4(),
+            media_id=media.id,
+            idx=i,
+            html_sanitized=html,
+            canonical_text=canon,
+        )
+        session.add(frag)
+        session.flush()
+        frag_ids.append(frag.id)
+
+    if with_toc:
+        for i in range(num_chapters):
+            node = EpubTocNode(
+                media_id=media.id,
+                node_id=f"ch{i}",
+                parent_node_id=None,
+                label=f"TOC Chapter {i + 1}",
+                href=f"ch{i}.xhtml",
+                fragment_idx=i,
+                depth=0,
+                order_key=f"{i + 1:04d}",
+            )
+            session.add(node)
+
+    session.commit()
+    return media.id, frag_ids
+
+
+def create_seeded_test_media(
+    session: Session,
+    *,
+    title: str,
+    canonical_text: str,
+    html_sanitized: str,
+    media_id: UUID | None = None,
+    fragment_id: UUID | None = None,
+) -> UUID:
+    """Create media + a single fragment for seeded test data.
+
+    Uses merge() for idempotent inserts (ON CONFLICT DO NOTHING semantics).
+    Returns media_id.
+    """
+    mid = media_id or uuid4()
+    fid = fragment_id or uuid4()
+
+    # Use merge to handle ON CONFLICT DO NOTHING semantics
+    media = Media(
+        id=mid,
+        kind=MediaKind.web_article.value,
+        title=title,
+        canonical_source_url="https://example.com/test-article",
+        processing_status=ProcessingStatus.ready_for_reading,
+    )
+    session.merge(media)
+    session.flush()
+
+    fragment = Fragment(
+        id=fid,
+        media_id=mid,
+        idx=0,
+        html_sanitized=html_sanitized,
+        canonical_text=canonical_text,
+    )
+    session.merge(fragment)
+    session.flush()
+
+    session.commit()
+    return mid
 
 
 # =============================================================================

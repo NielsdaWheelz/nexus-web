@@ -223,7 +223,7 @@ test-front-browser:
 	cd apps/web && npx vitest run --project browser
 
 test-e2e:
-	cd e2e && npx playwright install --with-deps chromium && npx playwright test
+	cd e2e && npx tsx seed-e2e-user.ts && npx playwright install --with-deps chromium && npx playwright test
 
 test-e2e-ui:
 	cd e2e && npx playwright install --with-deps chromium && npx playwright test --ui
@@ -235,6 +235,8 @@ _verify-fast-static: lint fmt-check typecheck
 
 _verify-fast-tests: test-back-unit test-front-unit
 
+# Run with `make -j verify-fast` for parallel static + test execution.
+# Sequential by default for deterministic output.
 verify-fast: _verify-fast-static _verify-fast-tests
 	@echo "=== verify-fast passed ==="
 
