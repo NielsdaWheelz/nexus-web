@@ -5,7 +5,7 @@
 Cross-cutting refactor of the testing infrastructure across backend (Python/pytest), frontend (TypeScript/Vitest), E2E (Playwright), CI (GitHub Actions), and build (Makefile). No product behavior changed.
 
 **Key deliverables:**
-- Created `docs/v1/sdlc/testing_standards.md` as the normative testing reference.
+- Created `docs/v1/testing_standards.md` as the normative testing reference.
 - Added 6 new Makefile targets (`verify-fast`, `test-back-unit`, `test-front-unit`, `test-front-browser`, `test-e2e`, `test-e2e-ui`), updated `verify` composition.
 - Centralized `auth_client` fixture in `conftest.py`, eliminating 6 duplicate definitions.
 - Migrated `factories.py` from raw SQL to SQLAlchemy ORM models.
@@ -103,7 +103,7 @@ rg -n 'patch\("nexus\.services\.send_message\.' python/tests/test_send_message.p
 rg -n 'vi\.mock\("next/navigation"' apps/web/vitest.setup.ts                         # 0 matches
 rg -n 'happy-dom' apps/web/package.json                                               # 0 matches
 rg -n 'pytestmark' python/tests/test_*.py --files-with-matches | wc -l               # 20+ files
-test -f docs/v1/sdlc/testing_standards.md && echo PASS                                # PASS
+test -f docs/v1/testing_standards.md && echo PASS                                     # PASS
 test -f apps/web/vitest.workspace.ts && echo PASS                                     # PASS
 test -f e2e/playwright.config.ts && echo PASS                                         # PASS
 test ! -f python/tests/test_s4_helper_retirement_audit.py && echo PASS                # PASS
@@ -114,7 +114,7 @@ test ! -f python/tests/test_s4_compatibility_audit.py && echo PASS              
 
 | # | Acceptance Item | Files Changed | Tests / Verification | Status |
 |---|----------------|---------------|---------------------|--------|
-| 1 | `docs/v1/sdlc/testing_standards.md` created | `docs/v1/sdlc/testing_standards.md` | `test -f` | PASS |
+| 1 | `docs/v1/testing_standards.md` created | `docs/v1/testing_standards.md` | `test -f` | PASS |
 | 2 | Makefile: `verify-fast`, `test-back-unit`, `test-front-unit`, `test-front-browser`, `test-e2e`, `test-e2e-ui` | `Makefile` | `make verify-fast`, `make test-back-unit`, `make test-front-unit`, `make test-front-browser` | PASS |
 | 3 | Makefile: `verify` updated | `Makefile` | `make verify` | PASS |
 | 4 | CI: remove typecheck bypass | `.github/workflows/ci.yml` | grep confirms no `\|\| true` on typecheck | PASS |
@@ -155,7 +155,7 @@ testing infrastructure to align with the five-tier testing model
 (static, unit, component, integration, E2E). No product behavior changed.
 
 Backend:
-- Create docs/v1/sdlc/testing_standards.md as normative reference
+- Create docs/v1/testing_standards.md as normative reference
 - Add pytestmark (unit/integration) to all 20+ backend test files
 - Centralize auth_client fixture in conftest.py (removed 6 duplicates)
 - Migrate factories.py from raw SQL text() to SQLAlchemy ORM models

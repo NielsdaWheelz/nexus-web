@@ -5,7 +5,7 @@ Establish a version-controlled testing standards document and refactor the curre
 
 ## context
 - `docs/v1/sdlc/L4-pr-spec.md` defines the required L4 structure for a single-PR implementer contract.
-- `docs/v1/sdlc/testing_standards.md` is the target-state testing policy this PR will codify and implement.
+- `docs/v1/testing_standards.md` is the target-state testing policy this PR will codify and implement.
 - This L4 spec uses a descriptive filename under `docs/v1/sdlc/` because the work is cross-cutting (not slice-scoped); the naming deviation is intentional for discoverability.
 - `Makefile` currently runs `verify` as a serial chain (`lint fmt-check typecheck build test`) and does not provide `verify-fast`, `test-back-unit`, `test-e2e`, or `test-e2e-ui`.
 - `.github/workflows/ci.yml` currently allows frontend typecheck failures (`npm run typecheck || true`) and has no E2E job.
@@ -25,7 +25,7 @@ Establish a version-controlled testing standards document and refactor the curre
 
 ## deliverables
 
-### `docs/v1/sdlc/testing_standards.md`
+### `docs/v1/testing_standards.md`
 - Create the version-controlled normative testing standards document (target state) and keep it focused on durable policy, not migration choreography.
 - Define the five-tier model (`Tier 0` static analysis through `Tier 4` E2E), behavior-first assertions, mocking boundaries, fixture/data rules, naming/markers, and target command/CI shape.
 - Document the temporary-exception rule for migration-only deviations (for example, an external-boundary mock reachable only through an internal seam).
@@ -200,8 +200,8 @@ Representative high-priority files in scope (non-exhaustive for marker/assertion
 |---|---|---|---|
 | Is the standards model "four tiers" or "five tiers" for this repo? | Use a five-tier model: Tier 0 static analysis, Tier 1 unit, Tier 2 browser component, Tier 3 backend integration, Tier 4 E2E. | Backend integration tests are a distinct layer with different feedback speed and failure localization than E2E. Collapsing them hides ownership. | If naming becomes confusing, keep behavior the same and relabel tiers later without changing policy boundaries. |
 | Should `make verify` include E2E? | No. `make verify` stays non-E2E for a routine local loop; E2E is explicit (`make test-e2e`) and CI-gated. | Keeps local feedback frequent and predictable while still enforcing E2E in CI. | If local workflows need one-shot full validation, add a separate `verify-full` later; do not overload `verify`. |
-| What exact command composition should `verify-fast` and `verify` enforce in this PR? | `verify-fast` must run `lint`, `fmt-check`, `typecheck`, backend unit tests, and frontend unit tests only. `verify` must run static checks + `build` + backend tests + frontend unit/browser tests, excluding E2E. | Removes ambiguity in local workflow semantics and prevents accidental slow/partial verification loops. | If command naming changes during implementation, preserve the same semantics and update both this spec and `docs/v1/sdlc/testing_standards.md` together. |
-| Where should the durable policy live versus migration choreography? | Durable policy lives in `docs/v1/sdlc/testing_standards.md`; migration choreography and temporary exceptions live in this L4 PR spec. | Prevents drift and duplication. Standards stay stable; the PR spec is disposable after merge. | If a policy rule changes during implementation, update the standards doc first, then align this spec. |
+| What exact command composition should `verify-fast` and `verify` enforce in this PR? | `verify-fast` must run `lint`, `fmt-check`, `typecheck`, backend unit tests, and frontend unit tests only. `verify` must run static checks + `build` + backend tests + frontend unit/browser tests, excluding E2E. | Removes ambiguity in local workflow semantics and prevents accidental slow/partial verification loops. | If command naming changes during implementation, preserve the same semantics and update both this spec and `docs/v1/testing_standards.md` together. |
+| Where should the durable policy live versus migration choreography? | Durable policy lives in `docs/v1/testing_standards.md`; migration choreography and temporary exceptions live in this L4 PR spec. | Prevents drift and duplication. Standards stay stable; the PR spec is disposable after merge. | If a policy rule changes during implementation, update the standards doc first, then align this spec. |
 | How strict is the "no internal mocks" rule during migration? | Target state is strict. Temporary exceptions are allowed only when an external boundary is currently reachable only through an internal seam, and must be documented in this PR's decisions. | Preserves the quality bar without blocking migration on unrelated architectural refactors. | If a clean seam can be introduced cheaply in this PR, prefer refactoring and remove the exception. |
 | How should Playwright boot the test environment? | `make test-e2e` (or an existing wrapper script) ensures Supabase/Redis readiness; Playwright `webServer` starts only app processes (Next.js and FastAPI). | Keeps heavy dependency lifecycle outside Playwright and reduces config fragility. | If `webServer` orchestration proves sufficient later, dependency bootstrapping can be consolidated in a follow-up cleanup. |
 | How should backend tests verify API behavior after cleanup? | Assert through API responses and follow-up API reads; use ORM queries only when API intentionally hides the asserted state; keep schema-level raw SQL in migration tests. | Behavior-first assertions survive refactors better and align with the testing standards. | If a touched test has no practical API/ORM assertion path in this PR, document a temporary exception and narrow it to that case only. |
@@ -217,7 +217,7 @@ Representative high-priority files in scope (non-exhaustive for marker/assertion
 
 | l3 acceptance item | deliverable(s) | test(s) |
 |---|---|---|
-| Version-controlled testing policy exists and defines the target testing model. | `docs/v1/sdlc/testing_standards.md` | `standards_doc_defines_tiers_mocking_and_assertion_rules` |
+| Version-controlled testing policy exists and defines the target testing model. | `docs/v1/testing_standards.md` | `standards_doc_defines_tiers_mocking_and_assertion_rules` |
 | Local verification/test commands support a fast loop and explicit E2E entrypoints with explicit semantics. | `Makefile` | `makefile_adds_verification_and_layer_targets`; `makefile_verify_target_semantics_are_explicit`; `verify_fast_executes_successfully`; `verify_executes_successfully_without_e2e` |
 | Backend test infrastructure and cleanup in this PR's listed scope use explicit markers, centralized fixtures, ORM-backed factories, behavior-first assertions, and reduced internal mocking. | `python/pyproject.toml`; `python/tests/conftest.py`; `python/tests/factories.py`; `python/tests/fixtures.py`; listed backend cleanup test files | `pytest_markers_defined_and_all_backend_test_files_marked`; `auth_client_fixture_centralized_or_documented_exceptions`; `backend_factories_and_fixtures_use_orm_for_common_entity_setup`; `backend_send_message_tests_remove_internal_service_patches`; `backend_send_message_stream_and_epub_ingest_tests_remove_internal_session_patches`; `backend_media_external_storage_seam_exception_is_explicit_if_present`; `backend_listed_api_tests_assert_behavior_not_schema`; `backend_unit_target_executes_unit_marker_only` |
 | Frontend test infrastructure is split into unit + real-browser component testing without global navigation mocks and with test linting rules. | `apps/web/vitest.setup.ts`; `apps/web/vitest.workspace.ts`; `apps/web/vitest.config.ts`; `apps/web/package.json`; `apps/web/eslint.config.mjs`; `Makefile` | `frontend_vitest_setup_has_no_global_next_navigation_mock`; `frontend_browser_mode_workspace_configured`; `frontend_package_replaces_happy_dom`; `frontend_eslint_testing_library_rules_enabled`; `frontend_unit_and_browser_targets_execute` |
@@ -230,10 +230,10 @@ Representative high-priority files in scope (non-exhaustive for marker/assertion
 
 ## acceptance tests
 
-### file: `docs/v1/sdlc/testing_standards.md`
+### file: `docs/v1/testing_standards.md`
 
 **test: `standards_doc_defines_tiers_mocking_and_assertion_rules`**
-- input: run `rg -n 'Tier 3: Integration Tests|Tier 4: E2E|Mocking Policy|MSW Policy|Assertion Standards|Migration Rules for Existing Tests' docs/v1/sdlc/testing_standards.md`
+- input: run `rg -n 'Tier 3: Integration Tests|Tier 4: E2E|Mocking Policy|MSW Policy|Assertion Standards|Migration Rules for Existing Tests' docs/v1/testing_standards.md`
 - output: all required sections are present; the document defines behavior-first assertions, mocking boundaries, and the tier model used by this PR.
 
 ### file: `Makefile`
@@ -440,7 +440,7 @@ Representative high-priority files in scope (non-exhaustive for marker/assertion
 
 ## execution sequence (recommended)
 
-1. Land docs first: finalize `docs/v1/sdlc/testing_standards.md` and keep this PR spec in sync with any policy edits.
+1. Land docs first: finalize `docs/v1/testing_standards.md` and keep this PR spec in sync with any policy edits.
 2. Add Makefile target scaffolding (`verify-fast`, `test-back-unit`, `test-front-unit`, `test-front-browser`, `test-e2e`, `test-e2e-ui`) with placeholder wiring if needed, then finalize semantics.
 3. Update frontend test infrastructure (`vitest.setup.ts`, `vitest.workspace.ts`, `vitest.config.ts`, `package.json`, `eslint.config.mjs`) and get `make test-front-unit` / `make test-front-browser` green.
 4. Add E2E project skeleton (`e2e/` config, package, tsconfig, auth setup, seed script, `.gitignore`) before writing all journey specs.
