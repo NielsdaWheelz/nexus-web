@@ -1743,3 +1743,60 @@ class TestEpubHighlightCompatibility:
         )
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "E_HIGHLIGHT_INVALID_RANGE"
+
+
+# =============================================================================
+# S6 PR-01: Fragment Highlight Route Smoke (regression gate)
+# =============================================================================
+
+
+class TestS6PR01FragmentHighlightRouteSmoke:
+    """Confirms fragment-highlight route behavior is unchanged after S6 pr-01 schema."""
+
+    def test_pr01_fragment_highlight_route_smoke_unchanged(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Create, fetch, list a fragment highlight — same contract as pre-pr-01."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        # Create
+        resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 201
+        data = resp.json()["data"]
+        h_id = data["id"]
+        assert data["fragment_id"] == str(fragment_id)
+        assert data["start_offset"] == 0
+        assert data["end_offset"] == 5
+        assert data["color"] == "yellow"
+        assert data["exact"] == "Hello"
+
+        # Typed-anchor fields must NOT leak into response
+        assert "anchor_kind" not in data
+        assert "anchor_media_id" not in data
+
+        # Get
+        resp2 = auth_client.get(f"/highlights/{h_id}", headers=auth_headers(user_id))
+        assert resp2.status_code == 200
+        assert resp2.json()["data"]["id"] == h_id
+
+        # List
+        resp3 = auth_client.get(
+            f"/fragments/{fragment_id}/highlights",
+            headers=auth_headers(user_id),
+        )
+        assert resp3.status_code == 200
+        assert len(resp3.json()["data"]) == 1
