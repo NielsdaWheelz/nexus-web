@@ -555,6 +555,7 @@ S6 frontend contract must preserve:
 - S6 reuses the existing linked-items pane shell and row interaction model (focus/selection/annotation/quote actions) for PDF highlights; renderer-specific alignment/measurement is implemented via a PDF adapter path rather than a separate pane product surface
 - HTML/EPUB may continue using DOM-anchor measurement (`data-highlight-anchor`-style) while S6 PDF integration may use a different anchor-position adapter (e.g., projected overlay geometry); the pane shell MUST NOT require PDF content to emulate HTML highlight span injection
 - visual highlight rendering must project persisted canonical page-space geometry to current viewer/page coordinates without mutating pdf.js-owned text layer DOM
+- visual PDF highlight rendering must apply persisted highlight color semantics (`highlights.color` / existing palette) and MUST NOT intentionally collapse the shipped S6 PDF path to a single hardcoded overlay color for all highlights
 - highlight visuals must be recomputed on viewer/page transformations that change projection (including zoom/scale changes and page rotation where supported)
 - lazy page rendering is allowed: highlights for unrendered pages may be absent until that page renders, but MUST appear when the page/text layer becomes available
 - PDF highlight selection/capture MUST scope to pdf.js text-layer content only; non-text-layer DOM nodes are outside the PDF highlight capture domain
@@ -636,6 +637,7 @@ S6 invariants (D01/D02/D05 resolved):
 33. Embedding/search retries for PDF do not rewrite `media.plain_text` or `pdf_page_text_spans`; if a retry/rebuild path does rewrite them, it must trigger invariant `32` before quote context is served.
 34. S6 PDF linked-items behavior reuses the existing linked-items pane product surface and row interaction semantics; renderer-specific alignment/measurement may differ, but S6 MUST NOT ship a separate PDF-only pane UX.
 35. The linked-items pane shell must support renderer-specific anchor measurement adapters; PDF integration is not required to emulate HTML `data-highlight-anchor` DOM spans.
+36. PDF overlay highlight visuals in the shipped S6 viewer path apply persisted per-highlight color semantics from `highlights.color` (existing palette) rather than a PDF-only hardcoded single-color rendering fallback.
 
 ---
 
@@ -680,6 +682,7 @@ S6 invariants (D01/D02/D05 resolved):
 - **given**: a PDF page contains persisted highlights visible to the viewer
 - **when**: the viewer opens the media page
 - **then**: highlights render in content and appear in the (active-page scoped) linked-items pane using the same visibility and author metadata semantics as existing highlights
+- **and**: visible PDF highlight overlays apply the persisted highlight color semantics (existing highlight palette), not a PDF-only hardcoded single-color fallback
 
 ### scenario 9: ambiguous-or-missing plain-text match degrades safely
 - **given**: a PDF highlight has stored `exact` text and quote-to-chat is otherwise allowed
@@ -751,6 +754,7 @@ S6 invariants (D01/D02/D05 resolved):
 | `media.plain_text` persisted and page-indexed (`pdf_page_text_spans`) before quote-to-chat | 2.2, 3.1, 4.1, 4.4, 6.14, 6.20, 6.25, 7.3, 7.7, 7.14 |
 | Quote-to-chat uses stored text (not re-extraction) | 2.4, 3.2, 4.3, 4.4, 6.12, 6.18, 6.19, 6.29, 7.4, 7.9 |
 | Overlapping PDF highlights supported | 2.2, 4.3, 6.13, 7.5 |
+| PDF highlight overlays apply persisted highlight color semantics | 2.2, 4.3, 4.5, 6.36, 7.8 |
 | Visibility test suite passes | 2.1, 2.2, 4.2, 4.3, 4.4, 4.5, 6.2, 6.15, 6.16, 6.28, 6.34, 7.6, 7.8, 7.16, 7.18 |
 | Processing-state test suite passes | 2.2, 2.4, 3.1, 3.2, 4.1, 4.2, 4.4, 5, 6.14, 6.17, 6.20, 6.25, 6.26, 6.27, 6.31, 6.32, 6.33, 6.35, 7.3, 7.7, 7.9, 7.12, 7.13, 7.14, 7.15, 7.17, 7.18 |
 

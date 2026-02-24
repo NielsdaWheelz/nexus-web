@@ -90,12 +90,18 @@ pr-02 + pr-03 + pr-05 + pr-07
   - Shared visibility and context-target resolution operate on logical highlights across anchor kinds.
   - Existing fragment-backed highlight reads, annotations, and quote-context behavior remain functionally unchanged.
   - Existing fragment-route API behavior is preserved while internal typed-highlight canonical paths are adopted for S6 rollout readiness.
+  - `pr-02` adopts typed logical fields + `highlight_fragment_anchors` as the canonical internal fragment-anchor source-of-truth, keeps legacy `highlights.fragment_*` as a transitional compatibility mirror, and uses transactional service-level dual-write (no triggers) for fragment create/update paths.
   - `pr-02` adopts and validates `pr-01` dormant logical-highlight fields (`anchor_kind`, `anchor_media_id`) and handles compatibility normalization for rows created while `pr-01` schema was dormant.
-  - `pr-02` tolerates and repairs fragment highlights created during the `pr-01` dormant window that do not yet have `highlight_fragment_anchors` subtype rows.
+  - `pr-02` tolerates fragment highlights created during the `pr-01` dormant window that do not yet have `highlight_fragment_anchors` subtype rows in read-only paths, and repairs/normalizes them in explicit transactional `pr-02` service paths / repair helpers.
+  - `pr-02` does not silently accept irreconcilable fragment bridge-vs-subtype mismatches; it uses path-specific fail-safe mapping while preserving fragment-route product semantics for valid data (`bool` visibility helpers fail closed, no-existence-leak user-facing visibility/read gates mask not-found, owner/internal write paths raise explicit internal integrity failure).
+  - Shared logical-highlight media-resolution/resolver seams introduced in `pr-02` remain side-effect free (no hidden repair writes); dormant-window fragment repair is performed only in explicit transactional `pr-02` service paths/repair helpers.
+  - `pr-02` treats `dormant_repairable` fragment rows as a tolerated read-only compatibility state: read-only consumers may proceed using resolver-returned legacy-derived anchor data without hidden repair writes (with observability), while write-capable fragment paths repair explicitly before mutation logic.
+  - `pr-02` updates `contexts.recompute_conversation_media` to a hybrid batch strategy that reuses `pr-02` `highlight_kernel` resolution/mismatch semantics (no duplicated fragment-only raw SQL anchor resolution), tolerates dormant repairable rows without hidden repair writes, and raises explicit internal integrity failure on mismatches.
+  - `pr-02` centralizes mismatch logging + path-specific mapping in `highlight_kernel` helper(s) (no per-service mismatch logging drift): the resolver remains side-effect-free/log-free, mismatch mapping emits one canonical `highlight_kernel_mismatch` event per mapping decision, and internal-write mappings use a dedicated kernel internal integrity exception contract with `E_INTERNAL` semantics plus structured diagnostics.
   - `pr-02` treats legacy fragment columns on `highlights` as a transitional compatibility bridge and shifts canonical fragment-anchor reads/writes toward subtype rows without changing fragment-route product semantics.
   - `pr-02` preserves fragment duplicate behavior under the `pr-01` retained compatibility index unless a separately-reviewed index refactor is introduced.
   - Test/fixture expectations are updated for the typed-highlight internal model without changing pre-S6 product semantics.
-  - Typed-highlight serializers/service seams are ready for later PDF endpoint expansion.
+  - Typed-highlight serializers/service seams are ready for later PDF endpoint expansion and are centralized in a dedicated internal kernel module (`python/nexus/services/highlight_kernel.py`) with structured side-effect-free resolver results + mismatch classification for reuse across backend services.
 - **non-goals**:
   - No PDF create/list/update API rollout.
   - No PDF quote matching logic rollout.
@@ -130,6 +136,7 @@ pr-02 + pr-03 + pr-05 + pr-07
   - `pr-04` owns PDF geometry canonicalization semantics (degeneracy rejection, quantization, canonical ordering, fingerprint correctness), building on the `pr-01` `highlight_pdf_quads` row-shape schema.
   - `pr-04` owns authoritative transactional write-time validation of `highlight_pdf_anchors` cross-table coherence and geometry-derived anchor fields (beyond the row-local domains introduced in `pr-01`), including mismatch rejection without trigger-based enforcement.
   - Any DB-level hardening for PDF anchor cross-table coherence is explicitly deferred to a later dedicated hardening/contraction step and is not a prerequisite for S6 `pr-04` completion.
+  - `pr-04` reuses the dedicated `pr-02` `highlight_kernel` shared logical-highlight media-resolution and typed serializer/service seams for generic highlight detail/delete/annotation compatibility rather than reintroducing fragment-only assumptions, preserves the side-effect-free/log-free resolver posture for read-only paths, preserves `pr-02` path-specific fail-safe mismatch mapping classes on reused generic routes, reuses the centralized `highlight_kernel` mismatch logging/mapping helper contract (including `highlight_kernel_mismatch` event shape and kernel internal integrity exception diagnostics) instead of re-logging/re-mapping mismatches locally, and preserves the `dormant_repairable` tolerated-read-only semantics unless a later spec explicitly tightens them.
   - Generic highlight detail/delete/annotation interactions remain compatible with typed-highlight semantics.
 - **non-goals**:
   - No frontend PDF rendering or selection UI.
@@ -144,6 +151,7 @@ pr-02 + pr-03 + pr-05 + pr-07
   - Pending/invalidation states follow S6 enrichment and safe-degradation rules.
   - `pr-05` owns quote-semantic validation/coherence of persisted PDF match-status/offset metadata usage (beyond the row-local schema checks introduced in `pr-01`).
   - Visibility and masked-existence semantics remain aligned with S3/S4 expectations for PDF context targets.
+  - `pr-05` reuses the `pr-02` `highlight_kernel` side-effect-free/log-free logical-highlight media-resolution/visibility seams in read-only quote/context rendering paths (no hidden repair writes during quote rendering), preserves `pr-02` no-existence-leak / fail-safe mismatch mapping behavior on user-facing quote context visibility gates, reuses the centralized `highlight_kernel` mismatch logging/mapping helper contract (including canonical mismatch event fields) instead of introducing quote-path-specific mismatch logging/mapping drift, and preserves `dormant_repairable` tolerated-read-only semantics for fragment/epub highlight contexts.
 - **non-goals**:
   - No frontend PDF viewer/highlight UI rollout.
   - No changes to PDF geometry persistence.
@@ -168,12 +176,14 @@ pr-02 + pr-03 + pr-05 + pr-07
 - **dependencies**: pr-04, pr-05, pr-06
 - **acceptance**:
   - Text-layer selection capture can create/update PDF highlights using the S6 PDF highlight APIs and stored `exact`.
+  - PDF overlay highlight rendering applies persisted per-highlight color semantics (no silent single hardcoded PDF-only color fallback in the shipped S6 path).
   - Persisted PDF highlights render with stable reprojection across zoom/rotation and appear as lazy-rendered pages become available.
   - The existing linked-items pane shell is reused for active-page PDF highlights via a PDF renderer alignment/measurement adapter.
   - Row interactions (focus/scroll/quote/annotation affordances) work for PDF highlights in S6 page-scoped mode using the reused linked-items pane shell and compatible backend routes.
 - **non-goals**:
   - No full cross-object linked-items pane unification beyond the PDF adapter integration required for S6.
   - No perfect text↔geometry reconciliation.
+  - No direct click/hover interaction on PDF overlay highlight rectangles is required in S6 (pane-driven row interactions are the required interaction path), as long as overlay rendering preserves text selection and scrolling usability.
 
 ### pr-08: acceptance hardening and regression closure
 - **goal**: Close the slice by validating S6 acceptance coverage, regression suites, and rollout hardening across the integrated backend/frontend PDF path.

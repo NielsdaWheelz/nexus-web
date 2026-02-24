@@ -403,6 +403,7 @@ Two test suites are introduced early and reused by every later slice:
 - `media.plain_text` persisted and page-indexed (`pdf_page_text_spans`) before quote-to-chat
 - Quote-to-chat works using stored text (not re-extraction)
 - Overlapping PDF highlights supported
+- PDF highlight overlays apply persisted highlight color semantics
 - Visibility test suite passes
 - Processing-state test suite passes
 
