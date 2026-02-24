@@ -349,9 +349,21 @@ def _validate_context_visibility(
 ) -> None:
     """Validate that viewer can see the context target.
 
+    Uses highlight_kernel for anchor-kind-aware media resolution (S6 PR-02).
+    Side-effect-free: does not repair dormant-window rows.
+    Mismatch in highlight/annotation visibility resolution is treated as
+    masked not-found per D03.
+
     Raises:
         NotFoundError: If context target not visible (prevents existence leaks).
     """
+    from nexus.services.highlight_kernel import (
+        MappingClass,
+        ResolverState,
+        map_mismatch,
+        resolve_highlight,
+    )
+
     ctx_type = ctx.get("type")
     ctx_id = ctx.get("id")
 
@@ -364,18 +376,35 @@ def _validate_context_visibility(
         highlight = db.get(Highlight, ctx_id)
         if not highlight:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        # Check media visibility
-        media_id = highlight.fragment.media_id
-        if not can_read_media(db, viewer_id, media_id):
+        resolution = resolve_highlight(highlight)
+        if resolution.state == ResolverState.mismatch:
+            map_mismatch(
+                resolution,
+                MappingClass.masked_not_found,
+                "send_message_validate_context_visibility",
+            )
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
+        media_id = resolution.anchor_media_id
+        if media_id is None or not can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
 
     elif ctx_type == "annotation":
         annotation = db.get(Annotation, ctx_id)
         if not annotation:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        # Check media visibility
-        media_id = annotation.highlight.fragment.media_id
-        if not can_read_media(db, viewer_id, media_id):
+        highlight = annotation.highlight
+        if not highlight:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
+        resolution = resolve_highlight(highlight)
+        if resolution.state == ResolverState.mismatch:
+            map_mismatch(
+                resolution,
+                MappingClass.masked_not_found,
+                "send_message_validate_context_visibility",
+            )
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
+        media_id = resolution.anchor_media_id
+        if media_id is None or not can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
 
 

@@ -274,15 +274,33 @@ def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUI
     - Exists a library containing that media where both viewer and highlight author are members.
 
     Returns False if highlight_id does not exist (no existence leak).
+    Returns False (fail closed) on irreconcilable anchor state (D03 bool_fail_closed).
 
     Consumes canonical _highlight_library_intersection_exists helper.
+    Uses highlight_kernel for anchor-kind-aware media resolution (S6 PR-02).
     """
+    from nexus.services.highlight_kernel import (
+        MappingClass,
+        ResolverState,
+        map_mismatch,
+        resolve_highlight,
+    )
+
     highlight = session.get(Highlight, highlight_id)
     if highlight is None:
         return False
 
+    resolution = resolve_highlight(highlight)
+
+    if resolution.state == ResolverState.mismatch:
+        map_mismatch(resolution, MappingClass.bool_fail_closed, "can_read_highlight")
+        return False
+
+    media_id = resolution.anchor_media_id
+    if media_id is None:
+        return False
+
     author_id = highlight.user_id
-    media_id = highlight.fragment.media_id
 
     if not can_read_media(session, viewer_user_id, media_id):
         return False

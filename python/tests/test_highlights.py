@@ -1767,3 +1767,207 @@ class TestS6PR01FragmentHighlightRouteSmoke:
         )
         assert resp3.status_code == 200
         assert len(resp3.json()["data"]) == 1
+
+
+# =============================================================================
+# S6 PR-02: Typed-Highlight Kernel Behavior Preservation Tests
+# =============================================================================
+
+
+class TestS6PR02DualWrite:
+    """PR-02: Verify dual-write populates logical fields and subtype row."""
+
+    def test_pr02_create_highlight_dual_writes_logical_and_subtype(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """POST /fragments/{fid}/highlights populates anchor_kind, anchor_media_id,
+        and creates a highlight_fragment_anchors subtype row."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 201
+        h_id = resp.json()["data"]["id"]
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("SELECT anchor_kind, anchor_media_id FROM highlights WHERE id = :id"),
+                {"id": h_id},
+            ).fetchone()
+            assert row is not None
+            assert row[0] == "fragment_offsets"
+            assert str(row[1]) == str(media_id)
+
+            fa_row = session.execute(
+                text(
+                    "SELECT fragment_id, start_offset, end_offset "
+                    "FROM highlight_fragment_anchors WHERE highlight_id = :id"
+                ),
+                {"id": h_id},
+            ).fetchone()
+            assert fa_row is not None
+            assert str(fa_row[0]) == str(fragment_id)
+            assert fa_row[1] == 0
+            assert fa_row[2] == 5
+
+    def test_pr02_update_highlight_offsets_syncs_subtype_row(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """PATCH offsets updates both legacy bridge and fragment_anchor subtype."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        h_id = resp.json()["data"]["id"]
+
+        update_resp = auth_client.patch(
+            f"/highlights/{h_id}",
+            json={"start_offset": 6, "end_offset": 11},
+            headers=auth_headers(user_id),
+        )
+        assert update_resp.status_code == 200
+
+        with direct_db.session() as session:
+            fa_row = session.execute(
+                text(
+                    "SELECT start_offset, end_offset "
+                    "FROM highlight_fragment_anchors WHERE highlight_id = :id"
+                ),
+                {"id": h_id},
+            ).fetchone()
+            assert fa_row is not None
+            assert fa_row[0] == 6
+            assert fa_row[1] == 11
+
+
+class TestS6PR02ResponseContract:
+    """PR-02: Public response must not expose internal typed-anchor fields."""
+
+    def test_pr02_response_excludes_typed_anchor_fields(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Create, get, list, update — anchor_kind/anchor_media_id never in response."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 201
+        h_id = resp.json()["data"]["id"]
+
+        for endpoint_resp in [
+            resp,
+            auth_client.get(f"/highlights/{h_id}", headers=auth_headers(user_id)),
+            auth_client.get(f"/fragments/{fragment_id}/highlights", headers=auth_headers(user_id)),
+            auth_client.patch(
+                f"/highlights/{h_id}",
+                json={"color": "green"},
+                headers=auth_headers(user_id),
+            ),
+        ]:
+            data = endpoint_resp.json().get("data", {})
+            if isinstance(data, dict) and "highlights" in data:
+                for h in data["highlights"]:
+                    assert "anchor_kind" not in h
+                    assert "anchor_media_id" not in h
+            elif isinstance(data, dict):
+                assert "anchor_kind" not in data
+                assert "anchor_media_id" not in data
+
+
+class TestS6PR02DormantWindowRepair:
+    """PR-02: Dormant-window highlights are repaired on author-write paths."""
+
+    def test_pr02_dormant_highlight_repaired_on_update(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """PATCH on a dormant-window highlight repairs it before applying update."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        # Insert dormant-window highlight directly (pr-01 shape)
+        h_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
+                                            color, exact, prefix, suffix)
+                    VALUES (:id, :uid, :fid, 0, 5, 'yellow', 'Hello', '', ' World')
+                """),
+                {"id": h_id, "uid": user_id, "fid": fragment_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", h_id)
+        direct_db.register_cleanup("highlights", "id", h_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # Patch color — should trigger dormant repair
+        update_resp = auth_client.patch(
+            f"/highlights/{h_id}",
+            json={"color": "green"},
+            headers=auth_headers(user_id),
+        )
+        assert update_resp.status_code == 200
+
+        # Verify repair occurred
+        with direct_db.session() as session:
+            row = session.execute(
+                text("SELECT anchor_kind, anchor_media_id FROM highlights WHERE id = :id"),
+                {"id": h_id},
+            ).fetchone()
+            assert row[0] == "fragment_offsets"
+            assert str(row[1]) == str(media_id)
+
+            fa_row = session.execute(
+                text("SELECT 1 FROM highlight_fragment_anchors WHERE highlight_id = :id"),
+                {"id": h_id},
+            ).fetchone()
+            assert fa_row is not None

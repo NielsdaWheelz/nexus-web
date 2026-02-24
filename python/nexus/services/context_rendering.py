@@ -145,15 +145,40 @@ def _render_media_context(db: Session, media_id: UUID) -> str | None:
 
 
 def _render_highlight_context(db: Session, highlight_id: UUID) -> str | None:
-    """Render a highlight context with quote and surrounding context."""
+    """Render a highlight context with quote and surrounding context.
+
+    S6 PR-02: uses anchor-kind dispatch seam. Fragment rendering path is
+    unchanged; PDF rendering is deferred to pr-05.
+    """
+    from nexus.services.highlight_kernel import ResolverState, resolve_highlight
+
     highlight = db.get(Highlight, highlight_id)
     if not highlight:
         return None
 
+    resolution = resolve_highlight(highlight)
+    if resolution.state == ResolverState.mismatch:
+        logger.warning(
+            "context_render_highlight_mismatch",
+            highlight_id=str(highlight_id),
+            mismatch_code=resolution.mismatch_code.value if resolution.mismatch_code else None,
+        )
+        return None
+
+    if resolution.anchor_kind == "fragment_offsets":
+        return _render_fragment_highlight_context(db, highlight, resolution)
+
+    # PDF and future anchor kinds deferred to pr-05
+    return _render_fallback_highlight_context(db, highlight, resolution)
+
+
+def _render_fragment_highlight_context(db, highlight, resolution) -> str | None:
+    """Render a fragment-anchored highlight context (unchanged from pre-PR-02)."""
     fragment = highlight.fragment
+    if fragment is None:
+        return None
     media = fragment.media
 
-    # Get the context window
     context_window = get_context_window(
         db,
         fragment.id,
@@ -161,7 +186,6 @@ def _render_highlight_context(db: Session, highlight_id: UUID) -> str | None:
         highlight.end_offset,
     )
 
-    # Build the block
     lines = [
         f"**Source:** {media.title}",
     ]
@@ -169,14 +193,11 @@ def _render_highlight_context(db: Session, highlight_id: UUID) -> str | None:
     if media.canonical_source_url:
         lines.append(f"URL: {media.canonical_source_url}")
 
-    lines.append("")  # Blank line
+    lines.append("")
     lines.append("**Quoted text:**")
-
-    # Add the exact highlighted text as a block quote
     for line in highlight.exact.split("\n"):
         lines.append(f"> {line}")
 
-    # Add surrounding context if different from exact
     if context_window.text != highlight.exact:
         lines.append("")
         lines.append("**Context:**")
@@ -185,17 +206,67 @@ def _render_highlight_context(db: Session, highlight_id: UUID) -> str | None:
     return "\n".join(lines)
 
 
+def _render_fallback_highlight_context(db, highlight, resolution) -> str | None:
+    """Fallback rendering for non-fragment highlight contexts (pr-05+)."""
+    from nexus.db.models import Media as MediaModel
+
+    media_id = resolution.anchor_media_id
+    if media_id is None:
+        return None
+    media = db.get(MediaModel, media_id)
+    if media is None:
+        return None
+
+    lines = [f"**Source:** {media.title}"]
+    if media.canonical_source_url:
+        lines.append(f"URL: {media.canonical_source_url}")
+    if highlight.exact:
+        lines.append("")
+        lines.append("**Quoted text:**")
+        for line in highlight.exact.split("\n"):
+            lines.append(f"> {line}")
+    return "\n".join(lines)
+
+
 def _render_annotation_context(db: Session, annotation_id: UUID) -> str | None:
-    """Render an annotation context (highlight + annotation note)."""
+    """Render an annotation context (highlight + annotation note).
+
+    S6 PR-02: uses anchor-kind dispatch via highlight rendering seam.
+    """
+    from nexus.services.highlight_kernel import ResolverState, resolve_highlight
+
     annotation = db.get(Annotation, annotation_id)
     if not annotation:
         return None
 
     highlight = annotation.highlight
+    if not highlight:
+        return None
+
+    resolution = resolve_highlight(highlight)
+    if resolution.state == ResolverState.mismatch:
+        logger.warning(
+            "context_render_annotation_mismatch",
+            annotation_id=str(annotation_id),
+            highlight_id=str(highlight.id),
+            mismatch_code=resolution.mismatch_code.value if resolution.mismatch_code else None,
+        )
+        return None
+
+    if resolution.anchor_kind == "fragment_offsets":
+        return _render_fragment_annotation_context(db, highlight, annotation, resolution)
+
+    # PDF and future anchor kinds deferred to pr-05
+    return _render_fallback_annotation_context(db, highlight, annotation, resolution)
+
+
+def _render_fragment_annotation_context(db, highlight, annotation, resolution) -> str | None:
+    """Render a fragment-anchored annotation context (unchanged from pre-PR-02)."""
     fragment = highlight.fragment
+    if fragment is None:
+        return None
     media = fragment.media
 
-    # Get the context window for the highlight
     context_window = get_context_window(
         db,
         fragment.id,
@@ -219,10 +290,34 @@ def _render_annotation_context(db: Session, annotation_id: UUID) -> str | None:
     lines.append("**User's note:**")
     lines.append(annotation.body)
 
-    # Add surrounding context
     if context_window.text != highlight.exact:
         lines.append("")
         lines.append("**Context:**")
         lines.append(context_window.text)
 
+    return "\n".join(lines)
+
+
+def _render_fallback_annotation_context(db, highlight, annotation, resolution) -> str | None:
+    """Fallback rendering for non-fragment annotation contexts (pr-05+)."""
+    from nexus.db.models import Media as MediaModel
+
+    media_id = resolution.anchor_media_id
+    if media_id is None:
+        return None
+    media = db.get(MediaModel, media_id)
+    if media is None:
+        return None
+
+    lines = [f"**Source:** {media.title}"]
+    if media.canonical_source_url:
+        lines.append(f"URL: {media.canonical_source_url}")
+    if highlight.exact:
+        lines.append("")
+        lines.append("**Quoted text:**")
+        for line in highlight.exact.split("\n"):
+            lines.append(f"> {line}")
+    lines.append("")
+    lines.append("**User's note:**")
+    lines.append(annotation.body)
     return "\n".join(lines)

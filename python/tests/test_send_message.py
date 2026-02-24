@@ -1306,3 +1306,63 @@ class TestSendMessageEpubQuoteToChat:
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_NOT_FOUND"
+
+
+# =============================================================================
+# S6 PR-02: Context Visibility Kernel Adoption Tests
+# =============================================================================
+
+
+class TestSendMessageContextKernel:
+    """PR-02: _validate_context_visibility uses kernel for highlight/annotation contexts."""
+
+    def test_send_message_with_dormant_highlight_context_succeeds(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        platform_key_env,
+        mock_openai_api,
+    ):
+        """Dormant-window highlight context is resolved via kernel and accepted."""
+        _route_openai_completion(mock_openai_api)
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            library_id = get_user_library(session, user_id)
+            media_id = create_test_media_in_library(session, user_id, library_id)
+            fragment_id = create_test_fragment(
+                session, media_id, "Dormant highlight test content here."
+            )
+            hl_id = uuid4()
+            session.execute(
+                text("""
+                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
+                                            color, exact, prefix, suffix)
+                    VALUES (:id, :uid, :fid, 0, 7, 'yellow', 'Dormant', '', ' highlight')
+                """),
+                {"id": hl_id, "uid": user_id, "fid": fragment_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlights", "id", hl_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "What does this mean?",
+                "model_id": str(model_id),
+                "contexts": [{"type": "highlight", "id": str(hl_id)}],
+            },
+        )
+
+        assert response.status_code == 200
+        conv_id = response.json()["data"]["conversation"]["id"]
+        direct_db.register_cleanup("messages", "conversation_id", conv_id)
+        direct_db.register_cleanup("conversations", "id", conv_id)
