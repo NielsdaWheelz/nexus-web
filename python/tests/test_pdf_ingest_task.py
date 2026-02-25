@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.errors import ApiErrorCode
 from nexus.storage.client import FakeStorageClient
+from tests.utils.db import task_session_factory
 
 pytestmark = pytest.mark.integration
 
@@ -63,9 +64,11 @@ class TestIngestPdfTask:
         mid = media.id
 
         with (
-            patch("nexus.tasks.ingest_pdf.get_session_factory", return_value=lambda: db_session),
+            patch(
+                "nexus.tasks.ingest_pdf.get_session_factory",
+                return_value=task_session_factory(db_session),
+            ),
             patch("nexus.tasks.ingest_pdf.get_storage_client", return_value=storage),
-            patch.object(db_session, "close"),
         ):
             from nexus.tasks.ingest_pdf import ingest_pdf
 
@@ -74,6 +77,7 @@ class TestIngestPdfTask:
         assert result["status"] == "success"
         assert result["page_count"] == 2
 
+        db_session.expire_all()
         refreshed = db_session.get(Media, mid)
         assert refreshed.processing_status == ProcessingStatus.ready_for_reading
         assert refreshed.page_count == 2
@@ -106,9 +110,11 @@ class TestIngestPdfTask:
         storage.put_object(storage_path, _make_password_pdf())
 
         with (
-            patch("nexus.tasks.ingest_pdf.get_session_factory", return_value=lambda: db_session),
+            patch(
+                "nexus.tasks.ingest_pdf.get_session_factory",
+                return_value=task_session_factory(db_session),
+            ),
             patch("nexus.tasks.ingest_pdf.get_storage_client", return_value=storage),
-            patch.object(db_session, "close"),
         ):
             from nexus.tasks.ingest_pdf import ingest_pdf
 
@@ -118,6 +124,7 @@ class TestIngestPdfTask:
         assert result["error_code"] == ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value
         assert result["terminal"] is True
 
+        db_session.expire_all()
         refreshed = db_session.get(Media, media_id)
         assert refreshed.processing_status == ProcessingStatus.failed
         assert refreshed.failure_stage == FailureStage.extract
@@ -129,9 +136,11 @@ class TestIngestPdfTask:
         storage = FakeStorageClient()
 
         with (
-            patch("nexus.tasks.ingest_pdf.get_session_factory", return_value=lambda: db_session),
+            patch(
+                "nexus.tasks.ingest_pdf.get_session_factory",
+                return_value=task_session_factory(db_session),
+            ),
             patch("nexus.tasks.ingest_pdf.get_storage_client", return_value=storage),
-            patch.object(db_session, "close"),
         ):
             from nexus.tasks.ingest_pdf import ingest_pdf
 
@@ -163,13 +172,15 @@ class TestIngestPdfTask:
         db_session.commit()
 
         with (
-            patch("nexus.tasks.ingest_pdf.get_session_factory", return_value=lambda: db_session),
+            patch(
+                "nexus.tasks.ingest_pdf.get_session_factory",
+                return_value=task_session_factory(db_session),
+            ),
             patch("nexus.tasks.ingest_pdf.get_storage_client", return_value=storage),
             patch(
                 "nexus.tasks.ingest_pdf.extract_pdf_artifacts",
                 side_effect=RuntimeError("boom"),
             ),
-            patch.object(db_session, "close"),
             pytest.raises(RuntimeError, match="boom"),
         ):
             from nexus.tasks.ingest_pdf import ingest_pdf
@@ -191,10 +202,12 @@ class TestIngestPdfTask:
         mid = media.id
 
         with (
-            patch("nexus.tasks.ingest_pdf.get_session_factory", return_value=lambda: db_session),
+            patch(
+                "nexus.tasks.ingest_pdf.get_session_factory",
+                return_value=task_session_factory(db_session),
+            ),
             patch("nexus.tasks.ingest_pdf.get_storage_client", return_value=storage),
             patch("nexus.tasks.ingest_pdf._try_embedding_handoff") as mock_handoff,
-            patch.object(db_session, "close"),
         ):
             from nexus.tasks.ingest_pdf import ingest_pdf
 
@@ -226,10 +239,12 @@ class TestIngestPdfTask:
                 db.commit()
 
         with (
-            patch("nexus.tasks.ingest_pdf.get_session_factory", return_value=lambda: db_session),
+            patch(
+                "nexus.tasks.ingest_pdf.get_session_factory",
+                return_value=task_session_factory(db_session),
+            ),
             patch("nexus.tasks.ingest_pdf.get_storage_client", return_value=storage),
             patch("nexus.tasks.ingest_pdf._try_embedding_handoff", side_effect=failing_handoff),
-            patch.object(db_session, "close"),
         ):
             from nexus.tasks.ingest_pdf import ingest_pdf
 
@@ -237,6 +252,7 @@ class TestIngestPdfTask:
 
         assert result["status"] == "success"
 
+        db_session.expire_all()
         refreshed = db_session.get(Media, mid)
         assert refreshed.page_count == 2
         assert refreshed.plain_text is not None

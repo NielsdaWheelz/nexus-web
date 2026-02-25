@@ -27,6 +27,7 @@ from nexus.services.epub_ingest import (
 )
 from nexus.storage.client import FakeStorageClient
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
+from tests.utils.db import task_session_factory
 
 pytestmark = pytest.mark.integration
 
@@ -651,18 +652,18 @@ class TestIngestEpubTaskMarksReadyForReadingOnSuccess:
 
         from nexus.tasks.ingest_epub import ingest_epub
 
-        # TASK INFRASTRUCTURE: Session factory redirect for test DB isolation.
-        # Celery tasks create their own session; this redirects to the test DB.
-        # STORAGE BOUNDARY: External storage mock per testing standards §6.
         with (
-            patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
+            patch(
+                "nexus.tasks.ingest_epub.get_session_factory",
+                return_value=task_session_factory(db_session),
+            ),
             patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
-            patch.object(db_session, "close"),
         ):
             result = ingest_epub(str(mid))
 
         assert result["status"] == "success"
 
+        db_session.expire_all()
         media = db_session.get(Media, mid)
         assert media.processing_status.value == "ready_for_reading"
         assert media.processing_completed_at is not None
@@ -693,11 +694,11 @@ class TestIngestEpubTaskMarksFailedOnExtractionError:
 
         from nexus.tasks.ingest_epub import ingest_epub
 
-        # TASK INFRASTRUCTURE: Session factory redirect for test DB isolation.
-        # STORAGE BOUNDARY: External storage mock per testing standards §6.
-        # extract_epub_artifacts mock: simulates extraction failure for error-path testing.
         with (
-            patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
+            patch(
+                "nexus.tasks.ingest_epub.get_session_factory",
+                return_value=task_session_factory(db_session),
+            ),
             patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
             patch(
                 "nexus.tasks.ingest_epub.extract_epub_artifacts",
@@ -705,12 +706,12 @@ class TestIngestEpubTaskMarksFailedOnExtractionError:
                     error_code="E_INGEST_FAILED", error_message="forced test failure"
                 ),
             ),
-            patch.object(db_session, "close"),
         ):
             result = ingest_epub(str(mid))
 
         assert result["status"] == "failed"
 
+        db_session.expire_all()
         media = db_session.get(Media, mid)
         assert media.processing_status.value == "failed"
         assert media.failure_stage.value == "extract"
@@ -725,12 +726,12 @@ class TestIngestEpubTaskIdempotentOnMissingOrNonextractingMedia:
         fake_mid = uuid4()
         from nexus.tasks.ingest_epub import ingest_epub
 
-        # TASK INFRASTRUCTURE: Session factory redirect for test DB isolation.
-        # STORAGE BOUNDARY: External storage mock per testing standards §6.
         with (
-            patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
+            patch(
+                "nexus.tasks.ingest_epub.get_session_factory",
+                return_value=task_session_factory(db_session),
+            ),
             patch("nexus.tasks.ingest_epub.get_storage_client", return_value=FakeStorageClient()),
-            patch.object(db_session, "close"),
         ):
             result = ingest_epub(str(fake_mid))
 
@@ -750,12 +751,12 @@ class TestIngestEpubTaskIdempotentOnMissingOrNonextractingMedia:
 
         from nexus.tasks.ingest_epub import ingest_epub
 
-        # TASK INFRASTRUCTURE: Session factory redirect for test DB isolation.
-        # STORAGE BOUNDARY: External storage mock per testing standards §6.
         with (
-            patch("nexus.tasks.ingest_epub.get_session_factory", return_value=lambda: db_session),
+            patch(
+                "nexus.tasks.ingest_epub.get_session_factory",
+                return_value=task_session_factory(db_session),
+            ),
             patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
-            patch.object(db_session, "close"),
         ):
             result = ingest_epub(str(mid))
 
