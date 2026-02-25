@@ -31,6 +31,7 @@ from nexus.db.models import (
     Membership,
     Message,
     Model,
+    PdfPageTextSpan,
     ProcessingStatus,
 )
 
@@ -771,6 +772,66 @@ def create_normalized_fragment_highlight(
     session.add(fa)
     session.commit()
     return highlight.id
+
+
+def create_pdf_media_with_text(
+    session: Session,
+    user_id: UUID,
+    library_id: UUID,
+    *,
+    title: str = "Test PDF",
+    plain_text: str = "Page one text. Page two text.",
+    page_count: int = 2,
+    page_spans: list[tuple[int, int]] | None = None,
+    status: str = "ready_for_reading",
+) -> UUID:
+    """Create PDF media with plain_text, page_count, and PdfPageTextSpan rows.
+
+    If page_spans is None, splits plain_text evenly across pages.
+    page_spans is a list of (start_offset, end_offset) tuples, one per page.
+    """
+    media = Media(
+        id=uuid4(),
+        kind=MediaKind.pdf.value,
+        title=title,
+        processing_status=ProcessingStatus(status),
+        created_by_user_id=user_id,
+        plain_text=plain_text,
+        page_count=page_count,
+    )
+    session.add(media)
+    session.flush()
+    session.add(LibraryMedia(library_id=library_id, media_id=media.id))
+    lib = session.get(Library, library_id)
+    if lib and lib.is_default:
+        session.add(
+            DefaultLibraryIntrinsic(
+                default_library_id=library_id,
+                media_id=media.id,
+            )
+        )
+
+    if page_spans is None:
+        chunk_size = len(plain_text) // page_count
+        page_spans = []
+        for i in range(page_count):
+            start = i * chunk_size
+            end = (i + 1) * chunk_size if i < page_count - 1 else len(plain_text)
+            page_spans.append((start, end))
+
+    for i, (start, end) in enumerate(page_spans):
+        session.add(
+            PdfPageTextSpan(
+                media_id=media.id,
+                page_number=i + 1,
+                start_offset=start,
+                end_offset=end,
+                text_extract_version=1,
+            )
+        )
+
+    session.commit()
+    return media.id
 
 
 def create_mismatched_fragment_highlight(

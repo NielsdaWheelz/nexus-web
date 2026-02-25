@@ -422,8 +422,8 @@ class TestUpdateHighlight:
 
         assert update_resp.status_code == 200
         data = update_resp.json()["data"]
-        assert data["start_offset"] == 6
-        assert data["end_offset"] == 11
+        assert data["anchor"]["start_offset"] == 6
+        assert data["anchor"]["end_offset"] == 11
         assert data["exact"] == "World"
 
     def test_update_conflict_on_existing_range(self, auth_client, direct_db: DirectSessionManager):
