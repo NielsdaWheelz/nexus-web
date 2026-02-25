@@ -29,13 +29,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_highlight, can_read_media, highlight_visibility_filter
-from nexus.db.models import Annotation, Fragment, Highlight, HighlightFragmentAnchor
+from nexus.db.models import Annotation, Fragment, Highlight, HighlightFragmentAnchor, Media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
     AnnotationOut,
     CreateHighlightRequest,
+    FragmentAnchorOut,
     HighlightOut,
+    PdfAnchorOut,
+    PdfQuadOut,
+    TypedHighlightOut,
     UpdateHighlightRequest,
     UpsertAnnotationRequest,
 )
@@ -43,6 +47,7 @@ from nexus.services.highlight_kernel import (
     HighlightKernelIntegrityError,
     MappingClass,
     ResolverState,
+    build_internal_view,
     map_mismatch,
     repair_fragment_highlight,
     resolve_highlight,
@@ -201,7 +206,6 @@ def get_highlight_for_author_write_or_404(
 
 def _require_media_ready_for_highlight(db: Session, highlight: Highlight) -> None:
     """Resolve media for a highlight via kernel and check processing status."""
-    from nexus.db.models import Media
 
     resolution = resolve_highlight(highlight)
     media_id = resolution.anchor_media_id
@@ -214,23 +218,20 @@ def _require_media_ready_for_highlight(db: Session, highlight: Highlight) -> Non
             require_media_ready_or_409(media_obj.processing_status.value)
 
 
+def _annotation_to_out(annotation: Annotation | None) -> AnnotationOut | None:
+    if annotation is None:
+        return None
+    return AnnotationOut(
+        id=annotation.id,
+        highlight_id=annotation.highlight_id,
+        body=annotation.body,
+        created_at=annotation.created_at,
+        updated_at=annotation.updated_at,
+    )
+
+
 def _highlight_to_out(highlight: Highlight, viewer_id: UUID) -> HighlightOut:
-    """Convert Highlight ORM model to HighlightOut schema.
-
-    Args:
-        highlight: The ORM highlight instance.
-        viewer_id: The current viewer's user ID (for is_owner computation).
-    """
-    annotation_out = None
-    if highlight.annotation is not None:
-        annotation_out = AnnotationOut(
-            id=highlight.annotation.id,
-            highlight_id=highlight.annotation.highlight_id,
-            body=highlight.annotation.body,
-            created_at=highlight.annotation.created_at,
-            updated_at=highlight.annotation.updated_at,
-        )
-
+    """Convert Highlight ORM model to HighlightOut schema (fragment-route compat)."""
     return HighlightOut(
         id=highlight.id,
         fragment_id=highlight.fragment_id,
@@ -242,7 +243,67 @@ def _highlight_to_out(highlight: Highlight, viewer_id: UUID) -> HighlightOut:
         suffix=highlight.suffix,
         created_at=highlight.created_at,
         updated_at=highlight.updated_at,
-        annotation=annotation_out,
+        annotation=_annotation_to_out(highlight.annotation),
+        author_user_id=highlight.user_id,
+        is_owner=(highlight.user_id == viewer_id),
+    )
+
+
+def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighlightOut:
+    """Convert Highlight ORM model to anchor-discriminated TypedHighlightOut."""
+    resolution = resolve_highlight(highlight)
+    view = build_internal_view(highlight, resolution)
+
+    if view.anchor_kind == "pdf_page_geometry" and view.pdf_anchor is not None:
+        quads_out = []
+        if highlight.pdf_quads:
+            sorted_quads = sorted(highlight.pdf_quads, key=lambda q: q.quad_idx)
+            quads_out = [
+                PdfQuadOut(
+                    x1=float(q.x1),
+                    y1=float(q.y1),
+                    x2=float(q.x2),
+                    y2=float(q.y2),
+                    x3=float(q.x3),
+                    y3=float(q.y3),
+                    x4=float(q.x4),
+                    y4=float(q.y4),
+                )
+                for q in sorted_quads
+            ]
+        anchor = PdfAnchorOut(
+            type="pdf_page_geometry",
+            media_id=view.pdf_anchor.media_id,
+            page_number=view.pdf_anchor.page_number,
+            quads=quads_out,
+        )
+    elif view.fragment_anchor is not None:
+        anchor = FragmentAnchorOut(
+            type="fragment_offsets",
+            media_id=view.fragment_anchor.media_id,
+            fragment_id=view.fragment_anchor.fragment_id,
+            start_offset=view.fragment_anchor.start_offset,
+            end_offset=view.fragment_anchor.end_offset,
+        )
+    else:
+        anchor = FragmentAnchorOut(
+            type="fragment_offsets",
+            media_id=view.anchor_media_id,
+            fragment_id=highlight.fragment_id or view.anchor_media_id,
+            start_offset=highlight.start_offset or 0,
+            end_offset=highlight.end_offset or 0,
+        )
+
+    return TypedHighlightOut(
+        id=highlight.id,
+        anchor=anchor,
+        color=highlight.color,
+        exact=highlight.exact,
+        prefix=highlight.prefix,
+        suffix=highlight.suffix,
+        created_at=highlight.created_at,
+        updated_at=highlight.updated_at,
+        annotation=_annotation_to_out(highlight.annotation),
         author_user_id=highlight.user_id,
         is_owner=(highlight.user_id == viewer_id),
     )
@@ -375,80 +436,93 @@ def list_highlights_for_fragment(
     return [_highlight_to_out(h, viewer_id) for h in highlights]
 
 
-def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> HighlightOut:
-    """Get a single highlight by ID.
+def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHighlightOut:
+    """Get a single highlight by ID (anchor-discriminated typed output).
 
     NO ready check - read-only operation.
     Visible to shared readers under s4 canonical predicate.
 
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        highlight_id: The ID of the highlight.
-
     Returns:
-        The highlight including annotation if present.
-
-    Raises:
-        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist or not visible.
+        TypedHighlightOut with anchor discriminator for both fragment and PDF highlights.
     """
     highlight = get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
-    return _highlight_to_out(highlight, viewer_id)
+    return _highlight_to_typed_out(highlight, viewer_id)
 
 
 def update_highlight(
     db: Session, viewer_id: UUID, highlight_id: UUID, req: UpdateHighlightRequest
-) -> HighlightOut:
-    """Update a highlight.
+) -> TypedHighlightOut:
+    """Update a highlight (unified PATCH for fragment + PDF).
 
-    Requires media ready if offsets are being changed.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        highlight_id: The ID of the highlight to update.
-        req: The update request (all fields optional).
-
-    Returns:
-        The updated highlight.
-
-    Raises:
-        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
-        ApiError(E_MEDIA_NOT_READY): If media not in ready state and offsets changed.
-        ApiError(E_HIGHLIGHT_INVALID_RANGE): If new offsets out of bounds.
-        ApiError(E_HIGHLIGHT_CONFLICT): If new offsets conflict with existing highlight.
+    Returns TypedHighlightOut with anchor discriminator.
     """
-    # 1. Get highlight with ownership and readability check
     highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
-    # 2. Require media ready for any mutation
+    # D16: anchor-kind mismatch rejection
+    resolution = resolve_highlight(highlight)
+    anchor_kind = resolution.anchor_kind or "fragment_offsets"
+
+    has_fragment_offsets = req.start_offset is not None or req.end_offset is not None
+    has_pdf_bounds = req.pdf_bounds is not None
+
+    if has_pdf_bounds and anchor_kind != "pdf_page_geometry":
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "pdf_bounds is not valid for non-PDF highlights",
+        )
+    if has_fragment_offsets and anchor_kind == "pdf_page_geometry":
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Fragment offset fields are not valid for PDF highlights",
+        )
+
+    # PDF bounds update: delegate to pdf_highlights
+    if has_pdf_bounds and anchor_kind == "pdf_page_geometry":
+        from nexus.services.pdf_highlights import update_pdf_highlight_bounds
+
+        return update_pdf_highlight_bounds(
+            db,
+            viewer_id,
+            highlight,
+            req.pdf_bounds,
+            req.color,
+        )
+
+    # PDF color-only update
+    if anchor_kind == "pdf_page_geometry" and not has_pdf_bounds and not has_fragment_offsets:
+        if req.color is not None and req.color != highlight.color:
+            _require_media_ready_for_highlight(db, highlight)
+            stmt = (
+                update(Highlight)
+                .where(Highlight.id == highlight_id)
+                .values(color=req.color, updated_at=func.now())
+            )
+            db.execute(stmt)
+            db.flush()
+            db.commit()
+            db.refresh(highlight)
+        return _highlight_to_typed_out(highlight, viewer_id)
+
+    # Fragment update path (unchanged logic)
     _require_media_ready_for_highlight(db, highlight)
 
-    # 3. Compute final offsets
     final_start = req.start_offset if req.start_offset is not None else highlight.start_offset
     final_end = req.end_offset if req.end_offset is not None else highlight.end_offset
     final_color = req.color if req.color is not None else highlight.color
 
-    # 4. Check if anything changed
     offsets_changed = final_start != highlight.start_offset or final_end != highlight.end_offset
     color_changed = final_color != highlight.color
 
     if not offsets_changed and not color_changed:
-        # Nothing to update, return current state
-        return _highlight_to_out(highlight, viewer_id)
+        return _highlight_to_typed_out(highlight, viewer_id)
 
-    # 5. Build update values
     update_values: dict = {"updated_at": func.now()}
 
     if offsets_changed:
-        # Validate new offsets
         validate_offsets_or_400(highlight.fragment.canonical_text, final_start, final_end)
-
-        # Re-derive exact/prefix/suffix
         exact, prefix, suffix = derive_exact_prefix_suffix(
             highlight.fragment.canonical_text, final_start, final_end
         )
-
         update_values.update(
             {
                 "start_offset": final_start,
@@ -462,7 +536,6 @@ def update_highlight(
     if color_changed:
         update_values["color"] = final_color
 
-    # 6. Execute update + sync fragment anchor subtype (S6 PR-02 dual-write)
     try:
         stmt = update(Highlight).where(Highlight.id == highlight_id).values(**update_values)
         db.execute(stmt)
@@ -487,9 +560,8 @@ def update_highlight(
         db.rollback()
         raise map_integrity_error(e) from e
 
-    # 7. Refresh and return
     db.refresh(highlight)
-    return _highlight_to_out(highlight, viewer_id)
+    return _highlight_to_typed_out(highlight, viewer_id)
 
 
 def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:

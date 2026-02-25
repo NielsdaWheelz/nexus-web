@@ -451,16 +451,28 @@ def map_mismatch(
 
 
 @dataclass(frozen=True, slots=True)
+class PdfAnchorData:
+    """Resolved PDF anchor data for internal typed view."""
+
+    media_id: UUID
+    page_number: int
+    geometry_fingerprint: str
+    sort_top: object  # Decimal
+    sort_left: object  # Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class InternalHighlightView:
     """Internal typed view for service serialization.
 
-    Fragment-only branch in pr-02. PDF branch deferred to pr-04.
+    Supports both fragment and PDF anchor branches (pr-04).
     """
 
     highlight_id: UUID
     anchor_kind: str
     anchor_media_id: UUID
     fragment_anchor: FragmentAnchorData | None
+    pdf_anchor: PdfAnchorData | None
     color: str
     exact: str
     prefix: str
@@ -474,12 +486,25 @@ def build_internal_view(
     """Build an internal typed view from a highlight and its resolution.
 
     Requires resolution.state in (ok, dormant_repairable).
+    Supports both fragment and PDF anchor branches.
     """
+    pdf_anchor_data = None
+    if resolution.anchor_kind == "pdf_page_geometry" and highlight.pdf_anchor is not None:
+        pa = highlight.pdf_anchor
+        pdf_anchor_data = PdfAnchorData(
+            media_id=pa.media_id,
+            page_number=pa.page_number,
+            geometry_fingerprint=pa.geometry_fingerprint,
+            sort_top=pa.sort_top,
+            sort_left=pa.sort_left,
+        )
+
     return InternalHighlightView(
         highlight_id=highlight.id,
         anchor_kind=resolution.anchor_kind or "fragment_offsets",
         anchor_media_id=resolution.anchor_media_id,
         fragment_anchor=resolution.fragment_anchor,
+        pdf_anchor=pdf_anchor_data,
         color=highlight.color,
         exact=highlight.exact,
         prefix=highlight.prefix,

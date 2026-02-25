@@ -1,19 +1,20 @@
 """Highlight and Annotation Pydantic schemas.
 
 Contains request and response models for highlight and annotation endpoints.
-These schemas are introduced in Slice 2 (Web Articles + Highlights).
 
-Note: No validation logic beyond basic field typing - business validation
-occurs in later PRs (PR-06+).
+S6 PR-04 additions:
+- Typed anchor discriminated union (fragment_offsets / pdf_page_geometry)
+- PDF highlight create/list/update request/response schemas
+- Generic PATCH extended with backward-compatible pdf_bounds field
+- Strict mutual exclusivity between fragment offset updates and pdf_bounds
 """
 
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# Valid highlight colors - must match DB constraint
 HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 
 
@@ -23,11 +24,7 @@ HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 
 
 class AnnotationOut(BaseModel):
-    """Response schema for an annotation.
-
-    An annotation is an optional note attached to a highlight (0..1).
-    Ownership is derived from highlights.user_id.
-    """
+    """Response schema for an annotation."""
 
     id: UUID
     highlight_id: UUID
@@ -38,18 +35,50 @@ class AnnotationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# --- Anchor discriminated union ---
+
+
+class FragmentAnchorOut(BaseModel):
+    """Fragment-offset anchor response."""
+
+    type: Literal["fragment_offsets"] = "fragment_offsets"
+    media_id: UUID
+    fragment_id: UUID
+    start_offset: int
+    end_offset: int
+
+
+class PdfQuadOut(BaseModel):
+    """Single canonical quad/rect segment in page-space points."""
+
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    x3: float
+    y3: float
+    x4: float
+    y4: float
+
+
+class PdfAnchorOut(BaseModel):
+    """PDF page-geometry anchor response."""
+
+    type: Literal["pdf_page_geometry"] = "pdf_page_geometry"
+    media_id: UUID
+    page_number: int
+    quads: list[PdfQuadOut]
+
+
+# --- Highlight output schemas ---
+
+
 class HighlightOut(BaseModel):
-    """Response schema for a highlight.
+    """Response schema for a fragment highlight (legacy fragment-route compat).
 
-    Offsets are half-open [start_offset, end_offset) in Unicode codepoints
-    over fragment.canonical_text.
-
-    The annotation field is included when fetching highlights - it will be
-    None if no annotation exists, or the annotation object if one exists.
-
-    S4 additive fields (PR-07):
+    S4 additive fields:
     - author_user_id: UUID of the highlight author
-    - is_owner: viewer-local convenience boolean (True iff viewer authored this highlight)
+    - is_owner: viewer-local convenience boolean
     """
 
     id: UUID
@@ -69,28 +98,71 @@ class HighlightOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TypedHighlightOut(BaseModel):
+    """Anchor-discriminated typed highlight response for generic/PDF routes."""
+
+    id: UUID
+    anchor: FragmentAnchorOut | PdfAnchorOut
+    color: str
+    exact: str
+    prefix: str
+    suffix: str
+    created_at: datetime
+    updated_at: datetime
+    annotation: AnnotationOut | None = None
+    author_user_id: UUID
+    is_owner: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # =============================================================================
 # Request Schemas
 # =============================================================================
 
 
 class CreateHighlightRequest(BaseModel):
-    """Request schema for creating a highlight.
-
-    Client sends offsets + color only. Server derives exact/prefix/suffix
-    from fragment.canonical_text.
-    """
+    """Request schema for creating a fragment highlight."""
 
     start_offset: int = Field(..., ge=0, description="Start offset (inclusive) in codepoints")
     end_offset: int = Field(..., gt=0, description="End offset (exclusive) in codepoints")
     color: HIGHLIGHT_COLORS = Field(..., description="Highlight color from palette")
 
 
-class UpdateHighlightRequest(BaseModel):
-    """Request schema for updating a highlight.
+class PdfQuadIn(BaseModel):
+    """Input quad vertices in canonical page-space points."""
 
-    All fields are optional. If offsets change, server re-derives
-    exact/prefix/suffix from fragment.canonical_text.
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    x3: float
+    y3: float
+    x4: float
+    y4: float
+
+
+class CreatePdfHighlightRequest(BaseModel):
+    """Request schema for creating a PDF geometry highlight."""
+
+    page_number: int = Field(..., ge=1, description="1-based page number")
+    quads: list[PdfQuadIn] = Field(..., min_length=1, max_length=512)
+    exact: str = Field("", description="Text layer extracted text (may be empty)")
+    color: HIGHLIGHT_COLORS = Field(..., description="Highlight color from palette")
+
+
+class PdfBoundsUpdate(BaseModel):
+    """Nested PDF bounds replacement payload for generic PATCH."""
+
+    page_number: int = Field(..., ge=1, description="1-based page number")
+    quads: list[PdfQuadIn] = Field(..., min_length=1, max_length=512)
+    exact: str = Field("", description="Replacement exact text (may be empty)")
+
+
+class UpdateHighlightRequest(BaseModel):
+    """Request schema for updating a highlight (backward-compatible unified PATCH).
+
+    Fragment fields (start_offset, end_offset) and pdf_bounds are mutually exclusive.
     """
 
     start_offset: int | None = Field(
@@ -100,13 +172,20 @@ class UpdateHighlightRequest(BaseModel):
         None, gt=0, description="New end offset (exclusive) in codepoints"
     )
     color: HIGHLIGHT_COLORS | None = Field(None, description="New highlight color from palette")
+    pdf_bounds: PdfBoundsUpdate | None = Field(
+        None, description="PDF bounds replacement (mutually exclusive with fragment offsets)"
+    )
+
+    @model_validator(mode="after")
+    def validate_mutual_exclusivity(self) -> "UpdateHighlightRequest":
+        has_fragment_offsets = self.start_offset is not None or self.end_offset is not None
+        has_pdf_bounds = self.pdf_bounds is not None
+        if has_fragment_offsets and has_pdf_bounds:
+            raise ValueError("Fragment offset fields and pdf_bounds are mutually exclusive")
+        return self
 
 
 class UpsertAnnotationRequest(BaseModel):
-    """Request schema for creating or updating an annotation.
-
-    Used with PUT for upsert semantics - creates if not exists,
-    updates if exists.
-    """
+    """Request schema for creating or updating an annotation."""
 
     body: str = Field(..., min_length=1, description="Annotation text content")

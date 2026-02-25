@@ -3,12 +3,10 @@
 Route handlers for highlight and annotation CRUD operations.
 Routes are transport-only: each calls exactly one service function.
 
-Per PR-06 spec:
-- Highlights: POST/GET/PATCH/DELETE
-- Annotation (0..1 per highlight): PUT/DELETE
-- All routes require authentication
-- Response envelope: {"data": ...}
-- Error envelope: {"error": {"code": "...", "message": "...", "request_id": "..."}}
+S6 PR-04 additions:
+- POST /media/{media_id}/pdf-highlights (PDF highlight create)
+- GET /media/{media_id}/pdf-highlights (PDF highlight page-scoped list)
+- Generic routes extended to return TypedHighlightOut for detail/update
 """
 
 from typing import Annotated
@@ -23,6 +21,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.highlights import (
     CreateHighlightRequest,
+    CreatePdfHighlightRequest,
     UpdateHighlightRequest,
     UpsertAnnotationRequest,
 )
@@ -32,7 +31,7 @@ router = APIRouter(tags=["highlights"])
 
 
 # =============================================================================
-# Highlight Endpoints
+# Fragment Highlight Endpoints
 # =============================================================================
 
 
@@ -43,19 +42,7 @@ def create_highlight(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Create a highlight on a fragment.
-
-    Client sends offsets + color only. Server derives exact/prefix/suffix
-    from fragment.canonical_text.
-
-    Returns 201 Created with the highlight object.
-
-    Errors:
-        E_MEDIA_NOT_FOUND (404): Fragment doesn't exist or viewer cannot read it.
-        E_MEDIA_NOT_READY (409): Media not in ready state.
-        E_HIGHLIGHT_INVALID_RANGE (400): Invalid offset range.
-        E_HIGHLIGHT_CONFLICT (409): Highlight already exists at this range.
-    """
+    """Create a highlight on a fragment."""
     result = highlights_service.create_highlight_for_fragment(
         db=db,
         viewer_id=viewer.user_id,
@@ -72,22 +59,7 @@ def list_highlights(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """List highlights for a fragment.
-
-    Returns highlights ordered by start_offset ASC, created_at ASC, id ASC.
-    Each highlight includes its annotation if present.
-
-    Query params:
-        mine_only: 'true' (default) returns only viewer-authored highlights.
-            'false' returns all highlights visible under s4 canonical predicate.
-            Strict token validation: only 'true' or 'false' accepted.
-
-    Does NOT require media to be in ready state (read-only operation).
-
-    Errors:
-        E_MEDIA_NOT_FOUND (404): Fragment doesn't exist or viewer cannot read it.
-        E_INVALID_REQUEST (400): Invalid mine_only value.
-    """
+    """List highlights for a fragment."""
     mine_only_raw = request.query_params.get("mine_only", "true")
     if mine_only_raw not in ("true", "false"):
         raise ApiError(
@@ -105,20 +77,80 @@ def list_highlights(
     return success_response({"highlights": [h.model_dump(mode="json") for h in result]})
 
 
+# =============================================================================
+# PDF Highlight Endpoints (S6 PR-04)
+# =============================================================================
+
+
+@router.post("/media/{media_id}/pdf-highlights", status_code=201)
+def create_pdf_highlight(
+    media_id: UUID,
+    request: CreatePdfHighlightRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Create a PDF geometry highlight on a page."""
+    from nexus.services.pdf_highlights import create_pdf_highlight as svc_create
+
+    result = svc_create(
+        db=db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        req=request,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.get("/media/{media_id}/pdf-highlights")
+def list_pdf_highlights(
+    media_id: UUID,
+    request: Request,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """List PDF highlights for a single page."""
+    from nexus.services.pdf_highlights import list_pdf_highlights as svc_list
+
+    page_raw = request.query_params.get("page_number")
+    if page_raw is None:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "page_number is required")
+    try:
+        page_number = int(page_raw)
+    except (TypeError, ValueError):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "page_number must be an integer") from None
+
+    mine_only_raw = request.query_params.get("mine_only", "true")
+    if mine_only_raw not in ("true", "false"):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "mine_only must be 'true' or 'false'")
+    mine_only = mine_only_raw == "true"
+
+    result = svc_list(
+        db=db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        page_number=page_number,
+        mine_only=mine_only,
+    )
+    return success_response(
+        {
+            "page_number": page_number,
+            "highlights": [h.model_dump(mode="json") for h in result],
+        }
+    )
+
+
+# =============================================================================
+# Generic Highlight Endpoints
+# =============================================================================
+
+
 @router.get("/highlights/{highlight_id}")
 def get_highlight(
     highlight_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get a single highlight by ID.
-
-    Includes annotation if present.
-    Does NOT require media to be in ready state (read-only operation).
-
-    Errors:
-        E_MEDIA_NOT_FOUND (404): Highlight doesn't exist, not owned, or media not readable.
-    """
+    """Get a single highlight by ID (anchor-discriminated typed output)."""
     result = highlights_service.get_highlight(
         db=db,
         viewer_id=viewer.user_id,
@@ -134,19 +166,7 @@ def update_highlight(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Update a highlight.
-
-    All fields are optional. If offsets change, server re-derives
-    exact/prefix/suffix from fragment.canonical_text.
-
-    Requires media to be in ready state.
-
-    Errors:
-        E_MEDIA_NOT_FOUND (404): Highlight doesn't exist, not owned, or media not readable.
-        E_MEDIA_NOT_READY (409): Media not in ready state.
-        E_HIGHLIGHT_INVALID_RANGE (400): Invalid offset range.
-        E_HIGHLIGHT_CONFLICT (409): New range conflicts with existing highlight.
-    """
+    """Update a highlight (unified PATCH for fragment + PDF)."""
     result = highlights_service.update_highlight(
         db=db,
         viewer_id=viewer.user_id,
@@ -162,14 +182,7 @@ def delete_highlight(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    """Delete a highlight.
-
-    Deleting a highlight cascades to delete its annotation.
-    Does NOT require media to be in ready state (allows cleanup).
-
-    Errors:
-        E_MEDIA_NOT_FOUND (404): Highlight doesn't exist, not owned, or media not readable.
-    """
+    """Delete a highlight (cascades annotation for all anchor kinds)."""
     highlights_service.delete_highlight(
         db=db,
         viewer_id=viewer.user_id,
@@ -179,7 +192,7 @@ def delete_highlight(
 
 
 # =============================================================================
-# Annotation Endpoints (0..1 per highlight)
+# Annotation Endpoints (0..1 per highlight, all anchor kinds)
 # =============================================================================
 
 
@@ -191,17 +204,7 @@ def upsert_annotation(
     db: Annotated[Session, Depends(get_db)],
     response: Response,
 ) -> dict:
-    """Create or update the annotation for a highlight.
-
-    PUT semantics: creates if not exists, updates if exists.
-
-    Returns 201 Created if new, 200 OK if updated.
-    Requires media to be in ready state.
-
-    Errors:
-        E_MEDIA_NOT_FOUND (404): Highlight doesn't exist, not owned, or media not readable.
-        E_MEDIA_NOT_READY (409): Media not in ready state.
-    """
+    """Create or update the annotation for a highlight."""
     result, created = highlights_service.upsert_annotation_for_highlight(
         db=db,
         viewer_id=viewer.user_id,
@@ -221,14 +224,7 @@ def delete_annotation(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    """Delete the annotation for a highlight.
-
-    Idempotent: returns 204 even if annotation doesn't exist.
-    Does NOT require media to be in ready state (allows cleanup).
-
-    Errors:
-        E_MEDIA_NOT_FOUND (404): Highlight doesn't exist, not owned, or media not readable.
-    """
+    """Delete the annotation for a highlight."""
     highlights_service.delete_annotation_for_highlight(
         db=db,
         viewer_id=viewer.user_id,
