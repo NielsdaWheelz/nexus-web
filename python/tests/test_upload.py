@@ -1159,3 +1159,142 @@ class TestIngestResponseBackwardCompatibility:
         assert "duplicate" in data
         assert isinstance(data["media_id"], str)
         assert isinstance(data["duplicate"], bool)
+
+
+class TestPdfIngestLifecycle:
+    """S6 PR-03: PDF ingest dispatch and lifecycle tests."""
+
+    def _init_and_store_pdf(self, upload_client, fake_storage, direct_db, user_id, content):
+        """Helper: init upload + store content, return (media_id, storage_path)."""
+        resp = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "test.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(content),
+            },
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 200
+        d = resp.json()["data"]
+        mid = d["media_id"]
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", mid)
+        direct_db.register_cleanup("library_media", "media_id", mid)
+        direct_db.register_cleanup("media_file", "media_id", mid)
+        direct_db.register_cleanup("media", "id", mid)
+
+        fake_storage.put_object(d["storage_path"], content, "application/pdf")
+        return mid, d["storage_path"]
+
+    def test_pr03_ingest_pdf_confirm_routes_to_pdf_lifecycle_and_dispatches(
+        self,
+        upload_client,
+        fake_storage,
+        direct_db,
+        monkeypatch,
+    ):
+        from unittest.mock import MagicMock
+
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+
+        monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
+        mock_dispatch = MagicMock()
+        monkeypatch.setattr("nexus.tasks.ingest_pdf.ingest_pdf.apply_async", mock_dispatch)
+
+        mid, _ = self._init_and_store_pdf(
+            upload_client, fake_storage, direct_db, user_id, PDF_CONTENT
+        )
+
+        resp = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+
+        assert data["processing_status"] == "extracting"
+        assert data["ingest_enqueued"] is True
+        mock_dispatch.assert_called_once()
+
+    def test_pr03_ingest_pdf_confirm_preserves_compat_response_fields(
+        self,
+        upload_client,
+        fake_storage,
+        direct_db,
+        monkeypatch,
+    ):
+        from unittest.mock import MagicMock
+
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+
+        monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr("nexus.tasks.ingest_pdf.ingest_pdf.apply_async", MagicMock())
+
+        mid, _ = self._init_and_store_pdf(
+            upload_client, fake_storage, direct_db, user_id, PDF_CONTENT
+        )
+
+        resp = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+
+        assert "media_id" in data
+        assert "duplicate" in data
+        assert "processing_status" in data
+        assert "ingest_enqueued" in data
+
+    def test_pr03_ingest_pdf_confirm_non_creator_forbidden(
+        self,
+        upload_client,
+        fake_storage,
+        direct_db,
+        monkeypatch,
+    ):
+        from unittest.mock import MagicMock
+
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_a))
+        upload_client.get("/me", headers=auth_headers(user_b))
+
+        monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr("nexus.tasks.ingest_pdf.ingest_pdf.apply_async", MagicMock())
+
+        mid, _ = self._init_and_store_pdf(
+            upload_client, fake_storage, direct_db, user_a, PDF_CONTENT
+        )
+
+        resp = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_b))
+        assert resp.status_code in (403, 404)
+
+    def test_pr03_ingest_pdf_confirm_repeat_call_idempotent_without_redispatch(
+        self,
+        upload_client,
+        fake_storage,
+        direct_db,
+        monkeypatch,
+    ):
+        from unittest.mock import MagicMock
+
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+
+        monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
+        mock_dispatch = MagicMock()
+        monkeypatch.setattr("nexus.tasks.ingest_pdf.ingest_pdf.apply_async", mock_dispatch)
+
+        mid, _ = self._init_and_store_pdf(
+            upload_client, fake_storage, direct_db, user_id, PDF_CONTENT
+        )
+
+        resp1 = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
+        assert resp1.status_code == 200
+        assert resp1.json()["data"]["ingest_enqueued"] is True
+        assert mock_dispatch.call_count == 1
+
+        resp2 = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
+        assert resp2.status_code == 200
+        data2 = resp2.json()["data"]
+        assert data2["ingest_enqueued"] is False
+        assert mock_dispatch.call_count == 1

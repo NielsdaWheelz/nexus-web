@@ -36,14 +36,14 @@ class TestPdfCapabilities:
         assert caps.can_play is False
 
     def test_pdf_ready_for_reading_with_plain_text(self):
-        """PDF ready_for_reading with plain_text can quote."""
+        """PDF ready_for_reading with full quote readiness can quote."""
         caps = derive_capabilities(
             kind="pdf",
             processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=True,
             external_playback_url_exists=False,
-            has_plain_text=True,
+            pdf_quote_text_ready=True,
         )
 
         assert caps.can_read is True
@@ -51,6 +51,35 @@ class TestPdfCapabilities:
         assert caps.can_quote is True
         assert caps.can_search is True
         assert caps.can_download_file is True
+
+    def test_pr03_capabilities_pdf_quote_search_gate_uses_explicit_pdf_quote_text_ready_input(
+        self,
+    ):
+        """PDF can_quote/can_search follow the explicit pdf_quote_text_ready input,
+        not has_plain_text."""
+        caps_no_ready = derive_capabilities(
+            kind="pdf",
+            processing_status="ready_for_reading",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            pdf_quote_text_ready=False,
+        )
+        assert caps_no_ready.can_read is True
+        assert caps_no_ready.can_quote is False
+        assert caps_no_ready.can_search is False
+
+        caps_ready = derive_capabilities(
+            kind="pdf",
+            processing_status="ready_for_reading",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            pdf_quote_text_ready=True,
+        )
+        assert caps_ready.can_read is True
+        assert caps_ready.can_quote is True
+        assert caps_ready.can_search is True
 
     def test_pdf_no_file(self):
         """PDF without file cannot be read."""

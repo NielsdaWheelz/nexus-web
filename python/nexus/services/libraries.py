@@ -33,6 +33,7 @@ from nexus.schemas.library import (
 )
 from nexus.schemas.media import MediaOut
 from nexus.services.capabilities import derive_capabilities
+from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 
 logger = logging.getLogger(__name__)
 
@@ -539,8 +540,14 @@ def list_library_media(
         {"library_id": library_id, "limit": limit},
     )
 
+    rows = result.fetchall()
+
+    pdf_media_ids = [row[0] for row in rows if row[1] == "pdf"]
+    pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
+
     media_list = []
-    for row in result.fetchall():
+    for row in rows:
+        _pdf_ready = pdf_readiness.get(row[0], False) if row[1] == "pdf" else False
         capabilities = derive_capabilities(
             kind=row[1],
             processing_status=row[4],
@@ -548,7 +555,7 @@ def list_library_media(
             media_file_exists=row[10],
             external_playback_url_exists=row[7] is not None,
             has_fragments=row[11],
-            has_plain_text=False,  # TODO: Check media.plain_text when added
+            pdf_quote_text_ready=_pdf_ready,
         )
         media_list.append(
             MediaOut(

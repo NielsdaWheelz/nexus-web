@@ -1,23 +1,19 @@
-"""EPUB ingest + retry lifecycle orchestration (S5 PR-03).
+"""PDF ingest + retry lifecycle orchestration (S6 PR-03).
 
-Owns C4 lifecycle policy: dispatch, state transitions, retry guards, and
-artifact cleanup for EPUB media.  Routes call exactly one function here.
-Non-EPUB kinds fall through to existing upload-confirm behavior.
+Owns C3 lifecycle policy: dispatch, state transitions, retry guards, and
+artifact cleanup/invalidation for PDF media. Routes call exactly one
+function here. Mirrors the EPUB lifecycle split.
 """
 
 import logging
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
-    EpubTocNode,
     FailureStage,
-    Fragment,
-    FragmentBlock,
     Media,
     MediaFile,
     ProcessingStatus,
@@ -30,7 +26,10 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.services.epub_ingest import check_archive_safety
+from nexus.services.pdf_ingest import (
+    delete_pdf_text_artifacts,
+    invalidate_pdf_quote_match_metadata,
+)
 from nexus.services.upload import (
     confirm_ingest as _base_confirm_ingest,
 )
@@ -42,67 +41,35 @@ from nexus.storage import get_storage_client
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class EpubIngestConfirmOut:
-    media_id: str
-    duplicate: bool
-    processing_status: str
-    ingest_enqueued: bool
-
-
-@dataclass(frozen=True)
-class EpubRetryOut:
-    media_id: str
-    processing_status: str
-    retry_enqueued: bool
-
-
-def confirm_ingest_for_viewer(
+def retry_for_viewer_unified(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
     *,
     request_id: str | None = None,
 ) -> dict:
-    """Unified ingest-confirm entry point called by the route.
-
-    For EPUB: validates, hashes, deduplicates via base confirm_ingest, then
-    runs preflight archive safety and dispatches extraction.
-    For PDF: delegates to the PDF lifecycle module.
-    For non-EPUB/non-PDF: delegates to base confirm_ingest (S1 behavior).
-    """
+    """Unified retry entry point. Routes PDF to pdf_lifecycle, else to epub_lifecycle."""
     media = db.execute(select(Media).where(Media.id == media_id)).scalar()
+    if media is not None and media.kind == "pdf":
+        return retry_pdf_ingest_for_viewer(db, viewer_id, media_id, request_id=request_id)
+    from nexus.services.epub_lifecycle import retry_epub_ingest_for_viewer
 
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    if media.kind == "pdf":
-        from nexus.services.pdf_lifecycle import confirm_pdf_ingest
-
-        return confirm_pdf_ingest(db, viewer_id, media_id, request_id=request_id)
-
-    if media.kind != "epub":
-        result = _base_confirm_ingest(db, viewer_id, media_id)
-        return {
-            "media_id": result["media_id"],
-            "duplicate": result["duplicate"],
-            "processing_status": "pending",
-            "ingest_enqueued": False,
-        }
-
-    return _confirm_epub_ingest(db, viewer_id, media_id, request_id=request_id)
+    return retry_epub_ingest_for_viewer(db, viewer_id, media_id, request_id=request_id)
 
 
-def _confirm_epub_ingest(
+def confirm_pdf_ingest(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
     *,
     request_id: str | None = None,
 ) -> dict:
-    """EPUB-specific ingest confirm with preflight and dispatch."""
-    base_result = _base_confirm_ingest(db, viewer_id, media_id)
+    """PDF-specific ingest confirm with dispatch.
 
+    Called by the unified confirm_ingest_for_viewer when kind='pdf'.
+    Validates via base confirm_ingest, then dispatches PDF extraction.
+    """
+    base_result = _base_confirm_ingest(db, viewer_id, media_id)
     actual_media_id = UUID(base_result["media_id"])
 
     if base_result["duplicate"]:
@@ -127,10 +94,9 @@ def _confirm_epub_ingest(
             "ingest_enqueued": False,
         }
 
-    storage_client = get_storage_client()
     media_file = media.media_file
     if not media_file:
-        _mark_epub_failed(
+        _mark_pdf_failed(
             db,
             media,
             "upload",
@@ -140,35 +106,6 @@ def _confirm_epub_ingest(
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
             "Upload not found. Please try again.",
-        )
-
-    try:
-        epub_bytes = b"".join(storage_client.stream_object(media_file.storage_path))
-    except Exception as exc:
-        _mark_epub_failed(
-            db,
-            media,
-            "upload",
-            ApiErrorCode.E_STORAGE_ERROR.value,
-            "Failed to read EPUB from storage",
-        )
-        raise ApiError(
-            ApiErrorCode.E_STORAGE_ERROR,
-            "Failed to read uploaded file.",
-        ) from exc
-
-    safety_err = check_archive_safety(epub_bytes)
-    if safety_err is not None:
-        _mark_epub_failed(
-            db,
-            media,
-            "extract",
-            safety_err.error_code,
-            safety_err.error_message,
-        )
-        raise InvalidRequestError(
-            ApiErrorCode.E_ARCHIVE_UNSAFE,
-            safety_err.error_message,
         )
 
     now = datetime.now(UTC)
@@ -183,9 +120,9 @@ def _confirm_epub_ingest(
     db.flush()
 
     try:
-        from nexus.tasks.ingest_epub import ingest_epub
+        from nexus.tasks.ingest_pdf import ingest_pdf
 
-        ingest_epub.apply_async(
+        ingest_pdf.apply_async(
             args=[str(media.id)],
             kwargs={"request_id": request_id},
             queue="ingest",
@@ -193,7 +130,7 @@ def _confirm_epub_ingest(
     except Exception as exc:
         db.rollback()
         logger.error(
-            "epub_dispatch_failed media_id=%s error=%s",
+            "pdf_dispatch_failed media_id=%s error=%s",
             media.id,
             exc,
         )
@@ -212,14 +149,22 @@ def _confirm_epub_ingest(
     }
 
 
-def retry_epub_ingest_for_viewer(
+def retry_pdf_ingest_for_viewer(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
     *,
     request_id: str | None = None,
 ) -> dict:
-    """Retry endpoint orchestration for failed EPUB media."""
+    """Retry endpoint orchestration for failed PDF media.
+
+    Implements S6-PR03-D11 precedence-ordered retry inference matrix:
+    1. non-failed -> E_RETRY_INVALID_STATE
+    2. E_PDF_PASSWORD_REQUIRED -> terminal E_RETRY_NOT_ALLOWED
+    3. failure_stage='embed' -> embedding-only retry (no text rewrite)
+    4. failure_stage in {upload,extract,other} -> text-rebuild retry
+    5. failure_stage='transcribe' (impossible for PDF) -> fail closed
+    """
     from nexus.auth.permissions import can_read_media
 
     if not can_read_media(db, viewer_id, media_id):
@@ -230,10 +175,10 @@ def retry_epub_ingest_for_viewer(
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    if media.kind != "epub":
+    if media.kind != "pdf":
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_KIND,
-            "Retry is only supported for EPUB media.",
+            "Retry is only supported for PDF/EPUB media.",
         )
 
     if media.created_by_user_id != viewer_id:
@@ -248,13 +193,81 @@ def retry_epub_ingest_for_viewer(
             "Media must be in failed state to retry.",
         )
 
-    if media.last_error_code == ApiErrorCode.E_ARCHIVE_UNSAFE.value:
+    if media.last_error_code == ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value:
         raise ConflictError(
             ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Retry not allowed for terminal archive failure. Upload a new file.",
+            "Retry not allowed for password-protected PDF. Upload a new file.",
         )
 
-    media_file = db.execute(select(MediaFile).where(MediaFile.media_id == media_id)).scalar()
+    failure_stage = media.failure_stage
+
+    if failure_stage == FailureStage.transcribe:
+        logger.error(
+            "pdf_retry_impossible_failure_stage media_id=%s failure_stage=transcribe",
+            media_id,
+        )
+        raise ApiError(
+            ApiErrorCode.E_INTERNAL,
+            "Internal integrity error: impossible failure stage for PDF.",
+        )
+
+    if failure_stage == FailureStage.embed:
+        return _retry_pdf_embedding_only(db, media, request_id=request_id)
+    else:
+        return _retry_pdf_text_rebuild(db, media, request_id=request_id)
+
+
+def _retry_pdf_embedding_only(
+    db: Session,
+    media: Media,
+    *,
+    request_id: str | None = None,
+) -> dict:
+    """Embedding/search-only retry. Does NOT rewrite text artifacts."""
+    now = datetime.now(UTC)
+    media.processing_status = ProcessingStatus.extracting
+    media.processing_attempts = (media.processing_attempts or 0) + 1
+    media.processing_started_at = now
+    media.failure_stage = None
+    media.last_error_code = None
+    media.last_error_message = None
+    media.failed_at = None
+    media.updated_at = now
+    db.flush()
+
+    try:
+        from nexus.tasks.ingest_pdf import ingest_pdf
+
+        ingest_pdf.apply_async(
+            args=[str(media.id)],
+            kwargs={"request_id": request_id, "embedding_only": True},
+            queue="ingest",
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error("pdf_embed_retry_dispatch_failed media_id=%s error=%s", media.id, exc)
+        raise ApiError(
+            ApiErrorCode.E_INTERNAL,
+            "Failed to enqueue retry job.",
+        ) from exc
+
+    db.commit()
+    return {
+        "media_id": str(media.id),
+        "processing_status": "extracting",
+        "retry_enqueued": True,
+    }
+
+
+def _retry_pdf_text_rebuild(
+    db: Session,
+    media: Media,
+    *,
+    request_id: str | None = None,
+) -> dict:
+    """Text-rebuild retry. Invalidates quote-match metadata, deletes text artifacts,
+    then re-dispatches full extraction."""
+    media_file = db.execute(select(MediaFile).where(MediaFile.media_id == media.id)).scalar()
     if media_file is None:
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
@@ -269,7 +282,8 @@ def retry_epub_ingest_for_viewer(
         expected_sha256=media.file_sha256,
     )
 
-    _delete_extraction_artifacts(db, media_id)
+    invalidate_pdf_quote_match_metadata(db, media.id)
+    delete_pdf_text_artifacts(db, media.id)
 
     now = datetime.now(UTC)
     media.processing_status = ProcessingStatus.extracting
@@ -283,27 +297,22 @@ def retry_epub_ingest_for_viewer(
     db.flush()
 
     try:
-        from nexus.tasks.ingest_epub import ingest_epub
+        from nexus.tasks.ingest_pdf import ingest_pdf
 
-        ingest_epub.apply_async(
+        ingest_pdf.apply_async(
             args=[str(media.id)],
             kwargs={"request_id": request_id},
             queue="ingest",
         )
     except Exception as exc:
         db.rollback()
-        logger.error(
-            "epub_retry_dispatch_failed media_id=%s error=%s",
-            media.id,
-            exc,
-        )
+        logger.error("pdf_text_rebuild_dispatch_failed media_id=%s error=%s", media.id, exc)
         raise ApiError(
             ApiErrorCode.E_INTERNAL,
             "Failed to enqueue extraction job.",
         ) from exc
 
     db.commit()
-
     return {
         "media_id": str(media.id),
         "processing_status": "extracting",
@@ -311,23 +320,7 @@ def retry_epub_ingest_for_viewer(
     }
 
 
-def _delete_extraction_artifacts(db: Session, media_id: UUID) -> None:
-    """Delete all extraction and chunk/embedding artifacts for a media row."""
-    db.execute(delete(EpubTocNode).where(EpubTocNode.media_id == media_id))
-
-    fragment_ids = (
-        db.execute(select(Fragment.id).where(Fragment.media_id == media_id)).scalars().all()
-    )
-
-    if fragment_ids:
-        db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(fragment_ids)))
-
-    db.execute(delete(Fragment).where(Fragment.media_id == media_id))
-
-    db.flush()
-
-
-def _mark_epub_failed(
+def _mark_pdf_failed(
     db: Session,
     media: Media,
     stage: str,

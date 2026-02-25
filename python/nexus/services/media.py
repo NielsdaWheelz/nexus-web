@@ -26,6 +26,7 @@ from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.media import FragmentOut, FromUrlResponse, MediaOut
 from nexus.services.capabilities import derive_capabilities
+from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 logger = get_logger(__name__)
@@ -76,7 +77,10 @@ def get_media_for_viewer(
         # but handle defensively
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    # Derive capabilities
+    _pdf_ready = False
+    if row[1] == MediaKind.pdf.value:
+        _pdf_ready = is_pdf_quote_text_ready(db, media_id)
+
     capabilities = derive_capabilities(
         kind=row[1],
         processing_status=row[4],
@@ -84,7 +88,7 @@ def get_media_for_viewer(
         media_file_exists=row[10],
         external_playback_url_exists=row[7] is not None,
         has_fragments=row[11],
-        has_plain_text=False,  # TODO: Check media.plain_text when added
+        pdf_quote_text_ready=_pdf_ready,
     )
 
     return MediaOut(
