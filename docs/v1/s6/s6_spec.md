@@ -71,8 +71,9 @@ Add PDF text persistence to `media`:
 
 S6 constraints:
 1. `plain_text` is only meaningful for `kind='pdf'` in S6.
-2. `GET /media/{id}` capability derivation for PDF uses `has_plain_text = (plain_text is non-null and non-empty after trim)`.
-3. `page_count >= 1` when present.
+2. `pdf_has_plain_text(media)` (plain-text presence diagnostic) is true iff `plain_text` is non-null and non-empty after trim.
+3. `GET /media/{id}` quote/search capability derivation for PDF uses full `pdf_quote_text_ready(media)` readiness (Section `2.4`), not `pdf_has_plain_text(media)` alone.
+4. `page_count >= 1` when present.
 
 #### PDF `media.plain_text` Normalization Contract (S6)
 
@@ -341,7 +342,7 @@ S6 extends the existing `media.processing_status` lifecycle for `kind='pdf'`:
 
 Constitution constraints to preserve:
 1. PDF reading may be enabled once file/page-render prerequisites exist (`ready_for_reading`), even if `media.plain_text` extraction for quote/search is incomplete or partial.
-2. Quote-to-chat/search gating for PDF is separate from file readability and depends on persisted PDF text availability (`has_plain_text` capability seam already exists in code).
+2. Quote-to-chat/search gating for PDF is separate from file readability and depends on persisted PDF quote-text readiness (`pdf_quote_text_ready(media)`); current code may expose a placeholder boolean seam that S6 tightens to this readiness contract.
 3. Retry must prevent mixed-generation artifacts.
 
 S6 lifecycle clarifications:
@@ -384,8 +385,8 @@ PDF-specific constraints:
 
 S6 will extend media read behavior to make PDF quote/search capability accurate:
 - `capabilities.can_read` for PDF remains file-based (PDF.js rendering path)
-- `capabilities.can_quote` / `capabilities.can_search` for PDF require persisted PDF plain text readiness
-- `has_plain_text` TODOs in service code must be replaced with real DB-backed derivation
+- `capabilities.can_quote` / `capabilities.can_search` for PDF require persisted PDF quote-text readiness (`pdf_quote_text_ready(media)`), not plain-text presence alone
+- placeholder `has_plain_text` TODOs / boolean seams in service code must be replaced or tightened to a real DB-backed PDF quote-readiness derivation (plain-text presence may remain a separate internal diagnostic)
 - `capabilities.can_highlight` is a media-level capability and does not guarantee text selection availability on every PDF page (e.g., scanned/image-only pages without a usable text layer)
 
 ### 4.2 `GET /media/{media_id}/file` (PDF.js consumer path)

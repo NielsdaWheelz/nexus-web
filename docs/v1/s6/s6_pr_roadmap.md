@@ -113,16 +113,34 @@ pr-02 + pr-03 + pr-05 + pr-07
 - **acceptance**:
   - PDFs uploaded through the existing upload flow are recognized and routed into the S6 PDF processing lifecycle with the defined readiness/failure transitions.
   - PDF processing can produce `page_count`, normalized `media.plain_text`, and contiguous page-span indexing for quote/search readiness.
+  - Successful PDF extraction hands off to the existing embedding pipeline / post-extract path so downstream embedding failures surface with `failure_stage='embed'` semantics (without redesigning the embedding pipeline in `pr-03`).
   - `pr-03` enforces/validates contiguous/full-page-set `pdf_page_text_spans` lifecycle invariants (beyond the row-local schema checks introduced in `pr-01`) before quote-capable readiness is considered satisfied.
   - `pr-03` owns lifecycle/invalidation validation for PDF quote-match metadata on `highlight_pdf_anchors` beyond the row-local schema checks introduced in `pr-01`.
   - `ready_for_reading` and PDF quote/search readiness are correctly split per S6 lifecycle rules.
   - Scanned/image-only and password-protected PDF behaviors follow S6 deterministic degrade/fail semantics.
   - Retry/rebuild paths honor S6 invalidation rules for PDF quote-match metadata and do not rewrite text artifacts on embedding/search-only retries.
-  - `GET /media/{id}` capability derivation reflects real PDF `has_plain_text` readiness.
+  - `GET /media/{id}` capability derivation reflects real PDF quote-text readiness (`pdf_quote_text_ready(media)`) via an explicit capability seam (not raw plain-text presence alone).
+- **carry-forward notes**:
+  - `pr-03` uses a dedicated PDF lifecycle split (`python/nexus/services/pdf_lifecycle.py` + `python/nexus/services/pdf_ingest.py` + `python/nexus/tasks/ingest_pdf.py`) with thin route-level branching in `python/nexus/api/routes/media.py`; later PRs should reuse this path rather than folding PDF policy into `epub_lifecycle` or introducing a generic file-lifecycle abstraction opportunistically.
+  - `pr-03` standardizes on PyMuPDF in the backend implementation, but parser-specific behavior/exception mapping is isolated inside `python/nexus/services/pdf_ingest.py`; later PRs should consume parser-agnostic lifecycle/domain outcomes and not couple to PyMuPDF exceptions directly.
+  - `pr-03` preserves public `POST /media/{id}/retry` request/response compatibility and implements mode-specific retry behavior inside `pdf_lifecycle` (inferred user-facing retries + explicit internal rebuild helpers), so later PRs should not add a public retry-mode parameter or alternate retry endpoint without an explicit roadmap/spec change.
+  - `pr-03` treats `E_PDF_PASSWORD_REQUIRED` failures as terminal for the public retry route in S6 (`E_RETRY_NOT_ALLOWED`) because v1 has no password flow; later PRs should not weaken this behavior without an explicit L2/L3 contract change.
+  - `pr-03` uses an explicit PDF quote-readiness capability seam (recommended `pdf_quote_text_ready`) for `derive_capabilities(...)`; later PRs should not overload raw plain-text presence (`plain_text` non-empty) as the quote/search capability gate.
+  - `pr-03` centralizes DB-backed PDF quote-readiness predicate logic in `python/nexus/services/pdf_readiness.py` (single-media + batch helpers) reused by `python/nexus/services/media.py` and `python/nexus/services/libraries.py`; later PRs should reuse this seam and keep `python/nexus/services/capabilities.py` pure (no DB access).
+  - `pr-03` enforces full `pdf_page_text_spans` contiguity/coverage invariants at write time (`pdf_ingest` / `pdf_lifecycle`) and uses a lightweight fail-closed `pdf_readiness.py` read predicate for detail/list capability gating; later PRs should not move heavy contiguity revalidation into list read paths without an explicit performance-reviewed contract change.
+  - `pr-03` treats text-bearing extraction results that fail `pdf_page_text_spans` lifecycle invariants as deterministic extract failures (fail closed), while degrade-to-readable is reserved for explicit no-text/scanned outcomes; these failed text-bearing attempts must not leave partial persisted quote-text artifacts. Later PRs should not silently broaden degrade behavior for indexing integrity failures without an explicit L2/L3 contract change.
+  - `pr-03` makes repeated `POST /media/{id}/ingest` for non-duplicate PDF media idempotent/no-redispatch outside `pending`, preserving the compat response shape (`processing_status` + `ingest_enqueued=false`) and avoiding lifecycle mutation on repeat calls; later PRs should not change this ingest-confirm behavior without an explicit contract update.
+  - `pr-03` integrates library-list PDF capability gating through a separate batched `pdf_readiness.py` query over the already-paged media IDs (merged in-memory before `derive_capabilities(...)`), preserving pagination/order semantics and avoiding N+1 behavior; later PRs should reuse this batch seam instead of duplicating readiness SQL in `libraries.py`.
+  - `pr-03` uses a precedence-ordered public PDF retry inference matrix: terminal password-protected failures are disallowed first, `failure_stage='embed'` uses the embedding/search-only retry path (no text rewrite), `upload|extract|other` use extraction/text-rebuild retry, and impossible PDF `failure_stage='transcribe'` fails closed; later PRs should preserve this matrix unless L2/L3 explicitly changes retry semantics.
+  - `pr-03` makes the PDF extraction -> embedding handoff explicit while reusing the existing shared embedding pipeline/post-extract path; synchronous handoff/dispatch failures after successful extraction are classified as embed-stage failures (`failure_stage='embed'`) and preserve extracted text artifacts. Later PRs should preserve this stage attribution and avoid PDF-specific embedding pipeline forks unless explicitly specified.
+  - `pr-03` keeps backend PDF extraction single-engine (PyMuPDF only) and does not add a server-side parser fallback path; parser-fallback experimentation requires a later explicit scope change.
+  - `pr-03` may optionally set a non-fatal scanned/no-text diagnostic (`E_PDF_TEXT_UNAVAILABLE`) for renderable PDFs with no usable extracted text, but this must not change S6 readable/no-quote degrade semantics or be treated as a route error.
 - **non-goals**:
   - No PDF highlight CRUD APIs.
   - No frontend PDF viewer integration.
   - No quote-to-chat PDF context rendering changes beyond readiness/error gating prerequisites.
+  - No server-side dual-parser/fallback PDF extraction architecture (PyMuPDF-only in `pr-03`).
+  - No PDF metadata/XMP/version extraction or persistence contract work.
 
 ### pr-04: pdf highlight apis and geometry canonicalization
 - **goal**: Add S6 PDF highlight API surfaces and generic highlight-route compatibility backed by canonical PDF geometry normalization/fingerprinting.
