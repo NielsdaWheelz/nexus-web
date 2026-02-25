@@ -95,6 +95,9 @@ class ApiErrorCode(str, Enum):
     E_CHAPTER_NOT_FOUND = "E_CHAPTER_NOT_FOUND"  # 404
     E_ARCHIVE_UNSAFE = "E_ARCHIVE_UNSAFE"  # 400
 
+    # S6 PDF errors (422)
+    E_PDF_PASSWORD_REQUIRED = "E_PDF_PASSWORD_REQUIRED"  # 422
+
     # Ingestion errors (502/504)
     E_INGEST_FAILED = "E_INGEST_FAILED"  # 502
     E_INGEST_TIMEOUT = "E_INGEST_TIMEOUT"  # 504
@@ -184,6 +187,8 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_RETRY_NOT_ALLOWED: 409,
     ApiErrorCode.E_CHAPTER_NOT_FOUND: 404,
     ApiErrorCode.E_ARCHIVE_UNSAFE: 400,
+    # S6 PDF errors
+    ApiErrorCode.E_PDF_PASSWORD_REQUIRED: 422,
     # Ingestion errors
     ApiErrorCode.E_INGEST_FAILED: 502,
     ApiErrorCode.E_INGEST_TIMEOUT: 504,

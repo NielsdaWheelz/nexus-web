@@ -3497,3 +3497,149 @@ class TestVisibilityClosureScenarios:
         response_a = auth_client.get(f"/libraries/{library_a}/media", headers=auth_headers(user_a))
         assert response_a.status_code == 200
         assert response_a.json()["data"] == []
+
+
+# ---------------------------------------------------------------------------
+# S6 PR-03: Library list PDF capabilities
+# ---------------------------------------------------------------------------
+
+
+def _create_pdf_media_for_library(
+    session,
+    *,
+    processing_status="ready_for_reading",
+    plain_text=None,
+    page_count=None,
+    with_page_spans=False,
+):
+    from uuid import uuid4
+
+    from sqlalchemy import text
+
+    media_id = uuid4()
+
+    session.execute(
+        text("""
+            INSERT INTO media (
+                id, kind, title, processing_status, plain_text, page_count
+            ) VALUES (
+                :id, 'pdf', 'Library PDF', :ps, :pt, :pc
+            )
+        """),
+        {"id": media_id, "ps": processing_status, "pt": plain_text, "pc": page_count},
+    )
+    session.execute(
+        text("""
+            INSERT INTO media_file (media_id, storage_path, content_type, size_bytes)
+            VALUES (:mid, :sp, 'application/pdf', 1000)
+        """),
+        {"mid": media_id, "sp": f"media/{media_id}/original.pdf"},
+    )
+
+    if with_page_spans and page_count and plain_text:
+        page_len = len(plain_text) // page_count
+        for i in range(page_count):
+            start = i * page_len
+            end = start + page_len if i < page_count - 1 else len(plain_text)
+            session.execute(
+                text("""
+                    INSERT INTO pdf_page_text_spans
+                    (media_id, page_number, start_offset, end_offset, text_extract_version)
+                    VALUES (:mid, :pn, :so, :eo, 1)
+                """),
+                {"mid": media_id, "pn": i + 1, "so": start, "eo": end},
+            )
+
+    session.commit()
+    return media_id
+
+
+class TestLibraryListPdfCapabilities:
+    """S6 PR-03: Library list PDF capabilities use same readiness predicate as detail."""
+
+    def test_pr03_library_list_pdf_capabilities_use_same_quote_text_readiness_predicate_as_detail(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+
+        with direct_db.session() as session:
+            mid_ready = _create_pdf_media_for_library(
+                session,
+                processing_status="ready_for_reading",
+                plain_text="Quote ready text",
+                page_count=1,
+                with_page_spans=True,
+            )
+            mid_not_ready = _create_pdf_media_for_library(
+                session,
+                processing_status="ready_for_reading",
+                plain_text=None,
+                page_count=1,
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_ready)
+        direct_db.register_cleanup("media_file", "media_id", mid_ready)
+        direct_db.register_cleanup("library_media", "media_id", mid_ready)
+        direct_db.register_cleanup("media", "id", mid_ready)
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_not_ready)
+        direct_db.register_cleanup("media_file", "media_id", mid_not_ready)
+        direct_db.register_cleanup("library_media", "media_id", mid_not_ready)
+        direct_db.register_cleanup("media", "id", mid_not_ready)
+
+        for mid in [mid_ready, mid_not_ready]:
+            auth_client.post(
+                f"/libraries/{library_id}/media",
+                json={"media_id": str(mid)},
+                headers=auth_headers(user_id),
+            )
+
+        list_resp = auth_client.get(f"/libraries/{library_id}/media", headers=auth_headers(user_id))
+        assert list_resp.status_code == 200
+        items = {m["id"]: m for m in list_resp.json()["data"]}
+
+        ready_caps = items[str(mid_ready)]["capabilities"]
+        assert ready_caps["can_quote"] is True
+        assert ready_caps["can_search"] is True
+
+        not_ready_caps = items[str(mid_not_ready)]["capabilities"]
+        assert not_ready_caps["can_quote"] is False
+        assert not_ready_caps["can_search"] is False
+
+    def test_pr03_library_list_pdf_capabilities_match_detail_readiness_split(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+
+        with direct_db.session() as session:
+            mid = _create_pdf_media_for_library(
+                session,
+                processing_status="ready_for_reading",
+                plain_text="Match text",
+                page_count=1,
+                with_page_spans=True,
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid)
+        direct_db.register_cleanup("media_file", "media_id", mid)
+        direct_db.register_cleanup("library_media", "media_id", mid)
+        direct_db.register_cleanup("media", "id", mid)
+
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(mid)},
+            headers=auth_headers(user_id),
+        )
+
+        list_resp = auth_client.get(f"/libraries/{library_id}/media", headers=auth_headers(user_id))
+        list_caps = next(m for m in list_resp.json()["data"] if m["id"] == str(mid))["capabilities"]
+
+        detail_resp = auth_client.get(f"/media/{mid}", headers=auth_headers(user_id))
+        detail_caps = detail_resp.json()["data"]["capabilities"]
+
+        assert list_caps["can_read"] == detail_caps["can_read"]
+        assert list_caps["can_quote"] == detail_caps["can_quote"]
+        assert list_caps["can_search"] == detail_caps["can_search"]

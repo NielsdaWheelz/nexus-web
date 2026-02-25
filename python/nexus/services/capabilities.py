@@ -25,6 +25,7 @@ def derive_capabilities(
     external_playback_url_exists: bool,
     has_fragments: bool = False,
     has_plain_text: bool = False,
+    pdf_quote_text_ready: bool = False,
 ) -> CapabilitiesOut:
     """Derive capabilities from media state.
 
@@ -37,18 +38,12 @@ def derive_capabilities(
         media_file_exists: True if MediaFile row exists for this media.
         external_playback_url_exists: True if external_playback_url is set.
         has_fragments: True if media has at least one fragment.
-        has_plain_text: True if media.plain_text is set (for PDF quote-to-chat).
+        has_plain_text: True if media.plain_text is set (legacy compat, non-PDF).
+        pdf_quote_text_ready: True if full S6 pdf_quote_text_ready(media)
+            predicate is satisfied (plain_text + page_count + page_spans).
 
     Returns:
         CapabilitiesOut with derived boolean flags.
-
-    Notes:
-        - can_download_file: True iff media_file exists (authorization already passed)
-        - can_play: True iff external_playback_url exists and (status >= ready_for_reading
-          OR failed + E_TRANSCRIPT_UNAVAILABLE)
-        - PDF is special: can_read = media_file_exists (pdf.js can render before extraction)
-        - Other document types require ready_for_reading status (fragments exist)
-        - Transcript media (video, podcast_episode) require fragments (transcript segments)
     """
     # Normalize inputs
     is_pdf = kind == MediaKind.pdf.value
@@ -115,8 +110,7 @@ def derive_capabilities(
     # - Others: same as can_read
     # =========================================================================
     if is_pdf:
-        # PDF can_quote requires text extraction complete
-        can_quote = can_read and has_plain_text
+        can_quote = can_read and pdf_quote_text_ready
     elif is_transcript_unavailable:
         can_quote = False
     else:

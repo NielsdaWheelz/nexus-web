@@ -5,10 +5,41 @@ that are rolled back after each test, ensuring test isolation without
 requiring full database resets.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import Connection, Engine, text
 from sqlalchemy.orm import Session
+
+
+def task_session_factory(fixture_session: Session) -> Callable[[], Session]:
+    """Create a session factory for Celery task tests.
+
+    Celery tasks call session_factory() to get a session, then db.close() in a
+    finally block.  This factory creates sessions that share the test fixture's
+    DB connection (so they see test data and their writes are rolled back with
+    the test) but can be safely closed without affecting the fixture session.
+
+    After the task runs, call ``fixture_session.expire_all()`` before asserting
+    on ORM objects so the fixture re-reads the task's committed changes.
+
+    Usage::
+
+        with patch(
+            "nexus.tasks.foo.get_session_factory",
+            return_value=task_session_factory(db_session),
+        ):
+            result = some_task(str(media_id))
+
+        db_session.expire_all()
+        assert db_session.get(Media, mid).status == "done"
+    """
+    connection = fixture_session.connection()
+
+    def factory() -> Session:
+        return Session(bind=connection, join_transaction_mode="create_savepoint")
+
+    return factory
 
 
 class DirectSessionManager:

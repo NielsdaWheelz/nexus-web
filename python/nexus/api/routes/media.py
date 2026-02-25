@@ -223,7 +223,7 @@ def retry_ingest(
     db: Annotated[Session, Depends(get_db)],
     request: Request,
 ) -> dict:
-    """Retry failed EPUB extraction.
+    """Retry failed EPUB or PDF extraction.
 
     Enforces legal-state preconditions, clears old artifacts, and
     dispatches re-extraction. Only the creator can retry.
@@ -233,8 +233,10 @@ def retry_ingest(
         - processing_status: 'extracting'
         - retry_enqueued: True if extraction task was dispatched
     """
+    from nexus.services.pdf_lifecycle import retry_for_viewer_unified
+
     request_id = getattr(request.state, "request_id", None)
-    result = epub_lifecycle.retry_epub_ingest_for_viewer(
+    result = retry_for_viewer_unified(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,

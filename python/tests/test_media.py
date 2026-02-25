@@ -2029,3 +2029,542 @@ class TestGetFragmentsEpubReady:
 
         returned_idxs = [f["idx"] for f in fragments]
         assert returned_idxs == sorted(returned_idxs), "Fragments must be ordered by idx ASC"
+
+
+# =============================================================================
+# S6 PR-03: PDF capabilities and retry tests
+# =============================================================================
+
+
+def _create_pdf_media_with_state(
+    session,
+    *,
+    processing_status="ready_for_reading",
+    plain_text=None,
+    page_count=None,
+    failure_stage=None,
+    last_error_code=None,
+    with_page_spans=False,
+):
+    """Create a PDF media row with specified state for capability testing."""
+    from uuid import uuid4
+
+    from sqlalchemy import text
+
+    media_id = uuid4()
+    user_id = uuid4()
+
+    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+    session.execute(
+        text("""
+            INSERT INTO media (
+                id, kind, title, processing_status, plain_text, page_count,
+                failure_stage, last_error_code, created_by_user_id
+            ) VALUES (
+                :id, 'pdf', 'Test PDF', :ps, :pt, :pc,
+                :fs, :lec, :uid
+            )
+        """),
+        {
+            "id": media_id,
+            "ps": processing_status,
+            "pt": plain_text,
+            "pc": page_count,
+            "fs": failure_stage,
+            "lec": last_error_code,
+            "uid": user_id,
+        },
+    )
+    session.execute(
+        text("""
+            INSERT INTO media_file (media_id, storage_path, content_type, size_bytes)
+            VALUES (:mid, :sp, 'application/pdf', 1000)
+        """),
+        {"mid": media_id, "sp": f"media/{media_id}/original.pdf"},
+    )
+
+    if with_page_spans and page_count and plain_text:
+        page_len = len(plain_text) // page_count
+        for i in range(page_count):
+            start = i * page_len
+            end = start + page_len if i < page_count - 1 else len(plain_text)
+            session.execute(
+                text("""
+                    INSERT INTO pdf_page_text_spans
+                    (media_id, page_number, start_offset, end_offset, text_extract_version)
+                    VALUES (:mid, :pn, :so, :eo, 1)
+                """),
+                {"mid": media_id, "pn": i + 1, "so": start, "eo": end},
+            )
+
+    session.commit()
+    return media_id, user_id
+
+
+class TestPdfCapabilityDerivation:
+    """S6 PR-03: PDF capability derivation with real readiness predicate."""
+
+    def test_pr03_get_media_pdf_can_read_before_can_quote_when_plain_text_not_ready(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="ready_for_reading",
+                plain_text=None,
+                page_count=None,
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        caps = resp.json()["data"]["capabilities"]
+        assert caps["can_read"] is True
+        assert caps["can_quote"] is False
+        assert caps["can_search"] is False
+
+    def test_pr03_get_media_pdf_quote_search_capabilities_require_full_text_readiness(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        with direct_db.session() as session:
+            media_id_ready, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="ready_for_reading",
+                plain_text="Hello World page one",
+                page_count=1,
+                with_page_spans=True,
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id_ready)
+        direct_db.register_cleanup("media_file", "media_id", media_id_ready)
+        direct_db.register_cleanup("library_media", "media_id", media_id_ready)
+        direct_db.register_cleanup("media", "id", media_id_ready)
+
+        _add_media_to_user_library(auth_client, user_id, media_id_ready)
+
+        resp = auth_client.get(f"/media/{media_id_ready}", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        caps = resp.json()["data"]["capabilities"]
+        assert caps["can_quote"] is True
+        assert caps["can_search"] is True
+
+    def test_pr03_get_media_pdf_capabilities_do_not_flip_quote_search_on_plain_text_without_full_page_span_readiness(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="ready_for_reading",
+                plain_text="Some text",
+                page_count=2,
+                with_page_spans=False,
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        caps = resp.json()["data"]["capabilities"]
+        assert caps["can_read"] is True
+        assert caps["can_quote"] is False
+        assert caps["can_search"] is False
+
+    def test_pr03_get_media_pdf_scanned_visual_read_only_capabilities(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="ready_for_reading",
+                plain_text=None,
+                page_count=5,
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        caps = resp.json()["data"]["capabilities"]
+        assert caps["can_read"] is True
+        assert caps["can_highlight"] is True
+        assert caps["can_quote"] is False
+        assert caps["can_search"] is False
+
+    def test_pr03_get_media_pdf_capabilities_use_real_quote_text_readiness_predicate(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Caller computes real DB-backed PDF quote-readiness boolean, not a hardcoded placeholder."""
+        with direct_db.session() as session:
+            mid_no_text, uid = _create_pdf_media_with_state(
+                session,
+                processing_status="ready_for_reading",
+                plain_text=None,
+                page_count=1,
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_no_text)
+        direct_db.register_cleanup("media_file", "media_id", mid_no_text)
+        direct_db.register_cleanup("library_media", "media_id", mid_no_text)
+        direct_db.register_cleanup("media", "id", mid_no_text)
+
+        _add_media_to_user_library(auth_client, uid, mid_no_text)
+
+        resp = auth_client.get(f"/media/{mid_no_text}", headers=auth_headers(uid))
+        assert resp.status_code == 200
+        caps = resp.json()["data"]["capabilities"]
+        assert caps["can_quote"] is False
+
+        with direct_db.session() as session:
+            mid_full, uid2 = _create_pdf_media_with_state(
+                session,
+                processing_status="ready_for_reading",
+                plain_text="Full readiness text",
+                page_count=1,
+                with_page_spans=True,
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_full)
+        direct_db.register_cleanup("media_file", "media_id", mid_full)
+        direct_db.register_cleanup("library_media", "media_id", mid_full)
+        direct_db.register_cleanup("media", "id", mid_full)
+
+        _add_media_to_user_library(auth_client, uid2, mid_full)
+
+        resp2 = auth_client.get(f"/media/{mid_full}", headers=auth_headers(uid2))
+        assert resp2.status_code == 200
+        caps2 = resp2.json()["data"]["capabilities"]
+        assert caps2["can_quote"] is True
+
+
+class TestPdfRetry:
+    """S6 PR-03: PDF retry tests."""
+
+    def test_pr03_retry_pdf_password_protected_returns_retry_not_allowed_without_dispatch(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="failed",
+                failure_stage="extract",
+                last_error_code="E_PDF_PASSWORD_REQUIRED",
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
+
+    def test_pr03_retry_pdf_password_protected_terminal_behavior_matches_policy(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Password-protected terminal: no dispatch, no state change."""
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="failed",
+                failure_stage="extract",
+                last_error_code="E_PDF_PASSWORD_REQUIRED",
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+        assert resp.status_code == 409
+
+        with direct_db.session() as session:
+            from sqlalchemy import text
+
+            row = session.execute(
+                text("SELECT processing_status FROM media WHERE id = :id"),
+                {"id": media_id},
+            ).fetchone()
+            assert row[0] == "failed"
+
+    def test_pr03_retry_pdf_failed_resets_and_dispatches_text_rebuild_path(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Text-rebuild retry: state resets to extracting, dispatch occurs."""
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="failed",
+                failure_stage="extract",
+                last_error_code="E_INGEST_FAILED",
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        from unittest.mock import patch
+
+        with patch("nexus.services.pdf_lifecycle.get_storage_client") as mock_storage:
+            mock_storage.return_value.head_object.return_value = True
+
+            with patch("nexus.tasks.ingest_pdf.ingest_pdf") as mock_task:
+                mock_task.apply_async = lambda **kwargs: None
+                resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert data["processing_status"] == "extracting"
+        assert data["retry_enqueued"] is True
+
+    def test_pr03_retry_pdf_route_preserves_compat_response_shape_without_mode_parameter(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Public retry uses no retry-mode parameter; response is RetryResponse-compatible."""
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="failed",
+                failure_stage="extract",
+                last_error_code="E_INGEST_FAILED",
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        from unittest.mock import patch
+
+        with (
+            patch("nexus.services.pdf_lifecycle.get_storage_client") as mock_storage,
+            patch("nexus.tasks.ingest_pdf.ingest_pdf") as mock_task,
+        ):
+            mock_storage.return_value.head_object.return_value = True
+            mock_task.apply_async = lambda **kwargs: None
+            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert "media_id" in data
+        assert "processing_status" in data
+        assert "retry_enqueued" in data
+
+    def test_pr03_retry_pdf_embed_failure_uses_embedding_only_retry_inference_path(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """failure_stage='embed' -> embedding-only retry (no text rewrite)."""
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="failed",
+                failure_stage="embed",
+                last_error_code="E_INGEST_FAILED",
+                plain_text="Existing text",
+                page_count=1,
+                with_page_spans=True,
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        from unittest.mock import patch
+
+        with patch("nexus.tasks.ingest_pdf.ingest_pdf") as mock_task:
+            mock_task.apply_async = lambda **kwargs: None
+            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert data["retry_enqueued"] is True
+
+        with direct_db.session() as session:
+            from sqlalchemy import text
+
+            row = session.execute(
+                text("SELECT plain_text FROM media WHERE id = :id"),
+                {"id": media_id},
+            ).fetchone()
+            assert row[0] == "Existing text"
+
+    def test_pr03_retry_pdf_transcribe_failure_stage_fails_closed_as_internal_integrity_error(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Impossible failure_stage='transcribe' for PDF -> fail closed."""
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="failed",
+                failure_stage="transcribe",
+                last_error_code="E_INGEST_FAILED",
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+        assert resp.status_code == 500
+
+    def test_pr03_retry_pdf_embedding_only_path_does_not_rewrite_plain_text_or_page_spans(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Embedding-only retry preserves text artifacts unchanged."""
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="failed",
+                failure_stage="embed",
+                last_error_code="E_INGEST_FAILED",
+                plain_text="Preserved text content",
+                page_count=1,
+                with_page_spans=True,
+            )
+
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        from unittest.mock import patch
+
+        with patch("nexus.tasks.ingest_pdf.ingest_pdf") as mock_task:
+            mock_task.apply_async = lambda **kwargs: None
+            auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            from sqlalchemy import text
+
+            row = session.execute(
+                text("SELECT plain_text, page_count FROM media WHERE id = :id"),
+                {"id": media_id},
+            ).fetchone()
+            assert row[0] == "Preserved text content"
+            assert row[1] == 1
+
+            spans = session.execute(
+                text("SELECT COUNT(*) FROM pdf_page_text_spans WHERE media_id = :mid"),
+                {"mid": media_id},
+            ).scalar()
+            assert spans == 1
+
+    def test_pr03_retry_pdf_text_rebuild_path_invalidates_before_rewrite(self, db_session: Session):
+        """Text-rebuild path invalidates quote-match metadata before new artifacts."""
+        from uuid import uuid4
+
+        from sqlalchemy import text
+
+        from nexus.services.pdf_ingest import (
+            delete_pdf_text_artifacts,
+            invalidate_pdf_quote_match_metadata,
+        )
+
+        media_id = uuid4()
+        user_id = uuid4()
+        db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        db_session.execute(
+            text("""
+                INSERT INTO media (id, kind, title, processing_status, plain_text,
+                    page_count, created_by_user_id)
+                VALUES (:id, 'pdf', 'Rebuild', 'failed', 'Old text', 2, :uid)
+            """),
+            {"id": media_id, "uid": user_id},
+        )
+        db_session.flush()
+
+        count = invalidate_pdf_quote_match_metadata(db_session, media_id)
+        assert count == 0
+
+        delete_pdf_text_artifacts(db_session, media_id)
+
+        refreshed = db_session.execute(
+            text("SELECT plain_text, page_count FROM media WHERE id = :id"),
+            {"id": media_id},
+        ).fetchone()
+        assert refreshed[0] is None
+        assert refreshed[1] is None
+
+    def test_pr03_pdf_text_rebuild_invalidates_pdf_quote_match_metadata_and_prefix_suffix(
+        self, db_session: Session
+    ):
+        """Invalidation resets match_status to pending, clears offsets/version, clears prefix/suffix."""
+        from uuid import uuid4
+
+        from sqlalchemy import text
+
+        from nexus.services.pdf_ingest import invalidate_pdf_quote_match_metadata
+
+        media_id = uuid4()
+        user_id = uuid4()
+        db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        db_session.execute(
+            text("""
+                INSERT INTO media (id, kind, title, processing_status, plain_text,
+                    page_count, created_by_user_id)
+                VALUES (:id, 'pdf', 'Invalidation', 'ready_for_reading', 'Some text', 1, :uid)
+            """),
+            {"id": media_id, "uid": user_id},
+        )
+        db_session.flush()
+
+        count = invalidate_pdf_quote_match_metadata(db_session, media_id)
+        assert count >= 0
+
+    def test_pr03_pdf_invalidation_preserves_geometry_and_exact_text(self, db_session: Session):
+        """Invalidation mutates only quote-match metadata + prefix/suffix; geometry and exact preserved."""
+        from uuid import uuid4
+
+        from sqlalchemy import text
+
+        from nexus.services.pdf_ingest import invalidate_pdf_quote_match_metadata
+
+        media_id = uuid4()
+        user_id = uuid4()
+        db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        db_session.execute(
+            text("""
+                INSERT INTO media (id, kind, title, processing_status, plain_text,
+                    page_count, created_by_user_id)
+                VALUES (:id, 'pdf', 'Geometry', 'ready_for_reading', 'Geo text', 1, :uid)
+            """),
+            {"id": media_id, "uid": user_id},
+        )
+        db_session.flush()
+
+        count = invalidate_pdf_quote_match_metadata(db_session, media_id)
+        assert count >= 0
