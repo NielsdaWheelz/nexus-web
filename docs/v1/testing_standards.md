@@ -4,12 +4,14 @@
 
 ## 1. Philosophy
 
-Tests exist to verify behavior, not implementation.
+Tests exist to verify behavior, not implementation. Tests are the primary verification gate — specs give direction, but passing tests prove the code works.
 
 - If a test breaks when internals are refactored but observable behavior is unchanged, the test is wrong.
 - Tests are contracts: they document what the system promises to users and operators, not how the code is arranged internally.
 - A passing test suite should mean "the product works." A failing test should mean "something meaningful regressed."
 - Prefer fewer, higher-confidence tests over many shallow tests. One real user-flow E2E test is worth many brittle mocked tests.
+- Use red/green TDD: write failing tests from acceptance criteria first (red), then write code to make them pass (green). This prevents both non-functional code and unnecessary code.
+- When starting a session, run the existing test suite first. This reveals project scope, surfaces pre-existing failures, and establishes a testing mindset.
 
 ## 2. Scope and Definitions
 
@@ -172,6 +174,28 @@ Exceptions:
 - `python/tests/test_migrations.py` and other schema-level tests
 - DB-level constraint tests where the API intentionally hides the internal detail (prefer ORM queries over raw SQL `text()` where feasible)
 
+### Assertion Messages Should Be Rich
+
+Include extra context in assertion messages. When a test fails, the failure message is often the only feedback an agent or developer sees. Rich messages enable faster self-correction.
+
+```python
+# WEAK: No context in failure
+assert response.status_code == 201
+
+# BETTER: Context in failure message
+assert response.status_code == 201, (
+    f"Expected 201 but got {response.status_code}: {response.json()}"
+)
+
+# BEST: Structured context for complex assertions
+assert data["role"] == "admin", (
+    f"Expected role='admin' for creator, got '{data['role']}'. "
+    f"Library: {lib_id}, User: {user_id}, Full response: {data}"
+)
+```
+
+This is especially valuable for integration and E2E tests where failures can be indirect and hard to diagnose.
+
 ### Frontend: Assert User-Visible Behavior
 
 ```typescript
@@ -230,7 +254,7 @@ Instead:
 
 Short-term exceptions are allowed only when migration work is in progress and the test would otherwise be deleted or blocked. Requirements:
 
-- The exception must be documented in the owning PR spec decision ledger
+- The exception must be documented in the PR description or a code comment at the mock site
 - The exception must be time-bounded (for example, "remove in this PR before merge" or "remove in next planned cleanup PR")
 - The exception must not be hidden in global/shared test setup
 - If an external boundary is only reachable through an internal accessor in current code, a temporary patch at that seam may be used during migration, but the test must still assert behavior and the exception must be called out explicitly
@@ -413,4 +437,4 @@ When modifying existing tests during cleanup:
 2. If deleting a test, identify the replacement layer (`unit`, `component`, `integration`, or `E2E`)
 3. Do not add new global test mocks
 4. Do not add new `happy-dom`-dependent tests
-5. If a temporary exception is required, document it in the owning PR spec and remove it before merge when feasible
+5. If a temporary exception is required, document it in the PR description and remove it before merge when feasible
