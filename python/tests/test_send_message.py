@@ -13,6 +13,7 @@ Tests cover:
 """
 
 import base64
+import json
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
@@ -27,6 +28,7 @@ from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 from tests.factories import (
     create_epub_chapter_fragment,
     create_epub_media_in_library,
+    create_pdf_media_with_text,
     create_test_conversation,
     create_test_fragment,
     create_test_highlight,
@@ -180,6 +182,13 @@ def _route_openai_timeout(respx_mock):
     respx_mock.post("https://api.openai.com/v1/chat/completions").mock(
         side_effect=httpx.ReadTimeout("Read timed out")
     )
+
+
+def _extract_openai_system_prompt(mock_openai_api) -> str:
+    """Extract the outbound system prompt from the latest mocked OpenAI call."""
+    assert len(mock_openai_api.calls) >= 1
+    payload = json.loads(mock_openai_api.calls[-1].request.content.decode("utf-8"))
+    return payload["messages"][0]["content"]
 
 
 # =============================================================================
@@ -675,6 +684,373 @@ class TestSendMessageContext:
         )
 
         assert response.status_code == 400
+
+
+class TestSendMessagePdfQuoteToChat:
+    """S6 PR-05 PDF quote-to-chat compatibility tests."""
+
+    def _setup_pdf_highlight_context(
+        self,
+        session,
+        user_id: UUID,
+        *,
+        plain_text: str,
+        page_spans: list[tuple[int, int]],
+        exact: str,
+        match_status: str,
+        match_version: int | None,
+        start_offset: int | None,
+        end_offset: int | None,
+        prefix: str = "",
+        suffix: str = "",
+        with_annotation: bool = False,
+    ) -> tuple[UUID, UUID, UUID | None]:
+        library_id = get_user_default_library(session, user_id)
+        assert library_id is not None
+
+        media_id = create_pdf_media_with_text(
+            session,
+            user_id,
+            library_id,
+            plain_text=plain_text,
+            page_count=1,
+            page_spans=page_spans,
+            status="ready_for_reading",
+        )
+
+        highlight_id = uuid4()
+        session.execute(
+            text("""
+                INSERT INTO highlights (
+                    id, user_id, fragment_id, start_offset, end_offset,
+                    anchor_kind, anchor_media_id,
+                    color, exact, prefix, suffix
+                )
+                VALUES (
+                    :id, :user_id, NULL, NULL, NULL,
+                    'pdf_page_geometry', :media_id,
+                    'yellow', :exact, :prefix, :suffix
+                )
+            """),
+            {
+                "id": highlight_id,
+                "user_id": user_id,
+                "media_id": media_id,
+                "exact": exact,
+                "prefix": prefix,
+                "suffix": suffix,
+            },
+        )
+
+        session.execute(
+            text("""
+                INSERT INTO highlight_pdf_anchors (
+                    highlight_id, media_id, page_number,
+                    geometry_version, geometry_fingerprint,
+                    sort_top, sort_left,
+                    plain_text_match_version, plain_text_match_status,
+                    plain_text_start_offset, plain_text_end_offset,
+                    rect_count
+                )
+                VALUES (
+                    :highlight_id, :media_id, 1,
+                    1, :fingerprint,
+                    0, 0,
+                    :match_version, :match_status,
+                    :start_offset, :end_offset,
+                    1
+                )
+            """),
+            {
+                "highlight_id": highlight_id,
+                "media_id": media_id,
+                "fingerprint": "0" * 64,
+                "match_version": match_version,
+                "match_status": match_status,
+                "start_offset": start_offset,
+                "end_offset": end_offset,
+            },
+        )
+
+        annotation_id = None
+        if with_annotation:
+            annotation_id = uuid4()
+            session.execute(
+                text("""
+                    INSERT INTO annotations (id, highlight_id, body)
+                    VALUES (:id, :highlight_id, :body)
+                """),
+                {
+                    "id": annotation_id,
+                    "highlight_id": highlight_id,
+                    "body": "PDF annotation note",
+                },
+            )
+
+        session.commit()
+        return media_id, highlight_id, annotation_id
+
+    def _register_pdf_context_cleanup(
+        self,
+        direct_db: DirectSessionManager,
+        media_id: UUID,
+        highlight_id: UUID,
+        annotation_id: UUID | None = None,
+    ) -> None:
+        if annotation_id is not None:
+            direct_db.register_cleanup("annotations", "id", annotation_id)
+        direct_db.register_cleanup("highlight_pdf_anchors", "highlight_id", highlight_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+    def test_pdf_highlight_context_not_quote_ready_returns_409_and_finalizes_assistant(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        platform_key_env,
+        mock_openai_api,
+    ):
+        """Quote-to-chat blocks with E_MEDIA_NOT_READY and finalizes assistant error state."""
+        _route_openai_completion(mock_openai_api)
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id, highlight_id, _ = self._setup_pdf_highlight_context(
+                session,
+                user_id,
+                plain_text="",
+                page_spans=[(0, 0)],
+                exact="stored exact text",
+                match_status="pending",
+                match_version=None,
+                start_offset=None,
+                end_offset=None,
+            )
+
+        self._register_pdf_context_cleanup(direct_db, media_id, highlight_id)
+
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Explain this PDF quote",
+                "model_id": str(model_id),
+                "contexts": [{"type": "highlight", "id": str(highlight_id)}],
+            },
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "E_MEDIA_NOT_READY"
+        assert len(mock_openai_api.calls) == 0
+
+        with direct_db.session() as session:
+            conv_row = session.execute(
+                text("""
+                    SELECT id
+                    FROM conversations
+                    WHERE owner_user_id = :user_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """),
+                {"user_id": user_id},
+            ).fetchone()
+            assert conv_row is not None
+            conversation_id = conv_row[0]
+
+            assistant_row = session.execute(
+                text("""
+                    SELECT id, status, error_code
+                    FROM messages
+                    WHERE conversation_id = :conversation_id
+                      AND role = 'assistant'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """),
+                {"conversation_id": conversation_id},
+            ).fetchone()
+            assert assistant_row is not None
+            assert assistant_row[1] == "error"
+            assert assistant_row[2] == "E_MEDIA_NOT_READY"
+
+            llm_row = session.execute(
+                text("""
+                    SELECT provider, model_name, prompt_tokens, completion_tokens,
+                           total_tokens, provider_request_id, error_class
+                    FROM message_llm
+                    WHERE message_id = :message_id
+                """),
+                {"message_id": assistant_row[0]},
+            ).fetchone()
+            assert llm_row is not None
+            assert llm_row[0] == "openai"
+            assert llm_row[2] is None
+            assert llm_row[3] is None
+            assert llm_row[4] is None
+            assert llm_row[5] is None
+            assert llm_row[6] == "E_MEDIA_NOT_READY"
+
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+    def test_pdf_highlight_pending_match_uses_in_memory_enrichment_for_nearby_context(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        platform_key_env,
+        mock_openai_api,
+    ):
+        """Pending PDF match metadata enriches in-memory and renders nearby context."""
+        _route_openai_completion(mock_openai_api)
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        plain_text = "alpha beta target phrase gamma delta"
+        exact = "target phrase"
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id, highlight_id, _ = self._setup_pdf_highlight_context(
+                session,
+                user_id,
+                plain_text=plain_text,
+                page_spans=[(0, len(plain_text))],
+                exact=exact,
+                match_status="pending",
+                match_version=None,
+                start_offset=None,
+                end_offset=None,
+            )
+
+        self._register_pdf_context_cleanup(direct_db, media_id, highlight_id)
+
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Use this PDF quote",
+                "model_id": str(model_id),
+                "contexts": [{"type": "highlight", "id": str(highlight_id)}],
+            },
+        )
+
+        assert response.status_code == 200
+        system_prompt = _extract_openai_system_prompt(mock_openai_api)
+        assert "**Quoted text:**" in system_prompt
+        assert "> target phrase" in system_prompt
+        assert "**Context:**" in system_prompt
+        assert "alpha beta target phrase gamma delta" in system_prompt
+
+        conversation_id = response.json()["data"]["conversation"]["id"]
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+    def test_pdf_annotation_context_not_quote_ready_returns_409(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        platform_key_env,
+        mock_openai_api,
+    ):
+        """Annotation context for non-ready PDF is quote-blocking."""
+        _route_openai_completion(mock_openai_api)
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id, highlight_id, annotation_id = self._setup_pdf_highlight_context(
+                session,
+                user_id,
+                plain_text="",
+                page_spans=[(0, 0)],
+                exact="stored exact text",
+                match_status="pending",
+                match_version=None,
+                start_offset=None,
+                end_offset=None,
+                with_annotation=True,
+            )
+
+        assert annotation_id is not None
+        self._register_pdf_context_cleanup(direct_db, media_id, highlight_id, annotation_id)
+
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Use this annotated PDF quote",
+                "model_id": str(model_id),
+                "contexts": [{"type": "annotation", "id": str(annotation_id)}],
+            },
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "E_MEDIA_NOT_READY"
+        assert len(mock_openai_api.calls) == 0
+
+    def test_pdf_ambiguous_match_uses_stored_exact_and_omits_nearby_context(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        platform_key_env,
+        mock_openai_api,
+    ):
+        """Ambiguous PDF matches degrade safely: exact only, no nearby context."""
+        _route_openai_completion(mock_openai_api)
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id, highlight_id, _ = self._setup_pdf_highlight_context(
+                session,
+                user_id,
+                plain_text="repeat repeat repeat",
+                page_spans=[(0, len("repeat repeat repeat"))],
+                exact="repeat",
+                match_status="ambiguous",
+                match_version=1,
+                start_offset=None,
+                end_offset=None,
+                prefix="DO_NOT_USE_PREFIX",
+                suffix="DO_NOT_USE_SUFFIX",
+            )
+
+        self._register_pdf_context_cleanup(direct_db, media_id, highlight_id)
+
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Explain this repeated PDF phrase",
+                "model_id": str(model_id),
+                "contexts": [{"type": "highlight", "id": str(highlight_id)}],
+            },
+        )
+
+        assert response.status_code == 200
+        system_prompt = _extract_openai_system_prompt(mock_openai_api)
+        assert "**Quoted text:**" in system_prompt
+        assert "> repeat" in system_prompt
+        assert "**Context:**" not in system_prompt
+        assert "DO_NOT_USE_PREFIX" not in system_prompt
+        assert "DO_NOT_USE_SUFFIX" not in system_prompt
+
+        conversation_id = response.json()["data"]["conversation"]["id"]
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
 
 
 # =============================================================================
