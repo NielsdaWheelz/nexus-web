@@ -11,13 +11,19 @@ export async function middleware(request: NextRequest) {
   // Handle session and auth redirects
   const response = await updateSession(request);
 
+  // E2E runner can disable CSP to allow stable Playwright auth/session bootstrapping.
+  if (process.env.E2E_DISABLE_CSP === "1") {
+    return response;
+  }
+
   // Generate CSP nonce for inline scripts
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
 
   // Build CSP header
   const cspHeader = [
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    `script-src 'self' 'nonce-${nonce}'`,
     `style-src 'self' 'unsafe-inline'`,
+    `worker-src 'self'`,
     `object-src 'none'`,
     `base-uri 'self'`,
     `frame-ancestors 'none'`,

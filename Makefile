@@ -182,7 +182,9 @@ api:
 web:
 	cd apps/web && \
 		FASTAPI_BASE_URL=http://localhost:8000 \
-		NEXUS_ENV=local \
+		NEXUS_ENV=$${NEXUS_ENV:-local} \
+		NEXT_PUBLIC_SUPABASE_URL=$${NEXT_PUBLIC_SUPABASE_URL:-$(SUPABASE_URL)} \
+		NEXT_PUBLIC_SUPABASE_ANON_KEY=$${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$(SUPABASE_ANON_KEY)} \
 		npm run dev
 
 worker:
@@ -224,10 +226,10 @@ test-front-browser:
 	cd apps/web && npx vitest run --project browser
 
 test-e2e:
-	cd e2e && npx tsx seed-e2e-user.ts && npx playwright install --with-deps chromium && npx playwright test
+	cd e2e && npx tsx seed-e2e-user.ts && cd ../python && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local uv run python scripts/seed_e2e_pdf.py && cd ../e2e && npx playwright install --with-deps chromium && npx playwright test
 
 test-e2e-ui:
-	cd e2e && npx playwright install --with-deps chromium && npx playwright test --ui
+	cd e2e && npx tsx seed-e2e-user.ts && cd ../python && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local uv run python scripts/seed_e2e_pdf.py && cd ../e2e && npx playwright install --with-deps chromium && npx playwright test --ui
 
 # === Verify ===
 

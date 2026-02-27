@@ -32,12 +32,21 @@ export default defineConfig({
       url: `http://localhost:${WEB_PORT}`,
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
+      env: {
+        ...process.env,
+        NEXUS_ENV: "test",
+        E2E_DISABLE_CSP: "1",
+      },
     },
     {
       command: `cd .. && make api`,
       url: `http://localhost:${API_PORT}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
+      env: {
+        ...process.env,
+        SIGNED_URL_EXPIRY_S: process.env.SIGNED_URL_EXPIRY_S ?? "8",
+      },
     },
   ],
 });

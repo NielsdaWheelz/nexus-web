@@ -17,6 +17,7 @@ import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import PdfReader from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
 import HighlightEditor, { type Highlight } from "@/components/HighlightEditor";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
@@ -62,6 +63,8 @@ interface Media {
   title: string;
   canonical_source_url: string | null;
   processing_status: string;
+  failure_stage?: string | null;
+  last_error_code?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -227,9 +230,13 @@ export default function MediaViewPage({
 
   // ---- Derived state ----
   const isEpub = media?.kind === "epub";
+  const isPdf = media?.kind === "pdf";
 
   // Unified active content for both paths
   const activeContent: ActiveContent | null = useMemo(() => {
+    if (isPdf) {
+      return null;
+    }
     if (isEpub && activeChapter) {
       return {
         fragmentId: activeChapter.fragment_id,
@@ -246,7 +253,7 @@ export default function MediaViewPage({
       };
     }
     return null;
-  }, [isEpub, activeChapter, fragments]);
+  }, [isPdf, isEpub, activeChapter, fragments]);
 
   const canRead = media ? isReadableStatus(media.processing_status) : false;
 
@@ -264,7 +271,7 @@ export default function MediaViewPage({
         const m = mediaResp.data;
         setMedia(m);
 
-        if (m.kind !== "epub") {
+        if (m.kind !== "epub" && m.kind !== "pdf") {
           // Non-EPUB: load fragments
           const fragmentsResp = await apiFetch<{ data: Fragment[] }>(
             `/api/media/${id}/fragments`
@@ -859,21 +866,36 @@ export default function MediaViewPage({
         <div className={styles.content}>
           <MediaHeader media={media} />
 
-          {isMismatchDisabled && (
+          {!isPdf && isMismatchDisabled && (
             <div className={styles.mismatchBanner}>
               Highlights disabled due to content mismatch. Try reloading.
             </div>
           )}
 
-          {selectionError && (
+          {!isPdf && selectionError && (
             <div className={styles.selectionError}>{selectionError}</div>
           )}
 
           {!canRead ? (
             <div className={styles.notReady}>
-              <p>This media is still being processed.</p>
-              <p>Status: {media.processing_status}</p>
+              {isPdf && media.processing_status === "failed" ? (
+                <>
+                  {media.last_error_code === "E_PDF_PASSWORD_REQUIRED" ? (
+                    <p>This PDF is password-protected and cannot be opened in v1.</p>
+                  ) : (
+                    <p>This PDF cannot be opened right now.</p>
+                  )}
+                  {media.last_error_code && <p>Error: {media.last_error_code}</p>}
+                </>
+              ) : (
+                <>
+                  <p>This media is still being processed.</p>
+                  <p>Status: {media.processing_status}</p>
+                </>
+              )}
             </div>
+          ) : isPdf ? (
+            <PdfReader mediaId={id} />
           ) : isEpub ? (
             <EpubContentPane
               manifest={epubManifest}
@@ -908,7 +930,7 @@ export default function MediaViewPage({
       </Pane>
 
       {/* Linked Items Pane */}
-      {canRead && (
+      {canRead && !isPdf && (
         <Pane title="Highlights" defaultWidth={360} minWidth={280}>
           {focusState.focusedId ? (
             <div className={styles.linkedItems}>
@@ -943,7 +965,7 @@ export default function MediaViewPage({
       )}
 
       {/* Selection Popover */}
-      {selection && !focusState.editingBounds && contentRef.current && (
+      {!isPdf && selection && !focusState.editingBounds && contentRef.current && (
         <SelectionPopover
           selectionRect={selection.rect}
           containerRef={contentRef}

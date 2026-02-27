@@ -54,4 +54,12 @@ describe("media EPUB BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/toc");
   });
+
+  it("GET /api/media/[id]/file proxies to canonical /media/{id}/file", async () => {
+    const { GET } = await import("./[id]/file/route");
+    const req = new Request("http://localhost/api/media/mid-123/file");
+    await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/file");
+  });
 });
