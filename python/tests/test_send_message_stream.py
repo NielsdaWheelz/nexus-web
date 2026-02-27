@@ -13,13 +13,15 @@ Covers:
 - Auth middleware skip for /stream/*
 """
 
+import json
 import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import jwt
 import pytest
+from sqlalchemy import text
 
 from nexus.auth.stream_token import (
     STREAM_TOKEN_AUDIENCE,
@@ -30,16 +32,31 @@ from nexus.auth.stream_token import (
     mint_stream_token,
     verify_stream_token,
 )
+from nexus.config import clear_settings_cache
+from nexus.db.session import create_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.middleware.stream_cors import StreamCORSMiddleware
+from nexus.services.api_key_resolver import ResolvedKey
+from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.llm.types import LLMChunk, LLMUsage
-from nexus.services.rate_limit import RateLimiter
+from nexus.services.rate_limit import RateLimiter, set_rate_limiter
+from nexus.services.send_message_stream import (
+    _finalize_stream_conditional,
+    stream_send_message_async,
+)
 from nexus.services.stream_liveness import (
     check_liveness_marker,
     clear_liveness_marker,
     set_liveness_marker,
 )
 from nexus.tasks.sweep_pending import sweep_pending_messages
+from tests.factories import (
+    create_pdf_media_with_text,
+    create_test_conversation,
+    create_test_message,
+    create_test_model,
+    get_user_default_library,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -299,6 +316,282 @@ class TestBudgetReservation:
         with pytest.raises(ApiError) as exc:
             limiter.reserve_token_budget(uuid4(), uuid4(), 5000)
         assert exc.value.code == ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE
+
+
+# =============================================================================
+# S6 PR-05: PDF Quote-Blocking Stream Semantics
+# =============================================================================
+
+
+class _RecordingRouter:
+    def __init__(self):
+        self.called = False
+
+    async def generate_stream(self, *args, **kwargs):
+        self.called = True
+        yield LLMChunk(
+            delta_text="",
+            done=True,
+            usage=LLMUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            provider_request_id="req-test",
+        )
+
+
+def _parse_sse_data(event: str) -> dict:
+    data_line = next(line for line in event.splitlines() if line.startswith("data: "))
+    return json.loads(data_line.removeprefix("data: "))
+
+
+class TestPdfQuoteBlockingStream:
+    @pytest.mark.asyncio
+    async def test_pdf_not_ready_blocks_before_delta_and_returns_media_not_ready(
+        self,
+        engine,
+        direct_db,
+        mock_redis,
+        monkeypatch,
+    ):
+        """Meta may emit first, but quote-blocking errors must emit done(error) before delta."""
+        monkeypatch.setenv("OPENAI_API_KEY", "test-platform-key")
+        clear_settings_cache()
+        set_rate_limiter(RateLimiter(redis_client=mock_redis))
+
+        user_id = uuid4()
+        with direct_db.session() as session:
+            ensure_user_and_default_library(session, user_id)
+            model_id = create_test_model(session)
+            library_id = get_user_default_library(session, user_id)
+            assert library_id is not None
+
+            media_id = create_pdf_media_with_text(
+                session,
+                user_id,
+                library_id,
+                plain_text="",
+                page_count=1,
+                page_spans=[(0, 0)],
+                status="ready_for_reading",
+            )
+
+            highlight_id = uuid4()
+            session.execute(
+                text("""
+                    INSERT INTO highlights (
+                        id, user_id, fragment_id, start_offset, end_offset,
+                        anchor_kind, anchor_media_id,
+                        color, exact, prefix, suffix
+                    )
+                    VALUES (
+                        :id, :user_id, NULL, NULL, NULL,
+                        'pdf_page_geometry', :media_id,
+                        'yellow', 'stored exact', '', ''
+                    )
+                """),
+                {
+                    "id": highlight_id,
+                    "user_id": user_id,
+                    "media_id": media_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO highlight_pdf_anchors (
+                        highlight_id, media_id, page_number,
+                        geometry_version, geometry_fingerprint,
+                        sort_top, sort_left,
+                        plain_text_match_version, plain_text_match_status,
+                        plain_text_start_offset, plain_text_end_offset,
+                        rect_count
+                    )
+                    VALUES (
+                        :highlight_id, :media_id, 1,
+                        1, :fingerprint,
+                        0, 0,
+                        NULL, 'pending',
+                        NULL, NULL,
+                        1
+                    )
+                """),
+                {
+                    "highlight_id": highlight_id,
+                    "media_id": media_id,
+                    "fingerprint": "0" * 64,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlight_pdf_anchors", "highlight_id", highlight_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        db_factory = create_session_factory(engine)
+        router = _RecordingRouter()
+        events = []
+
+        async for event in stream_send_message_async(
+            db_factory=db_factory,
+            viewer_id=user_id,
+            conversation_id=None,
+            content="Explain this PDF quote",
+            model_id=model_id,
+            key_mode="auto",
+            contexts=[{"type": "highlight", "id": highlight_id}],
+            redis_client=mock_redis,
+            llm_router=router,
+        ):
+            events.append(event)
+
+        assert events
+        assert events[0].startswith("event: meta")
+        assert not any(e.startswith("event: delta") for e in events)
+        done_event = next(e for e in events if e.startswith("event: done"))
+        done_payload = _parse_sse_data(done_event)
+        assert done_payload["status"] == "error"
+        assert done_payload["error_code"] == "E_MEDIA_NOT_READY"
+        assert router.called is False
+
+        meta_payload = _parse_sse_data(events[0])
+        conversation_id = UUID(meta_payload["conversation_id"])
+        assistant_message_id = UUID(meta_payload["assistant_message_id"])
+
+        with direct_db.session() as session:
+            message_row = session.execute(
+                text("SELECT status, error_code FROM messages WHERE id = :id"),
+                {"id": assistant_message_id},
+            ).fetchone()
+            assert message_row is not None
+            assert message_row[0] == "error"
+            assert message_row[1] == "E_MEDIA_NOT_READY"
+
+            llm_row = session.execute(
+                text("""
+                    SELECT error_class, provider_request_id
+                    FROM message_llm
+                    WHERE message_id = :id
+                """),
+                {"id": assistant_message_id},
+            ).fetchone()
+            assert llm_row is not None
+            assert llm_row[0] == "E_MEDIA_NOT_READY"
+            assert llm_row[1] is None
+
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+
+class TestStreamFinalizeErrorMessages:
+    def test_non_quote_error_uses_default_message_copy(self, direct_db):
+        """Non-quote error codes must not get quote-context fallback copy."""
+        user_id = uuid4()
+        with direct_db.session() as session:
+            ensure_user_and_default_library(session, user_id)
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id=conversation_id,
+                seq=1,
+                role="assistant",
+                content="",
+                status="pending",
+                model_id=model_id,
+            )
+
+            model_stub = MagicMock(provider="openai", model_name="gpt-4o")
+            resolved_key = ResolvedKey(
+                api_key="sk-test",
+                mode="byok",
+                provider="openai",
+                user_key_id=None,
+            )
+            finalized = _finalize_stream_conditional(
+                db=session,
+                assistant_message_id=assistant_message_id,
+                content="",
+                status="error",
+                error_code="E_CLIENT_DISCONNECT",
+                model=model_stub,
+                resolved_key=resolved_key,
+                key_mode="auto",
+                latency_ms=5,
+                usage=None,
+                viewer_id=user_id,
+                redis_client=None,
+                quote_context_error=False,
+            )
+            assert finalized is True
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("SELECT content, status, error_code FROM messages WHERE id = :id"),
+                {"id": assistant_message_id},
+            ).fetchone()
+            assert row is not None
+            assert row[0] == "An unexpected error occurred. Please try again."
+            assert row[1] == "error"
+            assert row[2] == "E_CLIENT_DISCONNECT"
+
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+    def test_quote_error_preserves_quote_context_copy(self, direct_db):
+        """Quote-context failures keep explicit quote-context user copy."""
+        user_id = uuid4()
+        with direct_db.session() as session:
+            ensure_user_and_default_library(session, user_id)
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id=conversation_id,
+                seq=1,
+                role="assistant",
+                content="",
+                status="pending",
+                model_id=model_id,
+            )
+
+            model_stub = MagicMock(provider="openai", model_name="gpt-4o")
+            resolved_key = ResolvedKey(
+                api_key="sk-test",
+                mode="byok",
+                provider="openai",
+                user_key_id=None,
+            )
+            finalized = _finalize_stream_conditional(
+                db=session,
+                assistant_message_id=assistant_message_id,
+                content="",
+                status="error",
+                error_code="E_MEDIA_NOT_READY",
+                model=model_stub,
+                resolved_key=resolved_key,
+                key_mode="auto",
+                latency_ms=5,
+                usage=None,
+                viewer_id=user_id,
+                redis_client=None,
+                quote_context_error=True,
+            )
+            assert finalized is True
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("SELECT content, status, error_code FROM messages WHERE id = :id"),
+                {"id": assistant_message_id},
+            ).fetchone()
+            assert row is not None
+            assert (
+                row[0]
+                == "PDF quote context is not ready yet. Try again after PDF text processing completes."
+            )
+            assert row[1] == "error"
+            assert row[2] == "E_MEDIA_NOT_READY"
+
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
 
 
 # =============================================================================

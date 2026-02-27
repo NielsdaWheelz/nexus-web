@@ -42,6 +42,10 @@ from nexus.services.llm import LLMRouter
 from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.prompt import DEFAULT_SYSTEM_PROMPT
 from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMUsage, Turn
+from nexus.services.quote_context_errors import (
+    QuoteContextBlockingError,
+    get_quote_context_error_message,
+)
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
 from nexus.services.send_message import (
@@ -85,6 +89,7 @@ def _finalize_stream_conditional(
     viewer_id: UUID,
     redis_client=None,
     provider_request_id: str | None = None,
+    quote_context_error: bool = False,
 ) -> bool:
     """Finalize the assistant message with conditional update (exactly-once).
 
@@ -103,16 +108,20 @@ def _finalize_stream_conditional(
         if not content:
             error_class_enum = None
             if error_code:
-                try:
-                    error_class_enum = LLMErrorClass(error_code)
-                except ValueError:
-                    pass
+                if quote_context_error:
+                    final_content = get_quote_context_error_message(error_code)
+                else:
+                    try:
+                        error_class_enum = LLMErrorClass(error_code)
+                    except ValueError:
+                        pass
             default_message = "An unexpected error occurred. Please try again."
-            final_content = (
-                ERROR_CLASS_TO_MESSAGE.get(error_class_enum, default_message)
-                if error_class_enum
-                else default_message
-            )
+            if final_content == content:
+                final_content = (
+                    ERROR_CLASS_TO_MESSAGE.get(error_class_enum, default_message)
+                    if error_class_enum
+                    else default_message
+                )
 
     # Conditional update: only finalize if still pending
     result = db.execute(
@@ -597,6 +606,8 @@ async def stream_send_message_async(
                 await refresh_liveness_marker(redis_client, assistant_message_id)
                 last_keepalive = now
 
+    except QuoteContextBlockingError as e:
+        error = e
     except LLMError as e:
         error = e
     except asyncio.CancelledError:
@@ -613,7 +624,9 @@ async def stream_send_message_async(
         if assistant_message_id and resolved_key and model:
             if error:
                 error_code = "E_INTERNAL"
-                if isinstance(error, LLMError):
+                if isinstance(error, QuoteContextBlockingError):
+                    error_code = error.error_code.value
+                elif isinstance(error, LLMError):
                     error_code = error.error_class.value
                 elif "E_CLIENT_DISCONNECT" in str(error):
                     error_code = "E_CLIENT_DISCONNECT"
@@ -633,6 +646,7 @@ async def stream_send_message_async(
                     viewer_id,
                     redis_client,
                     provider_request_id,
+                    isinstance(error, QuoteContextBlockingError),
                 )
             else:
                 await run_in_threadpool(
@@ -650,6 +664,7 @@ async def stream_send_message_async(
                     viewer_id,
                     redis_client,
                     provider_request_id,
+                    False,
                 )
 
             # Release budget if reserved but not committed through finalize
@@ -664,6 +679,7 @@ async def stream_send_message_async(
         # PR-09: Emit terminal stream event + phase timing
         is_disconnect = error and "E_CLIENT_DISCONNECT" in str(error)
         is_llm_error = isinstance(error, LLMError)
+        is_quote_blocking = isinstance(error, QuoteContextBlockingError)
 
         if error:
             if is_disconnect:
@@ -679,7 +695,12 @@ async def stream_send_message_async(
                 )
             else:
                 outcome = "error"
-                err_class = error.error_class.value if is_llm_error else "E_INTERNAL"
+                if is_quote_blocking:
+                    err_class = error.error_code.value
+                elif is_llm_error:
+                    err_class = error.error_class.value
+                else:
+                    err_class = "E_INTERNAL"
                 logger.error(
                     "stream.finalized_error",
                     **safe_kv(
@@ -722,7 +743,9 @@ async def stream_send_message_async(
     # Yield done event (after finally, if generator wasn't cancelled)
     if error:
         error_code = "E_INTERNAL"
-        if isinstance(error, LLMError):
+        if isinstance(error, QuoteContextBlockingError):
+            error_code = error.error_code.value
+        elif isinstance(error, LLMError):
             error_code = error.error_class.value
         elif "E_CLIENT_DISCONNECT" in str(error):
             error_code = "E_CLIENT_DISCONNECT"

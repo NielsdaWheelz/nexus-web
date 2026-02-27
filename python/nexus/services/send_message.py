@@ -82,6 +82,10 @@ from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.prompt import DEFAULT_SYSTEM_PROMPT, render_prompt
 from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMResponse
 from nexus.services.media import can_read_media
+from nexus.services.quote_context_errors import (
+    QuoteContextBlockingError,
+    get_quote_context_error_message,
+)
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
 from nexus.services.seq import assign_next_message_seq
@@ -186,6 +190,23 @@ class ExecuteResult:
     response: LLMResponse | None = None
     error: LLMError | None = None
     latency_ms: int = 0
+
+
+class PreLLMQuoteContextError(Exception):
+    """Quote-context failure raised before provider execution starts."""
+
+    def __init__(
+        self,
+        error_code: ApiErrorCode,
+        message: str,
+        resolved_key: ResolvedKey,
+        latency_ms: int,
+    ):
+        self.error_code = error_code
+        self.message = message
+        self.resolved_key = resolved_key
+        self.latency_ms = latency_ms
+        super().__init__(message)
 
 
 def compute_payload_hash(
@@ -569,7 +590,16 @@ def phase2_execute(
     resolved_key = resolve_api_key(db, viewer_id, model.provider, key_mode)
 
     # Render context blocks (from context_rendering.py - has DB access)
-    context_text, context_chars = render_context_blocks(db, contexts)
+    try:
+        context_text, context_chars = render_context_blocks(db, contexts)
+    except QuoteContextBlockingError as quote_err:
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        raise PreLLMQuoteContextError(
+            error_code=quote_err.error_code,
+            message=quote_err.message,
+            resolved_key=resolved_key,
+            latency_ms=latency_ms,
+        ) from quote_err
 
     if context_chars > MAX_RENDERED_CONTEXT_CHARS:
         logger.warning(
@@ -624,6 +654,42 @@ def phase2_execute(
             error=e,
             latency_ms=latency_ms,
         ), resolved_key
+
+
+def finalize_pre_llm_quote_failure(
+    db: Session,
+    assistant_message: Message,
+    model: Model,
+    resolved_key: ResolvedKey,
+    key_mode: str,
+    error_code: ApiErrorCode,
+    latency_ms: int,
+) -> None:
+    """Finalize assistant/message_llm for quote-blocking pre-LLM failures."""
+    if assistant_message.status != "pending":
+        return
+
+    assistant_message.content = get_quote_context_error_message(error_code)
+    assistant_message.status = "error"
+    assistant_message.error_code = error_code.value
+    assistant_message.updated_at = datetime.now(UTC)
+
+    existing_llm = db.get(MessageLLM, assistant_message.id)
+    if existing_llm is None:
+        db.add(
+            MessageLLM(
+                message_id=assistant_message.id,
+                provider=model.provider,
+                model_name=model.model_name,
+                key_mode_requested=key_mode,
+                key_mode_used=resolved_key.mode,
+                latency_ms=latency_ms,
+                error_class=error_code.value,
+                prompt_version=PROMPT_VERSION,
+            )
+        )
+
+    db.commit()
 
 
 def phase3_finalize(
@@ -823,17 +889,45 @@ def send_message(
 
             # Phase 2: Execute
             phase2_start = time.monotonic()
-            execute_result, resolved_key = phase2_execute(
-                db,
-                viewer_id,
-                model,
-                content,
-                key_mode,
-                contexts,
-                router=router,
-                call_context=call_ctx,
-            )
-            phase2_ms = int((time.monotonic() - phase2_start) * 1000)
+            try:
+                execute_result, resolved_key = phase2_execute(
+                    db,
+                    viewer_id,
+                    model,
+                    content,
+                    key_mode,
+                    contexts,
+                    router=router,
+                    call_context=call_ctx,
+                )
+                phase2_ms = int((time.monotonic() - phase2_start) * 1000)
+            except PreLLMQuoteContextError as quote_err:
+                phase2_ms = int((time.monotonic() - phase2_start) * 1000)
+                phase3_start = time.monotonic()
+                finalize_pre_llm_quote_failure(
+                    db=db,
+                    assistant_message=prepare_result.assistant_message,
+                    model=model,
+                    resolved_key=quote_err.resolved_key,
+                    key_mode=key_mode,
+                    error_code=quote_err.error_code,
+                    latency_ms=quote_err.latency_ms,
+                )
+                phase3_ms = int((time.monotonic() - phase3_start) * 1000)
+                total_ms = int((time.monotonic() - total_start) * 1000)
+                logger.warning(
+                    "send.quote_context_blocked",
+                    **safe_kv(
+                        conversation_id=str(prepare_result.conversation.id),
+                        assistant_message_id=str(prepare_result.assistant_message.id),
+                        error_code=quote_err.error_code.value,
+                        phase1_db_ms=phase1_ms,
+                        phase2_pre_llm_ms=phase2_ms,
+                        phase3_finalize_ms=phase3_ms,
+                        total_ms=total_ms,
+                    ),
+                )
+                raise ApiError(quote_err.error_code, quote_err.message) from quote_err
 
             # Phase 3: Finalize
             phase3_start = time.monotonic()
