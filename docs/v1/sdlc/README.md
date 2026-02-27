@@ -13,18 +13,29 @@
       │  l1  slice roadmap   ordering    │
       └──────────────┬───────────────────┘
                      ▼
-        ┌──────────────────────────────┐
-        │  l2  slice plan              │
-        │  (acceptance + pr briefs)    │
-        └──────────┬───────────────────┘
-                   ▼
+           ┌────────────────────┐
+           │  l2  slice spec    │
+           │  (acceptance +     │
+           │   key decisions)   │
+           └────────┬───────────┘
+                    ▼
+           ┌────────────────────┐
+           │  l3  pr roadmap    │
+           │  (1-2 at a time)   │
+           └────────┬───────────┘
+                    ▼
+           ┌────────────────────┐
+           │  l4  pr brief      │
+           │  (20-40 lines)     │
+           └────────┬───────────┘
+                    ▼
               ┌──────────┐
               │   code   │
               │ + tests  │
               └──────────┘
 ```
 
-l0 defines project constraints. l1 orders the work. l2 defines what each slice delivers and how it breaks into prs. code + tests are the source of truth.
+l0 defines project constraints. l1 orders the work. l2 defines what the slice delivers. l3 decides pr ordering. l4 scopes one pr. code + tests are the source of truth.
 
 ## core rules
 
@@ -37,21 +48,23 @@ l0 defines project constraints. l1 orders the work. l2 defines what each slice d
 
 ## dispatch logic
 
+after each step completes, restart from the top.
+
 ```
-start:
-  if no l0 exists           -> write l0
-  if no l1 exists           -> write l1
-  if next slice has no l2   -> write l2 (with first 1-2 pr briefs)
-  if next pr has brief      -> implement pr (write tests first, then code)
-  after pr merges           -> add next pr brief to l2, implement
-  after slice complete      -> write l2 for next slice
+if no l0 exists                  -> write l0
+if no l1 exists                  -> write l1
+if next slice has no l2          -> write l2
+if l3 missing or next pr unplanned -> write/update l3
+if next pr has no l4             -> write l4
+if l4 exists and pr not started  -> implement pr (tests first, then code)
+if all l2 acceptance criteria met -> slice complete, loop to next slice
 ```
 
 ## verification
 
 the plan is the direction gate. code + tests are the proof gate.
 
-**before implementation**: human reads slice plan + pr brief. short enough to read critically in under 5 minutes. approve direction or redirect.
+**before implementation**: human reads slice spec + pr brief. short enough to read critically in under 5 minutes. approve direction or redirect.
 
 **during implementation**: agent runs existing tests first to understand the codebase, then writes failing tests from acceptance criteria (red), then writes code to pass them (green).
 
@@ -67,16 +80,38 @@ the human must understand the code they approve. if you can't explain what it do
 
 | trigger | action |
 |---|---|
-| implementation diverges from plan | update plan to match reality, note why |
-| slice plan needs revision | update l2, adjust upcoming pr briefs |
-| l1 ordering is wrong | fix l1, update affected l2s |
+| implementation diverges from brief | update l4 to match reality, note why |
+| slice spec needs revision | update l2, adjust l3/l4 |
+| l1 ordering is wrong | fix l1, update affected slices |
 | l0 constraint is wrong | full stop, revise l0, audit downstream |
 
-divergence is expected. update the plan to match the code, not the other way around.
+divergence is expected. update the docs to match the code, not the other way around.
+
+## when to use this pipeline
+
+the full l0→l4 pipeline is for feature development: new slices, new capabilities.
+
+for smaller work, right-size the process:
+- **bug fix in existing slice**: write a brief l4, implement, submit.
+- **small refactor**: no spec needed. implement with tests, submit.
+- **exploratory spike**: skip specs entirely. build it, evaluate, decide whether to keep or restart with a proper spec.
+- **one-off improvement**: l4 brief if scope is ambiguous, otherwise just implement.
+
+the rule: if you can explain the change in one sentence and the scope is obvious, skip to code. if there's ambiguity about what to build or how it affects other parts, write the relevant spec layer.
+
+## skill docs
+
+- [l0: constitution](./L0-constitution.md)
+- [l1: slice roadmap](./L1-slice-roadmap.md)
+- [l2: slice spec](./L2-slice-spec.md)
+- [l3: pr roadmap](./L3-pr-roadmap.md)
+- [l4: pr brief](./L4-pr-brief.md)
 
 ## examples
 
-worked example:
+worked example (bookmark manager):
 - [l0: constitution](./examples/bookmark-manager/constitution.md)
 - [l1: roadmap](./examples/bookmark-manager/roadmap.md)
-- [l2: slice plan](./examples/bookmark-manager/slice-2-bookmark-crud.md)
+- [l2: slice spec](./examples/bookmark-manager/slice-2-spec.md)
+- [l3: pr roadmap](./examples/bookmark-manager/slice-2-roadmap.md)
+- [l4: pr brief](./examples/bookmark-manager/slice-2-pr01.md)

@@ -1,4 +1,4 @@
-# Slice 2: Bookmark CRUD — Plan
+# Slice 2: Bookmark CRUD — Spec
 
 ## Goal
 
@@ -52,18 +52,3 @@ Users can create, read, update, and delete bookmarks.
 - Frontend UI (Slice 6)
 - Bookmark sharing between users
 - URL validation or server-side title fetching
-
----
-
-## PRs
-
-### PR-01: bookmark CRUD backend
-- **goal**: add bookmark model, storage, service logic, and API routes with full test coverage.
-- **builds on**: slice 1 (auth) complete.
-- **acceptance**:
-  - all six acceptance criteria above pass as automated tests.
-  - migration creates bookmarks table with constraints.
-  - API routes follow L0 conventions (error format, pagination, auth).
-- **non-goals**: no frontend, no tags, no search.
-
-### PR-02: (planned after PR-01 merges)

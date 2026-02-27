@@ -132,4 +132,4 @@ when invoking this skill, include:
 - known technical constraints (team, budget, infra).
 - any prior art or existing systems being replaced.
 
-see also: [l0 example](./examples/bookmark-manager/constitution.md) | next: [l1: slice roadmap](./L1-slice-roadmap.md)
+see also: [l0 example](./examples/bookmark-manager/constitution.md) | next: [l1: slice roadmap](./L1-slice-roadmap.md) | [all skills](./README.md)

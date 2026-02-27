@@ -78,4 +78,4 @@ when invoking this skill, include:
 - l0 vision, scope, non-scope.
 - l0 core abstractions and architecture components.
 
-see also: [l1 example](./examples/bookmark-manager/roadmap.md) | next: [l2: slice plan](./L2-slice-plan.md)
+see also: [l1 example](./examples/bookmark-manager/roadmap.md) | next: [l2: slice spec](./L2-slice-spec.md) | [all skills](./README.md)
