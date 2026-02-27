@@ -90,6 +90,7 @@ secrets/
 
 # Playwright E2E auth state
 e2e/.auth/
+e2e/.seed/
 e2e/test-results/
 e2e/playwright-report/
 
