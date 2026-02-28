@@ -301,6 +301,8 @@ Rule:
 - Seed through app APIs or a dedicated `e2e/` seed script
 - Avoid direct DB writes from Playwright tests
 - Prefer deterministic seed inputs and idempotent setup behavior
+- Prefer Playwright `globalSetup` for centralized seeding/bootstrap so all invocation paths (`make test-e2e`, direct `npm test`, CI) share identical setup guarantees
+- `globalSetup` may load repo `.env`/runtime port files to mirror Makefile behavior when tests are run outside Make
 
 ## 8. Test Organization
 
@@ -348,6 +350,7 @@ Guidance:
 ```text
 e2e/
 |- playwright.config.ts
+|- global-setup.mjs
 |- package.json
 |- tsconfig.json
 |- seed-*.ts

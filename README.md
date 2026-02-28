@@ -127,8 +127,30 @@ make test-migrations
 # Run Supabase integration tests (auth JWKS + storage)
 make test-supabase
 
+# Run E2E browser tests (Playwright)
+make test-e2e
+
 # Seed development data (creates fixture media)
 make seed
+```
+
+### E2E Test Seeding
+
+`e2e/` tests use Playwright `globalSetup` to bootstrap deterministic seed data before any
+project starts:
+
+- seeds/refreshes E2E auth user (`e2e/seed-e2e-user.ts`)
+- seeds readable PDF media (`python/scripts/seed_e2e_pdf.py`)
+- writes `e2e/.seed/pdf-media.json` used by PDF reader specs
+
+`globalSetup` loads root `.env` and `.dev-ports` automatically so direct runs like
+`cd e2e && npm test -- tests/pdf-reader.spec.ts --project=chromium` behave like `make test-e2e`.
+
+For fast local reruns when seed state is known-good:
+
+```bash
+cd e2e
+SKIP_SEED=1 npm test -- tests/pdf-reader.spec.ts --project=chromium
 ```
 
 ### Run Full Stack

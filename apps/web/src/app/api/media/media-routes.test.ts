@@ -62,4 +62,47 @@ describe("media EPUB BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/file");
   });
+
+  it("GET /api/media/[id]/pdf-highlights proxies to /media/{id}/pdf-highlights", async () => {
+    const { GET } = await import("./[id]/pdf-highlights/route");
+    const req = new Request(
+      "http://localhost/api/media/mid-123/pdf-highlights?page_number=1&mine_only=false"
+    );
+    await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(
+      req,
+      "/media/mid-123/pdf-highlights"
+    );
+  });
+
+  it("POST /api/media/[id]/pdf-highlights proxies to /media/{id}/pdf-highlights", async () => {
+    const { POST } = await import("./[id]/pdf-highlights/route");
+    const req = new Request("http://localhost/api/media/mid-123/pdf-highlights", {
+      method: "POST",
+      body: JSON.stringify({
+        page_number: 1,
+        exact: "hello",
+        color: "yellow",
+        quads: [
+          {
+            x1: 10,
+            y1: 20,
+            x2: 30,
+            y2: 20,
+            x3: 30,
+            y3: 32,
+            x4: 10,
+            y4: 32,
+          },
+        ],
+      }),
+    });
+    await POST(req, { params: Promise.resolve({ id: "mid-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(
+      req,
+      "/media/mid-123/pdf-highlights"
+    );
+  });
 });

@@ -4,6 +4,7 @@ const WEB_PORT = process.env.WEB_PORT ?? "3000";
 const API_PORT = process.env.API_PORT ?? "8000";
 
 export default defineConfig({
+  globalSetup: "./global-setup.mjs",
   testDir: "./tests",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
