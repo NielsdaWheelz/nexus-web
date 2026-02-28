@@ -226,10 +226,10 @@ test-front-browser:
 	cd apps/web && npx vitest run --project browser
 
 test-e2e:
-	cd e2e && npx tsx seed-e2e-user.ts && cd ../python && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local uv run python scripts/seed_e2e_pdf.py && cd ../e2e && npx playwright install --with-deps chromium && npx playwright test
+	cd e2e && npx playwright install --with-deps chromium && npx playwright test
 
 test-e2e-ui:
-	cd e2e && npx tsx seed-e2e-user.ts && cd ../python && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local uv run python scripts/seed_e2e_pdf.py && cd ../e2e && npx playwright install --with-deps chromium && npx playwright test --ui
+	cd e2e && npx playwright install --with-deps chromium && npx playwright test --ui
 
 # === Verify ===
 

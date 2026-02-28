@@ -7,7 +7,8 @@
 .toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: var(--space-2);
   padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--color-border-subtle);
@@ -36,6 +37,21 @@
 .pageIndicator {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+  min-width: 110px;
+}
+
+.zoomControls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.zoomLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  min-width: 3.5rem;
+  text-align: center;
 }
 
 .notice {
@@ -50,6 +66,21 @@
   overflow-x: auto;
 }
 
+.pageLayer {
+  position: relative;
+  width: max-content;
+}
+
+/* Keep PDF geometry calculations stable under global CSS resets. */
+.canvas,
+.textLayer,
+.textLayer :global(span),
+.textLayer :global(br),
+.overlayLayer,
+.highlightOverlayRect {
+  box-sizing: content-box;
+}
+
 .loading {
   margin-bottom: var(--space-2);
   color: var(--color-text-muted);
@@ -57,11 +88,42 @@
 }
 
 .canvas {
-  max-width: 100%;
   border: 1px solid var(--color-border-subtle);
   border-radius: 4px;
   display: block;
   background: #fff;
+}
+
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 1;
+  line-height: 1;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+}
+
+.textLayer :global(span),
+.textLayer :global(br) {
+  user-select: text;
+  cursor: text;
+}
+
+.overlayLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.highlightOverlayRect {
+  position: absolute;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.highlightOverlayRectFocused {
+  outline: 2px solid var(--color-accent);
 }
 
 .error {

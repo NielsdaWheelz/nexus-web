@@ -122,6 +122,15 @@ export default function SelectionPopover({
   // Handle click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target;
+      if (target instanceof Element) {
+        const preserveSelectionTarget = target.closest(
+          '[data-selection-popover-ignore-outside="true"]',
+        );
+        if (preserveSelectionTarget) {
+          return;
+        }
+      }
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         onDismiss();
       }

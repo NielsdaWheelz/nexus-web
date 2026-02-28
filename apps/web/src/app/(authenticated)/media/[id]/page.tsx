@@ -17,7 +17,7 @@ import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import PdfReader from "@/components/PdfReader";
+import PdfReader, { type PdfHighlightOut } from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
 import HighlightEditor, { type Highlight } from "@/components/HighlightEditor";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
@@ -78,6 +78,8 @@ interface Fragment {
   created_at: string;
 }
 
+type EditorHighlight = Highlight;
+
 interface SelectionState {
   range: Range;
   rect: DOMRect;
@@ -89,6 +91,13 @@ interface ActiveContent {
   htmlSanitized: string;
   canonicalText: string;
 }
+
+type PageLinkedHighlight = {
+  id: string;
+  exact: string;
+  color: EditorHighlight["color"];
+  annotation: EditorHighlight["annotation"];
+};
 
 // =============================================================================
 // API Functions
@@ -161,6 +170,22 @@ async function deleteAnnotation(highlightId: string): Promise<void> {
   });
 }
 
+function toEditorHighlightFromPdf(highlight: PdfHighlightOut): EditorHighlight {
+  return {
+    id: highlight.id,
+    fragment_id: "",
+    start_offset: 0,
+    end_offset: 0,
+    color: highlight.color,
+    exact: highlight.exact,
+    prefix: highlight.prefix,
+    suffix: highlight.suffix,
+    created_at: highlight.created_at,
+    updated_at: highlight.updated_at,
+    annotation: highlight.annotation,
+  };
+}
+
 async function fetchChapterDetail(
   mediaId: string,
   idx: number,
@@ -209,6 +234,10 @@ export default function MediaViewPage({
 
   // ---- Highlight interaction state ----
   const [highlights, setHighlights] = useState<Highlight[]>([]);
+  const [pdfPageHighlights, setPdfPageHighlights] = useState<PdfHighlightOut[]>([]);
+  const [pdfActivePage, setPdfActivePage] = useState(1);
+  const [pdfRefreshToken, setPdfRefreshToken] = useState(0);
+  const [pdfHighlightsVersion, setPdfHighlightsVersion] = useState(0);
   const {
     focusState,
     focusHighlight,
@@ -225,12 +254,43 @@ export default function MediaViewPage({
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
 
   const contentRef = useRef<HTMLDivElement>(null);
+  const pdfContentRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
   const [highlightsVersion, setHighlightsVersion] = useState(0);
 
   // ---- Derived state ----
   const isEpub = media?.kind === "epub";
   const isPdf = media?.kind === "pdf";
+  const linkedPaneHighlights: PageLinkedHighlight[] = useMemo(() => {
+    if (isPdf) {
+      return pdfPageHighlights.map((highlight) => ({
+        id: highlight.id,
+        exact: highlight.exact,
+        color: highlight.color,
+        annotation: highlight.annotation,
+      }));
+    }
+    return highlights.map((highlight) => ({
+      id: highlight.id,
+      exact: highlight.exact,
+      color: highlight.color,
+      annotation: highlight.annotation,
+    }));
+  }, [highlights, isPdf, pdfPageHighlights]);
+
+  const focusedHighlightForEditor = useMemo(() => {
+    if (!focusState.focusedId) {
+      return null;
+    }
+    if (isPdf) {
+      const pdfHighlight = pdfPageHighlights.find((h) => h.id === focusState.focusedId);
+      return pdfHighlight ? toEditorHighlightFromPdf(pdfHighlight) : null;
+    }
+    return highlights.find((h) => h.id === focusState.focusedId) ?? null;
+  }, [focusState.focusedId, highlights, isPdf, pdfPageHighlights]);
+
+  const linkedItemsContentRef = isPdf ? pdfContentRef : contentRef;
+  const linkedItemsVersion = isPdf ? pdfHighlightsVersion : highlightsVersion;
 
   // Unified active content for both paths
   const activeContent: ActiveContent | null = useMemo(() => {
@@ -256,6 +316,15 @@ export default function MediaViewPage({
   }, [isPdf, isEpub, activeChapter, fragments]);
 
   const canRead = media ? isReadableStatus(media.processing_status) : false;
+
+  useEffect(() => {
+    if (!isPdf) {
+      setPdfPageHighlights([]);
+      setPdfActivePage(1);
+      setPdfRefreshToken(0);
+      setPdfHighlightsVersion(0);
+    }
+  }, [isPdf, id]);
 
   // ==========================================================================
   // Data Fetching — initial load
@@ -510,6 +579,11 @@ export default function MediaViewPage({
   // ==========================================================================
 
   const handleSelectionChange = useCallback(() => {
+    if (isPdf) {
+      setSelection(null);
+      setSelectionError(null);
+      return;
+    }
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !contentRef.current) {
       setSelection(null);
@@ -533,7 +607,7 @@ export default function MediaViewPage({
     const rect = range.getBoundingClientRect();
     setSelection({ range, rect });
     setSelectionError(null);
-  }, [isMismatchDisabled]);
+  }, [isMismatchDisabled, isPdf]);
 
   useEffect(() => {
     document.addEventListener("selectionchange", handleSelectionChange);
@@ -671,6 +745,7 @@ export default function MediaViewPage({
 
   useEffect(() => {
     if (
+      isPdf ||
       !focusState.editingBounds ||
       !selection ||
       !activeContent ||
@@ -729,6 +804,7 @@ export default function MediaViewPage({
   }, [
     focusState.editingBounds,
     focusState.focusedId,
+    isPdf,
     selection,
     activeContent,
     isMismatchDisabled,
@@ -743,6 +819,12 @@ export default function MediaViewPage({
 
   const handleColorChange = useCallback(
     async (highlightId: string, color: HighlightColor) => {
+      if (isPdf) {
+        await updateHighlight(highlightId, { color });
+        setPdfRefreshToken((v) => v + 1);
+        setPdfHighlightsVersion((v) => v + 1);
+        return;
+      }
       if (!activeContent) return;
       await updateHighlight(highlightId, { color });
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
@@ -750,11 +832,18 @@ export default function MediaViewPage({
       setHighlightsVersion((v) => v + 1);
       clearHighlightCache();
     },
-    [activeContent]
+    [activeContent, isPdf]
   );
 
   const handleDelete = useCallback(
     async (highlightId: string) => {
+      if (isPdf) {
+        await deleteHighlight(highlightId);
+        setPdfRefreshToken((v) => v + 1);
+        setPdfHighlightsVersion((v) => v + 1);
+        clearFocus();
+        return;
+      }
       if (!activeContent) return;
       await deleteHighlight(highlightId);
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
@@ -763,27 +852,37 @@ export default function MediaViewPage({
       clearHighlightCache();
       clearFocus();
     },
-    [activeContent, clearFocus]
+    [activeContent, clearFocus, isPdf]
   );
 
   const handleAnnotationSave = useCallback(
     async (highlightId: string, body: string) => {
+      if (isPdf) {
+        await saveAnnotation(highlightId, body);
+        setPdfRefreshToken((v) => v + 1);
+        return;
+      }
       if (!activeContent) return;
       await saveAnnotation(highlightId, body);
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
       setHighlights(newHighlights);
     },
-    [activeContent]
+    [activeContent, isPdf]
   );
 
   const handleAnnotationDelete = useCallback(
     async (highlightId: string) => {
+      if (isPdf) {
+        await deleteAnnotation(highlightId);
+        setPdfRefreshToken((v) => v + 1);
+        return;
+      }
       if (!activeContent) return;
       await deleteAnnotation(highlightId);
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
       setHighlights(newHighlights);
     },
-    [activeContent]
+    [activeContent, isPdf]
   );
 
   // ==========================================================================
@@ -811,6 +910,22 @@ export default function MediaViewPage({
       setActiveChapterIdx(idx);
     },
     [router, id]
+  );
+
+  const handlePdfPageHighlightsChange = useCallback(
+    (nextPage: number, nextHighlights: PdfHighlightOut[]) => {
+      setPdfActivePage(nextPage);
+      setPdfPageHighlights(nextHighlights);
+      setPdfHighlightsVersion((v) => v + 1);
+
+      if (
+        focusState.focusedId &&
+        !nextHighlights.some((highlight) => highlight.id === focusState.focusedId)
+      ) {
+        clearFocus();
+      }
+    },
+    [clearFocus, focusState.focusedId]
   );
 
   // ==========================================================================
@@ -895,7 +1010,16 @@ export default function MediaViewPage({
               )}
             </div>
           ) : isPdf ? (
-            <PdfReader mediaId={id} />
+            <PdfReader
+              mediaId={id}
+              contentRef={pdfContentRef}
+              focusedHighlightId={focusState.focusedId}
+              editingHighlightId={
+                focusState.editingBounds ? focusState.focusedId : null
+              }
+              highlightRefreshToken={pdfRefreshToken}
+              onPageHighlightsChange={handlePdfPageHighlightsChange}
+            />
           ) : isEpub ? (
             <EpubContentPane
               manifest={epubManifest}
@@ -930,36 +1054,44 @@ export default function MediaViewPage({
       </Pane>
 
       {/* Linked Items Pane */}
-      {canRead && !isPdf && (
+      {canRead && (
         <Pane title="Highlights" defaultWidth={360} minWidth={280}>
           {focusState.focusedId ? (
             <div className={styles.linkedItems}>
-              {highlights
-                .filter((h) => h.id === focusState.focusedId)
-                .map((h) => (
-                  <div key={h.id} className={`${styles.highlightItem} ${styles.focused}`}>
-                    <HighlightEditor
-                      highlight={h}
-                      isEditingBounds={focusState.editingBounds}
-                      onStartEditBounds={startEditBounds}
-                      onCancelEditBounds={cancelEditBounds}
-                      onColorChange={handleColorChange}
-                      onDelete={handleDelete}
-                      onAnnotationSave={handleAnnotationSave}
-                      onAnnotationDelete={handleAnnotationDelete}
-                    />
-                  </div>
-                ))}
+              {focusedHighlightForEditor ? (
+                <div
+                  key={focusedHighlightForEditor.id}
+                  className={`${styles.highlightItem} ${styles.focused}`}
+                >
+                  <HighlightEditor
+                    highlight={focusedHighlightForEditor}
+                    isEditingBounds={focusState.editingBounds}
+                    onStartEditBounds={startEditBounds}
+                    onCancelEditBounds={cancelEditBounds}
+                    onColorChange={handleColorChange}
+                    onDelete={handleDelete}
+                    onAnnotationSave={handleAnnotationSave}
+                    onAnnotationDelete={handleAnnotationDelete}
+                  />
+                </div>
+              ) : (
+                <div className={styles.noHighlights}>
+                  <p>No highlight selected.</p>
+                </div>
+              )}
             </div>
           ) : (
             <LinkedItemsPane
-              highlights={highlights}
-              contentRef={contentRef}
+              highlights={linkedPaneHighlights}
+              contentRef={linkedItemsContentRef}
               focusedId={focusState.focusedId}
               onHighlightClick={focusHighlight}
-              highlightsVersion={highlightsVersion}
+              highlightsVersion={linkedItemsVersion}
               onSendToChat={handleSendToChat}
             />
+          )}
+          {isPdf && (
+            <div className={styles.hint}>Active page: {pdfActivePage}</div>
           )}
         </Pane>
       )}
