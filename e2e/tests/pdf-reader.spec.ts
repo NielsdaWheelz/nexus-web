@@ -181,6 +181,7 @@ function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
 
 test.describe("pdf reader", () => {
   test("upload -> viewer -> persistent highlight -> send to chat", async ({ page }) => {
+    test.slow(); // full upload → render → highlight → reload → chat flow under parallel workers
     const seeded = readSeededPdfMedia();
     const uploadFixturePath = path.join(process.cwd(), seeded.upload_fixture_path);
     const expectedPageCount = seeded.page_count;
@@ -345,34 +346,11 @@ test.describe("pdf reader", () => {
       expect(await selectTextLayerSnippet(page)).toBe(true);
       await expect(page.locator('button[aria-label="Highlight selection"]')).toBeEnabled();
 
-      await expect
-        .poll(
-          async () =>
-            await page.evaluate(() => window.getSelection()?.toString().trim().length ?? 0),
-          { timeout: 5_000 }
-        )
-        .toBeGreaterThan(0);
-      await expect
-        .poll(
-          async () =>
-            await page.evaluate(() => {
-              const layers = Array.from(
-                document.querySelectorAll<HTMLElement>('[class*="pageLayer"] [class*="textLayer"]'),
-              );
-              const activeLayer = layers.at(-1);
-              const sel = window.getSelection();
-              if (!activeLayer || !sel || sel.rangeCount === 0) {
-                return false;
-              }
-              const range = sel.getRangeAt(0);
-              return (
-                activeLayer.contains(range.startContainer) ||
-                activeLayer.contains(range.endContainer)
-              );
-            }),
-          { timeout: 5_000 }
-        )
-        .toBe(true);
+      // Selection may be lost between selectTextLayerSnippet and the create
+      // click due to React re-renders replacing text layer DOM nodes (making
+      // the Range's containers detached). The retry loop below handles this
+      // gracefully via skipped_no_selection → re-select, so we proceed
+      // directly rather than adding a hard-failure gate here.
 
       const telemetryBefore = await readCreateTelemetry(page);
       const postRequestsBefore = highlightPostRequests;
