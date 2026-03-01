@@ -340,7 +340,9 @@ def main() -> None:
     )
 
     with session_factory() as db:
-        confirm_result = confirm_ingest(db=db, viewer_id=user_id, media_id=UUID(uploaded_media_id_str))
+        confirm_result = confirm_ingest(
+            db=db, viewer_id=user_id, media_id=UUID(uploaded_media_id_str)
+        )
 
     media_id_str = confirm_result["media_id"]
     media_id = UUID(media_id_str)
