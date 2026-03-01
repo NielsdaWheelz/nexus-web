@@ -29,7 +29,6 @@ import LinkedItemRow, { type LinkedItemRowHighlight } from "./LinkedItemRow";
 import {
   measureAnchorPositions,
   computeAlignedRows,
-  computeScrollTarget,
   createMeasureScheduler,
   createScrollHandler,
   ROW_HEIGHT,
@@ -267,20 +266,21 @@ export default function LinkedItemsPane({
     (highlightId: string) => {
       onHighlightClick(highlightId);
 
-      // Scroll content to highlight anchor
-      const anchorTop = anchorPositions.get(highlightId);
-      if (anchorTop !== undefined && contentRef.current) {
-        const target = computeScrollTarget(
-          anchorTop,
-          contentRef.current.clientHeight
-        );
-        contentRef.current.scrollTo({
-          top: Math.max(0, target),
-          behavior: "smooth",
-        });
+      const contentEl = contentRef.current;
+      if (!contentEl) {
+        return;
+      }
+
+      // Prefer anchor.scrollIntoView so the nearest real scroll container moves,
+      // even when contentRef itself is not the element with overflow scrolling.
+      const anchor = contentEl.querySelector<HTMLElement>(
+        `[data-highlight-anchor="${highlightId}"]`
+      );
+      if (anchor) {
+        anchor.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     },
-    [onHighlightClick, anchorPositions, contentRef]
+    [onHighlightClick, contentRef]
   );
 
   const handleRowMouseEnter = useCallback(

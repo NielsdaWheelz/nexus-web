@@ -5,6 +5,8 @@ import path from "node:path";
 interface SeededPdfMedia {
   media_id: string;
   page_count: number;
+  upload_fixture_path: string;
+  password_media_id: string;
 }
 
 interface CreateTelemetrySnapshot {
@@ -47,7 +49,24 @@ function readSeededPdfMedia(): SeededPdfMedia {
   if (!parsed.media_id || typeof parsed.media_id !== "string") {
     throw new Error(`Invalid seeded PDF metadata at ${seedPath}`);
   }
+  if (!parsed.upload_fixture_path || typeof parsed.upload_fixture_path !== "string") {
+    throw new Error(`Seed metadata missing upload_fixture_path at ${seedPath}`);
+  }
+  if (!parsed.password_media_id || typeof parsed.password_media_id !== "string") {
+    throw new Error(`Seed metadata missing password_media_id at ${seedPath}`);
+  }
   return parsed;
+}
+
+function extractHighlightIdFromDataTestId(dataTestId: string | null): string {
+  if (!dataTestId) {
+    throw new Error("Missing data-testid for persisted PDF highlight");
+  }
+  const match = dataTestId.match(/^pdf-highlight-([0-9a-f-]+)-\d+$/i);
+  if (!match) {
+    throw new Error(`Unexpected PDF highlight test id: ${dataTestId}`);
+  }
+  return match[1];
 }
 
 async function selectTextLayerSnippet(page: Page): Promise<boolean> {
@@ -161,6 +180,75 @@ function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
 }
 
 test.describe("pdf reader", () => {
+  test("upload -> viewer -> persistent highlight -> send to chat", async ({ page }) => {
+    const seeded = readSeededPdfMedia();
+    const uploadFixturePath = path.join(process.cwd(), seeded.upload_fixture_path);
+    const expectedPageCount = seeded.page_count;
+    const expectedMediaId = seeded.media_id;
+    let createdHighlightId: string | null = null;
+
+    try {
+      await page.goto("/libraries");
+      const fileInput = page.locator("input[type='file']");
+      await expect(fileInput).toBeAttached();
+      await fileInput.setInputFiles(uploadFixturePath);
+
+      await expect(page.getByText(/Upload complete!/i)).toBeVisible({ timeout: 20_000 });
+      await expect(page).toHaveURL(new RegExp(`/media/${expectedMediaId}`), {
+        timeout: 30_000,
+      });
+
+      await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
+        timeout: 20_000,
+      });
+      await expect(page.locator('[class*="textLayer"]')).toBeVisible();
+
+      expect(await selectTextLayerSnippet(page)).toBe(true);
+      await clickToolbarButtonByAriaLabel(page, "Highlight selection");
+      await expect
+        .poll(async () => page.locator('[data-testid^="pdf-highlight-"]').count(), {
+          timeout: 10_000,
+        })
+        .toBeGreaterThan(0);
+
+      const persistedOverlay = page.locator('[data-testid^="pdf-highlight-"]').first();
+      createdHighlightId = extractHighlightIdFromDataTestId(
+        await persistedOverlay.getAttribute("data-testid"),
+      );
+
+      await page.reload();
+      await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
+        timeout: 20_000,
+      });
+      await expect(page.locator(`[data-testid^="pdf-highlight-${createdHighlightId}-"]`)).toHaveCount(1);
+
+      const linkedRow = page.locator('[class*="linkedItemRow"]').first();
+      await expect(linkedRow).toBeVisible();
+      await linkedRow.hover();
+      const sendToChatButton = linkedRow.locator('button[class*="sendToChatBtn"]');
+      await expect(sendToChatButton).toBeVisible();
+      await sendToChatButton.click();
+      await expect(page).toHaveURL(
+        new RegExp(`/conversations\\?attach_type=highlight&attach_id=${createdHighlightId}`),
+        { timeout: 10_000 },
+      );
+      await expect(
+        page.getByText(new RegExp(`highlight:\\s*${createdHighlightId.slice(0, 8)}`)),
+      ).toBeVisible();
+    } finally {
+      if (createdHighlightId) {
+        await page.request.delete(`/api/highlights/${createdHighlightId}`);
+      }
+    }
+  });
+
+  test("password-protected seeded pdf shows deterministic failure semantics", async ({ page }) => {
+    const seeded = readSeededPdfMedia();
+    await page.goto(`/media/${seeded.password_media_id}`);
+    await expect(page.getByText(/password-protected and cannot be opened in v1/i)).toBeVisible();
+    await expect(page.getByRole("img", { name: "PDF page" })).toHaveCount(0);
+  });
+
   test("recovers after signed URL expiry during active reading session", async ({
     page,
   }) => {

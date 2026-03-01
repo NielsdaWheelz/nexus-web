@@ -8,6 +8,8 @@
 import { describe, it, expect } from "vitest";
 import {
   REQUEST_ID_HEADER,
+  proxyToFastAPIWithDeps,
+  type ProxyDeps,
   _shouldForwardResponseHeader,
   _shouldForwardRequestHeader,
   _getOrGenerateRequestId,
@@ -236,6 +238,68 @@ describe("proxy helper functions", () => {
       expect(_isStreamingResponse("application/json", false)).toBe(false);
       expect(_isStreamingResponse("text/plain", false)).toBe(false);
       expect(_isStreamingResponse(null, false)).toBe(false);
+    });
+  });
+
+  describe("proxyToFastAPIWithDeps", () => {
+    it("preserves 204 no-content responses without constructing an invalid body", async () => {
+      const request = createMockRequest({
+        url: "http://localhost:3000/api/highlights/abc",
+        method: "DELETE",
+      });
+      const deps: ProxyDeps = {
+        getSession: async () => ({ access_token: "test-token" }),
+        fetch: async () =>
+          new Response(null, {
+            status: 204,
+            headers: {
+              "content-type": "application/octet-stream",
+            },
+          }),
+        generateRequestId: () => "request-id-1",
+        config: {
+          fastApiBaseUrl: "http://localhost:8000",
+          internalSecret: "",
+        },
+      };
+
+      const response = await proxyToFastAPIWithDeps(
+        request,
+        "/highlights/abc",
+        deps
+      );
+
+      expect(response.status).toBe(204);
+      expect(await response.text()).toBe("");
+    });
+
+    it("treats ResponseAborted as client cancel instead of backend failure", async () => {
+      const request = createMockRequest({
+        url: "http://localhost:3000/api/media/abc/file",
+        method: "GET",
+      });
+      const deps: ProxyDeps = {
+        getSession: async () => ({ access_token: "test-token" }),
+        fetch: async () => {
+          const err = new Error("aborted by client");
+          err.name = "ResponseAborted";
+          throw err;
+        },
+        generateRequestId: () => "request-id-2",
+        config: {
+          fastApiBaseUrl: "http://localhost:8000",
+          internalSecret: "",
+        },
+      };
+
+      const response = await proxyToFastAPIWithDeps(
+        request,
+        "/media/abc/file",
+        deps
+      );
+
+      expect(response.status).toBe(499);
+      expect(await response.text()).toBe("");
     });
   });
 });

@@ -140,17 +140,30 @@ make seed
 project starts:
 
 - seeds/refreshes E2E auth user (`e2e/seed-e2e-user.ts`)
-- seeds readable PDF media (`python/scripts/seed_e2e_pdf.py`)
-- writes `e2e/.seed/pdf-media.json` used by PDF reader specs
+- seeds PDF media fixtures (quote-ready + password-protected failure) via
+  `python/scripts/seed_e2e_pdf.py`
+- seeds deterministic non-PDF linked-items media via the same script
+- writes:
+  - `e2e/.seed/pdf-media.json` (PDF reader specs)
+  - `e2e/.seed/non-pdf-media.json` (non-PDF linked-items specs)
 
 `globalSetup` loads root `.env` and `.dev-ports` automatically so direct runs like
 `cd e2e && npm test -- tests/pdf-reader.spec.ts --project=chromium` behave like `make test-e2e`.
+
+Useful targeted E2E runs:
+
+```bash
+cd e2e
+npm test -- tests/pdf-reader.spec.ts --project=chromium
+npm test -- tests/non-pdf-linked-items.spec.ts --project=chromium
+```
 
 For fast local reruns when seed state is known-good:
 
 ```bash
 cd e2e
 SKIP_SEED=1 npm test -- tests/pdf-reader.spec.ts --project=chromium
+SKIP_SEED=1 npm test -- tests/non-pdf-linked-items.spec.ts --project=chromium
 ```
 
 ### Run Full Stack
