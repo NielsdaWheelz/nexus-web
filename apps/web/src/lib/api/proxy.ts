@@ -196,6 +196,24 @@ function isStreamingResponse(
 }
 
 /**
+ * Detect transport-level abort/cancel errors across runtimes.
+ *
+ * Next.js/undici may surface aborted requests as either:
+ * - DOMException("AbortError")
+ * - Error-like objects named "ResponseAborted"
+ */
+function isAbortLikeError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true;
+  }
+  if (typeof error === "object" && error !== null && "name" in error) {
+    const name = (error as { name?: unknown }).name;
+    return name === "AbortError" || name === "ResponseAborted";
+  }
+  return false;
+}
+
+/**
  * Get default environment configuration.
  */
 function getDefaultConfig() {
@@ -334,6 +352,21 @@ export async function proxyToFastAPIWithDeps(
       responseHeaders.set(REQUEST_ID_HEADER, requestId);
     }
 
+    // 204/205/304 and HEAD responses must not include a body.
+    // Creating a Response with body bytes for these statuses throws.
+    if (
+      request.method === "HEAD" ||
+      response.status === 204 ||
+      response.status === 205 ||
+      response.status === 304
+    ) {
+      return new Response(null, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeaders,
+      });
+    }
+
     // Handle response body based on content type
     const contentType = response.headers.get("content-type");
 
@@ -356,7 +389,7 @@ export async function proxyToFastAPIWithDeps(
     }
   } catch (error) {
     // Abort errors are expected on client disconnect — do not log as server errors
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (isAbortLikeError(error)) {
       return new Response(null, { status: 499 });
     }
 

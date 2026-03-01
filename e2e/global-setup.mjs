@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(E2E_DIR, "..");
 const PDF_SEED = path.join(E2E_DIR, ".seed", "pdf-media.json");
+const NON_PDF_SEED = path.join(E2E_DIR, ".seed", "non-pdf-media.json");
 
 function loadEnvFile(filePath) {
   if (!existsSync(filePath)) {
@@ -65,7 +66,7 @@ export default function globalSetup() {
 
   // Skip seeding if the artifact already exists and SKIP_SEED is set.
   // Useful for rapid local re-runs where the DB hasn't changed.
-  if (process.env.SKIP_SEED && existsSync(PDF_SEED)) {
+  if (process.env.SKIP_SEED && existsSync(PDF_SEED) && existsSync(NON_PDF_SEED)) {
     console.log("[global-setup] SKIP_SEED set and seed artifact exists — skipping.");
     return;
   }
@@ -95,6 +96,12 @@ export default function globalSetup() {
   if (!existsSync(PDF_SEED)) {
     throw new Error(
       `[global-setup] Seed script succeeded but ${PDF_SEED} was not created.\n` +
+        "  This indicates a bug in python/scripts/seed_e2e_pdf.py.",
+    );
+  }
+  if (!existsSync(NON_PDF_SEED)) {
+    throw new Error(
+      `[global-setup] Seed script succeeded but ${NON_PDF_SEED} was not created.\n` +
         "  This indicates a bug in python/scripts/seed_e2e_pdf.py.",
     );
   }

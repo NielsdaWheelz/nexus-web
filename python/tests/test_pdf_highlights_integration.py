@@ -104,6 +104,38 @@ def _setup_pdf_media(
     return media_id
 
 
+def _create_shared_library(session, owner_id: UUID) -> UUID:
+    """Create non-default shared library with owner admin membership."""
+    library_id = uuid4()
+    session.execute(
+        text("""
+            INSERT INTO libraries (id, name, owner_user_id, is_default)
+            VALUES (:id, 'S6 Shared PDF Library', :owner, false)
+        """),
+        {"id": library_id, "owner": owner_id},
+    )
+    session.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:library_id, :user_id, 'admin')
+            ON CONFLICT DO NOTHING
+        """),
+        {"library_id": library_id, "user_id": owner_id},
+    )
+    return library_id
+
+
+def _add_library_member(session, library_id: UUID, user_id: UUID, role: str = "member") -> None:
+    session.execute(
+        text("""
+            INSERT INTO memberships (library_id, user_id, role)
+            VALUES (:library_id, :user_id, :role)
+            ON CONFLICT DO NOTHING
+        """),
+        {"library_id": library_id, "user_id": user_id, "role": role},
+    )
+
+
 # ---------------------------------------------------------------------------
 # POST /media/{media_id}/pdf-highlights
 # ---------------------------------------------------------------------------
@@ -422,6 +454,151 @@ class TestListPdfHighlights:
         assert len(highlights) == 2
         assert highlights[0]["exact"] == "top"
         assert highlights[1]["exact"] == "bottom"
+
+
+class TestPdfHighlightVisibilityRegression:
+    """S6 PR-08 visibility regression coverage for PDF highlight surfaces."""
+
+    def test_shared_reader_can_list_and_get_pdf_highlights_with_mine_only_split(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        author_id = create_test_user_id()
+        reader_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(author_id))
+        auth_client.get("/me", headers=auth_headers(reader_id))
+
+        with direct_db.session() as session:
+            shared_library_id = _create_shared_library(session, author_id)
+            _add_library_member(session, shared_library_id, reader_id)
+            media_id = create_pdf_media_with_text(
+                session,
+                author_id,
+                shared_library_id,
+                plain_text=PDF_PLAIN_TEXT,
+                page_count=2,
+                page_spans=PDF_PAGE_SPANS,
+                status="ready_for_reading",
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
+        direct_db.register_cleanup("highlight_pdf_anchors", "media_id", media_id)
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", shared_library_id)
+        direct_db.register_cleanup("libraries", "id", shared_library_id)
+
+        create_resp = auth_client.post(
+            f"/media/{media_id}/pdf-highlights",
+            json={"page_number": 1, "quads": SAMPLE_QUADS, "exact": "page one", "color": "yellow"},
+            headers=auth_headers(author_id),
+        )
+        assert create_resp.status_code == 201
+        highlight_id = create_resp.json()["data"]["id"]
+
+        shared_list_resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights?page_number=1&mine_only=false",
+            headers=auth_headers(reader_id),
+        )
+        assert shared_list_resp.status_code == 200
+        shared_data = shared_list_resp.json()["data"]["highlights"]
+        assert len(shared_data) == 1
+        assert shared_data[0]["id"] == highlight_id
+        assert shared_data[0]["is_owner"] is False
+        assert shared_data[0]["author_user_id"] == str(author_id)
+
+        mine_only_resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights?page_number=1",
+            headers=auth_headers(reader_id),
+        )
+        assert mine_only_resp.status_code == 200
+        assert mine_only_resp.json()["data"]["highlights"] == []
+
+        get_resp = auth_client.get(
+            f"/highlights/{highlight_id}",
+            headers=auth_headers(reader_id),
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["is_owner"] is False
+
+    def test_non_owner_and_non_visible_paths_remain_masked_for_pdf_highlights(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        author_id = create_test_user_id()
+        reader_id = create_test_user_id()
+        outsider_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(author_id))
+        auth_client.get("/me", headers=auth_headers(reader_id))
+        auth_client.get("/me", headers=auth_headers(outsider_id))
+
+        with direct_db.session() as session:
+            shared_library_id = _create_shared_library(session, author_id)
+            _add_library_member(session, shared_library_id, reader_id)
+            media_id = create_pdf_media_with_text(
+                session,
+                author_id,
+                shared_library_id,
+                plain_text=PDF_PLAIN_TEXT,
+                page_count=2,
+                page_spans=PDF_PAGE_SPANS,
+                status="ready_for_reading",
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
+        direct_db.register_cleanup("highlight_pdf_anchors", "media_id", media_id)
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", shared_library_id)
+        direct_db.register_cleanup("libraries", "id", shared_library_id)
+
+        create_resp = auth_client.post(
+            f"/media/{media_id}/pdf-highlights",
+            json={"page_number": 1, "quads": SAMPLE_QUADS, "exact": "page one", "color": "yellow"},
+            headers=auth_headers(author_id),
+        )
+        assert create_resp.status_code == 201
+        highlight_id = create_resp.json()["data"]["id"]
+
+        non_owner_patch_resp = auth_client.patch(
+            f"/highlights/{highlight_id}",
+            json={"color": "green"},
+            headers=auth_headers(reader_id),
+        )
+        assert non_owner_patch_resp.status_code == 404
+        assert non_owner_patch_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+        outsider_list_resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights?page_number=1&mine_only=false",
+            headers=auth_headers(outsider_id),
+        )
+        assert outsider_list_resp.status_code == 404
+        assert outsider_list_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    "DELETE FROM memberships WHERE library_id = :library_id AND user_id = :user_id"
+                ),
+                {"library_id": shared_library_id, "user_id": reader_id},
+            )
+            session.commit()
+
+        revoked_list_resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights?page_number=1&mine_only=false",
+            headers=auth_headers(reader_id),
+        )
+        assert revoked_list_resp.status_code == 404
+        assert revoked_list_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+        revoked_get_resp = auth_client.get(
+            f"/highlights/{highlight_id}",
+            headers=auth_headers(reader_id),
+        )
+        assert revoked_get_resp.status_code == 404
+        assert revoked_get_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------

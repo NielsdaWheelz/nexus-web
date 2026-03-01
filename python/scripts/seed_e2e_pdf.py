@@ -6,8 +6,9 @@ This script:
 2) Bootstraps the app user + default library in Nexus DB.
 3) Creates a PDF upload stub through the real upload service.
 4) Uploads a generated multi-page PDF bytes payload to Supabase Storage.
-5) Marks the media as ready_for_reading for deterministic reader tests.
-6) Writes seeded media metadata to e2e/.seed/pdf-media.json.
+5) Confirms ingest and runs synchronous PDF extraction for quote-ready artifacts.
+6) Seeds one deterministic password-protected failure media row for degrade-path UI tests.
+7) Writes upload fixture bytes + seeded metadata to e2e/.seed/.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import json
 import os
 import sys
 from datetime import UTC, datetime
+from html import escape
 from pathlib import Path
 from uuid import UUID
 
@@ -24,14 +26,22 @@ import httpx
 from sqlalchemy import select
 
 from nexus.config import get_settings
-from nexus.db.models import Media, ProcessingStatus
+from nexus.db.models import Annotation, FailureStage, Fragment, Media, ProcessingStatus
 from nexus.db.session import create_session_factory
+from nexus.schemas.highlights import CreateHighlightRequest
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.upload import init_upload
+from nexus.services.highlights import create_highlight_for_fragment
+from nexus.services.media import create_provisional_web_article
+from nexus.services.pdf_ingest import PdfExtractionError
+from nexus.services.upload import confirm_ingest, init_upload
+from nexus.tasks.ingest_pdf import run_pdf_ingest_sync
 
 E2E_USER_EMAIL = os.getenv("E2E_USER_EMAIL", "e2e-test@nexus.local")
 PDF_PAGE_COUNT = 80
 SEED_FILE_RELATIVE = Path("e2e/.seed/pdf-media.json")
+NON_PDF_SEED_FILE_RELATIVE = Path("e2e/.seed/non-pdf-media.json")
+UPLOAD_FIXTURE_RELATIVE = Path("e2e/.seed/upload-source.pdf")
+NON_PDF_SOURCE_URL = "https://example.com/e2e-linked-items-seed"
 
 
 def _build_pdf_bytes(page_count: int) -> bytes:
@@ -108,7 +118,24 @@ def _upload_to_signed_url(
         )
 
 
-def _write_seed_file(media_id: str, title: str, page_count: int) -> None:
+def _write_upload_fixture(content: bytes) -> str:
+    """Persist a deterministic upload fixture used by Playwright."""
+    repo_root = Path(__file__).resolve().parents[2]
+    fixture_path = repo_root / UPLOAD_FIXTURE_RELATIVE
+    fixture_path.parent.mkdir(parents=True, exist_ok=True)
+    fixture_path.write_bytes(content)
+    print(f"Wrote E2E upload fixture: {fixture_path}")
+    # Playwright runs with CWD=e2e, so keep path relative to e2e/.
+    return fixture_path.relative_to(repo_root / "e2e").as_posix()
+
+
+def _write_seed_file(
+    media_id: str,
+    title: str,
+    page_count: int,
+    upload_fixture_path: str,
+    password_media_id: str,
+) -> None:
     """Persist seeded media metadata for Playwright tests."""
     repo_root = Path(__file__).resolve().parents[2]
     seed_path = repo_root / SEED_FILE_RELATIVE
@@ -117,10 +144,149 @@ def _write_seed_file(media_id: str, title: str, page_count: int) -> None:
         "media_id": media_id,
         "title": title,
         "page_count": page_count,
+        "upload_fixture_path": upload_fixture_path,
+        "password_media_id": password_media_id,
         "seeded_at": datetime.now(UTC).isoformat(),
     }
     seed_path.write_text(json.dumps(seed_payload, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote E2E PDF seed metadata: {seed_path}")
+
+
+def _build_non_pdf_fragment_payload() -> tuple[str, str, str, str]:
+    """Return deterministic non-PDF canonical/html payload + focus/quote token text."""
+    quote_exact = "e2e non-pdf quote target alpha"
+    focus_exact = "e2e non-pdf focus target omega"
+
+    lines: list[str] = []
+    for idx in range(1, 181):
+        if idx == 8:
+            lines.append(f"section {idx:03d} includes {quote_exact} for quote-to-chat.")
+        elif idx == 170:
+            lines.append(f"section {idx:03d} includes {focus_exact} for focus+scroll.")
+        else:
+            lines.append(
+                f"section {idx:03d} filler content for linked-items non-pdf alignment behavior."
+            )
+
+    canonical_text = "\n".join(lines)
+    html_sanitized = "".join(f"<p>{escape(line)}</p>" for line in lines)
+    return canonical_text, html_sanitized, quote_exact, focus_exact
+
+
+def _write_non_pdf_seed_file(
+    *,
+    media_id: str,
+    fragment_id: str,
+    quote_highlight_id: str,
+    focus_highlight_id: str,
+    quote_exact: str,
+    focus_exact: str,
+) -> None:
+    """Persist seeded non-PDF media metadata for linked-items E2E tests."""
+    repo_root = Path(__file__).resolve().parents[2]
+    seed_path = repo_root / NON_PDF_SEED_FILE_RELATIVE
+    seed_path.parent.mkdir(parents=True, exist_ok=True)
+    seed_payload = {
+        "media_id": media_id,
+        "fragment_id": fragment_id,
+        "quote_highlight_id": quote_highlight_id,
+        "focus_highlight_id": focus_highlight_id,
+        "quote_exact": quote_exact,
+        "focus_exact": focus_exact,
+        "seeded_at": datetime.now(UTC).isoformat(),
+    }
+    seed_path.write_text(json.dumps(seed_payload, indent=2) + "\n", encoding="utf-8")
+    print(f"Wrote E2E non-PDF seed metadata: {seed_path}")
+
+
+def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
+    """Seed deterministic web-article media with highlights for linked-items E2E."""
+    canonical_text, html_sanitized, quote_exact, focus_exact = _build_non_pdf_fragment_payload()
+
+    with session_factory() as db:
+        ensure_user_and_default_library(db, user_id)
+        provisional = create_provisional_web_article(
+            db=db,
+            viewer_id=user_id,
+            url=NON_PDF_SOURCE_URL,
+            enqueue_task=False,
+        )
+        media_id = provisional.media_id
+
+    with session_factory() as db:
+        media = db.execute(select(Media).where(Media.id == media_id)).scalar_one_or_none()
+        if media is None:
+            raise RuntimeError(f"Non-PDF seed media missing: {media_id}")
+
+        now = datetime.now(UTC)
+        media.title = "E2E linked-items web article seed"
+        media.processing_status = ProcessingStatus.ready_for_reading
+        media.failure_stage = None
+        media.last_error_code = None
+        media.last_error_message = None
+        media.failed_at = None
+        media.processing_started_at = now
+        media.processing_completed_at = now
+        media.updated_at = now
+
+        fragment = Fragment(
+            media_id=media_id,
+            idx=0,
+            canonical_text=canonical_text,
+            html_sanitized=html_sanitized,
+        )
+        db.add(fragment)
+        db.flush()
+
+        quote_start = canonical_text.index(quote_exact)
+        quote_end = quote_start + len(quote_exact)
+        focus_start = canonical_text.index(focus_exact)
+        focus_end = focus_start + len(focus_exact)
+
+        quote_highlight = create_highlight_for_fragment(
+            db=db,
+            viewer_id=user_id,
+            fragment_id=fragment.id,
+            req=CreateHighlightRequest(
+                start_offset=quote_start,
+                end_offset=quote_end,
+                color="yellow",
+            ),
+        )
+        focus_highlight = create_highlight_for_fragment(
+            db=db,
+            viewer_id=user_id,
+            fragment_id=fragment.id,
+            req=CreateHighlightRequest(
+                start_offset=focus_start,
+                end_offset=focus_end,
+                color="blue",
+            ),
+        )
+
+        db.add(
+            Annotation(
+                highlight_id=quote_highlight.id,
+                body="Seeded note for non-PDF linked-items e2e.",
+            )
+        )
+        db.add(
+            Annotation(
+                highlight_id=focus_highlight.id,
+                body="Seeded focus note for non-PDF linked-items e2e.",
+            )
+        )
+        db.commit()
+
+    _write_non_pdf_seed_file(
+        media_id=str(media_id),
+        fragment_id=str(fragment.id),
+        quote_highlight_id=str(quote_highlight.id),
+        focus_highlight_id=str(focus_highlight.id),
+        quote_exact=quote_exact,
+        focus_exact=focus_exact,
+    )
+    print(f"Seeded non-PDF linked-items media for E2E: {media_id}")
 
 
 def main() -> None:
@@ -147,6 +313,7 @@ def main() -> None:
     pdf_bytes = _build_pdf_bytes(PDF_PAGE_COUNT)
     session_factory = create_session_factory()
     filename = f"e2e-pdf-expiry-seed-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.pdf"
+    upload_fixture_path = _write_upload_fixture(pdf_bytes)
 
     with session_factory() as db:
         ensure_user_and_default_library(db, user_id)
@@ -159,7 +326,7 @@ def main() -> None:
             size_bytes=len(pdf_bytes),
         )
 
-    media_id_str = init_data["media_id"]
+    uploaded_media_id_str = init_data["media_id"]
     storage_path = init_data["storage_path"]
     token = init_data["token"]
 
@@ -172,15 +339,26 @@ def main() -> None:
         content=pdf_bytes,
     )
 
-    media_id = UUID(media_id_str)
     with session_factory() as db:
+        confirm_result = confirm_ingest(db=db, viewer_id=user_id, media_id=UUID(uploaded_media_id_str))
+
+    media_id_str = confirm_result["media_id"]
+    media_id = UUID(media_id_str)
+
+    with session_factory() as db:
+        extraction_result = run_pdf_ingest_sync(db, media_id)
+        if isinstance(extraction_result, PdfExtractionError):
+            raise RuntimeError(
+                "Failed to seed quote-ready PDF artifacts: "
+                f"{extraction_result.error_code} {extraction_result.error_message}"
+            )
+
         media = db.execute(select(Media).where(Media.id == media_id)).scalar_one_or_none()
         if media is None:
-            raise RuntimeError(f"Seeded media row disappeared: {media_id_str}")
+            raise RuntimeError(f"Seeded media row disappeared before finalize: {media_id_str}")
 
         now = datetime.now(UTC)
         media.processing_status = ProcessingStatus.ready_for_reading
-        media.page_count = PDF_PAGE_COUNT
         media.failure_stage = None
         media.last_error_code = None
         media.last_error_message = None
@@ -189,8 +367,48 @@ def main() -> None:
         media.updated_at = now
         db.commit()
 
-    _write_seed_file(media_id=media_id_str, title=filename, page_count=PDF_PAGE_COUNT)
-    print(f"Seeded readable PDF media for E2E: {media_id_str}")
+    password_filename = f"e2e-password-seed-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.pdf"
+    with session_factory() as db:
+        password_init = init_upload(
+            db=db,
+            viewer_id=user_id,
+            kind="pdf",
+            filename=password_filename,
+            content_type="application/pdf",
+            size_bytes=1024,
+        )
+        password_media_id = UUID(password_init["media_id"])
+        password_media = db.execute(
+            select(Media).where(Media.id == password_media_id)
+        ).scalar_one_or_none()
+        if password_media is None:
+            raise RuntimeError(f"Password-seed media missing: {password_media_id}")
+
+        now = datetime.now(UTC)
+        password_media.processing_status = ProcessingStatus.failed
+        password_media.failure_stage = FailureStage.extract
+        password_media.last_error_code = "E_PDF_PASSWORD_REQUIRED"
+        password_media.last_error_message = "PDF is password-protected or encrypted"
+        password_media.failed_at = now
+        password_media.processing_completed_at = now
+        password_media.updated_at = now
+        db.commit()
+
+    with session_factory() as db:
+        media = db.execute(select(Media).where(Media.id == media_id)).scalar_one_or_none()
+        if media is None:
+            raise RuntimeError(f"Seeded media row disappeared: {media_id_str}")
+        page_count = media.page_count or PDF_PAGE_COUNT
+
+    _write_seed_file(
+        media_id=media_id_str,
+        title=filename,
+        page_count=page_count,
+        upload_fixture_path=upload_fixture_path,
+        password_media_id=str(password_media_id),
+    )
+    print(f"Seeded quote-ready PDF media for E2E: {media_id_str}")
+    _seed_non_pdf_linked_items_media(session_factory, user_id)
 
 
 if __name__ == "__main__":

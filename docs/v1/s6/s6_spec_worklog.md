@@ -6,6 +6,12 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 
 ## Evidence Log
 
+### 2026-02-28 - Cluster: PR-08 acceptance closure hardening (non-PDF linked-items regression)
+- `e2e/tests/non-pdf-linked-items.spec.ts` now provides a true browser-level non-PDF linked-items regression flow covering row quote-to-chat, row focus, focused-highlight rendering, and scroll-to-anchor behavior.
+- `python/scripts/seed_e2e_pdf.py` now also seeds deterministic non-PDF linked-items fixtures and writes `e2e/.seed/non-pdf-media.json` to keep E2E setup deterministic without external URL-ingest timing dependencies.
+- `e2e/global-setup.mjs` now validates both seed artifacts (`pdf-media.json` and `non-pdf-media.json`) before tests start.
+- `apps/web/src/components/LinkedItemsPane.tsx` row-click scrolling now uses anchor `scrollIntoView(...)` so non-PDF focus scrolling works when the immediate content ref is not itself a scroll container.
+
 ### 2026-02-22 - Cluster: Scope and Acceptance Baseline
 - `docs/v1/slice_roadmap.md:383-386` defines Slice 6 goal/outcome (academic/scanned PDF reading).
 - `docs/v1/slice_roadmap.md:387-394` defines in-scope items: PyMuPDF extraction, `media.plain_text`, PDF.js rendering, text-layer selection, geometry-based highlights, linked-items pane visibility.

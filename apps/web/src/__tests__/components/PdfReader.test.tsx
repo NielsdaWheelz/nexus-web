@@ -444,6 +444,84 @@ describe("PdfReader", () => {
     expect(await screen.findByTestId("pdf-highlight-h-page-2-0")).toBeInTheDocument();
   });
 
+  it("emits active-page scoped highlight snapshots for linked-items consumers", async () => {
+    const signedUrl = "https://storage.example/signed-linked-items";
+    const doc = createFakeDocument(2, {
+      1: createFakePage({ textItems: ["page one text"] }),
+      2: createFakePage({ textItems: ["page two text"] }),
+    });
+    const onPageHighlightsChange = vi.fn();
+
+    const { deps } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: {
+        1: [
+          makePdfHighlight("h-page-1", "yellow", "one", 1, [
+            { x1: 72, y1: 120, x2: 140, y2: 120, x3: 140, y3: 132, x4: 72, y4: 132 },
+          ]),
+        ],
+        2: [
+          makePdfHighlight("h-page-2", "green", "two", 2, [
+            { x1: 72, y1: 200, x2: 165, y2: 200, x3: 165, y3: 212, x4: 72, y4: 212 },
+          ]),
+        ],
+      },
+    });
+
+    render(
+      <PdfReader
+        mediaId="media-8"
+        deps={deps}
+        onPageHighlightsChange={onPageHighlightsChange}
+      />
+    );
+
+    expect(await screen.findByText("Page 1 of 2")).toBeInTheDocument();
+    await waitFor(() => {
+      const calls = onPageHighlightsChange.mock.calls as Array<
+        [number, Array<ReturnType<typeof makePdfHighlight>>]
+      >;
+      const sawPageOneSnapshot = calls.some(
+        ([pageNumber, highlights]) =>
+          pageNumber === 1 &&
+          highlights.length === 1 &&
+          highlights[0]?.id === "h-page-1"
+      );
+      expect(sawPageOneSnapshot).toBe(true);
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /next page/i }));
+    expect(await screen.findByText("Page 2 of 2")).toBeInTheDocument();
+
+    await waitFor(() => {
+      const calls = onPageHighlightsChange.mock.calls as Array<
+        [number, Array<ReturnType<typeof makePdfHighlight>>]
+      >;
+      const sawPageTwoReset = calls.some(
+        ([pageNumber, highlights]) => pageNumber === 2 && highlights.length === 0
+      );
+      const sawPageTwoSnapshot = calls.some(
+        ([pageNumber, highlights]) =>
+          pageNumber === 2 &&
+          highlights.length === 1 &&
+          highlights[0]?.id === "h-page-2"
+      );
+      expect(sawPageTwoReset).toBe(true);
+      expect(sawPageTwoSnapshot).toBe(true);
+    });
+
+    const calls = onPageHighlightsChange.mock.calls as Array<
+      [number, Array<ReturnType<typeof makePdfHighlight>>]
+    >;
+    const latestPageTwoSnapshot = [...calls]
+      .reverse()
+      .find(([pageNumber]) => pageNumber === 2)?.[1];
+    expect(latestPageTwoSnapshot?.map((highlight) => highlight.id)).toEqual([
+      "h-page-2",
+    ]);
+  });
+
   it("does not expose false-success highlight creation when page has no usable text layer", async () => {
     const signedUrl = "https://storage.example/signed-no-text";
     const doc = createFakeDocument(1, {
