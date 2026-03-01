@@ -14,6 +14,7 @@ const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(E2E_DIR, "..");
 const PDF_SEED = path.join(E2E_DIR, ".seed", "pdf-media.json");
 const NON_PDF_SEED = path.join(E2E_DIR, ".seed", "non-pdf-media.json");
+const EPUB_SEED = path.join(E2E_DIR, ".seed", "epub-media.json");
 
 function loadEnvFile(filePath) {
   if (!existsSync(filePath)) {
@@ -64,17 +65,22 @@ export default function globalSetup() {
   loadEnvFile(path.join(ROOT, ".env"));
   loadEnvFile(path.join(ROOT, ".dev-ports"));
 
-  // Skip seeding if the artifact already exists and SKIP_SEED is set.
+  // Skip seeding if all artifacts exist and SKIP_SEED is set.
   // Useful for rapid local re-runs where the DB hasn't changed.
-  if (process.env.SKIP_SEED && existsSync(PDF_SEED) && existsSync(NON_PDF_SEED)) {
-    console.log("[global-setup] SKIP_SEED set and seed artifact exists — skipping.");
+  if (
+    process.env.SKIP_SEED &&
+    existsSync(PDF_SEED) &&
+    existsSync(NON_PDF_SEED) &&
+    existsSync(EPUB_SEED)
+  ) {
+    console.log("[global-setup] SKIP_SEED set and seed artifacts exist — skipping.");
     return;
   }
 
   // Step 1: Ensure the E2E auth user exists in Supabase.
   run("Seed E2E user", "npx tsx seed-e2e-user.ts", E2E_DIR);
 
-  // Step 2: Seed a readable PDF via the Python service layer.
+  // Step 2: Seed PDF, web articles, API keys, and EPUB via the Python service layer.
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
     throw new Error(
@@ -83,8 +89,8 @@ export default function globalSetup() {
     );
   }
   run(
-    "Seed E2E PDF media",
-    "uv run python scripts/seed_e2e_pdf.py",
+    "Seed E2E data",
+    "uv run python scripts/seed_e2e_data.py",
     path.join(ROOT, "python"),
     {
       DATABASE_URL: dbUrl,
@@ -92,17 +98,23 @@ export default function globalSetup() {
     },
   );
 
-  // Step 3: Verify the seed artifact was created.
+  // Step 3: Verify all seed artifacts were created.
   if (!existsSync(PDF_SEED)) {
     throw new Error(
       `[global-setup] Seed script succeeded but ${PDF_SEED} was not created.\n` +
-        "  This indicates a bug in python/scripts/seed_e2e_pdf.py.",
+        "  This indicates a bug in python/scripts/seed_e2e_data.py.",
     );
   }
   if (!existsSync(NON_PDF_SEED)) {
     throw new Error(
       `[global-setup] Seed script succeeded but ${NON_PDF_SEED} was not created.\n` +
-        "  This indicates a bug in python/scripts/seed_e2e_pdf.py.",
+        "  This indicates a bug in python/scripts/seed_e2e_data.py.",
+    );
+  }
+  if (!existsSync(EPUB_SEED)) {
+    throw new Error(
+      `[global-setup] Seed script succeeded but ${EPUB_SEED} was not created.\n` +
+        "  This indicates a bug in python/scripts/seed_e2e_data.py.",
     );
   }
 

@@ -228,6 +228,8 @@ test-front-browser:
 test-e2e:
 	cd e2e && npx playwright install --with-deps chromium && npx playwright test
 
+e2e: test-e2e
+
 test-e2e-ui:
 	cd e2e && npx playwright install --with-deps chromium && npx playwright test --ui
 

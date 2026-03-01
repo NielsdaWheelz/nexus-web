@@ -8,8 +8,8 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 
 ### 2026-02-28 - Cluster: PR-08 acceptance closure hardening (non-PDF linked-items regression)
 - `e2e/tests/non-pdf-linked-items.spec.ts` now provides a true browser-level non-PDF linked-items regression flow covering row quote-to-chat, row focus, focused-highlight rendering, and scroll-to-anchor behavior.
-- `python/scripts/seed_e2e_pdf.py` now also seeds deterministic non-PDF linked-items fixtures and writes `e2e/.seed/non-pdf-media.json` to keep E2E setup deterministic without external URL-ingest timing dependencies.
-- `e2e/global-setup.mjs` now validates both seed artifacts (`pdf-media.json` and `non-pdf-media.json`) before tests start.
+- `python/scripts/seed_e2e_data.py` (renamed from `seed_e2e_pdf.py`) now seeds PDFs, non-PDF linked-items, an API key, and an EPUB. Writes `e2e/.seed/pdf-media.json`, `e2e/.seed/non-pdf-media.json`, and `e2e/.seed/epub-media.json` to keep E2E setup deterministic.
+- `e2e/global-setup.mjs` now validates all three seed artifacts (`pdf-media.json`, `non-pdf-media.json`, and `epub-media.json`) before tests start.
 - `apps/web/src/components/LinkedItemsPane.tsx` row-click scrolling now uses anchor `scrollIntoView(...)` so non-PDF focus scrolling works when the immediate content ref is not itself a scroll container.
 
 ### 2026-02-22 - Cluster: Scope and Acceptance Baseline

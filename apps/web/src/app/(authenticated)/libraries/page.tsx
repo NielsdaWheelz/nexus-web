@@ -6,6 +6,7 @@ import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
 import FileUpload from "@/components/FileUpload";
+import AddFromUrl from "@/components/AddFromUrl";
 import styles from "./page.module.css";
 
 interface Library {
@@ -157,6 +158,7 @@ export default function LibrariesPage() {
       <Pane title="Upload">
         <div className={styles.uploadContent}>
           <FileUpload />
+          <AddFromUrl />
         </div>
       </Pane>
     </PaneContainer>

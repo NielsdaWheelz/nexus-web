@@ -1,16 +1,17 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("search", () => {
-  test("search returns results across content types", async ({ page }) => {
+  test("search returns results", async ({ page }) => {
     await page.goto("/search");
     const searchInput = page.getByPlaceholder("Search your content...");
     await expect(searchInput).toBeVisible();
-    await searchInput.fill("test");
+    // Search for text known to exist in seeded non-PDF web article
+    await searchInput.fill("e2e non-pdf");
     await page.getByRole("button", { name: /search/i }).click();
-    // Wait for search results or a no-results message to appear
+    // Expect at least one result link to appear
     await expect(
-      page.getByText(/result|no result|nothing found/i).first()
-    ).toBeVisible();
+      page.locator("a[href^='/media/']").first()
+    ).toBeVisible({ timeout: 10_000 });
   });
 
   test("no-results behavior", async ({ page }) => {
@@ -19,9 +20,6 @@ test.describe("search", () => {
     await expect(searchInput).toBeVisible();
     await searchInput.fill("xyznonexistent12345");
     await page.getByRole("button", { name: /search/i }).click();
-    // Expect a no-results message to appear
-    await expect(
-      page.getByText(/no results|nothing found|no matches/i)
-    ).toBeVisible();
+    await expect(page.getByText("No results found.")).toBeVisible();
   });
 });

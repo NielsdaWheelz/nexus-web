@@ -1,38 +1,48 @@
 import { test, expect } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+interface SeededNonPdfMedia {
+  media_id: string;
+  fragment_id: string;
+  quote_highlight_id: string;
+  focus_highlight_id: string;
+  quote_exact: string;
+  focus_exact: string;
+}
+
+function readSeededNonPdfMedia(): SeededNonPdfMedia {
+  const seedPath = path.join(__dirname, "..", ".seed", "non-pdf-media.json");
+  return JSON.parse(readFileSync(seedPath, "utf-8"));
+}
 
 test.describe("web articles", () => {
-  const articleUrl = "https://example.com";
-
   test("add article from URL", async ({ page }) => {
     await page.goto("/libraries");
-    const addBtn = page.getByRole("button", { name: /add|ingest|import|new/i }).first();
-    await expect(addBtn).toBeVisible();
-    await addBtn.click();
-    const urlInput = page.getByPlaceholder(/url/i).or(page.getByLabel(/url/i));
+    const urlInput = page.getByPlaceholder("Paste a URL...");
     await expect(urlInput).toBeVisible();
-    await urlInput.fill(articleUrl);
-    await page.getByRole("button", { name: /add|submit|save|ingest/i }).click();
-    await expect(page.getByText(/added|processing|pending|ingesting/i)).toBeVisible({ timeout: 10_000 });
+    await urlInput.fill("https://example.com");
+    await page.getByRole("button", { name: "Add" }).click();
+    await expect(
+      page.getByText(/added|processing/i)
+    ).toBeVisible({ timeout: 10_000 });
   });
 
-  test("open and view article", async ({ page }) => {
-    await page.goto("/libraries");
-    const articleLink = page.getByRole("link").filter({ hasText: /article|example/i }).first();
-    await expect(articleLink).toBeVisible();
-    await articleLink.click();
-    await expect(page.locator("[data-testid='media-content'], article, .content-pane, main")).toBeVisible();
+  test("open and view seeded web article", async ({ page }) => {
+    const seed = readSeededNonPdfMedia();
+    await page.goto(`/media/${seed.media_id}`);
+    await expect(
+      page.locator("[data-testid='media-content'], .content-pane, article, main")
+        .filter({ hasText: /e2e non-pdf/ })
+    ).toBeVisible({ timeout: 10_000 });
   });
 
-  test("create highlight", async ({ page }) => {
-    await page.goto("/libraries");
-    const articleLink = page.getByRole("link").filter({ hasText: /article|example/i }).first();
-    await expect(articleLink).toBeVisible();
-    await articleLink.click();
-    const content = page.locator("article, .content-pane, [data-testid='media-content']").first();
-    await expect(content).toBeVisible({ timeout: 10_000 });
-  });
-
-  test.fixme("annotate highlight", async () => {
-    // Requires seeded article with existing highlight for annotation.
+  test("web article highlights are present", async ({ page }) => {
+    const seed = readSeededNonPdfMedia();
+    await page.goto(`/media/${seed.media_id}`);
+    // Highlights render as mark elements with data-highlight-id
+    await expect(
+      page.locator("[data-highlight-id]").first()
+    ).toBeVisible({ timeout: 10_000 });
   });
 });
