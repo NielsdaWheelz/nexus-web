@@ -204,8 +204,31 @@ test.describe("pdf reader", () => {
       });
       await expect(page.locator('[class*="textLayer"]')).toBeVisible();
 
-      expect(await selectTextLayerSnippet(page)).toBe(true);
-      await clickToolbarButtonByAriaLabel(page, "Highlight selection");
+      // Highlight creation with retry — selection can be lost between
+      // selectTextLayerSnippet and the button click due to React re-renders
+      // replacing text layer DOM nodes (same pattern as the stress test).
+      let created = false;
+      for (let retry = 0; retry < 3; retry++) {
+        expect(await selectTextLayerSnippet(page)).toBe(true);
+        const before = await readCreateTelemetry(page);
+        await clickToolbarButtonByAriaLabel(page, "Highlight selection");
+        await expect
+          .poll(async () => (await readCreateTelemetry(page)).attempts, { timeout: 5_000 })
+          .toBe(before.attempts + 1);
+        const settled = await waitForCreateOutcome(page, before.attempts + 1);
+        if (settled.lastOutcome === "success") {
+          created = true;
+          break;
+        }
+        if (
+          settled.lastOutcome === "skipped_no_selection" ||
+          settled.lastOutcome === "skipped_no_geometry"
+        ) {
+          continue;
+        }
+        throw new Error(`Unexpected highlight outcome: ${settled.lastOutcome}`);
+      }
+      expect(created).toBe(true);
       await expect
         .poll(async () => page.locator('[data-testid^="pdf-highlight-"]').count(), {
           timeout: 10_000,
