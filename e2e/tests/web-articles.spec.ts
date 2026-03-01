@@ -40,9 +40,9 @@ test.describe("web articles", () => {
   test("web article highlights are present", async ({ page }) => {
     const seed = readSeededNonPdfMedia();
     await page.goto(`/media/${seed.media_id}`);
-    // Highlights render as mark elements with data-highlight-id
+    // Highlights render as spans with data-active-highlight-ids attribute
     await expect(
-      page.locator("[data-highlight-id]").first()
+      page.locator("[data-active-highlight-ids]").first()
     ).toBeVisible({ timeout: 10_000 });
   });
 });

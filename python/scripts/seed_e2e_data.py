@@ -40,7 +40,6 @@ from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.media import create_provisional_web_article
 from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.upload import confirm_ingest, init_upload
-from nexus.services.user_keys import upsert_user_key
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
 from nexus.tasks.ingest_pdf import run_pdf_ingest_sync
 
@@ -421,15 +420,45 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
 
 
 def _seed_api_key(session_factory, user_id: UUID) -> None:
-    """Seed a test API key so the models endpoint returns data."""
+    """Seed a test API key so the models endpoint returns data.
+
+    Inserts directly into the DB to avoid requiring NEXUS_KEY_ENCRYPTION_KEY.
+    The key is fake and never used for real API calls — we just need a row
+    with status='untested' so get_usable_key_providers() returns {'openai'}
+    and the models endpoint returns model data.
+    """
+    from nexus.db.models import UserApiKey
+
     with session_factory() as db:
-        upsert_user_key(
-            db=db,
+        existing = db.scalars(
+            select(UserApiKey).where(
+                UserApiKey.user_id == user_id,
+                UserApiKey.provider == "openai",
+            )
+        ).first()
+
+        if existing:
+            if existing.status == "revoked":
+                existing.status = "untested"
+                existing.revoked_at = None
+                db.commit()
+                print("Reactivated existing E2E test API key (provider=openai)")
+            else:
+                print("E2E test API key already exists (provider=openai)")
+            return
+
+        key = UserApiKey(
             user_id=user_id,
             provider="openai",
-            api_key="sk-test-e2e-placeholder-key-00000",
+            encrypted_key=b"fake-e2e-ciphertext-pad!",
+            key_nonce=b"fake-e2e-nonce-24bytesXX",
+            master_key_version=1,
+            key_fingerprint="0000",
+            status="untested",
         )
-    print("Seeded E2E test API key (provider=openai)")
+        db.add(key)
+        db.commit()
+        print("Seeded E2E test API key (provider=openai)")
 
 
 def _seed_epub_media(session_factory, user_id: UUID, settings) -> None:

@@ -3,7 +3,9 @@ import { test, expect } from "@playwright/test";
 test.describe("settings", () => {
   test("view settings", async ({ page }) => {
     await page.goto("/settings/keys");
-    await expect(page.getByText(/your keys|api key|settings/i)).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "API Keys" })
+    ).toBeVisible();
   });
 
   test("update preference", async ({ page }) => {
@@ -14,8 +16,12 @@ test.describe("settings", () => {
 
   test("persisted settings state after reload", async ({ page }) => {
     await page.goto("/settings/keys");
-    await expect(page.getByText(/your keys|api key|settings/i)).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "API Keys" })
+    ).toBeVisible();
     await page.reload();
-    await expect(page.getByText(/your keys|api key|settings/i)).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "API Keys" })
+    ).toBeVisible();
   });
 });

@@ -25,9 +25,10 @@ test.describe("epub", () => {
   test("open reader", async ({ page }) => {
     const seed = readSeededEpubMedia();
     await page.goto(`/media/${seed.media_id}`);
-    // First chapter content should be visible
+    // First chapter heading should be visible (use heading role to avoid
+    // strict mode violation with the <option> in the chapter selector)
     await expect(
-      page.getByText(seed.chapter_titles[0])
+      page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
   });
 
@@ -37,7 +38,7 @@ test.describe("epub", () => {
 
     // Wait for first chapter to load
     await expect(
-      page.getByText(seed.chapter_titles[0])
+      page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
     // Click "Next chapter" to go to chapter 2
@@ -46,9 +47,9 @@ test.describe("epub", () => {
     await expect(nextBtn).toBeEnabled();
     await nextBtn.click();
 
-    // Chapter 2 content should now be visible
+    // Chapter 2 heading should now be visible
     await expect(
-      page.getByText(seed.chapter_titles[1])
+      page.getByRole("heading", { name: seed.chapter_titles[1] })
     ).toBeVisible({ timeout: 10_000 });
 
     // The chapter selector dropdown should list all chapters
@@ -64,13 +65,13 @@ test.describe("epub", () => {
 
     // Wait for chapter content to load
     await expect(
-      page.getByText(seed.chapter_titles[0])
+      page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
-    // Select text in the chapter body by triple-clicking a paragraph
-    const paragraph = page.locator("p").first();
+    // Select text in the chapter body (scoped to the content area)
+    const paragraph = page.locator('[class*="fragments"] p').first();
     await expect(paragraph).toBeVisible();
-    await paragraph.click({ clickCount: 3 });
+    await paragraph.selectText();
 
     // Selection popover should appear
     await expect(
