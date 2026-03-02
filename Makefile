@@ -229,12 +229,22 @@ test-front-browser:
 	cd apps/web && npx vitest run --project browser
 
 test-e2e:
-	cd e2e && npx playwright install --with-deps chromium && npx playwright test
+	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
+	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
+	echo "Running e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
+	cd e2e && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright test
 
 e2e: test-e2e
 
 test-e2e-ui:
-	cd e2e && npx playwright install --with-deps chromium && npx playwright test --ui
+	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
+	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
+	echo "Running e2e ui with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
+	cd e2e && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright test --ui
 
 # === Verify ===
 

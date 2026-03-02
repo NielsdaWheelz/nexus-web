@@ -623,6 +623,7 @@ make test-migrations   # Migration tests (separate DB)
 make test-supabase     # Supabase auth/storage integration tests (opt-in)
 make test-front        # Frontend tests
 make verify            # Full verification (lint + format + all tests)
+make e2e               # Playwright E2E (auto-selects free API/WEB ports)
 ```
 
 Backend tests are hermetic: they start their own Postgres + Redis on free ports,
