@@ -73,10 +73,52 @@ def _mock_podcast_index(
     def fake_fetch(self, provider_podcast_id: str, limit: int) -> list[dict]:
         return episodes_by_podcast[str(provider_podcast_id)][:limit]
 
+    # EXTERNAL SEAM EXCEPTION:
+    # Podcast transcription is an external provider boundary. This default
+    # test seam mirrors legacy transcript_segments payload behavior so existing
+    # lifecycle tests can focus on ingest contracts, while allowing specific
+    # tests to override transcription outcomes explicitly.
+    def fake_transcribe(audio_url: str) -> dict[str, object]:
+        normalized_audio_url = str(audio_url or "").strip()
+        for episode_rows in episodes_by_podcast.values():
+            for episode in episode_rows:
+                episode_audio_url = str(episode.get("audio_url") or "").strip()
+                if episode_audio_url != normalized_audio_url:
+                    continue
+
+                override = episode.get("mock_transcription_result")
+                if isinstance(override, dict):
+                    return override
+
+                transcript_segments = episode.get("transcript_segments")
+                if isinstance(transcript_segments, list) and transcript_segments:
+                    return {
+                        "status": "completed",
+                        "segments": transcript_segments,
+                        "diagnostic_error_code": None,
+                    }
+
+                return {
+                    "status": "failed",
+                    "error_code": "E_TRANSCRIPT_UNAVAILABLE",
+                    "error_message": "Transcript unavailable",
+                }
+
+        return {
+            "status": "failed",
+            "error_code": "E_TRANSCRIPT_UNAVAILABLE",
+            "error_message": "Transcript unavailable",
+        }
+
     monkeypatch.setattr("nexus.services.podcasts.PodcastIndexClient.search_podcasts", fake_search)
     monkeypatch.setattr(
         "nexus.services.podcasts.PodcastIndexClient.fetch_recent_episodes",
         fake_fetch,
+    )
+    monkeypatch.setattr(
+        "nexus.services.podcasts._transcribe_podcast_audio",
+        fake_transcribe,
+        raising=False,
     )
 
 
@@ -1166,6 +1208,95 @@ class TestPodcastQuotaAndPlans:
 
 
 class TestPodcastTranscriptPersistence:
+    def test_transcript_segments_are_sourced_from_transcription_provider_not_discovery_payload(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"provider-source-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Provider Source Boundary Podcast")
+        audio_url = "https://cdn.example.com/provider-source.mp3"
+        episodes = [
+            {
+                "provider_episode_id": "ep-provider-source-1",
+                "guid": "guid-provider-source-1",
+                "title": "Provider Source Episode",
+                "audio_url": audio_url,
+                "published_at": "2026-03-02T06:00:00Z",
+                "duration_seconds": 120,
+                "transcript_segments": [
+                    {
+                        "t_start_ms": 0,
+                        "t_end_ms": 900,
+                        "text": "payload transcript segment should be ignored",
+                        "speaker_label": "PayloadSpeaker",
+                    }
+                ],
+            }
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: episodes},
+        )
+
+        provider_segments = [
+            {
+                "t_start_ms": 1200,
+                "t_end_ms": 2600,
+                "text": "provider transcript segment",
+                "speaker_label": "ProviderSpeaker",
+            }
+        ]
+        monkeypatch.setattr(
+            "nexus.services.podcasts._transcribe_podcast_audio",
+            lambda _audio_url: {
+                "status": "completed",
+                "segments": provider_segments,
+                "diagnostic_error_code": None,
+            },
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text(
+                    """
+                    SELECT pe.media_id
+                    FROM podcast_episodes pe
+                    JOIN podcasts p ON p.id = pe.podcast_id
+                    WHERE p.provider_podcast_id = :provider_podcast_id
+                    """
+                ),
+                {"provider_podcast_id": provider_podcast_id},
+            ).scalar()
+        assert media_id is not None
+
+        fragments_response = auth_client.get(
+            f"/media/{media_id}/fragments",
+            headers=auth_headers(user_id),
+        )
+        assert fragments_response.status_code == 200, (
+            f"expected transcript fragments to be readable, got {fragments_response.status_code}: "
+            f"{fragments_response.text}"
+        )
+        fragments = fragments_response.json()["data"]
+        assert len(fragments) == 1
+        assert fragments[0]["canonical_text"] == "provider transcript segment"
+        assert fragments[0]["speaker_label"] == "ProviderSpeaker"
+        assert "payload transcript segment should be ignored" not in fragments[0]["canonical_text"]
+
     def test_transcript_segments_persist_with_deterministic_order_and_diarization_fallback(
         self, auth_client, monkeypatch, direct_db
     ):
@@ -1310,6 +1441,287 @@ class TestPodcastTranscriptPersistence:
         assert caps["can_highlight"] is False
         assert caps["can_quote"] is False
         assert caps["can_search"] is False
+
+    def test_diarization_fallback_success_is_readable_and_retains_diagnostic_error_code(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"diarization-fallback-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Diarization Fallback Podcast")
+        audio_url = "https://cdn.example.com/diarization-fallback.mp3"
+        episodes = [
+            {
+                "provider_episode_id": "ep-diarization-fallback-1",
+                "guid": "guid-diarization-fallback-1",
+                "title": "Diarization Fallback Episode",
+                "audio_url": audio_url,
+                "published_at": "2026-03-02T07:00:00Z",
+                "duration_seconds": 60,
+                "transcript_segments": None,
+            }
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: episodes},
+        )
+        monkeypatch.setattr(
+            "nexus.services.podcasts._transcribe_podcast_audio",
+            lambda _audio_url: {
+                "status": "completed",
+                "segments": [
+                    {
+                        "t_start_ms": 500,
+                        "t_end_ms": 1800,
+                        "text": "fallback transcript",
+                        "speaker_label": None,
+                    }
+                ],
+                "diagnostic_error_code": "E_DIARIZATION_FAILED",
+            },
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+
+        with direct_db.session() as session:
+            media_row = session.execute(
+                text(
+                    """
+                    SELECT m.id, m.processing_status, m.last_error_code
+                    FROM media m
+                    JOIN podcast_episodes pe ON pe.media_id = m.id
+                    JOIN podcasts p ON p.id = pe.podcast_id
+                    WHERE p.provider_podcast_id = :provider_podcast_id
+                    """
+                ),
+                {"provider_podcast_id": provider_podcast_id},
+            ).fetchone()
+            assert media_row is not None
+            media_id = media_row[0]
+
+            job_row = session.execute(
+                text(
+                    """
+                    SELECT status, error_code
+                    FROM podcast_transcription_jobs
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+
+        assert media_row[1] == "ready_for_reading", (
+            f"diarization fallback success must remain readable, got status={media_row[1]}"
+        )
+        assert media_row[2] is None, (
+            f"readable media must not carry terminal transcript error code, got {media_row[2]}"
+        )
+        assert job_row is not None
+        assert job_row[0] == "completed"
+        assert job_row[1] == "E_DIARIZATION_FAILED"
+
+    @pytest.mark.parametrize(
+        "terminal_error_code",
+        ["E_TRANSCRIPTION_FAILED", "E_TRANSCRIPTION_TIMEOUT"],
+    )
+    def test_transcription_failures_map_to_explicit_terminal_error_codes(
+        self, auth_client, monkeypatch, direct_db, terminal_error_code
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"terminal-error-{terminal_error_code.lower()}-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Terminal Error Podcast")
+        episodes = [
+            {
+                "provider_episode_id": f"ep-{terminal_error_code.lower()}",
+                "guid": f"guid-{terminal_error_code.lower()}",
+                "title": "Terminal Error Episode",
+                "audio_url": "https://cdn.example.com/terminal-error.mp3",
+                "published_at": "2026-03-02T08:00:00Z",
+                "duration_seconds": 90,
+                "transcript_segments": [
+                    {
+                        "t_start_ms": 0,
+                        "t_end_ms": 1000,
+                        "text": "payload transcript must be ignored on provider failure",
+                    }
+                ],
+            }
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: episodes},
+        )
+        monkeypatch.setattr(
+            "nexus.services.podcasts._transcribe_podcast_audio",
+            lambda _audio_url: {
+                "status": "failed",
+                "error_code": terminal_error_code,
+                "error_message": f"simulated {terminal_error_code}",
+            },
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+
+        with direct_db.session() as session:
+            media_row = session.execute(
+                text(
+                    """
+                    SELECT m.id, m.processing_status, m.failure_stage, m.last_error_code
+                    FROM media m
+                    JOIN podcast_episodes pe ON pe.media_id = m.id
+                    JOIN podcasts p ON p.id = pe.podcast_id
+                    WHERE p.provider_podcast_id = :provider_podcast_id
+                    """
+                ),
+                {"provider_podcast_id": provider_podcast_id},
+            ).fetchone()
+            assert media_row is not None
+
+            job_row = session.execute(
+                text(
+                    """
+                    SELECT status, error_code
+                    FROM podcast_transcription_jobs
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_row[0]},
+            ).fetchone()
+
+        assert media_row[1] == "failed"
+        assert media_row[2] == "transcribe"
+        assert media_row[3] == terminal_error_code
+        assert job_row is not None
+        assert job_row[0] == "failed"
+        assert job_row[1] == terminal_error_code
+
+    def test_transcript_segments_are_canonicalized_and_invalid_timings_are_rejected(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"canonicalize-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Canonicalization Podcast")
+        raw_segments = [
+            {
+                "t_start_ms": 1000,
+                "t_end_ms": 2000,
+                "text": "Cafe\u0301\u00a0 \t  story",
+                "speaker_label": " Host ",
+            },
+            {
+                "t_start_ms": 2200,
+                "t_end_ms": 2200,
+                "text": "zero length segment should be rejected",
+                "speaker_label": None,
+            },
+            {
+                "t_start_ms": 2500,
+                "t_end_ms": 2400,
+                "text": "backwards segment should be rejected",
+                "speaker_label": None,
+            },
+            {
+                "t_start_ms": 2600,
+                "t_end_ms": 3400,
+                "text": "  second\n\nsegment  ",
+                "speaker_label": "",
+            },
+        ]
+        episodes = [
+            {
+                "provider_episode_id": "ep-canonicalize-1",
+                "guid": "guid-canonicalize-1",
+                "title": "Canonicalization Episode",
+                "audio_url": "https://cdn.example.com/canonicalize.mp3",
+                "published_at": "2026-03-02T09:00:00Z",
+                "duration_seconds": 120,
+                "transcript_segments": raw_segments,
+            }
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: episodes},
+        )
+        monkeypatch.setattr(
+            "nexus.services.podcasts._transcribe_podcast_audio",
+            lambda _audio_url: {
+                "status": "completed",
+                "segments": raw_segments,
+                "diagnostic_error_code": None,
+            },
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text(
+                    """
+                    SELECT pe.media_id
+                    FROM podcast_episodes pe
+                    JOIN podcasts p ON p.id = pe.podcast_id
+                    WHERE p.provider_podcast_id = :provider_podcast_id
+                    """
+                ),
+                {"provider_podcast_id": provider_podcast_id},
+            ).scalar()
+        assert media_id is not None
+
+        fragments_response = auth_client.get(
+            f"/media/{media_id}/fragments",
+            headers=auth_headers(user_id),
+        )
+        assert fragments_response.status_code == 200, (
+            f"expected transcript fragments to be readable, got {fragments_response.status_code}: "
+            f"{fragments_response.text}"
+        )
+        fragments = fragments_response.json()["data"]
+
+        assert len(fragments) == 2, (
+            "invalid transcript timings must be rejected instead of coerced into zero-length rows"
+        )
+        assert [frag["canonical_text"] for frag in fragments] == ["Café story", "second segment"]
+        assert [(frag["t_start_ms"], frag["t_end_ms"]) for frag in fragments] == [
+            (1000, 2000),
+            (2600, 3400),
+        ]
+        assert fragments[0]["speaker_label"] == "Host"
+        assert fragments[1]["speaker_label"] is None
 
 
 def _run_active_subscription_poll(direct_db: DirectSessionManager, *, limit: int = 100) -> dict:

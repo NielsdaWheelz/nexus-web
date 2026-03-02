@@ -156,6 +156,15 @@ Podcast subscription ingest is split into control-plane and data-plane paths:
 - `POST /podcasts/subscriptions` writes/updates per-user subscription state and enqueues a worker job.
 - `DELETE /podcasts/subscriptions/{podcast_id}` marks the subscription unsubscribed and records `unsubscribe_mode` (`1`, `2`, or `3`) for deterministic retention behavior.
 - Worker task `podcast_sync_subscription_job` runs episode selection + idempotent ingest, then updates sync status.
+- Transcript persistence (S7 PR-03) is provider-driven:
+  - new episodes with external audio URLs run transcription work via Deepgram
+  - diarized attempt falls back to non-diarized attempt when diarization fails
+  - persisted transcript segments come from provider output, not discovery/feed payload transcript fields
+  - transcript text is canonicalized (NFC + whitespace collapse) before persistence
+  - segment timing invariants are strict (`t_start_ms < t_end_ms`) at ingest validation and DB constraint layers
+- Transcription failure semantics:
+  - terminal/readability failure: `E_TRANSCRIPTION_FAILED`, `E_TRANSCRIPTION_TIMEOUT`, `E_TRANSCRIPT_UNAVAILABLE`
+  - diagnostic-only fallback signal: `E_DIARIZATION_FAILED` on completed transcription jobs when non-diarized fallback succeeds
 - Sync status is explicit and queryable via `GET /podcasts/subscriptions/{podcast_id}`:
   `pending`, `running`, `complete`, `source_limited`, `failed`.
 - `source_limited` indicates upstream source pagination limits prevented fully satisfying requested prefetch depth.

@@ -82,6 +82,12 @@ class Settings(BaseSettings):
         default="https://api.podcastindex.org/api/1.0",
         alias="PODCAST_INDEX_BASE_URL",
     )
+    deepgram_api_key: str | None = Field(default=None, alias="DEEPGRAM_API_KEY")
+    deepgram_base_url: str = Field(default="https://api.deepgram.com", alias="DEEPGRAM_BASE_URL")
+    deepgram_model: str = Field(default="nova-3", alias="DEEPGRAM_MODEL")
+    podcast_transcription_timeout_seconds: float = Field(
+        default=90.0, alias="PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS"
+    )
     podcast_free_daily_transcription_minutes: int = Field(
         default=60, alias="PODCAST_FREE_DAILY_TRANSCRIPTION_MINUTES"
     )
@@ -217,6 +223,8 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_PAID_INITIAL_EPISODE_WINDOW must be >= 1.")
         if self.podcast_ingest_prefetch_limit < 1:
             raise ValueError("PODCAST_INGEST_PREFETCH_LIMIT must be >= 1.")
+        if self.podcast_transcription_timeout_seconds <= 0:
+            raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
 
         return self
 

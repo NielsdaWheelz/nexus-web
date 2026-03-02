@@ -39,7 +39,9 @@ nexus/
 │   │       ├── 0008_slice5_epub_toc_nodes.py     # S5: EPUB TOC snapshot schema
 │   │       ├── 0009_slice6_typed_highlight_data_foundation.py  # S6: typed highlight + PDF artifacts
 │   │       ├── 0010_slice7_podcast_backend_foundation.py       # S7: podcast foundation tables
-│   │       └── 0011_slice7_podcast_subscription_sync_lifecycle.py # S7: async subscription sync state
+│   │       ├── 0011_slice7_podcast_subscription_sync_lifecycle.py # S7: async subscription sync state
+│   │       ├── 0012_slice7_podcast_unsubscribe_modes.py        # S7: unsubscribe retention modes
+│   │       └── 0013_slice7_pr03_transcript_invariants.py       # S7 PR-03: strict transcript timing invariants
 │   └── alembic.ini
 │
 ├── supabase/                    # Supabase local configuration
@@ -80,6 +82,7 @@ nexus/
 - **EPUB Extraction** (S5): Deterministic chapter fragment materialization from EPUB archives with TOC snapshot, title fallback, resource rewriting, and archive safety enforcement. Chapter + TOC read APIs with cursor pagination and BFF parity.
 - **EPUB Reader** (S5 PR-05): Chapter-based EPUB reader in the media view page. Chapter manifest navigation, URL-addressable chapter deep links, collapsible TOC with navigable/non-clickable node states, request-version guards for stale response protection, and deterministic error recovery matrix. Non-EPUB reader flow preserved unchanged.
 - **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` remains control-plane only (subscribe + enqueue). `DELETE /podcasts/subscriptions/{podcast_id}` applies explicit unsubscribe retention modes (`mode=1|2|3`). Episode ingest runs in worker data-plane jobs with explicit sync lifecycle states (`pending`, `running`, `complete`, `source_limited`, `failed`).
+- **Podcast Transcription Pipeline** (S7 PR-03): transcript segments are sourced from transcription-provider output (Deepgram), not feed payload transcript fields. Diarized transcription falls back to non-diarized output, transcript text is canonicalized (NFC + whitespace normalization), and persisted segment timing is strictly validated (`t_start_ms < t_end_ms`).
 
 ## Quick Start
 
@@ -219,6 +222,12 @@ DATABASE_URL_TEST=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_t
 DATABASE_URL_TEST_MIGRATIONS=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations
 REDIS_URL=redis://localhost:6379/0
 
+# Optional: real podcast transcription provider config (S7 PR-03)
+# DEEPGRAM_API_KEY=<deepgram-api-key>
+# DEEPGRAM_BASE_URL=https://api.deepgram.com
+# DEEPGRAM_MODEL=nova-3
+# PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS=90
+
 # Supabase local configuration
 SUPABASE_URL=http://127.0.0.1:54321
 SUPABASE_ANON_KEY=<generated-by-supabase>
@@ -256,6 +265,15 @@ This file is:
 | `REDIS_URL` | For worker | Redis connection string (e.g., `redis://localhost:6379/0`) |
 | `CELERY_BROKER_URL` | No | Celery broker URL (defaults to `REDIS_URL`) |
 | `CELERY_RESULT_BACKEND` | No | Celery result backend URL (defaults to `REDIS_URL`) |
+
+#### Podcast Transcription (S7 PR-03)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DEEPGRAM_API_KEY` | For real provider transcription | Deepgram API key used for podcast transcription |
+| `DEEPGRAM_BASE_URL` | No | Deepgram API base URL (default: `https://api.deepgram.com`) |
+| `DEEPGRAM_MODEL` | No | Deepgram model identifier (default: `nova-3`) |
+| `PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS` | No | Provider request timeout in seconds (default: `90`) |
 
 #### Storage (Supabase)
 

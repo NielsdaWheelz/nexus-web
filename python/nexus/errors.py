@@ -98,6 +98,10 @@ class ApiErrorCode(str, Enum):
 
     # S7 Podcast provider errors
     E_PODCAST_PROVIDER_UNAVAILABLE = "E_PODCAST_PROVIDER_UNAVAILABLE"  # 503 upstream unavailable
+    E_TRANSCRIPTION_FAILED = "E_TRANSCRIPTION_FAILED"  # 502 provider returned error
+    E_TRANSCRIPTION_TIMEOUT = "E_TRANSCRIPTION_TIMEOUT"  # 504 provider timed out
+    E_DIARIZATION_FAILED = "E_DIARIZATION_FAILED"  # 502 diarized attempt failed (diagnostic)
+    E_TRANSCRIPT_UNAVAILABLE = "E_TRANSCRIPT_UNAVAILABLE"  # 409 transcript unavailable
 
     # S6 PDF errors (422)
     E_PDF_PASSWORD_REQUIRED = "E_PDF_PASSWORD_REQUIRED"  # 422
@@ -194,6 +198,10 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_ARCHIVE_UNSAFE: 400,
     # S7 podcast provider errors
     ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE: 503,
+    ApiErrorCode.E_TRANSCRIPTION_FAILED: 502,
+    ApiErrorCode.E_TRANSCRIPTION_TIMEOUT: 504,
+    ApiErrorCode.E_DIARIZATION_FAILED: 502,
+    ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE: 409,
     # S6 PDF errors
     ApiErrorCode.E_PDF_PASSWORD_REQUIRED: 422,
     # Ingestion errors
