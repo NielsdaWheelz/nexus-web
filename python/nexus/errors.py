@@ -88,12 +88,16 @@ class ApiErrorCode(str, Enum):
     E_STREAM_TOKEN_EXPIRED = "E_STREAM_TOKEN_EXPIRED"  # 401 token past expiry
     E_STREAM_TOKEN_REPLAYED = "E_STREAM_TOKEN_REPLAYED"  # 401 jti already used
     E_STREAM_TOKEN_INVALID = "E_STREAM_TOKEN_INVALID"  # 401 signature or claims failed
+    E_PODCAST_QUOTA_EXCEEDED = "E_PODCAST_QUOTA_EXCEEDED"  # 429 free-tier daily quota exceeded
 
     # S5 EPUB errors (400/404/409)
     E_RETRY_INVALID_STATE = "E_RETRY_INVALID_STATE"  # 409
     E_RETRY_NOT_ALLOWED = "E_RETRY_NOT_ALLOWED"  # 409
     E_CHAPTER_NOT_FOUND = "E_CHAPTER_NOT_FOUND"  # 404
     E_ARCHIVE_UNSAFE = "E_ARCHIVE_UNSAFE"  # 400
+
+    # S7 Podcast provider errors
+    E_PODCAST_PROVIDER_UNAVAILABLE = "E_PODCAST_PROVIDER_UNAVAILABLE"  # 503 upstream unavailable
 
     # S6 PDF errors (422)
     E_PDF_PASSWORD_REQUIRED = "E_PDF_PASSWORD_REQUIRED"  # 422
@@ -182,11 +186,14 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_STREAM_TOKEN_EXPIRED: 401,
     ApiErrorCode.E_STREAM_TOKEN_REPLAYED: 401,
     ApiErrorCode.E_STREAM_TOKEN_INVALID: 401,
+    ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED: 429,
     # S5 EPUB errors
     ApiErrorCode.E_RETRY_INVALID_STATE: 409,
     ApiErrorCode.E_RETRY_NOT_ALLOWED: 409,
     ApiErrorCode.E_CHAPTER_NOT_FOUND: 404,
     ApiErrorCode.E_ARCHIVE_UNSAFE: 400,
+    # S7 podcast provider errors
+    ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE: 503,
     # S6 PDF errors
     ApiErrorCode.E_PDF_PASSWORD_REQUIRED: 422,
     # Ingestion errors

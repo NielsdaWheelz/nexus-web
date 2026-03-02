@@ -75,6 +75,27 @@ class Settings(BaseSettings):
     ingest_stream_timeout_s: int = Field(default=60, alias="INGEST_STREAM_TIMEOUT_S")
     signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
 
+    # S7: Podcast discovery + subscription ingestion policy
+    podcast_index_api_key: str | None = Field(default=None, alias="PODCAST_INDEX_API_KEY")
+    podcast_index_api_secret: str | None = Field(default=None, alias="PODCAST_INDEX_API_SECRET")
+    podcast_index_base_url: str = Field(
+        default="https://api.podcastindex.org/api/1.0",
+        alias="PODCAST_INDEX_BASE_URL",
+    )
+    podcast_free_daily_transcription_minutes: int = Field(
+        default=60, alias="PODCAST_FREE_DAILY_TRANSCRIPTION_MINUTES"
+    )
+    podcast_free_initial_episode_window: int = Field(
+        default=3, alias="PODCAST_FREE_INITIAL_EPISODE_WINDOW"
+    )
+    podcast_paid_daily_transcription_minutes: int | None = Field(
+        default=None, alias="PODCAST_PAID_DAILY_TRANSCRIPTION_MINUTES"
+    )
+    podcast_paid_initial_episode_window: int = Field(
+        default=10, alias="PODCAST_PAID_INITIAL_EPISODE_WINDOW"
+    )
+    podcast_ingest_prefetch_limit: int = Field(default=50, alias="PODCAST_INGEST_PREFETCH_LIMIT")
+
     # S5: EPUB archive safety limits (L2 baseline = ceiling; may be stricter, never weaker)
     max_epub_archive_entries: int = Field(default=10_000, alias="MAX_EPUB_ARCHIVE_ENTRIES")
     max_epub_archive_total_uncompressed_bytes: int = Field(
@@ -184,6 +205,18 @@ class Settings(BaseSettings):
                 )
             if value < 1:
                 raise ValueError(f"{field_name.upper()}={value} must be >= 1.")
+
+        if self.podcast_free_daily_transcription_minutes < 0:
+            raise ValueError("PODCAST_FREE_DAILY_TRANSCRIPTION_MINUTES must be >= 0.")
+        if self.podcast_paid_daily_transcription_minutes is not None:
+            if self.podcast_paid_daily_transcription_minutes < 0:
+                raise ValueError("PODCAST_PAID_DAILY_TRANSCRIPTION_MINUTES must be >= 0.")
+        if self.podcast_free_initial_episode_window < 1:
+            raise ValueError("PODCAST_FREE_INITIAL_EPISODE_WINDOW must be >= 1.")
+        if self.podcast_paid_initial_episode_window < 1:
+            raise ValueError("PODCAST_PAID_INITIAL_EPISODE_WINDOW must be >= 1.")
+        if self.podcast_ingest_prefetch_limit < 1:
+            raise ValueError("PODCAST_INGEST_PREFETCH_LIMIT must be >= 1.")
 
         return self
 

@@ -22,7 +22,8 @@ nexus/
 │       ├── conversations.py # Conversation/message CRUD (S3)
 │       ├── keys.py          # User API key management (S3)
 │       ├── models.py        # LLM model registry (S3)
-│       └── search.py        # Keyword search (S3, PR-06)
+│       ├── search.py        # Keyword search (S3, PR-06)
+│       └── podcasts.py      # Podcast discovery/subscription sync APIs (S7)
 ├── auth/          # Authentication
 │   ├── middleware.py  # Auth middleware
 │   ├── permissions.py # Authorization predicates (can_read_media, etc.)
@@ -61,6 +62,7 @@ nexus/
 │   ├── rate_limit.py    # Redis-based rate limiting and token budgets (S3 PR-05)
 │   ├── context_rendering.py  # Context rendering for prompts (S3 PR-05)
 │   ├── api_key_resolver.py   # API key resolution for LLM calls (S3 PR-05)
+│   ├── podcasts.py      # Podcast discovery + async subscription sync (S7)
 │   └── llm/             # LLM adapter layer (S3 PR-04)
 │       ├── __init__.py       # Public exports
 │       ├── types.py          # Turn, LLMRequest, LLMResponse, LLMChunk, LLMUsage
@@ -119,6 +121,10 @@ nexus/
 | DELETE | `/keys/{id}` | Revoke an API key (S3) |
 | POST | `/keys/{id}/test` | Test an API key against its provider (S3) |
 | GET | `/search` | Keyword search across visible content (S3, PR-06) |
+| GET | `/podcasts/discover` | Global podcast discovery metadata (S7) |
+| POST | `/podcasts/subscriptions` | Create/update subscription and enqueue async sync (S7) |
+| GET | `/podcasts/subscriptions/{podcast_id}` | Read per-user subscription sync lifecycle status (S7) |
+| PUT | `/internal/podcasts/users/{user_id}/plan` | Internal operator plan override endpoint (S7) |
 
 ### Public Endpoints
 
@@ -141,6 +147,16 @@ The `SupabaseJwksVerifier` validates:
 - Issuer matches configured value
 - Audience is in configured list
 - Subject is valid UUID
+
+### Podcast Subscription Sync (S7)
+
+Podcast subscription ingest is split into control-plane and data-plane paths:
+
+- `POST /podcasts/subscriptions` writes/updates per-user subscription state and enqueues a worker job.
+- Worker task `podcast_sync_subscription_job` runs episode selection + idempotent ingest, then updates sync status.
+- Sync status is explicit and queryable via `GET /podcasts/subscriptions/{podcast_id}`:
+  `pending`, `running`, `complete`, `source_limited`, `failed`.
+- `source_limited` indicates upstream source pagination limits prevented fully satisfying requested prefetch depth.
 
 ### Request Tracing (X-Request-ID)
 

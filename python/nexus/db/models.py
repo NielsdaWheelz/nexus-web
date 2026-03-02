@@ -4,7 +4,7 @@ Defines all database tables using SQLAlchemy 2.x declarative patterns.
 Enums are defined as Python enums and mapped to PostgreSQL enum types.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum as PyEnum
 from uuid import UUID
@@ -13,8 +13,10 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     SmallInteger,
@@ -339,6 +341,15 @@ class Media(Base):
     pdf_page_text_spans: Mapped[list["PdfPageTextSpan"]] = relationship(
         "PdfPageTextSpan", back_populates="media", cascade="all, delete-orphan"
     )
+    podcast_episode: Mapped["PodcastEpisode | None"] = relationship(
+        "PodcastEpisode", back_populates="media", cascade="all, delete-orphan", uselist=False
+    )
+    podcast_transcription_job: Mapped["PodcastTranscriptionJob | None"] = relationship(
+        "PodcastTranscriptionJob",
+        back_populates="media",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class MediaFile(Base):
@@ -381,13 +392,29 @@ class Fragment(Base):
     idx: Mapped[int] = mapped_column(Integer, nullable=False)
     canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
     html_sanitized: Mapped[str] = mapped_column(Text, nullable=False)
+    t_start_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    t_end_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    speaker_label: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
     )
 
-    __table_args__ = (UniqueConstraint("media_id", "idx", name="uq_fragments_media_idx"),)
+    __table_args__ = (
+        UniqueConstraint("media_id", "idx", name="uq_fragments_media_idx"),
+        CheckConstraint(
+            "(t_start_ms IS NULL AND t_end_ms IS NULL) "
+            "OR (t_start_ms IS NOT NULL AND t_end_ms IS NOT NULL)",
+            name="ck_fragments_time_offsets_paired_null",
+        ),
+        CheckConstraint(
+            "(t_start_ms IS NULL OR t_start_ms >= 0) "
+            "AND (t_end_ms IS NULL OR t_end_ms >= 0) "
+            "AND (t_start_ms IS NULL OR t_end_ms >= t_start_ms)",
+            name="ck_fragments_time_offsets_valid",
+        ),
+    )
 
     # Relationships
     media: Mapped["Media"] = relationship("Media", back_populates="fragments", lazy="joined")
@@ -420,6 +447,263 @@ class LibraryMedia(Base):
     # Relationships
     library: Mapped["Library"] = relationship("Library", back_populates="library_media")
     media: Mapped["Media"] = relationship("Media", back_populates="library_media")
+
+
+# =============================================================================
+# Slice 7: Podcasts
+# =============================================================================
+
+
+class Podcast(Base):
+    """Global podcast metadata from discovery providers."""
+
+    __tablename__ = "podcasts"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_podcast_id: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    author: Mapped[str | None] = mapped_column(Text, nullable=True)
+    feed_url: Mapped[str] = mapped_column(Text, nullable=False)
+    website_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "provider_podcast_id",
+            name="uq_podcasts_provider_provider_podcast_id",
+        ),
+        UniqueConstraint("feed_url", name="uq_podcasts_feed_url"),
+    )
+
+    episodes: Mapped[list["PodcastEpisode"]] = relationship(
+        "PodcastEpisode", back_populates="podcast", cascade="all, delete-orphan"
+    )
+
+
+class PodcastSubscription(Base):
+    """Per-user subscription to a global podcast."""
+
+    __tablename__ = "podcast_subscriptions"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    podcast_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcasts.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    sync_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sync_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sync_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    sync_started_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    sync_completed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'unsubscribed')",
+            name="ck_podcast_subscriptions_status",
+        ),
+        CheckConstraint(
+            "sync_status IN ('pending', 'running', 'partial', 'complete', 'source_limited', 'failed')",
+            name="ck_podcast_subscriptions_sync_status",
+        ),
+        CheckConstraint(
+            "sync_attempts >= 0",
+            name="ck_podcast_subscriptions_sync_attempts_non_negative",
+        ),
+    )
+
+    podcast: Mapped["Podcast"] = relationship("Podcast")
+
+
+class PodcastEpisode(Base):
+    """Global episode identity and metadata for podcast media rows."""
+
+    __tablename__ = "podcast_episodes"
+
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    podcast_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcasts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider_episode_id: Mapped[str] = mapped_column(Text, nullable=False)
+    guid: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fallback_identity: Mapped[str] = mapped_column(Text, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "podcast_id",
+            "provider_episode_id",
+            name="uq_podcast_episodes_podcast_provider_episode_id",
+        ),
+        UniqueConstraint(
+            "podcast_id",
+            "fallback_identity",
+            name="uq_podcast_episodes_podcast_fallback_identity",
+        ),
+        CheckConstraint(
+            "duration_seconds IS NULL OR duration_seconds > 0",
+            name="ck_podcast_episodes_duration_positive",
+        ),
+        Index(
+            "uq_podcast_episodes_podcast_guid_not_null",
+            "podcast_id",
+            "guid",
+            unique=True,
+            postgresql_where=text("guid IS NOT NULL"),
+        ),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="podcast_episode")
+    podcast: Mapped["Podcast"] = relationship("Podcast", back_populates="episodes")
+
+
+class PodcastTranscriptionJob(Base):
+    """One transcription-work record per globally ingested podcast episode."""
+
+    __tablename__ = "podcast_transcription_jobs"
+
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    requested_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'completed', 'failed')",
+            name="ck_podcast_transcription_jobs_status",
+        ),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="podcast_transcription_job")
+
+
+class PodcastUserPlan(Base):
+    """Manual plan overrides used for podcast quota and ingest-window policy."""
+
+    __tablename__ = "podcast_user_plans"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    plan_tier: Mapped[str] = mapped_column(Text, nullable=False)
+    daily_transcription_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    initial_episode_window: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "plan_tier IN ('free', 'paid')",
+            name="ck_podcast_user_plans_plan_tier",
+        ),
+        CheckConstraint(
+            "daily_transcription_minutes IS NULL OR daily_transcription_minutes >= 0",
+            name="ck_podcast_user_plans_daily_minutes_non_negative",
+        ),
+        CheckConstraint(
+            "initial_episode_window >= 1",
+            name="ck_podcast_user_plans_initial_episode_window_positive",
+        ),
+    )
+
+
+class PodcastTranscriptionUsageDaily(Base):
+    """Per-user UTC-day transcription usage ledger."""
+
+    __tablename__ = "podcast_transcription_usage_daily"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    minutes_used: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "minutes_used >= 0",
+            name="ck_podcast_transcription_usage_daily_minutes_non_negative",
+        ),
+    )
 
 
 # =============================================================================
