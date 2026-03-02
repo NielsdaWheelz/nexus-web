@@ -6,7 +6,9 @@ Celery worker for asynchronous task processing.
 
 The worker processes background tasks including:
 - **Web article ingestion**: Fetch URLs via Playwright, extract with Mozilla Readability, sanitize HTML, generate canonical text
-- Future: Media extraction, embedding generation, transcription
+- **Podcast subscription sync**: Data-plane ingest/transcription for subscribed podcasts
+- **Scheduled podcast active polling**: Periodic active-subscription polling via Celery Beat
+- Future: Additional media extraction/embedding jobs
 
 ## Prerequisites
 
@@ -21,6 +23,7 @@ For web article ingestion, the worker requires:
 ```bash
 # From repo root
 make worker
+make beat
 
 # Or manually:
 cd python
@@ -28,6 +31,11 @@ PYTHONPATH=$PWD:$PWD/.. \
   DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/postgres \
   REDIS_URL=redis://localhost:6379/0 \
   uv run celery -A apps.worker.main:celery_app worker -Q ingest --concurrency=1 --loglevel=info
+
+PYTHONPATH=$PWD:$PWD/.. \
+  DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/postgres \
+  REDIS_URL=redis://localhost:6379/0 \
+  uv run celery -A apps.worker.main:celery_app beat --loglevel=info --schedule /tmp/nexus-celerybeat-schedule
 ```
 
 ### Docker
@@ -37,7 +45,7 @@ PYTHONPATH=$PWD:$PWD/.. \
 docker build -f docker/Dockerfile.worker -t nexus-worker .
 
 # Run with docker-compose
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d worker beat
 
 # Or run standalone
 docker run \
@@ -112,6 +120,10 @@ Chromium browser processes are memory-intensive. Recommendations:
 | `REDIS_URL` | Yes | Redis URL for Celery broker |
 | `CELERY_BROKER_URL` | No | Override broker URL (defaults to REDIS_URL) |
 | `CELERY_RESULT_BACKEND` | No | Override result backend (defaults to REDIS_URL) |
+| `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS` | No | Beat interval for active-subscription polling (default: 300) |
+| `PODCAST_ACTIVE_POLL_LIMIT` | No | Max active subscriptions scanned per scheduled run (default: 100) |
+| `PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS` | No | Singleton poll-run lease duration in seconds (default: 900) |
+| `PODCAST_SYNC_RUNNING_LEASE_SECONDS` | No | Stale running-sync reclaim threshold in seconds (default: 1800) |
 | `SUPABASE_JWKS_URL` | Yes | Supabase JWKS endpoint |
 | `SUPABASE_ISSUER` | Yes | JWT issuer |
 | `SUPABASE_AUDIENCES` | Yes | JWT audiences |

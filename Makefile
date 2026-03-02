@@ -1,7 +1,7 @@
 # Nexus Development Makefile
 # Run `make help` for available commands
 
-.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations ensure-services ensure-node-ingest lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker migrate migrate-test migrate-down seed verify verify-fast test-back-unit test-front-unit test-front-browser test-e2e test-e2e-ui _verify-fast-static _verify-fast-tests _verify-tests logs
+.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations ensure-services ensure-node-ingest lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker beat migrate migrate-test migrate-down seed verify verify-fast test-back-unit test-front-unit test-front-browser test-e2e test-e2e-ui _verify-fast-static _verify-fast-tests _verify-tests logs
 
 # Load .env file if it exists (created by setup)
 -include .env
@@ -56,6 +56,7 @@ help:
 	@echo "  make api            - Start API server (port 8000)"
 	@echo "  make web            - Start web frontend (port 3000)"
 	@echo "  make worker         - Start Celery worker"
+	@echo "  make beat           - Start Celery beat scheduler"
 	@echo ""
 	@echo "Database:"
 	@echo "  make migrate        - Run migrations (dev database)"
@@ -197,6 +198,14 @@ worker:
 		CELERY_BROKER_URL=redis://localhost:$(REDIS_PORT)/0 \
 		CELERY_RESULT_BACKEND=redis://localhost:$(REDIS_PORT)/0 \
 		uv run celery -A apps.worker.main worker --loglevel=info
+
+beat:
+	cd python && PYTHONPATH=$$PWD:$$PWD/.. \
+		DATABASE_URL=$(DATABASE_URL) \
+		REDIS_URL=redis://localhost:$(REDIS_PORT)/0 \
+		CELERY_BROKER_URL=redis://localhost:$(REDIS_PORT)/0 \
+		CELERY_RESULT_BACKEND=redis://localhost:$(REDIS_PORT)/0 \
+		uv run celery -A apps.worker.main beat --loglevel=info --schedule /tmp/nexus-celerybeat-schedule
 
 # === Database ===
 

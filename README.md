@@ -41,7 +41,8 @@ nexus/
 │   │       ├── 0010_slice7_podcast_backend_foundation.py       # S7: podcast foundation tables
 │   │       ├── 0011_slice7_podcast_subscription_sync_lifecycle.py # S7: async subscription sync state
 │   │       ├── 0012_slice7_podcast_unsubscribe_modes.py        # S7: unsubscribe retention modes
-│   │       └── 0013_slice7_pr03_transcript_invariants.py       # S7 PR-03: strict transcript timing invariants
+│   │       ├── 0013_slice7_pr03_transcript_invariants.py       # S7 PR-03: strict transcript timing invariants
+│   │       └── 0014_slice7_pr04_polling_orchestration.py       # S7 PR-04: scheduled poll telemetry + singleton leasing
 │   └── alembic.ini
 │
 ├── supabase/                    # Supabase local configuration
@@ -83,6 +84,7 @@ nexus/
 - **EPUB Reader** (S5 PR-05): Chapter-based EPUB reader in the media view page. Chapter manifest navigation, URL-addressable chapter deep links, collapsible TOC with navigable/non-clickable node states, request-version guards for stale response protection, and deterministic error recovery matrix. Non-EPUB reader flow preserved unchanged.
 - **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` remains control-plane only (subscribe + enqueue). `DELETE /podcasts/subscriptions/{podcast_id}` applies explicit unsubscribe retention modes (`mode=1|2|3`). Episode ingest runs in worker data-plane jobs with explicit sync lifecycle states (`pending`, `running`, `complete`, `source_limited`, `failed`).
 - **Podcast Transcription Pipeline** (S7 PR-03): transcript segments are sourced from transcription-provider output (Deepgram), not feed payload transcript fields. Diarized transcription falls back to non-diarized output, transcript text is canonicalized (NFC + whitespace normalization), and persisted segment timing is strictly validated (`t_start_ms < t_end_ms`).
+- **Podcast Active Polling Orchestration** (S7 PR-04): Celery Beat schedules periodic active-subscription polling. Runs are singleton-safe via durable lease rows, stale `running` subscription sync claims are reclaimable, and each run persists deterministic operator telemetry (`processed_count`, `failed_count`, `skipped_count`, `scanned_count`, failure-code breakdown).
 
 ## Quick Start
 
@@ -122,6 +124,9 @@ make web
 
 # In terminal 3 (optional): Start Celery worker
 make worker
+
+# In terminal 4 (optional but required for scheduled polling): Start Celery beat
+make beat
 
 # Run all tests
 make test
@@ -185,7 +190,8 @@ SKIP_SEED=1 npm test -- tests/epub.spec.ts --project=chromium
 3. Start API: `make api` (terminal 1)
 4. Start web: `make web` (terminal 2)
 5. Start worker: `make worker` (terminal 3, optional)
-6. Open http://localhost:3000
+6. Start beat scheduler: `make beat` (terminal 4, required for scheduled polling)
+7. Open http://localhost:3000
 
 ### Infrastructure Commands
 
@@ -227,6 +233,12 @@ REDIS_URL=redis://localhost:6379/0
 # DEEPGRAM_BASE_URL=https://api.deepgram.com
 # DEEPGRAM_MODEL=nova-3
 # PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS=90
+
+# Optional: scheduled active subscription polling controls (S7 PR-04)
+# PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS=300
+# PODCAST_ACTIVE_POLL_LIMIT=100
+# PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS=900
+# PODCAST_SYNC_RUNNING_LEASE_SECONDS=1800
 
 # Supabase local configuration
 SUPABASE_URL=http://127.0.0.1:54321
@@ -274,6 +286,15 @@ This file is:
 | `DEEPGRAM_BASE_URL` | No | Deepgram API base URL (default: `https://api.deepgram.com`) |
 | `DEEPGRAM_MODEL` | No | Deepgram model identifier (default: `nova-3`) |
 | `PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS` | No | Provider request timeout in seconds (default: `90`) |
+
+#### Podcast Active Polling (S7 PR-04)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS` | No | Celery Beat interval in seconds for scheduled active-subscription polling (default: `300`) |
+| `PODCAST_ACTIVE_POLL_LIMIT` | No | Per-run max active subscriptions scanned (default: `100`, runtime-clamped to service max) |
+| `PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS` | No | Singleton poll-run lease duration in seconds (default: `900`) |
+| `PODCAST_SYNC_RUNNING_LEASE_SECONDS` | No | Stale `sync_status='running'` reclaim threshold in seconds (default: `1800`) |
 
 #### Storage (Supabase)
 
@@ -474,6 +495,9 @@ The system supports ingesting web articles by URL with asynchronous processing:
 ```bash
 # Terminal 3: Start Celery worker for ingestion
 make worker
+
+# Terminal 4: Start Celery beat for scheduled poll jobs
+make beat
 ```
 
 The worker requires Node.js 20+ and Playwright Chromium. On first run:
@@ -487,7 +511,7 @@ npx playwright install chromium
 
 ```bash
 # Build and run worker with docker-compose
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d worker beat
 ```
 
 ## Chat / Send Message

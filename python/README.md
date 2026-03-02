@@ -156,6 +156,7 @@ Podcast subscription ingest is split into control-plane and data-plane paths:
 - `POST /podcasts/subscriptions` writes/updates per-user subscription state and enqueues a worker job.
 - `DELETE /podcasts/subscriptions/{podcast_id}` marks the subscription unsubscribed and records `unsubscribe_mode` (`1`, `2`, or `3`) for deterministic retention behavior.
 - Worker task `podcast_sync_subscription_job` runs episode selection + idempotent ingest, then updates sync status.
+- Celery Beat task `podcast_active_subscription_poll_job` runs bounded active-subscription polling on a schedule.
 - Transcript persistence (S7 PR-03) is provider-driven:
   - new episodes with external audio URLs run transcription work via Deepgram
   - diarized attempt falls back to non-diarized attempt when diarization fails
@@ -169,6 +170,12 @@ Podcast subscription ingest is split into control-plane and data-plane paths:
   `pending`, `running`, `complete`, `source_limited`, `failed`.
 - `source_limited` indicates upstream source pagination limits prevented fully satisfying requested prefetch depth.
 - Ongoing polling ingest only processes `active` subscriptions and reuses the same sync/idempotency/quota path as direct subscription sync.
+- Scheduled polling runs are singleton-safe at cluster scope (durable `podcast_subscription_poll_runs` lease rows) and persist deterministic counters + failure-code breakdowns in `podcast_subscription_poll_run_failures`.
+- Runtime controls:
+  - `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS`
+  - `PODCAST_ACTIVE_POLL_LIMIT`
+  - `PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS`
+  - `PODCAST_SYNC_RUNNING_LEASE_SECONDS`
 
 ### Request Tracing (X-Request-ID)
 
