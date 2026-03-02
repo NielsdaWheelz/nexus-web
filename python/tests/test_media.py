@@ -227,6 +227,45 @@ class TestGetMedia:
         datetime.fromisoformat(data["created_at"].replace("Z", "+00:00"))
         datetime.fromisoformat(data["updated_at"].replace("Z", "+00:00"))
 
+    def test_get_media_video_exposes_typed_playback_source_contract(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        playback_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.video.value,
+                title="Contract Video",
+                canonical_source_url=playback_url,
+                processing_status=ProcessingStatus.ready_for_reading,
+                external_playback_url=playback_url,
+            )
+            session.add(media)
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        add_resp = auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+        assert add_resp.status_code == 201
+
+        response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert response.status_code == 200
+        media = response.json()["data"]
+        playback_source = media["playback_source"]
+        assert playback_source["kind"] == "external_video"
+        assert playback_source["stream_url"] == playback_url
+        assert playback_source["source_url"] == playback_url
+
 
 # =============================================================================
 # GET /media/{id}/fragments Tests

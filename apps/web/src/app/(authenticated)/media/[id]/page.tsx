@@ -63,6 +63,19 @@ interface Media {
   title: string;
   canonical_source_url: string | null;
   processing_status: string;
+  capabilities?: {
+    can_read: boolean;
+    can_highlight: boolean;
+    can_quote: boolean;
+    can_search: boolean;
+    can_play: boolean;
+    can_download_file: boolean;
+  };
+  playback_source?: {
+    kind: "external_audio" | "external_video";
+    stream_url: string;
+    source_url: string;
+  } | null;
   failure_stage?: string | null;
   last_error_code?: string | null;
   created_at: string;
@@ -75,6 +88,9 @@ interface Fragment {
   idx: number;
   html_sanitized: string;
   canonical_text: string;
+  t_start_ms?: number | null;
+  t_end_ms?: number | null;
+  speaker_label?: string | null;
   created_at: string;
 }
 
@@ -198,6 +214,19 @@ async function fetchChapterDetail(
   return resp.data;
 }
 
+function formatTimestampMs(timestampMs: number | null | undefined): string | null {
+  if (timestampMs == null || timestampMs < 0) {
+    return null;
+  }
+  const totalSeconds = Math.floor(timestampMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours.toString().padStart(2, "0")}:${minutes
+    .toString()
+    .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
 // =============================================================================
 // Component
 // =============================================================================
@@ -218,6 +247,9 @@ export default function MediaViewPage({
 
   // ---- Non-EPUB fragment state ----
   const [fragments, setFragments] = useState<Fragment[]>([]);
+  const [activeTranscriptFragmentId, setActiveTranscriptFragmentId] = useState<string | null>(
+    null
+  );
 
   // ---- EPUB state ----
   const [epubManifest, setEpubManifest] = useState<EpubChapterSummary[] | null>(null);
@@ -255,12 +287,40 @@ export default function MediaViewPage({
 
   const contentRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
   const [highlightsVersion, setHighlightsVersion] = useState(0);
+  const [playbackError, setPlaybackError] = useState(false);
 
   // ---- Derived state ----
   const isEpub = media?.kind === "epub";
   const isPdf = media?.kind === "pdf";
+  const isTranscriptMedia =
+    media?.kind === "podcast_episode" || media?.kind === "video";
+  const canRead = media
+    ? isTranscriptMedia
+      ? (media.capabilities?.can_read ?? isReadableStatus(media.processing_status))
+      : isReadableStatus(media.processing_status)
+    : false;
+  const canPlay = media?.capabilities?.can_play ?? false;
+  const playbackSource = media?.playback_source ?? null;
+  const isPlaybackOnlyTranscript =
+    isTranscriptMedia &&
+    media?.processing_status === "failed" &&
+    media?.last_error_code === "E_TRANSCRIPT_UNAVAILABLE" &&
+    canPlay;
+
+  const activeTranscriptFragment = useMemo(() => {
+    if (!isTranscriptMedia || fragments.length === 0) {
+      return null;
+    }
+    return (
+      fragments.find((fragment) => fragment.id === activeTranscriptFragmentId) ??
+      fragments[0]
+    );
+  }, [activeTranscriptFragmentId, fragments, isTranscriptMedia]);
+
   const linkedPaneHighlights: PageLinkedHighlight[] = useMemo(() => {
     if (isPdf) {
       return pdfPageHighlights.map((highlight) => ({
@@ -304,7 +364,7 @@ export default function MediaViewPage({
         canonicalText: activeChapter.canonical_text,
       };
     }
-    const frag = fragments[0] ?? null;
+    const frag = isTranscriptMedia ? activeTranscriptFragment : (fragments[0] ?? null);
     if (frag) {
       return {
         fragmentId: frag.id,
@@ -313,9 +373,7 @@ export default function MediaViewPage({
       };
     }
     return null;
-  }, [isPdf, isEpub, activeChapter, fragments]);
-
-  const canRead = media ? isReadableStatus(media.processing_status) : false;
+  }, [isPdf, isEpub, isTranscriptMedia, activeChapter, activeTranscriptFragment, fragments]);
 
   useEffect(() => {
     if (!isPdf) {
@@ -324,6 +382,7 @@ export default function MediaViewPage({
       setPdfRefreshToken(0);
       setPdfHighlightsVersion(0);
     }
+    setPlaybackError(false);
   }, [isPdf, id]);
 
   // ==========================================================================
@@ -347,6 +406,7 @@ export default function MediaViewPage({
           );
           if (cancelled) return;
           setFragments(fragmentsResp.data);
+          setActiveTranscriptFragmentId(fragmentsResp.data[0]?.id ?? null);
         }
 
         setError(null);
@@ -714,6 +774,33 @@ export default function MediaViewPage({
     setSelectionError(null);
   }, []);
 
+  const seekPlaybackToMs = useCallback(
+    (timestampMs: number | null | undefined) => {
+      if (timestampMs == null || timestampMs < 0) {
+        return;
+      }
+      const playbackElement =
+        media?.kind === "video" ? videoRef.current : audioRef.current;
+      if (!playbackElement) {
+        return;
+      }
+      playbackElement.currentTime = timestampMs / 1000;
+    },
+    [media?.kind]
+  );
+
+  const handleTranscriptSegmentSelect = useCallback(
+    (fragment: Fragment) => {
+      setActiveTranscriptFragmentId(fragment.id);
+      clearFocus();
+      setHighlights([]);
+      setSelection(null);
+      setSelectionError(null);
+      seekPlaybackToMs(fragment.t_start_ms);
+    },
+    [clearFocus, seekPlaybackToMs]
+  );
+
   // ==========================================================================
   // Highlight Click Handling
   // ==========================================================================
@@ -991,7 +1078,110 @@ export default function MediaViewPage({
             <div className={styles.selectionError}>{selectionError}</div>
           )}
 
-          {!canRead ? (
+          {isTranscriptMedia ? (
+            <div className={styles.transcriptPane}>
+              <div className={styles.playerPanel}>
+                {playbackSource ? (
+                  playbackSource.kind === "external_audio" ? (
+                    <audio
+                      ref={audioRef}
+                      controls
+                      preload="none"
+                      src={playbackSource.stream_url}
+                      className={styles.player}
+                      onError={() => setPlaybackError(true)}
+                      onCanPlay={() => setPlaybackError(false)}
+                    />
+                  ) : (
+                    <video
+                      ref={videoRef}
+                      controls
+                      preload="none"
+                      src={playbackSource.stream_url}
+                      className={styles.player}
+                      onError={() => setPlaybackError(true)}
+                      onCanPlay={() => setPlaybackError(false)}
+                    />
+                  )
+                ) : (
+                  <div className={styles.notReady}>
+                    <p>No playback source is available.</p>
+                  </div>
+                )}
+
+                {playbackError &&
+                  (playbackSource?.source_url || media.canonical_source_url) && (
+                    <div className={styles.playbackFallback}>
+                      <p>Browser playback failed.</p>
+                      <a
+                        href={playbackSource?.source_url || media.canonical_source_url || "#"}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.sourceLink}
+                      >
+                        Open in source ↗
+                      </a>
+                    </div>
+                  )}
+              </div>
+
+              {isPlaybackOnlyTranscript ? (
+                <div className={styles.notReady}>
+                  <p>Transcript unavailable for this episode.</p>
+                  <p>Error: E_TRANSCRIPT_UNAVAILABLE</p>
+                </div>
+              ) : !canRead ? (
+                <div className={styles.notReady}>
+                  <p>This media is still being processed.</p>
+                  <p>Status: {media.processing_status}</p>
+                </div>
+              ) : fragments.length === 0 ? (
+                <div className={styles.empty}>
+                  <p>No transcript segments available.</p>
+                </div>
+              ) : (
+                <div className={styles.transcriptLayout}>
+                  <div className={styles.transcriptSegments}>
+                    {fragments.map((fragment) => {
+                      const ts = formatTimestampMs(fragment.t_start_ms);
+                      const isActive = fragment.id === activeTranscriptFragment?.id;
+                      return (
+                        <button
+                          key={fragment.id}
+                          type="button"
+                          className={`${styles.segmentButton} ${
+                            isActive ? styles.segmentButtonActive : ""
+                          }`}
+                          onClick={() => handleTranscriptSegmentSelect(fragment)}
+                        >
+                          <span className={styles.segmentMeta}>
+                            {ts && <span>{ts}</span>}
+                            {fragment.speaker_label && (
+                              <span>{fragment.speaker_label}</span>
+                            )}
+                          </span>
+                          <span className={styles.segmentText}>{fragment.canonical_text}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {activeTranscriptFragment && (
+                    <div
+                      ref={contentRef}
+                      className={styles.transcriptActiveFragment}
+                      onClick={handleContentClick}
+                    >
+                      <HtmlRenderer
+                        htmlSanitized={renderedHtml}
+                        className={styles.fragment}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : !canRead ? (
             <div className={styles.notReady}>
               {isPdf && media.processing_status === "failed" ? (
                 <>

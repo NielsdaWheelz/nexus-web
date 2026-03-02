@@ -57,6 +57,7 @@ class PodcastSubscriptionStatusOut(BaseModel):
     user_id: UUID
     podcast_id: UUID
     status: Literal["active", "unsubscribed"]
+    unsubscribe_mode: Literal[1, 2, 3] = 1
     sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
     sync_error_code: str | None = None
     sync_error_message: str | None = None

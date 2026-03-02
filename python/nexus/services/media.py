@@ -27,6 +27,7 @@ from nexus.logging import get_logger
 from nexus.schemas.media import FragmentOut, FromUrlResponse, MediaOut
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
+from nexus.services.playback_source import derive_playback_source
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 logger = get_logger(__name__)
@@ -90,6 +91,11 @@ def get_media_for_viewer(
         has_fragments=row[11],
         pdf_quote_text_ready=_pdf_ready,
     )
+    playback_source = derive_playback_source(
+        kind=row[1],
+        external_playback_url=row[7],
+        canonical_source_url=row[3],
+    )
 
     return MediaOut(
         id=row[0],
@@ -99,6 +105,7 @@ def get_media_for_viewer(
         processing_status=row[4],
         failure_stage=row[5],
         last_error_code=row[6],
+        playback_source=playback_source,
         capabilities=capabilities,
         created_at=row[8],
         updated_at=row[9],

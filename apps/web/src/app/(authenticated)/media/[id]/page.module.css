@@ -120,6 +120,91 @@
   /* Fragment styling inherits from HtmlRenderer */
 }
 
+.transcriptPane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.playerPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.player {
+  width: 100%;
+  max-width: 100%;
+}
+
+.playbackFallback {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.playbackFallback p {
+  margin: 0;
+}
+
+.transcriptLayout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.transcriptSegments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.segmentButton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  text-align: left;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  padding: var(--space-3);
+  cursor: pointer;
+}
+
+.segmentButton:hover {
+  border-color: var(--color-border);
+}
+
+.segmentButtonActive {
+  border-color: var(--color-accent);
+}
+
+.segmentMeta {
+  display: flex;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.segmentText {
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.transcriptActiveFragment {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  padding: var(--space-3);
+}
+
 /* =============================================================================
    Linked Items Pane
    ============================================================================= */

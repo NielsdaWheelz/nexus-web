@@ -35,6 +35,7 @@ logger = get_logger(__name__)
 PODCAST_PROVIDER = "podcast_index"
 PODCAST_INDEX_EPISODE_PAGE_SIZE = 100
 PODCAST_FEED_PAGINATION_MAX_PAGES = 10
+PODCAST_UNSUBSCRIBE_MODES = {1, 2, 3}
 _ATOM_NAMESPACE = {"atom": "http://www.w3.org/2005/Atom"}
 _ITUNES_DURATION_XPATH = (
     "*[local-name()='duration' and namespace-uri()='http://www.itunes.com/dtds/podcast-1.0.dtd']"
@@ -235,6 +236,7 @@ def get_subscription_status(
                 user_id,
                 podcast_id,
                 status,
+                unsubscribe_mode,
                 sync_status,
                 sync_error_code,
                 sync_error_message,
@@ -256,15 +258,263 @@ def get_subscription_status(
         user_id=row[0],
         podcast_id=row[1],
         status=row[2],
-        sync_status=row[3],
-        sync_error_code=row[4],
-        sync_error_message=row[5],
-        sync_attempts=row[6],
-        sync_started_at=row[7],
-        sync_completed_at=row[8],
-        last_synced_at=row[9],
-        updated_at=row[10],
+        unsubscribe_mode=row[3],
+        sync_status=row[4],
+        sync_error_code=row[5],
+        sync_error_message=row[6],
+        sync_attempts=row[7],
+        sync_started_at=row[8],
+        sync_completed_at=row[9],
+        last_synced_at=row[10],
+        updated_at=row[11],
     )
+
+
+def unsubscribe_from_podcast(
+    db: Session,
+    viewer_id: UUID,
+    podcast_id: UUID,
+    *,
+    mode: int = 1,
+) -> PodcastSubscriptionStatusOut:
+    if mode not in PODCAST_UNSUBSCRIBE_MODES:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Unsubscribe mode must be one of: 1, 2, 3",
+        )
+
+    now = datetime.now(UTC)
+    with transaction(db):
+        subscription_exists = db.execute(
+            text(
+                """
+                SELECT 1
+                FROM podcast_subscriptions
+                WHERE user_id = :user_id AND podcast_id = :podcast_id
+                FOR UPDATE
+                """
+            ),
+            {"user_id": viewer_id, "podcast_id": podcast_id},
+        ).fetchone()
+        if subscription_exists is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
+
+        db.execute(
+            text(
+                """
+                UPDATE podcast_subscriptions
+                SET
+                    status = 'unsubscribed',
+                    unsubscribe_mode = :mode,
+                    updated_at = :updated_at
+                WHERE user_id = :user_id AND podcast_id = :podcast_id
+                """
+            ),
+            {
+                "user_id": viewer_id,
+                "podcast_id": podcast_id,
+                "mode": mode,
+                "updated_at": now,
+            },
+        )
+
+        media_ids = [
+            row[0]
+            for row in db.execute(
+                text(
+                    """
+                    SELECT media_id
+                    FROM podcast_episodes
+                    WHERE podcast_id = :podcast_id
+                    """
+                ),
+                {"podcast_id": podcast_id},
+            ).fetchall()
+        ]
+
+        if media_ids and mode >= 2:
+            _remove_subscription_episodes_from_default_library(
+                db=db,
+                user_id=viewer_id,
+                media_ids=media_ids,
+            )
+        if media_ids and mode == 3:
+            _remove_subscription_episodes_from_single_member_libraries(
+                db=db,
+                user_id=viewer_id,
+                media_ids=media_ids,
+            )
+
+    return get_subscription_status(db, viewer_id, podcast_id)
+
+
+def _remove_subscription_episodes_from_default_library(
+    *,
+    db: Session,
+    user_id: UUID,
+    media_ids: list[UUID],
+) -> None:
+    from nexus.services.default_library_closure import remove_default_intrinsic_and_gc
+
+    default_library_id = db.execute(
+        text(
+            """
+            SELECT id
+            FROM libraries
+            WHERE owner_user_id = :user_id AND is_default = true
+            """
+        ),
+        {"user_id": user_id},
+    ).scalar()
+    if default_library_id is None:
+        return
+
+    for media_id in media_ids:
+        remove_default_intrinsic_and_gc(db, default_library_id, media_id)
+
+
+def _remove_subscription_episodes_from_single_member_libraries(
+    *,
+    db: Session,
+    user_id: UUID,
+    media_ids: list[UUID],
+) -> None:
+    from nexus.services.default_library_closure import remove_media_from_non_default_closure
+
+    library_rows = db.execute(
+        text(
+            """
+            SELECT l.id
+            FROM libraries l
+            WHERE l.owner_user_id = :user_id
+              AND l.is_default = false
+              AND (
+                  SELECT COUNT(*)
+                  FROM memberships m
+                  WHERE m.library_id = l.id
+              ) = 1
+            """
+        ),
+        {"user_id": user_id},
+    ).fetchall()
+
+    single_member_library_ids = [row[0] for row in library_rows]
+    if not single_member_library_ids:
+        return
+
+    for library_id in single_member_library_ids:
+        for media_id in media_ids:
+            membership_row = db.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM library_media
+                    WHERE library_id = :library_id AND media_id = :media_id
+                    """
+                ),
+                {"library_id": library_id, "media_id": media_id},
+            ).fetchone()
+            if membership_row is None:
+                continue
+
+            db.execute(
+                text(
+                    """
+                    DELETE FROM library_media
+                    WHERE library_id = :library_id AND media_id = :media_id
+                    """
+                ),
+                {"library_id": library_id, "media_id": media_id},
+            )
+            remove_media_from_non_default_closure(db, library_id, media_id)
+
+
+def poll_active_subscriptions_once(db: Session, *, limit: int = 100) -> dict[str, int]:
+    """Run one polling pass over active subscriptions.
+
+    This path intentionally reuses run_podcast_subscription_sync_now so idempotency
+    and quota behavior stay identical to direct sync execution.
+    """
+    if limit <= 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    limit = min(limit, 1000)
+
+    rows = db.execute(
+        text(
+            """
+            SELECT user_id, podcast_id
+            FROM podcast_subscriptions
+            WHERE status = 'active'
+              AND sync_status <> 'running'
+            ORDER BY updated_at ASC, user_id ASC, podcast_id ASC
+            LIMIT :limit
+            """
+        ),
+        {"limit": limit},
+    ).fetchall()
+
+    processed_count = 0
+    failed_count = 0
+    skipped_count = 0
+
+    for user_id, podcast_id in rows:
+        with transaction(db):
+            queued = db.execute(
+                text(
+                    """
+                    UPDATE podcast_subscriptions
+                    SET
+                        sync_status = 'pending',
+                        sync_error_code = NULL,
+                        sync_error_message = NULL,
+                        sync_started_at = NULL,
+                        sync_completed_at = NULL,
+                        updated_at = :updated_at
+                    WHERE user_id = :user_id
+                      AND podcast_id = :podcast_id
+                      AND status = 'active'
+                      AND sync_status <> 'running'
+                    RETURNING 1
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                    "updated_at": datetime.now(UTC),
+                },
+            ).fetchone()
+
+        if queued is None:
+            continue
+
+        try:
+            sync_result = run_podcast_subscription_sync_now(
+                db,
+                user_id=user_id,
+                podcast_id=podcast_id,
+            )
+            if sync_result.get("reason") == "not_pending":
+                skipped_count += 1
+                continue
+            if sync_result.get("sync_status") == "failed":
+                failed_count += 1
+            else:
+                processed_count += 1
+        except Exception as exc:
+            logger.exception(
+                "podcast_active_poll_sync_failed",
+                user_id=str(user_id),
+                podcast_id=str(podcast_id),
+                error=str(exc),
+            )
+            failed_count += 1
+
+    return {
+        "processed_count": processed_count,
+        "failed_count": failed_count,
+        "skipped_count": skipped_count,
+        "scanned_count": len(rows),
+    }
 
 
 def run_podcast_subscription_sync_now(
@@ -877,6 +1127,7 @@ def _upsert_subscription(db: Session, user_id: UUID, podcast_id: UUID, *, now: d
                 user_id,
                 podcast_id,
                 status,
+                unsubscribe_mode,
                 sync_status,
                 created_at,
                 updated_at
@@ -885,6 +1136,7 @@ def _upsert_subscription(db: Session, user_id: UUID, podcast_id: UUID, *, now: d
                 :user_id,
                 :podcast_id,
                 'active',
+                1,
                 'pending',
                 :created_at,
                 :updated_at
@@ -892,6 +1144,7 @@ def _upsert_subscription(db: Session, user_id: UUID, podcast_id: UUID, *, now: d
             ON CONFLICT (user_id, podcast_id)
             DO UPDATE SET
                 status = 'active',
+                unsubscribe_mode = 1,
                 sync_status = 'pending',
                 sync_error_code = NULL,
                 sync_error_message = NULL,

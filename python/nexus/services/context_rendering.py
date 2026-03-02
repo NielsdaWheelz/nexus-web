@@ -45,6 +45,13 @@ MAX_CONTEXT_CHARS = 25000
 _PDF_CONTEXT_RENDER_PATH = "pdf_quote_context_render"
 
 
+def _format_timestamp_ms(timestamp_ms: int) -> str:
+    total_seconds = max(0, timestamp_ms // 1000)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
 @dataclass
 class RenderedContext:
     """A rendered context block for the prompt."""
@@ -211,6 +218,11 @@ def _render_fragment_highlight_context(db, highlight, resolution) -> str | None:
 
     if media.canonical_source_url:
         lines.append(f"URL: {media.canonical_source_url}")
+
+    if fragment.t_start_ms is not None:
+        lines.append(f"Timestamp: {_format_timestamp_ms(fragment.t_start_ms)}")
+    if fragment.speaker_label:
+        lines.append(f"Speaker: {fragment.speaker_label}")
 
     lines.append("")
     lines.append("**Quoted text:**")
@@ -555,6 +567,11 @@ def _render_fragment_annotation_context(db, highlight, annotation, resolution) -
 
     if media.canonical_source_url:
         lines.append(f"URL: {media.canonical_source_url}")
+
+    if fragment.t_start_ms is not None:
+        lines.append(f"Timestamp: {_format_timestamp_ms(fragment.t_start_ms)}")
+    if fragment.speaker_label:
+        lines.append(f"Speaker: {fragment.speaker_label}")
 
     lines.append("")
     lines.append("**Quoted text:**")

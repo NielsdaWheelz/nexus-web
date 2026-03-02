@@ -26,6 +26,14 @@ class CapabilitiesOut(BaseModel):
     can_download_file: bool
 
 
+class PlaybackSourceOut(BaseModel):
+    """Typed playback source contract for externally hosted media."""
+
+    kind: Literal["external_audio", "external_video"]
+    stream_url: str
+    source_url: str
+
+
 class MediaOut(BaseModel):
     """Response schema for media.
 
@@ -40,6 +48,7 @@ class MediaOut(BaseModel):
     processing_status: str  # "pending", "extracting", "ready_for_reading", etc.
     failure_stage: str | None = None
     last_error_code: str | None = None
+    playback_source: PlaybackSourceOut | None = None
     capabilities: CapabilitiesOut
     created_at: datetime
     updated_at: datetime

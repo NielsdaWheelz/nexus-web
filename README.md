@@ -79,7 +79,7 @@ nexus/
 - **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations.
 - **EPUB Extraction** (S5): Deterministic chapter fragment materialization from EPUB archives with TOC snapshot, title fallback, resource rewriting, and archive safety enforcement. Chapter + TOC read APIs with cursor pagination and BFF parity.
 - **EPUB Reader** (S5 PR-05): Chapter-based EPUB reader in the media view page. Chapter manifest navigation, URL-addressable chapter deep links, collapsible TOC with navigable/non-clickable node states, request-version guards for stale response protection, and deterministic error recovery matrix. Non-EPUB reader flow preserved unchanged.
-- **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` is control-plane only (subscription + enqueue). Episode ingest runs in worker data-plane jobs with explicit sync lifecycle states (`pending`, `running`, `complete`, `source_limited`, `failed`).
+- **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` remains control-plane only (subscribe + enqueue). `DELETE /podcasts/subscriptions/{podcast_id}` applies explicit unsubscribe retention modes (`mode=1|2|3`). Episode ingest runs in worker data-plane jobs with explicit sync lifecycle states (`pending`, `running`, `complete`, `source_limited`, `failed`).
 
 ## Quick Start
 
@@ -209,6 +209,8 @@ Running `make setup` creates a `.env` file with your local configuration:
 ```bash
 # Infrastructure ports
 REDIS_PORT=6379
+API_PORT=8000
+WEB_PORT=3000
 
 # Application config
 NEXUS_ENV=local
@@ -600,6 +602,7 @@ When running locally:
 | EPUB Assets | `GET /media/{id}/assets/{asset_key}` (S5 PR-02: EPUB internal asset safe fetch) |
 | EPUB Chapters | `GET /media/{id}/chapters`, `GET /media/{id}/chapters/{idx}` (S5 PR-04: chapter manifest + navigation) |
 | EPUB TOC | `GET /media/{id}/toc` (S5 PR-04: persisted nested TOC tree) |
+| Podcasts | `GET /podcasts/discover`, `POST /podcasts/subscriptions`, `GET /podcasts/subscriptions/{podcast_id}`, `DELETE /podcasts/subscriptions/{podcast_id}?mode=1|2|3` |
 | Highlights | `POST/GET /fragments/{id}/highlights`, `PATCH/DELETE /highlights/{id}` |
 | Annotations | `PUT/DELETE /highlights/{id}/annotation` |
 | Conversations | `GET/POST /conversations`, `GET/DELETE /conversations/{id}` |
