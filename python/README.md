@@ -92,7 +92,7 @@ nexus/
 | GET | `/libraries/{id}/media` | List media in library |
 | POST | `/libraries/{id}/media` | Add media to library |
 | DELETE | `/libraries/{id}/media/{media_id}` | Remove media from library |
-| GET | `/media/{id}` | Get media by ID (visibility enforced, includes `capabilities` and transcript `playback_source` when available) |
+| GET | `/media/{id}` | Get media by ID (visibility enforced, includes `capabilities` and transcript `playback_source` when available; video playback_source is used for in-app YouTube embed playback) |
 | GET | `/media/{id}/fragments` | Get fragments for media (visibility enforced) |
 | POST | `/media/from_url` | Create provisional web_article from URL (S2) |
 | POST | `/media/upload/init` | Initialize file upload (PDF/EPUB) |

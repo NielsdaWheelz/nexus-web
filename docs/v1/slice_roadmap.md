@@ -477,7 +477,7 @@ Two test suites are introduced early and reused by every later slice:
 
 **Goal:** Reuse transcript logic for video.
 
-**Outcome:** User can ingest a YouTube video and work with transcript.
+**Outcome:** User can watch a YouTube video in-app and work with transcript.
 
 ### Includes
 - YouTube URL ingestion
@@ -497,6 +497,7 @@ Two test suites are introduced early and reused by every later slice:
 
 ### Acceptance Criteria
 - Transcript feasibility spike documented with success/failure rates
+- Transcript-available videos render in-app YouTube playback and transcript in the same media view
 - Transcript view works without playback
 - Playback seeks from transcript
 - YouTube embed renders (iframe allowed per constitution)
