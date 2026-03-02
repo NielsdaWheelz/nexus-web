@@ -344,10 +344,19 @@ def list_fragments_for_viewer(
     # Query 2: Fetch fragments ordered by idx ASC
     result = db.execute(
         text("""
-            SELECT f.id, f.media_id, f.idx, f.html_sanitized, f.canonical_text, f.created_at
+            SELECT
+                f.id,
+                f.media_id,
+                f.idx,
+                f.html_sanitized,
+                f.canonical_text,
+                f.t_start_ms,
+                f.t_end_ms,
+                f.speaker_label,
+                f.created_at
             FROM fragments f
             WHERE f.media_id = :media_id
-            ORDER BY f.idx ASC
+            ORDER BY f.t_start_ms ASC NULLS LAST, f.idx ASC
         """),
         {"media_id": media_id},
     )
@@ -359,7 +368,10 @@ def list_fragments_for_viewer(
             idx=row[2],
             html_sanitized=row[3],
             canonical_text=row[4],
-            created_at=row[5],
+            t_start_ms=row[5],
+            t_end_ms=row[6],
+            speaker_label=row[7],
+            created_at=row[8],
         )
         for row in result.fetchall()
     ]

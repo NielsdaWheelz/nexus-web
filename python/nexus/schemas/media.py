@@ -58,6 +58,9 @@ class FragmentOut(BaseModel):
     idx: int
     html_sanitized: str
     canonical_text: str
+    t_start_ms: int | None = None
+    t_end_ms: int | None = None
+    speaker_label: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

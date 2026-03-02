@@ -39,6 +39,7 @@ celery_app.conf.task_routes = {
     "nexus.tasks.ingest_web_article.*": {"queue": "ingest"},
     "ingest_epub": {"queue": "ingest"},
     "backfill_default_library_closure_job": {"queue": "ingest"},
+    "podcast_sync_subscription_job": {"queue": "ingest"},
 }
 
 # Default queue

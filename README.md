@@ -35,7 +35,11 @@ nexus/
 │   │       ├── 0004_slice3_schema.py     # S3: conversations, messages, LLM infrastructure
 │   │       ├── 0005_*.py                # S3: tsvector/search indexes
 │   │       ├── 0006_pr09_provider_request_id.py  # S3: message_llm.provider_request_id
-│   │       └── 0007_slice4_library_sharing.py    # S4: library sharing schema + provenance
+│   │       ├── 0007_slice4_library_sharing.py    # S4: library sharing schema + provenance
+│   │       ├── 0008_slice5_epub_toc_nodes.py     # S5: EPUB TOC snapshot schema
+│   │       ├── 0009_slice6_typed_highlight_data_foundation.py  # S6: typed highlight + PDF artifacts
+│   │       ├── 0010_slice7_podcast_backend_foundation.py       # S7: podcast foundation tables
+│   │       └── 0011_slice7_podcast_subscription_sync_lifecycle.py # S7: async subscription sync state
 │   └── alembic.ini
 │
 ├── supabase/                    # Supabase local configuration
@@ -75,6 +79,7 @@ nexus/
 - **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations.
 - **EPUB Extraction** (S5): Deterministic chapter fragment materialization from EPUB archives with TOC snapshot, title fallback, resource rewriting, and archive safety enforcement. Chapter + TOC read APIs with cursor pagination and BFF parity.
 - **EPUB Reader** (S5 PR-05): Chapter-based EPUB reader in the media view page. Chapter manifest navigation, URL-addressable chapter deep links, collapsible TOC with navigable/non-clickable node states, request-version guards for stale response protection, and deterministic error recovery matrix. Non-EPUB reader flow preserved unchanged.
+- **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` is control-plane only (subscription + enqueue). Episode ingest runs in worker data-plane jobs with explicit sync lifecycle states (`pending`, `running`, `complete`, `source_limited`, `failed`).
 
 ## Quick Start
 
