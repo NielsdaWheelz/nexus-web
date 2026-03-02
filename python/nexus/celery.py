@@ -40,6 +40,15 @@ celery_app.conf.task_routes = {
     "ingest_epub": {"queue": "ingest"},
     "backfill_default_library_closure_job": {"queue": "ingest"},
     "podcast_sync_subscription_job": {"queue": "ingest"},
+    "podcast_active_subscription_poll_job": {"queue": "ingest"},
+}
+
+celery_app.conf.beat_schedule = {
+    "podcast_active_subscription_poll": {
+        "task": "podcast_active_subscription_poll_job",
+        "schedule": float(settings.podcast_active_poll_schedule_seconds),
+        "options": {"queue": "ingest"},
+    }
 }
 
 # Default queue

@@ -7,7 +7,7 @@ import html
 import math
 import re
 import unicodedata
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urljoin
@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 import httpx
 from lxml import etree
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
@@ -45,6 +46,8 @@ _ITUNES_DURATION_XPATH = (
 )
 _DEEPGRAM_LISTEN_PATH = "/v1/listen"
 _TRANSCRIPT_WHITESPACE_RE = re.compile(r"[\s\u00a0]+")
+_PODCAST_ACTIVE_POLL_MAX_LIMIT = 1000
+_PODCAST_ACTIVE_POLL_UNEXPECTED_ERROR_CODE = ApiErrorCode.E_INTERNAL.value
 
 
 class PodcastIndexClient:
@@ -434,33 +437,152 @@ def _remove_subscription_episodes_from_single_member_libraries(
             remove_media_from_non_default_closure(db, library_id, media_id)
 
 
-def poll_active_subscriptions_once(db: Session, *, limit: int = 100) -> dict[str, int]:
-    """Run one polling pass over active subscriptions.
-
-    This path intentionally reuses run_podcast_subscription_sync_now so idempotency
-    and quota behavior stay identical to direct sync execution.
-    """
+def run_scheduled_active_subscription_poll(
+    db: Session,
+    *,
+    limit: int,
+    run_lease_seconds: int,
+    sync_lease_seconds: int,
+    scheduler_identity: str | None = None,
+) -> dict[str, Any]:
+    """Run scheduled active-subscription polling with singleton + durable run telemetry."""
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-    limit = min(limit, 1000)
+    effective_limit = min(limit, _PODCAST_ACTIVE_POLL_MAX_LIMIT)
+    if effective_limit < limit:
+        logger.warning(
+            "podcast_active_poll_limit_clamped",
+            requested_limit=limit,
+            effective_limit=effective_limit,
+            max_limit=_PODCAST_ACTIVE_POLL_MAX_LIMIT,
+        )
 
+    if run_lease_seconds <= 0:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Run lease seconds must be positive",
+        )
+
+    run_id = uuid4()
+    now = datetime.now(UTC)
+    claimed = _claim_subscription_poll_run_singleton(
+        db,
+        run_id=run_id,
+        now=now,
+        run_limit=effective_limit,
+        run_lease_seconds=run_lease_seconds,
+        scheduler_identity=scheduler_identity,
+    )
+    if not claimed:
+        logger.info(
+            "podcast_active_poll_run_skipped_singleton",
+            scheduler_identity=scheduler_identity,
+            run_limit=effective_limit,
+        )
+        return {
+            "status": "skipped_singleton",
+            "processed_count": 0,
+            "failed_count": 0,
+            "skipped_count": 0,
+            "scanned_count": 0,
+            "failure_code_breakdown": {},
+        }
+
+    logger.info(
+        "podcast_active_poll_run_started",
+        run_id=str(run_id),
+        scheduler_identity=scheduler_identity,
+        run_limit=effective_limit,
+        run_lease_seconds=run_lease_seconds,
+        sync_lease_seconds=sync_lease_seconds,
+    )
+    try:
+        poll_result = poll_active_subscriptions_once(
+            db,
+            limit=effective_limit,
+            sync_lease_seconds=sync_lease_seconds,
+        )
+    except Exception as exc:
+        with transaction(db):
+            _mark_subscription_poll_run_failed(
+                db,
+                run_id=run_id,
+                now=datetime.now(UTC),
+                error_code=_PODCAST_ACTIVE_POLL_UNEXPECTED_ERROR_CODE,
+                error_message=str(exc),
+            )
+        raise
+
+    with transaction(db):
+        _mark_subscription_poll_run_completed(
+            db,
+            run_id=run_id,
+            now=datetime.now(UTC),
+            poll_result=poll_result,
+        )
+
+    logger.info(
+        "podcast_active_poll_run_completed",
+        run_id=str(run_id),
+        scheduler_identity=scheduler_identity,
+        run_limit=effective_limit,
+        processed_count=poll_result["processed_count"],
+        failed_count=poll_result["failed_count"],
+        skipped_count=poll_result["skipped_count"],
+        scanned_count=poll_result["scanned_count"],
+        failure_code_breakdown=poll_result["failure_code_breakdown"],
+    )
+    return {
+        "status": "completed",
+        "run_id": str(run_id),
+        **poll_result,
+    }
+
+
+def poll_active_subscriptions_once(
+    db: Session,
+    *,
+    limit: int = 100,
+    sync_lease_seconds: int | None = None,
+) -> dict[str, Any]:
+    """Run one bounded polling pass over active subscriptions."""
+    if limit <= 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    limit = min(limit, _PODCAST_ACTIVE_POLL_MAX_LIMIT)
+
+    if sync_lease_seconds is None:
+        sync_lease_seconds = get_settings().podcast_sync_running_lease_seconds
+    if sync_lease_seconds <= 0:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Sync lease seconds must be positive",
+        )
+
+    running_lease_cutoff = datetime.now(UTC) - timedelta(seconds=sync_lease_seconds)
     rows = db.execute(
         text(
             """
             SELECT user_id, podcast_id
             FROM podcast_subscriptions
             WHERE status = 'active'
-              AND sync_status <> 'running'
+              AND (
+                  sync_status <> 'running'
+                  OR COALESCE(sync_started_at, updated_at) < :running_lease_cutoff
+              )
             ORDER BY updated_at ASC, user_id ASC, podcast_id ASC
             LIMIT :limit
             """
         ),
-        {"limit": limit},
+        {
+            "limit": limit,
+            "running_lease_cutoff": running_lease_cutoff,
+        },
     ).fetchall()
 
     processed_count = 0
     failed_count = 0
     skipped_count = 0
+    failure_code_breakdown: dict[str, int] = {}
 
     for user_id, podcast_id in rows:
         with transaction(db):
@@ -478,7 +600,10 @@ def poll_active_subscriptions_once(db: Session, *, limit: int = 100) -> dict[str
                     WHERE user_id = :user_id
                       AND podcast_id = :podcast_id
                       AND status = 'active'
-                      AND sync_status <> 'running'
+                      AND (
+                          sync_status <> 'running'
+                          OR COALESCE(sync_started_at, updated_at) < :running_lease_cutoff
+                      )
                     RETURNING 1
                     """
                 ),
@@ -486,10 +611,12 @@ def poll_active_subscriptions_once(db: Session, *, limit: int = 100) -> dict[str
                     "user_id": user_id,
                     "podcast_id": podcast_id,
                     "updated_at": datetime.now(UTC),
+                    "running_lease_cutoff": running_lease_cutoff,
                 },
             ).fetchone()
 
         if queued is None:
+            skipped_count += 1
             continue
 
         try:
@@ -503,6 +630,8 @@ def poll_active_subscriptions_once(db: Session, *, limit: int = 100) -> dict[str
                 continue
             if sync_result.get("sync_status") == "failed":
                 failed_count += 1
+                error_code = _normalize_poll_failure_code(sync_result.get("error_code"))
+                failure_code_breakdown[error_code] = failure_code_breakdown.get(error_code, 0) + 1
             else:
                 processed_count += 1
         except Exception as exc:
@@ -513,13 +642,224 @@ def poll_active_subscriptions_once(db: Session, *, limit: int = 100) -> dict[str
                 error=str(exc),
             )
             failed_count += 1
+            fallback_code = _PODCAST_ACTIVE_POLL_UNEXPECTED_ERROR_CODE
+            failure_code_breakdown[fallback_code] = failure_code_breakdown.get(fallback_code, 0) + 1
 
     return {
         "processed_count": processed_count,
         "failed_count": failed_count,
         "skipped_count": skipped_count,
         "scanned_count": len(rows),
+        "failure_code_breakdown": {
+            code: failure_code_breakdown[code] for code in sorted(failure_code_breakdown)
+        },
     }
+
+
+def _normalize_poll_failure_code(raw_value: Any) -> str:
+    value = str(raw_value or "").strip()
+    if not value:
+        return _PODCAST_ACTIVE_POLL_UNEXPECTED_ERROR_CODE
+    return value
+
+
+def _is_singleton_poll_run_integrity_error(exc: IntegrityError) -> bool:
+    orig = getattr(exc, "orig", None)
+    sqlstate = (
+        getattr(orig, "sqlstate", None)
+        or getattr(orig, "pgcode", None)
+        or getattr(getattr(orig, "diag", None), "sqlstate", None)
+    )
+    if sqlstate != "23505":
+        return False
+
+    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    if constraint_name:
+        return constraint_name == "uq_podcast_subscription_poll_runs_singleton_running"
+    return "uq_podcast_subscription_poll_runs_singleton_running" in str(exc)
+
+
+def _claim_subscription_poll_run_singleton(
+    db: Session,
+    *,
+    run_id: UUID,
+    now: datetime,
+    run_limit: int,
+    run_lease_seconds: int,
+    scheduler_identity: str | None,
+) -> bool:
+    lease_expires_at = now + timedelta(seconds=run_lease_seconds)
+    try:
+        with transaction(db):
+            db.execute(
+                text(
+                    """
+                    UPDATE podcast_subscription_poll_runs
+                    SET
+                        status = 'expired',
+                        completed_at = :now,
+                        error_code = :error_code,
+                        error_message = :error_message,
+                        updated_at = :now
+                    WHERE status = 'running'
+                      AND lease_expires_at < :now
+                    """
+                ),
+                {
+                    "now": now,
+                    "error_code": _PODCAST_ACTIVE_POLL_UNEXPECTED_ERROR_CODE,
+                    "error_message": "Polling run lease expired before completion",
+                },
+            )
+
+            db.execute(
+                text(
+                    """
+                    INSERT INTO podcast_subscription_poll_runs (
+                        id,
+                        orchestration_source,
+                        scheduler_identity,
+                        status,
+                        run_limit,
+                        started_at,
+                        lease_expires_at,
+                        processed_count,
+                        failed_count,
+                        skipped_count,
+                        scanned_count,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        :id,
+                        'scheduled',
+                        :scheduler_identity,
+                        'running',
+                        :run_limit,
+                        :started_at,
+                        :lease_expires_at,
+                        0,
+                        0,
+                        0,
+                        0,
+                        :created_at,
+                        :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": run_id,
+                    "scheduler_identity": scheduler_identity,
+                    "run_limit": run_limit,
+                    "started_at": now,
+                    "lease_expires_at": lease_expires_at,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+    except IntegrityError as exc:
+        if _is_singleton_poll_run_integrity_error(exc):
+            return False
+        raise
+    return True
+
+
+def _mark_subscription_poll_run_completed(
+    db: Session,
+    *,
+    run_id: UUID,
+    now: datetime,
+    poll_result: dict[str, Any],
+) -> None:
+    db.execute(
+        text(
+            """
+            UPDATE podcast_subscription_poll_runs
+            SET
+                status = 'completed',
+                completed_at = :now,
+                processed_count = :processed_count,
+                failed_count = :failed_count,
+                skipped_count = :skipped_count,
+                scanned_count = :scanned_count,
+                error_code = NULL,
+                error_message = NULL,
+                updated_at = :now
+            WHERE id = :run_id
+            """
+        ),
+        {
+            "run_id": run_id,
+            "now": now,
+            "processed_count": int(poll_result["processed_count"]),
+            "failed_count": int(poll_result["failed_count"]),
+            "skipped_count": int(poll_result["skipped_count"]),
+            "scanned_count": int(poll_result["scanned_count"]),
+        },
+    )
+
+    db.execute(
+        text(
+            """
+            DELETE FROM podcast_subscription_poll_run_failures
+            WHERE run_id = :run_id
+            """
+        ),
+        {"run_id": run_id},
+    )
+
+    for error_code, failure_count in sorted(poll_result["failure_code_breakdown"].items()):
+        db.execute(
+            text(
+                """
+                INSERT INTO podcast_subscription_poll_run_failures (
+                    run_id,
+                    error_code,
+                    failure_count
+                )
+                VALUES (
+                    :run_id,
+                    :error_code,
+                    :failure_count
+                )
+                """
+            ),
+            {
+                "run_id": run_id,
+                "error_code": error_code,
+                "failure_count": int(failure_count),
+            },
+        )
+
+
+def _mark_subscription_poll_run_failed(
+    db: Session,
+    *,
+    run_id: UUID,
+    now: datetime,
+    error_code: str,
+    error_message: str,
+) -> None:
+    db.execute(
+        text(
+            """
+            UPDATE podcast_subscription_poll_runs
+            SET
+                status = 'failed',
+                completed_at = :now,
+                error_code = :error_code,
+                error_message = :error_message,
+                updated_at = :now
+            WHERE id = :run_id
+            """
+        ),
+        {
+            "run_id": run_id,
+            "now": now,
+            "error_code": error_code,
+            "error_message": error_message[:1000],
+        },
+    )
 
 
 def run_podcast_subscription_sync_now(
@@ -530,12 +870,18 @@ def run_podcast_subscription_sync_now(
     request_id: str | None = None,
 ) -> dict[str, Any]:
     _ = request_id
+    settings = get_settings()
     now = datetime.now(UTC)
+    lease_expires_before = now - timedelta(seconds=settings.podcast_sync_running_lease_seconds)
     claimed = False
 
     with transaction(db):
         claimed = _claim_subscription_sync_pending(
-            db, user_id=user_id, podcast_id=podcast_id, now=now
+            db,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            now=now,
+            lease_expires_before=lease_expires_before,
         )
 
     if not claimed:
@@ -549,7 +895,6 @@ def run_podcast_subscription_sync_now(
         }
 
     try:
-        settings = get_settings()
         plan = _get_effective_plan(db, user_id)
         window_size = plan["initial_episode_window"]
         prefetch_limit = max(window_size, settings.podcast_ingest_prefetch_limit)
@@ -974,6 +1319,7 @@ def _claim_subscription_sync_pending(
     user_id: UUID,
     podcast_id: UUID,
     now: datetime,
+    lease_expires_before: datetime,
 ) -> bool:
     row = db.execute(
         text(
@@ -990,11 +1336,22 @@ def _claim_subscription_sync_pending(
             WHERE user_id = :user_id
               AND podcast_id = :podcast_id
               AND status = 'active'
-              AND sync_status = 'pending'
+              AND (
+                  sync_status = 'pending'
+                  OR (
+                      sync_status = 'running'
+                      AND COALESCE(sync_started_at, updated_at) < :lease_expires_before
+                  )
+              )
             RETURNING 1
             """
         ),
-        {"user_id": user_id, "podcast_id": podcast_id, "now": now},
+        {
+            "user_id": user_id,
+            "podcast_id": podcast_id,
+            "now": now,
+            "lease_expires_before": lease_expires_before,
+        },
     ).fetchone()
     return row is not None
 

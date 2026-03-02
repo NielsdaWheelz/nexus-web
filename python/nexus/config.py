@@ -101,6 +101,16 @@ class Settings(BaseSettings):
         default=10, alias="PODCAST_PAID_INITIAL_EPISODE_WINDOW"
     )
     podcast_ingest_prefetch_limit: int = Field(default=50, alias="PODCAST_INGEST_PREFETCH_LIMIT")
+    podcast_active_poll_schedule_seconds: int = Field(
+        default=300, alias="PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS"
+    )
+    podcast_active_poll_limit: int = Field(default=100, alias="PODCAST_ACTIVE_POLL_LIMIT")
+    podcast_active_poll_run_lease_seconds: int = Field(
+        default=900, alias="PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS"
+    )
+    podcast_sync_running_lease_seconds: int = Field(
+        default=1800, alias="PODCAST_SYNC_RUNNING_LEASE_SECONDS"
+    )
 
     # S5: EPUB archive safety limits (L2 baseline = ceiling; may be stricter, never weaker)
     max_epub_archive_entries: int = Field(default=10_000, alias="MAX_EPUB_ARCHIVE_ENTRIES")
@@ -223,6 +233,14 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_PAID_INITIAL_EPISODE_WINDOW must be >= 1.")
         if self.podcast_ingest_prefetch_limit < 1:
             raise ValueError("PODCAST_INGEST_PREFETCH_LIMIT must be >= 1.")
+        if self.podcast_active_poll_schedule_seconds < 1:
+            raise ValueError("PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS must be >= 1.")
+        if self.podcast_active_poll_limit < 1:
+            raise ValueError("PODCAST_ACTIVE_POLL_LIMIT must be >= 1.")
+        if self.podcast_active_poll_run_lease_seconds < 1:
+            raise ValueError("PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS must be >= 1.")
+        if self.podcast_sync_running_lease_seconds < 1:
+            raise ValueError("PODCAST_SYNC_RUNNING_LEASE_SECONDS must be >= 1.")
         if self.podcast_transcription_timeout_seconds <= 0:
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
 

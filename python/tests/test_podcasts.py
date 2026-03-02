@@ -1733,6 +1733,28 @@ def _run_active_subscription_poll(direct_db: DirectSessionManager, *, limit: int
     return result
 
 
+def _run_scheduled_active_subscription_poll(
+    direct_db: DirectSessionManager,
+    *,
+    limit: int = 100,
+    run_lease_seconds: int = 300,
+    scheduler_identity: str = "pytest-scheduler",
+) -> dict:
+    from nexus.tasks.podcast_active_subscription_poll import (
+        run_podcast_active_subscription_poll_now,
+    )
+
+    with direct_db.session() as session:
+        result = run_podcast_active_subscription_poll_now(
+            session,
+            limit=limit,
+            run_lease_seconds=run_lease_seconds,
+            scheduler_identity=scheduler_identity,
+        )
+        session.commit()
+    return result
+
+
 def _create_library(auth_client, user_id: UUID, *, name: str) -> UUID:
     response = auth_client.post(
         "/libraries",
@@ -1810,6 +1832,390 @@ class TestPodcastMediaDetailContract:
         assert playback_source["kind"] == "external_audio"
         assert playback_source["stream_url"] == audio_url
         assert playback_source["source_url"] == audio_url
+
+
+class TestPodcastPollingOrchestration:
+    def test_scheduled_poll_rejects_non_positive_limit(self, direct_db):
+        from nexus.errors import InvalidRequestError
+
+        with pytest.raises(InvalidRequestError) as exc_info:
+            _run_scheduled_active_subscription_poll(
+                direct_db,
+                limit=0,
+                scheduler_identity="pytest-invalid-limit",
+            )
+        assert exc_info.value.code.value == "E_INVALID_REQUEST"
+
+    def test_scheduled_poll_clamps_run_limit_to_service_max(self, direct_db):
+        result = _run_scheduled_active_subscription_poll(
+            direct_db,
+            limit=5_000,
+            scheduler_identity="pytest-clamped-limit",
+        )
+        assert result["status"] == "completed", (
+            f"expected completed scheduled run for clamp assertion, got {result}"
+        )
+
+        with direct_db.session() as session:
+            run_limit = session.execute(
+                text(
+                    """
+                    SELECT run_limit
+                    FROM podcast_subscription_poll_runs
+                    WHERE id = :run_id
+                    """
+                ),
+                {"run_id": UUID(result["run_id"])},
+            ).scalar()
+        assert run_limit == 1_000, f"expected persisted run_limit clamp to 1000, got {run_limit}"
+
+    def test_scheduled_poll_persists_durable_run_counters_and_failure_breakdown(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="free",
+            daily_transcription_minutes=1,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"scheduled-failure-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Scheduled Failure Podcast")
+        episodes_by_podcast = {
+            provider_podcast_id: [
+                {
+                    "provider_episode_id": "ep-failure-1",
+                    "guid": "guid-failure-1",
+                    "title": "Over Quota Episode",
+                    "audio_url": "https://cdn.example.com/over-quota.mp3",
+                    "published_at": "2026-03-02T10:00:00Z",
+                    "duration_seconds": 600,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 1000, "text": "quota"}],
+                }
+            ]
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+
+        # Keep this assertion deterministic even when this class runs after other
+        # podcast tests that may leave active subscriptions behind.
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_subscriptions
+                    SET status = 'unsubscribed',
+                        updated_at = :updated_at
+                    WHERE NOT (user_id = :user_id AND podcast_id = :podcast_id)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                    "updated_at": datetime.now(UTC),
+                },
+            )
+            session.commit()
+
+        result = _run_scheduled_active_subscription_poll(
+            direct_db,
+            limit=100,
+            scheduler_identity="pytest-scheduled-run",
+        )
+
+        assert result["status"] == "completed", f"expected completed run, got {result}"
+        assert result["processed_count"] == 0
+        assert result["failed_count"] == 1
+        assert result["skipped_count"] == 0
+        assert result["scanned_count"] == 1
+        assert "run_id" in result and result["run_id"], (
+            f"expected durable run_id in scheduled poll result, got {result}"
+        )
+
+        status_response = auth_client.get(
+            f"/podcasts/subscriptions/{podcast_id}",
+            headers=auth_headers(user_id),
+        )
+        assert status_response.status_code == 200, (
+            f"expected subscription status 200, got {status_response.status_code}: "
+            f"{status_response.text}"
+        )
+        status_data = status_response.json()["data"]
+        assert status_data["sync_status"] == "failed"
+        assert status_data["sync_error_code"] == "E_PODCAST_QUOTA_EXCEEDED"
+
+        with direct_db.session() as session:
+            run_row = session.execute(
+                text(
+                    """
+                    SELECT
+                        status,
+                        processed_count,
+                        failed_count,
+                        skipped_count,
+                        scanned_count
+                    FROM podcast_subscription_poll_runs
+                    WHERE id = :run_id
+                    """
+                ),
+                {"run_id": UUID(result["run_id"])},
+            ).fetchone()
+            assert run_row is not None, (
+                f"expected durable poll run row for run_id={result['run_id']}, found none"
+            )
+
+            failure_rows = session.execute(
+                text(
+                    """
+                    SELECT error_code, failure_count
+                    FROM podcast_subscription_poll_run_failures
+                    WHERE run_id = :run_id
+                    ORDER BY error_code ASC
+                    """
+                ),
+                {"run_id": UUID(result["run_id"])},
+            ).fetchall()
+
+        assert run_row[0] == "completed"
+        assert run_row[1:] == (0, 1, 0, 1), (
+            f"durable run counters mismatch: expected (0,1,0,1), got {run_row[1:]}"
+        )
+        assert failure_rows == [("E_PODCAST_QUOTA_EXCEEDED", 1)], (
+            f"expected stable durable failure-code breakdown for poll run, got {failure_rows}"
+        )
+
+    def test_scheduled_poll_is_singleton_safe_when_another_run_is_active(self, direct_db):
+        now = datetime.now(UTC)
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_subscription_poll_runs (
+                        id,
+                        orchestration_source,
+                        scheduler_identity,
+                        status,
+                        run_limit,
+                        started_at,
+                        lease_expires_at,
+                        processed_count,
+                        failed_count,
+                        skipped_count,
+                        scanned_count,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        :id,
+                        'scheduled',
+                        'other-scheduler',
+                        'running',
+                        100,
+                        :started_at,
+                        :lease_expires_at,
+                        0,
+                        0,
+                        0,
+                        0,
+                        :now,
+                        :now
+                    )
+                    """
+                ),
+                {
+                    "id": uuid4(),
+                    "started_at": now - timedelta(seconds=10),
+                    "lease_expires_at": now + timedelta(minutes=10),
+                    "now": now,
+                },
+            )
+            session.commit()
+
+        try:
+            result = _run_scheduled_active_subscription_poll(
+                direct_db,
+                limit=10,
+                scheduler_identity="pytest-contender",
+            )
+            assert result["status"] == "skipped_singleton", (
+                "expected scheduled poll contender to skip when another active run lease exists, "
+                f"got {result}"
+            )
+        finally:
+            with direct_db.session() as session:
+                session.execute(
+                    text(
+                        """
+                        UPDATE podcast_subscription_poll_runs
+                        SET status = 'expired',
+                            completed_at = :now,
+                            updated_at = :now
+                        WHERE status = 'running'
+                        """
+                    ),
+                    {"now": datetime.now(UTC)},
+                )
+                session.commit()
+
+    def test_poll_reclaims_expired_running_sync_claim(self, auth_client, monkeypatch, direct_db):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"stale-running-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Stale Running Claim Podcast")
+        episodes_by_podcast = {
+            provider_podcast_id: [
+                {
+                    "provider_episode_id": "ep-stale-1",
+                    "guid": "guid-stale-1",
+                    "title": "Recovered Episode",
+                    "audio_url": "https://cdn.example.com/recovered.mp3",
+                    "published_at": "2026-03-02T10:30:00Z",
+                    "duration_seconds": 60,
+                    "transcript_segments": [
+                        {"t_start_ms": 0, "t_end_ms": 900, "text": "recovered"}
+                    ],
+                }
+            ]
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_subscriptions
+                    SET
+                        sync_status = 'running',
+                        sync_started_at = :sync_started_at,
+                        sync_completed_at = NULL,
+                        updated_at = :updated_at
+                    WHERE user_id = :user_id AND podcast_id = :podcast_id
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                    "sync_started_at": datetime.now(UTC) - timedelta(hours=2),
+                    "updated_at": datetime.now(UTC) - timedelta(hours=2),
+                },
+            )
+            session.commit()
+
+        result = _run_scheduled_active_subscription_poll(
+            direct_db,
+            limit=100,
+            scheduler_identity="pytest-stale-recovery",
+        )
+        assert result["processed_count"] == 1, (
+            f"expected stale running claim to be reclaimed and processed, got {result}"
+        )
+
+        status_response = auth_client.get(
+            f"/podcasts/subscriptions/{podcast_id}",
+            headers=auth_headers(user_id),
+        )
+        assert status_response.status_code == 200
+        status_data = status_response.json()["data"]
+        assert status_data["sync_status"] in {"complete", "source_limited"}
+        assert status_data["last_synced_at"] is not None
+
+    def test_scheduled_poll_is_bounded_by_explicit_run_limit(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        _bootstrap_user(auth_client, user_a)
+        _bootstrap_user(auth_client, user_b)
+        _set_plan(
+            auth_client,
+            user_a,
+            user_a,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=1,
+        )
+        _set_plan(
+            auth_client,
+            user_b,
+            user_b,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=1,
+        )
+
+        provider_a = f"bounded-a-{uuid4()}"
+        provider_b = f"bounded-b-{uuid4()}"
+        payload_a = _podcast_payload(provider_a, "Bounded Podcast A")
+        payload_b = _podcast_payload(provider_b, "Bounded Podcast B")
+
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload_a, payload_b],
+            episodes_by_podcast={
+                provider_a: [
+                    {
+                        "provider_episode_id": "ep-bound-a-1",
+                        "guid": "guid-bound-a-1",
+                        "title": "Bounded Episode A",
+                        "audio_url": "https://cdn.example.com/bounded-a.mp3",
+                        "published_at": "2026-03-02T11:00:00Z",
+                        "duration_seconds": 60,
+                        "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "a"}],
+                    }
+                ],
+                provider_b: [
+                    {
+                        "provider_episode_id": "ep-bound-b-1",
+                        "guid": "guid-bound-b-1",
+                        "title": "Bounded Episode B",
+                        "audio_url": "https://cdn.example.com/bounded-b.mp3",
+                        "published_at": "2026-03-02T11:01:00Z",
+                        "duration_seconds": 60,
+                        "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "b"}],
+                    }
+                ],
+            },
+        )
+
+        _subscribe(auth_client, user_a, payload_a)
+        _subscribe(auth_client, user_b, payload_b)
+
+        result = _run_scheduled_active_subscription_poll(
+            direct_db,
+            limit=1,
+            scheduler_identity="pytest-bounded-limit",
+        )
+        assert result["scanned_count"] == 1, (
+            f"expected scanned_count=1 with run limit=1, got {result}"
+        )
+        assert result["processed_count"] + result["failed_count"] + result["skipped_count"] <= 1, (
+            f"bounded run processed more subscriptions than limit permits: {result}"
+        )
 
 
 class TestPodcastSubscriptionLifecycleClosure:

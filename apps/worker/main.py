@@ -33,6 +33,7 @@ from nexus.logging import configure_logging, get_logger
 from nexus.tasks import backfill_default_library_closure_job  # noqa: F401
 from nexus.tasks import ingest_epub  # noqa: F401
 from nexus.tasks import ingest_web_article  # noqa: F401
+from nexus.tasks import podcast_active_subscription_poll_job  # noqa: F401
 from nexus.tasks import podcast_sync_subscription_job  # noqa: F401
 
 # =============================================================================
