@@ -204,6 +204,13 @@ test.describe("pdf reader", () => {
       });
       await expect(page.locator('[class*="textLayer"]')).toBeVisible();
 
+      // Navigate to page 2 so highlights don't collide with the stress
+      // test (line ~310) which creates highlights on page 1. Both tests
+      // share the same seeded PDF and run in parallel (fullyParallel).
+      await clickToolbarButtonByAriaLabel(page, "Next page");
+      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
+      await expect(page.locator('[class*="textLayer"]')).toBeVisible();
+
       // Highlight creation with retry — selection can be lost between
       // selectTextLayerSnippet and the button click due to React re-renders
       // replacing text layer DOM nodes (same pattern as the stress test).
@@ -222,7 +229,8 @@ test.describe("pdf reader", () => {
         }
         if (
           settled.lastOutcome === "skipped_no_selection" ||
-          settled.lastOutcome === "skipped_no_geometry"
+          settled.lastOutcome === "skipped_no_geometry" ||
+          settled.lastOutcome === "error" // e.g. duplicate from parallel test
         ) {
           continue;
         }
@@ -244,6 +252,9 @@ test.describe("pdf reader", () => {
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
         timeout: 20_000,
       });
+      // Navigate back to page 2 where the highlight was created
+      await clickToolbarButtonByAriaLabel(page, "Next page");
+      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
       await expect(page.locator(`[data-testid^="pdf-highlight-${createdHighlightId}-"]`)).toHaveCount(1);
 
       const linkedRow = page.locator('[class*="linkedItemRow"]').first();
