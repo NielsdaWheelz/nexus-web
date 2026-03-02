@@ -558,6 +558,94 @@ class PodcastSubscription(Base):
     podcast: Mapped["Podcast"] = relationship("Podcast")
 
 
+class PodcastSubscriptionPollRun(Base):
+    """Durable telemetry row for one scheduled active-subscription poll run."""
+
+    __tablename__ = "podcast_subscription_poll_runs"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    orchestration_source: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="scheduled"
+    )
+    scheduler_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="running")
+    run_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    processed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    scanned_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'completed', 'failed', 'expired')",
+            name="ck_podcast_subscription_poll_runs_status",
+        ),
+        CheckConstraint(
+            "run_limit >= 1",
+            name="ck_podcast_subscription_poll_runs_run_limit_positive",
+        ),
+        CheckConstraint(
+            "processed_count >= 0 AND failed_count >= 0 AND skipped_count >= 0 AND scanned_count >= 0",
+            name="ck_podcast_subscription_poll_runs_counters_non_negative",
+        ),
+    )
+
+    failure_breakdown: Mapped[list["PodcastSubscriptionPollRunFailure"]] = relationship(
+        "PodcastSubscriptionPollRunFailure",
+        back_populates="run",
+        cascade="all, delete-orphan",
+    )
+
+
+class PodcastSubscriptionPollRunFailure(Base):
+    """Per-run stable failure-code breakdown for scheduled podcast polling."""
+
+    __tablename__ = "podcast_subscription_poll_run_failures"
+
+    run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcast_subscription_poll_runs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    error_code: Mapped[str] = mapped_column(Text, primary_key=True)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "failure_count >= 1",
+            name="ck_podcast_subscription_poll_run_failures_count_positive",
+        ),
+    )
+
+    run: Mapped["PodcastSubscriptionPollRun"] = relationship(
+        "PodcastSubscriptionPollRun",
+        back_populates="failure_breakdown",
+    )
+
+
 class PodcastEpisode(Base):
     """Global episode identity and metadata for podcast media rows."""
 
