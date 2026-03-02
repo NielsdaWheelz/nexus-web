@@ -14,7 +14,7 @@ Reuse transcript logic for video.
 ### Transcript feasibility spike is completed and documented
 - **given**: a representative sample of YouTube videos across likely failure modes (auto-captions, disabled transcripts, rate limits, language mismatch)
 - **when**: transcript-fetch feasibility is executed
-- **then**: success/failure rates and failure categories are documented, and the playback-only fallback path is verified end-to-end for transcript-unavailable cases.
+- **then**: success/failure rates and failure categories are documented in a reproducible artifact set (fixture-backed checks + dated probe report), and the playback-only fallback path is verified end-to-end for transcript-unavailable cases.
 
 ### Transcript-success videos become readable transcript media
 - **given**: a YouTube video where transcript fetch succeeds
@@ -66,11 +66,17 @@ Reuse transcript logic for video.
 
 **Video playback contract is embed-oriented**: video playback metadata is treated as an embed contract (YouTube iframe-safe rendering + source fallback), not as a direct media-file stream contract. This avoids brittle client guessing and aligns with constitution iframe policy.
 
+**Playback metadata is typed and provider-derived**: API playback data is provider-specific and canonical. For YouTube, contract fields are derived server-side from stable provider identity (including provider video ID and embed/watch URLs); clients must not parse raw URLs to build embed behavior.
+
 **Transcript and playback are a single product surface**: for transcript-available videos, MVP requires co-present in-app playback and transcript interaction in one media pane (not a redirect-only or transcript-only primary experience).
 
 **Transcript availability and playback availability remain decoupled**: transcript failure does not imply playback failure. `E_TRANSCRIPT_UNAVAILABLE` is a terminal transcript-readability failure with explicit playback-only capability posture.
 
+**Searchability policy is capability-consistent across transcript media**: transcript-unavailable media is excluded from transcript-dependent search results. This policy applies consistently to both `video` and `podcast_episode` to prevent cross-kind behavior drift.
+
 **Security posture is explicit for embeds**: Slice 8 requires explicit YouTube embed allowlisting in client security policy and does not relax document rendering constraints (documents still never render via iframe).
+
+**Feasibility evidence is executable, not prose-only**: Slice 8 feasibility deliverables include repeatable test harness coverage and a timestamped sample probe report so operational risk can be re-measured as providers evolve.
 
 ## Out of Scope
 
