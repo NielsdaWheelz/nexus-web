@@ -363,6 +363,71 @@ class TestSchemaConstraints:
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
 
+    def test_fragment_time_offsets_require_strictly_increasing_ranges(self, migrated_engine):
+        """Fragment transcript timing must enforce t_start_ms < t_end_ms."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            media_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'podcast_episode', 'Timing Test', 'ready_for_reading', :user_id)
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.commit()
+
+            # Valid strict range succeeds.
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (
+                        id, media_id, idx, canonical_text, html_sanitized, t_start_ms, t_end_ms
+                    )
+                    VALUES (:id, :media_id, 0, 'ok', '<p>ok</p>', 100, 200)
+                    """
+                ),
+                {"id": uuid4(), "media_id": media_id},
+            )
+            session.commit()
+
+            # Zero-length range must fail.
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO fragments (
+                            id, media_id, idx, canonical_text, html_sanitized, t_start_ms, t_end_ms
+                        )
+                        VALUES (:id, :media_id, 1, 'zero', '<p>zero</p>', 200, 200)
+                        """
+                    ),
+                    {"id": uuid4(), "media_id": media_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_fragments_time_offsets_valid" in str(exc_info.value)
+
+            # Backwards range must fail.
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO fragments (
+                            id, media_id, idx, canonical_text, html_sanitized, t_start_ms, t_end_ms
+                        )
+                        VALUES (:id, :media_id, 2, 'backward', '<p>backward</p>', 400, 300)
+                        """
+                    ),
+                    {"id": uuid4(), "media_id": media_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_fragments_time_offsets_valid" in str(exc_info.value)
+
 
 class TestS1SchemaConstraints:
     """Tests for S1-specific schema constraints (idempotency indexes, URL lengths)."""

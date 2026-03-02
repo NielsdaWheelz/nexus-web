@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import html
+import math
+import re
+import unicodedata
 from datetime import UTC, date, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -40,6 +43,8 @@ _ATOM_NAMESPACE = {"atom": "http://www.w3.org/2005/Atom"}
 _ITUNES_DURATION_XPATH = (
     "*[local-name()='duration' and namespace-uri()='http://www.itunes.com/dtds/podcast-1.0.dtd']"
 )
+_DEEPGRAM_LISTEN_PATH = "/v1/listen"
+_TRANSCRIPT_WHITESPACE_RE = re.compile(r"[\s\u00a0]+")
 
 
 class PodcastIndexClient:
@@ -689,13 +694,34 @@ def _sync_subscription_ingest(
         episode = row["episode"]
         media_id = uuid4()
         audio_url = str(episode.get("audio_url") or "").strip() or None
-        transcript_segments = _normalize_transcript_segments(episode.get("transcript_segments"))
-        transcript_available = len(transcript_segments) > 0
+        transcription_result = _transcribe_podcast_audio(audio_url)
+        transcription_status = str(transcription_result.get("status") or "failed")
+        transcript_segments = _normalize_transcript_segments(transcription_result.get("segments"))
+        transcription_error_code = _normalize_terminal_transcription_error_code(
+            transcription_result.get("error_code")
+        )
+        transcription_error_message = str(transcription_result.get("error_message") or "").strip()
+        diagnostic_error_code = _normalize_diagnostic_transcription_error_code(
+            transcription_result.get("diagnostic_error_code")
+        )
+
+        if transcription_status == "completed" and not transcript_segments:
+            transcription_status = "failed"
+            transcription_error_code = ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value
+            transcription_error_message = "Transcript unavailable"
+            diagnostic_error_code = None
+
+        transcript_available = transcription_status == "completed" and bool(transcript_segments)
+        if not transcript_available:
+            if not transcription_error_code:
+                transcription_error_code = ApiErrorCode.E_TRANSCRIPTION_FAILED.value
+            if not transcription_error_message:
+                transcription_error_message = "Transcription failed"
 
         processing_status = "ready_for_reading" if transcript_available else "failed"
         failure_stage = None if transcript_available else "transcribe"
-        last_error_code = None if transcript_available else "E_TRANSCRIPT_UNAVAILABLE"
-        last_error_message = None if transcript_available else "Transcript unavailable"
+        last_error_code = None if transcript_available else transcription_error_code
+        last_error_message = None if transcript_available else transcription_error_message
 
         db.execute(
             text(
@@ -791,10 +817,13 @@ def _sync_subscription_ingest(
         if transcript_available:
             _insert_transcript_fragments(db, media_id, transcript_segments, now=now)
             transcription_status = "completed"
-            transcription_error_code = None
+            transcription_error_code = diagnostic_error_code
         else:
             transcription_status = "failed"
-            transcription_error_code = "E_TRANSCRIPT_UNAVAILABLE"
+            # Reuse normalized terminal failure code for both media and job state.
+            transcription_error_code = (
+                transcription_error_code or ApiErrorCode.E_TRANSCRIPTION_FAILED.value
+            )
 
         db.execute(
             text(
@@ -1714,6 +1743,243 @@ def _coerce_positive_int(raw_value: Any) -> int | None:
     return value
 
 
+def _normalize_terminal_transcription_error_code(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    value = str(raw_value).strip()
+    if not value:
+        return None
+    allowed = {
+        ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+        ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value,
+        ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
+    }
+    if value in allowed:
+        return value
+    return ApiErrorCode.E_TRANSCRIPTION_FAILED.value
+
+
+def _normalize_diagnostic_transcription_error_code(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    value = str(raw_value).strip()
+    if not value:
+        return None
+    if value == ApiErrorCode.E_DIARIZATION_FAILED.value:
+        return value
+    return None
+
+
+def _transcription_failure_result(error_code: str, error_message: str) -> dict[str, Any]:
+    return {
+        "status": "failed",
+        "error_code": error_code,
+        "error_message": error_message,
+    }
+
+
+def _transcribe_podcast_audio(audio_url: str | None) -> dict[str, Any]:
+    normalized_audio_url = str(audio_url or "").strip()
+    if not normalized_audio_url:
+        return _transcription_failure_result(
+            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
+            "Transcript unavailable",
+        )
+
+    try:
+        validate_requested_url(normalized_audio_url)
+    except InvalidRequestError:
+        return _transcription_failure_result(
+            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
+            "Transcript unavailable",
+        )
+
+    settings = get_settings()
+    if not settings.deepgram_api_key:
+        return _transcription_failure_result(
+            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+            "Transcription provider credentials are not configured",
+        )
+
+    diarized_result = _transcribe_with_deepgram(normalized_audio_url, diarize=True)
+    if diarized_result.get("status") == "completed":
+        diarized_result["diagnostic_error_code"] = None
+        return diarized_result
+
+    fallback_result = _transcribe_with_deepgram(normalized_audio_url, diarize=False)
+    if fallback_result.get("status") == "completed":
+        fallback_result["diagnostic_error_code"] = ApiErrorCode.E_DIARIZATION_FAILED.value
+        return fallback_result
+
+    return fallback_result
+
+
+def _transcribe_with_deepgram(audio_url: str, *, diarize: bool) -> dict[str, Any]:
+    settings = get_settings()
+    request_url = f"{settings.deepgram_base_url.rstrip('/')}{_DEEPGRAM_LISTEN_PATH}"
+    diarize_str = "true" if diarize else "false"
+    try:
+        response = httpx.post(
+            request_url,
+            headers={
+                "Authorization": f"Token {settings.deepgram_api_key}",
+                "Content-Type": "application/json",
+            },
+            params={
+                "model": settings.deepgram_model,
+                "diarize": diarize_str,
+                "utterances": "true",
+                "smart_format": "true",
+                "punctuate": "true",
+                "language": "en",
+            },
+            json={"url": audio_url},
+            timeout=settings.podcast_transcription_timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.TimeoutException:
+        return _transcription_failure_result(
+            ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value,
+            "Transcription timed out",
+        )
+    except httpx.HTTPStatusError as exc:
+        code = (
+            ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value
+            if exc.response.status_code in {408, 504}
+            else ApiErrorCode.E_TRANSCRIPTION_FAILED.value
+        )
+        logger.warning(
+            "podcast_transcription_provider_http_error",
+            audio_url=audio_url,
+            diarize=diarize,
+            status_code=exc.response.status_code,
+        )
+        return _transcription_failure_result(code, "Transcription failed")
+    except Exception as exc:
+        logger.warning(
+            "podcast_transcription_provider_request_failed",
+            audio_url=audio_url,
+            diarize=diarize,
+            error=str(exc),
+        )
+        return _transcription_failure_result(
+            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+            "Transcription failed",
+        )
+
+    segments = _extract_deepgram_segments(payload)
+    if not segments:
+        return _transcription_failure_result(
+            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
+            "Transcript unavailable",
+        )
+
+    return {
+        "status": "completed",
+        "segments": segments,
+    }
+
+
+def _extract_deepgram_segments(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    results = payload.get("results")
+    if not isinstance(results, dict):
+        return []
+
+    utterances = results.get("utterances")
+    if isinstance(utterances, list):
+        segments: list[dict[str, Any]] = []
+        for utterance in utterances:
+            if not isinstance(utterance, dict):
+                continue
+            transcript = str(utterance.get("transcript") or "").strip()
+            if not transcript:
+                continue
+            t_start_ms = _seconds_to_ms(utterance.get("start"))
+            t_end_ms = _seconds_to_ms(utterance.get("end"))
+            if t_start_ms is None or t_end_ms is None:
+                continue
+            speaker_value = utterance.get("speaker")
+            speaker_label = str(speaker_value).strip() if speaker_value is not None else None
+            if speaker_label == "":
+                speaker_label = None
+            segments.append(
+                {
+                    "text": transcript,
+                    "t_start_ms": t_start_ms,
+                    "t_end_ms": t_end_ms,
+                    "speaker_label": speaker_label,
+                }
+            )
+        if segments:
+            return segments
+
+    channels = results.get("channels")
+    if not isinstance(channels, list) or not channels:
+        return []
+    first_channel = channels[0]
+    if not isinstance(first_channel, dict):
+        return []
+    alternatives = first_channel.get("alternatives")
+    if not isinstance(alternatives, list) or not alternatives:
+        return []
+    first_alt = alternatives[0]
+    if not isinstance(first_alt, dict):
+        return []
+
+    transcript = str(first_alt.get("transcript") or "").strip()
+    duration_seconds = None
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        duration_seconds = metadata.get("duration")
+    duration_ms = _seconds_to_ms(duration_seconds)
+    if duration_ms is None:
+        words = first_alt.get("words")
+        duration_ms = _word_range_end_ms(words)
+    if not transcript or duration_ms is None:
+        return []
+
+    return [
+        {
+            "text": transcript,
+            "t_start_ms": 0,
+            "t_end_ms": duration_ms,
+            "speaker_label": None,
+        }
+    ]
+
+
+def _seconds_to_ms(raw_value: Any) -> int | None:
+    if raw_value is None:
+        return None
+    try:
+        seconds = float(raw_value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(seconds):
+        return None
+    if seconds < 0:
+        return None
+    return int(round(seconds * 1000))
+
+
+def _word_range_end_ms(raw_words: Any) -> int | None:
+    if not isinstance(raw_words, list) or not raw_words:
+        return None
+    max_end_ms: int | None = None
+    for word in raw_words:
+        if not isinstance(word, dict):
+            continue
+        end_ms = _seconds_to_ms(word.get("end"))
+        if end_ms is None:
+            continue
+        if max_end_ms is None or end_ms > max_end_ms:
+            max_end_ms = end_ms
+    return max_end_ms
+
+
 def _normalize_transcript_segments(raw_segments: Any) -> list[dict[str, Any]]:
     if not isinstance(raw_segments, list):
         return []
@@ -1722,16 +1988,16 @@ def _normalize_transcript_segments(raw_segments: Any) -> list[dict[str, Any]]:
     for original_idx, segment in enumerate(raw_segments):
         if not isinstance(segment, dict):
             continue
-        text_value = str(segment.get("text") or "").strip()
+        text_value = _canonicalize_transcript_segment_text(segment.get("text"))
         if not text_value:
             continue
 
         t_start_ms = _coerce_non_negative_int(segment.get("t_start_ms"))
-        if t_start_ms is None:
-            t_start_ms = 0
         t_end_ms = _coerce_non_negative_int(segment.get("t_end_ms"))
-        if t_end_ms is None or t_end_ms < t_start_ms:
-            t_end_ms = t_start_ms
+        if t_start_ms is None or t_end_ms is None:
+            continue
+        if t_start_ms >= t_end_ms:
+            continue
 
         speaker_raw = segment.get("speaker_label")
         speaker_label = str(speaker_raw).strip() if speaker_raw is not None else None
@@ -1752,6 +2018,13 @@ def _normalize_transcript_segments(raw_segments: Any) -> list[dict[str, Any]]:
     for seg in normalized:
         seg.pop("_original_idx", None)
     return normalized
+
+
+def _canonicalize_transcript_segment_text(raw_value: Any) -> str:
+    text = str(raw_value or "")
+    text = unicodedata.normalize("NFC", text)
+    text = _TRANSCRIPT_WHITESPACE_RE.sub(" ", text)
+    return text.strip()
 
 
 def _coerce_non_negative_int(raw_value: Any) -> int | None:

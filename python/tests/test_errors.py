@@ -118,6 +118,11 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_RETRY_NOT_ALLOWED, 409),
             (ApiErrorCode.E_CHAPTER_NOT_FOUND, 404),
             (ApiErrorCode.E_ARCHIVE_UNSAFE, 400),
+            # S7 transcription error codes
+            (ApiErrorCode.E_TRANSCRIPTION_FAILED, 502),
+            (ApiErrorCode.E_TRANSCRIPTION_TIMEOUT, 504),
+            (ApiErrorCode.E_DIARIZATION_FAILED, 502),
+            (ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE, 409),
         ],
     )
     def test_error_code_maps_to_correct_status(self, code: ApiErrorCode, expected_status: int):

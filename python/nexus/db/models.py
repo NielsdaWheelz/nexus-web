@@ -411,7 +411,7 @@ class Fragment(Base):
         CheckConstraint(
             "(t_start_ms IS NULL OR t_start_ms >= 0) "
             "AND (t_end_ms IS NULL OR t_end_ms >= 0) "
-            "AND (t_start_ms IS NULL OR t_end_ms >= t_start_ms)",
+            "AND (t_start_ms IS NULL OR t_end_ms > t_start_ms)",
             name="ck_fragments_time_offsets_valid",
         ),
     )
