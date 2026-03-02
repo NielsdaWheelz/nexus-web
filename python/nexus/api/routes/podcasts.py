@@ -49,6 +49,23 @@ def get_subscription_status(
     return success_response(out.model_dump(mode="json"))
 
 
+@router.delete("/podcasts/subscriptions/{podcast_id}")
+def unsubscribe_from_podcast(
+    podcast_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    mode: int = Query(default=1, ge=1, le=3),
+) -> dict:
+    """Unsubscribe viewer from a podcast with constitution retention mode."""
+    out = podcast_service.unsubscribe_from_podcast(
+        db,
+        viewer.user_id,
+        podcast_id,
+        mode=mode,
+    )
+    return success_response(out.model_dump(mode="json"))
+
+
 @router.put("/internal/podcasts/users/{user_id}/plan")
 def update_podcast_plan(
     user_id: UUID,

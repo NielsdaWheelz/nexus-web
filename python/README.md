@@ -92,7 +92,7 @@ nexus/
 | GET | `/libraries/{id}/media` | List media in library |
 | POST | `/libraries/{id}/media` | Add media to library |
 | DELETE | `/libraries/{id}/media/{media_id}` | Remove media from library |
-| GET | `/media/{id}` | Get media by ID (visibility enforced) |
+| GET | `/media/{id}` | Get media by ID (visibility enforced, includes `capabilities` and transcript `playback_source` when available) |
 | GET | `/media/{id}/fragments` | Get fragments for media (visibility enforced) |
 | POST | `/media/from_url` | Create provisional web_article from URL (S2) |
 | POST | `/media/upload/init` | Initialize file upload (PDF/EPUB) |
@@ -124,6 +124,7 @@ nexus/
 | GET | `/podcasts/discover` | Global podcast discovery metadata (S7) |
 | POST | `/podcasts/subscriptions` | Create/update subscription and enqueue async sync (S7) |
 | GET | `/podcasts/subscriptions/{podcast_id}` | Read per-user subscription sync lifecycle status (S7) |
+| DELETE | `/podcasts/subscriptions/{podcast_id}` | Unsubscribe with explicit retention mode (`mode=1|2|3`, default `1`) (S7 PR-02) |
 | PUT | `/internal/podcasts/users/{user_id}/plan` | Internal operator plan override endpoint (S7) |
 
 ### Public Endpoints
@@ -153,10 +154,12 @@ The `SupabaseJwksVerifier` validates:
 Podcast subscription ingest is split into control-plane and data-plane paths:
 
 - `POST /podcasts/subscriptions` writes/updates per-user subscription state and enqueues a worker job.
+- `DELETE /podcasts/subscriptions/{podcast_id}` marks the subscription unsubscribed and records `unsubscribe_mode` (`1`, `2`, or `3`) for deterministic retention behavior.
 - Worker task `podcast_sync_subscription_job` runs episode selection + idempotent ingest, then updates sync status.
 - Sync status is explicit and queryable via `GET /podcasts/subscriptions/{podcast_id}`:
   `pending`, `running`, `complete`, `source_limited`, `failed`.
 - `source_limited` indicates upstream source pagination limits prevented fully satisfying requested prefetch depth.
+- Ongoing polling ingest only processes `active` subscriptions and reuses the same sync/idempotency/quota path as direct subscription sync.
 
 ### Request Tracing (X-Request-ID)
 

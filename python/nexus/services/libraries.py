@@ -34,6 +34,7 @@ from nexus.schemas.library import (
 from nexus.schemas.media import MediaOut
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
+from nexus.services.playback_source import derive_playback_source
 
 logger = logging.getLogger(__name__)
 
@@ -557,6 +558,11 @@ def list_library_media(
             has_fragments=row[11],
             pdf_quote_text_ready=_pdf_ready,
         )
+        playback_source = derive_playback_source(
+            kind=row[1],
+            external_playback_url=row[7],
+            canonical_source_url=row[3],
+        )
         media_list.append(
             MediaOut(
                 id=row[0],
@@ -566,6 +572,7 @@ def list_library_media(
                 processing_status=row[4],
                 failure_stage=row[5],
                 last_error_code=row[6],
+                playback_source=playback_source,
                 capabilities=capabilities,
                 created_at=row[8],
                 updated_at=row[9],

@@ -22,6 +22,8 @@ REDIS_PORT ?= 6379
 
 # Web port
 WEB_PORT ?= 3000
+# API port
+API_PORT ?= 8000
 
 help:
 	@echo "Nexus Development Commands"
@@ -75,6 +77,7 @@ help:
 	@echo "Configuration (via environment or .env file):"
 	@echo "  REDIS_PORT          - Redis port (default: 6379)"
 	@echo "  WEB_PORT            - Web frontend port (default: 3000)"
+	@echo "  API_PORT            - API server port (default: 8000)"
 	@echo ""
 
 # === Setup ===
@@ -177,11 +180,11 @@ fmt-front:
 
 api:
 	cd apps/api && PYTHONPATH=$$PWD/../../python DATABASE_URL=$(DATABASE_URL) \
-		uv run --project ../../python uvicorn main:app --reload
+		uv run --project ../../python uvicorn main:app --reload --port $(API_PORT)
 
 web:
 	cd apps/web && \
-		FASTAPI_BASE_URL=http://localhost:8000 \
+		FASTAPI_BASE_URL=http://localhost:$(API_PORT) \
 		NEXUS_ENV=$${NEXUS_ENV:-local} \
 		NEXT_PUBLIC_SUPABASE_URL=$${NEXT_PUBLIC_SUPABASE_URL:-$(SUPABASE_URL)} \
 		NEXT_PUBLIC_SUPABASE_ANON_KEY=$${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$(SUPABASE_ANON_KEY)} \
@@ -226,12 +229,22 @@ test-front-browser:
 	cd apps/web && npx vitest run --project browser
 
 test-e2e:
-	cd e2e && npx playwright install --with-deps chromium && npx playwright test
+	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
+	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
+	echo "Running e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
+	cd e2e && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright test
 
 e2e: test-e2e
 
 test-e2e-ui:
-	cd e2e && npx playwright install --with-deps chromium && npx playwright test --ui
+	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
+	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
+	echo "Running e2e ui with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
+	cd e2e && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright test --ui
 
 # === Verify ===
 

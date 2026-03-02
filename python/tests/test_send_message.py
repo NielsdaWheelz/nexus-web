@@ -614,6 +614,140 @@ class TestSendMessageContext:
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
+    def test_send_message_with_podcast_highlight_context_includes_timestamp_and_speaker(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        platform_key_env,
+        mock_openai_api,
+    ):
+        """Podcast quote-to-chat includes transcript timestamp and speaker metadata."""
+        _route_openai_completion(mock_openai_api)
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        fragment_id = uuid4()
+        highlight_id = uuid4()
+        transcript_text = "Welcome everyone to the podcast."
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            default_library_id = get_user_default_library(session, user_id)
+            assert default_library_id is not None
+
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        external_playback_url, created_by_user_id
+                    )
+                    VALUES (
+                        :id, 'podcast_episode', :title, :canonical_source_url, 'ready_for_reading',
+                        :external_playback_url, :created_by_user_id
+                    )
+                    """
+                ),
+                {
+                    "id": media_id,
+                    "title": "Podcast Context Episode",
+                    "canonical_source_url": "https://feeds.example.com/context.xml",
+                    "external_playback_url": "https://cdn.example.com/context.mp3",
+                    "created_by_user_id": user_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO library_media (library_id, media_id)
+                    VALUES (:library_id, :media_id)
+                    """
+                ),
+                {"library_id": default_library_id, "media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                    VALUES (:default_library_id, :media_id)
+                    """
+                ),
+                {"default_library_id": default_library_id, "media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (
+                        id, media_id, idx, html_sanitized, canonical_text,
+                        t_start_ms, t_end_ms, speaker_label
+                    )
+                    VALUES (
+                        :id, :media_id, 0, :html_sanitized, :canonical_text,
+                        :t_start_ms, :t_end_ms, :speaker_label
+                    )
+                    """
+                ),
+                {
+                    "id": fragment_id,
+                    "media_id": media_id,
+                    "html_sanitized": "<p>Welcome everyone to the podcast.</p>",
+                    "canonical_text": transcript_text,
+                    "t_start_ms": 61_000,
+                    "t_end_ms": 66_000,
+                    "speaker_label": "Host",
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO highlights (
+                        id, user_id, fragment_id, start_offset, end_offset,
+                        color, exact, prefix, suffix
+                    )
+                    VALUES (
+                        :id, :user_id, :fragment_id, 0, 7,
+                        'yellow', :exact, '', :suffix
+                    )
+                    """
+                ),
+                {
+                    "id": highlight_id,
+                    "user_id": user_id,
+                    "fragment_id": fragment_id,
+                    "exact": "Welcome",
+                    "suffix": transcript_text[7:71],
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Summarize this podcast quote.",
+                "model_id": str(model_id),
+                "contexts": [{"type": "highlight", "id": str(highlight_id)}],
+            },
+        )
+
+        assert response.status_code == 200
+        system_prompt = _extract_openai_system_prompt(mock_openai_api)
+        assert "Timestamp: 00:01:01" in system_prompt
+        assert "Speaker: Host" in system_prompt
+
+        conversation_id = response.json()["data"]["conversation"]["id"]
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
     def test_send_message_context_not_visible_returns_404(
         self,
         auth_client,

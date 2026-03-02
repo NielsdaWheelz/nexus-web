@@ -1310,3 +1310,476 @@ class TestPodcastTranscriptPersistence:
         assert caps["can_highlight"] is False
         assert caps["can_quote"] is False
         assert caps["can_search"] is False
+
+
+def _run_active_subscription_poll(direct_db: DirectSessionManager, *, limit: int = 100) -> dict:
+    from nexus.services.podcasts import poll_active_subscriptions_once
+
+    with direct_db.session() as session:
+        result = poll_active_subscriptions_once(session, limit=limit)
+        session.commit()
+    return result
+
+
+def _create_library(auth_client, user_id: UUID, *, name: str) -> UUID:
+    response = auth_client.post(
+        "/libraries",
+        headers=auth_headers(user_id),
+        json={"name": name},
+    )
+    assert response.status_code == 201, (
+        f"expected library create 201, got {response.status_code}: {response.text}"
+    )
+    return UUID(response.json()["data"]["id"])
+
+
+class TestPodcastMediaDetailContract:
+    def test_media_detail_exposes_typed_playback_source_for_podcast_episode(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"contract-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Playback Contract Podcast")
+        audio_url = "https://cdn.example.com/contract.mp3"
+        episodes = [
+            {
+                "provider_episode_id": "ep-contract-1",
+                "guid": "guid-contract-1",
+                "title": "Playback Contract Episode",
+                "audio_url": audio_url,
+                "published_at": "2026-03-02T07:00:00Z",
+                "duration_seconds": 90,
+                "transcript_segments": [
+                    {"t_start_ms": 0, "t_end_ms": 1200, "text": "contract segment"}
+                ],
+            }
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: episodes},
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text(
+                    """
+                    SELECT pe.media_id
+                    FROM podcast_episodes pe
+                    JOIN podcasts p ON p.id = pe.podcast_id
+                    WHERE p.provider_podcast_id = :provider_podcast_id
+                    """
+                ),
+                {"provider_podcast_id": provider_podcast_id},
+            ).scalar()
+
+        assert media_id is not None
+
+        media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert media_response.status_code == 200, (
+            f"expected media detail 200, got {media_response.status_code}: {media_response.text}"
+        )
+        media = media_response.json()["data"]
+
+        playback_source = media["playback_source"]
+        assert playback_source["kind"] == "external_audio"
+        assert playback_source["stream_url"] == audio_url
+        assert playback_source["source_url"] == audio_url
+
+
+class TestPodcastSubscriptionLifecycleClosure:
+    def _ingest_single_episode_subscription(
+        self,
+        *,
+        auth_client,
+        monkeypatch,
+        direct_db,
+        user_id: UUID,
+        provider_podcast_id: str,
+        title: str,
+        episode_title: str,
+        audio_url: str,
+    ) -> tuple[UUID, UUID]:
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=3,
+        )
+        payload = _podcast_payload(provider_podcast_id, title)
+        episodes = [
+            {
+                "provider_episode_id": f"ep-{provider_podcast_id}-1",
+                "guid": f"guid-{provider_podcast_id}-1",
+                "title": episode_title,
+                "audio_url": audio_url,
+                "published_at": "2026-03-02T08:00:00Z",
+                "duration_seconds": 180,
+                "transcript_segments": [
+                    {"t_start_ms": 0, "t_end_ms": 1500, "text": "episode transcript"}
+                ],
+            }
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: episodes},
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(direct_db, user_id, podcast_id)
+
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text(
+                    """
+                    SELECT pe.media_id
+                    FROM podcast_episodes pe
+                    JOIN podcasts p ON p.id = pe.podcast_id
+                    WHERE p.provider_podcast_id = :provider_podcast_id
+                    """
+                ),
+                {"provider_podcast_id": provider_podcast_id},
+            ).scalar()
+        assert media_id is not None
+        return podcast_id, media_id
+
+    def test_unsubscribe_defaults_to_mode_1_and_stops_future_poll_ingest(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        provider_podcast_id = f"mode1-{uuid4()}"
+        default_library_id = _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=2,
+        )
+        payload = _podcast_payload(provider_podcast_id, "Mode 1 Podcast")
+        episodes_by_podcast = {
+            provider_podcast_id: [
+                {
+                    "provider_episode_id": "ep-m1-1",
+                    "guid": "guid-m1-1",
+                    "title": "Episode One",
+                    "audio_url": "https://cdn.example.com/m1-1.mp3",
+                    "published_at": "2026-03-02T09:00:00Z",
+                    "duration_seconds": 120,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 1000, "text": "first"}],
+                }
+            ]
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(direct_db, user_id, podcast_id)
+
+        episodes_by_podcast[provider_podcast_id].append(
+            {
+                "provider_episode_id": "ep-m1-2",
+                "guid": "guid-m1-2",
+                "title": "Episode Two",
+                "audio_url": "https://cdn.example.com/m1-2.mp3",
+                "published_at": "2026-03-03T09:00:00Z",
+                "duration_seconds": 120,
+                "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 900, "text": "second"}],
+            }
+        )
+
+        unsubscribe = auth_client.delete(
+            f"/podcasts/subscriptions/{podcast_id}",
+            headers=auth_headers(user_id),
+        )
+        assert unsubscribe.status_code == 200, (
+            f"expected unsubscribe 200, got {unsubscribe.status_code}: {unsubscribe.text}"
+        )
+        unsubscribed_data = unsubscribe.json()["data"]
+        assert unsubscribed_data["status"] == "unsubscribed"
+        assert unsubscribed_data["unsubscribe_mode"] == 1
+
+        poll_result = _run_active_subscription_poll(direct_db, limit=100)
+        assert poll_result["processed_count"] == 0
+
+        with direct_db.session() as session:
+            titles = session.execute(
+                text(
+                    """
+                    SELECT m.title
+                    FROM library_media lm
+                    JOIN media m ON m.id = lm.media_id
+                    WHERE lm.library_id = :library_id
+                      AND m.kind = 'podcast_episode'
+                    ORDER BY m.title ASC
+                    """
+                ),
+                {"library_id": default_library_id},
+            ).fetchall()
+        assert [row[0] for row in titles] == ["Episode One"]
+
+    def test_unsubscribe_mode_2_removes_default_but_never_shared_library_media(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        collaborator_id = create_test_user_id()
+        default_library_id = _bootstrap_user(auth_client, user_id)
+        _bootstrap_user(auth_client, collaborator_id)
+
+        provider_podcast_id = f"mode2-{uuid4()}"
+        podcast_id, media_id = self._ingest_single_episode_subscription(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            user_id=user_id,
+            provider_podcast_id=provider_podcast_id,
+            title="Mode 2 Podcast",
+            episode_title="Mode 2 Episode",
+            audio_url="https://cdn.example.com/m2.mp3",
+        )
+
+        shared_library_id = _create_library(
+            auth_client, user_id, name=f"shared-{provider_podcast_id}"
+        )
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'member')
+                    """
+                ),
+                {"library_id": shared_library_id, "user_id": collaborator_id},
+            )
+            session.commit()
+
+        add_shared = auth_client.post(
+            f"/libraries/{shared_library_id}/media",
+            headers=auth_headers(user_id),
+            json={"media_id": str(media_id)},
+        )
+        assert add_shared.status_code == 201
+
+        unsubscribe = auth_client.delete(
+            f"/podcasts/subscriptions/{podcast_id}?mode=2",
+            headers=auth_headers(user_id),
+        )
+        assert unsubscribe.status_code == 200
+        data = unsubscribe.json()["data"]
+        assert data["status"] == "unsubscribed"
+        assert data["unsubscribe_mode"] == 2
+
+        with direct_db.session() as session:
+            default_intrinsic = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM default_library_intrinsics
+                    WHERE default_library_id = :library_id AND media_id = :media_id
+                    """
+                ),
+                {"library_id": default_library_id, "media_id": media_id},
+            ).fetchone()
+            shared_row = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM library_media
+                    WHERE library_id = :library_id AND media_id = :media_id
+                    """
+                ),
+                {"library_id": shared_library_id, "media_id": media_id},
+            ).fetchone()
+
+        assert default_intrinsic is None
+        assert shared_row is not None
+
+    def test_unsubscribe_mode_3_removes_single_member_libraries_without_touching_shared(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        collaborator_id = create_test_user_id()
+        default_library_id = _bootstrap_user(auth_client, user_id)
+        _bootstrap_user(auth_client, collaborator_id)
+
+        provider_podcast_id = f"mode3-{uuid4()}"
+        podcast_id, media_id = self._ingest_single_episode_subscription(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            user_id=user_id,
+            provider_podcast_id=provider_podcast_id,
+            title="Mode 3 Podcast",
+            episode_title="Mode 3 Episode",
+            audio_url="https://cdn.example.com/m3.mp3",
+        )
+
+        single_member_library_id = _create_library(
+            auth_client, user_id, name=f"solo-{provider_podcast_id}"
+        )
+        shared_library_id = _create_library(
+            auth_client, user_id, name=f"shared-{provider_podcast_id}"
+        )
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'member')
+                    """
+                ),
+                {"library_id": shared_library_id, "user_id": collaborator_id},
+            )
+            session.commit()
+
+        add_single = auth_client.post(
+            f"/libraries/{single_member_library_id}/media",
+            headers=auth_headers(user_id),
+            json={"media_id": str(media_id)},
+        )
+        assert add_single.status_code == 201
+        add_shared = auth_client.post(
+            f"/libraries/{shared_library_id}/media",
+            headers=auth_headers(user_id),
+            json={"media_id": str(media_id)},
+        )
+        assert add_shared.status_code == 201
+
+        unsubscribe = auth_client.delete(
+            f"/podcasts/subscriptions/{podcast_id}?mode=3",
+            headers=auth_headers(user_id),
+        )
+        assert unsubscribe.status_code == 200
+        data = unsubscribe.json()["data"]
+        assert data["status"] == "unsubscribed"
+        assert data["unsubscribe_mode"] == 3
+
+        with direct_db.session() as session:
+            default_intrinsic = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM default_library_intrinsics
+                    WHERE default_library_id = :library_id AND media_id = :media_id
+                    """
+                ),
+                {"library_id": default_library_id, "media_id": media_id},
+            ).fetchone()
+            single_member_row = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM library_media
+                    WHERE library_id = :library_id AND media_id = :media_id
+                    """
+                ),
+                {"library_id": single_member_library_id, "media_id": media_id},
+            ).fetchone()
+            shared_row = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM library_media
+                    WHERE library_id = :library_id AND media_id = :media_id
+                    """
+                ),
+                {"library_id": shared_library_id, "media_id": media_id},
+            ).fetchone()
+
+        assert default_intrinsic is None
+        assert single_member_row is None
+        assert shared_row is not None
+
+    def test_active_subscription_poll_ingests_newly_published_episode(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        default_library_id = _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=2,
+        )
+
+        provider_podcast_id = f"poll-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Polling Podcast")
+        episodes_by_podcast = {
+            provider_podcast_id: [
+                {
+                    "provider_episode_id": "ep-poll-1",
+                    "guid": "guid-poll-1",
+                    "title": "Poll Episode One",
+                    "audio_url": "https://cdn.example.com/poll-1.mp3",
+                    "published_at": "2026-03-01T09:00:00Z",
+                    "duration_seconds": 60,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 800, "text": "one"}],
+                }
+            ]
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(direct_db, user_id, podcast_id)
+
+        episodes_by_podcast[provider_podcast_id].append(
+            {
+                "provider_episode_id": "ep-poll-2",
+                "guid": "guid-poll-2",
+                "title": "Poll Episode Two",
+                "audio_url": "https://cdn.example.com/poll-2.mp3",
+                "published_at": "2026-03-02T09:00:00Z",
+                "duration_seconds": 60,
+                "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 900, "text": "two"}],
+            }
+        )
+
+        poll_result = _run_active_subscription_poll(direct_db, limit=100)
+        assert poll_result["processed_count"] == 1
+
+        with direct_db.session() as session:
+            titles = session.execute(
+                text(
+                    """
+                    SELECT m.title
+                    FROM library_media lm
+                    JOIN media m ON m.id = lm.media_id
+                    WHERE lm.library_id = :library_id
+                      AND m.kind = 'podcast_episode'
+                    ORDER BY m.title ASC
+                    """
+                ),
+                {"library_id": default_library_id},
+            ).fetchall()
+
+        assert [row[0] for row in titles] == ["Poll Episode One", "Poll Episode Two"]

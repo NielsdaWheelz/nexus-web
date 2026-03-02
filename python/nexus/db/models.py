@@ -513,6 +513,7 @@ class PodcastSubscription(Base):
         primary_key=True,
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    unsubscribe_mode: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     sync_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     sync_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -539,6 +540,10 @@ class PodcastSubscription(Base):
         CheckConstraint(
             "status IN ('active', 'unsubscribed')",
             name="ck_podcast_subscriptions_status",
+        ),
+        CheckConstraint(
+            "unsubscribe_mode IN (1, 2, 3)",
+            name="ck_podcast_subscriptions_unsubscribe_mode_valid",
         ),
         CheckConstraint(
             "sync_status IN ('pending', 'running', 'partial', 'complete', 'source_limited', 'failed')",
