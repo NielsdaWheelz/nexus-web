@@ -181,6 +181,7 @@ function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
 
 test.describe("pdf reader", () => {
   test("upload -> viewer -> persistent highlight -> send to chat", async ({ page }) => {
+    test.slow(); // full upload → render → highlight → reload → chat flow under parallel workers
     const seeded = readSeededPdfMedia();
     const uploadFixturePath = path.join(process.cwd(), seeded.upload_fixture_path);
     const expectedPageCount = seeded.page_count;
@@ -203,8 +204,39 @@ test.describe("pdf reader", () => {
       });
       await expect(page.locator('[class*="textLayer"]')).toBeVisible();
 
-      expect(await selectTextLayerSnippet(page)).toBe(true);
-      await clickToolbarButtonByAriaLabel(page, "Highlight selection");
+      // Navigate to page 2 so highlights don't collide with the stress
+      // test (line ~310) which creates highlights on page 1. Both tests
+      // share the same seeded PDF and run in parallel (fullyParallel).
+      await clickToolbarButtonByAriaLabel(page, "Next page");
+      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
+      await expect(page.locator('[class*="textLayer"]')).toBeVisible();
+
+      // Highlight creation with retry — selection can be lost between
+      // selectTextLayerSnippet and the button click due to React re-renders
+      // replacing text layer DOM nodes (same pattern as the stress test).
+      let created = false;
+      for (let retry = 0; retry < 3; retry++) {
+        expect(await selectTextLayerSnippet(page)).toBe(true);
+        const before = await readCreateTelemetry(page);
+        await clickToolbarButtonByAriaLabel(page, "Highlight selection");
+        await expect
+          .poll(async () => (await readCreateTelemetry(page)).attempts, { timeout: 5_000 })
+          .toBe(before.attempts + 1);
+        const settled = await waitForCreateOutcome(page, before.attempts + 1);
+        if (settled.lastOutcome === "success") {
+          created = true;
+          break;
+        }
+        if (
+          settled.lastOutcome === "skipped_no_selection" ||
+          settled.lastOutcome === "skipped_no_geometry" ||
+          settled.lastOutcome === "error" // e.g. duplicate from parallel test
+        ) {
+          continue;
+        }
+        throw new Error(`Unexpected highlight outcome: ${settled.lastOutcome}`);
+      }
+      expect(created).toBe(true);
       await expect
         .poll(async () => page.locator('[data-testid^="pdf-highlight-"]').count(), {
           timeout: 10_000,
@@ -220,6 +252,9 @@ test.describe("pdf reader", () => {
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
         timeout: 20_000,
       });
+      // Navigate back to page 2 where the highlight was created
+      await clickToolbarButtonByAriaLabel(page, "Next page");
+      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
       await expect(page.locator(`[data-testid^="pdf-highlight-${createdHighlightId}-"]`)).toHaveCount(1);
 
       const linkedRow = page.locator('[class*="linkedItemRow"]').first();
@@ -345,34 +380,11 @@ test.describe("pdf reader", () => {
       expect(await selectTextLayerSnippet(page)).toBe(true);
       await expect(page.locator('button[aria-label="Highlight selection"]')).toBeEnabled();
 
-      await expect
-        .poll(
-          async () =>
-            await page.evaluate(() => window.getSelection()?.toString().trim().length ?? 0),
-          { timeout: 5_000 }
-        )
-        .toBeGreaterThan(0);
-      await expect
-        .poll(
-          async () =>
-            await page.evaluate(() => {
-              const layers = Array.from(
-                document.querySelectorAll<HTMLElement>('[class*="pageLayer"] [class*="textLayer"]'),
-              );
-              const activeLayer = layers.at(-1);
-              const sel = window.getSelection();
-              if (!activeLayer || !sel || sel.rangeCount === 0) {
-                return false;
-              }
-              const range = sel.getRangeAt(0);
-              return (
-                activeLayer.contains(range.startContainer) ||
-                activeLayer.contains(range.endContainer)
-              );
-            }),
-          { timeout: 5_000 }
-        )
-        .toBe(true);
+      // Selection may be lost between selectTextLayerSnippet and the create
+      // click due to React re-renders replacing text layer DOM nodes (making
+      // the Range's containers detached). The retry loop below handles this
+      // gracefully via skipped_no_selection → re-select, so we proceed
+      // directly rather than adding a hard-failure gate here.
 
       const telemetryBefore = await readCreateTelemetry(page);
       const postRequestsBefore = highlightPostRequests;

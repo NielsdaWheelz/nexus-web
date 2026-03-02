@@ -3,7 +3,6 @@ import { test, expect } from "@playwright/test";
 test.describe("conversations", () => {
   test("create conversation", async ({ page }) => {
     await page.goto("/conversations");
-    // Click the "+ New" button to start a new conversation
     const newBtn = page.getByRole("button", { name: /new/i }).or(
       page.getByRole("link", { name: /new/i })
     );
@@ -14,26 +13,25 @@ test.describe("conversations", () => {
 
   test("send message", async ({ page }) => {
     await page.goto("/conversations");
-    // Create a new conversation first
+    // Create a new conversation
     const newBtn = page.getByRole("button", { name: /new/i }).or(
       page.getByRole("link", { name: /new/i })
     );
     await expect(newBtn).toBeVisible();
     await newBtn.click();
-    // Fill in the ChatComposer and send
-    const input = page.getByPlaceholder("Type a message...");
+
+    // Wait for model dropdown to have a real selection (seeded API key provides models)
+    const modelSelect = page.locator("select").first();
+    await expect(modelSelect).toBeVisible();
+    await expect(modelSelect).not.toHaveValue("", { timeout: 10_000 });
+
+    // Type and send a message
+    const input = page.getByPlaceholder(/type a message/i);
     await expect(input).toBeVisible();
     await input.fill("Hello, this is a test message");
     await page.getByRole("button", { name: /send/i }).click();
-    // Verify the message appears in the thread
-    await expect(page.getByText("Hello, this is a test message")).toBeVisible();
-  });
 
-  test.fixme("streaming response UI", async () => {
-    // Requires LLM API key configured in E2E environment for real streaming.
-  });
-
-  test.fixme("attach and use context", async () => {
-    // Requires seeded media content and conversation for context attachment.
+    // With streaming enabled, the user message appears immediately via optimistic rendering
+    await expect(page.getByText("Hello, this is a test message")).toBeVisible({ timeout: 10_000 });
   });
 });
