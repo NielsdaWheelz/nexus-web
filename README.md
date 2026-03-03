@@ -522,7 +522,7 @@ For YouTube media, `GET /media/{id}` includes a typed playback contract with pro
 # Terminal 3: Start Celery worker for ingestion
 make worker
 
-# Terminal 4: Start Celery beat for scheduled poll jobs
+# Terminal 4: Start Celery beat for scheduled poll/recovery jobs
 make beat
 ```
 
@@ -532,6 +532,25 @@ cd node/ingest
 npm ci
 npx playwright install chromium
 ```
+
+### Ingest Reliability Guardrails
+
+The ingest pipeline includes explicit anti-drift and recovery controls:
+
+- **Task contract source of truth**: `python/nexus/celery_contract.py` defines required worker task names, queue routes, and beat wiring.
+- **Startup fail-fast**: worker startup aborts if any required task registration is missing.
+- **Deployment preflight**: `make verify-celery-contract` asserts worker registrations/routes/beat schedule match the canonical contract.
+- **Health fingerprint**: `GET /health` includes `task_contract_version` so deploy systems can compare API and worker contract versions.
+- **Auto-recovery**: beat enqueues `reconcile_stale_ingest_media_job`, which requeues stale `pdf`/`epub` rows in `extracting` and fail-closes after bounded attempts.
+- **Operator controls**:
+  - `POST /internal/ingest/reconcile` — manually enqueue stale-ingest reconciliation.
+  - `GET /internal/ingest/reconcile/health` — inspect stale backlog count/age.
+
+Runtime knobs:
+
+- `INGEST_RECONCILE_SCHEDULE_SECONDS` (default `300`)
+- `INGEST_STALE_EXTRACTING_SECONDS` (default `1800`)
+- `INGEST_STALE_REQUEUE_MAX_ATTEMPTS` (default `3`)
 
 ### Docker Worker
 
@@ -691,8 +710,17 @@ make test-back         # Backend tests (excludes migrations)
 make test-migrations   # Migration tests (separate DB)
 make test-supabase     # Supabase auth/storage integration tests (opt-in)
 make test-front        # Frontend tests
+make verify-fast       # Fast verification (static checks + unit tests + celery contract)
 make verify            # Full verification (lint + format + all tests)
+make verify-celery-contract  # Celery API/worker contract preflight
 make e2e               # Playwright E2E (auto-selects free API/WEB ports)
+```
+
+For first-time E2E setup:
+
+```bash
+cd e2e
+npm install
 ```
 
 Backend tests are hermetic: they start their own Postgres + Redis on free ports,

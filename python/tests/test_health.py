@@ -26,7 +26,10 @@ class TestHealthEndpoint:
         data = response.json()
 
         assert "data" in data
-        assert data["data"] == {"status": "ok"}
+        assert data["data"]["status"] == "ok"
+        assert "task_contract_version" in data["data"], (
+            "Health payload must include task_contract_version for deploy compatibility checks"
+        )
 
     def test_health_content_type_is_json(self, client: TestClient):
         """Health endpoint returns JSON content type."""

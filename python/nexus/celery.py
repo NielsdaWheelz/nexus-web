@@ -17,6 +17,7 @@ Usage:
 from celery import Celery
 from celery.signals import worker_process_init
 
+from nexus.celery_contract import build_beat_schedule, build_task_routes
 from nexus.config import get_settings
 
 settings = get_settings()
@@ -36,21 +37,9 @@ celery_app.conf.timezone = "UTC"
 celery_app.conf.enable_utc = True
 
 # Queue routing for ingestion tasks
-celery_app.conf.task_routes = {
-    "nexus.tasks.ingest_web_article.*": {"queue": "ingest"},
-    "ingest_epub": {"queue": "ingest"},
-    "backfill_default_library_closure_job": {"queue": "ingest"},
-    "podcast_sync_subscription_job": {"queue": "ingest"},
-    "podcast_active_subscription_poll_job": {"queue": "ingest"},
-}
+celery_app.conf.task_routes = build_task_routes()
 
-celery_app.conf.beat_schedule = {
-    "podcast_active_subscription_poll": {
-        "task": "podcast_active_subscription_poll_job",
-        "schedule": float(settings.podcast_active_poll_schedule_seconds),
-        "options": {"queue": "ingest"},
-    }
-}
+celery_app.conf.beat_schedule = build_beat_schedule(settings)
 
 # Default queue
 celery_app.conf.task_default_queue = "default"

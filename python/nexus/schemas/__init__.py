@@ -20,6 +20,7 @@ from nexus.schemas.highlights import (
     UpdateHighlightRequest,
     UpsertAnnotationRequest,
 )
+from nexus.schemas.ingest import IngestReconcileEnqueueOut, IngestRecoveryHealthOut
 from nexus.schemas.library import (
     AcceptLibraryInviteResponse,
     AddMediaRequest,
@@ -64,6 +65,9 @@ __all__ = [
     # S4 PR-05 backfill requeue schemas
     "RequeueDefaultLibraryBackfillJobRequest",
     "DefaultLibraryBackfillJobOut",
+    # Ingest recovery operator schemas
+    "IngestReconcileEnqueueOut",
+    "IngestRecoveryHealthOut",
     # Media schemas
     "MediaOut",
     "FragmentOut",

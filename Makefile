@@ -1,7 +1,7 @@
 # Nexus Development Makefile
 # Run `make help` for available commands
 
-.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations ensure-services ensure-node-ingest lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker beat migrate migrate-test migrate-down seed verify verify-fast test-back-unit test-front-unit test-front-browser test-e2e test-e2e-ui _verify-fast-static _verify-fast-tests _verify-tests logs
+.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations ensure-services ensure-node-ingest ensure-e2e-deps lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker beat migrate migrate-test migrate-down seed verify verify-fast verify-celery-contract test-back-unit test-front-unit test-front-browser test-e2e test-e2e-ui _verify-fast-static _verify-fast-tests _verify-tests logs
 
 # Load .env file if it exists (created by setup)
 -include .env
@@ -67,6 +67,7 @@ help:
 	@echo "Verify:"
 	@echo "  make verify         - Full local verification (static + build + tests, no E2E)"
 	@echo "  make verify-fast    - Fast feedback (static + unit tests only)"
+	@echo "  make verify-celery-contract - Validate Celery task catalog/routes/registration contract"
 	@echo ""
 	@echo "Layer targets:"
 	@echo "  make test-back-unit     - Backend unit tests only (no DB)"
@@ -127,6 +128,13 @@ ensure-node-ingest:
 	fi
 	@cd node/ingest && npx playwright install chromium >/dev/null 2>&1 || \
 		(echo "Installing Playwright browsers (Chromium)..." && npx playwright install chromium)
+
+# Ensure E2E dependencies are installed
+ensure-e2e-deps:
+	@if [ ! -d "e2e/node_modules" ]; then \
+		echo "Installing E2E dependencies..."; \
+		cd e2e && npm install; \
+	fi
 
 test: test-back-and-migrations test-front
 
@@ -237,7 +245,7 @@ test-front-browser:
 	@npx playwright install chromium >/dev/null 2>&1 || npx playwright install chromium
 	cd apps/web && npx vitest run --project browser
 
-test-e2e:
+test-e2e: ensure-e2e-deps
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
@@ -247,7 +255,7 @@ test-e2e:
 
 e2e: test-e2e
 
-test-e2e-ui:
+test-e2e-ui: ensure-e2e-deps
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e ui with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
@@ -258,7 +266,7 @@ test-e2e-ui:
 # === Verify ===
 
 # Helper targets for parallel execution within verify-fast
-_verify-fast-static: lint fmt-check typecheck
+_verify-fast-static: lint fmt-check typecheck verify-celery-contract
 
 _verify-fast-tests: test-back-unit test-front-unit
 
@@ -272,6 +280,13 @@ _verify-tests: test-back-and-migrations test-front-unit test-front-browser
 
 verify: lint fmt-check typecheck build _verify-tests
 	@echo "=== All verification checks passed ==="
+
+verify-celery-contract:
+	cd python && \
+		SUPABASE_JWKS_URL=$${SUPABASE_JWKS_URL:-http://127.0.0.1:54321/auth/v1/.well-known/jwks.json} \
+		SUPABASE_ISSUER=$${SUPABASE_ISSUER:-http://127.0.0.1:54321/auth/v1} \
+		SUPABASE_AUDIENCES=$${SUPABASE_AUDIENCES:-authenticated} \
+		PYTHONPATH=$$PWD:$$PWD/.. uv run python scripts/verify_celery_contract.py
 
 fmt-check:
 	@echo "=== Checking Backend Formatting ==="

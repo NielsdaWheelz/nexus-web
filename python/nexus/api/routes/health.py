@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from nexus.celery_contract import TASK_CONTRACT_VERSION
 from nexus.responses import success_response
 
 router = APIRouter()
@@ -14,4 +15,9 @@ async def health_check() -> dict:
     Returns 200 if the process is running.
     Does not check database or other dependencies.
     """
-    return success_response({"status": "ok"})
+    return success_response(
+        {
+            "status": "ok",
+            "task_contract_version": TASK_CONTRACT_VERSION,
+        }
+    )

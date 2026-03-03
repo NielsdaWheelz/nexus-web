@@ -115,6 +115,10 @@ class TestPdfTextNormalization:
         assert normalize_pdf_text("hello\u00a0world") == "hello world"
 
     @pytest.mark.unit
+    def test_nul_bytes_are_removed(self):
+        assert normalize_pdf_text("abc\x00def\x00ghi") == "abcdefghi"
+
+    @pytest.mark.unit
     def test_collapse_spaces_tabs(self):
         assert normalize_pdf_text("a   b\tc") == "a b c"
 

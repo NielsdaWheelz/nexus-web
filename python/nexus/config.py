@@ -112,6 +112,17 @@ class Settings(BaseSettings):
         default=1800, alias="PODCAST_SYNC_RUNNING_LEASE_SECONDS"
     )
 
+    # Ingest recovery guardrails
+    ingest_reconcile_schedule_seconds: int = Field(
+        default=300, alias="INGEST_RECONCILE_SCHEDULE_SECONDS"
+    )
+    ingest_stale_extracting_seconds: int = Field(
+        default=1800, alias="INGEST_STALE_EXTRACTING_SECONDS"
+    )
+    ingest_stale_requeue_max_attempts: int = Field(
+        default=3, alias="INGEST_STALE_REQUEUE_MAX_ATTEMPTS"
+    )
+
     # S5: EPUB archive safety limits (L2 baseline = ceiling; may be stricter, never weaker)
     max_epub_archive_entries: int = Field(default=10_000, alias="MAX_EPUB_ARCHIVE_ENTRIES")
     max_epub_archive_total_uncompressed_bytes: int = Field(
@@ -243,6 +254,12 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_SYNC_RUNNING_LEASE_SECONDS must be >= 1.")
         if self.podcast_transcription_timeout_seconds <= 0:
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
+        if self.ingest_reconcile_schedule_seconds < 1:
+            raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 1.")
+        if self.ingest_stale_extracting_seconds < 1:
+            raise ValueError("INGEST_STALE_EXTRACTING_SECONDS must be >= 1.")
+        if self.ingest_stale_requeue_max_attempts < 1:
+            raise ValueError("INGEST_STALE_REQUEUE_MAX_ATTEMPTS must be >= 1.")
 
         return self
 

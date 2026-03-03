@@ -71,14 +71,16 @@ def normalize_pdf_text(raw_text: str) -> str:
     1. \\r\\n and \\r -> \\n
     2. form-feed (\\f) -> \\n\\n (page separator)
     3. NBSP (\\u00A0) -> space
-    4. collapse runs of spaces/tabs within a line to single space
-    5. collapse 3+ consecutive newlines to \\n\\n
-    6. trim leading/trailing whitespace
+    4. NUL byte (\\x00) -> removed (PostgreSQL text cannot store NUL)
+    5. collapse runs of spaces/tabs within a line to single space
+    6. collapse 3+ consecutive newlines to \\n\\n
+    7. trim leading/trailing whitespace
     """
     s = raw_text
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     s = s.replace("\f", "\n\n")
     s = s.replace("\u00a0", " ")
+    s = s.replace("\x00", "")
     s = re.sub(r"[^\S\n]+", " ", s)
     s = re.sub(r"\n{3,}", "\n\n", s)
     s = s.strip()

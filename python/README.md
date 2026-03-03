@@ -126,12 +126,14 @@ nexus/
 | GET | `/podcasts/subscriptions/{podcast_id}` | Read per-user subscription sync lifecycle status (S7) |
 | DELETE | `/podcasts/subscriptions/{podcast_id}` | Unsubscribe with explicit retention mode (`mode=1|2|3`, default `1`) (S7 PR-02) |
 | PUT | `/internal/podcasts/users/{user_id}/plan` | Internal operator plan override endpoint (S7) |
+| POST | `/internal/ingest/reconcile` | Internal operator trigger for stale-ingest reconciliation |
+| GET | `/internal/ingest/reconcile/health` | Internal operator stale-ingest backlog snapshot |
 
 ### Public Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Health check |
+| GET | `/health` | Health check (`status=ok`, includes `task_contract_version`) |
 
 ## Architecture
 
@@ -176,6 +178,26 @@ Podcast subscription ingest is split into control-plane and data-plane paths:
   - `PODCAST_ACTIVE_POLL_LIMIT`
   - `PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS`
   - `PODCAST_SYNC_RUNNING_LEASE_SECONDS`
+
+### Ingest Worker Contract and Stale Recovery
+
+PDF/EPUB ingest reliability is guarded by a canonical Celery contract and bounded recovery:
+
+- `nexus.celery_contract` is the source of truth for required worker tasks, task routes, and beat jobs.
+- Worker startup hard-fails if any required task is missing from runtime registration.
+- `scripts/verify_celery_contract.py` enforces contract parity for deploy preflight checks.
+- Beat job `reconcile_stale_ingest_media_job` scans stale `extracting` rows (`pdf`, `epub`) and:
+  - re-dispatches up to `INGEST_STALE_REQUEUE_MAX_ATTEMPTS`
+  - fail-closes with deterministic timeout metadata after max attempts
+- Operator endpoints:
+  - `POST /internal/ingest/reconcile`
+  - `GET /internal/ingest/reconcile/health`
+
+Runtime controls:
+
+- `INGEST_RECONCILE_SCHEDULE_SECONDS` (default: `300`)
+- `INGEST_STALE_EXTRACTING_SECONDS` (default: `1800`)
+- `INGEST_STALE_REQUEUE_MAX_ATTEMPTS` (default: `3`)
 
 ### Request Tracing (X-Request-ID)
 
@@ -502,7 +524,9 @@ make test-migrations   # Run migration tests (separate database)
 make test-supabase     # Supabase auth/storage integration tests (opt-in)
 make lint-back         # Run linter
 make fmt-back          # Format code
+make verify-fast       # Fast verification (static + unit tests + celery contract)
 make verify            # Full verification
+make verify-celery-contract  # Celery task contract preflight
 ```
 
 `make test-back` and `make test-migrations` are hermetic: they start Postgres + Redis
