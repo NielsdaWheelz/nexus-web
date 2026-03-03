@@ -31,6 +31,7 @@ import {
   computeAlignedRows,
   createMeasureScheduler,
   createScrollHandler,
+  findScrollParent,
   ROW_HEIGHT,
   type AlignmentHighlight,
   type AlignedRow,
@@ -71,6 +72,9 @@ export default function LinkedItemsPane({
   // Container ref for sizing calculations
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Resolved scroll parent (nearest ancestor with overflow-y: auto/scroll)
+  const scrollParentRef = useRef<HTMLElement | null>(null);
+
   // Row refs for direct DOM manipulation during scroll
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
 
@@ -102,6 +106,11 @@ export default function LinkedItemsPane({
   const measure = useCallback(() => {
     if (!contentRef.current) return;
 
+    // Resolve scroll parent on first measurement (or if contentRef changed)
+    if (!scrollParentRef.current) {
+      scrollParentRef.current = findScrollParent(contentRef.current as HTMLElement);
+    }
+
     // Convert highlights to AlignmentHighlight format
     const alignmentHighlights: AlignmentHighlight[] = highlights.map((h) => ({
       id: h.id,
@@ -112,6 +121,7 @@ export default function LinkedItemsPane({
 
     const positions = measureAnchorPositions(
       contentRef.current,
+      scrollParentRef.current,
       alignmentHighlights
     );
 
@@ -137,9 +147,9 @@ export default function LinkedItemsPane({
    * This is the "cheap" operation that only does math and DOM writes.
    */
   const alignRows = useCallback(() => {
-    if (!contentRef.current || anchorPositions.size === 0) return;
+    if (!scrollParentRef.current || anchorPositions.size === 0) return;
 
-    const scrollTop = contentRef.current.scrollTop;
+    const scrollTop = scrollParentRef.current.scrollTop;
     const containerHeight = containerRef.current?.clientHeight ?? 0;
 
     // Convert highlights to alignment format with full data
@@ -177,7 +187,7 @@ export default function LinkedItemsPane({
         el.style.transform = `translateY(${row.top}px)`;
       }
     }
-  }, [contentRef, anchorPositions, highlights]);
+  }, [anchorPositions, highlights]);
 
   // Create RAF-throttled scroll handler
   const scrollHandler = useRef(createScrollHandler(alignRows));
@@ -208,23 +218,31 @@ export default function LinkedItemsPane({
     }
   }, [anchorPositions, alignRows]);
 
-  // Scroll event listener
+  // Resolve scroll parent when contentRef becomes available
   useEffect(() => {
-    const contentEl = contentRef.current;
-    if (!contentEl) return;
+    if (contentRef.current) {
+      scrollParentRef.current = findScrollParent(contentRef.current as HTMLElement);
+    }
+  }, [contentRef]);
+
+  // Scroll event listener on the actual scrolling ancestor
+  useEffect(() => {
+    const scrollEl = scrollParentRef.current;
+    if (!scrollEl) return;
 
     const handleScroll = () => scrollHandler.current.handleScroll();
-    contentEl.addEventListener("scroll", handleScroll, { passive: true });
+    scrollEl.addEventListener("scroll", handleScroll, { passive: true });
 
     return () => {
-      contentEl.removeEventListener("scroll", handleScroll);
+      scrollEl.removeEventListener("scroll", handleScroll);
     };
   }, [contentRef]);
 
-  // ResizeObserver for content and container
+  // ResizeObserver for content, scroll parent, and container
   useEffect(() => {
     const contentEl = contentRef.current;
     const containerEl = containerRef.current;
+    const scrollEl = scrollParentRef.current;
     if (!contentEl && !containerEl) return;
 
     const observer = new ResizeObserver(() => {
@@ -233,6 +251,7 @@ export default function LinkedItemsPane({
 
     if (contentEl) observer.observe(contentEl);
     if (containerEl) observer.observe(containerEl);
+    if (scrollEl && scrollEl !== contentEl) observer.observe(scrollEl);
 
     return () => observer.disconnect();
   }, [contentRef]);

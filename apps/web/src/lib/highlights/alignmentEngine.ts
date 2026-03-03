@@ -212,6 +212,20 @@ export function computeAlignedRows(
 }
 
 /**
+ * Find the nearest scrollable ancestor of an element.
+ * Walks up the DOM tree looking for overflow-y: auto or scroll.
+ */
+export function findScrollParent(el: HTMLElement): HTMLElement {
+  let parent = el.parentElement;
+  while (parent) {
+    const { overflowY } = getComputedStyle(parent);
+    if (overflowY === "auto" || overflowY === "scroll") return parent;
+    parent = parent.parentElement;
+  }
+  return document.documentElement;
+}
+
+/**
  * Measure anchor positions for all highlights.
  *
  * This is the "expensive" function that reads from the DOM.
@@ -221,17 +235,19 @@ export function computeAlignedRows(
  * - On image load
  * - Debounced to avoid reflow storms
  *
- * @param contentRoot - The content container element
+ * @param contentRoot - The content container element (for anchor queries)
+ * @param scrollContainer - The actual scrolling ancestor (for scrollTop)
  * @param highlights - The highlights to measure anchors for
  * @returns Map of highlightId -> anchorTopInDocument
  */
 export function measureAnchorPositions(
   contentRoot: Element,
+  scrollContainer: HTMLElement,
   highlights: AlignmentHighlight[]
 ): Map<string, number> {
   const positions = new Map<string, number>();
-  const contentRect = contentRoot.getBoundingClientRect();
-  const scrollTop = (contentRoot as HTMLElement).scrollTop || 0;
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const scrollTop = scrollContainer.scrollTop;
 
   for (const highlight of highlights) {
     const anchor = contentRoot.querySelector(
@@ -245,7 +261,8 @@ export function measureAnchorPositions(
 
     const anchorRect = anchor.getBoundingClientRect();
     // Convert viewport-relative position to document-relative position
-    const anchorTopInDocument = anchorRect.top - contentRect.top + scrollTop;
+    // using the scroll container's rect and scrollTop
+    const anchorTopInDocument = anchorRect.top - containerRect.top + scrollTop;
     positions.set(highlight.id, anchorTopInDocument);
   }
 
