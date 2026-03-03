@@ -181,6 +181,12 @@ test.describe("epub", () => {
     // Some books include additional section-level entries that map to anchors.
     const options = chapterSelect.locator("option");
     await expect.poll(async () => options.count()).toBeGreaterThanOrEqual(seed.chapter_count);
+    await expect
+      .poll(async () => {
+        const optionLabels = await options.allTextContents();
+        return seed.chapter_titles.every((title) => optionLabels.includes(title));
+      })
+      .toBe(true);
   });
 
   test("toc leaf with anchor lands at exact in-fragment target", async ({

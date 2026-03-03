@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "pdfjs-dist/web/pdf_viewer.css";
 
 export const metadata: Metadata = {
   title: "Nexus",
