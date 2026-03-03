@@ -22,19 +22,39 @@ Concurrency Notes:
 from celery.signals import worker_process_init
 
 from nexus.celery import celery_app
+from nexus.celery_contract import REQUIRED_WORKER_TASK_NAMES, TASK_CONTRACT_VERSION
 from nexus.logging import configure_logging, get_logger
 
 # =============================================================================
 # Task Registration (explicit imports - no autodiscovery)
 # =============================================================================
-
 # Import tasks to register them with Celery
 # Each import registers the task with the celery_app
-from nexus.tasks import backfill_default_library_closure_job  # noqa: F401
-from nexus.tasks import ingest_epub  # noqa: F401
-from nexus.tasks import ingest_web_article  # noqa: F401
-from nexus.tasks import podcast_active_subscription_poll_job  # noqa: F401
-from nexus.tasks import podcast_sync_subscription_job  # noqa: F401
+from nexus.tasks import (
+    backfill_default_library_closure_job,  # noqa: F401
+    ingest_epub,  # noqa: F401
+    ingest_pdf,  # noqa: F401
+    ingest_web_article,  # noqa: F401
+    ingest_youtube_video,  # noqa: F401
+    podcast_active_subscription_poll_job,  # noqa: F401
+    podcast_sync_subscription_job,  # noqa: F401
+    reconcile_stale_ingest_media_job,  # noqa: F401
+)
+
+REQUIRED_TASK_NAMES = set(REQUIRED_WORKER_TASK_NAMES)
+
+
+def _assert_required_task_registration() -> None:
+    registered = set(celery_app.tasks.keys())
+    missing = sorted(REQUIRED_TASK_NAMES - registered)
+    if missing:
+        raise RuntimeError(
+            "Celery worker startup aborted: missing task registrations "
+            f"{', '.join(missing)}. Ensure nexus.tasks imports are complete."
+        )
+
+
+_assert_required_task_registration()
 
 # =============================================================================
 # Worker Lifecycle
@@ -56,7 +76,11 @@ def setup_worker_logging(**kwargs):
     """
     configure_logging()
     logger = get_logger(__name__)
-    logger.info("celery_worker_started", queue="ingest")
+    logger.info(
+        "celery_worker_started",
+        queue="ingest",
+        task_contract_version=TASK_CONTRACT_VERSION,
+    )
 
 
 # Export celery_app for Celery to find
