@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reuse transcript logic for video.
+Deliver YouTube media as transcript-first reading surfaces with embed playback plus optional user-triggered stored audio/video artifacts.
 
 ## Acceptance Criteria
 
@@ -46,6 +46,26 @@ Reuse transcript logic for video.
 - **when**: ingest processing completes and the user opens the media
 - **then**: `processing_status=failed` with `last_error_code=E_TRANSCRIPT_UNAVAILABLE`, playback remains available, transcript-dependent actions (read/highlight/quote/search) are disabled, and transcript-unavailable state is explicit in UI/API.
 
+### User-triggered audio extraction creates optional stored playback
+- **given**: a readable or playback-only YouTube video
+- **when**: the user explicitly requests audio extraction
+- **then**: extraction runs asynchronously, a private stored audio artifact is created on success, and the media pane can switch to audio playback mode without changing transcript behavior.
+
+### User-triggered video download creates optional stored playback and download
+- **given**: a readable or playback-only YouTube video
+- **when**: the user explicitly requests video download
+- **then**: download runs asynchronously, a private stored video artifact is created on success, and the user can use both in-app stored playback and an explicit signed download action.
+
+### Stored artifacts remain visibility-safe
+- **given**: stored audio/video artifacts exist for a video media row
+- **when**: any user requests playback/download artifact URLs
+- **then**: artifact access is granted only through the same server-side visibility predicate used for media readability, and clients receive short-lived signed URLs only.
+
+### Extraction/download failures are additive and non-destructive
+- **given**: extraction or download fails for a video
+- **when**: failure is recorded
+- **then**: transcript and existing playback paths remain usable exactly as before, with failure state surfaced explicitly and no downgrade of base video readability.
+
 ### Idempotency is global and stable across subscribers
 - **given**: multiple ingest requests for the same YouTube video from one or more users
 - **when**: requests are processed
@@ -54,7 +74,7 @@ Reuse transcript logic for video.
 ### Cross-cutting suites remain green
 - **given**: Slice 8 changes are integrated
 - **when**: visibility and processing-state suites run
-- **then**: prior slice scenarios still pass and video-specific scenarios pass, including transcript-unavailable playback-only behavior.
+- **then**: prior slice scenarios still pass and video-specific scenarios pass, including transcript-unavailable playback-only behavior plus extraction/download access-control and failure-isolation cases.
 
 ## Key Decisions
 
@@ -74,6 +94,12 @@ Reuse transcript logic for video.
 
 **Searchability policy is capability-consistent across transcript media**: transcript-unavailable media is excluded from transcript-dependent search results. This policy applies consistently to both `video` and `podcast_episode` to prevent cross-kind behavior drift.
 
+**Stored artifacts are explicit and additive**: audio extraction and video download are user-triggered, optional artifacts attached to the same video media row. They coexist with provider playback metadata and never become implicit background ingestion.
+
+**Stored artifact access reuses existing storage security model**: extracted/downloaded files remain private storage objects, and all artifact playback/download URLs are minted server-side only after standard media visibility checks.
+
+**Extraction/download lifecycle is orthogonal to transcript lifecycle**: artifact generation status is tracked independently from transcript readability state so extraction/download failures cannot regress an already-readable transcript surface.
+
 **Security posture is explicit for embeds**: Slice 8 requires explicit YouTube embed allowlisting in client security policy and does not relax document rendering constraints (documents still never render via iframe).
 
 **Feasibility evidence is executable, not prose-only**: Slice 8 feasibility deliverables include repeatable test harness coverage and a timestamped sample probe report so operational risk can be re-measured as providers evolve.
@@ -82,7 +108,8 @@ Reuse transcript logic for video.
 
 - YouTube channel subscriptions and channel feed syncing
 - Non-YouTube video providers
-- Local video hosting or upload
+- Local audio/video upload
+- Automatic extraction/download without explicit user action
 - Advanced video controls beyond basic playback + transcript seek
 - Transcript editing/correction tooling
 - Semantic/vector search changes (Slice 9)

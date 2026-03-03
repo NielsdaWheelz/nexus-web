@@ -31,6 +31,8 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
   - youtube url ingestion
   - transcript ingestion
   - basic youtube playback embed + transcript click-to-seek
+  - user-triggered audio extraction for background playback
+  - user-triggered video download for archival (in-app playback + local download)
 - libraries (groups) + membership + roles (member/admin)
 - highlights + optional annotation (0..1) per highlight
 - conversations + messages (single-user authoring; can be visible if shared)
@@ -102,9 +104,9 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 - **db (supabase postgres + pgvector)**
   - primary datastore for all structured data + embeddings
 - **storage (supabase storage)**
-  - stores original epub/pdf files (private)
+  - stores original epub/pdf files plus user-triggered extracted/downloaded audio-video artifacts (private)
 - **jobs (celery + redis)**
-  - ingestion + extraction + chunking + embeddings + llm metadata verification
+  - ingestion + transcription + extraction/download + chunking + embeddings + llm metadata verification
 - **transcription provider (deepgram)**
   - transcription requests are processed by jobs
 
@@ -177,11 +179,12 @@ nexus is a responsive web app for ingesting documents, reading them in a clean p
 - epub extraction: fully materialized to html we render (no "reader from file")
 - llm metadata verification: openai model call (exact model may change); runs as async jobs and failures never block reading
 - podcasts: PodcastIndex API + rss fetch
-- videos: youtube url ingestion + embed playback (no local video files)
+- videos: youtube url ingestion + embed playback + user-triggered audio extraction / video download (yt-dlp + ffmpeg)
 - transcription: deepgram (primary), with fallback to non-diarized transcription if diarization fails; english-only in v1
 
 ### media hosting posture (hard constraint)
-- we do not host audio or video files; we store external urls + transcripts only.
+- by default, we do not host audio or video files; we store external urls + transcripts only.
+- exception: users may trigger on-demand extraction of audio or download of video from supported providers (youtube in v1). extracted/downloaded files are stored in supabase storage (private bucket, signed urls only), subject to standard media visibility checks. extraction and download are never automatic — they require explicit user action.
 
 ### audio playback fallback (v1 behavior)
 - external podcast audio urls may fail in-browser due to cors, redirects, range request issues, or transient errors.
@@ -437,6 +440,7 @@ rules:
   - `failed` → `extracting` on retry
   - `ready_for_reading` → `ready` directly if embedding is skipped
 - `ready_for_reading` implies fragments are immutable thereafter.
+- user-triggered audio extraction/video download workflows are additive and orthogonal to `processing_status`; extraction/download failures must not downgrade readable media to unreadable.
 
 ### transcription failure modes
 - distinguish "transcript failed" vs "embedding failed" in `last_error_code` conventions.
@@ -564,7 +568,8 @@ search is split into two distinct modes:
 
 ### videos
 - video media has exactly one external watch url and provider id (youtube).
-- we never store the video file.
+- video and audio files may be stored on-demand when the user explicitly requests extraction or download. stored files do not replace external playback sources; both coexist. stored files follow the same storage model as epub/pdf (private bucket, signed urls).
+- stored-asset generation is optional and user-triggered; missing/failed stored assets never revoke transcript-readability capabilities already available on the base video media row.
 
 ---
 

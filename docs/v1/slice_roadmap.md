@@ -475,9 +475,9 @@ Two test suites are introduced early and reused by every later slice:
 
 ## Slice 8 — YouTube Video
 
-**Goal:** Reuse transcript logic for video.
+**Goal:** Deliver YouTube transcript media plus optional user-triggered stored playback artifacts (audio extraction + video download) without regressing transcript behavior.
 
-**Outcome:** User can watch a YouTube video in-app and work with transcript.
+**Outcome:** User can ingest a YouTube video, work with transcript in-app, and optionally trigger stored audio/video playback artifacts for background listening or download.
 
 ### Includes
 - YouTube URL ingestion
@@ -490,10 +490,16 @@ Two test suites are introduced early and reused by every later slice:
 - Transcript highlighting + quote-to-chat
 - Click-to-seek from transcript
 - Transcript segment ordering: `(media_id, idx)` consistent with podcasts
+- User-triggered audio extraction workflow (yt-dlp/ffmpeg job + private storage artifact)
+- User-triggered video download workflow (stored video artifact + signed download access)
+- Stored artifact visibility/signed URL enforcement aligned with existing media access rules
+- Additive failure behavior: extraction/download failures do not break transcript or embed playback paths
 
 ### Excludes
 - Channels
-- Local video
+- Non-YouTube providers
+- Automatic extraction/download
+- Local audio/video uploads
 
 ### Acceptance Criteria
 - Transcript feasibility spike documented with success/failure rates
@@ -506,6 +512,9 @@ Two test suites are introduced early and reused by every later slice:
   - `last_error_code = E_TRANSCRIPT_UNAVAILABLE`
   - Playback URL still usable
   - Highlights and quote-to-chat disabled
+- User can explicitly trigger audio extraction for a video; on success, audio playback is available from private stored artifact URLs after permission checks
+- User can explicitly trigger video download for a video; on success, stored video playback and local download action are available via signed URLs
+- Audio/video extraction/download failures are explicit but leave existing transcript + YouTube embed behavior intact
 - Idempotent: same YouTube URL returns existing media
 - Visibility test suite passes
 - Processing-state test suite passes
@@ -513,6 +522,8 @@ Two test suites are introduced early and reused by every later slice:
 ### Risk
 - YouTube transcript availability variability
 - Feasibility spike may reveal high failure rates; accept playback-only as default
+- yt-dlp/provider behavior drift can break extraction/download reliability
+- Storage + bandwidth costs may spike without guardrails on extraction/download usage
 
 ---
 

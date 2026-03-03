@@ -1,5 +1,7 @@
 # Slice 8: YouTube Video — PR Roadmap
 
+Planning note: PR-01/PR-02 are immediate. PR-03/PR-04 are provisional and must be revalidated after preceding PRs merge.
+
 ### PR-01: YouTube Identity + Ingest + Transcript Contract
 - **goal**: deliver a production-safe backend vertical for YouTube URL ingestion, global idempotency, transcript persistence, and explicit playback-only fallback semantics.
 - **builds on**: slice 7 merged state (transcript fragments, capability gating, playback-only error semantics, default-library closure).
@@ -27,3 +29,28 @@
   - playback-only videos present explicit transcript-unavailable state and keep transcript-dependent actions disabled.
   - frontend/e2e regression coverage is added for embed rendering, click-to-seek, playback failure fallback, and transcript-unavailable gating.
 - **non-goals**: no advanced player controls (speed/chapters), no semantic ranking changes.
+
+### PR-03: YouTube Audio Extraction + Background Playback (planned after PR-02 merges)
+- **goal**: enable user-triggered audio extraction from YouTube videos for background listening and partial archival, establishing yt-dlp + storage infrastructure for media downloads.
+- **builds on**: PR-02 merged; constitution amendment (§5 media hosting posture, §11 videos) permitting user-triggered stored media files.
+- **acceptance**:
+  - user can request audio extraction for a video media item via API; a celery job extracts audio via yt-dlp and stores it in supabase storage (private bucket, signed URLs).
+  - extraction status is tracked per-media with explicit progress/failure states visible in API and UI.
+  - when extraction succeeds, video media pane offers audio-only playback mode using existing HTMLAudioElement infrastructure with transcript click-to-seek preserved.
+  - stored audio is served via signed URLs after standard media visibility checks.
+  - extraction failure does not affect existing video readability, transcript features, or YouTube embed playback — extraction is best-effort and additive.
+  - yt-dlp + ffmpeg are added as backend dependencies with celery task routing for extraction jobs.
+  - existing video, podcast, and transcript regressions remain green with extraction-specific coverage added.
+- **non-goals**: no full video download yet; no automatic extraction; no non-YouTube providers; no advanced audio controls beyond play/pause/seek.
+
+### PR-04: YouTube Video Download + Stored Playback (planned after PR-03 merges)
+- **goal**: add user-triggered video download and stored playback while preserving existing YouTube embed + transcript behavior as the baseline fallback.
+- **builds on**: PR-03 merged (artifact job/status model, yt-dlp/ffmpeg infra, signed storage access path).
+- **acceptance**:
+  - user can explicitly request full video download for a YouTube media item; backend queues an async job and persists download status with explicit progress/failure terminal states.
+  - successful download creates a private stored video artifact bound to the existing `media.kind=video` row (no duplicate media row and no change to canonical provider identity).
+  - media pane supports stored video playback mode plus explicit local download action, both backed by short-lived signed URLs.
+  - artifact playback/download URLs are issued only after standard media visibility checks; unauthorized users cannot fetch artifact URLs.
+  - if stored video playback or download fails, existing embed playback and transcript interactions remain available; failure is explicit and non-destructive.
+  - extraction/download regression coverage is added for visibility gating, signed URL issuance, playback fallback, and failure handling.
+- **non-goals**: no auto-download/batch download features, no non-YouTube providers, no policy/DRM circumvention support, no advanced video editing or transcoding controls.
