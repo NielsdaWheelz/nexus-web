@@ -17,6 +17,7 @@
  * @see docs/v1/s2/s2_prs/s2_pr08.md
  */
 
+import { memo } from "react";
 import styles from "./HtmlRenderer.module.css";
 // Import highlight styles to ensure they're available when rendering highlights
 import "@/lib/highlights/highlights.css";
@@ -58,7 +59,7 @@ interface HtmlRendererProps {
  * <HtmlRenderer htmlSanitized={html} />
  * ```
  */
-export default function HtmlRenderer({
+export default memo(function HtmlRenderer({
   htmlSanitized,
   className,
 }: HtmlRendererProps) {
@@ -68,4 +69,4 @@ export default function HtmlRenderer({
       dangerouslySetInnerHTML={{ __html: htmlSanitized }}
     />
   );
-}
+});

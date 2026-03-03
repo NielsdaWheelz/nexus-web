@@ -599,14 +599,18 @@ export default function MediaViewPage({
   // Highlight Rendering
   // ==========================================================================
 
-  const renderedHtml = activeContent
-    ? applyHighlightsToHtmlMemoized(
-        activeContent.htmlSanitized,
-        activeContent.canonicalText,
-        activeContent.fragmentId,
-        highlights as HighlightInput[]
-      ).html
-    : "";
+  const renderedHtml = useMemo(
+    () =>
+      activeContent
+        ? applyHighlightsToHtmlMemoized(
+            activeContent.htmlSanitized,
+            activeContent.canonicalText,
+            activeContent.fragmentId,
+            highlights as HighlightInput[]
+          ).html
+        : "",
+    [activeContent, highlights]
+  );
 
   // ==========================================================================
   // Focus Sync
