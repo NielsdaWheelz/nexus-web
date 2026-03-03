@@ -8,6 +8,7 @@ The worker processes background tasks including:
 - **Web article ingestion**: Fetch URLs via Playwright, extract with Mozilla Readability, sanitize HTML, generate canonical text
 - **Podcast subscription sync**: Data-plane ingest/transcription for subscribed podcasts
 - **Scheduled podcast active polling**: Periodic active-subscription polling via Celery Beat
+- **Stale ingest reconciliation**: Periodic recovery of PDF/EPUB media stuck in `extracting`
 - Future: Additional media extraction/embedding jobs
 
 ## Prerequisites
@@ -124,6 +125,9 @@ Chromium browser processes are memory-intensive. Recommendations:
 | `PODCAST_ACTIVE_POLL_LIMIT` | No | Max active subscriptions scanned per scheduled run (default: 100) |
 | `PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS` | No | Singleton poll-run lease duration in seconds (default: 900) |
 | `PODCAST_SYNC_RUNNING_LEASE_SECONDS` | No | Stale running-sync reclaim threshold in seconds (default: 1800) |
+| `INGEST_RECONCILE_SCHEDULE_SECONDS` | No | Interval for stale-ingest reconciler beat job (default: 300) |
+| `INGEST_STALE_EXTRACTING_SECONDS` | No | Age threshold for `extracting` media before recovery kicks in (default: 1800) |
+| `INGEST_STALE_REQUEUE_MAX_ATTEMPTS` | No | Max stale auto-requeue attempts before fail-closed (default: 3) |
 | `SUPABASE_JWKS_URL` | Yes | Supabase JWKS endpoint |
 | `SUPABASE_ISSUER` | Yes | JWT issuer |
 | `SUPABASE_AUDIENCES` | Yes | JWT audiences |
