@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback } from "react";
 import styles from "./Pane.module.css";
 
 interface PaneProps {
@@ -24,37 +24,34 @@ export default function Pane({
   const paneRef = useRef<HTMLDivElement>(null);
   const isResizing = useRef(false);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isResizing.current = true;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, []);
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isResizing.current = true;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
 
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing.current || !paneRef.current) return;
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        if (!paneRef.current) return;
+        const paneRect = paneRef.current.getBoundingClientRect();
+        const newWidth = moveEvent.clientX - paneRect.left;
+        const clampedWidth = Math.min(maxWidth, Math.max(minWidth, newWidth));
+        setWidth(clampedWidth);
+      };
 
-      const paneRect = paneRef.current.getBoundingClientRect();
-      const newWidth = e.clientX - paneRect.left;
-      const clampedWidth = Math.min(maxWidth, Math.max(minWidth, newWidth));
-      setWidth(clampedWidth);
-    };
+      const handleMouseUp = () => {
+        isResizing.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+      };
 
-    const handleMouseUp = () => {
-      isResizing.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [minWidth, maxWidth]);
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    },
+    [minWidth, maxWidth]
+  );
 
   return (
     <div ref={paneRef} className={styles.pane} style={{ width }}>
