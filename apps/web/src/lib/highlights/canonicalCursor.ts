@@ -23,6 +23,7 @@ export type CanonicalNode = {
   node: Text;
   start: number; // codepoint offset in emitted string (inclusive)
   end: number; // codepoint offset in emitted string (exclusive)
+  trimLeadCp: number; // leading codepoints stripped by trim (for raw→trimmed offset conversion)
 };
 
 /**
@@ -113,6 +114,94 @@ function normalizeWhitespace(text: string): string {
  */
 export function codepointLength(str: string): number {
   return [...str].length;
+}
+
+/**
+ * Test whether a codepoint is whitespace (including non-breaking space).
+ * Must match the regex used in normalizeWhitespace: /[\s\u00a0]+/g
+ */
+function isWsCp(cp: string): boolean {
+  return /[\s\u00a0]/.test(cp);
+}
+
+/**
+ * Convert a raw codepoint offset within a DOM text node to a canonical
+ * (trimmed + whitespace-normalized) codepoint offset within that node's
+ * mapped range.
+ *
+ * This walks the raw text character-by-character, simulating the same
+ * whitespace collapsing that normalizeWhitespace performs, so that
+ * internal runs of whitespace (e.g. "Hello   world" → "Hello world")
+ * are correctly accounted for — not just leading whitespace.
+ *
+ * @param rawText  - The text node's raw textContent
+ * @param rawCpOffset - Codepoint offset into the raw text
+ * @param trimLeadCp  - Leading whitespace codepoints in normalized text (from CanonicalNode)
+ * @returns Codepoint offset in canonical (trimmed) space for this node
+ */
+export function rawCpToCanonicalCp(
+  rawText: string,
+  rawCpOffset: number,
+  trimLeadCp: number
+): number {
+  const rawCps = [...rawText];
+  let normalizedCp = 0;
+  let inWhitespace = false;
+
+  for (let i = 0; i < rawCpOffset && i < rawCps.length; i++) {
+    if (isWsCp(rawCps[i])) {
+      if (!inWhitespace) {
+        normalizedCp++;
+        inWhitespace = true;
+      }
+      // subsequent whitespace in the same run: no advance
+    } else {
+      normalizedCp++;
+      inWhitespace = false;
+    }
+  }
+
+  return Math.max(0, normalizedCp - trimLeadCp);
+}
+
+/**
+ * Convert a canonical (trimmed + whitespace-normalized) codepoint offset
+ * back to a raw codepoint offset within the DOM text node.
+ *
+ * This is the inverse of rawCpToCanonicalCp — used when rendering
+ * highlights to find the correct split point in the raw text.
+ *
+ * @param rawText  - The text node's raw textContent
+ * @param canonicalCpOffset - Offset in canonical (trimmed) space for this node
+ * @param trimLeadCp  - Leading whitespace codepoints in normalized text (from CanonicalNode)
+ * @returns Codepoint offset into the raw text
+ */
+export function canonicalCpToRawCp(
+  rawText: string,
+  canonicalCpOffset: number,
+  trimLeadCp: number
+): number {
+  const rawCps = [...rawText];
+  // Target in normalized (pre-trim) space
+  const targetNormalized = canonicalCpOffset + trimLeadCp;
+  let normalizedCp = 0;
+  let inWhitespace = false;
+
+  for (let i = 0; i < rawCps.length; i++) {
+    if (normalizedCp >= targetNormalized) return i;
+
+    if (isWsCp(rawCps[i])) {
+      if (!inWhitespace) {
+        normalizedCp++;
+        inWhitespace = true;
+      }
+    } else {
+      normalizedCp++;
+      inWhitespace = false;
+    }
+  }
+
+  return rawCps.length;
 }
 
 /**
@@ -306,6 +395,13 @@ function buildNodeMapping(root: Element, emitted: string): CanonicalNode[] {
         const trimmed = normalized.trim();
         if (!trimmed) continue;
 
+        // Compute leading whitespace codepoints stripped by trim
+        const normalizedCps = [...normalized];
+        let leadCp = 0;
+        while (leadCp < normalizedCps.length && /[\s\u00a0]/.test(normalizedCps[leadCp])) {
+          leadCp++;
+        }
+
         const trimmedCodepoints = [...trimmed];
         const len = trimmedCodepoints.length;
 
@@ -330,6 +426,7 @@ function buildNodeMapping(root: Element, emitted: string): CanonicalNode[] {
             node: textNode,
             start: foundIndex,
             end: foundIndex + len,
+            trimLeadCp: leadCp,
           });
           searchStart = foundIndex + len;
         }

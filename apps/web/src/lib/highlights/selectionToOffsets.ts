@@ -15,7 +15,11 @@
  * @see docs/v1/s2/s2_prs/s2_pr09.md §4
  */
 
-import type { CanonicalCursorResult, CanonicalNode } from "./canonicalCursor";
+import {
+  rawCpToCanonicalCp,
+  type CanonicalCursorResult,
+  type CanonicalNode,
+} from "./canonicalCursor";
 
 // =============================================================================
 // Types
@@ -359,16 +363,26 @@ export function selectionToOffsets(
     };
   }
 
-  // Convert UTF-16 offsets to codepoint offsets within each node
+  // Convert UTF-16 offsets to canonical codepoint offsets within each node.
+  // The cursor's start/end are in canonical (trimmed + whitespace-normalized)
+  // space, but the DOM text node contains raw text. rawCpToCanonicalCp walks
+  // the raw text simulating whitespace collapsing so that internal runs of
+  // whitespace (e.g. "Hello   world" → "Hello world") are handled correctly.
   const startText = startNode.node.textContent || "";
   const endText = endNode.node.textContent || "";
 
-  const startLocalCp = utf16ToCodepoint(startText, startUtf16Offset);
-  const endLocalCp = utf16ToCodepoint(endText, endUtf16Offset);
+  const startRawCp = utf16ToCodepoint(startText, startUtf16Offset);
+  const endRawCp = utf16ToCodepoint(endText, endUtf16Offset);
+
+  const startAdjustedCp = rawCpToCanonicalCp(startText, startRawCp, startNode.trimLeadCp);
+  const endAdjustedCp = rawCpToCanonicalCp(endText, endRawCp, endNode.trimLeadCp);
+
+  const startClampedCp = Math.min(startAdjustedCp, startNode.end - startNode.start);
+  const endClampedCp = Math.min(endAdjustedCp, endNode.end - endNode.start);
 
   // Compute absolute offsets in canonical text space
-  let absStart = startNode.start + startLocalCp;
-  let absEnd = endNode.start + endLocalCp;
+  let absStart = startNode.start + startClampedCp;
+  let absEnd = endNode.start + endClampedCp;
 
   // Ensure absStart < absEnd (should already be true after normalization)
   if (absStart >= absEnd) {

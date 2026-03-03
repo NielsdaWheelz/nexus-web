@@ -26,6 +26,7 @@ import {
   buildCanonicalCursor,
   validateCanonicalText,
   codepointLength,
+  canonicalCpToRawCp,
   type CanonicalCursorResult,
   type CanonicalNode,
 } from "./canonicalCursor";
@@ -316,11 +317,19 @@ function applySegmentsToDom(
 
     for (const { mapping, startInNode, endInNode } of nodeMappings) {
       try {
+        // startInNode/endInNode are in cursor-trimmed (canonical) space.
+        // Convert to raw-text space using canonicalCpToRawCp which properly
+        // handles internal whitespace collapsing (e.g. "a   b" → "a b"),
+        // not just leading whitespace.
+        const rawNodeText = mapping.node.textContent || "";
+        const rawStartInNode = canonicalCpToRawCp(rawNodeText, startInNode, mapping.trimLeadCp);
+        const rawEndInNode = canonicalCpToRawCp(rawNodeText, endInNode, mapping.trimLeadCp);
+
         const span = wrapTextRange(
           doc,
           mapping.node,
-          startInNode,
-          endInNode,
+          rawStartInNode,
+          rawEndInNode,
           segment
         );
 
