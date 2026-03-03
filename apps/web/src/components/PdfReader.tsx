@@ -74,27 +74,8 @@ interface PdfViewportLike {
   rotation?: number;
 }
 
-interface PdfRenderTaskLike {
-  promise: Promise<unknown>;
-}
-
-interface PdfTextContentLike {
-  items: Array<{ str?: string }>;
-  styles?: Record<string, unknown>;
-}
-
-interface PdfPageLike {
-  getViewport(params: { scale: number; rotation?: number }): PdfViewportLike;
-  getTextContent?: () => Promise<PdfTextContentLike>;
-  render(params: {
-    canvasContext: CanvasRenderingContext2D;
-    viewport: PdfViewportLike;
-  }): PdfRenderTaskLike;
-}
-
 export interface PdfDocumentLike {
   numPages: number;
-  getPage(pageNumber: number): Promise<PdfPageLike>;
   destroy?: () => Promise<void> | void;
 }
 
@@ -120,24 +101,53 @@ interface PdfGlobalWorkerOptionsLike {
   workerSrc: string;
 }
 
-interface PdfTextLayerLike {
-  render(): Promise<unknown>;
-  update?: (params: { viewport: PdfViewportLike; onBefore?: () => void }) => void;
-  cancel?: () => void;
-}
-
-interface PdfTextLayerConstructorLike {
-  new (params: {
-    textContentSource: PdfTextContentLike;
-    container: HTMLElement;
-    viewport: PdfViewportLike;
-  }): PdfTextLayerLike;
-}
-
 export interface PdfJsLike {
   getDocument(source: PdfDocumentSourceLike): PdfDocumentLoadingTaskLike;
   GlobalWorkerOptions: PdfGlobalWorkerOptionsLike;
-  TextLayer?: PdfTextLayerConstructorLike;
+}
+
+interface PdfPageViewLike {
+  viewport?: PdfViewportLike;
+  pdfPage?: {
+    getViewport(params: { scale: number; rotation?: number }): PdfViewportLike;
+  };
+}
+
+interface PdfEventBusLike {
+  on(eventName: string, listener: (event: unknown) => void): void;
+  off(eventName: string, listener: (event: unknown) => void): void;
+}
+
+interface PdfLinkServiceLike {
+  setDocument(doc: PdfDocumentLike | null, baseUrl?: string | null): void;
+  setViewer(viewer: PdfViewerLike): void;
+}
+
+interface PdfViewerLike {
+  setDocument(doc: PdfDocumentLike | null): void;
+  currentPageNumber: number;
+  currentScaleValue: string | number;
+  pagesCount: number;
+  scrollMode?: number;
+  getPageView?: (index: number) => PdfPageViewLike | undefined;
+}
+
+interface PdfJsViewerLike {
+  EventBus: new () => PdfEventBusLike;
+  PDFLinkService: new (params?: {
+    eventBus?: PdfEventBusLike;
+    externalLinkTarget?: number | null;
+    externalLinkRel?: string | null;
+  }) => PdfLinkServiceLike;
+  PDFViewer: new (params: {
+    container: HTMLDivElement;
+    viewer: HTMLDivElement;
+    eventBus: PdfEventBusLike;
+    linkService: PdfLinkServiceLike;
+    textLayerMode?: number;
+  }) => PdfViewerLike;
+  ScrollMode?: { VERTICAL?: number };
+  LinkTarget?: { BLANK?: number };
 }
 
 type ApiFetchLike = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -145,6 +155,7 @@ type ApiFetchLike = <T>(path: string, options?: RequestInit) => Promise<T>;
 export interface PdfReaderDeps {
   apiFetch: ApiFetchLike;
   loadPdfJs: () => Promise<PdfJsLike>;
+  loadPdfJsViewer: () => Promise<PdfJsViewerLike>;
   workerSrc: string;
   getSelection: () => Selection | null;
 }
@@ -162,6 +173,7 @@ interface PdfReaderProps {
 interface SelectionState {
   range: Range;
   rect: DOMRect;
+  pageNumber: number;
 }
 
 interface ProjectedHighlightRect {
@@ -194,14 +206,21 @@ interface CreateTelemetryState {
   lastOutcome: CreateTelemetryOutcome;
 }
 
+interface ViewerEventHandlers {
+  pagechanging: (event: unknown) => void;
+  pagesloaded: (event: unknown) => void;
+  pagerendered: (event: unknown) => void;
+}
+
 const DEFAULT_WORKER_SRC = "/api/pdfjs/worker";
+const DEFAULT_VIEWER_MODULE_URL = "/api/pdfjs/viewer";
 const SIGNED_URL_REFRESH_SKEW_MS = 2_000;
-const DEFAULT_PAGE_SCALE = 1.3;
-const MIN_PAGE_SCALE = 0.25;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 2;
 const ZOOM_STEP = 0.25;
 const PDF_QUAD_EPSILON = 0.001;
+const PDF_VIEWER_TEXT_LAYER_MODE_ENABLE = 1;
+const PDF_LINK_TARGET_BLANK = 2;
 const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
   yellow: "rgba(255, 235, 59, 0.35)",
   green: "rgba(76, 175, 80, 0.3)",
@@ -209,13 +228,6 @@ const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
   pink: "rgba(233, 30, 99, 0.3)",
   purple: "rgba(156, 39, 176, 0.3)",
 };
-
-// Explicit S6 reprojection triggers: page/text-layer readiness, zoom/scale, highlight data.
-const OVERLAY_REPROJECTION_TRIGGER_MATRIX = [
-  "page_or_text_layer_render_availability",
-  "viewer_zoom_scale",
-  "highlight_data",
-] as const;
 
 async function defaultLoadPdfJs(): Promise<PdfJsLike> {
   const moduleUrl = "/api/pdfjs/module";
@@ -225,6 +237,16 @@ async function defaultLoadPdfJs(): Promise<PdfJsLike> {
     moduleUrl
   );
   return pdfJsModule as unknown as PdfJsLike;
+}
+
+async function defaultLoadPdfJsViewer(): Promise<PdfJsViewerLike> {
+  const moduleUrl = DEFAULT_VIEWER_MODULE_URL;
+  const pdfViewerModule = await import(
+    /* @vite-ignore */
+    /* webpackIgnore: true */
+    moduleUrl
+  );
+  return pdfViewerModule as unknown as PdfJsViewerLike;
 }
 
 function defaultGetSelection(): Selection | null {
@@ -299,10 +321,7 @@ function isTextLayerEligibleNode(node: Node | null, textLayerRoot: HTMLElement |
   if (!node || !textLayerRoot) {
     return false;
   }
-  const element =
-    node.nodeType === Node.ELEMENT_NODE
-      ? (node as Element)
-      : node.parentElement;
+  const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
   return !!element && textLayerRoot.contains(element);
 }
 
@@ -329,10 +348,6 @@ function isSelectionRangeInTextLayer(range: Range, textLayerRoot: HTMLElement | 
   );
 }
 
-function hasUsableTextItems(textContent: PdfTextContentLike): boolean {
-  return textContent.items.some((item) => typeof item.str === "string" && item.str.trim().length > 0);
-}
-
 function toCanonicalPoint(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
@@ -341,7 +356,10 @@ function clampZoom(value: number): number {
   return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value));
 }
 
-function projectQuadToRect(quad: PdfHighlightQuad, pageScale: number): Omit<ProjectedHighlightRect, "highlightId" | "color" | "index"> {
+function projectQuadToRect(
+  quad: PdfHighlightQuad,
+  pageScale: number
+): Omit<ProjectedHighlightRect, "highlightId" | "color" | "index"> {
   const xMin = Math.min(quad.x1, quad.x2, quad.x3, quad.x4) * pageScale;
   const xMax = Math.max(quad.x1, quad.x2, quad.x3, quad.x4) * pageScale;
   const yMin = Math.min(quad.y1, quad.y2, quad.y3, quad.y4) * pageScale;
@@ -355,18 +373,29 @@ function projectQuadToRect(quad: PdfHighlightQuad, pageScale: number): Omit<Proj
   };
 }
 
+function readPageNumberFromTextLayer(textLayerRoot: HTMLElement | null): number | null {
+  const parsedPageNumber = Number.parseInt(
+    textLayerRoot?.closest(".page")?.getAttribute("data-page-number") ?? "",
+    10
+  );
+  if (!Number.isFinite(parsedPageNumber) || parsedPageNumber <= 0) {
+    return null;
+  }
+  return parsedPageNumber;
+}
+
 function toSelectionSnapshot(
   range: Range,
   textLayerRoot: HTMLElement | null,
+  pageNumber: number
 ): SelectionState {
   const rect = range.getBoundingClientRect();
   const effectiveRect =
-    rect.width > 0 && rect.height > 0
-      ? rect
-      : textLayerRoot?.getBoundingClientRect() ?? rect;
+    rect.width > 0 && rect.height > 0 ? rect : textLayerRoot?.getBoundingClientRect() ?? rect;
   return {
     range: range.cloneRange(),
     rect: effectiveRect,
+    pageNumber,
   };
 }
 
@@ -403,6 +432,29 @@ function destroyPdfLoadingTask(task: PdfDocumentLoadingTaskLike | null): void {
   }
 }
 
+function deriveScaleFromPageView(pageView: PdfPageViewLike | undefined): number | null {
+  if (!pageView?.viewport) {
+    return null;
+  }
+  const viewport = pageView.viewport;
+  if (typeof viewport.scale === "number" && viewport.scale > 0) {
+    return viewport.scale;
+  }
+  if (pageView.pdfPage?.getViewport) {
+    const baseViewport = pageView.pdfPage.getViewport({
+      scale: 1,
+      rotation: viewport.rotation,
+    });
+    if (baseViewport.width > 0) {
+      const scale = viewport.width / baseViewport.width;
+      if (Number.isFinite(scale) && scale > 0) {
+        return scale;
+      }
+    }
+  }
+  return null;
+}
+
 export default function PdfReader({
   mediaId,
   deps,
@@ -419,7 +471,7 @@ export default function PdfReader({
   const [pageNumber, setPageNumber] = useState(1);
   const [numPages, setNumPages] = useState(0);
   const [zoom, setZoom] = useState(1);
-  const [pageScale, setPageScale] = useState(DEFAULT_PAGE_SCALE);
+  const [pageScale, setPageScale] = useState(1);
   const [pageRenderEpoch, setPageRenderEpoch] = useState(0);
   const [textLayerUsable, setTextLayerUsable] = useState(false);
   const [selection, setSelection] = useState<SelectionState | null>(null);
@@ -430,22 +482,28 @@ export default function PdfReader({
     createInitialCreateTelemetry
   );
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const viewerContainerRef = useRef<HTMLDivElement>(null);
   const internalContentRef = useRef<HTMLDivElement>(null);
-  const textLayerRef = useRef<HTMLDivElement>(null);
   const documentRef = useRef<PdfDocumentLike | null>(null);
   const loadingTaskRef = useRef<PdfDocumentLoadingTaskLike | null>(null);
-  const textLayerTaskRef = useRef<PdfTextLayerLike | null>(null);
-  const lastRenderedContainerWidthRef = useRef(0);
   const pdfJsRef = useRef<PdfJsLike | null>(null);
+  const pdfJsViewerRef = useRef<PdfJsViewerLike | null>(null);
+  const eventBusRef = useRef<PdfEventBusLike | null>(null);
+  const linkServiceRef = useRef<PdfLinkServiceLike | null>(null);
+  const pdfViewerRef = useRef<PdfViewerLike | null>(null);
+  const eventHandlersRef = useRef<ViewerEventHandlers | null>(null);
   const signedUrlExpiryRef = useRef<number | null>(null);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
-  const activePageScaleRef = useRef(DEFAULT_PAGE_SCALE);
+  const activePageScaleRef = useRef(1);
   const zoomRef = useRef(1);
   const runRef = useRef(0);
+  const pageNumberRef = useRef(1);
+  const pageScaleByNumberRef = useRef<Map<number, number>>(new Map());
+  const recoveringFromRenderErrorRef = useRef(false);
 
   const apiFetchDep = deps?.apiFetch ?? apiFetch;
   const loadPdfJsDep = deps?.loadPdfJs ?? defaultLoadPdfJs;
+  const loadPdfJsViewerDep = deps?.loadPdfJsViewer ?? defaultLoadPdfJsViewer;
   const workerSrcDep = deps?.workerSrc ?? DEFAULT_WORKER_SRC;
   const getSelectionDep = deps?.getSelection ?? defaultGetSelection;
 
@@ -467,39 +525,97 @@ export default function PdfReader({
     try {
       pdfJs.GlobalWorkerOptions.workerSrc = workerSrcDep;
     } catch {
-      // webpack entry configures workerPort automatically.
+      // Some PDF.js bundles preconfigure worker wiring.
     }
     pdfJsRef.current = pdfJs;
     return pdfJs;
   }, [loadPdfJsDep, workerSrcDep]);
 
-  const clearTextLayer = useCallback(() => {
-    textLayerTaskRef.current?.cancel?.();
-    textLayerTaskRef.current = null;
-    if (textLayerRef.current) {
-      textLayerRef.current.innerHTML = "";
+  const ensurePdfJsViewer = useCallback(async () => {
+    if (pdfJsViewerRef.current) {
+      return pdfJsViewerRef.current;
     }
-    setTextLayerUsable(false);
+    const pdfJsViewer = await loadPdfJsViewerDep();
+    pdfJsViewerRef.current = pdfJsViewer;
+    return pdfJsViewer;
+  }, [loadPdfJsViewerDep]);
+
+  const getPageElement = useCallback((targetPage: number): HTMLElement | null => {
+    const root = internalContentRef.current;
+    if (!root) {
+      return null;
+    }
+    const byNumber = root.querySelector<HTMLElement>(`.page[data-page-number="${targetPage}"]`);
+    if (byNumber) {
+      return byNumber;
+    }
+    const fallback = root.querySelectorAll<HTMLElement>(".page")[targetPage - 1];
+    return fallback ?? null;
   }, []);
+
+  const getTextLayerRootForPage = useCallback(
+    (targetPage: number): HTMLElement | null => {
+      return getPageElement(targetPage)?.querySelector<HTMLElement>(".textLayer") ?? null;
+    },
+    [getPageElement]
+  );
+
+  const markPageSurfaceForTesting = useCallback(
+    (targetPage: number) => {
+      const pageElement = getPageElement(targetPage);
+      if (pageElement) {
+        pageElement.setAttribute("data-testid", `pdf-page-surface-${targetPage}`);
+      }
+    },
+    [getPageElement]
+  );
+
+  const removeOverlayLayers = useCallback(() => {
+    internalContentRef.current
+      ?.querySelectorAll<HTMLElement>('[data-nexus-overlay-layer="true"]')
+      .forEach((layer) => layer.remove());
+  }, []);
+
+  const rememberPageScale = useCallback(
+    (targetPage: number, explicitPageView?: PdfPageViewLike): number => {
+      const pageView =
+        explicitPageView ??
+        pdfViewerRef.current?.getPageView?.(Math.max(0, targetPage - 1));
+      const derivedScale = deriveScaleFromPageView(pageView);
+      const resolvedScale = derivedScale ?? pageScaleByNumberRef.current.get(targetPage) ?? zoomRef.current;
+      pageScaleByNumberRef.current.set(targetPage, resolvedScale);
+      if (targetPage === pageNumberRef.current) {
+        activePageScaleRef.current = resolvedScale;
+        setPageScale(resolvedScale);
+      }
+      return resolvedScale;
+    },
+    []
+  );
+
+  const readPageScale = useCallback(
+    (targetPage: number): number => {
+      return pageScaleByNumberRef.current.get(targetPage) ?? rememberPageScale(targetPage);
+    },
+    [rememberPageScale]
+  );
+
+  const isTextLayerUsableForPage = useCallback(
+    (targetPage: number): boolean => {
+      const textLayerRoot = getTextLayerRootForPage(targetPage);
+      if (!textLayerRoot) {
+        return false;
+      }
+      return (textLayerRoot.textContent ?? "").trim().length > 0;
+    },
+    [getTextLayerRootForPage]
+  );
 
   const clearSelection = useCallback(() => {
     setSelection(null);
     selectionSnapshotRef.current = null;
     setSelectionError(null);
     getSelectionDep()?.removeAllRanges();
-  }, [getSelectionDep]);
-
-  const captureSelectionSnapshotFromWindow = useCallback(() => {
-    const sel = getSelectionDep();
-    if (!sel || sel.rangeCount === 0 || sel.toString().trim().length === 0) {
-      return;
-    }
-    const range = sel.getRangeAt(0);
-    const textLayerRoot = textLayerRef.current;
-    if (!isSelectionRangeInTextLayer(range, textLayerRoot)) {
-      return;
-    }
-    selectionSnapshotRef.current = toSelectionSnapshot(range, textLayerRoot);
   }, [getSelectionDep]);
 
   const updateCreateTelemetry = useCallback(
@@ -510,9 +626,7 @@ export default function PdfReader({
   );
 
   const fetchSignedUrl = useCallback(async () => {
-    const response = await apiFetchDep<PdfFileAccessResponse>(
-      `/api/media/${mediaId}/file`
-    );
+    const response = await apiFetchDep<PdfFileAccessResponse>(`/api/media/${mediaId}/file`);
     const expiresAtMs = Date.parse(response.data.expires_at);
     return {
       url: response.data.url,
@@ -565,143 +679,214 @@ export default function PdfReader({
     }
   }, []);
 
-  const renderTextLayer = useCallback(
-    async (
-      page: PdfPageLike,
-      viewport: PdfViewportLike,
-      runId: number
-    ): Promise<boolean> => {
-      if (runId !== runRef.current) {
-        return false;
-      }
-      const container = textLayerRef.current;
-      if (!container) {
-        return false;
-      }
+  const teardownViewer = useCallback(() => {
+    const eventBus = eventBusRef.current;
+    const handlers = eventHandlersRef.current;
+    if (eventBus && handlers) {
+      eventBus.off("pagechanging", handlers.pagechanging);
+      eventBus.off("pagesloaded", handlers.pagesloaded);
+      eventBus.off("pagerendered", handlers.pagerendered);
+    }
+    eventHandlersRef.current = null;
+    linkServiceRef.current?.setDocument(null, null);
+    pdfViewerRef.current?.setDocument(null);
+    eventBusRef.current = null;
+    linkServiceRef.current = null;
+    pdfViewerRef.current = null;
+    removeOverlayLayers();
+    if (internalContentRef.current) {
+      internalContentRef.current.innerHTML = "";
+    }
+  }, [removeOverlayLayers]);
 
-      clearTextLayer();
-      if (!page.getTextContent) {
-        return false;
-      }
+  const recoverAndRenderRef = useRef<
+    ((targetPage: number, runId: number) => Promise<void>) | null
+  >(null);
 
-      let textContent: PdfTextContentLike;
-      try {
-        textContent = await page.getTextContent();
-      } catch {
-        return false;
+  const initializeViewerIfNeeded = useCallback(
+    async (runId: number) => {
+      if (pdfViewerRef.current && eventBusRef.current && linkServiceRef.current) {
+        return;
       }
-      if (runId !== runRef.current) {
-        return false;
-      }
-
-      if (!hasUsableTextItems(textContent)) {
-        return false;
-      }
-
-      const pdfJs = await ensurePdfJs();
-      if (runId !== runRef.current) {
-        return false;
-      }
-
-      const TextLayerCtor = pdfJs.TextLayer;
-      if (TextLayerCtor) {
-        const textLayerTask = new TextLayerCtor({
-          textContentSource: textContent,
-          container,
-          viewport,
-        });
-        textLayerTaskRef.current = textLayerTask;
-        await textLayerTask.render();
-      } else {
-        for (const item of textContent.items) {
-          if (!item.str || item.str.trim().length === 0) {
-            continue;
-          }
-          const span = document.createElement("span");
-          span.textContent = item.str;
-          container.appendChild(span);
-          container.appendChild(document.createTextNode(" "));
-        }
-      }
-
-      if (runId !== runRef.current) {
-        return false;
-      }
-      return (container.textContent ?? "").trim().length > 0;
-    },
-    [clearTextLayer, ensurePdfJs]
-  );
-
-  const renderPage = useCallback(
-    async (doc: PdfDocumentLike, targetPage: number, runId: number) => {
-      const boundedPage = Math.max(1, Math.min(targetPage, doc.numPages));
-      const page = await doc.getPage(boundedPage);
+      const viewerModule = await ensurePdfJsViewer();
       if (runId !== runRef.current) {
         return;
       }
 
-      const canvas = canvasRef.current;
-      if (!canvas) {
-        throw new Error("PDF canvas is not available");
+      const container = viewerContainerRef.current;
+      const viewerHost = internalContentRef.current;
+      if (!container || !viewerHost) {
+        throw new Error("PDF viewer container is unavailable");
       }
 
-      const baseViewport = page.getViewport({ scale: 1 });
-      const containerWidth =
-        internalContentRef.current?.clientWidth ?? canvas.parentElement?.clientWidth ?? 0;
-      const fitScale =
-        containerWidth > 0 && baseViewport.width > 0
-          ? Math.max(MIN_PAGE_SCALE, containerWidth / baseViewport.width)
-          : DEFAULT_PAGE_SCALE;
-      const finalScale = fitScale * zoomRef.current;
-      const viewport =
-        finalScale === 1 ? baseViewport : page.getViewport({ scale: finalScale });
-
-      const context = canvas.getContext("2d");
-      if (!context) {
-        throw new Error("2D canvas context is unavailable");
-      }
-
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      lastRenderedContainerWidthRef.current = Math.floor(containerWidth);
-      const resolvedPageScale =
-        baseViewport.width > 0 ? viewport.width / baseViewport.width : finalScale;
-      activePageScaleRef.current = resolvedPageScale;
-      setPageScale(resolvedPageScale);
-
-      const task = page.render({
-        canvasContext: context,
-        viewport,
+      const eventBus = new viewerModule.EventBus();
+      const linkService = new viewerModule.PDFLinkService({
+        eventBus,
+        externalLinkTarget: viewerModule.LinkTarget?.BLANK ?? PDF_LINK_TARGET_BLANK,
+        externalLinkRel: "noopener noreferrer nofollow",
       });
-      await task.promise;
-      if (runId !== runRef.current) {
-        return;
+      const pdfViewer = new viewerModule.PDFViewer({
+        container,
+        viewer: viewerHost,
+        eventBus,
+        linkService,
+        textLayerMode: PDF_VIEWER_TEXT_LAYER_MODE_ENABLE,
+      });
+      try {
+        if (typeof viewerModule.ScrollMode?.VERTICAL === "number") {
+          pdfViewer.scrollMode = viewerModule.ScrollMode.VERTICAL;
+        }
+      } catch {
+        // Some viewer shims may not expose scrollMode mutability.
       }
+      linkService.setViewer(pdfViewer);
 
-      const textLayerReady = await renderTextLayer(page, viewport, runId);
-      if (runId !== runRef.current) {
-        return;
-      }
+      const handlePageChanging = (rawEvent: unknown) => {
+        if (runId !== runRef.current) {
+          return;
+        }
+        const event = rawEvent as { pageNumber?: number };
+        const nextPage = Number.isFinite(event.pageNumber)
+          ? Math.max(1, Math.floor(event.pageNumber as number))
+          : 1;
+        pageNumberRef.current = nextPage;
+        setPageNumber(nextPage);
+        setNavigating(false);
+        clearSelection();
+        setPageHighlights([]);
+        onPageHighlightsChange?.(nextPage, []);
+        rememberPageScale(nextPage);
+        setTextLayerUsable(isTextLayerUsableForPage(nextPage));
+        setPageRenderEpoch((value) => value + 1);
+      };
 
-      setTextLayerUsable(textLayerReady);
-      setPageNumber(boundedPage);
-      clearSelection();
-      setError(null);
-      setPageRenderEpoch((value) => value + 1);
+      const handlePagesLoaded = (rawEvent: unknown) => {
+        if (runId !== runRef.current) {
+          return;
+        }
+        const event = rawEvent as { pagesCount?: number };
+        const pagesCount =
+          Number.isFinite(event.pagesCount) && (event.pagesCount as number) > 0
+            ? Math.floor(event.pagesCount as number)
+            : documentRef.current?.numPages ?? 0;
+        setNumPages(pagesCount);
+        window.requestAnimationFrame(() => {
+          if (runId !== runRef.current) {
+            return;
+          }
+          for (let index = 1; index <= pagesCount; index += 1) {
+            markPageSurfaceForTesting(index);
+          }
+        });
+      };
+
+      const handlePageRendered = (rawEvent: unknown) => {
+        if (runId !== runRef.current) {
+          return;
+        }
+        const event = rawEvent as {
+          pageNumber?: number;
+          source?: PdfPageViewLike;
+          error?: unknown;
+        };
+        const renderedPage =
+          Number.isFinite(event.pageNumber) && (event.pageNumber as number) > 0
+            ? Math.floor(event.pageNumber as number)
+            : pageNumberRef.current;
+
+        markPageSurfaceForTesting(renderedPage);
+        rememberPageScale(renderedPage, event.source);
+
+        if (
+          event.error &&
+          isLikelySignedUrlExpiryError(event.error) &&
+          !recoveringFromRenderErrorRef.current
+        ) {
+          recoveringFromRenderErrorRef.current = true;
+          void recoverAndRenderRef.current
+            ?.(
+              pageNumberRef.current,
+              runRef.current
+            )
+            .finally(() => {
+              if (runId === runRef.current) {
+                recoveringFromRenderErrorRef.current = false;
+              }
+            });
+        }
+
+        if (renderedPage === pageNumberRef.current) {
+          window.requestAnimationFrame(() => {
+            if (runId !== runRef.current) {
+              return;
+            }
+            setTextLayerUsable(isTextLayerUsableForPage(renderedPage));
+            setPageRenderEpoch((value) => value + 1);
+          });
+        }
+      };
+
+      eventBus.on("pagechanging", handlePageChanging);
+      eventBus.on("pagesloaded", handlePagesLoaded);
+      eventBus.on("pagerendered", handlePageRendered);
+
+      eventBusRef.current = eventBus;
+      linkServiceRef.current = linkService;
+      pdfViewerRef.current = pdfViewer;
+      eventHandlersRef.current = {
+        pagechanging: handlePageChanging,
+        pagesloaded: handlePagesLoaded,
+        pagerendered: handlePageRendered,
+      };
     },
-    [clearSelection, renderTextLayer]
+    [
+      clearSelection,
+      ensurePdfJsViewer,
+      isTextLayerUsableForPage,
+      markPageSurfaceForTesting,
+      onPageHighlightsChange,
+      rememberPageScale,
+    ]
   );
 
-  const refreshPageHighlights = useCallback(
-    async (targetPage: number, runId: number) => {
-      const highlights = await fetchPageHighlights(targetPage);
+  const attachDocumentToViewer = useCallback(
+    async (doc: PdfDocumentLike, targetPage: number, runId: number) => {
+      await initializeViewerIfNeeded(runId);
       if (runId !== runRef.current) {
         return;
       }
-      setPageHighlights(highlights);
-      onPageHighlightsChange?.(targetPage, highlights);
+      const viewer = pdfViewerRef.current;
+      const linkService = linkServiceRef.current;
+      if (!viewer || !linkService) {
+        throw new Error("PDF viewer failed to initialize");
+      }
+
+      pageScaleByNumberRef.current.clear();
+      removeOverlayLayers();
+
+      linkService.setDocument(doc, null);
+      viewer.setDocument(doc);
+
+      const boundedPage = Math.max(1, Math.min(targetPage, doc.numPages));
+      pageNumberRef.current = boundedPage;
+      setPageNumber(boundedPage);
+      setNumPages(doc.numPages);
+      setTextLayerUsable(false);
+      setPageScale(zoomRef.current);
+      activePageScaleRef.current = zoomRef.current;
+
+      try {
+        viewer.currentScaleValue = `${zoomRef.current}`;
+      } catch {
+        // Ignore for lightweight test shims.
+      }
+      try {
+        viewer.currentPageNumber = boundedPage;
+      } catch {
+        // Ignore for lightweight test shims.
+      }
     },
-    [fetchPageHighlights, onPageHighlightsChange]
+    [initializeViewerIfNeeded, removeOverlayLayers]
   );
 
   const recoverAndRender = useCallback(
@@ -721,94 +906,170 @@ export default function PdfReader({
 
         signedUrlExpiryRef.current = refreshedAccess.expiresAtMs;
         await replaceDocument(refreshedOpened);
-        setNumPages(refreshedOpened.doc.numPages);
-        await renderPage(refreshedOpened.doc, targetPage, runId);
+        await attachDocumentToViewer(refreshedOpened.doc, targetPage, runId);
+        setError(null);
+      } catch (err) {
+        if (runId === runRef.current) {
+          setError(toUserFacingError(err));
+        }
       } finally {
         if (runId === runRef.current) {
           setRecovering(false);
         }
       }
     },
-    [fetchSignedUrl, openDocument, replaceDocument, renderPage]
+    [attachDocumentToViewer, fetchSignedUrl, openDocument, replaceDocument]
   );
 
-  const renderCurrentDocumentPage = useCallback(
-    async (targetPage: number) => {
-      const currentRun = runRef.current;
-      const currentDoc = documentRef.current;
-      if (!currentDoc) {
+  useEffect(() => {
+    recoverAndRenderRef.current = recoverAndRender;
+    return () => {
+      recoverAndRenderRef.current = null;
+    };
+  }, [recoverAndRender]);
+
+  const refreshPageHighlights = useCallback(
+    async (targetPage: number, runId: number) => {
+      const highlights = await fetchPageHighlights(targetPage);
+      if (runId !== runRef.current) {
         return;
       }
-
-      const expiryMs = signedUrlExpiryRef.current;
-      if (
-        typeof expiryMs === "number" &&
-        Date.now() >= expiryMs - SIGNED_URL_REFRESH_SKEW_MS
-      ) {
-        try {
-          await recoverAndRender(targetPage, currentRun);
-          return;
-        } catch (recoveryError) {
-          setError(toUserFacingError(recoveryError));
-          return;
-        }
-      }
-
-      try {
-        await renderPage(currentDoc, targetPage, currentRun);
-      } catch (err) {
-        if (isLikelySignedUrlExpiryError(err)) {
-          try {
-            await recoverAndRender(targetPage, currentRun);
-            return;
-          } catch (recoveryError) {
-            setError(toUserFacingError(recoveryError));
-            return;
-          }
-        }
-        setError(toUserFacingError(err));
-      }
+      setPageHighlights(highlights);
+      onPageHighlightsChange?.(targetPage, highlights);
     },
-    [recoverAndRender, renderPage]
+    [fetchPageHighlights, onPageHighlightsChange]
   );
 
-  const buildSelectionQuads = useCallback((range: Range): PdfHighlightQuad[] => {
-    const layerRect = textLayerRef.current?.getBoundingClientRect();
-    const pageScaleValue = activePageScaleRef.current;
-    if (!layerRect || pageScaleValue <= 0) {
-      return [];
+  const resolveTextLayerRootFromRange = useCallback(
+    (targetRange: Range): { textLayerRoot: HTMLElement; pageNumber: number } | null => {
+      const contexts = [targetRange.startContainer, targetRange.endContainer]
+        .map((node) => {
+          const element =
+            node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+          return element?.closest(".textLayer");
+        })
+        .filter((element): element is HTMLElement => element instanceof HTMLElement);
+      for (const candidate of contexts) {
+        if (!isSelectionRangeInTextLayer(targetRange, candidate)) {
+          continue;
+        }
+        const pageNumber = readPageNumberFromTextLayer(candidate);
+        if (pageNumber) {
+          return { textLayerRoot: candidate, pageNumber };
+        }
+      }
+      const activeLayer = getTextLayerRootForPage(pageNumberRef.current);
+      if (isSelectionRangeInTextLayer(targetRange, activeLayer)) {
+        const pageNumber = readPageNumberFromTextLayer(activeLayer);
+        if (activeLayer && pageNumber) {
+          return { textLayerRoot: activeLayer, pageNumber };
+        }
+      }
+      return null;
+    },
+    [getTextLayerRootForPage]
+  );
+
+  const captureSelectionSnapshotFromWindow = useCallback(() => {
+    const sel = getSelectionDep();
+    if (!sel || sel.rangeCount === 0 || sel.toString().trim().length === 0) {
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    const selectionContext = resolveTextLayerRootFromRange(range);
+    if (!selectionContext) {
+      return;
+    }
+    selectionSnapshotRef.current = toSelectionSnapshot(
+      range,
+      selectionContext.textLayerRoot,
+      selectionContext.pageNumber
+    );
+  }, [getSelectionDep, resolveTextLayerRootFromRange]);
+
+  const buildSelectionQuads = useCallback(
+    (range: Range, targetPage: number): PdfHighlightQuad[] => {
+      const layerRect = getTextLayerRootForPage(targetPage)?.getBoundingClientRect();
+      const pageScaleValue = readPageScale(targetPage);
+      if (!layerRect || pageScaleValue <= 0) {
+        return [];
+      }
+
+      const rectsFromRange = Array.from(range.getClientRects()).filter(
+        (rect) => rect.width > PDF_QUAD_EPSILON && rect.height > PDF_QUAD_EPSILON
+      );
+      const fallbackRect = range.getBoundingClientRect();
+      const rects =
+        rectsFromRange.length > 0
+          ? rectsFromRange
+          : fallbackRect.width > PDF_QUAD_EPSILON && fallbackRect.height > PDF_QUAD_EPSILON
+            ? [fallbackRect]
+            : layerRect.width > PDF_QUAD_EPSILON && layerRect.height > PDF_QUAD_EPSILON
+              ? [layerRect]
+              : [];
+
+      return rects.map((rect) => {
+        const left = toCanonicalPoint((rect.left - layerRect.left) / pageScaleValue);
+        const right = toCanonicalPoint((rect.right - layerRect.left) / pageScaleValue);
+        const top = toCanonicalPoint((rect.top - layerRect.top) / pageScaleValue);
+        const bottom = toCanonicalPoint((rect.bottom - layerRect.top) / pageScaleValue);
+
+        return {
+          x1: left,
+          y1: top,
+          x2: right,
+          y2: top,
+          x3: right,
+          y3: bottom,
+          x4: left,
+          y4: bottom,
+        };
+      });
+    },
+    [getTextLayerRootForPage, readPageScale]
+  );
+
+  const syncSelectionFromWindow = useCallback(() => {
+    if (!textLayerUsable) {
+      setSelection(null);
+      selectionSnapshotRef.current = null;
+      return;
     }
 
-    const rectsFromRange = Array.from(range.getClientRects()).filter(
-      (rect) => rect.width > PDF_QUAD_EPSILON && rect.height > PDF_QUAD_EPSILON
-    );
-    const fallbackRect = range.getBoundingClientRect();
-    const rects =
-      rectsFromRange.length > 0
-        ? rectsFromRange
-        : fallbackRect.width > PDF_QUAD_EPSILON && fallbackRect.height > PDF_QUAD_EPSILON
-          ? [fallbackRect]
-          : layerRect.width > PDF_QUAD_EPSILON && layerRect.height > PDF_QUAD_EPSILON
-            ? [layerRect]
-            : [];
-    return rects.map((rect) => {
-      const left = toCanonicalPoint((rect.left - layerRect.left) / pageScaleValue);
-      const right = toCanonicalPoint((rect.right - layerRect.left) / pageScaleValue);
-      const top = toCanonicalPoint((rect.top - layerRect.top) / pageScaleValue);
-      const bottom = toCanonicalPoint((rect.bottom - layerRect.top) / pageScaleValue);
+    const sel = getSelectionDep();
+    if (!sel || sel.rangeCount === 0) {
+      setSelection(null);
+      return;
+    }
+    const selectedTextFromSelection = sel.toString().trim();
+    if (sel.isCollapsed && selectedTextFromSelection.length === 0) {
+      setSelection(null);
+      return;
+    }
 
-      return {
-        x1: left,
-        y1: top,
-        x2: right,
-        y2: top,
-        x3: right,
-        y3: bottom,
-        x4: left,
-        y4: bottom,
-      };
-    });
-  }, []);
+    const range = sel.getRangeAt(0);
+    const selectionContext = resolveTextLayerRootFromRange(range);
+    if (!selectionContext) {
+      setSelection(null);
+      return;
+    }
+
+    const selectionText =
+      selectedTextFromSelection.length > 0 ? selectedTextFromSelection : range.toString().trim();
+    if (selectionText.length === 0) {
+      setSelection(null);
+      return;
+    }
+
+    const snapshot = toSelectionSnapshot(
+      range,
+      selectionContext.textLayerRoot,
+      selectionContext.pageNumber
+    );
+    selectionSnapshotRef.current = snapshot;
+    setSelection(snapshot);
+    setSelectionError(null);
+  }, [getSelectionDep, resolveTextLayerRootFromRange, textLayerUsable]);
 
   const handleCreateHighlight = useCallback(
     async (color: HighlightColor) => {
@@ -831,11 +1092,15 @@ export default function PdfReader({
           return null;
         }
         const range = sel.getRangeAt(0);
-        const textLayerRoot = textLayerRef.current;
-        if (!isSelectionRangeInTextLayer(range, textLayerRoot)) {
+        const selectionContext = resolveTextLayerRootFromRange(range);
+        if (!selectionContext) {
           return null;
         }
-        return toSelectionSnapshot(range, textLayerRoot);
+        return toSelectionSnapshot(
+          range,
+          selectionContext.textLayerRoot,
+          selectionContext.pageNumber
+        );
       })();
 
       const activeSelection = selection ?? selectionSnapshotRef.current ?? fallbackSelection;
@@ -848,7 +1113,7 @@ export default function PdfReader({
       }
 
       const exact = activeSelection.range.toString().trim();
-      const quads = buildSelectionQuads(activeSelection.range);
+      const quads = buildSelectionQuads(activeSelection.range, activeSelection.pageNumber);
       if (quads.length === 0) {
         updateCreateTelemetry((prev) => ({
           ...prev,
@@ -872,7 +1137,7 @@ export default function PdfReader({
             method: "PATCH",
             body: JSON.stringify({
               pdf_bounds: {
-                page_number: pageNumber,
+                page_number: activeSelection.pageNumber,
                 quads,
                 exact,
               },
@@ -887,7 +1152,7 @@ export default function PdfReader({
           await apiFetchDep(`/api/media/${mediaId}/pdf-highlights`, {
             method: "POST",
             body: JSON.stringify({
-              page_number: pageNumber,
+              page_number: activeSelection.pageNumber,
               quads,
               exact,
               color,
@@ -900,7 +1165,7 @@ export default function PdfReader({
           successes: prev.successes + 1,
           lastOutcome: "success",
         }));
-        await refreshPageHighlights(pageNumber, runRef.current);
+        await refreshPageHighlights(activeSelection.pageNumber, runRef.current);
         clearSelection();
       } catch (err) {
         updateCreateTelemetry((prev) => ({
@@ -914,46 +1179,77 @@ export default function PdfReader({
       }
     },
     [
-      selection,
-      textLayerUsable,
-      isCreating,
+      apiFetchDep,
       buildSelectionQuads,
       clearSelection,
       editingHighlightId,
-      apiFetchDep,
-      pageNumber,
-      mediaId,
       getSelectionDep,
+      isCreating,
+      mediaId,
       refreshPageHighlights,
+      resolveTextLayerRootFromRange,
+      selection,
+      textLayerUsable,
       updateCreateTelemetry,
     ]
   );
 
   const goToPage = useCallback(
     async (nextPage: number) => {
-      if (!documentRef.current || nextPage < 1 || nextPage > numPages) {
+      const viewer = pdfViewerRef.current;
+      if (!viewer || nextPage < 1 || nextPage > numPages) {
         return;
       }
+
       setNavigating(true);
+      clearSelection();
       setPageHighlights([]);
       onPageHighlightsChange?.(nextPage, []);
-      clearSelection();
+
+      const currentRun = runRef.current;
       try {
-        await renderCurrentDocumentPage(nextPage);
+        const expiryMs = signedUrlExpiryRef.current;
+        if (typeof expiryMs === "number" && Date.now() >= expiryMs - SIGNED_URL_REFRESH_SKEW_MS) {
+          await recoverAndRender(nextPage, currentRun);
+          return;
+        }
+        viewer.currentPageNumber = nextPage;
+      } catch (err) {
+        if (isLikelySignedUrlExpiryError(err)) {
+          await recoverAndRender(nextPage, currentRun);
+        } else {
+          setError(toUserFacingError(err));
+        }
       } finally {
-        setNavigating(false);
+        if (currentRun === runRef.current) {
+          window.setTimeout(() => setNavigating(false), 0);
+        }
       }
     },
-    [clearSelection, numPages, onPageHighlightsChange, renderCurrentDocumentPage]
+    [clearSelection, numPages, onPageHighlightsChange, recoverAndRender]
   );
 
   useEffect(() => {
     zoomRef.current = zoom;
+    const viewer = pdfViewerRef.current;
+    if (!viewer) {
+      return;
+    }
+    pageScaleByNumberRef.current.clear();
+    try {
+      viewer.currentScaleValue = `${zoom}`;
+    } catch {
+      // Ignore for lightweight test shims.
+    }
+    activePageScaleRef.current = zoom;
+    setPageScale(zoom);
+    setPageRenderEpoch((value) => value + 1);
   }, [zoom]);
 
   useEffect(() => {
     let active = true;
     const runId = ++runRef.current;
+    const pageScaleCache = pageScaleByNumberRef.current;
 
     setLoading(true);
     setNavigating(false);
@@ -962,13 +1258,18 @@ export default function PdfReader({
     setPageNumber(1);
     setNumPages(0);
     setZoom(1);
-    setPageScale(DEFAULT_PAGE_SCALE);
+    setPageScale(1);
     setPageRenderEpoch(0);
     setSelection(null);
     setSelectionError(null);
     setPageHighlights([]);
     setTextLayerUsable(false);
     setCreateTelemetry(createInitialCreateTelemetry());
+    pageNumberRef.current = 1;
+    pageScaleCache.clear();
+    signedUrlExpiryRef.current = null;
+    recoveringFromRenderErrorRef.current = false;
+    teardownViewer();
 
     const bootstrap = async () => {
       try {
@@ -976,37 +1277,35 @@ export default function PdfReader({
         if (!active || runId !== runRef.current) {
           return;
         }
-
-        const initialOpened = await openDocument(signedAccess.url);
+        const opened = await openDocument(signedAccess.url);
         if (!active || runId !== runRef.current) {
-          await destroyPdfDocument(initialOpened.doc);
-          destroyPdfLoadingTask(initialOpened.loadingTask);
+          await destroyPdfDocument(opened.doc);
+          destroyPdfLoadingTask(opened.loadingTask);
           return;
         }
-
         signedUrlExpiryRef.current = signedAccess.expiresAtMs;
-        await replaceDocument(initialOpened);
-        setNumPages(initialOpened.doc.numPages);
-        await renderPage(initialOpened.doc, 1, runId);
+        await replaceDocument(opened);
+        await attachDocumentToViewer(opened.doc, 1, runId);
       } catch (err) {
-        if (!active || runId !== runRef.current) {
-          return;
+        if (active && runId === runRef.current) {
+          setError(toUserFacingError(err));
         }
-        setError(toUserFacingError(err));
       } finally {
         if (active && runId === runRef.current) {
           setLoading(false);
         }
       }
     };
-
     void bootstrap();
 
     return () => {
       active = false;
       runRef.current += 1;
       signedUrlExpiryRef.current = null;
-      clearTextLayer();
+      pageScaleCache.clear();
+      recoveringFromRenderErrorRef.current = false;
+      clearSelection();
+      teardownViewer();
       const existingDoc = documentRef.current;
       const existingTask = loadingTaskRef.current;
       documentRef.current = null;
@@ -1015,60 +1314,14 @@ export default function PdfReader({
       destroyPdfLoadingTask(existingTask);
     };
   }, [
-    clearTextLayer,
+    attachDocumentToViewer,
+    clearSelection,
     fetchSignedUrl,
     mediaId,
     openDocument,
-    renderPage,
     replaceDocument,
+    teardownViewer,
   ]);
-
-  useEffect(() => {
-    if (typeof ResizeObserver === "undefined") {
-      return;
-    }
-    const wrap = internalContentRef.current;
-    if (!wrap) {
-      return;
-    }
-
-    let frameId: number | null = null;
-    const observer = new ResizeObserver((entries) => {
-      const nextWidth = Math.floor(entries[0]?.contentRect.width ?? 0);
-      if (nextWidth <= 0) {
-        return;
-      }
-      if (!documentRef.current || loading || navigating || recovering || error) {
-        return;
-      }
-      if (Math.abs(nextWidth - lastRenderedContainerWidthRef.current) <= 1) {
-        return;
-      }
-
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-      frameId = window.requestAnimationFrame(() => {
-        void renderCurrentDocumentPage(pageNumber);
-      });
-    });
-
-    observer.observe(wrap);
-
-    return () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-      observer.disconnect();
-    };
-  }, [error, loading, navigating, pageNumber, recovering, renderCurrentDocumentPage]);
-
-  useEffect(() => {
-    if (!documentRef.current || loading || navigating || recovering || error) {
-      return;
-    }
-    void renderCurrentDocumentPage(pageNumber);
-  }, [error, loading, navigating, pageNumber, recovering, renderCurrentDocumentPage, zoom]);
 
   useEffect(() => {
     if (!documentRef.current || numPages <= 0 || loading || error) {
@@ -1106,44 +1359,6 @@ export default function PdfReader({
     pageNumber,
   ]);
 
-  const syncSelectionFromWindow = useCallback(() => {
-    if (!textLayerUsable) {
-      setSelection(null);
-      selectionSnapshotRef.current = null;
-      return;
-    }
-    const sel = getSelectionDep();
-    if (!sel || sel.rangeCount === 0) {
-      setSelection(null);
-      return;
-    }
-    const selectedTextFromSelection = sel.toString().trim();
-    if (sel.isCollapsed && selectedTextFromSelection.length === 0) {
-      setSelection(null);
-      return;
-    }
-
-    const range = sel.getRangeAt(0);
-    const textLayerRoot = textLayerRef.current;
-    if (!isSelectionRangeInTextLayer(range, textLayerRoot)) {
-      setSelection(null);
-      return;
-    }
-
-    const selectionText =
-      selectedTextFromSelection.length > 0
-        ? selectedTextFromSelection
-        : range.toString().trim();
-    if (selectionText.length === 0) {
-      setSelection(null);
-      return;
-    }
-    const snapshot = toSelectionSnapshot(range, textLayerRoot);
-    selectionSnapshotRef.current = snapshot;
-    setSelection(snapshot);
-    setSelectionError(null);
-  }, [getSelectionDep, textLayerUsable]);
-
   useEffect(() => {
     document.addEventListener("selectionchange", syncSelectionFromWindow);
     return () => {
@@ -1168,8 +1383,8 @@ export default function PdfReader({
   }, [getSelectionDep, syncSelectionFromWindow, textLayerUsable]);
 
   const projectedHighlightRects = useMemo(() => {
-    void OVERLAY_REPROJECTION_TRIGGER_MATRIX;
-    if (!textLayerUsable || pageScale <= 0) {
+    const activeScale = pageScale <= 0 ? activePageScaleRef.current : pageScale;
+    if (activeScale <= 0) {
       return [] as ProjectedHighlightRect[];
     }
     const projected: ProjectedHighlightRect[] = [];
@@ -1185,12 +1400,47 @@ export default function PdfReader({
           highlightId: highlight.id,
           color: highlight.color,
           index,
-          ...projectQuadToRect(quad, pageScale),
+          ...projectQuadToRect(quad, activeScale),
         });
       });
     }
     return projected;
-  }, [pageHighlights, pageNumber, pageScale, textLayerUsable]);
+  }, [pageHighlights, pageNumber, pageScale]);
+
+  useEffect(() => {
+    removeOverlayLayers();
+    if (projectedHighlightRects.length === 0) {
+      return;
+    }
+    const pageElement = getPageElement(pageNumber);
+    if (!pageElement) {
+      return;
+    }
+    const overlayLayer = document.createElement("div");
+    overlayLayer.className = styles.overlayLayer;
+    overlayLayer.setAttribute("data-nexus-overlay-layer", "true");
+
+    for (const rect of projectedHighlightRects) {
+      const rectEl = document.createElement("div");
+      rectEl.className = styles.highlightOverlayRect;
+      if (focusedHighlightId === rect.highlightId) {
+        rectEl.classList.add(styles.highlightOverlayRectFocused);
+      }
+      rectEl.setAttribute("data-testid", `pdf-highlight-${rect.highlightId}-${rect.index}`);
+      rectEl.setAttribute("data-highlight-color", rect.color);
+      if (rect.index === 0) {
+        rectEl.setAttribute("data-highlight-anchor", rect.highlightId);
+      }
+      rectEl.style.left = `${rect.left}px`;
+      rectEl.style.top = `${rect.top}px`;
+      rectEl.style.width = `${rect.width}px`;
+      rectEl.style.height = `${rect.height}px`;
+      rectEl.style.backgroundColor = OVERLAY_COLOR_MAP[rect.color];
+      rectEl.style.mixBlendMode = "multiply";
+      overlayLayer.append(rectEl);
+    }
+    pageElement.append(overlayLayer);
+  }, [focusedHighlightId, getPageElement, pageNumber, projectedHighlightRects, removeOverlayLayers]);
 
   const showBusy = loading || navigating || recovering;
   const zoomPercent = Math.round(zoom * 100);
@@ -1265,65 +1515,34 @@ export default function PdfReader({
         </div>
       </div>
 
-      {recovering && (
-        <div className={styles.notice}>Refreshing secure file access…</div>
-      )}
+      {recovering && <div className={styles.notice}>Refreshing secure file access…</div>}
 
       {error ? (
         <div className={styles.error} role="alert">
           {error}
         </div>
       ) : (
-        <div ref={setContentNode} className={styles.canvasWrap}>
+        <div className={styles.canvasWrap}>
           {(loading || navigating) && (
             <div className={styles.loading} role="status">
               Loading PDF…
             </div>
           )}
-          <div className={styles.pageLayer}>
-            <canvas
-              ref={canvasRef}
-              className={styles.canvas}
-              role="img"
-              aria-label="PDF page"
-            />
+          <div className={styles.pdfViewport}>
+            <div className={styles.viewerA11yMarker} role="img" aria-label="PDF page" />
             <div
-              ref={textLayerRef}
-              className={styles.textLayer}
-              onMouseUp={syncSelectionFromWindow}
-              onKeyUp={syncSelectionFromWindow}
-            />
-            <div className={styles.overlayLayer} aria-hidden="true">
-              {projectedHighlightRects.map((rect) => (
-                <div
-                  key={`${rect.highlightId}-${rect.index}`}
-                  data-testid={`pdf-highlight-${rect.highlightId}-${rect.index}`}
-                  data-highlight-anchor={rect.index === 0 ? rect.highlightId : undefined}
-                  data-highlight-color={rect.color}
-                  className={`${styles.highlightOverlayRect} ${
-                    focusedHighlightId === rect.highlightId
-                      ? styles.highlightOverlayRectFocused
-                      : ""
-                  }`}
-                  style={{
-                    left: `${rect.left}px`,
-                    top: `${rect.top}px`,
-                    width: `${rect.width}px`,
-                    height: `${rect.height}px`,
-                    backgroundColor: OVERLAY_COLOR_MAP[rect.color],
-                    mixBlendMode: "multiply",
-                  }}
-                />
-              ))}
+              ref={viewerContainerRef}
+              className={styles.viewerContainer}
+              aria-label="PDF document"
+            >
+              <div ref={setContentNode} className={`pdfViewer ${styles.viewerHost}`} />
             </div>
           </div>
         </div>
       )}
 
       {!loading && !error && !textLayerUsable && (
-        <div className={styles.notice}>
-          Text selection is unavailable on this page.
-        </div>
+        <div className={styles.notice}>Text selection is unavailable on this page.</div>
       )}
 
       {selectionError && (
@@ -1332,10 +1551,10 @@ export default function PdfReader({
         </div>
       )}
 
-      {selection && internalContentRef.current && (
+      {selection && viewerContainerRef.current && (
         <SelectionPopover
           selectionRect={selection.rect}
-          containerRef={internalContentRef}
+          containerRef={viewerContainerRef}
           onCreateHighlight={handleCreateHighlight}
           onDismiss={clearSelection}
           isCreating={isCreating}
