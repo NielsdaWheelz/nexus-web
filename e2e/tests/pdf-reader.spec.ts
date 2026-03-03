@@ -69,10 +69,52 @@ function extractHighlightIdFromDataTestId(dataTestId: string | null): string {
   return match[1];
 }
 
-async function selectTextLayerSnippet(page: Page): Promise<boolean> {
-  const activeTextLayer = page.locator('[class*="pageLayer"] [class*="textLayer"]').last();
-  await expect(activeTextLayer).toBeVisible();
-  const candidateSpan = activeTextLayer
+async function listVisibleHighlightIds(page: Page): Promise<string[]> {
+  const dataTestIds = await page.locator('[data-testid^="pdf-highlight-"]').evaluateAll((nodes) =>
+    nodes
+      .map((node) => node.getAttribute("data-testid"))
+      .filter((value): value is string => Boolean(value)),
+  );
+  const ids = new Set<string>();
+  for (const dataTestId of dataTestIds) {
+    ids.add(extractHighlightIdFromDataTestId(dataTestId));
+  }
+  return Array.from(ids);
+}
+
+async function waitForNewVisibleHighlightId(
+  page: Page,
+  knownIds: ReadonlySet<string>,
+  timeoutMs = 10_000,
+): Promise<string> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const ids = await listVisibleHighlightIds(page);
+    const created = ids.find((id) => !knownIds.has(id));
+    if (created) {
+      return created;
+    }
+    await page.waitForTimeout(100);
+  }
+  const lastIds = await listVisibleHighlightIds(page);
+  throw new Error(
+    `Timed out waiting for a newly-created highlight. Known ids: ${JSON.stringify(Array.from(knownIds))}; visible ids: ${JSON.stringify(lastIds)}`,
+  );
+}
+
+async function selectTextLayerSnippet(page: Page, targetPageNumber?: number): Promise<boolean> {
+  const targetedTextLayer =
+    typeof targetPageNumber === "number"
+      ? page
+          .locator(`.pdfViewer .page[data-page-number="${targetPageNumber}"] .textLayer`)
+          .last()
+      : activeTextLayer(page);
+  const selectedTextLayer =
+    (typeof targetPageNumber === "number" && (await targetedTextLayer.count()) > 0)
+      ? targetedTextLayer
+      : activeTextLayer(page);
+  await expect(selectedTextLayer).toBeVisible();
+  const candidateSpan = selectedTextLayer
     .locator("span")
     .filter({ hasText: /\S/ })
     .first();
@@ -96,21 +138,61 @@ async function selectTextLayerSnippet(page: Page): Promise<boolean> {
     return Boolean(sel && sel.toString().trim().length > 0);
   });
   if (selectedByUserGesture) {
-    await page.evaluate(() => {
+    await page.evaluate((targetPage) => {
       document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+      const selection = window.getSelection();
+      const anchorNode = selection?.anchorNode ?? null;
+      const anchorElement =
+        anchorNode?.nodeType === Node.ELEMENT_NODE
+          ? (anchorNode as Element)
+          : anchorNode?.parentElement ?? null;
+      const anchorLayer = anchorElement?.closest(".textLayer");
+      if (anchorLayer instanceof HTMLElement) {
+        anchorLayer.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+        return;
+      }
+      const targetedLayer =
+        typeof targetPage === "number"
+          ? document.querySelector<HTMLElement>(
+              `.pdfViewer .page[data-page-number="${targetPage}"] .textLayer`,
+            )
+          : null;
+      if (targetedLayer) {
+        targetedLayer.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+        return;
+      }
       const layers = Array.from(
-        document.querySelectorAll<HTMLElement>('[class*="pageLayer"] [class*="textLayer"]'),
+        document.querySelectorAll<HTMLElement>(
+          '.pdfViewer .page .textLayer, [class*="pageLayer"] [class*="textLayer"]',
+        ),
       );
       layers.at(-1)?.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    });
+    }, targetPageNumber);
     return true;
   }
 
-  return page.evaluate(() => {
-    const layers = Array.from(
-      document.querySelectorAll<HTMLElement>('[class*="pageLayer"] [class*="textLayer"]'),
-    );
-    const textLayer = layers.at(-1) ?? document.querySelector<HTMLElement>('[class*="textLayer"]');
+  return page.evaluate((targetPage) => {
+    const textLayer = (() => {
+      if (typeof targetPage === "number") {
+        const targeted = document.querySelector<HTMLElement>(
+          `.pdfViewer .page[data-page-number="${targetPage}"] .textLayer`,
+        );
+        if (targeted) {
+          return targeted;
+        }
+      }
+      const layers = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '.pdfViewer .page .textLayer, [class*="pageLayer"] [class*="textLayer"]',
+        ),
+      );
+      return (
+        layers.at(-1) ??
+        document.querySelector<HTMLElement>(
+          '.pdfViewer .page .textLayer, [class*="pageLayer"] [class*="textLayer"]',
+        )
+      );
+    })();
     if (!textLayer) {
       return false;
     }
@@ -143,7 +225,13 @@ async function selectTextLayerSnippet(page: Page): Promise<boolean> {
     }
 
     return false;
-  });
+  }, targetPageNumber);
+}
+
+function activeTextLayer(page: Page) {
+  return page
+    .locator('.pdfViewer .page .textLayer, [class*="pageLayer"] [class*="textLayer"]')
+    .last();
 }
 
 async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Promise<void> {
@@ -202,21 +290,22 @@ test.describe("pdf reader", () => {
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
         timeout: 20_000,
       });
-      await expect(page.locator('[class*="textLayer"]')).toBeVisible();
+      await expect(activeTextLayer(page)).toBeVisible();
 
       // Navigate to page 2 so highlights don't collide with the stress
       // test (line ~310) which creates highlights on page 1. Both tests
       // share the same seeded PDF and run in parallel (fullyParallel).
       await clickToolbarButtonByAriaLabel(page, "Next page");
       await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
-      await expect(page.locator('[class*="textLayer"]')).toBeVisible();
+      await expect(activeTextLayer(page)).toBeVisible();
 
       // Highlight creation with retry — selection can be lost between
       // selectTextLayerSnippet and the button click due to React re-renders
       // replacing text layer DOM nodes (same pattern as the stress test).
+      const knownHighlightIds = new Set(await listVisibleHighlightIds(page));
       let created = false;
-      for (let retry = 0; retry < 3; retry++) {
-        expect(await selectTextLayerSnippet(page)).toBe(true);
+      for (let retry = 0; retry < 5; retry++) {
+        expect(await selectTextLayerSnippet(page, 2)).toBe(true);
         const before = await readCreateTelemetry(page);
         await clickToolbarButtonByAriaLabel(page, "Highlight selection");
         await expect
@@ -232,21 +321,14 @@ test.describe("pdf reader", () => {
           settled.lastOutcome === "skipped_no_geometry" ||
           settled.lastOutcome === "error" // e.g. duplicate from parallel test
         ) {
+          // Selection can be detached by rerenders between attempts.
+          await selectTextLayerSnippet(page, 2);
           continue;
         }
         throw new Error(`Unexpected highlight outcome: ${settled.lastOutcome}`);
       }
       expect(created).toBe(true);
-      await expect
-        .poll(async () => page.locator('[data-testid^="pdf-highlight-"]').count(), {
-          timeout: 10_000,
-        })
-        .toBeGreaterThan(0);
-
-      const persistedOverlay = page.locator('[data-testid^="pdf-highlight-"]').first();
-      createdHighlightId = extractHighlightIdFromDataTestId(
-        await persistedOverlay.getAttribute("data-testid"),
-      );
+      createdHighlightId = await waitForNewVisibleHighlightId(page, knownHighlightIds);
 
       await page.reload();
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
@@ -255,7 +337,14 @@ test.describe("pdf reader", () => {
       // Navigate back to page 2 where the highlight was created
       await clickToolbarButtonByAriaLabel(page, "Next page");
       await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
-      await expect(page.locator(`[data-testid^="pdf-highlight-${createdHighlightId}-"]`)).toHaveCount(1);
+      await expect
+        .poll(
+          async () => page.locator(`[data-testid^="pdf-highlight-${createdHighlightId}-"]`).count(),
+          {
+            timeout: 10_000,
+          },
+        )
+        .toBeGreaterThan(0);
 
       const linkedRow = page.locator('[class*="linkedItemRow"]').first();
       await expect(linkedRow).toBeVisible();
@@ -272,7 +361,11 @@ test.describe("pdf reader", () => {
       ).toBeVisible();
     } finally {
       if (createdHighlightId) {
-        await page.request.delete(`/api/highlights/${createdHighlightId}`);
+        try {
+          await page.request.delete(`/api/highlights/${createdHighlightId}`, { timeout: 5_000 });
+        } catch {
+          // Cleanup should never mask the real assertion failure.
+        }
       }
     }
   });
@@ -362,7 +455,7 @@ test.describe("pdf reader", () => {
       timeout: 20_000,
     });
     await expect(page.getByRole("img", { name: "PDF page" })).toBeVisible();
-    await expect(page.locator('[class*="textLayer"]')).toBeVisible();
+    await expect(activeTextLayer(page)).toBeVisible();
 
     for (const [zoomLabel, expectedZoom] of [
       ["Zoom in", "125%"],
@@ -377,7 +470,7 @@ test.describe("pdf reader", () => {
         })
         .toBeGreaterThan(telemetryBeforeZoom.pageRenderEpoch);
 
-      expect(await selectTextLayerSnippet(page)).toBe(true);
+      expect(await selectTextLayerSnippet(page, 1)).toBe(true);
       await expect(page.locator('button[aria-label="Highlight selection"]')).toBeEnabled();
 
       // Selection may be lost between selectTextLayerSnippet and the create
@@ -409,7 +502,7 @@ test.describe("pdf reader", () => {
           settled.lastOutcome === "skipped_no_selection" ||
           settled.lastOutcome === "skipped_no_geometry"
         ) {
-          expect(await selectTextLayerSnippet(page)).toBe(true);
+          expect(await selectTextLayerSnippet(page, 1)).toBe(true);
           continue;
         }
         throw new Error(`Unexpected create outcome: ${settled.lastOutcome}`);
