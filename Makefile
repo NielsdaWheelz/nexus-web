@@ -197,7 +197,7 @@ worker:
 		REDIS_URL=redis://localhost:$(REDIS_PORT)/0 \
 		CELERY_BROKER_URL=redis://localhost:$(REDIS_PORT)/0 \
 		CELERY_RESULT_BACKEND=redis://localhost:$(REDIS_PORT)/0 \
-		uv run celery -A apps.worker.main worker --loglevel=info
+		uv run celery -A apps.worker.main worker -Q ingest -P solo --loglevel=info
 
 beat:
 	cd python && PYTHONPATH=$$PWD:$$PWD/.. \

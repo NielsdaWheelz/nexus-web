@@ -15,6 +15,7 @@ Usage:
 """
 
 from celery import Celery
+from celery.signals import worker_process_init
 
 from nexus.config import get_settings
 
@@ -56,6 +57,22 @@ celery_app.conf.task_default_queue = "default"
 
 # For testing: allow eager mode (synchronous execution)
 celery_app.conf.task_always_eager = False
+
+
+@worker_process_init.connect
+def _reset_db_on_fork(**kwargs):
+    """Dispose inherited DB engine after Celery prefork.
+
+    The parent process may have created a SQLAlchemy engine (and its
+    connection pool) before fork().  libpq connections are not fork-safe,
+    so each child must create its own.  Clearing the lru_cache and the
+    session-factory singleton forces lazy re-creation on first use.
+    """
+    from nexus.db.engine import get_engine  # noqa: F811
+    from nexus.db import session as session_mod
+
+    get_engine.cache_clear()
+    session_mod._SessionLocal = None
 
 
 def get_celery_app() -> Celery:

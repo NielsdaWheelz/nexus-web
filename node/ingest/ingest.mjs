@@ -1,26 +1,30 @@
 #!/usr/bin/env node
 /**
  * Web Article Ingestion Script
- * 
+ *
  * Fetches a URL using Playwright (with JS enabled), follows redirects,
  * extracts readable content using Mozilla Readability, and outputs JSON.
- * 
+ *
  * Input (stdin JSON):
  *   { "url": "https://example.com/article", "timeout_ms": 30000 }
- * 
- * Output (stdout JSON):
+ *
+ * Output (stdout JSON on success, stderr JSON on failure):
  *   {
  *     "final_url": "https://example.com/actual-article",
  *     "base_url": "https://example.com/actual-article",
  *     "title": "Article Title",
  *     "content_html": "<div>...</div>"
  *   }
- * 
+ *
  * Exit Codes:
  *   0  - Success
  *   10 - Timeout
  *   11 - Fetch failed (network error, HTTP error, etc.)
  *   12 - Readability extraction failed
+ *
+ * IMPORTANT: Never call process.exit() directly — it kills the process
+ * before stdio buffers flush, truncating piped output. Instead, throw
+ * an IngestError or set process.exitCode and return.
  */
 
 import { chromium } from 'playwright';
@@ -34,6 +38,18 @@ const EXIT_FETCH_FAILED = 11;
 const EXIT_READABILITY_FAILED = 12;
 
 /**
+ * Structured error with exit code for the ingestion pipeline.
+ * Thrown instead of calling process.exit() to allow proper cleanup
+ * and stdio flushing.
+ */
+class IngestError extends Error {
+    constructor(code, message) {
+        super(message);
+        this.code = code;
+    }
+}
+
+/**
  * Read all stdin data as a string.
  */
 async function readStdin() {
@@ -45,43 +61,17 @@ async function readStdin() {
 }
 
 /**
- * Write error to stderr and exit with code.
+ * Core ingestion: fetch URL with Playwright, extract with Readability.
+ * Returns the result object on success, throws IngestError on failure.
  */
-function exitWithError(code, message) {
-    console.error(JSON.stringify({ error: message }));
-    process.exit(code);
-}
-
-/**
- * Main ingestion function.
- */
-async function main() {
+async function ingest(url, timeoutMs) {
     let browser = null;
-    
+
     try {
-        // Read and parse input
-        const inputJson = await readStdin();
-        let input;
-        try {
-            input = JSON.parse(inputJson);
-        } catch (e) {
-            exitWithError(EXIT_FETCH_FAILED, `Invalid JSON input: ${e.message}`);
-        }
-
-        const { url, timeout_ms = 30000 } = input;
-        
-        if (!url) {
-            exitWithError(EXIT_FETCH_FAILED, 'Missing required field: url');
-        }
-
-        // Launch browser
-        browser = await chromium.launch({
-            headless: true,
-        });
+        browser = await chromium.launch({ headless: true });
 
         const context = await browser.newContext({
             userAgent: 'NexusBot/1.0 (+https://nexus.example.com/bot)',
-            // Ignore HTTPS errors for development/testing
             ignoreHTTPSErrors: true,
         });
 
@@ -101,78 +91,88 @@ async function main() {
         let response;
         try {
             response = await page.goto(url, {
-                timeout: timeout_ms,
+                timeout: timeoutMs,
                 waitUntil: 'domcontentloaded',
             });
         } catch (e) {
             if (e.name === 'TimeoutError' || e.message.includes('timeout')) {
-                exitWithError(EXIT_TIMEOUT, `Page load timeout: ${e.message}`);
+                throw new IngestError(EXIT_TIMEOUT, `Page load timeout: ${e.message}`);
             }
-            exitWithError(EXIT_FETCH_FAILED, `Navigation failed: ${e.message}`);
+            throw new IngestError(EXIT_FETCH_FAILED, `Navigation failed: ${e.message}`);
         }
 
-        // Check response
         if (!response) {
-            exitWithError(EXIT_FETCH_FAILED, 'No response received');
+            throw new IngestError(EXIT_FETCH_FAILED, 'No response received');
         }
 
         const status = response.status();
         if (status >= 400) {
-            exitWithError(EXIT_FETCH_FAILED, `HTTP error: ${status}`);
+            throw new IngestError(EXIT_FETCH_FAILED, `HTTP error: ${status}`);
         }
 
-        // Get final URL after redirects
         const finalUrl = page.url();
-
-        // Get full page HTML
         const fullHtml = await page.content();
 
-        // Close browser early to free resources
+        // Close browser before CPU-bound extraction to free resources
         await browser.close();
         browser = null;
 
-        // Parse with jsdom (with URL context for relative URL resolution)
+        // Extract article with jsdom + Readability
         const dom = new JSDOM(fullHtml, { url: finalUrl });
-        const document = dom.window.document;
-
-        // Run Mozilla Readability
-        const reader = new Readability(document, {
-            // Keep some attributes for better extraction
-            keepClasses: false,
-        });
-        
+        const reader = new Readability(dom.window.document, { keepClasses: false });
         const article = reader.parse();
 
         if (!article || !article.content) {
-            exitWithError(EXIT_READABILITY_FAILED, 'Readability could not extract article content');
+            throw new IngestError(EXIT_READABILITY_FAILED, 'Readability could not extract article content');
         }
 
-        // Output result
-        const result = {
+        return {
             final_url: finalUrl,
             base_url: finalUrl,
             title: article.title || '',
             content_html: article.content,
         };
-
-        console.log(JSON.stringify(result));
-        process.exit(EXIT_SUCCESS);
-
-    } catch (e) {
-        // Cleanup browser if still open
+    } finally {
         if (browser) {
-            try {
-                await browser.close();
-            } catch (_) {}
+            try { await browser.close(); } catch (_) { /* best-effort cleanup */ }
         }
-
-        // Determine exit code based on error type
-        if (e.message && e.message.includes('timeout')) {
-            exitWithError(EXIT_TIMEOUT, `Timeout: ${e.message}`);
-        }
-        exitWithError(EXIT_FETCH_FAILED, `Unexpected error: ${e.message}`);
     }
 }
 
-// Run main
+/**
+ * Entry point: parse stdin, run ingestion, write result to stdout.
+ *
+ * Uses process.exitCode (not process.exit) so Node flushes stdio
+ * before terminating — critical when stdout is a pipe.
+ */
+async function main() {
+    let input;
+    try {
+        input = JSON.parse(await readStdin());
+    } catch (e) {
+        process.stderr.write(JSON.stringify({ error: `Invalid JSON input: ${e.message}` }) + '\n');
+        process.exitCode = EXIT_FETCH_FAILED;
+        return;
+    }
+
+    const { url, timeout_ms: timeoutMs = 30000 } = input;
+    if (!url) {
+        process.stderr.write(JSON.stringify({ error: 'Missing required field: url' }) + '\n');
+        process.exitCode = EXIT_FETCH_FAILED;
+        return;
+    }
+
+    try {
+        const result = await ingest(url, timeoutMs);
+        process.stdout.write(JSON.stringify(result) + '\n');
+        process.exitCode = EXIT_SUCCESS;
+    } catch (e) {
+        const code = e instanceof IngestError ? e.code
+            : e.message?.includes('timeout') ? EXIT_TIMEOUT
+            : EXIT_FETCH_FAILED;
+        process.stderr.write(JSON.stringify({ error: e.message }) + '\n');
+        process.exitCode = code;
+    }
+}
+
 main();
