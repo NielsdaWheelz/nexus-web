@@ -77,6 +77,48 @@ def list_highlights(
     return success_response({"highlights": [h.model_dump(mode="json") for h in result]})
 
 
+@router.get("/media/{media_id}/highlights")
+def list_media_highlights(
+    media_id: UUID,
+    request: Request,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """List highlights for a media item in chapter-index order with cursor pagination."""
+    mine_only_raw = request.query_params.get("mine_only", "true")
+    if mine_only_raw not in ("true", "false"):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "mine_only must be 'true' or 'false'",
+        )
+    mine_only = mine_only_raw == "true"
+
+    limit_raw = request.query_params.get("limit", "50")
+    try:
+        limit = int(limit_raw)
+    except (TypeError, ValueError):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "limit must be an integer") from None
+    if limit < 1 or limit > 200:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "limit must be between 1 and 200")
+
+    cursor = request.query_params.get("cursor")
+
+    highlights, page = highlights_service.list_highlights_for_media(
+        db=db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        limit=limit,
+        cursor=cursor,
+        mine_only=mine_only,
+    )
+    return success_response(
+        {
+            "highlights": [h.model_dump(mode="json") for h in highlights],
+            "page": page.model_dump(mode="json"),
+        }
+    )
+
+
 # =============================================================================
 # PDF Highlight Endpoints (S6 PR-04)
 # =============================================================================

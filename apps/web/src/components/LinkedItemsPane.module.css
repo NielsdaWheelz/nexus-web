@@ -18,6 +18,16 @@
   overflow: hidden;
 }
 
+.listMode {
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.listModeSlot {
+  height: 32px;
+  position: relative;
+}
+
 /* =============================================================================
    Row Styles
    ============================================================================= */
@@ -39,6 +49,13 @@
   cursor: pointer;
 
   transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.listModeRow {
+  position: relative;
+  transform: none !important;
+  left: 0;
+  right: 0;
 }
 
 .linkedItemRow:hover {
