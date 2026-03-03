@@ -748,6 +748,145 @@ class TestSendMessageContext:
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
+    def test_send_message_with_video_highlight_context_includes_timestamp_and_speaker(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        platform_key_env,
+        mock_openai_api,
+    ):
+        """Video quote-to-chat includes transcript timestamp and speaker metadata."""
+        _route_openai_completion(mock_openai_api)
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        fragment_id = uuid4()
+        highlight_id = uuid4()
+        transcript_text = "This is the transcript line for the highlighted quote."
+        provider_video_id = "dQw4w9WgXcQ"
+        watch_url = f"https://www.youtube.com/watch?v={provider_video_id}"
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            default_library_id = get_user_default_library(session, user_id)
+            assert default_library_id is not None
+
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, canonical_url,
+                        processing_status, external_playback_url, provider, provider_id, created_by_user_id
+                    )
+                    VALUES (
+                        :id, 'video', :title, :canonical_source_url, :canonical_url,
+                        'ready_for_reading', :external_playback_url, 'youtube', :provider_id, :created_by_user_id
+                    )
+                    """
+                ),
+                {
+                    "id": media_id,
+                    "title": "Video Context Episode",
+                    "canonical_source_url": watch_url,
+                    "canonical_url": watch_url,
+                    "external_playback_url": watch_url,
+                    "provider_id": provider_video_id,
+                    "created_by_user_id": user_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO library_media (library_id, media_id)
+                    VALUES (:library_id, :media_id)
+                    """
+                ),
+                {"library_id": default_library_id, "media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                    VALUES (:default_library_id, :media_id)
+                    """
+                ),
+                {"default_library_id": default_library_id, "media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (
+                        id, media_id, idx, html_sanitized, canonical_text,
+                        t_start_ms, t_end_ms, speaker_label
+                    )
+                    VALUES (
+                        :id, :media_id, 0, :html_sanitized, :canonical_text,
+                        :t_start_ms, :t_end_ms, :speaker_label
+                    )
+                    """
+                ),
+                {
+                    "id": fragment_id,
+                    "media_id": media_id,
+                    "html_sanitized": "<p>This is the transcript line for the highlighted quote.</p>",
+                    "canonical_text": transcript_text,
+                    "t_start_ms": 90_000,
+                    "t_end_ms": 95_000,
+                    "speaker_label": "Narrator",
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO highlights (
+                        id, user_id, fragment_id, start_offset, end_offset,
+                        color, exact, prefix, suffix
+                    )
+                    VALUES (
+                        :id, :user_id, :fragment_id, 8, 18,
+                        'yellow', :exact, :prefix, :suffix
+                    )
+                    """
+                ),
+                {
+                    "id": highlight_id,
+                    "user_id": user_id,
+                    "fragment_id": fragment_id,
+                    "exact": "the transc",
+                    "prefix": transcript_text[:8],
+                    "suffix": transcript_text[18:],
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Summarize this video quote.",
+                "model_id": str(model_id),
+                "contexts": [{"type": "highlight", "id": str(highlight_id)}],
+            },
+        )
+
+        assert response.status_code == 200
+        system_prompt = _extract_openai_system_prompt(mock_openai_api)
+        assert "Timestamp: 00:01:30" in system_prompt
+        assert "Speaker: Narrator" in system_prompt
+
+        conversation_id = response.json()["data"]["conversation"]["id"]
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
     def test_send_message_context_not_visible_returns_404(
         self,
         auth_client,

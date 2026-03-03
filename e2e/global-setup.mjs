@@ -15,6 +15,7 @@ const ROOT = path.resolve(E2E_DIR, "..");
 const PDF_SEED = path.join(E2E_DIR, ".seed", "pdf-media.json");
 const NON_PDF_SEED = path.join(E2E_DIR, ".seed", "non-pdf-media.json");
 const EPUB_SEED = path.join(E2E_DIR, ".seed", "epub-media.json");
+const YOUTUBE_SEED = path.join(E2E_DIR, ".seed", "youtube-media.json");
 
 function loadEnvFile(filePath) {
   if (!existsSync(filePath)) {
@@ -71,7 +72,8 @@ export default function globalSetup() {
     process.env.SKIP_SEED &&
     existsSync(PDF_SEED) &&
     existsSync(NON_PDF_SEED) &&
-    existsSync(EPUB_SEED)
+    existsSync(EPUB_SEED) &&
+    existsSync(YOUTUBE_SEED)
   ) {
     console.log("[global-setup] SKIP_SEED set and seed artifacts exist — skipping.");
     return;
@@ -114,6 +116,12 @@ export default function globalSetup() {
   if (!existsSync(EPUB_SEED)) {
     throw new Error(
       `[global-setup] Seed script succeeded but ${EPUB_SEED} was not created.\n` +
+        "  This indicates a bug in python/scripts/seed_e2e_data.py.",
+    );
+  }
+  if (!existsSync(YOUTUBE_SEED)) {
+    throw new Error(
+      `[global-setup] Seed script succeeded but ${YOUTUBE_SEED} was not created.\n` +
         "  This indicates a bug in python/scripts/seed_e2e_data.py.",
     );
   }

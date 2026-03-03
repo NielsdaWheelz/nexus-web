@@ -23,6 +23,7 @@ export async function middleware(request: NextRequest) {
   const cspHeader = [
     `script-src 'self' 'nonce-${nonce}'`,
     `style-src 'self' 'unsafe-inline'`,
+    `frame-src https://www.youtube.com https://www.youtube-nocookie.com`,
     `worker-src 'self'`,
     `object-src 'none'`,
     `base-uri 'self'`,
