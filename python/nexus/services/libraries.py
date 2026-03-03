@@ -529,7 +529,8 @@ def list_library_media(
         text("""
             SELECT m.id, m.kind, m.title, m.canonical_source_url,
                    m.processing_status, m.failure_stage, m.last_error_code,
-                   m.external_playback_url, m.created_at, m.updated_at,
+                   m.external_playback_url, m.provider, m.provider_id,
+                   m.created_at, m.updated_at,
                    EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) as has_file,
                    EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) as has_fragments
             FROM media m
@@ -553,15 +554,17 @@ def list_library_media(
             kind=row[1],
             processing_status=row[4],
             last_error_code=row[6],
-            media_file_exists=row[10],
+            media_file_exists=row[12],
             external_playback_url_exists=row[7] is not None,
-            has_fragments=row[11],
+            has_fragments=row[13],
             pdf_quote_text_ready=_pdf_ready,
         )
         playback_source = derive_playback_source(
             kind=row[1],
             external_playback_url=row[7],
             canonical_source_url=row[3],
+            provider=row[8],
+            provider_id=row[9],
         )
         media_list.append(
             MediaOut(
@@ -574,8 +577,8 @@ def list_library_media(
                 last_error_code=row[6],
                 playback_source=playback_source,
                 capabilities=capabilities,
-                created_at=row[8],
-                updated_at=row[9],
+                created_at=row[10],
+                updated_at=row[11],
             )
         )
     return media_list

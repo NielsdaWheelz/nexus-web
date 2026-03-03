@@ -92,6 +92,122 @@ class TestBasicSearch:
         assert len(media_results) >= 1
         assert any(r["id"] == str(media_id) for r in media_results)
 
+    def test_search_excludes_transcript_unavailable_video_and_podcast_media(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Transcript-unavailable transcript media should be excluded from media search."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        unavailable_video_id = uuid4()
+        unavailable_podcast_id = uuid4()
+        ready_video_id = uuid4()
+
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", unavailable_video_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", unavailable_podcast_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", ready_video_id)
+        direct_db.register_cleanup("library_media", "media_id", unavailable_video_id)
+        direct_db.register_cleanup("library_media", "media_id", unavailable_podcast_id)
+        direct_db.register_cleanup("library_media", "media_id", ready_video_id)
+        direct_db.register_cleanup("media", "id", unavailable_video_id)
+        direct_db.register_cleanup("media", "id", unavailable_podcast_id)
+        direct_db.register_cleanup("media", "id", ready_video_id)
+
+        with direct_db.session() as session:
+            default_library_id = get_user_default_library(session, user_id)
+            assert default_library_id is not None
+
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status, failure_stage,
+                        last_error_code, external_playback_url, provider, provider_id, created_by_user_id
+                    )
+                    VALUES (
+                        :id, 'video', :title, :source_url, 'failed', 'transcribe',
+                        'E_TRANSCRIPT_UNAVAILABLE', :playback_url, 'youtube', :provider_id, :user_id
+                    )
+                """),
+                {
+                    "id": unavailable_video_id,
+                    "title": "needle transcript unavailable video",
+                    "source_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    "playback_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    "provider_id": "dQw4w9WgXcQ",
+                    "user_id": user_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status, failure_stage,
+                        last_error_code, external_playback_url, provider, provider_id, created_by_user_id
+                    )
+                    VALUES (
+                        :id, 'podcast_episode', :title, :source_url, 'failed', 'transcribe',
+                        'E_TRANSCRIPT_UNAVAILABLE', :playback_url, 'podcast_index', :provider_id, :user_id
+                    )
+                """),
+                {
+                    "id": unavailable_podcast_id,
+                    "title": "needle transcript unavailable podcast",
+                    "source_url": "https://podcasts.example.com/feed.xml",
+                    "playback_url": "https://cdn.example.com/episode.mp3",
+                    "provider_id": "episode-needle",
+                    "user_id": user_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        external_playback_url, provider, provider_id, created_by_user_id
+                    )
+                    VALUES (
+                        :id, 'video', :title, :source_url, 'ready_for_reading',
+                        :playback_url, 'youtube', :provider_id, :user_id
+                    )
+                """),
+                {
+                    "id": ready_video_id,
+                    "title": "needle transcript ready video",
+                    "source_url": "https://www.youtube.com/watch?v=oHg5SJYRHA0",
+                    "playback_url": "https://www.youtube.com/watch?v=oHg5SJYRHA0",
+                    "provider_id": "oHg5SJYRHA0",
+                    "user_id": user_id,
+                },
+            )
+
+            for media_id in (unavailable_video_id, unavailable_podcast_id, ready_video_id):
+                session.execute(
+                    text("""
+                        INSERT INTO library_media (library_id, media_id)
+                        VALUES (:library_id, :media_id)
+                    """),
+                    {"library_id": default_library_id, "media_id": media_id},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                        VALUES (:default_library_id, :media_id)
+                    """),
+                    {"default_library_id": default_library_id, "media_id": media_id},
+                )
+
+            session.commit()
+
+        response = auth_client.get(
+            "/search?q=needle+transcript&types=media", headers=auth_headers(user_id)
+        )
+        assert response.status_code == 200, (
+            f"expected media search to succeed, got {response.status_code}: {response.text}"
+        )
+        result_ids = {row["id"] for row in response.json()["results"] if row["type"] == "media"}
+
+        assert str(ready_video_id) in result_ids
+        assert str(unavailable_video_id) not in result_ids
+        assert str(unavailable_podcast_id) not in result_ids
+
     def test_search_finds_fragments(self, auth_client, direct_db: DirectSessionManager):
         """Search finds fragments by canonical_text."""
         user_id = create_test_user_id()
