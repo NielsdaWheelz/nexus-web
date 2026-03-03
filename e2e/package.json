@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "test": "playwright test",
+    "test:csp": "playwright test --config=playwright.csp.config.ts",
     "test:ui": "playwright test --ui",
     "seed": "npx tsx seed-e2e-user.ts"
   },

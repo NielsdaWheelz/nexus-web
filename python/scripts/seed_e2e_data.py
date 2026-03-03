@@ -11,7 +11,8 @@ This script:
 7) Seeds a non-PDF web article with highlights for linked-items tests.
 8) Seeds a test API key so the models endpoint returns data and the Send button works.
 9) Seeds an EPUB with 3 chapters for EPUB reader tests.
-10) Writes upload fixture bytes + seeded metadata to e2e/.seed/.
+10) Seeds transcript-ready + transcript-unavailable YouTube video rows for media-pane E2E.
+11) Writes upload fixture bytes + seeded metadata to e2e/.seed/.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from uuid import UUID
 
 import fitz
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from nexus.config import get_settings
 from nexus.db.models import Annotation, FailureStage, Fragment, Media, ProcessingStatus
@@ -37,7 +38,7 @@ from nexus.schemas.highlights import CreateHighlightRequest
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.epub_ingest import EpubExtractionError
 from nexus.services.highlights import create_highlight_for_fragment
-from nexus.services.media import create_provisional_web_article
+from nexus.services.media import create_or_reuse_youtube_video, create_provisional_web_article
 from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.upload import confirm_ingest, init_upload
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
@@ -48,8 +49,30 @@ PDF_PAGE_COUNT = 80
 SEED_FILE_RELATIVE = Path("e2e/.seed/pdf-media.json")
 NON_PDF_SEED_FILE_RELATIVE = Path("e2e/.seed/non-pdf-media.json")
 EPUB_SEED_FILE_RELATIVE = Path("e2e/.seed/epub-media.json")
+YOUTUBE_SEED_FILE_RELATIVE = Path("e2e/.seed/youtube-media.json")
 UPLOAD_FIXTURE_RELATIVE = Path("e2e/.seed/upload-source.pdf")
 NON_PDF_SOURCE_URL = "https://example.com/e2e-linked-items-seed"
+YOUTUBE_VIDEO_ID = "s8E2Evid001"
+YOUTUBE_PLAYBACK_ONLY_VIDEO_ID = "s8E2Evid002"
+YOUTUBE_WATCH_URL = f"https://www.youtube.com/watch?v={YOUTUBE_VIDEO_ID}"
+YOUTUBE_PLAYBACK_ONLY_WATCH_URL = (
+    f"https://www.youtube.com/watch?v={YOUTUBE_PLAYBACK_ONLY_VIDEO_ID}"
+)
+YOUTUBE_EMBED_URL = f"https://www.youtube.com/embed/{YOUTUBE_VIDEO_ID}"
+YOUTUBE_TRANSCRIPT_SEGMENTS = [
+    {
+        "canonical_text": "S8 E2E segment alpha intro line.",
+        "speaker_label": "Host",
+        "t_start_ms": 4_000,
+        "t_end_ms": 8_000,
+    },
+    {
+        "canonical_text": "S8 E2E segment beta seek target.",
+        "speaker_label": "Guest",
+        "t_start_ms": 12_000,
+        "t_end_ms": 17_000,
+    },
+]
 
 # EPUB chapter content for deterministic tests
 EPUB_CHAPTERS = [
@@ -329,6 +352,67 @@ def _write_epub_seed_file(
     print(f"Wrote E2E EPUB seed metadata: {seed_path}")
 
 
+def _write_youtube_seed_file(
+    *,
+    media_id: str,
+    playback_only_media_id: str,
+    watch_url: str,
+    embed_url: str,
+    seek_segment_text: str,
+    seek_segment_start_ms: int,
+) -> None:
+    """Persist seeded YouTube media metadata for transcript media E2E tests."""
+    repo_root = Path(__file__).resolve().parents[2]
+    seed_path = repo_root / YOUTUBE_SEED_FILE_RELATIVE
+    seed_path.parent.mkdir(parents=True, exist_ok=True)
+    seed_payload = {
+        "media_id": media_id,
+        "playback_only_media_id": playback_only_media_id,
+        "watch_url": watch_url,
+        "embed_url": embed_url,
+        "seek_segment_text": seek_segment_text,
+        "seek_segment_start_ms": seek_segment_start_ms,
+        "seeded_at": datetime.now(UTC).isoformat(),
+    }
+    seed_path.write_text(json.dumps(seed_payload, indent=2) + "\n", encoding="utf-8")
+    print(f"Wrote E2E YouTube seed metadata: {seed_path}")
+
+
+def _clear_fragment_artifacts(db, media_id: UUID) -> None:
+    """Clear fragments/highlights/annotations attached to media transcript content."""
+    db.execute(
+        text(
+            """
+            DELETE FROM annotations
+            WHERE highlight_id IN (
+                SELECT h.id
+                FROM highlights h
+                JOIN fragments f ON f.id = h.fragment_id
+                WHERE f.media_id = :media_id
+            )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM highlights
+            WHERE fragment_id IN (
+                SELECT id
+                FROM fragments
+                WHERE media_id = :media_id
+            )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM fragments WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+
+
 def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
     """Seed deterministic web-article media with highlights for linked-items E2E."""
     canonical_text, html_sanitized, quote_exact, focus_exact = _build_non_pdf_fragment_payload()
@@ -417,6 +501,106 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
         focus_exact=focus_exact,
     )
     print(f"Seeded non-PDF linked-items media for E2E: {media_id}")
+
+
+def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
+    """Seed transcript-ready + transcript-unavailable YouTube media for E2E."""
+    with session_factory() as db:
+        ensure_user_and_default_library(db, user_id)
+        transcript_resp = create_or_reuse_youtube_video(
+            db=db,
+            viewer_id=user_id,
+            url=YOUTUBE_WATCH_URL,
+            enqueue_task=False,
+        )
+        transcript_media_id = transcript_resp.media_id
+
+    with session_factory() as db:
+        media = db.execute(
+            select(Media).where(Media.id == transcript_media_id)
+        ).scalar_one_or_none()
+        if media is None:
+            raise RuntimeError(f"YouTube transcript-ready media missing: {transcript_media_id}")
+
+        _clear_fragment_artifacts(db, transcript_media_id)
+
+        now = datetime.now(UTC)
+        media.title = "E2E YouTube transcript-ready seed"
+        media.canonical_url = YOUTUBE_WATCH_URL
+        media.canonical_source_url = YOUTUBE_WATCH_URL
+        media.external_playback_url = YOUTUBE_WATCH_URL
+        media.provider = "youtube"
+        media.provider_id = YOUTUBE_VIDEO_ID
+        media.processing_status = ProcessingStatus.ready_for_reading
+        media.failure_stage = None
+        media.last_error_code = None
+        media.last_error_message = None
+        media.failed_at = None
+        media.processing_started_at = now
+        media.processing_completed_at = now
+        media.updated_at = now
+
+        for idx, segment in enumerate(YOUTUBE_TRANSCRIPT_SEGMENTS):
+            db.add(
+                Fragment(
+                    media_id=transcript_media_id,
+                    idx=idx,
+                    canonical_text=segment["canonical_text"],
+                    html_sanitized=f"<p>{escape(segment['canonical_text'])}</p>",
+                    t_start_ms=segment["t_start_ms"],
+                    t_end_ms=segment["t_end_ms"],
+                    speaker_label=segment["speaker_label"],
+                )
+            )
+
+        db.commit()
+
+    with session_factory() as db:
+        ensure_user_and_default_library(db, user_id)
+        playback_only_resp = create_or_reuse_youtube_video(
+            db=db,
+            viewer_id=user_id,
+            url=YOUTUBE_PLAYBACK_ONLY_WATCH_URL,
+            enqueue_task=False,
+        )
+        playback_only_media_id = playback_only_resp.media_id
+
+    with session_factory() as db:
+        playback_only_media = db.execute(
+            select(Media).where(Media.id == playback_only_media_id)
+        ).scalar_one_or_none()
+        if playback_only_media is None:
+            raise RuntimeError(f"YouTube playback-only media missing: {playback_only_media_id}")
+
+        _clear_fragment_artifacts(db, playback_only_media_id)
+
+        now = datetime.now(UTC)
+        playback_only_media.title = "E2E YouTube playback-only seed"
+        playback_only_media.canonical_url = YOUTUBE_PLAYBACK_ONLY_WATCH_URL
+        playback_only_media.canonical_source_url = YOUTUBE_PLAYBACK_ONLY_WATCH_URL
+        playback_only_media.external_playback_url = YOUTUBE_PLAYBACK_ONLY_WATCH_URL
+        playback_only_media.provider = "youtube"
+        playback_only_media.provider_id = YOUTUBE_PLAYBACK_ONLY_VIDEO_ID
+        playback_only_media.processing_status = ProcessingStatus.failed
+        playback_only_media.failure_stage = FailureStage.transcribe
+        playback_only_media.last_error_code = "E_TRANSCRIPT_UNAVAILABLE"
+        playback_only_media.last_error_message = "Transcript unavailable in seed fixture"
+        playback_only_media.failed_at = now
+        playback_only_media.processing_completed_at = now
+        playback_only_media.updated_at = now
+        db.commit()
+
+    seek_segment = YOUTUBE_TRANSCRIPT_SEGMENTS[1]
+    _write_youtube_seed_file(
+        media_id=str(transcript_media_id),
+        playback_only_media_id=str(playback_only_media_id),
+        watch_url=YOUTUBE_WATCH_URL,
+        embed_url=YOUTUBE_EMBED_URL,
+        seek_segment_text=seek_segment["canonical_text"],
+        seek_segment_start_ms=seek_segment["t_start_ms"],
+    )
+    print(f"Seeded YouTube transcript media for E2E: {transcript_media_id}")
+    print(f"Seeded YouTube playback-only media for E2E: {playback_only_media_id}")
 
 
 def _seed_api_key(session_factory, user_id: UUID) -> None:
@@ -649,6 +833,7 @@ def main() -> None:
     print(f"Seeded quote-ready PDF media for E2E: {media_id_str}")
 
     _seed_non_pdf_linked_items_media(session_factory, user_id)
+    _seed_youtube_transcript_media(session_factory, user_id)
     _seed_api_key(session_factory, user_id)
     _seed_epub_media(session_factory, user_id, settings)
 

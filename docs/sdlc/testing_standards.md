@@ -410,6 +410,7 @@ make test-front-unit    # frontend unit tests only (Node)
 make test-front-browser # frontend component tests (Vitest Browser Mode / Chromium)
 make test-e2e       # Playwright E2E
 make test-e2e-ui    # Playwright UI mode
+cd e2e && npm run test:csp -- tests/youtube-transcript.csp.spec.ts --project=chromium-csp # strict CSP runtime assertions
 ```
 
 Command semantics:
@@ -417,6 +418,7 @@ Command semantics:
 - `make verify-fast`: static checks + fast unit tests only (no build, no browser-mode component tests, no E2E)
 - `make verify`: full local verification for routine development (static checks + build + backend tests + frontend unit/browser tests), excluding E2E by default
 - `make test-e2e`: explicit real-stack Playwright run (used before merge and in CI)
+- `npm run test:csp` in `e2e/`: strict CSP profile for runtime policy assertions against production Next runtime
 
 Target CI shape:
 

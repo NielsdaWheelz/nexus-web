@@ -6,6 +6,7 @@ const API_PORT = process.env.API_PORT ?? "8000";
 export default defineConfig({
   globalSetup: "./global-setup.mjs",
   testDir: "./tests",
+  testIgnore: ["**/*.csp.spec.ts", "**/*.csp.setup.ts"],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

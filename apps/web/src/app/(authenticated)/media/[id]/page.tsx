@@ -51,6 +51,10 @@ import {
   type EpubTocResponse,
   type NormalizedTocNode,
 } from "@/lib/media/epubReader";
+import TranscriptMediaPane, {
+  type TranscriptPlaybackSource,
+  type TranscriptFragment,
+} from "./TranscriptMediaPane";
 import styles from "./page.module.css";
 
 // =============================================================================
@@ -71,11 +75,7 @@ interface Media {
     can_play: boolean;
     can_download_file: boolean;
   };
-  playback_source?: {
-    kind: "external_audio" | "external_video";
-    stream_url: string;
-    source_url: string;
-  } | null;
+  playback_source?: TranscriptPlaybackSource | null;
   failure_stage?: string | null;
   last_error_code?: string | null;
   created_at: string;
@@ -214,19 +214,6 @@ async function fetchChapterDetail(
   return resp.data;
 }
 
-function formatTimestampMs(timestampMs: number | null | undefined): string | null {
-  if (timestampMs == null || timestampMs < 0) {
-    return null;
-  }
-  const totalSeconds = Math.floor(timestampMs / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return `${hours.toString().padStart(2, "0")}:${minutes
-    .toString()
-    .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
-}
-
 // =============================================================================
 // Component
 // =============================================================================
@@ -287,11 +274,8 @@ export default function MediaViewPage({
 
   const contentRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
   const [highlightsVersion, setHighlightsVersion] = useState(0);
-  const [playbackError, setPlaybackError] = useState(false);
 
   // ---- Derived state ----
   const isEpub = media?.kind === "epub";
@@ -382,7 +366,6 @@ export default function MediaViewPage({
       setPdfRefreshToken(0);
       setPdfHighlightsVersion(0);
     }
-    setPlaybackError(false);
   }, [isPdf, id]);
 
   // ==========================================================================
@@ -774,31 +757,15 @@ export default function MediaViewPage({
     setSelectionError(null);
   }, []);
 
-  const seekPlaybackToMs = useCallback(
-    (timestampMs: number | null | undefined) => {
-      if (timestampMs == null || timestampMs < 0) {
-        return;
-      }
-      const playbackElement =
-        media?.kind === "video" ? videoRef.current : audioRef.current;
-      if (!playbackElement) {
-        return;
-      }
-      playbackElement.currentTime = timestampMs / 1000;
-    },
-    [media?.kind]
-  );
-
   const handleTranscriptSegmentSelect = useCallback(
-    (fragment: Fragment) => {
+    (fragment: TranscriptFragment) => {
       setActiveTranscriptFragmentId(fragment.id);
       clearFocus();
       setHighlights([]);
       setSelection(null);
       setSelectionError(null);
-      seekPlaybackToMs(fragment.t_start_ms);
     },
-    [clearFocus, seekPlaybackToMs]
+    [clearFocus]
   );
 
   // ==========================================================================
@@ -1079,108 +1046,20 @@ export default function MediaViewPage({
           )}
 
           {isTranscriptMedia ? (
-            <div className={styles.transcriptPane}>
-              <div className={styles.playerPanel}>
-                {playbackSource ? (
-                  playbackSource.kind === "external_audio" ? (
-                    <audio
-                      ref={audioRef}
-                      controls
-                      preload="none"
-                      src={playbackSource.stream_url}
-                      className={styles.player}
-                      onError={() => setPlaybackError(true)}
-                      onCanPlay={() => setPlaybackError(false)}
-                    />
-                  ) : (
-                    <video
-                      ref={videoRef}
-                      controls
-                      preload="none"
-                      src={playbackSource.stream_url}
-                      className={styles.player}
-                      onError={() => setPlaybackError(true)}
-                      onCanPlay={() => setPlaybackError(false)}
-                    />
-                  )
-                ) : (
-                  <div className={styles.notReady}>
-                    <p>No playback source is available.</p>
-                  </div>
-                )}
-
-                {playbackError &&
-                  (playbackSource?.source_url || media.canonical_source_url) && (
-                    <div className={styles.playbackFallback}>
-                      <p>Browser playback failed.</p>
-                      <a
-                        href={playbackSource?.source_url || media.canonical_source_url || "#"}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={styles.sourceLink}
-                      >
-                        Open in source ↗
-                      </a>
-                    </div>
-                  )}
-              </div>
-
-              {isPlaybackOnlyTranscript ? (
-                <div className={styles.notReady}>
-                  <p>Transcript unavailable for this episode.</p>
-                  <p>Error: E_TRANSCRIPT_UNAVAILABLE</p>
-                </div>
-              ) : !canRead ? (
-                <div className={styles.notReady}>
-                  <p>This media is still being processed.</p>
-                  <p>Status: {media.processing_status}</p>
-                </div>
-              ) : fragments.length === 0 ? (
-                <div className={styles.empty}>
-                  <p>No transcript segments available.</p>
-                </div>
-              ) : (
-                <div className={styles.transcriptLayout}>
-                  <div className={styles.transcriptSegments}>
-                    {fragments.map((fragment) => {
-                      const ts = formatTimestampMs(fragment.t_start_ms);
-                      const isActive = fragment.id === activeTranscriptFragment?.id;
-                      return (
-                        <button
-                          key={fragment.id}
-                          type="button"
-                          className={`${styles.segmentButton} ${
-                            isActive ? styles.segmentButtonActive : ""
-                          }`}
-                          onClick={() => handleTranscriptSegmentSelect(fragment)}
-                        >
-                          <span className={styles.segmentMeta}>
-                            {ts && <span>{ts}</span>}
-                            {fragment.speaker_label && (
-                              <span>{fragment.speaker_label}</span>
-                            )}
-                          </span>
-                          <span className={styles.segmentText}>{fragment.canonical_text}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {activeTranscriptFragment && (
-                    <div
-                      ref={contentRef}
-                      className={styles.transcriptActiveFragment}
-                      onClick={handleContentClick}
-                    >
-                      <HtmlRenderer
-                        htmlSanitized={renderedHtml}
-                        className={styles.fragment}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <TranscriptMediaPane
+              mediaKind={media.kind === "video" ? "video" : "podcast_episode"}
+              playbackSource={playbackSource}
+              canonicalSourceUrl={media.canonical_source_url}
+              isPlaybackOnlyTranscript={isPlaybackOnlyTranscript}
+              canRead={canRead}
+              processingStatus={media.processing_status}
+              fragments={fragments}
+              activeFragment={activeTranscriptFragment}
+              renderedHtml={renderedHtml}
+              contentRef={contentRef}
+              onSegmentSelect={handleTranscriptSegmentSelect}
+              onContentClick={handleContentClick}
+            />
           ) : !canRead ? (
             <div className={styles.notReady}>
               {isPdf && media.processing_status === "failed" ? (

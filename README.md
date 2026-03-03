@@ -162,6 +162,7 @@ project starts:
   - `e2e/.seed/pdf-media.json` (PDF reader specs)
   - `e2e/.seed/non-pdf-media.json` (non-PDF linked-items specs)
   - `e2e/.seed/epub-media.json` (EPUB reader specs)
+  - `e2e/.seed/youtube-media.json` (YouTube transcript media specs)
 
 `globalSetup` loads root `.env` and `.dev-ports` automatically so direct runs like
 `cd e2e && npm test -- tests/pdf-reader.spec.ts --project=chromium` behave like `make test-e2e`.
@@ -173,6 +174,7 @@ cd e2e
 npm test -- tests/pdf-reader.spec.ts --project=chromium
 npm test -- tests/non-pdf-linked-items.spec.ts --project=chromium
 npm test -- tests/epub.spec.ts --project=chromium
+npm test -- tests/youtube-transcript.spec.ts --project=chromium
 ```
 
 For fast local reruns when seed state is known-good:
@@ -181,6 +183,13 @@ For fast local reruns when seed state is known-good:
 cd e2e
 SKIP_SEED=1 npm test -- tests/pdf-reader.spec.ts --project=chromium
 SKIP_SEED=1 npm test -- tests/epub.spec.ts --project=chromium
+```
+
+Runtime CSP verification profile (production Next runtime + CSP enabled):
+
+```bash
+cd e2e
+npm run test:csp -- tests/youtube-transcript.csp.spec.ts --project=chromium-csp
 ```
 
 ### Run Full Stack
