@@ -192,6 +192,29 @@ class TestAllowedElements:
         assert 'colspan="2"' in result
 
 
+class TestAnchorTargetPreservation:
+    """Tests opt-in behavior for keeping in-document anchor targets."""
+
+    def test_anchor_targets_preserved_when_opted_in(self):
+        html = (
+            '<h2 id="sec-a" class="heading">Section A</h2>'
+            '<a name="legacy-anchor" href="#sec-a" onclick="evil()">jump</a>'
+        )
+        result = sanitize_html(
+            html,
+            "https://example.com",
+            preserve_anchor_targets=True,
+        )
+
+        # Anchor targets must be retained for in-document navigation.
+        assert 'id="sec-a"' in result
+        assert 'name="legacy-anchor"' in result
+
+        # Security invariants still apply.
+        assert "onclick" not in result
+        assert "class=" not in result
+
+
 class TestEmptyAndMalformed:
     """Tests for edge cases."""
 

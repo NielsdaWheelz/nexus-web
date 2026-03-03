@@ -26,7 +26,7 @@ from xml.etree import ElementTree as ET
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
-from nexus.db.models import EpubTocNode, Fragment, Media
+from nexus.db.models import EpubNavLocation, EpubTocNode, Fragment, Media
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.canonicalize import generate_canonical_text
@@ -117,6 +117,18 @@ class _AssetEntry:
     asset_key: str
     content: bytes
     content_type: str
+
+
+@dataclass
+class _NavLocationSpec:
+    location_id: str
+    ordinal: int
+    source_node_id: str | None
+    label: str
+    fragment_idx: int
+    href_path: str | None
+    href_fragment: str | None
+    source: str
 
 
 @dataclass
@@ -229,6 +241,9 @@ def extract_epub_artifacts(
         # ---- resource rewriting + asset collection -------------------------
         asset_entries: list[_AssetEntry] = []
         asset_key_map: dict[str, str] = {}  # epub_path -> asset_key
+        readable_paths = {
+            href for (href, media_type) in manifest.values() if media_type in _READABLE_MEDIA_TYPES
+        }
 
         for ch in chapter_specs:
             ch.raw_html = _rewrite_chapter_resources(
@@ -240,11 +255,13 @@ def extract_epub_artifacts(
                 manifest,
                 asset_entries,
                 asset_key_map,
+                readable_paths,
             )
 
         # ---- sanitize + canonicalize + fragment creation --------------------
         fragments: list[Fragment] = []
-        all_block_specs: list[tuple[int, list]] = []
+        all_block_specs: list[list] = []
+        retained_hrefs: list[str] = []
 
         for contiguous_idx, ch in enumerate(chapter_specs):
             try:
@@ -275,7 +292,8 @@ def extract_epub_artifacts(
             )
             fragments.append(frag)
             block_specs = parse_fragment_blocks(canonical_text)
-            all_block_specs.append((contiguous_idx, block_specs))
+            all_block_specs.append(block_specs)
+            retained_hrefs.append(ch.href)
 
         # re-index fragments contiguously after potential empty-skip
         for new_idx, frag in enumerate(fragments):
@@ -288,10 +306,11 @@ def extract_epub_artifacts(
             )
 
         # build href -> fragment_idx lookup
-        href_to_frag_idx = _build_href_to_frag_idx(chapter_specs, fragments)
+        href_to_frag_idx = _build_href_to_frag_idx(retained_hrefs)
 
         # ---- TOC materialization -------------------------------------------
         toc_nodes = _materialize_toc(zf, opf_tree, opf_dir, manifest, href_to_frag_idx, media_id)
+        nav_locations = _materialize_nav_locations(toc_nodes, fragments)
 
         # ---- check parse-time budget ---------------------------------------
         elapsed_ms = int((time.monotonic() - t_start) * 1000)
@@ -308,12 +327,8 @@ def extract_epub_artifacts(
         db.flush()
 
         for frag in fragments:
-            idx = frag.idx
-            matching = [bs for (cidx, bs) in all_block_specs if cidx == idx]
-            if not matching:
-                matching = [bs for (cidx, bs) in all_block_specs]
-            if matching:
-                insert_fragment_blocks(db, frag.id, matching[0])
+            if 0 <= frag.idx < len(all_block_specs):
+                insert_fragment_blocks(db, frag.id, all_block_specs[frag.idx])
 
         for tn in toc_nodes:
             db.add(
@@ -326,6 +341,24 @@ def extract_epub_artifacts(
                     fragment_idx=tn.fragment_idx,
                     depth=tn.depth,
                     order_key=tn.order_key,
+                    created_at=now,
+                )
+            )
+
+        db.flush()
+
+        for nav in nav_locations:
+            db.add(
+                EpubNavLocation(
+                    media_id=media_id,
+                    location_id=nav.location_id,
+                    ordinal=nav.ordinal,
+                    source_node_id=nav.source_node_id,
+                    label=nav.label,
+                    fragment_idx=nav.fragment_idx,
+                    href_path=nav.href_path,
+                    href_fragment=nav.href_fragment,
+                    source=nav.source,
                     created_at=now,
                 )
             )
@@ -638,6 +671,7 @@ def _rewrite_chapter_resources(
     manifest: dict[str, tuple[str, str]],
     asset_entries: list[_AssetEntry],
     asset_key_map: dict[str, str],
+    readable_paths: set[str],
 ) -> str:
     """Rewrite src/href in chapter HTML.
 
@@ -672,6 +706,11 @@ def _rewrite_chapter_resources(
         frag = parsed.fragment
         path_only = decoded.split("#")[0] if "#" in decoded else decoded
         resolved = posixpath.normpath(posixpath.join(chapter_dir, path_only))
+
+        # Preserve readable chapter links as logical chapter references; do not
+        # convert them into binary asset URLs.
+        if attr_name.lower() == "href" and resolved in readable_paths:
+            return match.group(0)
 
         # check if it exists in the archive
         if resolved in asset_key_map:
@@ -768,7 +807,11 @@ def _epub_sanitize(html: str) -> str:
     """
     from nexus.services.sanitize_html import sanitize_html
 
-    return sanitize_html(html, base_url="https://epub.internal/")
+    return sanitize_html(
+        html,
+        base_url="https://epub.internal/",
+        preserve_anchor_targets=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1034,6 +1077,97 @@ def _walk_ncx_navpoints(
 
 
 # ---------------------------------------------------------------------------
+# Navigation location materialization
+# ---------------------------------------------------------------------------
+
+
+def _materialize_nav_locations(
+    toc_nodes: list[_TocNodeSpec],
+    fragments: list[Fragment],
+) -> list[_NavLocationSpec]:
+    """Build canonical navigation locations from TOC mappings + fragment fallback."""
+    locations: list[_NavLocationSpec] = []
+    used_fragment_idxs: set[int] = set()
+    seen_location_ids: set[str] = set()
+    ordinal = 0
+
+    for tn in toc_nodes:
+        if tn.fragment_idx is None:
+            continue
+        href_path, href_fragment = _split_href_parts(tn.href)
+        location_id = _toc_location_id(tn, seen_location_ids)
+        locations.append(
+            _NavLocationSpec(
+                location_id=location_id,
+                ordinal=ordinal,
+                source_node_id=tn.node_id,
+                label=tn.label[:512],
+                fragment_idx=tn.fragment_idx,
+                href_path=href_path,
+                href_fragment=href_fragment,
+                source="toc",
+            )
+        )
+        used_fragment_idxs.add(tn.fragment_idx)
+        ordinal += 1
+
+    for frag in sorted(fragments, key=lambda f: f.idx):
+        if frag.idx in used_fragment_idxs:
+            continue
+        location_id = _ensure_location_id_unique(f"frag-{frag.idx:06d}", seen_location_ids)
+        locations.append(
+            _NavLocationSpec(
+                location_id=location_id,
+                ordinal=ordinal,
+                source_node_id=None,
+                label=_fallback_fragment_label(frag.canonical_text, frag.idx),
+                fragment_idx=frag.idx,
+                href_path=None,
+                href_fragment=None,
+                source="fragment_fallback",
+            )
+        )
+        ordinal += 1
+
+    return locations
+
+
+def _split_href_parts(href: str | None) -> tuple[str | None, str | None]:
+    if not href:
+        return None, None
+    if "#" not in href:
+        return href, None
+    path_part, frag_part = href.split("#", 1)
+    return (path_part or None, frag_part or None)
+
+
+def _toc_location_id(tn: _TocNodeSpec, seen: set[str]) -> str:
+    base = _slug(tn.node_id)[:32]
+    digest = hashlib.sha256(f"{tn.node_id}|{tn.order_key}".encode()).hexdigest()[:12]
+    return _ensure_location_id_unique(f"toc-{base}-{digest}", seen)
+
+
+def _ensure_location_id_unique(candidate: str, seen: set[str]) -> str:
+    if candidate not in seen:
+        seen.add(candidate)
+        return candidate
+    i = 1
+    while f"{candidate}-{i}" in seen:
+        i += 1
+    unique = f"{candidate}-{i}"
+    seen.add(unique)
+    return unique
+
+
+def _fallback_fragment_label(canonical_text: str, idx: int) -> str:
+    for line in canonical_text.splitlines():
+        trimmed = line.strip()
+        if trimmed:
+            return trimmed[:512]
+    return f"Chapter {idx + 1}"
+
+
+# ---------------------------------------------------------------------------
 # Node ID helpers
 # ---------------------------------------------------------------------------
 
@@ -1091,15 +1225,15 @@ def _text_content(el: ET.Element) -> str:
 
 
 def _build_href_to_frag_idx(
-    chapter_specs: list[_ChapterSpec],
-    fragments: list[Fragment],
+    retained_hrefs: list[str],
 ) -> dict[str, int]:
-    """Map chapter hrefs to their assigned contiguous fragment idx."""
+    """Map retained chapter hrefs to contiguous fragment idx.
+
+    The input list must contain hrefs for chapters that survived
+    canonicalization in the exact final fragment order.
+    """
     result: dict[str, int] = {}
-    for ch in chapter_specs:
-        for frag in fragments:
-            if frag.idx < len(chapter_specs):
-                if chapter_specs[frag.idx].href == ch.href:
-                    result[ch.href] = frag.idx
-                    break
+    for idx, href in enumerate(retained_hrefs):
+        # Keep first mapping if duplicate href appears in malformed books.
+        result.setdefault(href, idx)
     return result

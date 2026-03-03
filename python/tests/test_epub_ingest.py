@@ -508,7 +508,9 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
-        assert result.asset_count >= 1
+        # Only static assets should be extracted/uploaded. Chapter-to-chapter
+        # xhtml links must not be treated as binary assets.
+        assert result.asset_count == 1
 
         frag = db_session.execute(
             text("SELECT html_sanitized FROM fragments WHERE media_id = :mid AND idx = 0"),
@@ -517,7 +519,9 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         html = frag[0]
 
         # internal image rewritten to safe fetch path
-        assert f"/media/{mid}/assets/" in html
+        assert f"/media/{mid}/assets/" in html or f"%2Fmedia%2F{mid}%2Fassets%2F" in html
+        # chapter xhtml links remain logical chapter links, not asset fetches
+        assert f"/media/{mid}/assets/OEBPS/chapter2.xhtml" not in html
         # external image rewritten to image proxy
         assert "/media/image?url=" in html
         # broken ref degraded (src removed or empty)
@@ -530,6 +534,110 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         assert "onerror" not in html.lower()
         # javascript: protocol stripped from href
         assert "javascript:" not in html.lower()
+
+
+class TestEpubExtractTocMappingRemainsAlignedWhenNonTextSpineItemSkipped:
+    """TOC href->fragment mapping stays stable when a spine item is skipped."""
+
+    def test_toc_mapping_not_shifted_by_skipped_non_text_spine_item(self, db_session: Session):
+        storage = FakeStorageClient()
+        cover_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20
+
+        # chapter0.xhtml is readable XHTML but canonicalizes to empty text
+        # (image-only). It should be skipped for fragment creation without
+        # shifting subsequent TOC href->fragment mappings.
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[
+                        ("ch0", "chapter0.xhtml", "application/xhtml+xml"),
+                        ("ch1", "chapter1.xhtml", "application/xhtml+xml"),
+                        ("ch2", "chapter2.xhtml", "application/xhtml+xml"),
+                    ],
+                    ncx_id="ncx",
+                ),
+                "OEBPS/chapter0.xhtml": _build_chapter_xhtml('<img src="cover.png" alt="cover"/>'),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml("<p>First readable chapter.</p>"),
+                "OEBPS/chapter2.xhtml": _build_chapter_xhtml("<p>Second readable chapter.</p>"),
+                "OEBPS/cover.png": cover_bytes,
+                "OEBPS/toc.ncx": _build_ncx(
+                    [
+                        ("np1", "Chapter One", "chapter1.xhtml"),
+                        ("np2", "Chapter Two", "chapter2.xhtml"),
+                    ]
+                ),
+            }
+        )
+
+        mid = _create_media_with_epub(db_session, storage, epub)
+        result = run_epub_ingest_sync(db_session, mid, storage)
+        db_session.flush()
+
+        assert isinstance(result, EpubExtractionResult)
+        assert result.chapter_count == 2
+
+        toc_rows = db_session.execute(
+            text(
+                "SELECT label, fragment_idx FROM epub_toc_nodes "
+                "WHERE media_id = :mid ORDER BY order_key"
+            ),
+            {"mid": mid},
+        ).fetchall()
+
+        assert len(toc_rows) == 2
+        assert toc_rows[0][0] == "Chapter One"
+        assert toc_rows[0][1] == 0, (
+            "Expected chapter1.xhtml to map to fragment idx 0 after skipping "
+            "chapter0.xhtml image-only spine item"
+        )
+        assert toc_rows[1][0] == "Chapter Two"
+        assert toc_rows[1][1] == 1, (
+            "Expected chapter2.xhtml to map to fragment idx 1; mapping should "
+            "not drift or become null when an earlier spine item is skipped"
+        )
+
+
+class TestEpubExtractPreservesAnchorTargetsForInFragmentNavigation:
+    """EPUB sanitization must retain in-fragment anchor targets."""
+
+    def test_anchor_id_and_name_survive_sanitization(self, db_session: Session):
+        storage = FakeStorageClient()
+
+        chapter_html = _build_chapter_xhtml(
+            '<h2 id="sec-a">Section A</h2><a name="legacy-anchor"></a><p>Body text.</p>'
+        )
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[("ch1", "chapter1.xhtml", "application/xhtml+xml")],
+                    ncx_id="ncx",
+                ),
+                "OEBPS/chapter1.xhtml": chapter_html,
+                "OEBPS/toc.ncx": _build_ncx(
+                    [
+                        ("np1", "Section A", "chapter1.xhtml#sec-a"),
+                        ("np2", "Legacy anchor", "chapter1.xhtml#legacy-anchor"),
+                    ]
+                ),
+            }
+        )
+
+        mid = _create_media_with_epub(db_session, storage, epub)
+        result = run_epub_ingest_sync(db_session, mid, storage)
+        db_session.flush()
+
+        assert isinstance(result, EpubExtractionResult)
+        assert result.chapter_count == 1
+
+        html = db_session.execute(
+            text("SELECT html_sanitized FROM fragments WHERE media_id = :mid AND idx = 0"),
+            {"mid": mid},
+        ).scalar_one()
+
+        # These anchors are required for TOC items that target positions inside
+        # the currently loaded fragment.
+        assert 'id="sec-a"' in html
+        assert 'name="legacy-anchor"' in html
 
 
 class TestEpubExtractRejectsUnsafeArchiveWithTerminalCode:

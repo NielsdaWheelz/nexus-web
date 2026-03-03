@@ -1,5 +1,5 @@
 /**
- * BFF proxy route tests for EPUB chapter and TOC endpoints (S5 PR-04).
+ * BFF proxy route tests for EPUB read endpoints.
  *
  * Verifies each route handler calls proxyToFastAPI with the exact
  * expected upstream path including query strings where applicable.
@@ -53,6 +53,14 @@ describe("media EPUB BFF proxy routes", () => {
     await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
     expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/toc");
+  });
+
+  it("GET /api/media/[id]/navigation proxies to /media/{id}/navigation", async () => {
+    const { GET } = await import("./[id]/navigation/route");
+    const req = new Request("http://localhost/api/media/mid-123/navigation");
+    await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/navigation");
   });
 
   it("GET /api/media/[id]/file proxies to canonical /media/{id}/file", async () => {

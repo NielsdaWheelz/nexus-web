@@ -54,10 +54,37 @@ export interface EpubTocResponse {
   };
 }
 
+export interface EpubNavigationSection {
+  section_id: string;
+  label: string;
+  fragment_idx: number;
+  anchor_id: string | null;
+  source_node_id: string | null;
+  source: "toc" | "fragment_fallback";
+  ordinal: number;
+}
+
+export interface EpubNavigationTocNode extends EpubTocNode {
+  section_id: string | null;
+  children: EpubNavigationTocNode[];
+}
+
+export interface EpubNavigationResponse {
+  data: {
+    sections: EpubNavigationSection[];
+    toc_nodes: EpubNavigationTocNode[];
+  };
+}
+
 // Normalized TOC node with navigability flag
 export interface NormalizedTocNode extends EpubTocNode {
   navigable: boolean;
   children: NormalizedTocNode[];
+}
+
+export interface NormalizedNavigationTocNode extends EpubNavigationTocNode {
+  navigable: boolean;
+  children: NormalizedNavigationTocNode[];
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +189,58 @@ export function normalizeEpubToc(
     ...node,
     navigable: node.fragment_idx !== null && chapterIdxSet.has(node.fragment_idx),
     children: normalizeEpubToc(node.children, chapterIdxSet),
+  }));
+}
+
+/**
+ * Resolve canonical section id for EPUB navigation from URL params.
+ *
+ * Priority:
+ * 1) valid `loc` query param (section id)
+ * 2) valid `chapter` query param mapped to first matching section
+ * 3) first section in ordered navigation list
+ * 4) null when no sections
+ */
+export function resolveInitialEpubSectionId(
+  sections: EpubNavigationSection[],
+  requestedLocParam: string | null | undefined,
+  requestedChapterParam: string | null | undefined
+): string | null {
+  if (sections.length === 0) {
+    return null;
+  }
+
+  if (requestedLocParam && sections.some((s) => s.section_id === requestedLocParam)) {
+    return requestedLocParam;
+  }
+
+  if (requestedChapterParam != null && requestedChapterParam !== "") {
+    const parsed = Number(requestedChapterParam);
+    if (Number.isFinite(parsed) && Number.isInteger(parsed) && parsed >= 0) {
+      const byChapter = sections.find((s) => s.fragment_idx === parsed);
+      if (byChapter) {
+        return byChapter.section_id;
+      }
+    }
+  }
+
+  return sections[0].section_id;
+}
+
+/**
+ * Normalize navigation TOC nodes with section-level navigability.
+ *
+ * A node is navigable only when it carries a valid section_id present in the
+ * current navigation payload.
+ */
+export function normalizeEpubNavigationToc(
+  nodes: EpubNavigationTocNode[],
+  sectionIdSet: Set<string>
+): NormalizedNavigationTocNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    navigable: node.section_id !== null && sectionIdSet.has(node.section_id),
+    children: normalizeEpubNavigationToc(node.children, sectionIdSet),
   }));
 }
 

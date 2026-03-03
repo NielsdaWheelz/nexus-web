@@ -123,6 +123,25 @@ class StorageClientBase(ABC):
         ...
 
     @abstractmethod
+    def put_object(
+        self,
+        path: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> None:
+        """Upload bytes to a storage object path.
+
+        Args:
+            path: Full storage path.
+            content: Binary payload to upload.
+            content_type: MIME type metadata for the object.
+
+        Raises:
+            StorageError: If upload fails.
+        """
+        ...
+
+    @abstractmethod
     def delete_object(self, path: str) -> None:
         """Delete an object from storage.
 
@@ -304,6 +323,33 @@ class StorageClient(StorageClientBase):
                     )
 
                 yield from response.iter_bytes(chunk_size=8 * 1024 * 1024)  # 8 MiB chunks
+
+    def put_object(
+        self,
+        path: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> None:
+        """Upload object bytes via authenticated POST request.
+
+        Uses upsert semantics so deterministic asset writes remain idempotent
+        across retries for the same media row.
+        """
+        url = f"{self._storage_url}/object/{self._bucket}/{path}"
+        headers = {
+            **self._headers,
+            "Content-Type": content_type,
+            "x-upsert": "true",
+        }
+
+        with httpx.Client() as client:
+            response = client.post(url, headers=headers, content=content, timeout=60.0)
+
+        if response.status_code not in (200, 201):
+            raise StorageError(
+                f"Failed to upload object: {response.status_code} {response.text}",
+                code="E_STORAGE_ERROR",
+            )
 
     def delete_object(self, path: str) -> None:
         """Delete object from storage (best-effort)."""

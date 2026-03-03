@@ -1911,6 +1911,73 @@ class TestGetEpubTocEmptyReturnsNodesEmpty:
         assert resp.json()["data"]["nodes"] == []
 
 
+class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
+    """test_get_epub_navigation_returns_canonical_sections_and_toc_targets"""
+
+    def test_navigation_response_includes_sections_and_toc_section_links(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_epub(session, num_chapters=3, with_toc=True)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}/navigation", headers=auth_headers(user_id))
+        assert resp.status_code == 200, (
+            f"Expected 200 from /media/{{id}}/navigation, got {resp.status_code}: {resp.text}"
+        )
+
+        body = resp.json()["data"]
+        assert "sections" in body
+        assert len(body["sections"]) >= 3
+        assert all("section_id" in section for section in body["sections"])
+        assert all("fragment_idx" in section for section in body["sections"])
+
+        toc_nodes = body["toc_nodes"]
+        assert len(toc_nodes) >= 1
+        assert all("section_id" in node for node in toc_nodes), (
+            "Every TOC node must carry a canonical section_id field (nullable) "
+            "so the reader can use one target model for dropdown and TOC"
+        )
+
+    def test_navigation_includes_fragment_fallback_section_for_unmapped_chapter(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_epub(session, num_chapters=3, with_toc=True)
+            # Remove the TOC node for chapter index 2 to force fallback section generation.
+            session.query(EpubTocNode).filter(
+                EpubTocNode.media_id == media_id,
+                EpubTocNode.fragment_idx == 2,
+            ).delete(synchronize_session=False)
+            session.commit()
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(f"/media/{media_id}/navigation", headers=auth_headers(user_id))
+        assert resp.status_code == 200
+        sections = resp.json()["data"]["sections"]
+
+        fallback_sections = [s for s in sections if s["source"] == "fragment_fallback"]
+        assert any(s["fragment_idx"] == 2 for s in fallback_sections), (
+            "Expected fragment fallback section for unmapped chapter idx=2"
+        )
+
+
 class TestGetEpubReadEndpointsVisibilityMasking:
     """test_get_epub_read_endpoints_visibility_masking"""
 
@@ -1931,11 +1998,12 @@ class TestGetEpubReadEndpointsVisibilityMasking:
         # Bootstrap user B (no media)
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        # User B should get 404 on all three endpoints (visibility masking)
+        # User B should get 404 on all EPUB read endpoints (visibility masking)
         for path in [
             f"/media/{media_id}/chapters",
             f"/media/{media_id}/chapters/0",
             f"/media/{media_id}/toc",
+            f"/media/{media_id}/navigation",
         ]:
             resp = auth_client.get(path, headers=auth_headers(user_b))
             assert resp.status_code == 404, f"Expected 404 for {path}, got {resp.status_code}"
@@ -1969,6 +2037,7 @@ class TestGetEpubReadEndpointsKindAndReadinessGuards:
             f"/media/{media_id}/chapters",
             f"/media/{media_id}/chapters/0",
             f"/media/{media_id}/toc",
+            f"/media/{media_id}/navigation",
         ]:
             resp = auth_client.get(path, headers=auth_headers(user_id))
             assert resp.status_code == 400, f"Expected 400 for {path}"
@@ -1997,6 +2066,7 @@ class TestGetEpubReadEndpointsKindAndReadinessGuards:
             f"/media/{media_id}/chapters",
             f"/media/{media_id}/chapters/0",
             f"/media/{media_id}/toc",
+            f"/media/{media_id}/navigation",
         ]:
             resp = auth_client.get(path, headers=auth_headers(user_id))
             assert resp.status_code == 409, f"Expected 409 for {path}"

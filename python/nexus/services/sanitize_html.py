@@ -83,7 +83,12 @@ EVENT_HANDLER_RE = re.compile(r"^on", re.IGNORECASE)
 IMAGE_PROXY_URL = "/media/image?url={encoded_url}"
 
 
-def sanitize_html(html: str, base_url: str) -> str:
+def sanitize_html(
+    html: str,
+    base_url: str,
+    *,
+    preserve_anchor_targets: bool = False,
+) -> str:
     """Sanitize HTML content from web article extraction.
 
     This function:
@@ -93,10 +98,13 @@ def sanitize_html(html: str, base_url: str) -> str:
     4. Strips all event handlers and styles
     5. Rewrites images to proxy endpoint
     6. Adds security attributes to links
+    7. Optionally preserves in-document anchor targets (`id` / `a[name]`)
 
     Args:
         html: The HTML content to sanitize (from Readability).
         base_url: The base URL for resolving relative URLs.
+        preserve_anchor_targets: Keep anchor target attributes for
+            in-document navigation (`id` and `a[name]`).
 
     Returns:
         Sanitized HTML string.
@@ -121,7 +129,11 @@ def sanitize_html(html: str, base_url: str) -> str:
     # Process body's children (not body itself, as we need to preserve it for serialization)
     for child in list(body):
         if isinstance(child, HtmlElement):
-            _sanitize_element(child, base_url)
+            _sanitize_element(
+                child,
+                base_url,
+                preserve_anchor_targets=preserve_anchor_targets,
+            )
 
     # Serialize back to string
     # Use method='html' to preserve HTML semantics (e.g., self-closing tags)
@@ -134,7 +146,12 @@ def sanitize_html(html: str, base_url: str) -> str:
     return result
 
 
-def _sanitize_element(element: HtmlElement, base_url: str) -> None:
+def _sanitize_element(
+    element: HtmlElement,
+    base_url: str,
+    *,
+    preserve_anchor_targets: bool,
+) -> None:
     """Recursively sanitize an element and its children.
 
     Modifies the element tree in-place.
@@ -142,7 +159,11 @@ def _sanitize_element(element: HtmlElement, base_url: str) -> None:
     # Process children first (deepest elements first)
     for child in list(element):
         if isinstance(child, HtmlElement):
-            _sanitize_element(child, base_url)
+            _sanitize_element(
+                child,
+                base_url,
+                preserve_anchor_targets=preserve_anchor_targets,
+            )
 
     # Check if this element's tag is allowed
     tag = element.tag.lower() if element.tag else ""
@@ -170,10 +191,21 @@ def _sanitize_element(element: HtmlElement, base_url: str) -> None:
         return
 
     # Sanitize attributes
-    _sanitize_attributes(element, tag, base_url)
+    _sanitize_attributes(
+        element,
+        tag,
+        base_url,
+        preserve_anchor_targets=preserve_anchor_targets,
+    )
 
 
-def _sanitize_attributes(element: HtmlElement, tag: str, base_url: str) -> None:
+def _sanitize_attributes(
+    element: HtmlElement,
+    tag: str,
+    base_url: str,
+    *,
+    preserve_anchor_targets: bool,
+) -> None:
     """Sanitize attributes on an element."""
     allowed = ALLOWED_ATTRS.get(tag, set())
 
@@ -187,8 +219,21 @@ def _sanitize_attributes(element: HtmlElement, tag: str, base_url: str) -> None:
             attrs_to_remove.append(attr)
             continue
 
-        # Always remove style, class, id
-        if attr_lower in ("style", "class", "id"):
+        # Always remove style and class
+        if attr_lower in ("style", "class"):
+            attrs_to_remove.append(attr)
+            continue
+
+        # Keep anchor targets only when explicitly requested.
+        if attr_lower == "id":
+            if preserve_anchor_targets and element.attrib.get(attr, "").strip():
+                continue
+            attrs_to_remove.append(attr)
+            continue
+
+        if attr_lower == "name" and tag == "a":
+            if preserve_anchor_targets and element.attrib.get(attr, "").strip():
+                continue
             attrs_to_remove.append(attr)
             continue
 

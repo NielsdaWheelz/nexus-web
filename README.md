@@ -80,8 +80,8 @@ nexus/
 - **Library Sharing** (S4): Multi-user library membership, invitations, and shared visibility. Canonical visibility predicates enforce S4 provenance rules for media (non-default membership, intrinsic, active closure edge), conversations (owner/public/library-shared with dual membership), and highlights (media visibility + library intersection).
 - **Send Message Flow**: Three-phase execution (Prepare → Execute → Finalize) to avoid holding DB transactions during LLM calls.
 - **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations.
-- **EPUB Extraction** (S5): Deterministic chapter fragment materialization from EPUB archives with TOC snapshot, title fallback, resource rewriting, and archive safety enforcement. Chapter + TOC read APIs with cursor pagination and BFF parity.
-- **EPUB Reader** (S5 PR-05): Chapter-based EPUB reader in the media view page. Chapter manifest navigation, URL-addressable chapter deep links, collapsible TOC with navigable/non-clickable node states, request-version guards for stale response protection, and deterministic error recovery matrix. Non-EPUB reader flow preserved unchanged.
+- **EPUB Extraction** (S5): Deterministic chapter fragment materialization from EPUB archives with TOC snapshot, title fallback, resource rewriting, archive safety enforcement, and persisted canonical navigation locations.
+- **EPUB Reader** (S5 PR-05 + hardening): Reader navigation is section-based (`loc` query param) via unified navigation payload (`sections` + TOC links). Dropdown and TOC resolve through the same section ids, with in-fragment anchor targeting preserved for TOC leaf navigation.
 - **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` remains control-plane only (subscribe + enqueue). `DELETE /podcasts/subscriptions/{podcast_id}` applies explicit unsubscribe retention modes (`mode=1|2|3`). Episode ingest runs in worker data-plane jobs with explicit sync lifecycle states (`pending`, `running`, `complete`, `source_limited`, `failed`).
 - **Podcast Transcription Pipeline** (S7 PR-03): transcript segments are sourced from transcription-provider output (Deepgram), not feed payload transcript fields. Diarized transcription falls back to non-diarized output, transcript text is canonicalized (NFC + whitespace normalization), and persisted segment timing is strictly validated (`t_start_ms < t_end_ms`).
 - **Podcast Active Polling Orchestration** (S7 PR-04): Celery Beat schedules periodic active-subscription polling. Runs are singleton-safe via durable lease rows, stale `running` subscription sync claims are reclaimable, and each run persists deterministic operator telemetry (`processed_count`, `failed_count`, `skipped_count`, `scanned_count`, failure-code breakdown).
@@ -669,7 +669,8 @@ When running locally:
 | Media | `GET /media/{id}`, `POST /media/from_url`, `POST /media/upload/init` |
 | EPUB Assets | `GET /media/{id}/assets/{asset_key}` (S5 PR-02: EPUB internal asset safe fetch) |
 | EPUB Chapters | `GET /media/{id}/chapters`, `GET /media/{id}/chapters/{idx}` (S5 PR-04: chapter manifest + navigation) |
-| EPUB TOC | `GET /media/{id}/toc` (S5 PR-04: persisted nested TOC tree) |
+| EPUB Navigation | `GET /media/{id}/navigation` (canonical section targets + TOC linkage for reader UI) |
+| EPUB TOC | `GET /media/{id}/toc` (legacy deterministic nested TOC tree) |
 | Podcasts | `GET /podcasts/discover`, `POST /podcasts/subscriptions`, `GET /podcasts/subscriptions/{podcast_id}`, `DELETE /podcasts/subscriptions/{podcast_id}?mode=1|2|3` |
 | Highlights | `POST/GET /fragments/{id}/highlights`, `PATCH/DELETE /highlights/{id}` |
 | Annotations | `PUT/DELETE /highlights/{id}/annotation` |

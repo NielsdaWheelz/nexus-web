@@ -68,8 +68,8 @@ def _reset_db_on_fork(**kwargs):
     so each child must create its own.  Clearing the lru_cache and the
     session-factory singleton forces lazy re-creation on first use.
     """
-    from nexus.db.engine import get_engine  # noqa: F811
     from nexus.db import session as session_mod
+    from nexus.db.engine import get_engine  # noqa: F811
 
     get_engine.cache_clear()
     session_mod._SessionLocal = None

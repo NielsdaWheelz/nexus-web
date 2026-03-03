@@ -9,9 +9,18 @@ Tests cover:
 
 from uuid import uuid4
 
+import httpx
 import pytest
+import respx
 
-from nexus.storage.client import FakeStorageClient, ObjectMetadata, SignedUpload, compute_sha256
+from nexus.storage.client import (
+    FakeStorageClient,
+    ObjectMetadata,
+    SignedUpload,
+    StorageClient,
+    StorageError,
+    compute_sha256,
+)
 from nexus.storage.paths import build_storage_path, get_file_extension, parse_storage_path
 
 pytestmark = pytest.mark.unit
@@ -195,3 +204,35 @@ class TestComputeSha256:
         expected = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         result = compute_sha256(b"")
         assert result == expected
+
+
+class TestStorageClientPutObject:
+    """Tests for production StorageClient put_object behavior."""
+
+    @respx.mock
+    def test_put_object_uploads_bytes_with_content_type(self):
+        client = StorageClient("https://example.supabase.co", "svc-key", bucket="media")
+        route = respx.post(
+            "https://example.supabase.co/storage/v1/object/media/media/test/assets/cover.jpg"
+        ).mock(return_value=httpx.Response(200, json={"Key": "ok"}))
+
+        payload = b"jpeg-bytes"
+        client.put_object("media/test/assets/cover.jpg", payload, "image/jpeg")
+
+        assert route.called, "Expected storage upload request to be issued"
+        request = route.calls[0].request
+        assert request.content == payload
+        assert request.headers.get("content-type") == "image/jpeg"
+        assert request.headers.get("x-upsert") == "true"
+
+    @respx.mock
+    def test_put_object_raises_storage_error_on_non_2xx(self):
+        client = StorageClient("https://example.supabase.co", "svc-key", bucket="media")
+        respx.post(
+            "https://example.supabase.co/storage/v1/object/media/media/test/assets/bad.bin"
+        ).mock(return_value=httpx.Response(500, text="boom"))
+
+        with pytest.raises(StorageError) as exc_info:
+            client.put_object("media/test/assets/bad.bin", b"data", "application/octet-stream")
+
+        assert exc_info.value.code == "E_STORAGE_ERROR"

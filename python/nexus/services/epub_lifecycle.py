@@ -14,6 +14,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    EpubNavLocation,
     EpubTocNode,
     FailureStage,
     Fragment,
@@ -313,6 +314,7 @@ def retry_epub_ingest_for_viewer(
 
 def _delete_extraction_artifacts(db: Session, media_id: UUID) -> None:
     """Delete all extraction and chunk/embedding artifacts for a media row."""
+    db.execute(delete(EpubNavLocation).where(EpubNavLocation.media_id == media_id))
     db.execute(delete(EpubTocNode).where(EpubTocNode.media_id == media_id))
 
     fragment_ids = (
