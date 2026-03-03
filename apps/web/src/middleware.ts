@@ -20,9 +20,11 @@ export async function middleware(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
 
   // Build CSP header
+  // Next.js dev mode requires 'unsafe-eval' for hot module reloading (HMR).
+  const isDev = process.env.NODE_ENV === "development";
   const cspHeader = [
-    `script-src 'self' 'nonce-${nonce}'`,
-    `style-src 'self' 'unsafe-inline'`,
+    `script-src 'self' 'nonce-${nonce}'${isDev ? " 'unsafe-eval'" : ""}`,
+    `style-src 'self' 'unsafe-inline'${isDev ? " https://fonts.googleapis.com" : ""}`,
     `frame-src https://www.youtube.com https://www.youtube-nocookie.com`,
     `worker-src 'self'`,
     `object-src 'none'`,
