@@ -1971,3 +1971,220 @@ class TestS6PR02DormantWindowRepair:
                 {"id": h_id},
             ).fetchone()
             assert fa_row is not None
+
+
+class TestMediaWideHighlightListing:
+    """Integration coverage for GET /media/{media_id}/highlights (book index mode)."""
+
+    def test_list_media_highlights_orders_by_chapter_and_offset_with_cursor_pagination(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        fragment_ch0 = uuid4()
+        fragment_ch1 = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:media_id, 'epub', 'Book', 'ready_for_reading')
+                """),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                    VALUES (:fid, :mid, 0, '<p>chapter zero</p>', 'chapter zero text')
+                """),
+                {"fid": fragment_ch0, "mid": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                    VALUES (:fid, :mid, 1, '<p>chapter one</p>', 'chapter one text')
+                """),
+                {"fid": fragment_ch1, "mid": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_ch0)
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_ch1)
+        direct_db.register_cleanup("fragments", "id", fragment_ch0)
+        direct_db.register_cleanup("fragments", "id", fragment_ch1)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        create_h3 = auth_client.post(
+            f"/fragments/{fragment_ch0}/highlights",
+            json={"start_offset": 1, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert create_h3.status_code == 201, (
+            f"Expected first chapter-0 highlight create to succeed, "
+            f"got {create_h3.status_code}: {create_h3.json()}"
+        )
+        create_h1 = auth_client.post(
+            f"/fragments/{fragment_ch0}/highlights",
+            json={"start_offset": 6, "end_offset": 10, "color": "green"},
+            headers=auth_headers(user_id),
+        )
+        assert create_h1.status_code == 201, (
+            f"Expected second chapter-0 highlight create to succeed, "
+            f"got {create_h1.status_code}: {create_h1.json()}"
+        )
+        create_h2 = auth_client.post(
+            f"/fragments/{fragment_ch1}/highlights",
+            json={"start_offset": 0, "end_offset": 4, "color": "blue"},
+            headers=auth_headers(user_id),
+        )
+        assert create_h2.status_code == 201, (
+            f"Expected chapter-1 highlight create to succeed, "
+            f"got {create_h2.status_code}: {create_h2.json()}"
+        )
+
+        first_page = auth_client.get(
+            f"/media/{media_id}/highlights?limit=2",
+            headers=auth_headers(user_id),
+        )
+        assert first_page.status_code == 200, (
+            f"Expected media highlights list page 1 to succeed, "
+            f"got {first_page.status_code}: {first_page.json()}"
+        )
+        first_payload = first_page.json()["data"]
+        first_items = first_payload["highlights"]
+
+        assert len(first_items) == 2, (
+            f"Expected first page to return 2 highlights, got {len(first_items)}: {first_items}"
+        )
+        assert first_items[0]["fragment_idx"] == 0
+        assert first_items[0]["start_offset"] == 1
+        assert first_items[1]["fragment_idx"] == 0
+        assert first_items[1]["start_offset"] == 6
+        assert first_payload["page"]["has_more"] is True
+        cursor = first_payload["page"]["next_cursor"]
+        assert cursor, f"Expected non-empty cursor when has_more=true, got: {first_payload['page']}"
+
+        second_page = auth_client.get(
+            f"/media/{media_id}/highlights?limit=2&cursor={cursor}",
+            headers=auth_headers(user_id),
+        )
+        assert second_page.status_code == 200, (
+            f"Expected media highlights list page 2 to succeed, "
+            f"got {second_page.status_code}: {second_page.json()}"
+        )
+        second_payload = second_page.json()["data"]
+        second_items = second_payload["highlights"]
+        assert len(second_items) == 1, (
+            f"Expected second page to return remaining highlight, got {len(second_items)}: "
+            f"{second_items}"
+        )
+        assert second_items[0]["fragment_idx"] == 1
+        assert second_items[0]["start_offset"] == 0
+        assert second_payload["page"]["has_more"] is False
+        assert second_payload["page"]["next_cursor"] is None
+
+    def test_list_media_highlights_orders_same_start_by_end_offset_before_created_at(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = uuid4()
+            fragment_id = uuid4()
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:media_id, 'epub', 'Cursor tie-break book', 'ready_for_reading')
+                """),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                    VALUES (:fragment_id, :media_id, 0, '<p>abcdefghi</p>', 'abcdefghi')
+                """),
+                {"fragment_id": fragment_id, "media_id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        older_long = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 1, "end_offset": 8, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert older_long.status_code == 201
+
+        # Ensure created_at differs so this asserts end_offset precedence, not timestamp ties.
+        time.sleep(0.05)
+
+        newer_short = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 1, "end_offset": 4, "color": "green"},
+            headers=auth_headers(user_id),
+        )
+        assert newer_short.status_code == 201
+
+        first_page = auth_client.get(
+            f"/media/{media_id}/highlights?limit=1",
+            headers=auth_headers(user_id),
+        )
+        assert first_page.status_code == 200
+        first_payload = first_page.json()["data"]
+        first_items = first_payload["highlights"]
+        assert len(first_items) == 1
+        assert first_items[0]["start_offset"] == 1
+        assert first_items[0]["end_offset"] == 4
+        assert first_payload["page"]["has_more"] is True
+        cursor = first_payload["page"]["next_cursor"]
+        assert cursor
+
+        second_page = auth_client.get(
+            f"/media/{media_id}/highlights?limit=1&cursor={cursor}",
+            headers=auth_headers(user_id),
+        )
+        assert second_page.status_code == 200
+        second_payload = second_page.json()["data"]
+        second_items = second_payload["highlights"]
+        assert len(second_items) == 1
+        assert second_items[0]["start_offset"] == 1
+        assert second_items[0]["end_offset"] == 8
+        assert second_payload["page"]["has_more"] is False
+        assert second_payload["page"]["next_cursor"] is None
+
+    def test_list_media_highlights_invalid_cursor_returns_400_invalid_cursor(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        response = auth_client.get(
+            f"/media/{media_id}/highlights?cursor=not-a-valid-cursor",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 400, (
+            f"Expected invalid cursor to return 400, got {response.status_code}: {response.json()}"
+        )
+        assert response.json()["error"]["code"] == "E_INVALID_CURSOR"

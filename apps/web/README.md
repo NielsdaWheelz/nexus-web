@@ -100,6 +100,7 @@ src/
 │   │   ├── me/
 │   │   ├── libraries/
 │   │   ├── media/
+│   │   │   └── [id]/highlights/   # Media-wide EPUB highlights (book scope)
 │   │   ├── fragments/      # Highlight creation endpoints (PR-09)
 │   │   │   └── [fragmentId]/highlights/
 │   │   └── highlights/     # Highlight CRUD endpoints (PR-09)
@@ -115,7 +116,7 @@ src/
 │   ├── SelectionPopover.tsx    # Highlight color picker (PR-09)
 │   ├── HighlightEditor.tsx     # Highlight edit/delete UI (PR-09)
 │   ├── AnnotationEditor.tsx    # Note editor (PR-09)
-│   ├── LinkedItemsPane.tsx     # Aligned linked-items container (PR-10)
+│   ├── LinkedItemsPane.tsx     # Aligned + list/virtualized linked-items container
 │   ├── LinkedItemRow.tsx       # Linked-item row component (PR-10)
 │   ├── Navbar.tsx
 │   ├── Pane.tsx

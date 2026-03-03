@@ -26,6 +26,11 @@ export interface LinkedItemRowHighlight {
   exact: string;
   color: "yellow" | "green" | "blue" | "pink" | "purple";
   annotation?: { id: string; body: string } | null;
+  start_offset?: number;
+  end_offset?: number;
+  created_at?: string;
+  fragment_id?: string;
+  fragment_idx?: number;
 }
 
 export interface LinkedItemRowProps {
@@ -41,6 +46,10 @@ export interface LinkedItemRowProps {
   onMouseLeave: () => void;
   /** Callback when "send to chat" is clicked (quote-to-chat). */
   onSendToChat?: (highlightId: string) => void;
+  /** Optional style override for positioned rows. */
+  style?: React.CSSProperties;
+  /** Optional class name for mode-specific row styling. */
+  className?: string;
 }
 
 // =============================================================================
@@ -62,7 +71,16 @@ const MAX_PREVIEW_LENGTH = 60;
  */
 const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
   function LinkedItemRow(
-    { highlight, isFocused, onClick, onMouseEnter, onMouseLeave, onSendToChat },
+    {
+      highlight,
+      isFocused,
+      onClick,
+      onMouseEnter,
+      onMouseLeave,
+      onSendToChat,
+      style,
+      className,
+    },
     ref
   ) {
     const handleClick = useCallback(() => {
@@ -90,7 +108,11 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
     return (
       <div
         ref={ref}
-        className={`${styles.linkedItemRow} ${isFocused ? styles.rowFocused : ""}`}
+        data-highlight-id={highlight.id}
+        className={`${styles.linkedItemRow} ${isFocused ? styles.rowFocused : ""} ${
+          className ?? ""
+        }`}
+        style={style}
         onClick={handleClick}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={onMouseLeave}

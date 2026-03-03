@@ -23,6 +23,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useMemo,
   type RefObject,
 } from "react";
 import LinkedItemRow, { type LinkedItemRowHighlight } from "./LinkedItemRow";
@@ -37,6 +38,17 @@ import {
   type AlignedRow,
 } from "@/lib/highlights/alignmentEngine";
 import styles from "./LinkedItemsPane.module.css";
+
+const LIST_ROW_SLOT_HEIGHT = ROW_HEIGHT + 4;
+const LIST_OVERSCAN_ROWS = 8;
+const INITIAL_LIST_ROWS = LIST_OVERSCAN_ROWS * 2 + 16;
+
+function escapeAttrValue(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
 
 // =============================================================================
 // Types
@@ -55,6 +67,8 @@ export interface LinkedItemsPaneProps {
   highlightsVersion?: number;
   /** Callback for quote-to-chat trigger (S3 PR-07). */
   onSendToChat?: (highlightId: string) => void;
+  /** Layout strategy: anchor alignment (chapter) or static list (book index). */
+  layoutMode?: "aligned" | "list";
 }
 
 // =============================================================================
@@ -68,7 +82,10 @@ export default function LinkedItemsPane({
   onHighlightClick,
   highlightsVersion = 0,
   onSendToChat,
+  layoutMode = "aligned",
 }: LinkedItemsPaneProps) {
+  const isAlignedMode = layoutMode === "aligned";
+
   // Container ref for sizing calculations
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -94,6 +111,8 @@ export default function LinkedItemsPane({
 
   // Count of rows below visible area
   const [overflowCount, setOverflowCount] = useState(0);
+  const [listScrollTop, setListScrollTop] = useState(0);
+  const [listViewportHeight, setListViewportHeight] = useState(0);
 
   // ==========================================================================
   // Measurement Phase
@@ -104,7 +123,7 @@ export default function LinkedItemsPane({
    * This is the "expensive" operation that reads layout from DOM.
    */
   const measure = useCallback(() => {
-    if (!contentRef.current) return;
+    if (!isAlignedMode || !contentRef.current) return;
 
     // Resolve scroll parent on first measurement (or if contentRef changed)
     if (!scrollParentRef.current) {
@@ -114,9 +133,9 @@ export default function LinkedItemsPane({
     // Convert highlights to AlignmentHighlight format
     const alignmentHighlights: AlignmentHighlight[] = highlights.map((h) => ({
       id: h.id,
-      start_offset: 0, // Not used for measurement, only for tie-breaking
-      end_offset: 0,
-      created_at: "", // Not used for measurement
+      start_offset: h.start_offset ?? 0,
+      end_offset: h.end_offset ?? 0,
+      created_at: h.created_at ?? "",
     }));
 
     const positions = measureAnchorPositions(
@@ -126,7 +145,7 @@ export default function LinkedItemsPane({
     );
 
     setAnchorPositions(positions);
-  }, [contentRef, highlights]);
+  }, [contentRef, highlights, isAlignedMode]);
 
   // Create debounced measurement scheduler
   const measureScheduler = useRef(createMeasureScheduler(measure));
@@ -147,7 +166,7 @@ export default function LinkedItemsPane({
    * This is the "cheap" operation that only does math and DOM writes.
    */
   const alignRows = useCallback(() => {
-    if (!scrollParentRef.current || anchorPositions.size === 0) return;
+    if (!isAlignedMode || !scrollParentRef.current || anchorPositions.size === 0) return;
 
     const scrollTop = scrollParentRef.current.scrollTop;
     const containerHeight = containerRef.current?.clientHeight ?? 0;
@@ -155,9 +174,9 @@ export default function LinkedItemsPane({
     // Convert highlights to alignment format with full data
     const alignmentHighlights: AlignmentHighlight[] = highlights.map((h) => ({
       id: h.id,
-      start_offset: 0, // We don't have offsets here, but we have positions
-      end_offset: 0,
-      created_at: "", // Not needed since we're using measured positions
+      start_offset: h.start_offset ?? 0,
+      end_offset: h.end_offset ?? 0,
+      created_at: h.created_at ?? "",
     }));
 
     // Compute aligned rows
@@ -187,7 +206,7 @@ export default function LinkedItemsPane({
         el.style.transform = `translateY(${row.top}px)`;
       }
     }
-  }, [anchorPositions, highlights]);
+  }, [anchorPositions, highlights, isAlignedMode]);
 
   // Create RAF-throttled scroll handler
   const scrollHandler = useRef(createScrollHandler(alignRows));
@@ -205,28 +224,37 @@ export default function LinkedItemsPane({
 
   // Initial measurement and on highlight changes
   useEffect(() => {
+    if (!isAlignedMode) return;
+
     // Measure on mount and after render stabilizes
     requestAnimationFrame(() => {
-      measure();
+      requestAnimationFrame(() => {
+        measure();
+      });
     });
-  }, [measure, highlightsVersion]);
+  }, [measure, highlightsVersion, isAlignedMode]);
 
   // Align after measurement completes
   useEffect(() => {
-    if (anchorPositions.size > 0) {
+    if (isAlignedMode && anchorPositions.size > 0) {
       alignRows();
     }
-  }, [anchorPositions, alignRows]);
+  }, [anchorPositions, alignRows, isAlignedMode]);
 
   // Resolve scroll parent when contentRef becomes available
   useEffect(() => {
+    if (!isAlignedMode) return;
     if (contentRef.current) {
       scrollParentRef.current = findScrollParent(contentRef.current as HTMLElement);
     }
-  }, [contentRef]);
+  }, [contentRef, highlightsVersion, isAlignedMode, highlights.length]);
 
   // Scroll event listener on the actual scrolling ancestor
   useEffect(() => {
+    if (!isAlignedMode) return;
+    if (contentRef.current) {
+      scrollParentRef.current = findScrollParent(contentRef.current as HTMLElement);
+    }
     const scrollEl = scrollParentRef.current;
     if (!scrollEl) return;
 
@@ -236,10 +264,11 @@ export default function LinkedItemsPane({
     return () => {
       scrollEl.removeEventListener("scroll", handleScroll);
     };
-  }, [contentRef]);
+  }, [contentRef, highlightsVersion, isAlignedMode, highlights.length]);
 
   // ResizeObserver for content, scroll parent, and container
   useEffect(() => {
+    if (!isAlignedMode) return;
     const contentEl = contentRef.current;
     const containerEl = containerRef.current;
     const scrollEl = scrollParentRef.current;
@@ -254,10 +283,11 @@ export default function LinkedItemsPane({
     if (scrollEl && scrollEl !== contentEl) observer.observe(scrollEl);
 
     return () => observer.disconnect();
-  }, [contentRef]);
+  }, [contentRef, isAlignedMode, highlightsVersion, highlights.length]);
 
   // Image load listeners
   useEffect(() => {
+    if (!isAlignedMode) return;
     const contentEl = contentRef.current;
     if (!contentEl) return;
 
@@ -275,7 +305,7 @@ export default function LinkedItemsPane({
         img.removeEventListener("error", handleImageLoad);
       });
     };
-  }, [contentRef, highlightsVersion]);
+  }, [contentRef, highlightsVersion, isAlignedMode]);
 
   // ==========================================================================
   // Interaction Handlers
@@ -292,8 +322,9 @@ export default function LinkedItemsPane({
 
       // Prefer anchor.scrollIntoView so the nearest real scroll container moves,
       // even when contentRef itself is not the element with overflow scrolling.
+      const escapedId = escapeAttrValue(highlightId);
       const anchor = contentEl.querySelector<HTMLElement>(
-        `[data-highlight-anchor="${highlightId}"]`
+        `[data-highlight-anchor="${escapedId}"]`
       );
       if (anchor) {
         anchor.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -308,7 +339,8 @@ export default function LinkedItemsPane({
 
       // Apply hover outline to content pane highlights
       if (contentRef.current) {
-        const selector = `[data-active-highlight-ids~="${highlightId}"]`;
+        const escapedId = escapeAttrValue(highlightId);
+        const selector = `[data-active-highlight-ids~="${escapedId}"]`;
         const segments = contentRef.current.querySelectorAll(selector);
         segments.forEach((el) => el.classList.add("hl-hover-outline"));
       }
@@ -345,10 +377,111 @@ export default function LinkedItemsPane({
 
   // Log missing anchors in development
   useEffect(() => {
-    if (missingAnchors.length > 0) {
+    if (isAlignedMode && missingAnchors.length > 0) {
       console.warn("highlight_anchor_missing", { highlightIds: missingAnchors });
     }
-  }, [missingAnchors]);
+  }, [missingAnchors, isAlignedMode]);
+
+  useEffect(() => {
+    if (isAlignedMode) return;
+    const containerEl = containerRef.current;
+    if (!containerEl) return;
+
+    const updateListMetrics = () => {
+      setListViewportHeight(containerEl.clientHeight);
+      setListScrollTop(containerEl.scrollTop);
+    };
+
+    updateListMetrics();
+    const handleListScroll = () => {
+      setListScrollTop(containerEl.scrollTop);
+    };
+
+    const observer = new ResizeObserver(updateListMetrics);
+    observer.observe(containerEl);
+    containerEl.addEventListener("scroll", handleListScroll, { passive: true });
+
+    return () => {
+      containerEl.removeEventListener("scroll", handleListScroll);
+      observer.disconnect();
+    };
+  }, [isAlignedMode, highlights.length, highlightsVersion]);
+
+  // Build a map for fast lookup
+  const highlightMap = new Map(highlights.map((h) => [h.id, h]));
+
+  const listModeHighlights = useMemo(() => {
+    if (isAlignedMode) return [];
+    const sorted = [...highlights];
+    sorted.sort((a, b) => {
+      const aFragmentIdx = a.fragment_idx ?? 0;
+      const bFragmentIdx = b.fragment_idx ?? 0;
+      if (aFragmentIdx !== bFragmentIdx) {
+        return aFragmentIdx - bFragmentIdx;
+      }
+
+      const aStart = a.start_offset ?? 0;
+      const bStart = b.start_offset ?? 0;
+      if (aStart !== bStart) {
+        return aStart - bStart;
+      }
+
+      const aEnd = a.end_offset ?? 0;
+      const bEnd = b.end_offset ?? 0;
+      if (aEnd !== bEnd) {
+        return aEnd - bEnd;
+      }
+
+      const aMs = Date.parse(a.created_at ?? "");
+      const bMs = Date.parse(b.created_at ?? "");
+      const normalizedAMs = Number.isNaN(aMs) ? 0 : aMs;
+      const normalizedBMs = Number.isNaN(bMs) ? 0 : bMs;
+      if (normalizedAMs !== normalizedBMs) {
+        return normalizedAMs - normalizedBMs;
+      }
+
+      return a.id.localeCompare(b.id);
+    });
+    return sorted;
+  }, [highlights, isAlignedMode]);
+
+  const listWindow = useMemo(() => {
+    if (isAlignedMode) {
+      return {
+        visible: [] as LinkedItemRowHighlight[],
+        topSpacerPx: 0,
+        bottomSpacerPx: 0,
+      };
+    }
+
+    const totalRows = listModeHighlights.length;
+    if (totalRows === 0) {
+      return {
+        visible: [] as LinkedItemRowHighlight[],
+        topSpacerPx: 0,
+        bottomSpacerPx: 0,
+      };
+    }
+
+    if (listViewportHeight <= 0) {
+      const fallbackCount = Math.min(totalRows, INITIAL_LIST_ROWS);
+      return {
+        visible: listModeHighlights.slice(0, fallbackCount),
+        topSpacerPx: 0,
+        bottomSpacerPx: (totalRows - fallbackCount) * LIST_ROW_SLOT_HEIGHT,
+      };
+    }
+
+    const rowsPerViewport = Math.max(1, Math.ceil(listViewportHeight / LIST_ROW_SLOT_HEIGHT));
+    const start = Math.max(0, Math.floor(listScrollTop / LIST_ROW_SLOT_HEIGHT) - LIST_OVERSCAN_ROWS);
+    const end = Math.min(totalRows, start + rowsPerViewport + LIST_OVERSCAN_ROWS * 2);
+
+    return {
+      visible: listModeHighlights.slice(start, end),
+      topSpacerPx: start * LIST_ROW_SLOT_HEIGHT,
+      bottomSpacerPx: (totalRows - end) * LIST_ROW_SLOT_HEIGHT,
+    };
+  }, [isAlignedMode, listModeHighlights, listScrollTop, listViewportHeight]);
 
   if (highlights.length === 0) {
     return (
@@ -361,8 +494,30 @@ export default function LinkedItemsPane({
     );
   }
 
-  // Build a map for fast lookup
-  const highlightMap = new Map(highlights.map((h) => [h.id, h]));
+  if (!isAlignedMode) {
+    return (
+      <div
+        ref={containerRef}
+        className={`${styles.linkedItemsContainer} ${styles.listMode}`}
+      >
+        <div style={{ height: `${listWindow.topSpacerPx}px` }} aria-hidden />
+        {listWindow.visible.map((highlight) => (
+          <div key={highlight.id} className={styles.listModeSlot}>
+            <LinkedItemRow
+              highlight={highlight}
+              className={styles.listModeRow}
+              isFocused={focusedId === highlight.id}
+              onClick={handleRowClick}
+              onMouseEnter={handleRowMouseEnter}
+              onMouseLeave={handleRowMouseLeave}
+              onSendToChat={onSendToChat}
+            />
+          </div>
+        ))}
+        <div style={{ height: `${listWindow.bottomSpacerPx}px` }} aria-hidden />
+      </div>
+    );
+  }
 
   return (
     <div ref={containerRef} className={styles.linkedItemsContainer}>
@@ -375,6 +530,7 @@ export default function LinkedItemsPane({
             key={row.highlight.id}
             ref={setRowRef(row.highlight.id)}
             highlight={highlight}
+            style={{ transform: `translateY(${row.top}px)` }}
             isFocused={focusedId === row.highlight.id}
             onClick={handleRowClick}
             onMouseEnter={handleRowMouseEnter}

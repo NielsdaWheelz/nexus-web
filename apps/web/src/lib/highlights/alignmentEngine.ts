@@ -69,6 +69,13 @@ export interface AlignmentResult {
   missingAnchorIds: string[];
 }
 
+function escapeAttrValue(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 // =============================================================================
 // Sorting Logic
 // =============================================================================
@@ -250,9 +257,10 @@ export function measureAnchorPositions(
   const scrollTop = scrollContainer.scrollTop;
 
   for (const highlight of highlights) {
-    const anchor = contentRoot.querySelector(
-      `[data-highlight-anchor="${highlight.id}"]`
-    );
+    const escapedId = escapeAttrValue(highlight.id);
+    const anchor =
+      contentRoot.querySelector(`[data-highlight-anchor="${escapedId}"]`) ??
+      contentRoot.querySelector(`[data-active-highlight-ids~="${escapedId}"]`);
 
     if (!anchor) {
       console.warn("highlight_anchor_missing", { highlightId: highlight.id });

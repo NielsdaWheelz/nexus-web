@@ -115,7 +115,26 @@ type PageLinkedHighlight = {
   exact: string;
   color: EditorHighlight["color"];
   annotation: EditorHighlight["annotation"];
+  start_offset?: number;
+  end_offset?: number;
+  created_at?: string;
+  fragment_id?: string;
+  fragment_idx?: number;
 };
+
+type EpubHighlightScope = "chapter" | "book";
+
+type MediaHighlight = Highlight & {
+  media_id: string;
+  fragment_idx: number;
+};
+
+function escapeAttrValue(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
 
 // =============================================================================
 // API Functions
@@ -126,6 +145,33 @@ async function fetchHighlights(fragmentId: string): Promise<Highlight[]> {
     `/api/fragments/${fragmentId}/highlights`
   );
   return response.data.highlights;
+}
+
+async function fetchMediaHighlights(
+  mediaId: string,
+  cursor: string | null,
+  limit = 50
+): Promise<{ highlights: MediaHighlight[]; hasMore: boolean; nextCursor: string | null }> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    mine_only: "false",
+  });
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+
+  const response = await apiFetch<{
+    data: {
+      highlights: MediaHighlight[];
+      page: { has_more: boolean; next_cursor: string | null };
+    };
+  }>(`/api/media/${mediaId}/highlights?${params.toString()}`);
+
+  return {
+    highlights: response.data.highlights,
+    hasMore: response.data.page.has_more,
+    nextCursor: response.data.page.next_cursor,
+  };
 }
 
 async function createHighlight(
@@ -260,11 +306,16 @@ export default function MediaViewPage({
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [activeChapterIdx, setActiveChapterIdx] = useState<number | null>(null);
   const [pendingAnchorId, setPendingAnchorId] = useState<string | null>(null);
+  const [pendingHighlightId, setPendingHighlightId] = useState<string | null>(null);
+  const [pendingHighlightFragmentId, setPendingHighlightFragmentId] = useState<string | null>(
+    null
+  );
   const [activeChapter, setActiveChapter] = useState<EpubChapter | null>(null);
   const [epubToc, setEpubToc] = useState<NormalizedNavigationTocNode[] | null>(null);
   const [tocWarning, setTocWarning] = useState(false);
   const [chapterLoading, setChapterLoading] = useState(false);
   const [epubError, setEpubError] = useState<string | null>(null);
+  const [epubHighlightScope, setEpubHighlightScope] = useState<EpubHighlightScope>("chapter");
 
   // Request-version guard for stale chapter/highlight responses
   const chapterVersionRef = useRef(0);
@@ -272,6 +323,11 @@ export default function MediaViewPage({
 
   // ---- Highlight interaction state ----
   const [highlights, setHighlights] = useState<Highlight[]>([]);
+  const [mediaHighlights, setMediaHighlights] = useState<MediaHighlight[]>([]);
+  const [mediaHighlightsHasMore, setMediaHighlightsHasMore] = useState(false);
+  const [mediaHighlightsCursor, setMediaHighlightsCursor] = useState<string | null>(null);
+  const [mediaHighlightsLoading, setMediaHighlightsLoading] = useState(false);
+  const [mediaHighlightsVersion, setMediaHighlightsVersion] = useState(0);
   const [pdfPageHighlights, setPdfPageHighlights] = useState<PdfHighlightOut[]>([]);
   const [pdfActivePage, setPdfActivePage] = useState(1);
   const [pdfRefreshToken, setPdfRefreshToken] = useState(0);
@@ -330,6 +386,20 @@ export default function MediaViewPage({
         exact: highlight.exact,
         color: highlight.color,
         annotation: highlight.annotation,
+        created_at: highlight.created_at,
+      }));
+    }
+    if (isEpub && epubHighlightScope === "book") {
+      return mediaHighlights.map((highlight) => ({
+        id: highlight.id,
+        exact: highlight.exact,
+        color: highlight.color,
+        annotation: highlight.annotation,
+        start_offset: highlight.start_offset,
+        end_offset: highlight.end_offset,
+        created_at: highlight.created_at,
+        fragment_id: highlight.fragment_id,
+        fragment_idx: highlight.fragment_idx,
       }));
     }
     return highlights.map((highlight) => ({
@@ -337,8 +407,12 @@ export default function MediaViewPage({
       exact: highlight.exact,
       color: highlight.color,
       annotation: highlight.annotation,
+      start_offset: highlight.start_offset,
+      end_offset: highlight.end_offset,
+      created_at: highlight.created_at,
+      fragment_id: highlight.fragment_id,
     }));
-  }, [highlights, isPdf, pdfPageHighlights]);
+  }, [highlights, isPdf, pdfPageHighlights, isEpub, epubHighlightScope, mediaHighlights]);
 
   const focusedHighlightForEditor = useMemo(() => {
     if (!focusState.focusedId) {
@@ -348,11 +422,31 @@ export default function MediaViewPage({
       const pdfHighlight = pdfPageHighlights.find((h) => h.id === focusState.focusedId);
       return pdfHighlight ? toEditorHighlightFromPdf(pdfHighlight) : null;
     }
+    if (isEpub && epubHighlightScope === "book") {
+      const mediaHighlight = mediaHighlights.find((h) => h.id === focusState.focusedId);
+      if (mediaHighlight) {
+        return mediaHighlight;
+      }
+    }
     return highlights.find((h) => h.id === focusState.focusedId) ?? null;
-  }, [focusState.focusedId, highlights, isPdf, pdfPageHighlights]);
+  }, [
+    focusState.focusedId,
+    highlights,
+    isPdf,
+    pdfPageHighlights,
+    isEpub,
+    epubHighlightScope,
+    mediaHighlights,
+  ]);
 
   const linkedItemsContentRef = isPdf ? pdfContentRef : contentRef;
-  const linkedItemsVersion = isPdf ? pdfHighlightsVersion : highlightsVersion;
+  const linkedItemsVersion = isPdf
+    ? pdfHighlightsVersion
+    : isEpub && epubHighlightScope === "book"
+      ? mediaHighlightsVersion
+      : highlightsVersion;
+  const linkedItemsLayoutMode: "aligned" | "list" =
+    isEpub && epubHighlightScope === "book" ? "list" : "aligned";
 
   // Unified active content for both paths
   const activeContent: ActiveContent | null = useMemo(() => {
@@ -385,6 +479,45 @@ export default function MediaViewPage({
       setPdfHighlightsVersion(0);
     }
   }, [isPdf, id]);
+
+  useEffect(() => {
+    if (!isEpub || epubHighlightScope !== "book") {
+      setMediaHighlights([]);
+      setMediaHighlightsHasMore(false);
+      setMediaHighlightsCursor(null);
+      setMediaHighlightsLoading(false);
+      setMediaHighlightsVersion(0);
+    }
+  }, [isEpub, epubHighlightScope]);
+
+  useEffect(() => {
+    if (!isEpub || epubHighlightScope !== "book" || !media?.id) return;
+    let cancelled = false;
+
+    const loadMediaHighlights = async () => {
+      setMediaHighlightsLoading(true);
+      try {
+        const page = await fetchMediaHighlights(media.id, null);
+        if (cancelled) return;
+        setMediaHighlights(page.highlights);
+        setMediaHighlightsHasMore(page.hasMore);
+        setMediaHighlightsCursor(page.nextCursor);
+        setMediaHighlightsVersion((v) => v + 1);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Failed to load media highlights:", err);
+      } finally {
+        if (!cancelled) {
+          setMediaHighlightsLoading(false);
+        }
+      }
+    };
+
+    loadMediaHighlights();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEpub, epubHighlightScope, media?.id]);
 
   // ==========================================================================
   // Data Fetching — initial load
@@ -522,6 +655,7 @@ export default function MediaViewPage({
     setChapterLoading(true);
     clearFocus();
     setHighlights([]);
+    setHighlightsVersion((v) => v + 1);
     setSelection(null);
 
     const load = async () => {
@@ -645,6 +779,7 @@ export default function MediaViewPage({
         const data = await fetchHighlights(activeContent.fragmentId);
         if (version !== highlightVersionRef.current) return;
         setHighlights(data);
+        setHighlightsVersion((v) => v + 1);
       } catch (err) {
         if (version !== highlightVersionRef.current) return;
         console.error("Failed to load highlights:", err);
@@ -699,6 +834,123 @@ export default function MediaViewPage({
     if (!contentRef.current) return;
     applyFocusClass(contentRef.current, focusState.focusedId);
   }, [focusState.focusedId]);
+
+  const refreshMediaHighlights = useCallback(async () => {
+    if (!isEpub || epubHighlightScope !== "book" || !media?.id) return;
+    const page = await fetchMediaHighlights(media.id, null);
+    setMediaHighlights(page.highlights);
+    setMediaHighlightsHasMore(page.hasMore);
+    setMediaHighlightsCursor(page.nextCursor);
+    setMediaHighlightsVersion((v) => v + 1);
+  }, [isEpub, epubHighlightScope, media?.id]);
+
+  const scheduleMediaHighlightsRefresh = useCallback(() => {
+    void refreshMediaHighlights().catch((err) => {
+      console.error("Failed to refresh media highlights:", err);
+    });
+  }, [refreshMediaHighlights]);
+
+  const handleLoadMoreMediaHighlights = useCallback(async () => {
+    if (!isEpub || epubHighlightScope !== "book" || !media?.id || !mediaHighlightsCursor) return;
+    setMediaHighlightsLoading(true);
+    try {
+      const next = await fetchMediaHighlights(media.id, mediaHighlightsCursor);
+      setMediaHighlights((prev) => [...prev, ...next.highlights]);
+      setMediaHighlightsHasMore(next.hasMore);
+      setMediaHighlightsCursor(next.nextCursor);
+      setMediaHighlightsVersion((v) => v + 1);
+    } catch (err) {
+      console.error("Failed to load more media highlights:", err);
+    } finally {
+      setMediaHighlightsLoading(false);
+    }
+  }, [isEpub, epubHighlightScope, media?.id, mediaHighlightsCursor]);
+
+  const handleLinkedItemClick = useCallback(
+    (highlightId: string) => {
+      if (isEpub && epubHighlightScope === "book") {
+        const target = mediaHighlights.find((h) => h.id === highlightId);
+        if (target && activeContent?.fragmentId !== target.fragment_id) {
+          setPendingAnchorId(null);
+          setPendingHighlightId(highlightId);
+          setPendingHighlightFragmentId(target.fragment_id);
+          const section = epubSections?.find((item) => item.fragment_idx === target.fragment_idx);
+          if (section) {
+            router.push(`/media/${id}?loc=${encodeURIComponent(section.section_id)}`);
+            setActiveSectionId(section.section_id);
+            setActiveChapterIdx(section.fragment_idx);
+          } else {
+            setActiveChapterIdx(target.fragment_idx);
+          }
+        } else {
+          setPendingHighlightId(null);
+          setPendingHighlightFragmentId(null);
+        }
+      }
+      focusHighlight(highlightId);
+    },
+    [
+      isEpub,
+      epubHighlightScope,
+      mediaHighlights,
+      activeContent?.fragmentId,
+      epubSections,
+      router,
+      id,
+      focusHighlight,
+    ]
+  );
+
+  useEffect(() => {
+    if (
+      !isEpub ||
+      !pendingHighlightId ||
+      !pendingHighlightFragmentId ||
+      !activeContent ||
+      activeContent.fragmentId !== pendingHighlightFragmentId ||
+      !contentRef.current ||
+      chapterLoading
+    ) {
+      return;
+    }
+
+    const escapedId = escapeAttrValue(pendingHighlightId);
+    const anchor = contentRef.current.querySelector<HTMLElement>(
+      `[data-highlight-anchor="${escapedId}"]`
+    );
+    if (anchor) {
+      anchor.scrollIntoView({ behavior: "auto", block: "center" });
+      focusHighlight(pendingHighlightId);
+      setPendingHighlightId(null);
+      setPendingHighlightFragmentId(null);
+      return;
+    }
+
+    if (highlights.some((item) => item.id === pendingHighlightId)) {
+      console.warn("pending_highlight_anchor_missing", { highlightId: pendingHighlightId });
+      setPendingHighlightId(null);
+      setPendingHighlightFragmentId(null);
+    }
+  }, [
+    isEpub,
+    pendingHighlightId,
+    pendingHighlightFragmentId,
+    activeContent,
+    chapterLoading,
+    renderedHtml,
+    highlights,
+    focusHighlight,
+  ]);
+
+  const handleEpubHighlightScopeChange = useCallback(
+    (scope: EpubHighlightScope) => {
+      setEpubHighlightScope(scope);
+      setPendingHighlightId(null);
+      setPendingHighlightFragmentId(null);
+      clearFocus();
+    },
+    [clearFocus]
+  );
 
   // ==========================================================================
   // Selection Handling
@@ -786,6 +1038,8 @@ export default function MediaViewPage({
         setHighlights(newHighlights);
         setHighlightsVersion((v) => v + 1);
         clearHighlightCache();
+        scheduleMediaHighlightsRefresh();
+        scheduleMediaHighlightsRefresh();
 
         const newHighlight = newHighlights.find(
           (h) =>
@@ -804,6 +1058,7 @@ export default function MediaViewPage({
           setHighlights(newHighlights);
           setHighlightsVersion((v) => v + 1);
           clearHighlightCache();
+          scheduleMediaHighlightsRefresh();
 
           const existing = newHighlights.find(
             (h) =>
@@ -829,6 +1084,7 @@ export default function MediaViewPage({
       highlights,
       focusHighlight,
       toast,
+      scheduleMediaHighlightsRefresh,
     ]
   );
 
@@ -841,6 +1097,7 @@ export default function MediaViewPage({
       setActiveTranscriptFragmentId(fragment.id);
       clearFocus();
       setHighlights([]);
+      setHighlightsVersion((v) => v + 1);
       setSelection(null);
     },
     [clearFocus]
@@ -943,6 +1200,7 @@ export default function MediaViewPage({
     highlights,
     focusHighlight,
     cancelEditBounds,
+    scheduleMediaHighlightsRefresh,
     toast,
   ]);
 
@@ -964,8 +1222,9 @@ export default function MediaViewPage({
       setHighlights(newHighlights);
       setHighlightsVersion((v) => v + 1);
       clearHighlightCache();
+      scheduleMediaHighlightsRefresh();
     },
-    [activeContent, isPdf]
+    [activeContent, isPdf, scheduleMediaHighlightsRefresh]
   );
 
   const handleDelete = useCallback(
@@ -983,9 +1242,10 @@ export default function MediaViewPage({
       setHighlights(newHighlights);
       setHighlightsVersion((v) => v + 1);
       clearHighlightCache();
+      scheduleMediaHighlightsRefresh();
       clearFocus();
     },
-    [activeContent, clearFocus, isPdf]
+    [activeContent, clearFocus, isPdf, scheduleMediaHighlightsRefresh]
   );
 
   const handleAnnotationSave = useCallback(
@@ -999,8 +1259,10 @@ export default function MediaViewPage({
       await saveAnnotation(highlightId, body);
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
       setHighlights(newHighlights);
+      setHighlightsVersion((v) => v + 1);
+      scheduleMediaHighlightsRefresh();
     },
-    [activeContent, isPdf]
+    [activeContent, isPdf, scheduleMediaHighlightsRefresh]
   );
 
   const handleAnnotationDelete = useCallback(
@@ -1014,8 +1276,10 @@ export default function MediaViewPage({
       await deleteAnnotation(highlightId);
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
       setHighlights(newHighlights);
+      setHighlightsVersion((v) => v + 1);
+      scheduleMediaHighlightsRefresh();
     },
-    [activeContent, isPdf]
+    [activeContent, isPdf, scheduleMediaHighlightsRefresh]
   );
 
   // ==========================================================================
@@ -1044,6 +1308,8 @@ export default function MediaViewPage({
       router.push(`/media/${id}?loc=${encodeURIComponent(sectionId)}`);
       setActiveSectionId(sectionId);
       setPendingAnchorId(section.anchor_id);
+      setPendingHighlightId(null);
+      setPendingHighlightFragmentId(null);
       setActiveChapterIdx(section.fragment_idx);
     },
     [router, id, epubSections]
@@ -1204,7 +1470,59 @@ export default function MediaViewPage({
       {/* Linked Items Pane */}
       {canRead && (
         <Pane title="Highlights" defaultWidth={360} minWidth={280}>
-          {focusState.focusedId ? (
+          {isEpub && (
+            <div className={styles.highlightScopeHeader}>
+              <span className={styles.highlightScopeLabel}>Scope</span>
+              <div className={styles.highlightScopeToggle}>
+                <button
+                  className={`${styles.scopeBtn} ${
+                    epubHighlightScope === "chapter" ? styles.scopeBtnActive : ""
+                  }`}
+                  onClick={() => handleEpubHighlightScopeChange("chapter")}
+                  type="button"
+                >
+                  This chapter
+                </button>
+                <button
+                  className={`${styles.scopeBtn} ${
+                    epubHighlightScope === "book" ? styles.scopeBtnActive : ""
+                  }`}
+                  onClick={() => handleEpubHighlightScopeChange("book")}
+                  type="button"
+                >
+                  Entire book
+                </button>
+              </div>
+            </div>
+          )}
+
+          <LinkedItemsPane
+            highlights={linkedPaneHighlights}
+            contentRef={linkedItemsContentRef}
+            focusedId={focusState.focusedId}
+            onHighlightClick={handleLinkedItemClick}
+            highlightsVersion={linkedItemsVersion}
+            onSendToChat={handleSendToChat}
+            layoutMode={linkedItemsLayoutMode}
+          />
+
+          {isEpub && epubHighlightScope === "book" && (
+            <div className={styles.bookHighlightsControls}>
+              <p className={styles.hint}>Showing highlights from the entire book.</p>
+              {mediaHighlightsHasMore && (
+                <button
+                  type="button"
+                  className={styles.loadMoreBtn}
+                  onClick={handleLoadMoreMediaHighlights}
+                  disabled={mediaHighlightsLoading}
+                >
+                  {mediaHighlightsLoading ? "Loading..." : "Load more"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {focusState.focusedId && (
             <div className={styles.linkedItems}>
               {focusedHighlightForEditor ? (
                 <div
@@ -1228,15 +1546,6 @@ export default function MediaViewPage({
                 </div>
               )}
             </div>
-          ) : (
-            <LinkedItemsPane
-              highlights={linkedPaneHighlights}
-              contentRef={linkedItemsContentRef}
-              focusedId={focusState.focusedId}
-              onHighlightClick={focusHighlight}
-              highlightsVersion={linkedItemsVersion}
-              onSendToChat={handleSendToChat}
-            />
           )}
           {isPdf && (
             <div className={styles.hint}>Active page: {pdfActivePage}</div>
