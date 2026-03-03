@@ -235,6 +235,124 @@ class TestFromUrlSuccess:
             # Query params should be preserved
             assert row[0] == "https://example.com/search?q=test&page=1"
 
+    def test_youtube_variants_reuse_one_video_identity(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """YouTube URL variants should converge on one canonical video media row."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        first_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
+            headers=auth_headers(user_id),
+        )
+        assert first_response.status_code == 202, (
+            f"expected first youtube ingest to return 202, got {first_response.status_code}: "
+            f"{first_response.text}"
+        )
+        first_data = first_response.json()["data"]
+        media_id = UUID(first_data["media_id"])
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        assert first_data["idempotency_outcome"] == "created"
+        assert first_data["duplicate"] is False
+
+        second_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://youtu.be/dQw4w9WgXcQ?t=43"},
+            headers=auth_headers(user_id),
+        )
+        assert second_response.status_code == 202, (
+            f"expected second youtube ingest to return 202, got {second_response.status_code}: "
+            f"{second_response.text}"
+        )
+        second_data = second_response.json()["data"]
+
+        assert UUID(second_data["media_id"]) == media_id
+        assert second_data["idempotency_outcome"] == "reused"
+        assert second_data["duplicate"] is True
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("""
+                    SELECT kind, provider, provider_id, canonical_url, canonical_source_url
+                    FROM media
+                    WHERE id = :media_id
+                """),
+                {"media_id": media_id},
+            ).fetchone()
+            count = session.execute(
+                text("""
+                    SELECT COUNT(*)
+                    FROM media
+                    WHERE kind = 'video'
+                      AND provider = 'youtube'
+                      AND provider_id = :provider_id
+                """),
+                {"provider_id": "dQw4w9WgXcQ"},
+            ).scalar()
+
+        assert row is not None
+        assert row[0] == "video"
+        assert row[1] == "youtube"
+        assert row[2] == "dQw4w9WgXcQ"
+        assert row[3] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        assert row[4] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        assert count == 1, f"expected one canonical youtube media row, found {count}"
+
+    def test_youtube_reuse_is_global_across_users(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Repeated ingest by different users should attach one shared video row."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        me_a = auth_client.get("/me", headers=auth_headers(user_a))
+        me_b = auth_client.get("/me", headers=auth_headers(user_b))
+        default_library_a = UUID(me_a.json()["data"]["default_library_id"])
+        default_library_b = UUID(me_b.json()["data"]["default_library_id"])
+
+        first_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://www.youtube.com/embed/dQw4w9WgXcQ"},
+            headers=auth_headers(user_a),
+        )
+        assert first_response.status_code == 202
+        first_data = first_response.json()["data"]
+        media_id = UUID(first_data["media_id"])
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        second_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://m.youtube.com/watch?v=dQw4w9WgXcQ&feature=youtu.be"},
+            headers=auth_headers(user_b),
+        )
+        assert second_response.status_code == 202
+        second_data = second_response.json()["data"]
+
+        assert UUID(second_data["media_id"]) == media_id
+        assert first_data["idempotency_outcome"] == "created"
+        assert second_data["idempotency_outcome"] == "reused"
+
+        with direct_db.session() as session:
+            attachments = session.execute(
+                text("""
+                    SELECT library_id
+                    FROM library_media
+                    WHERE media_id = :media_id
+                """),
+                {"media_id": media_id},
+            ).fetchall()
+
+        attached_library_ids = {row[0] for row in attachments}
+        assert default_library_a in attached_library_ids
+        assert default_library_b in attached_library_ids
+
 
 # =============================================================================
 # POST /media/from_url - Validation Errors

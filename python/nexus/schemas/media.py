@@ -32,6 +32,10 @@ class PlaybackSourceOut(BaseModel):
     kind: Literal["external_audio", "external_video"]
     stream_url: str
     source_url: str
+    provider: str | None = None
+    provider_video_id: str | None = None
+    watch_url: str | None = None
+    embed_url: str | None = None
 
 
 class MediaOut(BaseModel):
@@ -135,9 +139,10 @@ class FileDownloadResponse(BaseModel):
 class FromUrlRequest(BaseModel):
     """Request schema for POST /media/from_url.
 
-    Creates a provisional web_article from a URL.
-    URL validation (length, scheme, host, etc.) happens in the service layer
-    with clear error messages.
+    Creates media from URL with service-layer classification:
+    - supported YouTube variants -> canonical `video` identity (create-or-reuse)
+    - all other URLs -> provisional `web_article`
+    URL validation (length, scheme, host, etc.) happens in the service layer.
     """
 
     url: str = Field(
@@ -149,14 +154,13 @@ class FromUrlRequest(BaseModel):
 class FromUrlResponse(BaseModel):
     """Response schema for POST /media/from_url.
 
-    Returns the created media info. In PR-03:
-    - duplicate is always False (true dedup in PR-04)
-    - processing_status is always 'pending'
-    - ingest_enqueued is always False (ingestion not implemented yet)
+    `idempotency_outcome` is the source-of-truth contract for create-vs-reuse.
+    `duplicate` remains as a compatibility shim.
     """
 
     media_id: UUID
     duplicate: bool
+    idempotency_outcome: Literal["created", "reused"]
     processing_status: str
     ingest_enqueued: bool
 

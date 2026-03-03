@@ -1,0 +1,66 @@
+[
+  {
+    "sample_id": "yt-auto-captions-en",
+    "scenario": "auto_captions_available",
+    "transcript_fetch_status": "completed",
+    "error_code": null,
+    "playback_available": true,
+    "expected_playback_only": false
+  },
+  {
+    "sample_id": "yt-manual-captions-en",
+    "scenario": "manual_captions_available",
+    "transcript_fetch_status": "completed",
+    "error_code": null,
+    "playback_available": true,
+    "expected_playback_only": false
+  },
+  {
+    "sample_id": "yt-auto-captions-es",
+    "scenario": "language_mismatch_auto_translate_available",
+    "transcript_fetch_status": "completed",
+    "error_code": null,
+    "playback_available": true,
+    "expected_playback_only": false
+  },
+  {
+    "sample_id": "yt-longform-podcast",
+    "scenario": "longform_dialogue",
+    "transcript_fetch_status": "completed",
+    "error_code": null,
+    "playback_available": true,
+    "expected_playback_only": false
+  },
+  {
+    "sample_id": "yt-captions-disabled",
+    "scenario": "captions_disabled_by_uploader",
+    "transcript_fetch_status": "failed",
+    "error_code": "E_TRANSCRIPT_UNAVAILABLE",
+    "playback_available": true,
+    "expected_playback_only": true
+  },
+  {
+    "sample_id": "yt-age-restricted",
+    "scenario": "age_restricted_transcript_unavailable",
+    "transcript_fetch_status": "failed",
+    "error_code": "E_TRANSCRIPT_UNAVAILABLE",
+    "playback_available": true,
+    "expected_playback_only": true
+  },
+  {
+    "sample_id": "yt-region-locked",
+    "scenario": "region_locked_transcript_unavailable",
+    "transcript_fetch_status": "failed",
+    "error_code": "E_TRANSCRIPT_UNAVAILABLE",
+    "playback_available": true,
+    "expected_playback_only": true
+  },
+  {
+    "sample_id": "yt-provider-timeout",
+    "scenario": "provider_timeout",
+    "transcript_fetch_status": "failed",
+    "error_code": "E_TRANSCRIPTION_TIMEOUT",
+    "playback_available": true,
+    "expected_playback_only": false
+  }
+]

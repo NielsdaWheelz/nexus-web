@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import html
 import math
-import re
-import unicodedata
 from datetime import UTC, date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -31,6 +28,15 @@ from nexus.schemas.podcast import (
     PodcastSubscribeRequest,
     PodcastSubscriptionStatusOut,
 )
+from nexus.services.transcript_segments import (
+    canonicalize_transcript_segment_text as _shared_canonicalize_transcript_segment_text,
+)
+from nexus.services.transcript_segments import (
+    insert_transcript_fragments as _shared_insert_transcript_fragments,
+)
+from nexus.services.transcript_segments import (
+    normalize_transcript_segments as _shared_normalize_transcript_segments,
+)
 from nexus.services.upload import _ensure_in_default_library
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
@@ -45,7 +51,6 @@ _ITUNES_DURATION_XPATH = (
     "*[local-name()='duration' and namespace-uri()='http://www.itunes.com/dtds/podcast-1.0.dtd']"
 )
 _DEEPGRAM_LISTEN_PATH = "/v1/listen"
-_TRANSCRIPT_WHITESPACE_RE = re.compile(r"[\s\u00a0]+")
 _PODCAST_ACTIVE_POLL_MAX_LIMIT = 1000
 _PODCAST_ACTIVE_POLL_UNEXPECTED_ERROR_CODE = ApiErrorCode.E_INTERNAL.value
 
@@ -1594,45 +1599,7 @@ def _insert_transcript_fragments(
     *,
     now: datetime,
 ) -> None:
-    for idx, segment in enumerate(transcript_segments):
-        canonical_text = segment["text"]
-        html_sanitized = f"<p>{html.escape(canonical_text)}</p>"
-        db.execute(
-            text(
-                """
-                INSERT INTO fragments (
-                    media_id,
-                    idx,
-                    canonical_text,
-                    html_sanitized,
-                    t_start_ms,
-                    t_end_ms,
-                    speaker_label,
-                    created_at
-                )
-                VALUES (
-                    :media_id,
-                    :idx,
-                    :canonical_text,
-                    :html_sanitized,
-                    :t_start_ms,
-                    :t_end_ms,
-                    :speaker_label,
-                    :created_at
-                )
-                """
-            ),
-            {
-                "media_id": media_id,
-                "idx": idx,
-                "canonical_text": canonical_text,
-                "html_sanitized": html_sanitized,
-                "t_start_ms": segment["t_start_ms"],
-                "t_end_ms": segment["t_end_ms"],
-                "speaker_label": segment["speaker_label"],
-                "created_at": now,
-            },
-        )
+    _shared_insert_transcript_fragments(db, media_id, transcript_segments, now=now)
 
 
 def _get_effective_plan(db: Session, user_id: UUID) -> dict[str, Any]:
@@ -2338,59 +2305,8 @@ def _word_range_end_ms(raw_words: Any) -> int | None:
 
 
 def _normalize_transcript_segments(raw_segments: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw_segments, list):
-        return []
-
-    normalized: list[dict[str, Any]] = []
-    for original_idx, segment in enumerate(raw_segments):
-        if not isinstance(segment, dict):
-            continue
-        text_value = _canonicalize_transcript_segment_text(segment.get("text"))
-        if not text_value:
-            continue
-
-        t_start_ms = _coerce_non_negative_int(segment.get("t_start_ms"))
-        t_end_ms = _coerce_non_negative_int(segment.get("t_end_ms"))
-        if t_start_ms is None or t_end_ms is None:
-            continue
-        if t_start_ms >= t_end_ms:
-            continue
-
-        speaker_raw = segment.get("speaker_label")
-        speaker_label = str(speaker_raw).strip() if speaker_raw is not None else None
-        if speaker_label == "":
-            speaker_label = None
-
-        normalized.append(
-            {
-                "text": text_value,
-                "t_start_ms": t_start_ms,
-                "t_end_ms": t_end_ms,
-                "speaker_label": speaker_label,
-                "_original_idx": original_idx,
-            }
-        )
-
-    normalized.sort(key=lambda seg: (seg["t_start_ms"], seg["_original_idx"]))
-    for seg in normalized:
-        seg.pop("_original_idx", None)
-    return normalized
+    return _shared_normalize_transcript_segments(raw_segments)
 
 
 def _canonicalize_transcript_segment_text(raw_value: Any) -> str:
-    text = str(raw_value or "")
-    text = unicodedata.normalize("NFC", text)
-    text = _TRANSCRIPT_WHITESPACE_RE.sub(" ", text)
-    return text.strip()
-
-
-def _coerce_non_negative_int(raw_value: Any) -> int | None:
-    if raw_value is None:
-        return None
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return None
-    if value < 0:
-        return None
-    return value
+    return _shared_canonicalize_transcript_segment_text(raw_value)

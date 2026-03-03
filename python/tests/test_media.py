@@ -232,7 +232,8 @@ class TestGetMedia:
     ):
         user_id = create_test_user_id()
         media_id = uuid4()
-        playback_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        video_id = "dQw4w9WgXcQ"
+        playback_url = f"https://www.youtube.com/watch?v={video_id}"
 
         with direct_db.session() as session:
             media = Media(
@@ -240,8 +241,11 @@ class TestGetMedia:
                 kind=MediaKind.video.value,
                 title="Contract Video",
                 canonical_source_url=playback_url,
+                canonical_url=playback_url,
                 processing_status=ProcessingStatus.ready_for_reading,
                 external_playback_url=playback_url,
+                provider="youtube",
+                provider_id=video_id,
             )
             session.add(media)
             session.commit()
@@ -265,6 +269,10 @@ class TestGetMedia:
         assert playback_source["kind"] == "external_video"
         assert playback_source["stream_url"] == playback_url
         assert playback_source["source_url"] == playback_url
+        assert playback_source["provider"] == "youtube"
+        assert playback_source["provider_video_id"] == video_id
+        assert playback_source["watch_url"] == playback_url
+        assert playback_source["embed_url"] == f"https://www.youtube.com/embed/{video_id}"
 
 
 # =============================================================================

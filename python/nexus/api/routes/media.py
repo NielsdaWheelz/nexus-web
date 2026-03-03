@@ -98,15 +98,17 @@ def create_from_url(
     db: Annotated[Session, Depends(get_db)],
     request: Request,
 ) -> dict:
-    """Create a web_article from a URL and enqueue ingestion.
+    """Create media from URL and enqueue ingestion.
 
-    Per PR-04: Creates a provisional media row, attaches it to the viewer's
-    default library, and enqueues a Celery task for asynchronous ingestion.
+    Kind classification happens in the service layer:
+    - YouTube URLs -> canonical `video` identity with create-or-reuse semantics
+    - Other URLs -> provisional `web_article`
 
     Returns 202 Accepted with:
         - media_id: UUID of the created media
-        - duplicate: Always false at creation (dedup during ingestion)
-        - processing_status: 'pending'
+        - duplicate: Compatibility flag (`True` iff canonical media was reused)
+        - idempotency_outcome: `created` or `reused`
+        - processing_status: current lifecycle snapshot (`pending`, `ready_for_reading`, etc.)
         - ingest_enqueued: True if task was enqueued
 
     Clients should poll GET /media/{id} for status updates.
@@ -114,7 +116,7 @@ def create_from_url(
     # Get request_id from state if available (set by request-id middleware)
     request_id = getattr(request.state, "request_id", None)
 
-    result = media_service.enqueue_web_article_from_url(
+    result = media_service.enqueue_media_from_url(
         db=db,
         viewer_id=viewer.user_id,
         url=request_body.url,

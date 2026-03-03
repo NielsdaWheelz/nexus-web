@@ -474,21 +474,38 @@ Images in sanitized HTML are automatically rewritten to use the proxy:
 <img src="/media/image?url=https%3A%2F%2Fexample.com%2Fimage.png">
 ```
 
-## Web Article Ingestion
+## URL Ingestion (Web + YouTube)
 
-The system supports ingesting web articles by URL with asynchronous processing:
+The system supports asynchronous URL ingestion with service-layer classification:
+
+- **YouTube URL variants** (`watch`, `youtu.be`, `embed`, `shorts`, `live`) are normalized to one canonical provider identity and mapped to a shared `media(kind=video)` row.
+- **All other URLs** follow provisional `web_article` ingestion.
 
 ### Workflow
 
 1. **API Request**: `POST /media/from_url` with `{"url": "https://..."}`
-2. **Immediate Response**: Returns 202 Accepted with `media_id` and `ingest_enqueued: true`
-3. **Background Processing**: Celery worker:
-   - Fetches page via Playwright (JS-enabled browser)
-   - Extracts content using Mozilla Readability
-   - Sanitizes HTML (XSS protection, image proxy rewriting)
-   - Generates canonical text for highlighting
-   - Handles deduplication by canonical URL
+2. **Immediate Response**: Returns `202 Accepted` with:
+   - `media_id`
+   - `duplicate` (compatibility flag)
+   - `idempotency_outcome` (`created` or `reused`)
+   - `processing_status` (current lifecycle snapshot)
+   - `ingest_enqueued`
+3. **Background Processing**:
+   - **YouTube video path**:
+     - Resolves canonical watch/embed identity from provider video id
+     - Fetches transcript segments via provider boundary
+     - Canonicalizes/sorts transcript segments and persists ordered fragments
+     - On transcript success: sets `processing_status=ready_for_reading`
+     - On transcript-unavailable terminal outcome: sets `processing_status=failed`, `last_error_code=E_TRANSCRIPT_UNAVAILABLE`, preserves playback
+   - **Web article path**:
+     - Fetches page via Playwright (JS-enabled browser)
+     - Extracts content using Mozilla Readability
+     - Sanitizes HTML (XSS protection, image proxy rewriting)
+     - Generates canonical text for highlighting
+     - Handles deduplication by canonical URL
 4. **Poll for Status**: `GET /media/{id}` returns `processing_status`
+
+For YouTube media, `GET /media/{id}` includes a typed playback contract with provider metadata (`provider`, `provider_video_id`, canonical watch/embed URLs). Transcript-unavailable video/podcast items are excluded from transcript-driven search surfaces.
 
 ### Running the Worker
 

@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
@@ -29,6 +30,7 @@ from nexus.services.capabilities import derive_capabilities
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
+from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
 
 logger = get_logger(__name__)
 
@@ -63,7 +65,8 @@ def get_media_for_viewer(
         text("""
             SELECT m.id, m.kind, m.title, m.canonical_source_url,
                    m.processing_status, m.failure_stage, m.last_error_code,
-                   m.external_playback_url, m.created_at, m.updated_at,
+                   m.external_playback_url, m.provider, m.provider_id,
+                   m.created_at, m.updated_at,
                    (SELECT EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id)) as has_file,
                    (SELECT EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id)) as has_fragments
             FROM media m
@@ -86,15 +89,17 @@ def get_media_for_viewer(
         kind=row[1],
         processing_status=row[4],
         last_error_code=row[6],
-        media_file_exists=row[10],
+        media_file_exists=row[12],
         external_playback_url_exists=row[7] is not None,
-        has_fragments=row[11],
+        has_fragments=row[13],
         pdf_quote_text_ready=_pdf_ready,
     )
     playback_source = derive_playback_source(
         kind=row[1],
         external_playback_url=row[7],
         canonical_source_url=row[3],
+        provider=row[8],
+        provider_id=row[9],
     )
 
     return MediaOut(
@@ -107,8 +112,8 @@ def get_media_for_viewer(
         last_error_code=row[6],
         playback_source=playback_source,
         capabilities=capabilities,
-        created_at=row[8],
-        updated_at=row[9],
+        created_at=row[10],
+        updated_at=row[11],
     )
 
 
@@ -242,7 +247,138 @@ def create_provisional_web_article(
     return FromUrlResponse(
         media_id=media.id,
         duplicate=False,  # Always false at creation; dedup happens during ingestion
+        idempotency_outcome="created",
         processing_status=ProcessingStatus.pending.value,
+        ingest_enqueued=ingest_enqueued,
+    )
+
+
+def enqueue_media_from_url(
+    db: Session,
+    viewer_id: UUID,
+    url: str,
+    request_id: str | None = None,
+) -> FromUrlResponse:
+    """Create media from URL with kind classification and enqueue ingestion.
+
+    Classification:
+    - YouTube variants -> shared `video` row (create-or-reuse by canonical video identity)
+    - all other URLs -> provisional `web_article`
+    """
+    validate_requested_url(url)
+
+    youtube_identity = classify_youtube_url(url)
+    if youtube_identity is not None:
+        return create_or_reuse_youtube_video(
+            db=db,
+            viewer_id=viewer_id,
+            url=url,
+            enqueue_task=True,
+            request_id=request_id,
+        )
+
+    if is_youtube_url(url):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "YouTube URL must include a valid video ID",
+        )
+
+    return create_provisional_web_article(
+        db,
+        viewer_id,
+        url,
+        enqueue_task=True,
+        request_id=request_id,
+    )
+
+
+def create_or_reuse_youtube_video(
+    db: Session,
+    viewer_id: UUID,
+    url: str,
+    *,
+    enqueue_task: bool = False,
+    request_id: str | None = None,
+) -> FromUrlResponse:
+    """Create-or-reuse a canonical YouTube video media row.
+
+    Global idempotency is anchored by canonical watch URL derived from
+    provider identity (YouTube video ID).
+    """
+    from nexus.services.upload import _ensure_in_default_library
+
+    validate_requested_url(url)
+    identity = classify_youtube_url(url)
+    if identity is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "URL is not a supported YouTube video URL",
+        )
+
+    now = datetime.now(UTC)
+    created = False
+    media = Media(
+        kind=MediaKind.video.value,
+        title=f"YouTube Video {identity.provider_video_id}",
+        requested_url=url,
+        canonical_url=identity.watch_url,
+        canonical_source_url=identity.watch_url,
+        external_playback_url=identity.watch_url,
+        provider=identity.provider,
+        provider_id=identity.provider_video_id,
+        processing_status=ProcessingStatus.pending,
+        created_by_user_id=viewer_id,
+        created_at=now,
+        updated_at=now,
+    )
+
+    try:
+        db.add(media)
+        db.flush()
+        created = True
+    except IntegrityError as exc:
+        if not _is_media_canonical_url_conflict(exc):
+            raise
+        db.rollback()
+        media = (
+            db.query(Media)
+            .filter(
+                Media.kind == MediaKind.video.value,
+                Media.canonical_url == identity.watch_url,
+            )
+            .limit(1)
+            .one_or_none()
+        )
+        if media is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INTERNAL, "Unable to resolve canonical video row"
+            ) from exc
+        # Compatibility/backfill safety for pre-identity rows.
+        media.provider = identity.provider
+        media.provider_id = identity.provider_video_id
+        if not media.external_playback_url:
+            media.external_playback_url = identity.watch_url
+        if not media.canonical_source_url:
+            media.canonical_source_url = identity.watch_url
+        media.updated_at = now
+
+    _ensure_in_default_library(db, viewer_id, media.id)
+    db.commit()
+
+    ingest_enqueued = False
+    if created and enqueue_task:
+        ingest_enqueued = _enqueue_youtube_ingest_task(media.id, viewer_id, request_id)
+
+    processing_status = (
+        media.processing_status.value
+        if hasattr(media.processing_status, "value")
+        else str(media.processing_status)
+    )
+    return FromUrlResponse(
+        media_id=media.id,
+        duplicate=not created,
+        idempotency_outcome="created" if created else "reused",
+        processing_status=processing_status,
         ingest_enqueued=ingest_enqueued,
     )
 
@@ -254,11 +390,6 @@ def enqueue_web_article_from_url(
     request_id: str | None = None,
 ) -> FromUrlResponse:
     """Create a provisional web_article and enqueue ingestion.
-
-    Per PR-04 spec, this is the main entry point for /media/from_url:
-    - Creates provisional media row
-    - Attaches to viewer's default library
-    - Enqueues Celery task for ingestion
 
     Args:
         db: Database session.
@@ -320,6 +451,50 @@ def _enqueue_ingest_task(
             error=str(e),
         )
         return False
+
+
+def _enqueue_youtube_ingest_task(
+    media_id: UUID,
+    actor_user_id: UUID,
+    request_id: str | None,
+) -> bool:
+    """Enqueue the ingest_youtube_video Celery task."""
+    settings = get_settings()
+    if settings.nexus_env == Environment.TEST:
+        logger.debug("skipping_task_enqueue", reason="test_environment", media_kind="video")
+        return False
+
+    try:
+        from nexus.tasks.ingest_youtube_video import ingest_youtube_video
+
+        ingest_youtube_video.apply_async(
+            args=[str(media_id), str(actor_user_id)],
+            kwargs={"request_id": request_id},
+            queue="ingest",
+        )
+        logger.info(
+            "ingest_video_task_enqueued",
+            media_id=str(media_id),
+            actor_user_id=str(actor_user_id),
+            request_id=request_id,
+        )
+        return True
+    except Exception as e:
+        logger.warning(
+            "ingest_video_task_enqueue_failed",
+            media_id=str(media_id),
+            error=str(e),
+        )
+        return False
+
+
+def _is_media_canonical_url_conflict(exc: IntegrityError) -> bool:
+    """Return True when IntegrityError is media canonical-url uniqueness conflict."""
+    orig = getattr(exc, "orig", None)
+    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    if constraint_name:
+        return constraint_name == "uix_media_canonical_url"
+    return "uix_media_canonical_url" in str(exc)
 
 
 def list_fragments_for_viewer(
