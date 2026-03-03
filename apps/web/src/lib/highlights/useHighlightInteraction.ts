@@ -128,12 +128,11 @@ export function useHighlightInteraction(
    */
   const focusHighlight = useCallback(
     (highlightId: string | null) => {
-      setFocusState((prev) => ({
-        ...prev,
-        focusedId: highlightId,
-        // Exit edit bounds mode when changing focus
-        editingBounds: highlightId === null ? false : prev.editingBounds,
-      }));
+      setFocusState((prev) => {
+        const newEditingBounds = highlightId === null ? false : prev.editingBounds;
+        if (prev.focusedId === highlightId && prev.editingBounds === newEditingBounds) return prev;
+        return { focusedId: highlightId, editingBounds: newEditingBounds };
+      });
       onFocusChange?.(highlightId);
     },
     [onFocusChange]
@@ -143,7 +142,10 @@ export function useHighlightInteraction(
    * Clear focus entirely.
    */
   const clearFocus = useCallback(() => {
-    setFocusState({ focusedId: null, editingBounds: false });
+    setFocusState((prev) => {
+      if (prev.focusedId === null && !prev.editingBounds) return prev;
+      return { focusedId: null, editingBounds: false };
+    });
     lastClickedSegment.current = {
       element: null,
       cycleIndex: 0,
