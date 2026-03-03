@@ -96,6 +96,12 @@ EPUB_CHAPTERS = [
     },
 ]
 
+EPUB_TOC_ANCHOR_CHAPTER_INDEX = 0
+EPUB_TOC_ANCHOR_ID = "e2e-deep-anchor-target"
+EPUB_TOC_ANCHOR_NAME = "e2e-deep-anchor-legacy-name"
+EPUB_TOC_ANCHOR_LABEL = "Chapter 1: Deep Anchor Target"
+EPUB_TOC_ANCHOR_HEADING = "Deep Anchor Target"
+
 
 def _build_pdf_bytes(page_count: int) -> bytes:
     """Generate a simple multi-page PDF suitable for PDF.js rendering."""
@@ -140,6 +146,7 @@ def _build_epub_bytes() -> bytes:
         manifest_items = []
         spine_items = []
         nav_points = []
+        nav_play_order = 1
         for idx, ch in enumerate(EPUB_CHAPTERS):
             fname = f"chapter{idx + 1}.xhtml"
             manifest_items.append(
@@ -147,11 +154,40 @@ def _build_epub_bytes() -> bytes:
             )
             spine_items.append(f'    <itemref idref="ch{idx + 1}"/>')
             nav_points.append(
-                f'    <navPoint id="nav{idx + 1}" playOrder="{idx + 1}">\n'
+                f'    <navPoint id="nav{idx + 1}" playOrder="{nav_play_order}">\n'
                 f"      <navLabel><text>{ch['title']}</text></navLabel>\n"
                 f'      <content src="{fname}"/>\n'
                 f"    </navPoint>"
             )
+            nav_play_order += 1
+
+            chapter_body_html = f"<h1>{ch['title']}</h1>\n<p>{ch['body']}</p>\n"
+
+            if idx == EPUB_TOC_ANCHOR_CHAPTER_INDEX:
+                pre_anchor = "".join(
+                    f"<p>Deterministic pre-anchor filler paragraph {n} for E2E.</p>\n"
+                    for n in range(1, 17)
+                )
+                post_anchor = "".join(
+                    f"<p>Deterministic post-anchor filler paragraph {n} for E2E.</p>\n"
+                    for n in range(1, 9)
+                )
+                chapter_body_html = (
+                    f"<h1>{ch['title']}</h1>\n"
+                    f"<p>{ch['body']}</p>\n"
+                    f"{pre_anchor}"
+                    f'<h2 id="{EPUB_TOC_ANCHOR_ID}">{EPUB_TOC_ANCHOR_HEADING}</h2>\n'
+                    f'<a name="{EPUB_TOC_ANCHOR_NAME}"></a>\n'
+                    "<p>Anchor target landing paragraph for deterministic E2E checks.</p>\n"
+                    f"{post_anchor}"
+                )
+                nav_points.append(
+                    f'    <navPoint id="nav{idx + 1}-anchor" playOrder="{nav_play_order}">\n'
+                    f"      <navLabel><text>{EPUB_TOC_ANCHOR_LABEL}</text></navLabel>\n"
+                    f'      <content src="{fname}#{EPUB_TOC_ANCHOR_ID}"/>\n'
+                    f"    </navPoint>"
+                )
+                nav_play_order += 1
 
             # Chapter XHTML
             zf.writestr(
@@ -160,7 +196,7 @@ def _build_epub_bytes() -> bytes:
                 "<!DOCTYPE html>\n"
                 '<html xmlns="http://www.w3.org/1999/xhtml">\n'
                 f"<head><title>{ch['title']}</title></head>\n"
-                f"<body>\n<h1>{ch['title']}</h1>\n<p>{ch['body']}</p>\n</body>\n"
+                f"<body>\n{chapter_body_html}</body>\n"
                 "</html>",
             )
 
@@ -337,6 +373,9 @@ def _write_epub_seed_file(
     media_id: str,
     chapter_count: int,
     chapter_titles: list[str],
+    toc_anchor_label: str,
+    toc_anchor_target_id: str,
+    toc_anchor_heading: str,
 ) -> None:
     """Persist seeded EPUB media metadata for Playwright tests."""
     repo_root = Path(__file__).resolve().parents[2]
@@ -346,6 +385,9 @@ def _write_epub_seed_file(
         "media_id": media_id,
         "chapter_count": chapter_count,
         "chapter_titles": chapter_titles,
+        "toc_anchor_label": toc_anchor_label,
+        "toc_anchor_target_id": toc_anchor_target_id,
+        "toc_anchor_heading": toc_anchor_heading,
         "seeded_at": datetime.now(UTC).isoformat(),
     }
     seed_path.write_text(json.dumps(seed_payload, indent=2) + "\n", encoding="utf-8")
@@ -706,6 +748,9 @@ def _seed_epub_media(session_factory, user_id: UUID, settings) -> None:
         media_id=epub_media_id_str,
         chapter_count=len(EPUB_CHAPTERS),
         chapter_titles=[ch["title"] for ch in EPUB_CHAPTERS],
+        toc_anchor_label=EPUB_TOC_ANCHOR_LABEL,
+        toc_anchor_target_id=EPUB_TOC_ANCHOR_ID,
+        toc_anchor_heading=EPUB_TOC_ANCHOR_HEADING,
     )
     print(f"Seeded EPUB media for E2E: {epub_media_id_str}")
 

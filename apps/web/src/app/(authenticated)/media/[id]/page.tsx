@@ -44,13 +44,14 @@ import {
 } from "@/lib/highlights/useHighlightInteraction";
 import {
   fetchAllEpubChapterSummaries,
-  resolveInitialEpubChapterIdx,
-  normalizeEpubToc,
+  normalizeEpubNavigationToc,
+  resolveInitialEpubSectionId,
   isReadableStatus,
   type EpubChapterSummary,
   type EpubChapter,
-  type EpubTocResponse,
-  type NormalizedTocNode,
+  type EpubNavigationResponse,
+  type EpubNavigationSection,
+  type NormalizedNavigationTocNode,
 } from "@/lib/media/epubReader";
 import TranscriptMediaPane, {
   type TranscriptPlaybackSource,
@@ -215,6 +216,20 @@ async function fetchChapterDetail(
   return resp.data;
 }
 
+function buildManifestFallbackSections(
+  manifest: EpubChapterSummary[]
+): EpubNavigationSection[] {
+  return manifest.map((chapter, ordinal) => ({
+    section_id: `frag-${chapter.idx}`,
+    label: chapter.title,
+    fragment_idx: chapter.idx,
+    anchor_id: null,
+    source_node_id: chapter.primary_toc_node_id,
+    source: "fragment_fallback",
+    ordinal,
+  }));
+}
+
 // =============================================================================
 // Component
 // =============================================================================
@@ -241,10 +256,12 @@ export default function MediaViewPage({
   );
 
   // ---- EPUB state ----
-  const [epubManifest, setEpubManifest] = useState<EpubChapterSummary[] | null>(null);
+  const [epubSections, setEpubSections] = useState<EpubNavigationSection[] | null>(null);
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [activeChapterIdx, setActiveChapterIdx] = useState<number | null>(null);
+  const [pendingAnchorId, setPendingAnchorId] = useState<string | null>(null);
   const [activeChapter, setActiveChapter] = useState<EpubChapter | null>(null);
-  const [epubToc, setEpubToc] = useState<NormalizedTocNode[] | null>(null);
+  const [epubToc, setEpubToc] = useState<NormalizedNavigationTocNode[] | null>(null);
   const [tocWarning, setTocWarning] = useState(false);
   const [chapterLoading, setChapterLoading] = useState(false);
   const [epubError, setEpubError] = useState<string | null>(null);
@@ -428,30 +445,48 @@ export default function MediaViewPage({
         // Load manifest
         const chapters = await fetchAllEpubChapterSummaries(apiFetch, id);
         if (cancelled) return;
-        setEpubManifest(chapters);
 
-        const chapterParam = searchParams.get("chapter");
-        const resolvedIdx = resolveInitialEpubChapterIdx(chapters, chapterParam);
+        let sections: EpubNavigationSection[] = [];
+        setTocWarning(false);
 
-        // Canonicalize URL if needed
-        if (resolvedIdx !== null) {
-          const requestedNum = chapterParam !== null ? Number(chapterParam) : NaN;
-          if (requestedNum !== resolvedIdx || chapterParam === null) {
-            router.replace(`/media/${id}?chapter=${resolvedIdx}`);
+        try {
+          const navResp = await apiFetch<EpubNavigationResponse>(`/api/media/${id}/navigation`);
+          if (cancelled) return;
+          sections = navResp.data.sections;
+          const sectionIdSet = new Set(sections.map((section) => section.section_id));
+          setEpubToc(normalizeEpubNavigationToc(navResp.data.toc_nodes, sectionIdSet));
+        } catch {
+          // Keep reading available even if navigation contract is temporarily unavailable.
+          sections = buildManifestFallbackSections(chapters);
+          if (!cancelled) {
+            setTocWarning(true);
+            setEpubToc(null);
           }
-          setActiveChapterIdx(resolvedIdx);
-        } else {
-          setEpubError("No chapters available for this EPUB.");
         }
 
-        // Load TOC (non-blocking)
-        try {
-          const tocResp = await apiFetch<EpubTocResponse>(`/api/media/${id}/toc`);
-          if (cancelled) return;
-          const idxSet = new Set(chapters.map((c) => c.idx));
-          setEpubToc(normalizeEpubToc(tocResp.data.nodes, idxSet));
-        } catch {
-          if (!cancelled) setTocWarning(true);
+        if (sections.length === 0) {
+          sections = buildManifestFallbackSections(chapters);
+        }
+        setEpubSections(sections);
+
+        const locParam = searchParams.get("loc");
+        const chapterParam = searchParams.get("chapter");
+        const resolvedSectionId = resolveInitialEpubSectionId(sections, locParam, chapterParam);
+
+        if (resolvedSectionId !== null) {
+          const resolvedSection = sections.find((section) => section.section_id === resolvedSectionId);
+          if (!resolvedSection) {
+            setEpubError("No chapters available for this EPUB.");
+            return;
+          }
+          if (locParam !== resolvedSectionId || chapterParam !== null) {
+            router.replace(`/media/${id}?loc=${encodeURIComponent(resolvedSectionId)}`);
+          }
+          setActiveSectionId(resolvedSectionId);
+          setPendingAnchorId(resolvedSection.anchor_id);
+          setActiveChapterIdx(resolvedSection.fragment_idx);
+        } else {
+          setEpubError("No chapters available for this EPUB.");
         }
       } catch (err) {
         if (cancelled) return;
@@ -510,6 +545,42 @@ export default function MediaViewPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on chapter idx change
   }, [isEpub, activeChapterIdx, id]);
 
+  // EPUB URL/state sync for browser back/forward on ?loc=
+  useEffect(() => {
+    if (!isEpub || !epubSections || epubSections.length === 0) return;
+    const locParam = searchParams.get("loc");
+    if (!locParam || locParam === activeSectionId) return;
+    const section = epubSections.find((item) => item.section_id === locParam);
+    if (!section) return;
+    setActiveSectionId(section.section_id);
+    setPendingAnchorId(section.anchor_id);
+    setActiveChapterIdx(section.fragment_idx);
+  }, [isEpub, epubSections, searchParams, activeSectionId]);
+
+  // Scroll to anchor target after chapter content loads.
+  useEffect(() => {
+    if (!isEpub || !pendingAnchorId || !contentRef.current || !activeChapter || chapterLoading) return;
+
+    let target: Element | null = null;
+    const byId = document.getElementById(pendingAnchorId);
+    if (byId && contentRef.current.contains(byId)) {
+      target = byId;
+    }
+    if (!target) {
+      // Avoid selector-escaping pitfalls for uncommon anchor names.
+      target =
+        Array.from(contentRef.current.querySelectorAll("[name]")).find(
+          (el) => el.getAttribute("name") === pendingAnchorId
+        ) ?? null;
+    }
+
+    if (target instanceof HTMLElement) {
+      target.scrollIntoView({ block: "start", behavior: "auto" });
+    }
+
+    setPendingAnchorId(null);
+  }, [isEpub, pendingAnchorId, activeChapter, chapterLoading]);
+
   // Chapter fetch error recovery matrix
   const handleChapterFetchError = useCallback(
     async (err: unknown, requestVersion: number) => {
@@ -523,11 +594,19 @@ export default function MediaViewPage({
         try {
           const freshManifest = await fetchAllEpubChapterSummaries(apiFetch, id);
           if (requestVersion !== chapterVersionRef.current) return;
-          setEpubManifest(freshManifest);
-          const resolvedIdx = resolveInitialEpubChapterIdx(freshManifest, null);
-          if (resolvedIdx !== null) {
-            router.replace(`/media/${id}?chapter=${resolvedIdx}`);
-            setActiveChapterIdx(resolvedIdx);
+          const fallbackSections = buildManifestFallbackSections(freshManifest);
+          setEpubSections(fallbackSections);
+          const resolvedSectionId = resolveInitialEpubSectionId(
+            fallbackSections,
+            activeSectionId,
+            null
+          );
+          if (resolvedSectionId !== null) {
+            const section = fallbackSections.find((s) => s.section_id === resolvedSectionId)!;
+            router.replace(`/media/${id}?loc=${encodeURIComponent(resolvedSectionId)}`);
+            setActiveSectionId(resolvedSectionId);
+            setPendingAnchorId(section.anchor_id);
+            setActiveChapterIdx(section.fragment_idx);
           } else {
             setEpubError("No chapters available for this EPUB.");
           }
@@ -549,7 +628,7 @@ export default function MediaViewPage({
 
       setEpubError(err.message);
     },
-    [id, router]
+    [activeSectionId, id, router]
   );
 
   // ==========================================================================
@@ -958,12 +1037,16 @@ export default function MediaViewPage({
   // EPUB Chapter Navigation
   // ==========================================================================
 
-  const navigateToChapter = useCallback(
-    (idx: number) => {
-      router.push(`/media/${id}?chapter=${idx}`);
-      setActiveChapterIdx(idx);
+  const navigateToSection = useCallback(
+    (sectionId: string) => {
+      const section = epubSections?.find((item) => item.section_id === sectionId);
+      if (!section) return;
+      router.push(`/media/${id}?loc=${encodeURIComponent(sectionId)}`);
+      setActiveSectionId(sectionId);
+      setPendingAnchorId(section.anchor_id);
+      setActiveChapterIdx(section.fragment_idx);
     },
-    [router, id]
+    [router, id, epubSections]
   );
 
   const handlePdfPageHighlightsChange = useCallback(
@@ -1087,9 +1170,9 @@ export default function MediaViewPage({
             />
           ) : isEpub ? (
             <EpubContentPane
-              manifest={epubManifest}
+              sections={epubSections}
               activeChapter={activeChapter}
-              activeChapterIdx={activeChapterIdx}
+              activeSectionId={activeSectionId}
               chapterLoading={chapterLoading}
               epubError={epubError}
               toc={epubToc}
@@ -1097,7 +1180,7 @@ export default function MediaViewPage({
               contentRef={contentRef}
               renderedHtml={renderedHtml}
               onContentClick={handleContentClick}
-              onNavigate={navigateToChapter}
+              onNavigate={navigateToSection}
             />
           ) : fragments.length === 0 ? (
             <div className={styles.empty}>
@@ -1203,9 +1286,9 @@ function MediaHeader({ media }: { media: Media }) {
 }
 
 function EpubContentPane({
-  manifest,
+  sections,
   activeChapter,
-  activeChapterIdx,
+  activeSectionId,
   chapterLoading,
   epubError,
   toc,
@@ -1215,17 +1298,17 @@ function EpubContentPane({
   onContentClick,
   onNavigate,
 }: {
-  manifest: EpubChapterSummary[] | null;
+  sections: EpubNavigationSection[] | null;
   activeChapter: EpubChapter | null;
-  activeChapterIdx: number | null;
+  activeSectionId: string | null;
   chapterLoading: boolean;
   epubError: string | null;
-  toc: NormalizedTocNode[] | null;
+  toc: NormalizedNavigationTocNode[] | null;
   tocWarning: boolean;
   contentRef: React.RefObject<HTMLDivElement | null>;
   renderedHtml: string;
   onContentClick: (e: React.MouseEvent) => void;
-  onNavigate: (idx: number) => void;
+  onNavigate: (sectionId: string) => void;
 }) {
   const [tocExpanded, setTocExpanded] = useState(false);
 
@@ -1237,11 +1320,11 @@ function EpubContentPane({
     );
   }
 
-  if (!manifest) {
+  if (!sections) {
     return <div className={styles.loading}>Loading chapters...</div>;
   }
 
-  if (manifest.length === 0) {
+  if (sections.length === 0) {
     return (
       <div className={styles.empty}>
         <p>No chapters available for this EPUB.</p>
@@ -1250,6 +1333,12 @@ function EpubContentPane({
   }
 
   const hasToc = toc !== null && toc.length > 0;
+  const activeSectionPosition = sections.findIndex((section) => section.section_id === activeSectionId);
+  const prevSection = activeSectionPosition > 0 ? sections[activeSectionPosition - 1] : null;
+  const nextSection =
+    activeSectionPosition >= 0 && activeSectionPosition < sections.length - 1
+      ? sections[activeSectionPosition + 1]
+      : null;
 
   return (
     <div className={styles.epubContainer}>
@@ -1257,9 +1346,9 @@ function EpubContentPane({
       <div className={styles.chapterControls}>
         <button
           className={styles.chapterNavBtn}
-          disabled={activeChapter?.prev_idx == null}
+          disabled={!prevSection}
           onClick={() => {
-            if (activeChapter?.prev_idx != null) onNavigate(activeChapter.prev_idx);
+            if (prevSection) onNavigate(prevSection.section_id);
           }}
           aria-label="Previous chapter"
         >
@@ -1268,17 +1357,16 @@ function EpubContentPane({
 
         <div className={styles.chapterSelector}>
           <select
-            value={activeChapterIdx ?? ""}
+            value={activeSectionId ?? ""}
             onChange={(e) => {
-              const val = Number(e.target.value);
-              if (Number.isFinite(val)) onNavigate(val);
+              if (e.target.value) onNavigate(e.target.value);
             }}
             className={styles.chapterSelect}
             aria-label="Select chapter"
           >
-            {manifest.map((ch) => (
-              <option key={ch.idx} value={ch.idx}>
-                {ch.title}
+            {sections.map((section) => (
+              <option key={section.section_id} value={section.section_id}>
+                {section.label}
               </option>
             ))}
           </select>
@@ -1286,9 +1374,9 @@ function EpubContentPane({
 
         <button
           className={styles.chapterNavBtn}
-          disabled={activeChapter?.next_idx == null}
+          disabled={!nextSection}
           onClick={() => {
-            if (activeChapter?.next_idx != null) onNavigate(activeChapter.next_idx);
+            if (nextSection) onNavigate(nextSection.section_id);
           }}
           aria-label="Next chapter"
         >
@@ -1314,7 +1402,7 @@ function EpubContentPane({
             <div className={styles.tocTree}>
               <TocNodeList
                 nodes={toc!}
-                activeChapterIdx={activeChapterIdx}
+                activeSectionId={activeSectionId}
                 onNavigate={onNavigate}
               />
             </div>
@@ -1343,12 +1431,12 @@ function EpubContentPane({
 
 function TocNodeList({
   nodes,
-  activeChapterIdx,
+  activeSectionId,
   onNavigate,
 }: {
-  nodes: NormalizedTocNode[];
-  activeChapterIdx: number | null;
-  onNavigate: (idx: number) => void;
+  nodes: NormalizedNavigationTocNode[];
+  activeSectionId: string | null;
+  onNavigate: (sectionId: string) => void;
 }) {
   return (
     <ul className={styles.tocList}>
@@ -1357,9 +1445,9 @@ function TocNodeList({
           {node.navigable ? (
             <button
               className={`${styles.tocLink} ${
-                node.fragment_idx === activeChapterIdx ? styles.tocActive : ""
+                node.section_id === activeSectionId ? styles.tocActive : ""
               }`}
-              onClick={() => onNavigate(node.fragment_idx!)}
+              onClick={() => node.section_id && onNavigate(node.section_id)}
             >
               {node.label}
             </button>
@@ -1369,7 +1457,7 @@ function TocNodeList({
           {node.children.length > 0 && (
             <TocNodeList
               nodes={node.children}
-              activeChapterIdx={activeChapterIdx}
+              activeSectionId={activeSectionId}
               onNavigate={onNavigate}
             />
           )}

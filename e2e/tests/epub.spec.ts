@@ -6,6 +6,9 @@ interface SeededEpubMedia {
   media_id: string;
   chapter_count: number;
   chapter_titles: string[];
+  toc_anchor_label: string;
+  toc_anchor_target_id: string;
+  toc_anchor_heading: string;
 }
 
 function readSeededEpubMedia(): SeededEpubMedia {
@@ -47,16 +50,76 @@ test.describe("epub", () => {
     await expect(nextBtn).toBeEnabled();
     await nextBtn.click();
 
+    const chapterSelect = page.getByLabel("Select chapter");
+    await expect(chapterSelect).toBeVisible();
+    await chapterSelect.selectOption({ label: seed.chapter_titles[1] });
+
     // Chapter 2 heading should now be visible
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[1] })
     ).toBeVisible({ timeout: 10_000 });
 
     // The chapter selector dropdown should list all chapters
-    const chapterSelect = page.getByLabel("Select chapter");
-    await expect(chapterSelect).toBeVisible();
     const options = chapterSelect.locator("option");
     await expect(options).toHaveCount(seed.chapter_count);
+  });
+
+  test("toc leaf with anchor lands at exact in-fragment target", async ({
+    page,
+  }) => {
+    const seed = readSeededEpubMedia();
+    await page.goto(`/media/${seed.media_id}`);
+
+    await expect(
+      page.getByRole("heading", { name: seed.chapter_titles[0] })
+    ).toBeVisible({ timeout: 15_000 });
+
+    const tocToggle = page.getByLabel(/expand table of contents/i);
+    await expect(tocToggle).toBeVisible();
+    await tocToggle.click();
+
+    const anchorLeaf = page.getByRole("button", { name: seed.toc_anchor_label });
+    await expect(anchorLeaf).toBeVisible();
+    await anchorLeaf.click();
+
+    await expect(page.getByRole("heading", { name: seed.toc_anchor_heading })).toBeVisible({
+      timeout: 10_000,
+    });
+
+    await expect
+      .poll(
+        async () => {
+          try {
+            return await page.evaluate((anchorId) => {
+              const target = document.getElementById(anchorId);
+              if (!(target instanceof HTMLElement)) {
+                return null;
+              }
+
+              let scroller: HTMLElement | null = target.parentElement;
+              while (scroller && scroller !== document.body) {
+                const computed = window.getComputedStyle(scroller);
+                const canScrollY =
+                  /(auto|scroll)/.test(computed.overflowY) &&
+                  scroller.scrollHeight > scroller.clientHeight;
+                if (canScrollY) break;
+                scroller = scroller.parentElement;
+              }
+              if (!(scroller instanceof HTMLElement)) {
+                return null;
+              }
+
+              const targetTop = target.getBoundingClientRect().top;
+              const scrollerTop = scroller.getBoundingClientRect().top;
+              return Math.abs(targetTop - scrollerTop);
+            }, seed.toc_anchor_target_id);
+          } catch {
+            return null;
+          }
+        },
+        { timeout: 10_000 }
+      )
+      .toBeLessThan(40);
   });
 
   test("create highlight in epub", async ({ page }) => {

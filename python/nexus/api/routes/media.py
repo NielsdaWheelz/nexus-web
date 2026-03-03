@@ -326,6 +326,17 @@ def get_epub_toc(
     return success_response(result.model_dump(mode="json"))
 
 
+@router.get("/media/{media_id}/navigation")
+def get_epub_navigation(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Get unified EPUB navigation payload (sections + TOC links)."""
+    result = epub_read.get_epub_navigation_for_viewer(db, viewer.user_id, media_id)
+    return success_response(result.model_dump(mode="json"))
+
+
 @router.get("/media/{media_id}/file")
 def get_media_file(
     media_id: UUID,

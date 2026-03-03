@@ -230,3 +230,36 @@ class EpubTocOut(BaseModel):
     """TOC tree response."""
 
     nodes: list[EpubTocNodeOut]
+
+
+class EpubNavigationSectionOut(BaseModel):
+    """Canonical EPUB navigation section target."""
+
+    section_id: str
+    label: str
+    fragment_idx: int
+    anchor_id: str | None
+    source_node_id: str | None
+    source: Literal["toc", "fragment_fallback"]
+    ordinal: int
+
+
+class EpubNavigationTocNodeOut(BaseModel):
+    """TOC node extended with canonical section target linkage."""
+
+    node_id: str
+    parent_node_id: str | None
+    label: str
+    href: str | None
+    fragment_idx: int | None
+    depth: int
+    order_key: str
+    section_id: str | None
+    children: list["EpubNavigationTocNodeOut"]
+
+
+class EpubNavigationOut(BaseModel):
+    """Unified EPUB navigation payload for reader UI."""
+
+    sections: list[EpubNavigationSectionOut]
+    toc_nodes: list[EpubNavigationTocNodeOut]

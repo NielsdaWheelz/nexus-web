@@ -3,6 +3,10 @@ import {
   fetchAllEpubChapterSummaries,
   resolveInitialEpubChapterIdx,
   normalizeEpubToc,
+  normalizeEpubNavigationToc,
+  resolveInitialEpubSectionId,
+  type EpubNavigationSection,
+  type EpubNavigationTocNode,
   type EpubChapterSummary,
   type EpubChapterListResponse,
   type EpubTocNode,
@@ -175,5 +179,92 @@ describe("normalizeEpubToc", () => {
     // Preserves tree shape
     expect(result).toHaveLength(2);
     expect(result[0].children).toHaveLength(2);
+  });
+});
+
+describe("resolveInitialEpubSectionId", () => {
+  const sections: EpubNavigationSection[] = [
+    {
+      section_id: "sec-a",
+      label: "Chapter 1",
+      fragment_idx: 0,
+      anchor_id: null,
+      source_node_id: "ch0",
+      source: "toc",
+      ordinal: 0,
+    },
+    {
+      section_id: "sec-b",
+      label: "Chapter 2",
+      fragment_idx: 1,
+      anchor_id: "part-2",
+      source_node_id: "ch1",
+      source: "toc",
+      ordinal: 1,
+    },
+  ];
+
+  it("prefers valid loc query param", () => {
+    expect(resolveInitialEpubSectionId(sections, "sec-b", null)).toBe("sec-b");
+  });
+
+  it("falls back to chapter query mapping when loc is missing", () => {
+    expect(resolveInitialEpubSectionId(sections, null, "1")).toBe("sec-b");
+  });
+
+  it("falls back to first section for invalid loc/chapter values", () => {
+    expect(resolveInitialEpubSectionId(sections, "missing", "999")).toBe("sec-a");
+    expect(resolveInitialEpubSectionId(sections, null, "oops")).toBe("sec-a");
+  });
+
+  it("returns null for empty sections", () => {
+    expect(resolveInitialEpubSectionId([], null, null)).toBeNull();
+  });
+});
+
+describe("normalizeEpubNavigationToc", () => {
+  it("marks TOC nodes navigable only when section_id is valid", () => {
+    const sectionIds = new Set(["sec-a"]);
+    const nodes: EpubNavigationTocNode[] = [
+      {
+        node_id: "root",
+        parent_node_id: null,
+        label: "Part I",
+        href: null,
+        fragment_idx: null,
+        depth: 0,
+        order_key: "0001",
+        section_id: null,
+        children: [
+          {
+            node_id: "ch1",
+            parent_node_id: "root",
+            label: "Chapter 1",
+            href: "ch1.xhtml",
+            fragment_idx: 0,
+            depth: 1,
+            order_key: "0001.0001",
+            section_id: "sec-a",
+            children: [],
+          },
+          {
+            node_id: "ch2",
+            parent_node_id: "root",
+            label: "Chapter 2",
+            href: "ch2.xhtml",
+            fragment_idx: 1,
+            depth: 1,
+            order_key: "0001.0002",
+            section_id: "sec-b",
+            children: [],
+          },
+        ],
+      },
+    ];
+
+    const out = normalizeEpubNavigationToc(nodes, sectionIds);
+    expect(out[0].navigable).toBe(false);
+    expect(out[0].children[0].navigable).toBe(true);
+    expect(out[0].children[1].navigable).toBe(false);
   });
 });

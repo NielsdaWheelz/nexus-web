@@ -1895,6 +1895,62 @@ class EpubTocNode(Base):
     media: Mapped["Media"] = relationship("Media")
 
 
+class EpubNavLocation(Base):
+    """Canonical EPUB navigation location targets.
+
+    Persisted, deterministic section targets consumed by reader navigation UI.
+    """
+
+    __tablename__ = "epub_nav_locations"
+
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+    location_id: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_node_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    fragment_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    href_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    href_fragment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(location_id) BETWEEN 1 AND 255",
+            name="ck_epub_nav_locations_location_id_nonempty",
+        ),
+        CheckConstraint(
+            "char_length(trim(label)) BETWEEN 1 AND 512",
+            name="ck_epub_nav_locations_label_nonempty",
+        ),
+        CheckConstraint(
+            "fragment_idx >= 0",
+            name="ck_epub_nav_locations_fragment_idx_nonneg",
+        ),
+        CheckConstraint(
+            "ordinal >= 0",
+            name="ck_epub_nav_locations_ordinal_nonneg",
+        ),
+        CheckConstraint(
+            "source IN ('toc', 'fragment_fallback')",
+            name="ck_epub_nav_locations_source_valid",
+        ),
+        UniqueConstraint("media_id", "ordinal", name="uix_epub_nav_locations_media_ordinal"),
+        UniqueConstraint("media_id", "source_node_id", name="uix_epub_nav_locations_media_source"),
+    )
+
+    media: Mapped["Media"] = relationship("Media")
+
+
 class FragmentBlock(Base):
     """FragmentBlock model - block boundary index for context window computation.
 

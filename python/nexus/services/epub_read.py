@@ -19,6 +19,9 @@ from nexus.schemas.media import (
     EpubChapterOut,
     EpubChapterPageInfoOut,
     EpubChapterSummaryOut,
+    EpubNavigationOut,
+    EpubNavigationSectionOut,
+    EpubNavigationTocNodeOut,
     EpubTocNodeOut,
     EpubTocOut,
 )
@@ -294,3 +297,157 @@ def get_epub_toc_for_viewer(
             nodes_by_id[parent_id].children.append(node)
 
     return EpubTocOut(nodes=roots)
+
+
+def get_epub_navigation_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+) -> EpubNavigationOut:
+    """Return unified EPUB navigation sections and TOC linkage."""
+    _enforce_epub_read_guards(db, viewer_id, media_id)
+
+    nav_table_available = db.execute(
+        text("SELECT to_regclass('public.epub_nav_locations') IS NOT NULL")
+    ).scalar_one()
+
+    section_rows: list[tuple] = []
+    if nav_table_available:
+        section_rows = db.execute(
+            text("""
+                SELECT location_id, label, fragment_idx, href_fragment,
+                       source_node_id, source, ordinal
+                FROM epub_nav_locations
+                WHERE media_id = :mid
+                ORDER BY ordinal ASC
+            """),
+            {"mid": media_id},
+        ).fetchall()
+
+    toc_rows = db.execute(
+        text("""
+            SELECT node_id, parent_node_id, label, href,
+                   fragment_idx, depth, order_key
+            FROM epub_toc_nodes
+            WHERE media_id = :mid
+            ORDER BY order_key ASC
+        """),
+        {"mid": media_id},
+    ).fetchall()
+
+    if section_rows:
+        sections = [
+            EpubNavigationSectionOut(
+                section_id=r[0],
+                label=r[1],
+                fragment_idx=r[2],
+                anchor_id=r[3],
+                source_node_id=r[4],
+                source=r[5],
+                ordinal=r[6],
+            )
+            for r in section_rows
+        ]
+    else:
+        sections = _derive_navigation_sections_without_persisted_locations(db, media_id, toc_rows)
+
+    section_by_source_node = {
+        section.source_node_id: section.section_id
+        for section in sections
+        if section.source_node_id is not None
+    }
+
+    nodes_by_id: dict[str, EpubNavigationTocNodeOut] = {}
+    roots: list[EpubNavigationTocNodeOut] = []
+
+    for r in toc_rows:
+        node = EpubNavigationTocNodeOut(
+            node_id=r[0],
+            parent_node_id=r[1],
+            label=r[2],
+            href=r[3],
+            fragment_idx=r[4],
+            depth=r[5],
+            order_key=r[6],
+            section_id=section_by_source_node.get(r[0]),
+            children=[],
+        )
+        nodes_by_id[r[0]] = node
+
+    for r in toc_rows:
+        node = nodes_by_id[r[0]]
+        parent_id = r[1]
+        if parent_id is None or parent_id not in nodes_by_id:
+            roots.append(node)
+        else:
+            nodes_by_id[parent_id].children.append(node)
+
+    return EpubNavigationOut(sections=sections, toc_nodes=roots)
+
+
+def _derive_navigation_sections_without_persisted_locations(
+    db: Session,
+    media_id: UUID,
+    toc_rows: list[tuple],
+) -> list[EpubNavigationSectionOut]:
+    """Back-compat fallback when media predates persisted nav locations."""
+    sections: list[EpubNavigationSectionOut] = []
+    used_fragment_idxs: set[int] = set()
+    ordinal = 0
+
+    for row in toc_rows:
+        node_id, _parent, label, href, fragment_idx, _depth, _order = row
+        if fragment_idx is None:
+            continue
+        anchor = None
+        if href and "#" in href:
+            anchor = href.split("#", 1)[1] or None
+        sections.append(
+            EpubNavigationSectionOut(
+                section_id=f"toc-{node_id}",
+                label=label,
+                fragment_idx=fragment_idx,
+                anchor_id=anchor,
+                source_node_id=node_id,
+                source="toc",
+                ordinal=ordinal,
+            )
+        )
+        used_fragment_idxs.add(fragment_idx)
+        ordinal += 1
+
+    fragment_rows = db.execute(
+        text("""
+            SELECT idx, canonical_text
+            FROM fragments
+            WHERE media_id = :mid
+            ORDER BY idx ASC
+        """),
+        {"mid": media_id},
+    ).fetchall()
+
+    for frag_idx, canonical_text in fragment_rows:
+        if frag_idx in used_fragment_idxs:
+            continue
+        sections.append(
+            EpubNavigationSectionOut(
+                section_id=f"frag-{frag_idx:06d}",
+                label=_fallback_section_label(canonical_text, frag_idx),
+                fragment_idx=frag_idx,
+                anchor_id=None,
+                source_node_id=None,
+                source="fragment_fallback",
+                ordinal=ordinal,
+            )
+        )
+        ordinal += 1
+
+    return sections
+
+
+def _fallback_section_label(canonical_text: str, idx: int) -> str:
+    for line in canonical_text.splitlines():
+        trimmed = line.strip()
+        if trimmed:
+            return trimmed[:512]
+    return f"Chapter {idx + 1}"
