@@ -20,6 +20,7 @@ import HtmlRenderer from "@/components/HtmlRenderer";
 import PdfReader, { type PdfHighlightOut } from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
 import HighlightEditor, { type Highlight } from "@/components/HighlightEditor";
+import { useToast } from "@/components/Toast";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
 import {
   applyHighlightsToHtmlMemoized,
@@ -226,6 +227,7 @@ export default function MediaViewPage({
   const { id } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { toast } = useToast();
 
   // ---- Core data state ----
   const [media, setMedia] = useState<Media | null>(null);
@@ -269,7 +271,6 @@ export default function MediaViewPage({
   // Selection state for creating highlights
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
 
   const contentRef = useRef<HTMLDivElement>(null);
@@ -487,7 +488,6 @@ export default function MediaViewPage({
     clearFocus();
     setHighlights([]);
     setSelection(null);
-    setSelectionError(null);
 
     const load = async () => {
       try {
@@ -577,25 +577,6 @@ export default function MediaViewPage({
   }, [activeContent?.fragmentId]);
 
   // ==========================================================================
-  // Canonical Cursor Building
-  // ==========================================================================
-
-  useEffect(() => {
-    if (!activeContent || !contentRef.current) return;
-
-    const cursor = buildCanonicalCursor(contentRef.current);
-    const isValid = validateCanonicalText(
-      cursor,
-      activeContent.canonicalText,
-      activeContent.fragmentId
-    );
-
-    cursorRef.current = cursor;
-    setIsMismatchDisabled(!isValid);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuild when content changes
-  }, [activeContent?.fragmentId, activeContent?.canonicalText, highlightsVersion]);
-
-  // ==========================================================================
   // Highlight Rendering
   // ==========================================================================
 
@@ -613,6 +594,25 @@ export default function MediaViewPage({
   );
 
   // ==========================================================================
+  // Canonical Cursor Building
+  // ==========================================================================
+
+  useEffect(() => {
+    if (!activeContent || !contentRef.current) return;
+
+    const cursor = buildCanonicalCursor(contentRef.current);
+    const isValid = validateCanonicalText(
+      cursor,
+      activeContent.canonicalText,
+      activeContent.fragmentId
+    );
+
+    cursorRef.current = cursor;
+    setIsMismatchDisabled(!isValid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuild when rendered content changes
+  }, [activeContent?.fragmentId, activeContent?.canonicalText, renderedHtml]);
+
+  // ==========================================================================
   // Focus Sync
   // ==========================================================================
 
@@ -628,33 +628,29 @@ export default function MediaViewPage({
   const handleSelectionChange = useCallback(() => {
     if (isPdf) {
       setSelection(null);
-      setSelectionError(null);
       return;
     }
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !contentRef.current) {
       setSelection(null);
-      setSelectionError(null);
       return;
     }
 
     const range = sel.getRangeAt(0);
     if (!contentRef.current.contains(range.commonAncestorContainer)) {
       setSelection(null);
-      setSelectionError(null);
       return;
     }
 
     if (isMismatchDisabled) {
       setSelection(null);
-      setSelectionError("Highlights disabled due to content mismatch.");
+      toast({ variant: "warning", message: "Highlights disabled due to content mismatch." });
       return;
     }
 
     const rect = range.getBoundingClientRect();
-    setSelection({ range, rect });
-    setSelectionError(null);
-  }, [isMismatchDisabled, isPdf]);
+    setSelection({ range: range.cloneRange(), rect });
+  }, [isMismatchDisabled, isPdf, toast]);
 
   useEffect(() => {
     document.addEventListener("selectionchange", handleSelectionChange);
@@ -679,7 +675,7 @@ export default function MediaViewPage({
       );
 
       if (!result.success) {
-        setSelectionError(result.message);
+        toast({ variant: "error", message: result.message });
         setSelection(null);
         return;
       }
@@ -740,7 +736,7 @@ export default function MediaViewPage({
           }
         } else {
           console.error("Failed to create highlight:", err);
-          setSelectionError("Failed to create highlight");
+          toast({ variant: "error", message: "Failed to create highlight" });
         }
       } finally {
         setIsCreating(false);
@@ -753,12 +749,12 @@ export default function MediaViewPage({
       isMismatchDisabled,
       highlights,
       focusHighlight,
+      toast,
     ]
   );
 
   const handleDismissPopover = useCallback(() => {
     setSelection(null);
-    setSelectionError(null);
   }, []);
 
   const handleTranscriptSegmentSelect = useCallback(
@@ -767,7 +763,6 @@ export default function MediaViewPage({
       clearFocus();
       setHighlights([]);
       setSelection(null);
-      setSelectionError(null);
     },
     [clearFocus]
   );
@@ -824,7 +819,7 @@ export default function MediaViewPage({
     );
 
     if (!result.success) {
-      setSelectionError(result.message);
+      toast({ variant: "error", message: result.message });
       return;
     }
 
@@ -854,7 +849,7 @@ export default function MediaViewPage({
         window.getSelection()?.removeAllRanges();
       } catch (err) {
         console.error("Failed to update bounds:", err);
-        setSelectionError("Failed to update highlight bounds");
+        toast({ variant: "error", message: "Failed to update highlight bounds" });
       }
     };
 
@@ -869,6 +864,7 @@ export default function MediaViewPage({
     highlights,
     focusHighlight,
     cancelEditBounds,
+    toast,
   ]);
 
   // ==========================================================================
@@ -1043,10 +1039,6 @@ export default function MediaViewPage({
             <div className={styles.mismatchBanner}>
               Highlights disabled due to content mismatch. Try reloading.
             </div>
-          )}
-
-          {!isPdf && selectionError && (
-            <div className={styles.selectionError}>{selectionError}</div>
           )}
 
           {isTranscriptMedia ? (

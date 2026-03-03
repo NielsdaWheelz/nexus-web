@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Navbar from "@/components/Navbar";
+import { ToastProvider } from "@/components/Toast";
 import styles from "./layout.module.css";
 
 export default function AuthenticatedLayout({
@@ -12,11 +13,13 @@ export default function AuthenticatedLayout({
   const [navbarCollapsed, setNavbarCollapsed] = useState(false);
 
   return (
-    <div
-      className={`${styles.layout} ${navbarCollapsed ? styles.navCollapsed : ""}`}
-    >
-      <Navbar onToggle={setNavbarCollapsed} />
-      <main className={styles.main}>{children}</main>
-    </div>
+    <ToastProvider>
+      <div
+        className={`${styles.layout} ${navbarCollapsed ? styles.navCollapsed : ""}`}
+      >
+        <Navbar onToggle={setNavbarCollapsed} />
+        <main className={styles.main}>{children}</main>
+      </div>
+    </ToastProvider>
   );
 }

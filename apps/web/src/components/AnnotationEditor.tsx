@@ -14,6 +14,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useToast } from "./Toast";
 import styles from "./AnnotationEditor.module.css";
 
 // =============================================================================
@@ -59,15 +60,14 @@ export default function AnnotationEditor({
 }: AnnotationEditorProps) {
   const [body, setBody] = useState(annotation?.body || "");
   const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { toast } = useToast();
 
   // Reset body when annotation changes (e.g., after refetch)
   useEffect(() => {
     setBody(annotation?.body || "");
     setIsDirty(false);
-    setError(null);
   }, [annotation?.body, annotation?.updated_at]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -75,7 +75,6 @@ export default function AnnotationEditor({
     if (value.length <= MAX_ANNOTATION_LENGTH) {
       setBody(value);
       setIsDirty(true);
-      setError(null);
     }
   }, []);
 
@@ -84,7 +83,6 @@ export default function AnnotationEditor({
 
     const trimmedBody = body.trim();
     setIsSaving(true);
-    setError(null);
 
     try {
       if (trimmedBody === "") {
@@ -99,13 +97,13 @@ export default function AnnotationEditor({
       }
       setIsDirty(false);
     } catch (err) {
-      setError("Failed to save annotation");
+      toast({ variant: "error", message: "Failed to save annotation" });
       console.error("Annotation save failed:", err);
       // Keep text intact in editor
     } finally {
       setIsSaving(false);
     }
-  }, [isSaving, disabled, body, annotation, highlightId, onDelete, onSave]);
+  }, [isSaving, disabled, body, annotation, highlightId, onDelete, onSave, toast]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -132,19 +130,18 @@ export default function AnnotationEditor({
     if (!confirmed) return;
 
     setIsSaving(true);
-    setError(null);
 
     try {
       await onDelete(highlightId);
       setBody("");
       setIsDirty(false);
     } catch (err) {
-      setError("Failed to delete annotation");
+      toast({ variant: "error", message: "Failed to delete annotation" });
       console.error("Annotation delete failed:", err);
     } finally {
       setIsSaving(false);
     }
-  }, [isSaving, disabled, annotation, highlightId, onDelete]);
+  }, [isSaving, disabled, annotation, highlightId, onDelete, toast]);
 
   const hasContent = body.trim().length > 0;
   const isNewAnnotation = !annotation;
@@ -156,8 +153,6 @@ export default function AnnotationEditor({
         {isNewAnnotation ? "Add Note" : "Note"}
       </label>
       
-      {error && <div className={styles.error}>{error}</div>}
-
       <textarea
         ref={textareaRef}
         className={styles.textarea}

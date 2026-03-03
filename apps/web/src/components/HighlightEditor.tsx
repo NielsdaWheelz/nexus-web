@@ -14,6 +14,7 @@
 
 import { useState, useCallback } from "react";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights";
+import { useToast } from "./Toast";
 import AnnotationEditor from "./AnnotationEditor";
 import styles from "./HighlightEditor.module.css";
 
@@ -87,25 +88,24 @@ export default function HighlightEditor({
 }: HighlightEditorProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isChangingColor, setIsChangingColor] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
 
   const handleColorChange = useCallback(
     async (color: HighlightColor) => {
       if (color === highlight.color || isChangingColor) return;
 
       setIsChangingColor(true);
-      setError(null);
 
       try {
         await onColorChange(highlight.id, color);
       } catch (err) {
-        setError("Failed to change color");
+        toast({ variant: "error", message: "Failed to change color" });
         console.error("Color change failed:", err);
       } finally {
         setIsChangingColor(false);
       }
     },
-    [highlight.id, highlight.color, isChangingColor, onColorChange]
+    [highlight.id, highlight.color, isChangingColor, onColorChange, toast]
   );
 
   const handleDelete = useCallback(async () => {
@@ -115,16 +115,15 @@ export default function HighlightEditor({
     if (!confirmed) return;
 
     setIsDeleting(true);
-    setError(null);
 
     try {
       await onDelete(highlight.id);
     } catch (err) {
-      setError("Failed to delete highlight");
+      toast({ variant: "error", message: "Failed to delete highlight" });
       console.error("Delete failed:", err);
       setIsDeleting(false);
     }
-  }, [highlight.id, isDeleting, onDelete]);
+  }, [highlight.id, isDeleting, onDelete, toast]);
 
   return (
     <div className={styles.editor}>
@@ -136,9 +135,6 @@ export default function HighlightEditor({
         </mark>
         <span className={styles.previewSuffix}>{highlight.suffix}</span>
       </div>
-
-      {/* Error display */}
-      {error && <div className={styles.error}>{error}</div>}
 
       {/* Edit bounds mode */}
       {isEditingBounds ? (
