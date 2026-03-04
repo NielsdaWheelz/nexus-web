@@ -18,6 +18,16 @@ interface CreateTelemetrySnapshot {
   pageRenderEpoch: number;
 }
 
+interface LayerAlignmentSnapshot {
+  pageNumber: number;
+  widthScaleDrift: number;
+  heightScaleDrift: number;
+  leftOffsetDrift: number;
+  topOffsetDrift: number;
+  rightOffsetDrift: number;
+  bottomOffsetDrift: number;
+}
+
 async function waitForCreateOutcome(
   page: Page,
   minAttempts: number,
@@ -265,6 +275,48 @@ function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
   return page
     .locator('span[class*="pageIndicator"]')
     .filter({ hasText: `Page ${pageNumber} of ${pageCount}` });
+}
+
+async function readLayerAlignmentForPage(
+  page: Page,
+  targetPageNumber: number,
+): Promise<LayerAlignmentSnapshot | null> {
+  return page.evaluate((pageNumber) => {
+    const pageRoot = document.querySelector<HTMLElement>(
+      `.pdfViewer .page[data-page-number="${pageNumber}"]`,
+    );
+    if (!pageRoot) {
+      return null;
+    }
+    const canvas =
+      pageRoot.querySelector<HTMLElement>(".canvasWrapper") ??
+      pageRoot.querySelector<HTMLElement>("canvas");
+    const textLayer = pageRoot.querySelector<HTMLElement>(".textLayer");
+    if (!canvas || !textLayer) {
+      return null;
+    }
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const textRect = textLayer.getBoundingClientRect();
+    if (
+      canvasRect.width <= 0 ||
+      canvasRect.height <= 0 ||
+      textRect.width <= 0 ||
+      textRect.height <= 0
+    ) {
+      return null;
+    }
+
+    return {
+      pageNumber,
+      widthScaleDrift: Math.abs(textRect.width / canvasRect.width - 1),
+      heightScaleDrift: Math.abs(textRect.height / canvasRect.height - 1),
+      leftOffsetDrift: Math.abs(textRect.left - canvasRect.left) / canvasRect.width,
+      topOffsetDrift: Math.abs(textRect.top - canvasRect.top) / canvasRect.height,
+      rightOffsetDrift: Math.abs(textRect.right - canvasRect.right) / canvasRect.width,
+      bottomOffsetDrift: Math.abs(textRect.bottom - canvasRect.bottom) / canvasRect.height,
+    } satisfies LayerAlignmentSnapshot;
+  }, targetPageNumber);
 }
 
 test.describe("pdf reader", () => {
@@ -531,5 +583,53 @@ test.describe("pdf reader", () => {
       .toBeGreaterThanOrEqual(2);
     expect(highlightPostRequests).toBeGreaterThanOrEqual(2);
     expect(highlightPostResponsesOk).toBeGreaterThanOrEqual(2);
+  });
+
+  test("keeps text-layer/canvas geometry aligned and avoids invalid page warnings", async ({
+    page,
+  }) => {
+    const seeded = readSeededPdfMedia();
+    const expectedPageCount = seeded.page_count;
+    const targetPage = expectedPageCount >= 2 ? 2 : 1;
+    const invalidPageWarnings: string[] = [];
+
+    page.on("console", (message) => {
+      if (message.type() !== "warning" && message.type() !== "error") {
+        return;
+      }
+      const text = message.text();
+      if (
+        /scrollPageIntoView:\s*"\d+"\s*is not a valid pageNumber parameter/i.test(text) ||
+        /currentPageNumber:\s*"\d+"\s*is not a valid page/i.test(text)
+      ) {
+        invalidPageWarnings.push(text);
+      }
+    });
+
+    await page.goto(`/media/${seeded.media_id}`);
+    await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByRole("img", { name: "PDF page" })).toBeVisible();
+
+    if (targetPage > 1) {
+      await clickToolbarButtonByAriaLabel(page, "Next page");
+      await expect(pageIndicator(page, targetPage, expectedPageCount)).toBeVisible({
+        timeout: 20_000,
+      });
+    }
+
+    await expect(
+      page.locator(`.pdfViewer .page[data-page-number="${targetPage}"] .textLayer`),
+    ).toBeVisible();
+    const alignment = await readLayerAlignmentForPage(page, targetPage);
+    expect(alignment).not.toBeNull();
+    expect(alignment?.widthScaleDrift ?? 1).toBeLessThanOrEqual(0.02);
+    expect(alignment?.heightScaleDrift ?? 1).toBeLessThanOrEqual(0.02);
+    expect(alignment?.leftOffsetDrift ?? 1).toBeLessThanOrEqual(0.02);
+    expect(alignment?.topOffsetDrift ?? 1).toBeLessThanOrEqual(0.02);
+    expect(alignment?.rightOffsetDrift ?? 1).toBeLessThanOrEqual(0.02);
+    expect(alignment?.bottomOffsetDrift ?? 1).toBeLessThanOrEqual(0.02);
+    expect(invalidPageWarnings).toEqual([]);
   });
 });

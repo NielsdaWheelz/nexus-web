@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PdfReader, { type PdfReaderDeps } from "@/components/PdfReader";
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -27,6 +27,7 @@ interface FakePdfLink {
 interface FakePdfPageSpec {
   textItems: string[];
   links: FakePdfLink[];
+  textLayerScale: number;
 }
 
 interface FakePdfDocumentLike {
@@ -39,10 +40,12 @@ interface FakePdfDocumentLike {
 function createFakePage(options?: {
   textItems?: string[];
   links?: FakePdfLink[];
+  textLayerScale?: number;
 }): FakePdfPageSpec {
   return {
     textItems: options?.textItems ?? ["example text"],
     links: options?.links ?? [],
+    textLayerScale: options?.textLayerScale ?? 1,
   };
 }
 
@@ -121,6 +124,16 @@ class FakePDFLinkService {
 }
 
 class FakePDFViewer {
+  private static updateCallCount = 0;
+
+  static resetUpdateCallCount() {
+    FakePDFViewer.updateCallCount = 0;
+  }
+
+  static getUpdateCallCount() {
+    return FakePDFViewer.updateCallCount;
+  }
+
   private readonly container: HTMLDivElement;
   private readonly viewer: HTMLDivElement;
   private readonly eventBus: FakeEventBus;
@@ -165,10 +178,23 @@ class FakePDFViewer {
     pageRoot.style.width = `${dims.width}px`;
     pageRoot.style.height = `${dims.height}px`;
 
+    const canvasWrapper = document.createElement("div");
+    canvasWrapper.className = "canvasWrapper";
+    canvasWrapper.style.width = `${dims.width}px`;
+    canvasWrapper.style.height = `${dims.height}px`;
+    const canvas = document.createElement("canvas");
+    canvas.style.width = `${dims.width}px`;
+    canvas.style.height = `${dims.height}px`;
+    canvasWrapper.append(canvas);
+    pageRoot.append(canvasWrapper);
+
     const textLayer = document.createElement("div");
     textLayer.className = "textLayer";
     textLayer.style.position = "absolute";
-    textLayer.style.inset = "0";
+    textLayer.style.left = "0";
+    textLayer.style.top = "0";
+    textLayer.style.width = `${dims.width * page.textLayerScale}px`;
+    textLayer.style.height = `${dims.height * page.textLayerScale}px`;
     for (const text of page.textItems) {
       const span = document.createElement("span");
       span.textContent = text;
@@ -284,6 +310,10 @@ class FakePDFViewer {
     }
     this.renderDocumentPages();
     this.emitPageRendered(this._currentPageNumber);
+  }
+
+  update() {
+    FakePDFViewer.updateCallCount += 1;
   }
 }
 
@@ -548,7 +578,7 @@ describe("PdfReader", () => {
       addRange: () => undefined,
     } as unknown as Selection;
 
-    fireEvent.click(screen.getByRole("button", { name: /highlight selection/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Highlight$/ }));
 
     await waitFor(() => {
       const hasPostCall = apiFetchMock.mock.calls.some(
@@ -745,6 +775,191 @@ describe("PdfReader", () => {
     const computed = getComputedStyle(textSpan);
     expect(computed.position).toBe("absolute");
     expect(computed.whiteSpace).toBe("pre");
+  });
+
+  it("enforces pdf.js content-box sizing even with global border-box reset", async () => {
+    const resetStyle = document.createElement("style");
+    resetStyle.textContent = "*, *::before, *::after { box-sizing: border-box; }";
+    document.head.append(resetStyle);
+
+    try {
+      const signedUrl = "https://storage.example/signed-box-sizing";
+      const doc = createFakeDocument(1, {
+        1: createFakePage({ textItems: ["box sizing sentinel"] }),
+      });
+      const { deps } = createDeps({
+        urls: [signedUrl],
+        docsByUrl: { [signedUrl]: doc },
+        highlightsByPage: { 1: [] },
+      });
+
+      render(<PdfReader mediaId="media-12" deps={deps} />);
+      expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+
+      await waitFor(() => {
+        const page = document.querySelector(".pdfViewer .page");
+        const textLayer = document.querySelector(".pdfViewer .textLayer");
+        const canvasWrapper = document.querySelector(".pdfViewer .canvasWrapper");
+        const canvas = document.querySelector(".pdfViewer .canvasWrapper canvas");
+        expect(page).not.toBeNull();
+        expect(textLayer).not.toBeNull();
+        expect(canvasWrapper).not.toBeNull();
+        expect(canvas).not.toBeNull();
+        expect(getComputedStyle(page as Element).boxSizing).toBe("content-box");
+        expect(getComputedStyle(textLayer as Element).boxSizing).toBe("content-box");
+        expect(getComputedStyle(canvasWrapper as Element).boxSizing).toBe("content-box");
+        expect(getComputedStyle(canvas as Element).boxSizing).toBe("content-box");
+      });
+    } finally {
+      resetStyle.remove();
+    }
+  });
+
+  it("calls viewer update on initial render and zoom changes", async () => {
+    FakePDFViewer.resetUpdateCallCount();
+    const signedUrl = "https://storage.example/signed-update-calls";
+    const doc = createFakeDocument(1, {
+      1: createFakePage({ textItems: ["update sentinel"] }),
+    });
+    const { deps } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: [] },
+    });
+
+    render(<PdfReader mediaId="media-13" deps={deps} />);
+    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(FakePDFViewer.getUpdateCallCount()).toBeGreaterThan(0);
+    });
+
+    const updateCallsBeforeZoom = FakePDFViewer.getUpdateCallCount();
+    await userEvent.click(screen.getByRole("button", { name: /zoom in/i }));
+    await waitFor(() => {
+      expect(FakePDFViewer.getUpdateCallCount()).toBeGreaterThan(updateCallsBeforeZoom);
+    });
+  });
+
+  it("surfaces viewer scale/page lifecycle failures instead of silently swallowing them", async () => {
+    class BrokenScalePdfViewer extends FakePDFViewer {
+      get currentScaleValue() {
+        return 1;
+      }
+
+      set currentScaleValue(_value: string | number) {
+        throw new Error("scale setter failed");
+      }
+    }
+
+    const signedUrl = "https://storage.example/signed-broken-scale";
+    const doc = createFakeDocument(1);
+    const { deps } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: [] },
+    });
+
+    const loadPdfJsViewer: PdfReaderDeps["loadPdfJsViewer"] = async () => ({
+      EventBus: FakeEventBus as unknown as PdfReaderDeps["loadPdfJsViewer"] extends () => Promise<infer T>
+        ? T extends { EventBus: infer E }
+          ? E
+          : never
+        : never,
+      PDFLinkService:
+        FakePDFLinkService as unknown as PdfReaderDeps["loadPdfJsViewer"] extends () => Promise<infer T>
+          ? T extends { PDFLinkService: infer L }
+            ? L
+            : never
+          : never,
+      PDFViewer:
+        BrokenScalePdfViewer as unknown as PdfReaderDeps["loadPdfJsViewer"] extends () => Promise<infer T>
+          ? T extends { PDFViewer: infer V }
+            ? V
+            : never
+          : never,
+      ScrollMode: { VERTICAL: 0 },
+      LinkTarget: { BLANK: 2 },
+    });
+
+    render(<PdfReader mediaId="media-14" deps={{ ...deps, loadPdfJsViewer }} />);
+
+    expect(
+      await screen.findByText(/unable to load this pdf right now\. please retry\./i)
+    ).toBeInTheDocument();
+  });
+
+  it("degrades to area-style geometry when text layer and canvas scale diverge", async () => {
+    const signedUrl = "https://storage.example/signed-geometry-drift";
+    const doc = createFakeDocument(1, {
+      1: createFakePage({
+        textItems: ["geometry drift sentinel"],
+        textLayerScale: 1.08,
+      }),
+    });
+
+    let selectionForDeps: Selection | null = null;
+    const { deps, apiFetchMock } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: [] },
+      getSelection: () => selectionForDeps,
+    });
+
+    render(<PdfReader mediaId="media-15" deps={deps} />);
+
+    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    const textNode = await screen.findByText("geometry drift sentinel");
+    const range = document.createRange();
+    const rawText = textNode.firstChild;
+    if (!rawText) {
+      throw new Error("Expected text-layer span to include a text node");
+    }
+    range.setStart(rawText, 0);
+    range.setEnd(rawText, rawText.textContent?.length ?? 0);
+    const syntheticRect = new DOMRect(84, 160, 180, 18);
+    const clientRectsSpy = vi
+      .spyOn(range, "getClientRects")
+      .mockReturnValue([syntheticRect] as unknown as DOMRectList);
+    const boundingRectSpy = vi
+      .spyOn(range, "getBoundingClientRect")
+      .mockReturnValue(syntheticRect);
+    selectionForDeps = {
+      rangeCount: 1,
+      isCollapsed: false,
+      toString: () => "geometry drift sentinel",
+      getRangeAt: () => range,
+      removeAllRanges: () => undefined,
+      addRange: () => undefined,
+    } as unknown as Selection;
+
+    try {
+      await userEvent.click(await screen.findByRole("button", { name: /^Highlight$/ }));
+
+      await waitFor(() => {
+        const hasPostCall = apiFetchMock.mock.calls.some(
+          ([path, init]) =>
+            path === "/api/media/media-15/pdf-highlights" &&
+            (init as RequestInit | undefined)?.method === "POST"
+        );
+        expect(hasPostCall).toBe(true);
+      });
+
+      const postCall = apiFetchMock.mock.calls.find(
+        ([path, init]) =>
+          path === "/api/media/media-15/pdf-highlights" &&
+          (init as RequestInit | undefined)?.method === "POST"
+      );
+      expect(postCall).toBeDefined();
+      const payload = JSON.parse(((postCall?.[1] as RequestInit).body as string) ?? "{}");
+      expect(payload.exact).toBe("");
+      expect(payload.quads.length).toBeGreaterThan(0);
+      expect(
+        await screen.findByText(/text geometry is misaligned on this page/i)
+      ).toBeInTheDocument();
+    } finally {
+      clientRectsSpy.mockRestore();
+      boundingRectSpy.mockRestore();
+    }
   });
 
   it("renders PDF link annotations for internal and external links", async () => {
