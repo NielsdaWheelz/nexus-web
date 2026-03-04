@@ -1182,4 +1182,80 @@ describe("PdfReader", () => {
       expect(renderedPages.length).toBe(3);
     });
   });
+
+  it("supports external header controls when toolbar is hidden", async () => {
+    const signedUrl = "https://storage.example/signed-external-controls";
+    const doc = createFakeDocument(2, {
+      1: createFakePage({ textItems: ["external controls page one"] }),
+      2: createFakePage({ textItems: ["external controls page two"] }),
+    });
+    const { deps } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: [], 2: [] },
+    });
+
+    const stateEvents: Array<{
+      pageNumber: number;
+      numPages: number;
+      zoomPercent: number;
+      canGoNext: boolean;
+      canCreateHighlight: boolean;
+      highlightLabel: string;
+      createTelemetry: { attempts: number };
+    }> = [];
+    const actionsRef: {
+      current:
+        | {
+            goToNextPage: () => void;
+            zoomIn: () => void;
+            createHighlight: () => void;
+          }
+        | null;
+    } = { current: null };
+
+    render(
+      <PdfReader
+        mediaId="media-12"
+        deps={deps}
+        showToolbar={false}
+        onControlsStateChange={(state) => stateEvents.push(state)}
+        onControlsReady={(next) => {
+          actionsRef.current = next;
+        }}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: /next page/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /zoom in/i })).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(stateEvents.length).toBeGreaterThan(0);
+    });
+    await waitFor(() => {
+      const latest = stateEvents.at(-1);
+      expect(latest?.numPages).toBe(2);
+      expect(latest?.canGoNext).toBe(true);
+      expect(actionsRef.current).not.toBeNull();
+    });
+    expect(stateEvents.at(-1)?.pageNumber).toBe(1);
+    expect(stateEvents.at(-1)?.highlightLabel).toMatch(/highlight/i);
+
+    actionsRef.current?.goToNextPage();
+    await waitFor(() => {
+      expect(stateEvents.at(-1)?.pageNumber).toBe(2);
+    });
+
+    const zoomBefore = stateEvents.at(-1)?.zoomPercent ?? 0;
+    actionsRef.current?.zoomIn();
+    await waitFor(() => {
+      expect((stateEvents.at(-1)?.zoomPercent ?? 0) >= zoomBefore).toBe(true);
+    });
+
+    const attemptsBefore = stateEvents.at(-1)?.createTelemetry.attempts ?? 0;
+    actionsRef.current?.createHighlight();
+    await waitFor(() => {
+      expect((stateEvents.at(-1)?.createTelemetry.attempts ?? 0) >= attemptsBefore + 1).toBe(true);
+    });
+  });
 });

@@ -11,12 +11,15 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import Link from "next/link";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import PdfReader, { type PdfHighlightOut } from "@/components/PdfReader";
+import PdfReader, {
+  type PdfHighlightOut,
+  type PdfReaderControlActions,
+  type PdfReaderControlsState,
+} from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
 import HighlightEditor, { type Highlight } from "@/components/HighlightEditor";
 import { useToast } from "@/components/Toast";
@@ -362,8 +365,11 @@ export default function MediaViewPage() {
   const [tocWarning, setTocWarning] = useState(false);
   const [chapterLoading, setChapterLoading] = useState(false);
   const [epubError, setEpubError] = useState<string | null>(null);
+  const [epubTocExpanded, setEpubTocExpanded] = useState(false);
   const [epubHighlightScope, setEpubHighlightScope] = useState<EpubHighlightScope>("chapter");
   const [pdfHighlightScope, setPdfHighlightScope] = useState<PdfHighlightScope>("page");
+  const [pdfControlsState, setPdfControlsState] = useState<PdfReaderControlsState | null>(null);
+  const pdfControlsRef = useRef<PdfReaderControlActions | null>(null);
 
   // Request-version guard for stale chapter/highlight responses
   const chapterVersionRef = useRef(0);
@@ -1534,6 +1540,24 @@ export default function MediaViewPage() {
     [router, id, epubSections]
   );
 
+  const activeSectionPosition = useMemo(() => {
+    if (!epubSections || !activeSectionId) {
+      return -1;
+    }
+    return epubSections.findIndex((section) => section.section_id === activeSectionId);
+  }, [activeSectionId, epubSections]);
+  const prevSection =
+    activeSectionPosition > 0 && epubSections
+      ? epubSections[activeSectionPosition - 1]
+      : null;
+  const nextSection =
+    activeSectionPosition >= 0 &&
+    epubSections &&
+    activeSectionPosition < epubSections.length - 1
+      ? epubSections[activeSectionPosition + 1]
+      : null;
+  const hasEpubToc = epubToc !== null && epubToc.length > 0;
+
   const handlePdfPageHighlightsChange = useCallback(
     (nextPage: number, nextHighlights: PdfHighlightOut[]) => {
       setPdfActivePage(nextPage);
@@ -1604,6 +1628,144 @@ export default function MediaViewPage() {
     ]
   );
 
+  const mediaHeaderMeta = (
+    <div className={styles.metadata}>
+      <span className={styles.kind}>{media?.kind}</span>
+      {media?.canonical_source_url && (
+        <a
+          href={media.canonical_source_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={styles.sourceLink}
+        >
+          View Source ↗
+        </a>
+      )}
+    </div>
+  );
+
+  const mediaPaneNavigation =
+    isPdf && canRead && pdfControlsState
+      ? {
+          label: `Page ${pdfControlsState.pageNumber} of ${pdfControlsState.numPages || 0}`,
+          previous: {
+            label: "Previous page",
+            onClick: () => {
+              pdfControlsRef.current?.goToPreviousPage();
+            },
+            disabled: !pdfControlsState.canGoPrev,
+          },
+          next: {
+            label: "Next page",
+            onClick: () => {
+              pdfControlsRef.current?.goToNextPage();
+            },
+            disabled: !pdfControlsState.canGoNext,
+          },
+        }
+      : isEpub && canRead
+        ? {
+            label:
+              activeSectionPosition >= 0 && epubSections
+                ? `${activeSectionPosition + 1} / ${epubSections.length}`
+                : undefined,
+            previous: {
+              label: "Previous chapter",
+              onClick: () => {
+                if (prevSection) {
+                  navigateToSection(prevSection.section_id);
+                }
+              },
+              disabled: !prevSection,
+            },
+            next: {
+              label: "Next chapter",
+              onClick: () => {
+                if (nextSection) {
+                  navigateToSection(nextSection.section_id);
+                }
+              },
+              disabled: !nextSection,
+            },
+          }
+        : undefined;
+
+  const mediaPaneActions =
+    isPdf && canRead && pdfControlsState ? (
+      <div className={styles.headerActions}>
+        <button
+          type="button"
+          className={styles.headerActionBtn}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            pdfControlsRef.current?.captureSelectionSnapshot();
+          }}
+          onClick={() => pdfControlsRef.current?.createHighlight("yellow")}
+          disabled={!pdfControlsState.canCreateHighlight || pdfControlsState.isCreating}
+          aria-label="Highlight selection"
+          data-create-attempts={pdfControlsState.createTelemetry.attempts}
+          data-create-post-requests={pdfControlsState.createTelemetry.postRequests}
+          data-create-patch-requests={pdfControlsState.createTelemetry.patchRequests}
+          data-create-successes={pdfControlsState.createTelemetry.successes}
+          data-create-errors={pdfControlsState.createTelemetry.errors}
+          data-create-last-outcome={pdfControlsState.createTelemetry.lastOutcome}
+          data-page-render-epoch={pdfControlsState.pageRenderEpoch}
+          data-selection-popover-ignore-outside="true"
+        >
+          {pdfControlsState.highlightLabel}
+        </button>
+        <span className={styles.zoomLabel}>{pdfControlsState.zoomPercent}%</span>
+        <button
+          type="button"
+          className={styles.headerActionBtn}
+          onClick={() => pdfControlsRef.current?.zoomOut()}
+          disabled={!pdfControlsState.canZoomOut}
+          aria-label="Zoom out"
+        >
+          Zoom out
+        </button>
+        <button
+          type="button"
+          className={styles.headerActionBtn}
+          onClick={() => pdfControlsRef.current?.zoomIn()}
+          disabled={!pdfControlsState.canZoomIn}
+          aria-label="Zoom in"
+        >
+          Zoom in
+        </button>
+      </div>
+    ) : isEpub && canRead && epubSections ? (
+      <div className={styles.headerActions}>
+        <select
+          value={activeSectionId ?? ""}
+          onChange={(event) => {
+            if (event.target.value) {
+              navigateToSection(event.target.value);
+            }
+          }}
+          className={styles.headerSelect}
+          aria-label="Select chapter"
+        >
+          {epubSections.map((section) => (
+            <option key={section.section_id} value={section.section_id}>
+              {section.label}
+            </option>
+          ))}
+        </select>
+        {(hasEpubToc || tocWarning) && (
+          <button
+            type="button"
+            className={styles.headerActionBtn}
+            onClick={() => setEpubTocExpanded((value) => !value)}
+            aria-label={
+              epubTocExpanded ? "Collapse table of contents" : "Expand table of contents"
+            }
+          >
+            {epubTocExpanded ? "Hide TOC" : "Show TOC"}
+          </button>
+        )}
+      </div>
+    ) : null;
   // ==========================================================================
   // Render
   // ==========================================================================
@@ -1621,12 +1783,9 @@ export default function MediaViewPage() {
   if (error || !media) {
     return (
       <PaneContainer>
-        <Pane title="Error">
+        <Pane title="Error" back={{ label: "Back to Libraries", href: "/libraries" }}>
           <div className={styles.errorContainer}>
             <StateMessage variant="error">{error || "Media not found"}</StateMessage>
-            <Link href="/libraries" className={styles.backLink}>
-              ← Back to Libraries
-            </Link>
           </div>
         </Pane>
       </PaneContainer>
@@ -1637,9 +1796,12 @@ export default function MediaViewPage() {
   if (isEpub && epubError === "processing") {
     return (
       <PaneContainer>
-        <Pane title={media.title}>
+        <Pane
+          title={media.title}
+          back={{ label: "Back to Libraries", href: "/libraries" }}
+          headerMeta={mediaHeaderMeta}
+        >
           <div className={styles.content}>
-            <MediaHeader media={media} />
             <div className={styles.notReady}>
               <p>This EPUB is still being processed.</p>
               <p>Status: {media.processing_status}</p>
@@ -1653,10 +1815,34 @@ export default function MediaViewPage() {
   return (
     <PaneContainer>
       {/* Content Pane */}
-      <Pane title={media.title}>
+      <Pane
+        title={media.title}
+        back={{ label: "Back to Libraries", href: "/libraries" }}
+        headerMeta={mediaHeaderMeta}
+        navigation={mediaPaneNavigation}
+        headerActions={mediaPaneActions}
+        options={[
+          ...(media.canonical_source_url
+            ? [
+                {
+                  id: "open-source",
+                  label: "Open source",
+                  href: media.canonical_source_url,
+                },
+              ]
+            : []),
+          ...(isEpub && (hasEpubToc || tocWarning)
+            ? [
+                {
+                  id: "toggle-toc",
+                  label: epubTocExpanded ? "Hide table of contents" : "Show table of contents",
+                  onSelect: () => setEpubTocExpanded((value) => !value),
+                },
+              ]
+            : []),
+        ]}
+      >
         <div className={styles.content}>
-          <MediaHeader media={media} />
-
           {!isPdf && isMismatchDisabled && (
             <div className={styles.mismatchBanner}>
               Highlights disabled due to content mismatch. Try reloading.
@@ -1700,6 +1886,11 @@ export default function MediaViewPage() {
             <PdfReader
               mediaId={id}
               contentRef={pdfContentRef}
+              showToolbar={false}
+              onControlsStateChange={setPdfControlsState}
+              onControlsReady={(controls) => {
+                pdfControlsRef.current = controls;
+              }}
               focusedHighlightId={focusState.focusedId}
               editingHighlightId={
                 focusState.editingBounds ? focusState.focusedId : null
@@ -1720,6 +1911,7 @@ export default function MediaViewPage() {
               epubError={epubError}
               toc={epubToc}
               tocWarning={tocWarning}
+              tocExpanded={epubTocExpanded}
               contentRef={contentRef}
               renderedHtml={renderedHtml}
               onContentClick={handleContentClick}
@@ -1782,7 +1974,11 @@ export default function MediaViewPage() {
             </SectionCard>
           )}
           {isPdf && (
-            <div className={styles.highlightScopeHeader}>
+            <div
+              className={styles.highlightScopeHeader}
+              role="group"
+              aria-label="Highlight scope"
+            >
               <span className={styles.highlightScopeLabel}>Scope</span>
               <div className={styles.highlightScopeToggle}>
                 <button
@@ -1791,6 +1987,7 @@ export default function MediaViewPage() {
                   }`}
                   onClick={() => handlePdfHighlightScopeChange("page")}
                   type="button"
+                  aria-pressed={pdfHighlightScope === "page"}
                 >
                   This page
                 </button>
@@ -1800,6 +1997,7 @@ export default function MediaViewPage() {
                   }`}
                   onClick={() => handlePdfHighlightScopeChange("document")}
                   type="button"
+                  aria-pressed={pdfHighlightScope === "document"}
                 >
                   Entire document
                 </button>
@@ -1882,29 +2080,6 @@ export default function MediaViewPage() {
 // Sub-components
 // =============================================================================
 
-function MediaHeader({ media }: { media: Media }) {
-  return (
-    <div className={styles.header}>
-      <Link href="/libraries" className={styles.backLink}>
-        ← Back to Libraries
-      </Link>
-      <div className={styles.metadata}>
-        <span className={styles.kind}>{media.kind}</span>
-        {media.canonical_source_url && (
-          <a
-            href={media.canonical_source_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.sourceLink}
-          >
-            View Source ↗
-          </a>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function EpubContentPane({
   sections,
   activeChapter,
@@ -1913,6 +2088,7 @@ function EpubContentPane({
   epubError,
   toc,
   tocWarning,
+  tocExpanded,
   contentRef,
   renderedHtml,
   onContentClick,
@@ -1925,13 +2101,12 @@ function EpubContentPane({
   epubError: string | null;
   toc: NormalizedNavigationTocNode[] | null;
   tocWarning: boolean;
+  tocExpanded: boolean;
   contentRef: React.RefObject<HTMLDivElement | null>;
   renderedHtml: string;
   onContentClick: (e: React.MouseEvent) => void;
   onNavigate: (sectionId: string) => void;
 }) {
-  const [tocExpanded, setTocExpanded] = useState(false);
-
   if (epubError && epubError !== "processing") {
     return (
       <div className={styles.error}>
@@ -1953,70 +2128,15 @@ function EpubContentPane({
   }
 
   const hasToc = toc !== null && toc.length > 0;
-  const activeSectionPosition = sections.findIndex((section) => section.section_id === activeSectionId);
-  const prevSection = activeSectionPosition > 0 ? sections[activeSectionPosition - 1] : null;
-  const nextSection =
-    activeSectionPosition >= 0 && activeSectionPosition < sections.length - 1
-      ? sections[activeSectionPosition + 1]
-      : null;
 
   return (
     <div className={styles.epubContainer}>
-      {/* Chapter controls */}
-      <div className={styles.chapterControls}>
-        <button
-          className={styles.chapterNavBtn}
-          disabled={!prevSection}
-          onClick={() => {
-            if (prevSection) onNavigate(prevSection.section_id);
-          }}
-          aria-label="Previous chapter"
-        >
-          ← Prev
-        </button>
-
-        <div className={styles.chapterSelector}>
-          <select
-            value={activeSectionId ?? ""}
-            onChange={(e) => {
-              if (e.target.value) onNavigate(e.target.value);
-            }}
-            className={styles.chapterSelect}
-            aria-label="Select chapter"
-          >
-            {sections.map((section) => (
-              <option key={section.section_id} value={section.section_id}>
-                {section.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <button
-          className={styles.chapterNavBtn}
-          disabled={!nextSection}
-          onClick={() => {
-            if (nextSection) onNavigate(nextSection.section_id);
-          }}
-          aria-label="Next chapter"
-        >
-          Next →
-        </button>
-      </div>
-
-      {/* TOC toggle */}
       {(hasToc || tocWarning) && (
         <div className={styles.tocSection}>
-          <button
-            className={styles.tocToggle}
-            onClick={() => setTocExpanded((v) => !v)}
-            aria-label={tocExpanded ? "Collapse table of contents" : "Expand table of contents"}
-          >
-            {tocExpanded ? "▾" : "▸"} Table of Contents
-            {tocWarning && !hasToc && (
-              <span className={styles.tocWarning}> (unavailable)</span>
-            )}
-          </button>
+          <div className={styles.tocToggle}>
+            Table of Contents
+            {tocWarning && !hasToc && <span className={styles.tocWarning}> (unavailable)</span>}
+          </div>
 
           {tocExpanded && hasToc && (
             <div className={styles.tocTree}>

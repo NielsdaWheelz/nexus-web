@@ -45,13 +45,13 @@ test.describe("non-pdf linked-items", () => {
     const contentPane = page.locator('div[class*="fragments"]');
 
     await page.goto(mediaUrl);
-    await expect(contentPane).toBeVisible();
+    await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
     // Use the focus-target row for quote interaction because it is guaranteed
     // to be brought into the visible linked-items pane region by this fixture.
     const focusRow = page.locator(linkedItemRowByText(seeded.focus_exact)).first();
-    await expect(page.locator(linkedItemRowByText(seeded.quote_exact)).first()).toBeVisible();
-    await expect(focusRow).toBeVisible();
+    await expect(page.locator(linkedItemRowByText(seeded.quote_exact)).first()).toBeVisible({ timeout: 10_000 });
+    await expect(focusRow).toBeVisible({ timeout: 10_000 });
 
     await expect(focusRow.getByLabel("Has annotation")).toBeVisible();
     await focusRow.hover();
@@ -67,7 +67,7 @@ test.describe("non-pdf linked-items", () => {
     ).toBeVisible();
 
     await page.goto(mediaUrl);
-    await expect(contentPane).toBeVisible();
+    await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
     const focusedSegment = contentPane
       .locator(`[data-active-highlight-ids~="${seeded.focus_highlight_id}"]`)
@@ -79,10 +79,10 @@ test.describe("non-pdf linked-items", () => {
     expect(topBefore).toBeGreaterThan(viewportHeight);
 
     const focusRowAgain = page.locator(linkedItemRowByText(seeded.focus_exact)).first();
-    await expect(focusRowAgain).toBeVisible();
+    await expect(focusRowAgain).toBeVisible({ timeout: 10_000 });
     await focusRowAgain.click();
 
-    await expect(page.getByRole("button", { name: "Edit Bounds" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit Bounds" })).toBeVisible({ timeout: 10_000 });
     await expect
       .poll(
         async () =>

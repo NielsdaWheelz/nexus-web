@@ -1,11 +1,23 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, type KeyboardEvent } from "react";
 import styles from "./Pane.module.css";
+import SurfaceHeader, {
+  type SurfaceHeaderBackAction,
+  type SurfaceHeaderNavigation,
+  type SurfaceHeaderOption,
+} from "@/components/ui/SurfaceHeader";
 
 interface PaneProps {
   children: React.ReactNode;
   title?: string;
+  subtitle?: React.ReactNode;
+  back?: SurfaceHeaderBackAction;
+  navigation?: SurfaceHeaderNavigation;
+  options?: SurfaceHeaderOption[];
+  headerActions?: React.ReactNode;
+  headerMeta?: React.ReactNode;
+  header?: React.ReactNode;
   defaultWidth?: number;
   minWidth?: number;
   maxWidth?: number;
@@ -16,6 +28,13 @@ interface PaneProps {
 export default function Pane({
   children,
   title,
+  subtitle,
+  back,
+  navigation,
+  options,
+  headerActions,
+  headerMeta,
+  header,
   defaultWidth = 480,
   minWidth = 280,
   maxWidth = 900,
@@ -54,25 +73,64 @@ export default function Pane({
     },
     [minWidth, maxWidth]
   );
+  const handleResizeKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setWidth((current) => Math.max(minWidth, current - 16));
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        setWidth((current) => Math.min(maxWidth, current + 16));
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        setWidth(minWidth);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        setWidth(maxWidth);
+      }
+    },
+    [maxWidth, minWidth]
+  );
 
   return (
     <div ref={paneRef} className={styles.pane} style={{ width }}>
-      {title && (
-        <div className={styles.header}>
-          <h2 className={styles.title}>{title}</h2>
-          {onClose && (
-            <button
-              className={styles.closeBtn}
-              onClick={onClose}
-              aria-label="Close pane"
-            >
-              ×
-            </button>
+      {header
+        ? header
+        : title && (
+            <SurfaceHeader
+              title={title}
+              subtitle={subtitle}
+              back={back}
+              navigation={navigation}
+              options={options}
+              actions={
+                <>
+                  {headerActions}
+                  {onClose && (
+                    <button
+                      type="button"
+                      className={styles.closeBtn}
+                      onClick={onClose}
+                      aria-label="Close pane"
+                    >
+                      ×
+                    </button>
+                  )}
+                </>
+              }
+              meta={headerMeta}
+            />
           )}
-        </div>
-      )}
-      <div className={`${styles.content} ${contentClassName ?? ""}`}>{children}</div>
-      <div className={styles.resizeHandle} onMouseDown={handleMouseDown} />
+      <div className={`${styles.content} ${contentClassName ?? ""}`.trim()}>{children}</div>
+      <div
+        className={styles.resizeHandle}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize pane"
+        tabIndex={0}
+        onMouseDown={handleMouseDown}
+        onKeyDown={handleResizeKeyDown}
+      />
     </div>
   );
 }

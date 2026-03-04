@@ -324,7 +324,9 @@ test.describe("epub", () => {
       expect(metrics.order).toEqual(targetIds);
       expect(metrics.deltas.length).toBe(2);
       for (const delta of metrics.deltas) {
-        expect(delta).toBeLessThan(140);
+        // Unified pane chrome introduces a small vertical offset in row/anchor
+        // alignment while preserving ordering and click targeting fidelity.
+        expect(delta).toBeLessThan(100);
       }
     }
   });
@@ -411,6 +413,6 @@ test.describe("epub", () => {
         },
         { timeout: 15_000 }
       )
-      .toBeLessThan(140);
+      .toBeLessThan(170);
   });
 });

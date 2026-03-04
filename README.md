@@ -88,6 +88,7 @@ nexus/
 - **PDF Reader** (S6 PR-07): The web reader uses `pdfjs-dist` `PDFViewer` primitives (official text + annotation layers, `PDFLinkService`, vertical continuous scroll) so text selection, internal/external links, and large-document scrolling stay aligned with upstream PDF.js behavior.
 - **PDF Reader Alignment Hardening**: `PdfReader` enforces PDF.js `content-box` CSS invariants, defers initial scale/page application until viewer pages are ready (avoids invalid page warnings), and degrades to area-based bounds when text-layer/canvas geometry drifts beyond tolerance.
 - **PDF Linked-Items Adapters + Scope**: Linked-items now use explicit renderer adapters (`HtmlAnchorProvider` / `PdfAnchorProvider`) and typed coordinate transforms (`page` -> `viewer-scroll` -> `pane`) to avoid implicit cross-component `getBoundingClientRect` math; PDF exposes explicit scope controls (`This page` aligned mode, `Entire document` index/list mode) backed by stable ordering keyset semantics (`page_number`, `sort_top`, `sort_left`, `created_at`, `id`).
+- **Shared Surface Chrome**: Pane/page headers now use a single `SurfaceHeader` primitive (title, back, previous/next nav, actions, and options menu), with reader controls externalized from `PdfReader` so media/library/chat surfaces share non-scroll-coupled navigation chrome and a consistent options interaction model.
 - **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` remains control-plane only (subscribe + enqueue). `DELETE /podcasts/subscriptions/{podcast_id}` applies explicit unsubscribe retention modes (`mode=1|2|3`). Episode ingest runs in worker data-plane jobs with explicit sync lifecycle states (`pending`, `running`, `complete`, `source_limited`, `failed`).
 - **Podcast Transcription Pipeline** (S7 PR-03): transcript segments are sourced from transcription-provider output (Deepgram), not feed payload transcript fields. Diarized transcription falls back to non-diarized output, transcript text is canonicalized (NFC + whitespace normalization), and persisted segment timing is strictly validated (`t_start_ms < t_end_ms`).
 - **Podcast Active Polling Orchestration** (S7 PR-04): Celery Beat schedules periodic active-subscription polling. Runs are singleton-safe via durable lease rows, stale `running` subscription sync claims are reclaimable, and each run persists deterministic operator telemetry (`processed_count`, `failed_count`, `skipped_count`, `scanned_count`, failure-code breakdown).
@@ -179,6 +180,7 @@ Useful targeted E2E runs:
 ```bash
 cd e2e
 npm test -- tests/pdf-reader.spec.ts --project=chromium
+npm test -- tests/pane-chrome.spec.ts --project=chromium
 npm test -- tests/non-pdf-linked-items.spec.ts --project=chromium
 npm test -- tests/epub.spec.ts --project=chromium
 npm test -- tests/youtube-transcript.spec.ts --project=chromium
