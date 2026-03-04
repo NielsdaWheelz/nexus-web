@@ -79,7 +79,8 @@ nexus/
 - **Chat Infrastructure** (S3): Conversations, messages, and LLM integration for AI-assisted reading.
 - **Library Sharing** (S4): Multi-user library membership, invitations, and shared visibility. Canonical visibility predicates enforce S4 provenance rules for media (non-default membership, intrinsic, active closure edge), conversations (owner/public/library-shared with dual membership), and highlights (media visibility + library intersection).
 - **Send Message Flow**: Three-phase execution (Prepare → Execute → Finalize) to avoid holding DB transactions during LLM calls.
-- **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations.
+- **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations; the UI opens chat context in a side pane when pane dispatch succeeds.
+- **In-App Pane Workspace**: Authenticated pages render a primary pane plus persisted side panes (`nexus.paneGraph.v1`, capped at 8 panes). Supported pane routes are `/libraries`, `/libraries/{id}`, `/media/{id}`, `/conversations`, and `/conversations/{id}`.
 - **EPUB Extraction** (S5): Deterministic chapter fragment materialization from EPUB archives with TOC snapshot, title fallback, resource rewriting, archive safety enforcement, and persisted canonical navigation locations.
 - **EPUB Reader** (S5 PR-05 + hardening): Reader navigation is section-based (`loc` query param) via unified navigation payload (`sections` + TOC links). Dropdown and TOC resolve through the same section ids, with in-fragment anchor targeting preserved for TOC leaf navigation.
 - **EPUB Highlights Hardening**: Linked-items now support explicit scope modes (`This chapter` aligned vs `Entire book` list), deterministic cross-chapter ordering (`fragment_idx`, `start_offset`, `end_offset`, `created_at`, `id`), and a paginated media-wide highlight endpoint for book mode.
@@ -161,6 +162,7 @@ project starts:
 - seeds PDF media fixtures (quote-ready + password-protected failure) via
   `python/scripts/seed_e2e_data.py`
 - seeds deterministic non-PDF linked-items media with highlights
+- quote-to-chat E2E assertions for non-PDF linked items validate in-app pane open behavior (`Close pane` control present in-page, no browser popup)
 - seeds a test API key (provider=openai) so the models endpoint returns data
 - seeds a 3-chapter EPUB for EPUB reader tests
 - writes:
@@ -655,7 +657,7 @@ The chat UI is accessible at `/conversations`:
 - **Conversation list**: sidebar with cursor pagination
 - **Message thread**: paginated history (oldest first), streaming append
 - **Composer**: textarea + model picker + context chips
-- **Quote-to-chat**: "send to chat" button on highlight rows in the linked-items pane
+- **Quote-to-chat**: "send to chat" button on highlight rows in the linked-items pane opens attached chat in a side pane (fallback: in-place navigation)
 - **Search**: keyword search at `/search` across media, fragments, annotations, messages
 - **BYOK keys**: manage API keys at `/settings/keys`
 
@@ -747,6 +749,7 @@ Supabase integration tests start and stop Supabase local by default. Set
 - **Backend Integration**: Tests use `MockJwtVerifier` (test-only RSA keypair)
 - **BFF Smoke Tests**: Verify header attachment and auth flow
 - **Frontend Unit**: Vitest + happy-dom for component and utility tests
+- **Pane Workspace Tests**: Browser-mode Vitest coverage validates persistent pane graph restore, same-origin pane-open event handling, and non-iframe pane rendering.
 - **Proxy Tests**: Comprehensive tests for BFF proxy behavior including:
   - Authentication (401 when no session)
   - Header allowlist/blocklist enforcement

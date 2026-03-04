@@ -19,6 +19,7 @@ Planning note: PR-01/PR-02 are immediate. PR-03/PR-04 are provisional and must b
 ### PR-02: YouTube Media Pane + Embed-Safe Transcript UX (planned after PR-01 merges)
 - **goal**: ship the end-user video+transcript experience in one media pane using embed-safe YouTube playback and existing transcript interaction patterns.
 - **builds on**: PR-01.
+- **docs addendum**: pane workspace architecture and persistence contract captured in `docs/v1/s8/s8_prs/s8_pr02_pane_graph_addendum.md`.
 - **acceptance**:
   - video playback renders via approved YouTube embed origins (iframe allowlist) instead of direct file-style browser video playback.
   - frontend consumes the typed YouTube playback contract from API and performs no client-side URL parsing for embed construction.

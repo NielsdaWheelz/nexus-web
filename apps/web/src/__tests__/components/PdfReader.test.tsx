@@ -578,7 +578,7 @@ describe("PdfReader", () => {
       addRange: () => undefined,
     } as unknown as Selection;
 
-    await userEvent.click(await screen.findByRole("button", { name: /^Highlight$/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /yellow/i }));
 
     await waitFor(() => {
       const hasPostCall = apiFetchMock.mock.calls.some(
@@ -602,6 +602,66 @@ describe("PdfReader", () => {
     expect(payload.quads.length).toBeGreaterThan(0);
     clientRectsSpy.mockRestore();
     boundingRectSpy.mockRestore();
+  });
+
+  it("quotes selected pdf text to chat after creating the highlight", async () => {
+    const signedUrl = "https://storage.example/signed-pdf-quote";
+    const doc = createFakeDocument(1, {
+      1: createFakePage({ textItems: ["quote this pdf text"] }),
+    });
+    let selectionForDeps: Selection | null = null;
+    const onQuoteToChat = vi.fn();
+    const { deps } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: [] },
+      getSelection: () => selectionForDeps,
+    });
+
+    render(
+      <PdfReader
+        mediaId="media-pdf-quote"
+        deps={deps}
+        onQuoteToChat={onQuoteToChat}
+      />
+    );
+
+    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    const textNode = await screen.findByText("quote this pdf text");
+    const range = document.createRange();
+    const rawText = textNode.firstChild;
+    if (!rawText) {
+      throw new Error("Expected text-layer span to include a text node");
+    }
+    range.setStart(rawText, 0);
+    range.setEnd(rawText, rawText.textContent?.length ?? 0);
+    const syntheticRect = new DOMRect(72, 120, 140, 16);
+    const clientRectsSpy = vi
+      .spyOn(range, "getClientRects")
+      .mockReturnValue([syntheticRect] as unknown as DOMRectList);
+    const boundingRectSpy = vi
+      .spyOn(range, "getBoundingClientRect")
+      .mockReturnValue(syntheticRect);
+    selectionForDeps = {
+      rangeCount: 1,
+      isCollapsed: false,
+      toString: () => "quote this pdf text",
+      getRangeAt: () => range,
+      removeAllRanges: () => undefined,
+      addRange: () => undefined,
+    } as unknown as Selection;
+
+    try {
+      await userEvent.click(
+        await screen.findByRole("button", { name: /quote to chat/i })
+      );
+      await waitFor(() => {
+        expect(onQuoteToChat).toHaveBeenCalledWith("created-highlight");
+      });
+    } finally {
+      clientRectsSpy.mockRestore();
+      boundingRectSpy.mockRestore();
+    }
   });
 
   it("reprojects overlays on zoom and refreshes when active page changes", async () => {
@@ -1035,7 +1095,7 @@ describe("PdfReader", () => {
     } as unknown as Selection;
 
     try {
-      await userEvent.click(await screen.findByRole("button", { name: /^Highlight$/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /yellow/i }));
 
       await waitFor(() => {
         const hasPostCall = apiFetchMock.mock.calls.some(

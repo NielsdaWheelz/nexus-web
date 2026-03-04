@@ -70,6 +70,10 @@ interface PdfHighlightListResponse {
   };
 }
 
+interface PdfHighlightCreateResponse {
+  data: PdfHighlightOut;
+}
+
 interface PdfViewportLike {
   width: number;
   height: number;
@@ -175,6 +179,7 @@ interface PdfReaderProps {
   navigateToHighlight?: PdfHighlightNavigationRequest | null;
   onHighlightNavigationComplete?: () => void;
   onHighlightsMutated?: () => void;
+  onQuoteToChat?: (highlightId: string) => void;
 }
 
 interface SelectionState {
@@ -549,6 +554,7 @@ export default function PdfReader({
   navigateToHighlight = null,
   onHighlightNavigationComplete,
   onHighlightsMutated,
+  onQuoteToChat,
 }: PdfReaderProps) {
   const [loading, setLoading] = useState(true);
   const [navigating, setNavigating] = useState(false);
@@ -1280,7 +1286,7 @@ export default function PdfReader({
   }, [getSelectionDep, resolveTextLayerRootFromRange, textLayerUsable]);
 
   const handleCreateHighlight = useCallback(
-    async (color: HighlightColor) => {
+    async (color: HighlightColor): Promise<string | null> => {
       updateCreateTelemetry((prev) => ({
         ...prev,
         attempts: prev.attempts + 1,
@@ -1292,7 +1298,7 @@ export default function PdfReader({
           ...prev,
           lastOutcome: "skipped_not_usable_or_creating",
         }));
-        return;
+        return null;
       }
 
       const fallbackSelection: SelectionState | null = (() => {
@@ -1318,7 +1324,7 @@ export default function PdfReader({
           ...prev,
           lastOutcome: "skipped_no_selection",
         }));
-        return;
+        return null;
       }
 
       const exact = shouldUseAreaFallback ? "" : activeSelection.range.toString().trim();
@@ -1336,12 +1342,13 @@ export default function PdfReader({
             : "No selectable text geometry was found for this selection."
         );
         clearSelection();
-        return;
+        return null;
       }
 
       setIsCreating(true);
       setSelectionError(null);
       try {
+        let createdHighlightId: string | null = editingHighlightId;
         if (editingHighlightId) {
           updateCreateTelemetry((prev) => ({
             ...prev,
@@ -1364,15 +1371,19 @@ export default function PdfReader({
             postRequests: prev.postRequests + 1,
             lastOutcome: "request_post",
           }));
-          await apiFetchDep(`/api/media/${mediaId}/pdf-highlights`, {
-            method: "POST",
-            body: JSON.stringify({
-              page_number: activeSelection.pageNumber,
-              quads,
-              exact,
-              color,
-            }),
-          });
+          const response = await apiFetchDep<PdfHighlightCreateResponse>(
+            `/api/media/${mediaId}/pdf-highlights`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                page_number: activeSelection.pageNumber,
+                quads,
+                exact,
+                color,
+              }),
+            }
+          );
+          createdHighlightId = response.data.id;
         }
 
         updateCreateTelemetry((prev) => ({
@@ -1383,6 +1394,7 @@ export default function PdfReader({
         await refreshPageHighlights(activeSelection.pageNumber, runRef.current);
         onHighlightsMutated?.();
         clearSelection();
+        return createdHighlightId;
       } catch (err) {
         updateCreateTelemetry((prev) => ({
           ...prev,
@@ -1390,6 +1402,7 @@ export default function PdfReader({
           lastOutcome: "error",
         }));
         setSelectionError(toUserFacingError(err));
+        return null;
       } finally {
         setIsCreating(false);
       }
@@ -1411,6 +1424,20 @@ export default function PdfReader({
       updateCreateTelemetry,
       onHighlightsMutated,
     ]
+  );
+
+  const handleQuoteSelectionToChat = useCallback(
+    async (color: HighlightColor) => {
+      if (!onQuoteToChat) {
+        return;
+      }
+      const highlightId = await handleCreateHighlight(color);
+      if (!highlightId) {
+        return;
+      }
+      onQuoteToChat(highlightId);
+    },
+    [handleCreateHighlight, onQuoteToChat]
   );
 
   const goToPage = useCallback(
@@ -1897,6 +1924,9 @@ export default function PdfReader({
           selectionRect={selection.rect}
           containerRef={viewerContainerRef}
           onCreateHighlight={handleCreateHighlight}
+          onQuoteToNewChat={
+            onQuoteToChat && !editingHighlightId ? handleQuoteSelectionToChat : undefined
+          }
           onDismiss={clearSelection}
           isCreating={isCreating}
         />

@@ -98,7 +98,9 @@ describe("LinkedItemsPane", () => {
     await waitFor(() => {
       const rows = getRowButtons();
       expect(rows).toHaveLength(1);
-      expect(rows[0]?.style.transform).toBe("translateY(160px)");
+      const rowContainer = rows[0]?.closest("[data-highlight-id]");
+      expect(rowContainer).toBeInstanceOf(HTMLDivElement);
+      expect((rowContainer as HTMLDivElement).style.transform).toBe("translateY(160px)");
     });
 
     hostRectSpy.mockRestore();

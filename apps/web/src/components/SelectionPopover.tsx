@@ -1,13 +1,13 @@
 /**
- * SelectionPopover - Color picker and create button for highlight creation.
+ * SelectionPopover - Color picker and quote actions for highlight creation.
  *
  * Appears when user selects text in the HtmlRenderer. Positioned relative
  * to the selection bounding box.
  *
  * Features:
  * - Color palette picker (yellow, green, blue, pink, purple)
- * - Default color: yellow
- * - Create button
+ * - Selecting a color creates the highlight immediately
+ * - Optional quote-to-chat action (new chat)
  * - Dismisses on: Escape, click outside, selection collapse
  *
  * @see docs/v1/s2/s2_prs/s2_pr09.md §7
@@ -29,7 +29,9 @@ export interface SelectionPopoverProps {
   /** The container element for positioning calculations */
   containerRef: React.RefObject<HTMLElement | null>;
   /** Callback when user creates highlight */
-  onCreateHighlight: (color: HighlightColor) => void;
+  onCreateHighlight: (color: HighlightColor) => void | Promise<void | string | null>;
+  /** Optional callback for quote-to-chat into a new chat. */
+  onQuoteToNewChat?: (color: HighlightColor) => void | Promise<void>;
   /** Callback when popover is dismissed */
   onDismiss: () => void;
   /** Whether creation is in progress (loading state) */
@@ -58,6 +60,7 @@ export default function SelectionPopover({
   selectionRect,
   containerRef,
   onCreateHighlight,
+  onQuoteToNewChat,
   onDismiss,
   isCreating = false,
 }: SelectionPopoverProps) {
@@ -141,11 +144,20 @@ export default function SelectionPopover({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [onDismiss]);
 
-  const handleCreate = useCallback(() => {
-    if (!isCreating) {
-      onCreateHighlight(selectedColor);
-    }
-  }, [isCreating, onCreateHighlight, selectedColor]);
+  const handleColorSelect = useCallback(
+    (color: HighlightColor) => {
+      setSelectedColor(color);
+      if (!isCreating) {
+        void onCreateHighlight(color);
+      }
+    },
+    [isCreating, onCreateHighlight]
+  );
+
+  const handleQuoteToNewChat = useCallback(() => {
+    if (!onQuoteToNewChat || isCreating) return;
+    void onQuoteToNewChat(selectedColor);
+  }, [isCreating, onQuoteToNewChat, selectedColor]);
 
   return (
     <div
@@ -157,7 +169,7 @@ export default function SelectionPopover({
         left: `${position.left}px`,
       }}
       role="dialog"
-      aria-label="Create highlight"
+      aria-label="Highlight actions"
     >
       <div className={styles.colorPicker}>
         {HIGHLIGHT_COLORS.map((color) => (
@@ -167,21 +179,25 @@ export default function SelectionPopover({
             className={`${styles.colorButton} ${styles[`color-${color}`]} ${
               selectedColor === color ? styles.selected : ""
             }`}
-            onClick={() => setSelectedColor(color)}
+            onClick={() => handleColorSelect(color)}
             aria-label={`${COLOR_LABELS[color]}${selectedColor === color ? " (selected)" : ""}`}
             aria-pressed={selectedColor === color}
             disabled={isCreating}
           />
         ))}
       </div>
-      <button
-        type="button"
-        className={styles.createButton}
-        onClick={handleCreate}
-        disabled={isCreating}
-      >
-        {isCreating ? "Creating..." : "Highlight"}
-      </button>
+      {onQuoteToNewChat && (
+        <div className={styles.quoteActions}>
+          <button
+            type="button"
+            className={styles.actionButton}
+            onClick={handleQuoteToNewChat}
+            disabled={isCreating}
+          >
+            {isCreating ? "Creating..." : "Quote to chat"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

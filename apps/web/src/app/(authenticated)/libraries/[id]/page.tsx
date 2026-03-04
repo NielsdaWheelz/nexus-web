@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
@@ -11,6 +10,7 @@ import MediaKindIcon from "@/components/MediaKindIcon";
 import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
+import { usePaneParam, usePaneRouter } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 interface Media {
@@ -30,13 +30,12 @@ interface Library {
   role: string;
 }
 
-export default function LibraryDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = use(params);
-  const router = useRouter();
+export default function LibraryDetailPage() {
+  const id = usePaneParam("id");
+  if (!id) {
+    throw new Error("library route requires an id");
+  }
+  const router = usePaneRouter();
   const [library, setLibrary] = useState<Library | null>(null);
   const [media, setMedia] = useState<Media[]>([]);
   const [loading, setLoading] = useState(true);

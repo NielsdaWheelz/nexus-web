@@ -51,6 +51,8 @@ export interface LinkedItemRowProps {
   style?: React.CSSProperties;
   /** Optional class name for mode-specific row styling. */
   className?: string;
+  /** Optional expanded inline content rendered beneath the row preview. */
+  expandedContent?: React.ReactNode;
 }
 
 // =============================================================================
@@ -81,6 +83,7 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
       onSendToChat,
       style,
       className,
+      expandedContent,
     },
     ref
   ) {
@@ -100,6 +103,8 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
       [onSendToChat, highlight.id]
     );
 
+    const isExpanded = Boolean(expandedContent);
+
     // Truncate text for preview
     const previewText =
       highlight.exact.length > MAX_PREVIEW_LENGTH
@@ -111,43 +116,58 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
         ref={ref}
         data-highlight-id={highlight.id}
         className={`${styles.linkedItemRow} ${isFocused ? styles.rowFocused : ""} ${
-          className ?? ""
-        }`}
+          isExpanded ? styles.rowExpanded : ""
+        } ${className ?? ""}`}
         style={style}
-        onClick={handleClick}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={onMouseLeave}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            handleClick();
-          }
-        }}
-        aria-pressed={isFocused}
       >
-        <span
-          className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
-          aria-hidden="true"
-        />
-        <span className={styles.previewText} title={highlight.exact}>
-          {previewText}
-        </span>
-        {highlight.annotation && (
-          <span className={styles.annotationIndicator} aria-label="Has annotation">
-            💬
+        <div
+          className={styles.linkedItemRowMain}
+          onClick={handleClick}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleClick();
+            }
+          }}
+          aria-pressed={isFocused}
+          aria-expanded={isExpanded}
+        >
+          <span
+            className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
+            aria-hidden="true"
+          />
+          <span className={styles.previewText} title={highlight.exact}>
+            {previewText}
           </span>
-        )}
-        {onSendToChat && (
-          <button
-            className={styles.sendToChatBtn}
-            onClick={handleSendToChat}
-            aria-label="Send to chat"
-            title="Quote to chat"
+          {highlight.annotation && (
+            <span className={styles.annotationIndicator} aria-label="Has annotation">
+              💬
+            </span>
+          )}
+          {onSendToChat && (
+            <button
+              className={styles.sendToChatBtn}
+              onClick={handleSendToChat}
+              aria-label="Send to chat"
+              title="Quote to chat"
+            >
+              →💬
+            </button>
+          )}
+        </div>
+        {expandedContent && (
+          <div
+            className={styles.rowExpansion}
+            onClick={(e) => {
+              e.stopPropagation();
+            }}
           >
-            →💬
-          </button>
+            {expandedContent}
+          </div>
         )}
       </div>
     );

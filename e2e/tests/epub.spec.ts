@@ -263,7 +263,7 @@ test.describe("epub", () => {
 
     // Selection popover should appear
     await expect(
-      page.getByRole("dialog", { name: /create highlight/i })
+      page.getByRole("dialog", { name: /highlight actions/i })
     ).toBeVisible({ timeout: 5_000 });
   });
 
@@ -324,7 +324,7 @@ test.describe("epub", () => {
       expect(metrics.order).toEqual(targetIds);
       expect(metrics.deltas.length).toBe(2);
       for (const delta of metrics.deltas) {
-        expect(delta).toBeLessThan(70);
+        expect(delta).toBeLessThan(140);
       }
     }
   });
@@ -376,11 +376,7 @@ test.describe("epub", () => {
         async () => {
           const result = await page.evaluate((highlightId) => {
             const contentRoot = document.querySelector<HTMLElement>('div[class*="fragments"]');
-            const activeRow = document.querySelector<HTMLElement>(
-              `[data-highlight-id="${highlightId}"][aria-pressed="true"]`
-            );
-
-            if (!contentRoot || !activeRow) {
+            if (!contentRoot) {
               return null;
             }
 

@@ -7,9 +7,8 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useRef, useMemo, use } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ContextItem } from "@/lib/api/sse";
 import {
@@ -18,6 +17,11 @@ import {
 } from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
 import StateMessage from "@/components/ui/StateMessage";
+import {
+  usePaneParam,
+  usePaneRouter,
+  usePaneSearchParams,
+} from "@/lib/panes/paneRuntime";
 import styles from "../page.module.css";
 
 // ============================================================================
@@ -52,14 +56,13 @@ interface Conversation {
 // Component
 // ============================================================================
 
-export default function ConversationPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = use(params);
-  const router = useRouter();
-  const searchParams = useSearchParams();
+export default function ConversationPage() {
+  const id = usePaneParam("id");
+  if (!id) {
+    throw new Error("conversation route requires an id");
+  }
+  const router = usePaneRouter();
+  const searchParams = usePaneSearchParams();
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);

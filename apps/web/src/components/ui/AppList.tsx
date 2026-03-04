@@ -1,5 +1,8 @@
-import type { ReactNode } from "react";
+"use client";
+
+import type { MouseEvent, ReactNode } from "react";
 import Link from "next/link";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import styles from "./AppList.module.css";
 
 interface AppListProps {
@@ -33,6 +36,25 @@ export function AppListItem({
   trailing,
   actions,
 }: AppListItemProps) {
+  const handlePrimaryClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (
+      !href ||
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      !event.shiftKey ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    if (!requestOpenInAppPane(href)) {
+      window.location.assign(href);
+    }
+  };
+
   const primaryContent = (
     <>
       {icon && <span className={styles.icon}>{icon}</span>}
@@ -48,7 +70,13 @@ export function AppListItem({
   return (
     <li className={styles.item}>
       {href ? (
-        <Link href={href} className={styles.primary} target={target} rel={rel}>
+        <Link
+          href={href}
+          className={styles.primary}
+          target={target}
+          rel={rel}
+          onClick={handlePrimaryClick}
+        >
           {primaryContent}
         </Link>
       ) : (
