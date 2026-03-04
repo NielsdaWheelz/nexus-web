@@ -31,6 +31,7 @@ export interface LinkedItemRowHighlight {
   created_at?: string;
   fragment_id?: string;
   fragment_idx?: number;
+  stable_order_key?: string;
 }
 
 export interface LinkedItemRowProps {

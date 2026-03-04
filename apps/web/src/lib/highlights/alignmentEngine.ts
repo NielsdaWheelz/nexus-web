@@ -16,6 +16,8 @@
  * @see docs/v1/s2/s2_prs/s2_pr10.md
  */
 
+import { HtmlAnchorProvider } from "./anchorProviders";
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -69,12 +71,7 @@ export interface AlignmentResult {
   missingAnchorIds: string[];
 }
 
-function escapeAttrValue(value: string): string {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-    return CSS.escape(value);
-  }
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
+const htmlAnchorProvider = new HtmlAnchorProvider();
 
 // =============================================================================
 // Sorting Logic
@@ -252,29 +249,13 @@ export function measureAnchorPositions(
   scrollContainer: HTMLElement,
   highlights: AlignmentHighlight[]
 ): Map<string, number> {
-  const positions = new Map<string, number>();
-  const containerRect = scrollContainer.getBoundingClientRect();
-  const scrollTop = scrollContainer.scrollTop;
-
-  for (const highlight of highlights) {
-    const escapedId = escapeAttrValue(highlight.id);
-    const anchor =
-      contentRoot.querySelector(`[data-highlight-anchor="${escapedId}"]`) ??
-      contentRoot.querySelector(`[data-active-highlight-ids~="${escapedId}"]`);
-
-    if (!anchor) {
-      console.warn("highlight_anchor_missing", { highlightId: highlight.id });
-      continue;
+  return htmlAnchorProvider.measureViewerAnchorPositions(
+    highlights.map((highlight) => ({ kind: "html" as const, id: highlight.id })),
+    {
+      contentRoot,
+      viewerScrollContainer: scrollContainer,
     }
-
-    const anchorRect = anchor.getBoundingClientRect();
-    // Convert viewport-relative position to document-relative position
-    // using the scroll container's rect and scrollTop
-    const anchorTopInDocument = anchorRect.top - containerRect.top + scrollTop;
-    positions.set(highlight.id, anchorTopInDocument);
-  }
-
-  return positions;
+  );
 }
 
 /**

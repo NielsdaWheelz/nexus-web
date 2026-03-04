@@ -11,7 +11,15 @@ import {
 import { apiFetch, isApiError } from "@/lib/api/client";
 import SelectionPopover from "./SelectionPopover";
 import { type HighlightColor } from "@/lib/highlights";
+import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
+import {
+  normalizeQuarterTurnRotation,
+  projectPdfQuadToViewportRect,
+  type PdfPageViewportTransform,
+} from "@/lib/highlights/coordinateTransforms";
 import styles from "./PdfReader.module.css";
+
+export type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 
 interface PdfFileAccessResponse {
   data: {
@@ -23,17 +31,6 @@ interface PdfFileAccessResponse {
 interface SignedUrlAccess {
   url: string;
   expiresAtMs: number | null;
-}
-
-export interface PdfHighlightQuad {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  x3: number;
-  y3: number;
-  x4: number;
-  y4: number;
 }
 
 export interface PdfHighlightOut {
@@ -58,6 +55,12 @@ export interface PdfHighlightOut {
   } | null;
   author_user_id: string;
   is_owner: boolean;
+}
+
+export interface PdfHighlightNavigationRequest {
+  highlightId: string;
+  pageNumber: number;
+  quads: PdfHighlightQuad[];
 }
 
 interface PdfHighlightListResponse {
@@ -169,6 +172,9 @@ interface PdfReaderProps {
   editingHighlightId?: string | null;
   highlightRefreshToken?: number;
   onPageHighlightsChange?: (pageNumber: number, highlights: PdfHighlightOut[]) => void;
+  navigateToHighlight?: PdfHighlightNavigationRequest | null;
+  onHighlightNavigationComplete?: () => void;
+  onHighlightsMutated?: () => void;
 }
 
 interface SelectionState {
@@ -223,6 +229,7 @@ const PDF_QUAD_EPSILON = 0.001;
 const PDF_VIEWER_TEXT_LAYER_MODE_ENABLE = 1;
 const PDF_LINK_TARGET_BLANK = 2;
 const PDF_GEOMETRY_ALIGNMENT_DELTA_THRESHOLD = 0.02;
+const PDF_HIGHLIGHT_SCROLL_TARGET_FRACTION = 0.35;
 const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
   yellow: "rgba(255, 235, 59, 0.35)",
   green: "rgba(76, 175, 80, 0.3)",
@@ -360,19 +367,9 @@ function clampZoom(value: number): number {
 
 function projectQuadToRect(
   quad: PdfHighlightQuad,
-  pageScale: number
+  transform: PdfPageViewportTransform
 ): Omit<ProjectedHighlightRect, "highlightId" | "color" | "index"> {
-  const xMin = Math.min(quad.x1, quad.x2, quad.x3, quad.x4) * pageScale;
-  const xMax = Math.max(quad.x1, quad.x2, quad.x3, quad.x4) * pageScale;
-  const yMin = Math.min(quad.y1, quad.y2, quad.y3, quad.y4) * pageScale;
-  const yMax = Math.max(quad.y1, quad.y2, quad.y3, quad.y4) * pageScale;
-
-  return {
-    left: xMin,
-    top: yMin,
-    width: Math.max(xMax - xMin, 1),
-    height: Math.max(yMax - yMin, 1),
-  };
+  return projectPdfQuadToViewportRect(quad, transform);
 }
 
 function readPageNumberFromTextLayer(textLayerRoot: HTMLElement | null): number | null {
@@ -457,6 +454,33 @@ function deriveScaleFromPageView(pageView: PdfPageViewLike | undefined): number 
   return null;
 }
 
+function deriveViewportTransformFromPageView(
+  pageView: PdfPageViewLike | undefined,
+  fallbackScale: number
+): PdfPageViewportTransform | null {
+  const viewport = pageView?.viewport;
+  if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
+    return null;
+  }
+  const scale = deriveScaleFromPageView(pageView) ?? fallbackScale;
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return null;
+  }
+  const rotation = normalizeQuarterTurnRotation(viewport.rotation ?? 0);
+  const pageWidthPoints =
+    rotation === 90 || rotation === 270 ? viewport.height / scale : viewport.width / scale;
+  const pageHeightPoints =
+    rotation === 90 || rotation === 270 ? viewport.width / scale : viewport.height / scale;
+
+  return {
+    scale,
+    rotation,
+    pageWidthPoints,
+    pageHeightPoints,
+    dpiScale: 1,
+  };
+}
+
 function toViewerLifecycleError(context: string, error: unknown): Error {
   const detail = error instanceof Error ? error.message : String(error);
   return new Error(`PDF viewer lifecycle failure (${context}): ${detail}`);
@@ -522,6 +546,9 @@ export default function PdfReader({
   editingHighlightId = null,
   highlightRefreshToken = 0,
   onPageHighlightsChange,
+  navigateToHighlight = null,
+  onHighlightNavigationComplete,
+  onHighlightsMutated,
 }: PdfReaderProps) {
   const [loading, setLoading] = useState(true);
   const [navigating, setNavigating] = useState(false);
@@ -563,12 +590,18 @@ export default function PdfReader({
   const pendingViewerPageRef = useRef<number | null>(null);
   const pendingViewerScaleRef = useRef<number | null>(null);
   const recoveringFromRenderErrorRef = useRef(false);
+  const processedNavigationKeyRef = useRef<string | null>(null);
+  const onPageHighlightsChangeRef = useRef(onPageHighlightsChange);
 
   const apiFetchDep = deps?.apiFetch ?? apiFetch;
   const loadPdfJsDep = deps?.loadPdfJs ?? defaultLoadPdfJs;
   const loadPdfJsViewerDep = deps?.loadPdfJsViewer ?? defaultLoadPdfJsViewer;
   const workerSrcDep = deps?.workerSrc ?? DEFAULT_WORKER_SRC;
   const getSelectionDep = deps?.getSelection ?? defaultGetSelection;
+
+  useEffect(() => {
+    onPageHighlightsChangeRef.current = onPageHighlightsChange;
+  }, [onPageHighlightsChange]);
 
   const setContentNode = useCallback(
     (node: HTMLDivElement | null) => {
@@ -624,10 +657,28 @@ export default function PdfReader({
   );
 
   const markPageSurfaceForTesting = useCallback(
-    (targetPage: number) => {
+    (targetPage: number, explicitPageView?: PdfPageViewLike) => {
       const pageElement = getPageElement(targetPage);
       if (pageElement) {
         pageElement.setAttribute("data-testid", `pdf-page-surface-${targetPage}`);
+        const pageView =
+          explicitPageView ??
+          pdfViewerRef.current?.getPageView?.(Math.max(0, targetPage - 1));
+        const fallbackScale = pageScaleByNumberRef.current.get(targetPage) ?? zoomRef.current;
+        const viewportTransform = deriveViewportTransformFromPageView(pageView, fallbackScale);
+        if (viewportTransform) {
+          pageElement.setAttribute("data-nexus-page-scale", String(viewportTransform.scale));
+          pageElement.setAttribute("data-nexus-page-rotation", String(viewportTransform.rotation));
+          pageElement.setAttribute(
+            "data-nexus-page-viewport-width",
+            String(pageView?.viewport?.width ?? viewportTransform.pageWidthPoints * viewportTransform.scale)
+          );
+          pageElement.setAttribute(
+            "data-nexus-page-viewport-height",
+            String(pageView?.viewport?.height ?? viewportTransform.pageHeightPoints * viewportTransform.scale)
+          );
+          pageElement.setAttribute("data-nexus-page-dpi-scale", String(viewportTransform.dpiScale));
+        }
       }
     },
     [getPageElement]
@@ -837,7 +888,7 @@ export default function PdfReader({
         setNavigating(false);
         clearSelection();
         setPageHighlights([]);
-        onPageHighlightsChange?.(nextPage, []);
+        onPageHighlightsChangeRef.current?.(nextPage, []);
         rememberPageScale(nextPage);
         setTextLayerUsable(isTextLayerUsableForPage(nextPage));
         setTextGeometryReliable(evaluatePageGeometryReliability(nextPage));
@@ -882,7 +933,7 @@ export default function PdfReader({
             return;
           }
           for (let index = 1; index <= pagesCount; index += 1) {
-            markPageSurfaceForTesting(index);
+            markPageSurfaceForTesting(index, viewer?.getPageView?.(Math.max(0, index - 1)));
           }
         });
       };
@@ -901,7 +952,7 @@ export default function PdfReader({
             ? Math.floor(event.pageNumber as number)
             : pageNumberRef.current;
 
-        markPageSurfaceForTesting(renderedPage);
+        markPageSurfaceForTesting(renderedPage, event.source);
         rememberPageScale(renderedPage, event.source);
         evaluatePageGeometryReliability(renderedPage);
 
@@ -954,7 +1005,6 @@ export default function PdfReader({
       ensurePdfJsViewer,
       isTextLayerUsableForPage,
       markPageSurfaceForTesting,
-      onPageHighlightsChange,
       rememberPageScale,
     ]
   );
@@ -1050,9 +1100,9 @@ export default function PdfReader({
         return;
       }
       setPageHighlights(highlights);
-      onPageHighlightsChange?.(targetPage, highlights);
+      onPageHighlightsChangeRef.current?.(targetPage, highlights);
     },
-    [fetchPageHighlights, onPageHighlightsChange]
+    [fetchPageHighlights]
   );
 
   const resolveTextLayerRootFromRange = useCallback(
@@ -1331,6 +1381,7 @@ export default function PdfReader({
           lastOutcome: "success",
         }));
         await refreshPageHighlights(activeSelection.pageNumber, runRef.current);
+        onHighlightsMutated?.();
         clearSelection();
       } catch (err) {
         updateCreateTelemetry((prev) => ({
@@ -1358,6 +1409,7 @@ export default function PdfReader({
       textGeometryReliable,
       textLayerUsable,
       updateCreateTelemetry,
+      onHighlightsMutated,
     ]
   );
 
@@ -1371,7 +1423,7 @@ export default function PdfReader({
       setNavigating(true);
       clearSelection();
       setPageHighlights([]);
-      onPageHighlightsChange?.(nextPage, []);
+      onPageHighlightsChangeRef.current?.(nextPage, []);
 
       const currentRun = runRef.current;
       try {
@@ -1393,8 +1445,98 @@ export default function PdfReader({
         }
       }
     },
-    [clearSelection, numPages, onPageHighlightsChange, recoverAndRender]
+    [clearSelection, numPages, recoverAndRender]
   );
+
+  const scrollToProjectedHighlight = useCallback(
+    (targetPage: number, quads: PdfHighlightQuad[]): boolean => {
+      if (quads.length === 0) {
+        return false;
+      }
+      const container = viewerContainerRef.current;
+      const pageElement = getPageElement(targetPage);
+      if (!container || !pageElement) {
+        return false;
+      }
+      const pageScaleValue = readPageScale(targetPage);
+      if (pageScaleValue <= 0) {
+        return false;
+      }
+      const pageView = pdfViewerRef.current?.getPageView?.(Math.max(0, targetPage - 1));
+      const viewportTransform =
+        deriveViewportTransformFromPageView(pageView, pageScaleValue) ?? {
+          scale: pageScaleValue,
+          rotation: 0 as const,
+          pageWidthPoints: 0,
+          pageHeightPoints: 0,
+          dpiScale: 1,
+        };
+      const projectedRect = projectQuadToRect(quads[0], viewportTransform);
+      const targetTop =
+        pageElement.offsetTop +
+        projectedRect.top +
+        projectedRect.height / 2 -
+        container.clientHeight * PDF_HIGHLIGHT_SCROLL_TARGET_FRACTION;
+      container.scrollTop = Math.max(0, targetTop);
+      return true;
+    },
+    [getPageElement, readPageScale]
+  );
+
+  useEffect(() => {
+    if (!navigateToHighlight) {
+      processedNavigationKeyRef.current = null;
+      return;
+    }
+
+    const navigationKey = `${navigateToHighlight.highlightId}:${navigateToHighlight.pageNumber}`;
+    if (processedNavigationKeyRef.current === navigationKey) {
+      return;
+    }
+    processedNavigationKeyRef.current = navigationKey;
+
+    let cancelled = false;
+    const currentRun = runRef.current;
+
+    const complete = () => {
+      if (!cancelled) {
+        onHighlightNavigationComplete?.();
+      }
+    };
+
+    const tryScrollWithRetries = (remainingAttempts: number) => {
+      if (cancelled || currentRun !== runRef.current) {
+        return;
+      }
+      if (
+        scrollToProjectedHighlight(navigateToHighlight.pageNumber, navigateToHighlight.quads) ||
+        remainingAttempts <= 0
+      ) {
+        complete();
+        return;
+      }
+      window.requestAnimationFrame(() => {
+        tryScrollWithRetries(remainingAttempts - 1);
+      });
+    };
+
+    const runNavigation = async () => {
+      try {
+        if (navigateToHighlight.pageNumber !== pageNumberRef.current) {
+          await goToPage(navigateToHighlight.pageNumber);
+        }
+        tryScrollWithRetries(8);
+      } catch {
+        complete();
+      }
+    };
+
+    void runNavigation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [goToPage, navigateToHighlight, onHighlightNavigationComplete, scrollToProjectedHighlight]);
 
   useEffect(() => {
     zoomRef.current = zoom;
@@ -1520,7 +1662,7 @@ export default function PdfReader({
           return;
         }
         setPageHighlights(highlights);
-        onPageHighlightsChange?.(pageNumber, highlights);
+        onPageHighlightsChangeRef.current?.(pageNumber, highlights);
       } catch {
         if (!cancelled && runId === runRef.current) {
           setSelectionError("Failed to load PDF highlights for this page.");
@@ -1538,7 +1680,6 @@ export default function PdfReader({
     highlightRefreshToken,
     loading,
     numPages,
-    onPageHighlightsChange,
     pageNumber,
   ]);
 
@@ -1570,6 +1711,15 @@ export default function PdfReader({
     if (activeScale <= 0) {
       return [] as ProjectedHighlightRect[];
     }
+    const pageView = pdfViewerRef.current?.getPageView?.(Math.max(0, pageNumber - 1));
+    const viewportTransform =
+      deriveViewportTransformFromPageView(pageView, activeScale) ?? {
+        scale: activeScale,
+        rotation: 0 as const,
+        pageWidthPoints: 0,
+        pageHeightPoints: 0,
+        dpiScale: 1,
+      };
     const projected: ProjectedHighlightRect[] = [];
     for (const highlight of pageHighlights) {
       if (
@@ -1583,12 +1733,12 @@ export default function PdfReader({
           highlightId: highlight.id,
           color: highlight.color,
           index,
-          ...projectQuadToRect(quad, activeScale),
+          ...projectQuadToRect(quad, viewportTransform),
         });
       });
     }
     return projected;
-  }, [pageHighlights, pageNumber, pageScale]);
+  }, [pageHighlights, pageNumber, pageRenderEpoch, pageScale]);
 
   useEffect(() => {
     removeOverlayLayers();
