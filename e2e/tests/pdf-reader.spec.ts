@@ -422,6 +422,96 @@ test.describe("pdf reader", () => {
     }
   });
 
+  test("highlights on non-active page are visible immediately in document scope and click navigates to projected target", async ({
+    page,
+  }) => {
+    const seeded = readSeededPdfMedia();
+    const mediaId = seeded.media_id;
+    const expectedPageCount = seeded.page_count;
+    test.skip(
+      expectedPageCount < 2,
+      "Seeded PDF fixture must include at least two pages for cross-page navigation coverage",
+    );
+
+    const nonce = Date.now() % 1000;
+    const pageOneExact = `e2e-page-1-${nonce}`;
+    const pageTwoExact = `e2e-page-2-${nonce}`;
+    let pageOneHighlightId: string | null = null;
+    let pageTwoHighlightId: string | null = null;
+
+    try {
+      const createPageOne = await page.request.post(`/api/media/${mediaId}/pdf-highlights`, {
+        data: {
+          page_number: 1,
+          exact: pageOneExact,
+          color: "yellow",
+          quads: [
+            {
+              x1: 72,
+              y1: 120 + (nonce % 20),
+              x2: 180,
+              y2: 120 + (nonce % 20),
+              x3: 180,
+              y3: 136 + (nonce % 20),
+              x4: 72,
+              y4: 136 + (nonce % 20),
+            },
+          ],
+        },
+      });
+      expect(createPageOne.ok()).toBe(true);
+      pageOneHighlightId = (await createPageOne.json()).data.id as string;
+
+      const createPageTwo = await page.request.post(`/api/media/${mediaId}/pdf-highlights`, {
+        data: {
+          page_number: 2,
+          exact: pageTwoExact,
+          color: "green",
+          quads: [
+            {
+              x1: 72,
+              y1: 220 + (nonce % 30),
+              x2: 200,
+              y2: 220 + (nonce % 30),
+              x3: 200,
+              y3: 236 + (nonce % 30),
+              x4: 72,
+              y4: 236 + (nonce % 30),
+            },
+          ],
+        },
+      });
+      expect(createPageTwo.ok()).toBe(true);
+      pageTwoHighlightId = (await createPageTwo.json()).data.id as string;
+
+      await page.goto(`/media/${mediaId}`);
+      await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
+
+      const entireDocumentScope = page.getByRole("button", { name: "Entire document" });
+      await expect(entireDocumentScope).toBeVisible();
+      await entireDocumentScope.click();
+
+      const offPageRow = page.locator('[class*="linkedItemRow"]', { hasText: pageTwoExact }).first();
+      await expect(offPageRow).toBeVisible({ timeout: 10_000 });
+      await offPageRow.click();
+
+      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible({ timeout: 20_000 });
+      await expect
+        .poll(
+          async () => page.locator(`[data-testid^="pdf-highlight-${pageTwoHighlightId}-"]`).count(),
+          { timeout: 10_000 },
+        )
+        .toBeGreaterThan(0);
+    } finally {
+      if (pageOneHighlightId) {
+        await page.request.delete(`/api/highlights/${pageOneHighlightId}`).catch(() => undefined);
+      }
+      if (pageTwoHighlightId) {
+        await page.request.delete(`/api/highlights/${pageTwoHighlightId}`).catch(() => undefined);
+      }
+    }
+  });
+
   test("password-protected seeded pdf shows deterministic failure semantics", async ({ page }) => {
     const seeded = readSeededPdfMedia();
     await page.goto(`/media/${seeded.password_media_id}`);

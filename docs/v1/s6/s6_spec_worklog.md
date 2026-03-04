@@ -6,6 +6,20 @@ Only minimal upstream/code facts needed for each contract cluster are recorded.
 
 ## Evidence Log
 
+### 2026-03-03 - Cluster: PDF linked-items adapterization + document index scope
+- `python/nexus/api/routes/highlights.py` now exposes `GET /media/{media_id}/pdf-highlights/index` with `limit`, `cursor`, and `mine_only` query contracts, returning `{ highlights, page { has_more, next_cursor } }`.
+- `python/nexus/services/pdf_highlights.py` now implements document-wide keyset ordering and cursor semantics over `(page_number, sort_top, sort_left, created_at, id)`.
+- `apps/web/src/app/(authenticated)/media/[id]/page.tsx` now exposes explicit PDF linked-items scope controls:
+  - `This page`: aligned mode driven by page-scoped highlights.
+  - `Entire document`: list mode driven by document-wide index pagination.
+- `apps/web/src/lib/highlights/anchorProviders.ts` introduces a formal renderer boundary:
+  - `HtmlAnchorProvider`: DOM anchor measurement.
+  - `PdfAnchorProvider`: quad projection with page viewport transform metadata.
+- `apps/web/src/lib/highlights/coordinateTransforms.ts` centralizes typed coordinate-space transforms (`page`, `viewer-scroll`, `pane`) and baseline conversion (`paneBaselineOffsetFromContainers`), removing implicit cross-component `getBoundingClientRect` arithmetic.
+- `apps/web/src/lib/highlights/highlightIndexAdapter.ts` introduces shared pane index mapping and stable PDF ordering key helpers consumed by linked-items list mode.
+- `apps/web/src/components/PdfReader.tsx` now emits explicit per-page viewport metadata attributes used by `PdfAnchorProvider`, and uses transform-based quad projection for both overlay rendering and navigation targeting.
+- E2E evidence (`e2e/tests/pdf-reader.spec.ts`): non-active-page highlights are visible immediately in PDF document scope, and clicking a linked-item row navigates to the projected highlight target.
+
 ### 2026-02-28 - Cluster: PR-08 acceptance closure hardening (non-PDF linked-items regression)
 - `e2e/tests/non-pdf-linked-items.spec.ts` now provides a true browser-level non-PDF linked-items regression flow covering row quote-to-chat, row focus, focused-highlight rendering, and scroll-to-anchor behavior.
 - `python/scripts/seed_e2e_data.py` (renamed from `seed_e2e_pdf.py`) now seeds PDFs, non-PDF linked-items, an API key, and an EPUB. Writes `e2e/.seed/pdf-media.json`, `e2e/.seed/non-pdf-media.json`, and `e2e/.seed/epub-media.json` to keep E2E setup deterministic.

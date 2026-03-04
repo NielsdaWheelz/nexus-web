@@ -456,6 +456,282 @@ class TestListPdfHighlights:
         assert highlights[1]["exact"] == "bottom"
 
 
+class TestListPdfHighlightsIndex:
+    """Tests for GET /media/{media_id}/pdf-highlights/index."""
+
+    def test_list_index_returns_cross_page_order_with_cursor_pagination(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Lists deterministic document-wide order and supports cursor pagination."""
+        user_id = create_test_user_id()
+        media_id = _setup_pdf_media(
+            auth_client,
+            direct_db,
+            user_id,
+            page_count=3,
+            page_spans=[(0, 20), (20, 40), (40, 60)],
+        )
+
+        page_one_top = [
+            {
+                "x1": 72.0,
+                "y1": 100.0,
+                "x2": 200.0,
+                "y2": 100.0,
+                "x3": 200.0,
+                "y3": 112.0,
+                "x4": 72.0,
+                "y4": 112.0,
+            }
+        ]
+        page_two_mid = [
+            {
+                "x1": 72.0,
+                "y1": 240.0,
+                "x2": 200.0,
+                "y2": 240.0,
+                "x3": 200.0,
+                "y3": 252.0,
+                "x4": 72.0,
+                "y4": 252.0,
+            }
+        ]
+        page_three_top = [
+            {
+                "x1": 72.0,
+                "y1": 80.0,
+                "x2": 200.0,
+                "y2": 80.0,
+                "x3": 200.0,
+                "y3": 92.0,
+                "x4": 72.0,
+                "y4": 92.0,
+            }
+        ]
+
+        for payload in (
+            {"page_number": 3, "quads": page_three_top, "exact": "p3 top", "color": "blue"},
+            {"page_number": 1, "quads": page_one_top, "exact": "p1 top", "color": "yellow"},
+            {"page_number": 2, "quads": page_two_mid, "exact": "p2 middle", "color": "green"},
+        ):
+            create_resp = auth_client.post(
+                f"/media/{media_id}/pdf-highlights",
+                json=payload,
+                headers=auth_headers(user_id),
+            )
+            assert create_resp.status_code == 201, (
+                "Expected highlight create to succeed while preparing index test, "
+                f"got {create_resp.status_code}: {create_resp.json()}"
+            )
+
+        first_page_resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights/index?limit=2&mine_only=false",
+            headers=auth_headers(user_id),
+        )
+        assert first_page_resp.status_code == 200, (
+            f"Expected 200 for index page 1, got {first_page_resp.status_code}: "
+            f"{first_page_resp.json()}"
+        )
+
+        first_page_data = first_page_resp.json()["data"]
+        first_page_highlights = first_page_data["highlights"]
+        assert [h["exact"] for h in first_page_highlights] == ["p1 top", "p2 middle"], (
+            "Expected document-wide ordering by page_number then geometry sort keys, "
+            f"got {[h['exact'] for h in first_page_highlights]}"
+        )
+        assert first_page_data["page"]["has_more"] is True
+        assert first_page_data["page"]["next_cursor"] is not None
+
+        second_page_resp = auth_client.get(
+            (
+                f"/media/{media_id}/pdf-highlights/index?limit=2&mine_only=false"
+                f"&cursor={first_page_data['page']['next_cursor']}"
+            ),
+            headers=auth_headers(user_id),
+        )
+        assert second_page_resp.status_code == 200, (
+            f"Expected 200 for index page 2, got {second_page_resp.status_code}: "
+            f"{second_page_resp.json()}"
+        )
+        second_page_data = second_page_resp.json()["data"]
+        assert [h["exact"] for h in second_page_data["highlights"]] == ["p3 top"], (
+            "Expected second page to contain final remaining highlight only, "
+            f"got {[h['exact'] for h in second_page_data['highlights']]}"
+        )
+        assert second_page_data["page"]["has_more"] is False
+        assert second_page_data["page"]["next_cursor"] is None
+
+    def test_list_index_supports_mine_only_visibility_split(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """mine_only=false includes visible shared highlights; default mine_only=true does not."""
+        author_id = create_test_user_id()
+        reader_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(author_id))
+        auth_client.get("/me", headers=auth_headers(reader_id))
+
+        with direct_db.session() as session:
+            shared_library_id = _create_shared_library(session, author_id)
+            _add_library_member(session, shared_library_id, reader_id)
+            media_id = create_pdf_media_with_text(
+                session,
+                author_id,
+                shared_library_id,
+                plain_text=PDF_PLAIN_TEXT,
+                page_count=2,
+                page_spans=PDF_PAGE_SPANS,
+                status="ready_for_reading",
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
+        direct_db.register_cleanup("highlight_pdf_anchors", "media_id", media_id)
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", shared_library_id)
+        direct_db.register_cleanup("libraries", "id", shared_library_id)
+
+        create_resp = auth_client.post(
+            f"/media/{media_id}/pdf-highlights",
+            json={"page_number": 1, "quads": SAMPLE_QUADS, "exact": "shared", "color": "yellow"},
+            headers=auth_headers(author_id),
+        )
+        assert create_resp.status_code == 201, (
+            "Expected author create to succeed, "
+            f"got {create_resp.status_code}: {create_resp.json()}"
+        )
+
+        visible_resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights/index?mine_only=false",
+            headers=auth_headers(reader_id),
+        )
+        assert visible_resp.status_code == 200, (
+            f"Expected shared reader list to succeed, got {visible_resp.status_code}: "
+            f"{visible_resp.json()}"
+        )
+        assert len(visible_resp.json()["data"]["highlights"]) == 1
+
+        mine_only_resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights/index",
+            headers=auth_headers(reader_id),
+        )
+        assert mine_only_resp.status_code == 200, (
+            f"Expected mine_only list to succeed, got {mine_only_resp.status_code}: "
+            f"{mine_only_resp.json()}"
+        )
+        assert mine_only_resp.json()["data"]["highlights"] == []
+
+    def test_list_index_is_deterministic_for_tied_sort_keys_and_cursor(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Deterministic ordering and cursor slicing when page/sort_top/sort_left/created_at tie."""
+        user_id = create_test_user_id()
+        media_id = _setup_pdf_media(
+            auth_client,
+            direct_db,
+            user_id,
+            page_count=1,
+            page_spans=[(0, 40)],
+        )
+
+        tied_left = 72.0
+        tied_top = 120.0
+        first_quad = [
+            {
+                "x1": tied_left,
+                "y1": tied_top,
+                "x2": tied_left + 100.0,
+                "y2": tied_top,
+                "x3": tied_left + 100.0,
+                "y3": tied_top + 12.0,
+                "x4": tied_left,
+                "y4": tied_top + 12.0,
+            }
+        ]
+        second_quad = [
+            {
+                "x1": tied_left,
+                "y1": tied_top,
+                "x2": tied_left + 140.0,
+                "y2": tied_top,
+                "x3": tied_left + 140.0,
+                "y3": tied_top + 18.0,
+                "x4": tied_left,
+                "y4": tied_top + 18.0,
+            }
+        ]
+
+        first_create = auth_client.post(
+            f"/media/{media_id}/pdf-highlights",
+            json={"page_number": 1, "quads": first_quad, "exact": "tie-a", "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        second_create = auth_client.post(
+            f"/media/{media_id}/pdf-highlights",
+            json={"page_number": 1, "quads": second_quad, "exact": "tie-b", "color": "green"},
+            headers=auth_headers(user_id),
+        )
+        assert first_create.status_code == 201, first_create.json()
+        assert second_create.status_code == 201, second_create.json()
+        first_id = first_create.json()["data"]["id"]
+        second_id = second_create.json()["data"]["id"]
+
+        tied_created_at = "2026-01-01T00:00:00+00:00"
+        with direct_db.session() as session:
+            session.execute(
+                text("UPDATE highlights SET created_at = :ts WHERE id = :id"),
+                {"ts": tied_created_at, "id": first_id},
+            )
+            session.execute(
+                text("UPDATE highlights SET created_at = :ts WHERE id = :id"),
+                {"ts": tied_created_at, "id": second_id},
+            )
+            session.commit()
+
+        base_url = f"/media/{media_id}/pdf-highlights/index?mine_only=false&limit=10"
+        first_full = auth_client.get(base_url, headers=auth_headers(user_id))
+        second_full = auth_client.get(base_url, headers=auth_headers(user_id))
+        assert first_full.status_code == 200, first_full.json()
+        assert second_full.status_code == 200, second_full.json()
+
+        first_order = [h["id"] for h in first_full.json()["data"]["highlights"]]
+        second_order = [h["id"] for h in second_full.json()["data"]["highlights"]]
+        assert first_order == second_order, (
+            "Expected repeated index calls to preserve deterministic tie ordering, "
+            f"got first={first_order}, second={second_order}"
+        )
+        assert set(first_order) == {first_id, second_id}
+
+        page_one = auth_client.get(
+            f"/media/{media_id}/pdf-highlights/index?mine_only=false&limit=1",
+            headers=auth_headers(user_id),
+        )
+        assert page_one.status_code == 200, page_one.json()
+        page_one_data = page_one.json()["data"]
+        assert page_one_data["page"]["has_more"] is True
+        assert page_one_data["page"]["next_cursor"] is not None
+        page_one_ids = [h["id"] for h in page_one_data["highlights"]]
+
+        page_two = auth_client.get(
+            (
+                f"/media/{media_id}/pdf-highlights/index?mine_only=false&limit=1"
+                f"&cursor={page_one_data['page']['next_cursor']}"
+            ),
+            headers=auth_headers(user_id),
+        )
+        assert page_two.status_code == 200, page_two.json()
+        page_two_data = page_two.json()["data"]
+        page_two_ids = [h["id"] for h in page_two_data["highlights"]]
+        assert page_two_data["page"]["has_more"] is False
+        assert page_two_data["page"]["next_cursor"] is None
+
+        assert page_one_ids + page_two_ids == first_order, (
+            "Expected cursor pagination to preserve deterministic full-order sequence, "
+            f"full={first_order}, cursor_pages={page_one_ids + page_two_ids}"
+        )
+
+
 class TestPdfHighlightVisibilityRegression:
     """S6 PR-08 visibility regression coverage for PDF highlight surfaces."""
 

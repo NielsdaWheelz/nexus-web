@@ -734,6 +734,108 @@ describe("PdfReader", () => {
     ]);
   });
 
+  it("does not reopen the PDF when onPageHighlightsChange callback identity changes", async () => {
+    const signedUrl = "https://storage.example/signed-callback-stability";
+    const doc = createFakeDocument(1, {
+      1: createFakePage({ textItems: ["callback stability text"] }),
+    });
+    const firstHandler = vi.fn();
+    const secondHandler = vi.fn();
+
+    const { deps, getDocumentMock } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: {
+        1: [
+          makePdfHighlight("h-stable", "yellow", "stable", 1, [
+            { x1: 72, y1: 120, x2: 140, y2: 120, x3: 140, y3: 132, x4: 72, y4: 132 },
+          ]),
+        ],
+      },
+    });
+
+    const { rerender } = render(
+      <PdfReader
+        mediaId="media-stable-callback"
+        deps={deps}
+        onPageHighlightsChange={firstHandler}
+      />
+    );
+
+    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(getDocumentMock).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(
+      <PdfReader
+        mediaId="media-stable-callback"
+        deps={deps}
+        onPageHighlightsChange={secondHandler}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Page 1 of 1")).toBeInTheDocument();
+      expect(getDocumentMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("navigates to a requested highlight using projected PDF quad geometry", async () => {
+    const signedUrl = "https://storage.example/signed-navigate-highlight";
+    const doc = createFakeDocument(2, {
+      1: createFakePage({ textItems: ["page one text"] }),
+      2: createFakePage({ textItems: ["page two text"] }),
+    });
+    const targetQuad = {
+      x1: 72,
+      y1: 320,
+      x2: 180,
+      y2: 320,
+      x3: 180,
+      y3: 336,
+      x4: 72,
+      y4: 336,
+    };
+
+    const { deps } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: {
+        1: [],
+        2: [makePdfHighlight("h-target", "green", "target", 2, [targetQuad])],
+      },
+    });
+
+    const { rerender } = render(
+      <PdfReader mediaId="media-nav" deps={deps} navigateToHighlight={null} />
+    );
+
+    expect(await screen.findByText("Page 1 of 2")).toBeInTheDocument();
+    const viewerContainer = screen.getByLabelText("PDF document");
+    expect(viewerContainer).toBeInstanceOf(HTMLDivElement);
+
+    rerender(
+      <PdfReader
+        mediaId="media-nav"
+        deps={deps}
+        navigateToHighlight={{
+          highlightId: "h-target",
+          pageNumber: 2,
+          quads: [targetQuad],
+        }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect((viewerContainer as HTMLDivElement).scrollTop).toBeGreaterThan(1100);
+    });
+  });
+
   it("does not expose false-success highlight creation when page has no usable text layer", async () => {
     const signedUrl = "https://storage.example/signed-no-text";
     const doc = createFakeDocument(1, {
