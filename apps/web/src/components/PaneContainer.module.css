@@ -1,14 +1,81 @@
 .container {
   display: flex;
+  flex-direction: column;
   flex: 1;
   height: 100%;
+  overflow: hidden;
+}
+
+.panesWrapper {
+  display: flex;
+  flex: 1;
   overflow-x: auto;
   overflow-y: hidden;
 }
 
-/* Mobile: single pane mode */
+/* Mobile: tab bar + single pane */
+.mobileTabs {
+  display: none;
+  flex-shrink: 0;
+  gap: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.mobileTab {
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.mobileTab:hover {
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+}
+
+.mobileTabActive {
+  color: var(--color-accent);
+  background: rgba(139, 180, 255, 0.12);
+}
+
+.mobilePane {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.mobilePane[hidden] {
+  display: none;
+}
+
 @media (max-width: 768px) {
-  .container {
+  .mobileTabs {
+    display: flex;
+  }
+
+  .panesWrapper {
     overflow-x: hidden;
+    flex-direction: column;
+  }
+
+  .mobilePane:not([hidden]) {
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+/* Desktop: side-by-side panes (no mobile tabs) */
+@media (min-width: 769px) {
+  .panesWrapper {
+    flex-direction: row;
   }
 }

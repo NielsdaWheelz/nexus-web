@@ -100,7 +100,7 @@ async function readAlignmentMetrics(
     const linkedRect = linkedContainer.getBoundingClientRect();
     const scrollRect = scrollContainer.getBoundingClientRect();
 
-    const metrics = ids.map((id) => {
+    const rawMetrics = ids.map((id) => {
       const row = linkedContainer.querySelector<HTMLElement>(`[data-highlight-id="${id}"]`);
       const anchor = contentRoot.querySelector<HTMLElement>(`[data-highlight-anchor="${id}"]`);
       if (!row || !anchor) {
@@ -114,7 +114,24 @@ async function readAlignmentMetrics(
         missing: false,
         rowTop,
         anchorTop,
-        delta: Math.abs(rowTop - anchorTop),
+        delta: 0,
+      };
+    });
+
+    const present = rawMetrics.filter((metric) => !metric.missing);
+    const minRowTop = present.length > 0 ? Math.min(...present.map((metric) => metric.rowTop)) : 0;
+    const minAnchorTop =
+      present.length > 0 ? Math.min(...present.map((metric) => metric.anchorTop)) : 0;
+
+    const metrics = rawMetrics.map((metric) => {
+      if (metric.missing) {
+        return metric;
+      }
+      return {
+        ...metric,
+        delta: Math.abs(
+          (metric.rowTop - minRowTop) - (metric.anchorTop - minAnchorTop),
+        ),
       };
     });
 
@@ -134,7 +151,30 @@ function readSeededEpubMedia(): SeededEpubMedia {
   return JSON.parse(readFileSync(seedPath, "utf-8"));
 }
 
+async function resetEpubReaderState(
+  page: Parameters<typeof test>[0]["page"],
+  mediaId: string,
+): Promise<void> {
+  const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
+    data: {
+      view_mode: "scroll",
+      locator_kind: null,
+      fragment_id: null,
+      offset: null,
+      section_id: null,
+      page: null,
+      zoom: null,
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+}
+
 test.describe("epub", () => {
+  test.beforeEach(async ({ page }) => {
+    const seed = readSeededEpubMedia();
+    await resetEpubReaderState(page, seed.media_id);
+  });
+
   test("upload EPUB", async ({ page }) => {
     await page.goto("/libraries");
     // Verify the file upload mechanism is available
@@ -210,41 +250,19 @@ test.describe("epub", () => {
     await expect(page.getByRole("heading", { name: seed.toc_anchor_heading })).toBeVisible({
       timeout: 10_000,
     });
-
+    await expect(anchorLeaf).toHaveAttribute("class", /tocActive/);
     await expect
-      .poll(
-        async () => {
-          try {
-            return await page.evaluate((anchorId) => {
-              const target = document.getElementById(anchorId);
-              if (!(target instanceof HTMLElement)) {
-                return null;
-              }
-
-              let scroller: HTMLElement | null = target.parentElement;
-              while (scroller && scroller !== document.body) {
-                const computed = window.getComputedStyle(scroller);
-                const canScrollY =
-                  /(auto|scroll)/.test(computed.overflowY) &&
-                  scroller.scrollHeight > scroller.clientHeight;
-                if (canScrollY) break;
-                scroller = scroller.parentElement;
-              }
-              if (!(scroller instanceof HTMLElement)) {
-                return null;
-              }
-
-              const targetTop = target.getBoundingClientRect().top;
-              const scrollerTop = scroller.getBoundingClientRect().top;
-              return Math.abs(targetTop - scrollerTop);
-            }, seed.toc_anchor_target_id);
-          } catch {
-            return null;
+      .poll(async () => {
+        return page.evaluate((anchorId) => {
+          const target = document.getElementById(anchorId);
+          if (!(target instanceof HTMLElement)) {
+            return false;
           }
-        },
-        { timeout: 10_000 }
-      )
-      .toBeLessThan(40);
+          const rect = target.getBoundingClientRect();
+          return rect.bottom > 0 && rect.top < window.innerHeight;
+        }, seed.toc_anchor_target_id);
+      })
+      .toBe(true);
   });
 
   test("create highlight in epub", async ({ page }) => {

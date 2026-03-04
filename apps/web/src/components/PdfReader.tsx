@@ -215,6 +215,12 @@ interface PdfReaderProps {
   onHighlightNavigationComplete?: () => void;
   onHighlightsMutated?: () => void;
   onQuoteToChat?: (highlightId: string) => void;
+  /** Resume: initial page (1-based) from saved reader state */
+  initialPageNumber?: number;
+  /** Resume: initial zoom scale from saved reader state */
+  initialZoom?: number;
+  /** Called when page or zoom changes for progress persistence */
+  onResumeStateChange?: (pageNumber: number, zoom: number) => void;
 }
 
 interface SelectionState {
@@ -593,14 +599,17 @@ export default function PdfReader({
   onHighlightNavigationComplete,
   onHighlightsMutated,
   onQuoteToChat,
+  initialPageNumber,
+  initialZoom,
+  onResumeStateChange,
 }: PdfReaderProps) {
   const [loading, setLoading] = useState(true);
   const [navigating, setNavigating] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pageNumber, setPageNumber] = useState(1);
+  const [pageNumber, setPageNumber] = useState(initialPageNumber ?? 1);
   const [numPages, setNumPages] = useState(0);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(initialZoom ?? 1);
   const [pageScale, setPageScale] = useState(1);
   const [pageRenderEpoch, setPageRenderEpoch] = useState(0);
   const [textLayerUsable, setTextLayerUsable] = useState(false);
@@ -626,9 +635,9 @@ export default function PdfReader({
   const signedUrlExpiryRef = useRef<number | null>(null);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
   const activePageScaleRef = useRef(1);
-  const zoomRef = useRef(1);
+  const zoomRef = useRef(initialZoom ?? 1);
   const runRef = useRef(0);
-  const pageNumberRef = useRef(1);
+  const pageNumberRef = useRef(initialPageNumber ?? 1);
   const pageScaleByNumberRef = useRef<Map<number, number>>(new Map());
   const pageGeometryReliabilityRef = useRef<Map<number, boolean>>(new Map());
   const pendingViewerPageRef = useRef<number | null>(null);
@@ -646,6 +655,17 @@ export default function PdfReader({
   useEffect(() => {
     onPageHighlightsChangeRef.current = onPageHighlightsChange;
   }, [onPageHighlightsChange]);
+
+  const onResumeStateChangeRef = useRef(onResumeStateChange);
+  useEffect(() => {
+    onResumeStateChangeRef.current = onResumeStateChange;
+  }, [onResumeStateChange]);
+
+  useEffect(() => {
+    if (onResumeStateChangeRef.current && numPages > 0) {
+      onResumeStateChangeRef.current(pageNumber, zoom);
+    }
+  }, [pageNumber, zoom, numPages]);
 
   const setContentNode = useCallback(
     (node: HTMLDivElement | null) => {
@@ -1635,14 +1655,16 @@ export default function PdfReader({
     const pageScaleCache = pageScaleByNumberRef.current;
     const pageGeometryReliability = pageGeometryReliabilityRef.current;
 
+    const startPage = initialPageNumber ?? 1;
+    const startZoom = initialZoom ?? 1;
     setLoading(true);
     setNavigating(false);
     setRecovering(false);
     setError(null);
-    setPageNumber(1);
+    setPageNumber(startPage);
     setNumPages(0);
-    setZoom(1);
-    setPageScale(1);
+    setZoom(startZoom);
+    setPageScale(startZoom);
     setPageRenderEpoch(0);
     setSelection(null);
     setSelectionError(null);
@@ -1650,7 +1672,8 @@ export default function PdfReader({
     setTextLayerUsable(false);
     setTextGeometryReliable(true);
     setCreateTelemetry(createInitialCreateTelemetry());
-    pageNumberRef.current = 1;
+    pageNumberRef.current = startPage;
+    zoomRef.current = startZoom;
     pageScaleCache.clear();
     pageGeometryReliability.clear();
     pendingViewerPageRef.current = null;
@@ -1673,7 +1696,7 @@ export default function PdfReader({
         }
         signedUrlExpiryRef.current = signedAccess.expiresAtMs;
         await replaceDocument(opened);
-        await attachDocumentToViewer(opened.doc, 1, runId);
+        await attachDocumentToViewer(opened.doc, startPage, runId);
       } catch (err) {
         if (active && runId === runRef.current) {
           setError(toUserFacingError(err));

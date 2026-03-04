@@ -278,6 +278,60 @@ function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
     .first();
 }
 
+async function readCurrentPageNumber(page: Page, pageCount: number): Promise<number | null> {
+  const indicator = page
+    .locator('span[class*="pageIndicator"]')
+    .filter({ hasText: new RegExp(`Page\\s+\\d+\\s+of\\s+${pageCount}`) })
+    .first();
+  const text = (await indicator.textContent())?.trim() ?? "";
+  const match = text.match(/Page\s+(\d+)\s+of\s+\d+/i);
+  if (!match) {
+    return null;
+  }
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function ensureOnPage(page: Page, targetPage: number, pageCount: number): Promise<void> {
+  const anyIndicator = page
+    .locator('span[class*="pageIndicator"]')
+    .filter({ hasText: new RegExp(`Page\\s+\\d+\\s+of\\s+${pageCount}`) })
+    .first();
+  await expect(anyIndicator).toBeVisible({ timeout: 20_000 });
+
+  for (let step = 0; step < pageCount + 2; step += 1) {
+    const current = await readCurrentPageNumber(page, pageCount);
+    if (current === targetPage) {
+      await expect(pageIndicator(page, targetPage, pageCount)).toBeVisible();
+      return;
+    }
+    if (current === null) {
+      await page.waitForTimeout(100);
+      continue;
+    }
+    await clickToolbarButtonByAriaLabel(
+      page,
+      current < targetPage ? "Next page" : "Previous page",
+    );
+  }
+  throw new Error(`Unable to navigate to page ${targetPage} of ${pageCount}`);
+}
+
+async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
+  const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
+    data: {
+      view_mode: "scroll",
+      locator_kind: "pdf_page",
+      page: 1,
+      zoom: 1,
+      fragment_id: null,
+      offset: null,
+      section_id: null,
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+}
+
 async function readLayerAlignmentForPage(
   page: Page,
   targetPageNumber: number,
@@ -322,6 +376,11 @@ async function readLayerAlignmentForPage(
 
 test.describe("pdf reader", () => {
   test.describe.configure({ mode: "serial" });
+
+  test.beforeEach(async ({ page }) => {
+    const seeded = readSeededPdfMedia();
+    await resetPdfReaderState(page, seeded.media_id);
+  });
 
   test("upload -> viewer -> persistent highlight -> send to chat", async ({ page }) => {
     test.slow(); // full upload → render → highlight → reload → chat flow under parallel workers
@@ -385,11 +444,19 @@ test.describe("pdf reader", () => {
       createdHighlightId = await waitForNewVisibleHighlightId(page, knownHighlightIds);
 
       await page.reload();
-      await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
-        timeout: 20_000,
-      });
       const persistedHighlight = await page.request.get(`/api/highlights/${createdHighlightId}`);
       expect(persistedHighlight.ok()).toBe(true);
+      // Reader-state persistence can resume on page 1 or 2 depending on save timing.
+      // Normalize deterministically so this test validates highlight persistence only.
+      await ensureOnPage(page, 2, expectedPageCount);
+      await expect
+        .poll(
+          async () => page.locator(`[data-testid^="pdf-highlight-${createdHighlightId}-"]`).count(),
+          {
+            timeout: 10_000,
+          },
+        )
+        .toBeGreaterThan(0);
 
       const entireDocumentScope = page.getByRole("button", { name: "Entire document" });
       await expect(entireDocumentScope).toBeVisible();

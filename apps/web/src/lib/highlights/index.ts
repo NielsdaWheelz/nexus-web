@@ -43,6 +43,8 @@ export {
   buildCanonicalCursor,
   validateCanonicalText,
   codepointLength,
+  canonicalCpToRawCp,
+  rawCpToCanonicalCp,
   BLOCK_ELEMENTS,
   type CanonicalNode,
   type CanonicalCursorResult,

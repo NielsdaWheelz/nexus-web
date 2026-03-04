@@ -23,9 +23,21 @@ test.describe("web articles", () => {
     await expect(urlInput).toBeVisible();
     await urlInput.fill("https://example.com");
     await page.getByRole("button", { name: "Add" }).click();
-    await expect(
-      page.getByText(/added|processing/i)
-    ).toBeVisible({ timeout: 10_000 });
+    await expect
+      .poll(
+        async () => {
+          if (/\/media\/[0-9a-f-]+$/i.test(page.url())) {
+            return "redirected";
+          }
+          const hasStatus = await page
+            .getByText(/added|processing/i)
+            .isVisible()
+            .catch(() => false);
+          return hasStatus ? "status" : null;
+        },
+        { timeout: 15_000 }
+      )
+      .not.toBeNull();
   });
 
   test("open and view seeded web article", async ({ page }) => {

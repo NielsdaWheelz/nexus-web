@@ -1986,3 +1986,143 @@ class FragmentBlock(Base):
 
     # Relationships
     fragment: Mapped["Fragment"] = relationship("Fragment")
+
+
+class ReaderProfile(Base):
+    """Per-user reader defaults (theme, font, layout)."""
+
+    __tablename__ = "reader_profiles"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    theme: Mapped[str] = mapped_column(Text, nullable=False, server_default="light")
+    font_size_px: Mapped[int] = mapped_column(Integer, nullable=False, server_default="16")
+    line_height: Mapped[float] = mapped_column(Numeric(3, 2), nullable=False, server_default="1.5")
+    font_family: Mapped[str] = mapped_column(Text, nullable=False, server_default="serif")
+    column_width_ch: Mapped[int] = mapped_column(Integer, nullable=False, server_default="65")
+    focus_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    default_view_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="scroll")
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "theme IN ('light', 'dark', 'sepia')",
+            name="ck_reader_profiles_theme",
+        ),
+        CheckConstraint(
+            "font_size_px BETWEEN 12 AND 28",
+            name="ck_reader_profiles_font_size_px",
+        ),
+        CheckConstraint(
+            "line_height BETWEEN 1.2 AND 2.2",
+            name="ck_reader_profiles_line_height",
+        ),
+        CheckConstraint(
+            "font_family IN ('serif', 'sans')",
+            name="ck_reader_profiles_font_family",
+        ),
+        CheckConstraint(
+            "column_width_ch BETWEEN 40 AND 120",
+            name="ck_reader_profiles_column_width_ch",
+        ),
+        CheckConstraint(
+            "default_view_mode IN ('scroll', 'paged')",
+            name="ck_reader_profiles_default_view_mode",
+        ),
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User")
+
+
+class ReaderMediaState(Base):
+    """Per user + media reader state (overrides and progress)."""
+
+    __tablename__ = "reader_media_state"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    theme: Mapped[str | None] = mapped_column(Text, nullable=True)
+    font_size_px: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    line_height: Mapped[float | None] = mapped_column(Numeric(3, 2), nullable=True)
+    font_family: Mapped[str | None] = mapped_column(Text, nullable=True)
+    column_width_ch: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    focus_mode: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    view_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="scroll")
+    locator_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fragment_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("fragments.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    section_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    zoom: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "theme IS NULL OR theme IN ('light', 'dark', 'sepia')",
+            name="ck_reader_media_state_theme",
+        ),
+        CheckConstraint(
+            "font_size_px IS NULL OR (font_size_px BETWEEN 12 AND 28)",
+            name="ck_reader_media_state_font_size_px",
+        ),
+        CheckConstraint(
+            "line_height IS NULL OR (line_height BETWEEN 1.2 AND 2.2)",
+            name="ck_reader_media_state_line_height",
+        ),
+        CheckConstraint(
+            "font_family IS NULL OR font_family IN ('serif', 'sans')",
+            name="ck_reader_media_state_font_family",
+        ),
+        CheckConstraint(
+            "column_width_ch IS NULL OR (column_width_ch BETWEEN 40 AND 120)",
+            name="ck_reader_media_state_column_width_ch",
+        ),
+        CheckConstraint(
+            "view_mode IN ('scroll', 'paged')",
+            name="ck_reader_media_state_view_mode",
+        ),
+        CheckConstraint(
+            "locator_kind IS NULL OR locator_kind IN ('fragment_offset', 'epub_section', 'pdf_page')",
+            name="ck_reader_media_state_locator_kind",
+        ),
+        CheckConstraint(
+            '"offset" IS NULL OR "offset" >= 0',
+            name="ck_reader_media_state_offset",
+        ),
+        CheckConstraint(
+            "page IS NULL OR page >= 1",
+            name="ck_reader_media_state_page",
+        ),
+        CheckConstraint(
+            "zoom IS NULL OR (zoom BETWEEN 0.25 AND 4.0)",
+            name="ck_reader_media_state_zoom",
+        ),
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User")
+    media: Mapped["Media"] = relationship("Media")
