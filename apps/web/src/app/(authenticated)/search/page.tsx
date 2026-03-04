@@ -11,8 +11,12 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import Link from "next/link";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import PageLayout from "@/components/ui/PageLayout";
+import SectionCard from "@/components/ui/SectionCard";
+import StateMessage from "@/components/ui/StateMessage";
+import StatusPill from "@/components/ui/StatusPill";
+import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
 
 // ============================================================================
@@ -156,98 +160,104 @@ export default function SearchPage() {
     }
   }
 
+  function getTypeVariant(type: SearchResult["type"]) {
+    if (type === "media") return "info";
+    if (type === "fragment") return "success";
+    if (type === "annotation") return "warning";
+    return "neutral";
+  }
+
   // --------------------------------------------------------------------------
   // Render
   // --------------------------------------------------------------------------
 
   return (
-    <div className={styles.container}>
-      <h1 className={styles.title}>Search</h1>
+    <PageLayout
+      title="Search"
+      description="Keyword search across media, fragments, annotations, and chat messages."
+    >
+      <SectionCard title="Query">
+        <form className={styles.searchForm} onSubmit={handleSubmit}>
+          <div className={styles.searchRow}>
+            <input
+              className={styles.searchInput}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search your content..."
+              autoFocus
+            />
+            <button
+              type="submit"
+              className={styles.searchBtn}
+              disabled={searching || !query.trim()}
+            >
+              {searching ? "..." : "Search"}
+            </button>
+          </div>
 
-      <form className={styles.searchForm} onSubmit={handleSubmit}>
-        <div className={styles.searchRow}>
-          <input
-            className={styles.searchInput}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search your content..."
-            autoFocus
-          />
-          <button
-            type="submit"
-            className={styles.searchBtn}
-            disabled={searching || !query.trim()}
-          >
-            {searching ? "..." : "Search"}
-          </button>
-        </div>
+          <div className={styles.filters}>
+            {ALL_TYPES.map((type) => (
+              <label key={type} className={styles.filterLabel}>
+                <input
+                  type="checkbox"
+                  checked={types.has(type)}
+                  onChange={() => toggleType(type)}
+                />
+                {type}
+              </label>
+            ))}
+          </div>
+        </form>
+      </SectionCard>
 
-        <div className={styles.filters}>
-          {ALL_TYPES.map((type) => (
-            <label key={type} className={styles.filterLabel}>
-              <input
-                type="checkbox"
-                checked={types.has(type)}
-                onChange={() => toggleType(type)}
+      <SectionCard
+        title="Results"
+        actions={
+          searching ? <span className={styles.searchingHint}>Searching...</span> : null
+        }
+      >
+        {error && <StateMessage variant="error">{error}</StateMessage>}
+
+        {!hasSearched && (
+          <StateMessage variant="info">
+            Enter a query to search across your media, annotations, and conversations.
+          </StateMessage>
+        )}
+
+        {hasSearched && results.length === 0 && !searching && (
+          <StateMessage variant="empty">No results found.</StateMessage>
+        )}
+
+        {results.length > 0 && (
+          <AppList>
+            {results.map((result) => (
+              <AppListItem
+                key={`${result.type}-${result.id}`}
+                href={getResultHref(result)}
+                title={getResultDescription(result)}
+                description={result.snippet || "No snippet available"}
+                meta={`score ${result.score.toFixed(2)}`}
+                trailing={
+                  <StatusPill variant={getTypeVariant(result.type)}>
+                    {result.type}
+                  </StatusPill>
+                }
               />
-              {type}
-            </label>
-          ))}
-        </div>
-      </form>
+            ))}
+          </AppList>
+        )}
 
-      {error && <div className={styles.error}>{error}</div>}
-
-      {!hasSearched && (
-        <div className={styles.emptyState}>
-          Enter a query to search across your media, annotations, and
-          conversations.
-        </div>
-      )}
-
-      {hasSearched && results.length === 0 && !searching && (
-        <div className={styles.emptyState}>No results found.</div>
-      )}
-
-      <div className={styles.results}>
-        {results.map((result) => (
-          <Link
-            key={`${result.type}-${result.id}`}
-            href={getResultHref(result)}
-            className={styles.resultItem}
+        {nextCursor && (
+          <button
+            className={styles.loadMore}
+            onClick={() => search(nextCursor)}
+            disabled={searching}
           >
-            <div className={styles.resultHeader}>
-              <span className={`${styles.typeBadge} ${styles[result.type]}`}>
-                {result.type}
-              </span>
-              <span className={styles.resultTitle}>
-                {getResultDescription(result)}
-              </span>
-              <span className={styles.resultScore}>
-                {result.score.toFixed(2)}
-              </span>
-            </div>
-            {result.snippet && (
-              <div className={styles.resultSnippet}>
-                {result.snippet}
-              </div>
-            )}
-          </Link>
-        ))}
-      </div>
-
-      {nextCursor && (
-        <button
-          className={styles.loadMore}
-          onClick={() => search(nextCursor)}
-          disabled={searching}
-        >
-          Load more
-        </button>
-      )}
-
-      {searching && <div className={styles.loading}>Searching...</div>}
-    </div>
+            Load more
+          </button>
+        )}
+      </SectionCard>
+    </PageLayout>
   );
 }

@@ -11,7 +11,7 @@ No domain logic or raw DB access in routes.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -89,6 +89,33 @@ def get_proxied_image(
 # =============================================================================
 # Media CRUD Endpoints
 # =============================================================================
+
+
+@router.get("/media")
+def list_media(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    kind: str | None = Query(
+        default=None,
+        description="Comma-separated media kind filter (web_article, epub, pdf, video, podcast_episode)",
+    ),
+    search: str | None = Query(default=None, description="Optional title substring filter"),
+    cursor: str | None = Query(default=None, description="Pagination cursor"),
+    limit: int = Query(default=50, ge=1, le=200, description="Maximum results per page"),
+) -> dict:
+    """List media visible to the viewer across all libraries/provenance paths."""
+    media_list, next_cursor = media_service.list_visible_media(
+        db=db,
+        viewer_id=viewer.user_id,
+        kind=kind,
+        search=search,
+        cursor=cursor,
+        limit=limit,
+    )
+    return {
+        "data": [media.model_dump(mode="json") for media in media_list],
+        "page": {"next_cursor": next_cursor},
+    }
 
 
 @router.post("/media/from_url", status_code=202)

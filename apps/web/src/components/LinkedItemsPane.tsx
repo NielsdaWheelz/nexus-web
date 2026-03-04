@@ -46,6 +46,7 @@ import {
   paneYFromViewerViewportY,
   toViewerViewportY,
 } from "@/lib/highlights/coordinateTransforms";
+import StateMessage from "@/components/ui/StateMessage";
 import styles from "./LinkedItemsPane.module.css";
 
 const LIST_ROW_SLOT_HEIGHT = ROW_HEIGHT + 4;
@@ -523,9 +524,10 @@ export default function LinkedItemsPane({
   if (highlights.length === 0) {
     return (
       <div className={styles.linkedItemsContainer}>
-        <div className={styles.emptyState}>
-          <p>No highlights yet.</p>
-          <p className={styles.hint}>Select text to create a highlight.</p>
+        <div className={styles.emptyStateMessage}>
+          <StateMessage variant="empty">
+            No highlights yet. Select text to create one.
+          </StateMessage>
         </div>
       </div>
     );

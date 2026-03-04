@@ -49,8 +49,11 @@
 }
 
 .icon {
-  font-size: 3rem;
-  opacity: 0.7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.8;
+  color: var(--color-text-secondary);
 }
 
 .text {
@@ -87,12 +90,16 @@
 }
 
 .successIcon {
-  font-size: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--color-success);
 }
 
 .errorIcon {
-  font-size: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--color-error);
 }
 
@@ -117,9 +124,5 @@
   .dropzone {
     padding: var(--space-6);
     min-height: 160px;
-  }
-
-  .icon {
-    font-size: 2rem;
   }
 }

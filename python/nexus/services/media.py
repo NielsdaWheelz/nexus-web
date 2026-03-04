@@ -6,6 +6,8 @@ Routes may not contain domain logic or raw DB access - they must call these func
 
 from __future__ import annotations
 
+import base64
+import json
 import posixpath
 import re
 from dataclasses import dataclass
@@ -27,8 +29,9 @@ from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.media import FragmentOut, FromUrlResponse, MediaOut
 from nexus.services.capabilities import derive_capabilities
-from nexus.services.pdf_readiness import is_pdf_quote_text_ready
+from nexus.services.pdf_readiness import batch_pdf_quote_text_ready, is_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
+from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
 
@@ -115,6 +118,187 @@ def get_media_for_viewer(
         created_at=row[10],
         updated_at=row[11],
     )
+
+
+def _encode_media_cursor(updated_at: datetime, media_id: UUID) -> str:
+    """Encode a keyset cursor for media listing pagination."""
+    payload = {
+        "updated_at": updated_at.isoformat(),
+        "id": str(media_id),
+    }
+    json_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(json_bytes).decode("ascii").rstrip("=")
+
+
+def _decode_media_cursor(cursor: str) -> tuple[datetime, UUID]:
+    """Decode a media listing keyset cursor."""
+    try:
+        # Restore stripped base64 padding for urlsafe decoding.
+        if len(cursor) % 4:
+            cursor += "=" * (4 - len(cursor) % 4)
+        json_bytes = base64.urlsafe_b64decode(cursor)
+        payload = json.loads(json_bytes.decode("utf-8"))
+        updated_at = datetime.fromisoformat(payload["updated_at"])
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=UTC)
+        media_id = UUID(payload["id"])
+    except Exception:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+    return updated_at, media_id
+
+
+def _parse_kind_filter(kind: str | None) -> list[str] | None:
+    """Parse and validate comma-separated media kind filter."""
+    if not kind:
+        return None
+
+    parsed = sorted({token.strip() for token in kind.split(",") if token.strip()})
+    if not parsed:
+        return None
+
+    valid_kinds = {value.value for value in MediaKind}
+    invalid = [value for value in parsed if value not in valid_kinds]
+    if invalid:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Invalid media kind filter: {', '.join(invalid)}",
+        )
+    return parsed
+
+
+def _escape_ilike_pattern(value: str) -> str:
+    """Escape wildcard metacharacters for ILIKE pattern matching."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _status_to_str(value: object) -> str:
+    """Normalize SQL enum/text status values to a plain string."""
+    if isinstance(value, str):
+        return value
+    enum_value = getattr(value, "value", None)
+    if isinstance(enum_value, str):
+        return enum_value
+    return str(value)
+
+
+def list_visible_media(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    kind: str | None = None,
+    search: str | None = None,
+    cursor: str | None = None,
+    limit: int = 50,
+) -> tuple[list[MediaOut], str | None]:
+    """List viewer-visible media across all provenance paths with keyset pagination."""
+    if limit <= 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+
+    limit = min(limit, 200)
+    limit_plus_one = limit + 1
+    parsed_kinds = _parse_kind_filter(kind)
+    normalized_search = search.strip() if search else None
+    if normalized_search == "":
+        normalized_search = None
+
+    where_clauses = ["1=1"]
+    params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit_plus_one}
+
+    if parsed_kinds:
+        placeholders: list[str] = []
+        for index, value in enumerate(parsed_kinds):
+            key = f"kind_{index}"
+            placeholders.append(f":{key}")
+            params[key] = value
+        where_clauses.append(f"m.kind IN ({', '.join(placeholders)})")
+
+    if normalized_search:
+        where_clauses.append(r"m.title ILIKE :search_pattern ESCAPE '\'")
+        params["search_pattern"] = f"%{_escape_ilike_pattern(normalized_search)}%"
+
+    if cursor:
+        cursor_updated_at, cursor_id = _decode_media_cursor(cursor)
+        where_clauses.append("(m.updated_at, m.id) < (:cursor_updated_at, :cursor_id)")
+        params["cursor_updated_at"] = cursor_updated_at
+        params["cursor_id"] = cursor_id
+
+    query = text(f"""
+        WITH visible_media AS (
+            {visible_media_ids_cte_sql()}
+        )
+        SELECT
+            m.id,
+            m.kind,
+            m.title,
+            m.canonical_source_url,
+            m.processing_status,
+            m.failure_stage,
+            m.last_error_code,
+            m.external_playback_url,
+            m.provider,
+            m.provider_id,
+            m.created_at,
+            m.updated_at,
+            EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file,
+            EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) AS has_fragments
+        FROM media m
+        JOIN visible_media vm ON vm.media_id = m.id
+        WHERE {" AND ".join(where_clauses)}
+        ORDER BY m.updated_at DESC, m.id DESC
+        LIMIT :limit
+    """)
+    rows = db.execute(query, params).fetchall()
+
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+
+    pdf_media_ids = [row[0] for row in page_rows if row[1] == MediaKind.pdf.value]
+    pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
+
+    media_list: list[MediaOut] = []
+    for row in page_rows:
+        processing_status = _status_to_str(row[4])
+        pdf_quote_ready = (
+            pdf_readiness.get(row[0], False) if row[1] == MediaKind.pdf.value else False
+        )
+        capabilities = derive_capabilities(
+            kind=row[1],
+            processing_status=processing_status,
+            last_error_code=row[6],
+            media_file_exists=row[12],
+            external_playback_url_exists=row[7] is not None,
+            has_fragments=row[13],
+            pdf_quote_text_ready=pdf_quote_ready,
+        )
+        playback_source = derive_playback_source(
+            kind=row[1],
+            external_playback_url=row[7],
+            canonical_source_url=row[3],
+            provider=row[8],
+            provider_id=row[9],
+        )
+        media_list.append(
+            MediaOut(
+                id=row[0],
+                kind=row[1],
+                title=row[2],
+                canonical_source_url=row[3],
+                processing_status=processing_status,
+                failure_stage=row[5],
+                last_error_code=row[6],
+                playback_source=playback_source,
+                capabilities=capabilities,
+                created_at=row[10],
+                updated_at=row[11],
+            )
+        )
+
+    next_cursor = None
+    if has_more and media_list:
+        last = media_list[-1]
+        next_cursor = _encode_media_cursor(last.updated_at, last.id)
+
+    return media_list, next_cursor
 
 
 def can_read_media(db: Session, viewer_id: UUID, media_id: UUID) -> bool:

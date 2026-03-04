@@ -13,6 +13,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import PageLayout from "@/components/ui/PageLayout";
+import SectionCard from "@/components/ui/SectionCard";
+import StateMessage from "@/components/ui/StateMessage";
+import StatusPill from "@/components/ui/StatusPill";
+import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
 
 // ============================================================================
@@ -121,59 +126,61 @@ export default function KeysPage() {
   // Render
   // --------------------------------------------------------------------------
 
+  const statusVariant = (status: ApiKey["status"]) => {
+    if (status === "valid") return "success";
+    if (status === "untested") return "warning";
+    if (status === "invalid") return "danger";
+    return "neutral";
+  };
+
   return (
-    <div className={styles.container}>
-      <h1 className={styles.title}>API Keys</h1>
-
-      {/* Existing keys */}
-      <div className={styles.section}>
-        <h2 className={styles.sectionTitle}>Your Keys</h2>
-
-        {loading && <div className={styles.loading}>Loading...</div>}
-        {error && <div className={styles.error}>{error}</div>}
+    <PageLayout
+      title="API Keys"
+      description="BYOK credentials for model providers. keys never leave server-side flows."
+    >
+      <SectionCard title="Your Keys">
+        {loading && <StateMessage variant="loading">Loading...</StateMessage>}
+        {error && <StateMessage variant="error">{error}</StateMessage>}
 
         {!loading && keys.length === 0 && (
-          <div className={styles.emptyKeys}>
-            No API keys configured. Add one below.
-          </div>
+          <StateMessage variant="empty">No API keys configured. Add one below.</StateMessage>
         )}
 
-        <div className={styles.keyList}>
-          {keys.map((key) => (
-            <div key={key.id} className={styles.keyRow}>
-              <div className={styles.keyInfo}>
-                <span className={styles.keyProvider}>{key.provider}</span>
-                <span className={styles.keyMeta}>
-                  <span>...{key.key_fingerprint}</span>
-                  <span
-                    className={`${styles.keyStatus} ${styles[key.status]}`}
-                  >
+        {keys.length > 0 && (
+          <AppList>
+            {keys.map((key) => (
+              <AppListItem
+                key={key.id}
+                title={key.provider}
+                description={`...${key.key_fingerprint}`}
+                meta={
+                  key.last_tested_at
+                    ? `tested ${new Date(key.last_tested_at).toLocaleDateString()}`
+                    : "never tested"
+                }
+                trailing={
+                  <StatusPill variant={statusVariant(key.status)}>
                     {key.status}
-                  </span>
-                  {key.last_tested_at && (
-                    <span>
-                      tested{" "}
-                      {new Date(key.last_tested_at).toLocaleDateString()}
-                    </span>
-                  )}
-                </span>
-              </div>
-              {key.status !== "revoked" && (
-                <button
-                  className={styles.revokeBtn}
-                  onClick={() => handleRevoke(key.id)}
-                >
-                  Revoke
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
+                  </StatusPill>
+                }
+                actions={
+                  key.status !== "revoked" ? (
+                    <button
+                      type="button"
+                      className={styles.revokeBtn}
+                      onClick={() => handleRevoke(key.id)}
+                    >
+                      Revoke
+                    </button>
+                  ) : null
+                }
+              />
+            ))}
+          </AppList>
+        )}
+      </SectionCard>
 
-      {/* Add key form */}
-      <div className={styles.section}>
-        <h2 className={styles.sectionTitle}>Add / Update Key</h2>
+      <SectionCard title="Add / Update Key">
         <form className={styles.form} onSubmit={handleSubmit}>
           <div className={styles.formRow}>
             <div className={styles.formField}>
@@ -193,7 +200,7 @@ export default function KeysPage() {
               </select>
             </div>
 
-            <div className={`${styles.formField}`} style={{ flex: 1 }}>
+            <div className={styles.formFieldWide}>
               <label className={styles.formLabel} htmlFor="apiKey">
                 API Key
               </label>
@@ -218,12 +225,10 @@ export default function KeysPage() {
             </button>
           </div>
 
-          {formError && <div className={styles.formError}>{formError}</div>}
-          {formSuccess && (
-            <div className={styles.formSuccess}>{formSuccess}</div>
-          )}
+          {formError && <StateMessage variant="error">{formError}</StateMessage>}
+          {formSuccess && <StateMessage variant="success">{formSuccess}</StateMessage>}
         </form>
-      </div>
-    </div>
+      </SectionCard>
+    </PageLayout>
   );
 }

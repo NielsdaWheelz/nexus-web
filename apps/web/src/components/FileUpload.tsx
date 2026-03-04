@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { CircleCheck, CircleX, FileText } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import styles from "./FileUpload.module.css";
 
@@ -232,7 +233,9 @@ export default function FileUpload() {
 
         {status === "idle" && (
           <>
-            <div className={styles.icon}>📄</div>
+            <div className={styles.icon}>
+              <FileText size={40} aria-hidden="true" />
+            </div>
             <div className={styles.text}>
               <span className={styles.primary}>Drop a file here or click to upload</span>
               <span className={styles.secondary}>PDF (up to 100 MB) or EPUB (up to 50 MB)</span>
@@ -259,7 +262,9 @@ export default function FileUpload() {
 
         {status === "success" && (
           <>
-            <div className={styles.successIcon}>✓</div>
+            <div className={styles.successIcon}>
+              <CircleCheck size={40} aria-hidden="true" />
+            </div>
             <div className={styles.text}>
               <span className={styles.primary}>Upload complete!</span>
               <span className={styles.secondary}>Redirecting...</span>
@@ -269,7 +274,9 @@ export default function FileUpload() {
 
         {status === "error" && (
           <>
-            <div className={styles.errorIcon}>✗</div>
+            <div className={styles.errorIcon}>
+              <CircleX size={40} aria-hidden="true" />
+            </div>
             <div className={styles.text}>
               <span className={styles.primary}>{error || "Upload failed"}</span>
               <button className={styles.retryButton} onClick={handleRetry}>

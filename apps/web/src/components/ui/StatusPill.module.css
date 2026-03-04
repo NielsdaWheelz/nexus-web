@@ -1,0 +1,41 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.neutral {
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+  background: rgba(86, 95, 137, 0.15);
+}
+
+.info {
+  color: var(--color-accent);
+  border-color: rgba(122, 162, 247, 0.45);
+  background: rgba(122, 162, 247, 0.15);
+}
+
+.success {
+  color: var(--color-success);
+  border-color: rgba(158, 206, 106, 0.45);
+  background: rgba(158, 206, 106, 0.15);
+}
+
+.warning {
+  color: var(--color-warning);
+  border-color: rgba(224, 175, 104, 0.45);
+  background: rgba(224, 175, 104, 0.15);
+}
+
+.danger {
+  color: var(--color-error);
+  border-color: rgba(247, 118, 142, 0.45);
+  background: rgba(247, 118, 142, 0.15);
+}

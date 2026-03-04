@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+import { CircleCheck, CircleX, Clock3, Cog, Search, BookOpen } from "lucide-react";
 import styles from "./ProcessingStatusBadge.module.css";
 
 export type ProcessingStatus =
@@ -19,37 +21,37 @@ interface ProcessingStatusBadgeProps {
 
 const STATUS_CONFIG: Record<
   ProcessingStatus,
-  { label: string; variant: string; icon: string }
+  { label: string; variant: string; icon: ReactNode }
 > = {
   pending: {
     label: "Queued",
     variant: "pending",
-    icon: "⏳",
+    icon: <Clock3 size={12} aria-hidden="true" />,
   },
   extracting: {
     label: "Processing",
     variant: "processing",
-    icon: "⚙️",
+    icon: <Cog size={12} aria-hidden="true" />,
   },
   ready_for_reading: {
     label: "Readable",
     variant: "readable",
-    icon: "📖",
+    icon: <BookOpen size={12} aria-hidden="true" />,
   },
   embedding: {
     label: "Indexing",
     variant: "processing",
-    icon: "🔍",
+    icon: <Search size={12} aria-hidden="true" />,
   },
   ready: {
     label: "Ready",
     variant: "ready",
-    icon: "✓",
+    icon: <CircleCheck size={12} aria-hidden="true" />,
   },
   failed: {
     label: "Failed",
     variant: "failed",
-    icon: "✗",
+    icon: <CircleX size={12} aria-hidden="true" />,
   },
 };
 
