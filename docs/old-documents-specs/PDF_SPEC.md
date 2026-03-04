@@ -437,6 +437,20 @@ pdf.js internal elements must use `content-box` sizing (pdf.js expects this):
 
 This is necessary because many CSS resets set `box-sizing: border-box` globally, which breaks pdf.js layout calculations.
 
+Production contract (current implementation):
+
+- `apps/web/src/components/PdfReader.module.css` explicitly reasserts `content-box` for `.viewerHost` + `.page`, `.canvasWrapper`, `.canvasWrapper canvas`, `.textLayer`, `.annotationLayer`, `.svgLayer`.
+- If this contract is removed/regressed, expected failure pattern is progressive text-layer drift (minimal at top-left, maximal at bottom-right).
+
+### 5.10 Alignment Guardrails and Degradation
+
+Current reader behavior includes runtime guardrails to reduce silent geometry corruption:
+
+- **Lifecycle hardening:** scale/page writes are deferred until `pagesloaded` so PDF.js page views exist before `scrollPageIntoView` is triggered.
+- **Geometry reliability check:** each rendered page compares `.textLayer` vs `.canvasWrapper` dimensions/offsets; when delta exceeds tolerance, text geometry is treated as unreliable.
+- **Fallback mode:** highlight creation remains available but uses area-based bounds derived from the selection rectangle, and sends empty `exact` text to avoid false precision claims.
+- **Operator signal:** UI displays a notice when fallback mode is active ("Text geometry is misaligned on this page...").
+
 ---
 
 ## 6. PDF Annotation Rendering
