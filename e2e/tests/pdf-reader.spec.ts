@@ -273,8 +273,9 @@ async function readCreateTelemetry(page: Page): Promise<CreateTelemetrySnapshot>
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
   return page
-    .locator('span[class*="pageIndicator"]')
-    .filter({ hasText: `Page ${pageNumber} of ${pageCount}` });
+    .locator('span[class*="navigationLabel"], span[class*="pageIndicator"]')
+    .filter({ hasText: `Page ${pageNumber} of ${pageCount}` })
+    .first();
 }
 
 async function readLayerAlignmentForPage(
@@ -320,6 +321,8 @@ async function readLayerAlignmentForPage(
 }
 
 test.describe("pdf reader", () => {
+  test.describe.configure({ mode: "serial" });
+
   test("upload -> viewer -> persistent highlight -> send to chat", async ({ page }) => {
     test.slow(); // full upload → render → highlight → reload → chat flow under parallel workers
     const seeded = readSeededPdfMedia();
@@ -385,12 +388,15 @@ test.describe("pdf reader", () => {
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
         timeout: 20_000,
       });
-      // Navigate back to page 2 where the highlight was created
-      await clickToolbarButtonByAriaLabel(page, "Next page");
-      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
+      const persistedHighlight = await page.request.get(`/api/highlights/${createdHighlightId}`);
+      expect(persistedHighlight.ok()).toBe(true);
 
-      const linkedRow = page.locator('[class*="linkedItemRow"]').first();
-      await expect(linkedRow).toBeVisible();
+      const entireDocumentScope = page.getByRole("button", { name: "Entire document" });
+      await expect(entireDocumentScope).toBeVisible();
+      await entireDocumentScope.click();
+
+      const linkedRow = page.locator(`[data-highlight-id="${createdHighlightId}"]`).first();
+      await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await linkedRow.hover();
       const sendToChatButton = linkedRow.locator('button[class*="sendToChatBtn"]');
       await expect(sendToChatButton).toBeVisible();

@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
@@ -112,6 +110,28 @@ export default function LibraryDetailPage() {
     }
   };
 
+  const handleDeleteLibrary = async () => {
+    if (!library || library.is_default) {
+      return;
+    }
+    if (!confirm(`Delete "${library.name}"? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await apiFetch(`/api/libraries/${library.id}`, {
+        method: "DELETE",
+      });
+      router.push("/libraries");
+    } catch (err) {
+      if (isApiError(err)) {
+        setError(err.message);
+      } else {
+        setError("Failed to delete library");
+      }
+    }
+  };
+
   const statusVariant = (status: string) => {
     if (status === "ready" || status === "ready_for_reading") return "success";
     if (status === "extracting" || status === "embedding") return "info";
@@ -142,34 +162,45 @@ export default function LibraryDetailPage() {
 
   return (
     <PaneContainer>
-      <Pane title={library.name}>
+      <Pane
+        title={library.name}
+        back={{ label: "Back to Libraries", href: "/libraries" }}
+        headerActions={
+          !library.is_default && library.role === "admin" ? (
+            <form className={styles.renameForm} onSubmit={handleRename}>
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className={styles.input}
+                disabled={renaming}
+              />
+              <button
+                type="submit"
+                className={styles.renameBtn}
+                disabled={renaming || newName === library.name}
+              >
+                {renaming ? "Saving..." : "Rename"}
+              </button>
+            </form>
+          ) : null
+        }
+        options={
+          !library.is_default && library.role === "admin"
+            ? [
+                {
+                  id: "delete-library",
+                  label: "Delete library",
+                  tone: "danger",
+                  onSelect: () => {
+                    void handleDeleteLibrary();
+                  },
+                },
+              ]
+            : []
+        }
+      >
         <div className={styles.content}>
-          <div className={styles.header}>
-            <Link href="/libraries" className={styles.backLink}>
-              <ArrowLeft size={14} aria-hidden="true" />
-              <span>Back to Libraries</span>
-            </Link>
-
-            {!library.is_default && library.role === "admin" && (
-              <form className={styles.renameForm} onSubmit={handleRename}>
-                <input
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  className={styles.input}
-                  disabled={renaming}
-                />
-                <button
-                  type="submit"
-                  className={styles.renameBtn}
-                  disabled={renaming || newName === library.name}
-                >
-                  {renaming ? "Saving..." : "Rename"}
-                </button>
-              </form>
-            )}
-          </div>
-
           {error && <StateMessage variant="error">{error}</StateMessage>}
 
           {media.length === 0 ? (

@@ -63,6 +63,38 @@ export interface PdfHighlightNavigationRequest {
   quads: PdfHighlightQuad[];
 }
 
+export interface PdfReaderControlsState {
+  pageNumber: number;
+  numPages: number;
+  zoomPercent: number;
+  canGoPrev: boolean;
+  canGoNext: boolean;
+  canZoomIn: boolean;
+  canZoomOut: boolean;
+  canCreateHighlight: boolean;
+  highlightLabel: string;
+  isCreating: boolean;
+  createTelemetry: {
+    attempts: number;
+    postRequests: number;
+    patchRequests: number;
+    successes: number;
+    errors: number;
+    lastOutcome: CreateTelemetryOutcome;
+  };
+  pageRenderEpoch: number;
+  isBusy: boolean;
+}
+
+export interface PdfReaderControlActions {
+  goToPreviousPage: () => void;
+  goToNextPage: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  captureSelectionSnapshot: () => void;
+  createHighlight: (color?: HighlightColor) => void;
+}
+
 interface PdfHighlightListResponse {
   data: {
     page_number: number;
@@ -172,6 +204,9 @@ interface PdfReaderProps {
   mediaId: string;
   deps?: Partial<PdfReaderDeps>;
   contentRef?: MutableRefObject<HTMLDivElement | null>;
+  showToolbar?: boolean;
+  onControlsStateChange?: (state: PdfReaderControlsState) => void;
+  onControlsReady?: (actions: PdfReaderControlActions | null) => void;
   focusedHighlightId?: string | null;
   editingHighlightId?: string | null;
   highlightRefreshToken?: number;
@@ -547,6 +582,9 @@ export default function PdfReader({
   mediaId,
   deps,
   contentRef,
+  showToolbar = true,
+  onControlsStateChange,
+  onControlsReady,
   focusedHighlightId = null,
   editingHighlightId = null,
   highlightRefreshToken = 0,
@@ -1595,6 +1633,7 @@ export default function PdfReader({
     let active = true;
     const runId = ++runRef.current;
     const pageScaleCache = pageScaleByNumberRef.current;
+    const pageGeometryReliability = pageGeometryReliabilityRef.current;
 
     setLoading(true);
     setNavigating(false);
@@ -1613,7 +1652,7 @@ export default function PdfReader({
     setCreateTelemetry(createInitialCreateTelemetry());
     pageNumberRef.current = 1;
     pageScaleCache.clear();
-    pageGeometryReliabilityRef.current.clear();
+    pageGeometryReliability.clear();
     pendingViewerPageRef.current = null;
     pendingViewerScaleRef.current = null;
     signedUrlExpiryRef.current = null;
@@ -1652,7 +1691,7 @@ export default function PdfReader({
       runRef.current += 1;
       signedUrlExpiryRef.current = null;
       pageScaleCache.clear();
-      pageGeometryReliabilityRef.current.clear();
+      pageGeometryReliability.clear();
       pendingViewerPageRef.current = null;
       pendingViewerScaleRef.current = null;
       recoveringFromRenderErrorRef.current = false;
@@ -1765,6 +1804,7 @@ export default function PdfReader({
       });
     }
     return projected;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pageRenderEpoch is an intentional invalidation trigger
   }, [pageHighlights, pageNumber, pageRenderEpoch, pageScale]);
 
   useEffect(() => {
@@ -1806,76 +1846,172 @@ export default function PdfReader({
   const zoomPercent = Math.round(zoom * 100);
   const canZoomIn = zoom < MAX_ZOOM - 0.001;
   const canZoomOut = zoom > MIN_ZOOM + 0.001;
+  const canGoPrev = pageNumber > 1;
+  const canGoNext = pageNumber < numPages;
   const usingAreaHighlightFallback = !textGeometryReliable;
   const canCreateHighlight = textLayerUsable || usingAreaHighlightFallback;
+  const goToPreviousPage = useCallback(() => {
+    void goToPage(pageNumberRef.current - 1);
+  }, [goToPage]);
+  const goToNextPage = useCallback(() => {
+    void goToPage(pageNumberRef.current + 1);
+  }, [goToPage]);
+  const zoomOut = useCallback(() => {
+    setZoom((value) => clampZoom(value - ZOOM_STEP));
+  }, []);
+  const zoomIn = useCallback(() => {
+    setZoom((value) => clampZoom(value + ZOOM_STEP));
+  }, []);
+  const createHighlight = useCallback(
+    (color: HighlightColor = "yellow") => {
+      void handleCreateHighlight(color);
+    },
+    [handleCreateHighlight]
+  );
+
+  useEffect(() => {
+    if (!onControlsReady) {
+      return;
+    }
+    onControlsReady({
+      goToPreviousPage,
+      goToNextPage,
+      zoomIn,
+      zoomOut,
+      captureSelectionSnapshot: captureSelectionSnapshotFromWindow,
+      createHighlight,
+    });
+    return () => {
+      onControlsReady(null);
+    };
+  }, [
+    captureSelectionSnapshotFromWindow,
+    createHighlight,
+    goToNextPage,
+    goToPreviousPage,
+    onControlsReady,
+    zoomIn,
+    zoomOut,
+  ]);
+
+  useEffect(() => {
+    if (!onControlsStateChange) {
+      return;
+    }
+
+    onControlsStateChange({
+      pageNumber,
+      numPages,
+      zoomPercent,
+      canGoPrev: canGoPrev && !showBusy,
+      canGoNext: canGoNext && !showBusy,
+      canZoomIn: canZoomIn && !showBusy,
+      canZoomOut: canZoomOut && !showBusy,
+      canCreateHighlight: canCreateHighlight && !showBusy,
+      highlightLabel: usingAreaHighlightFallback ? "Highlight area" : "Highlight selection",
+      isCreating,
+      createTelemetry: {
+        attempts: createTelemetry.attempts,
+        postRequests: createTelemetry.postRequests,
+        patchRequests: createTelemetry.patchRequests,
+        successes: createTelemetry.successes,
+        errors: createTelemetry.errors,
+        lastOutcome: createTelemetry.lastOutcome,
+      },
+      pageRenderEpoch,
+      isBusy: showBusy,
+    });
+  }, [
+    canCreateHighlight,
+    canGoNext,
+    canGoPrev,
+    canZoomIn,
+    canZoomOut,
+    createTelemetry.attempts,
+    createTelemetry.errors,
+    createTelemetry.lastOutcome,
+    createTelemetry.patchRequests,
+    createTelemetry.postRequests,
+    createTelemetry.successes,
+    isCreating,
+    numPages,
+    onControlsStateChange,
+    pageRenderEpoch,
+    pageNumber,
+    showBusy,
+    usingAreaHighlightFallback,
+    zoomPercent,
+  ]);
 
   return (
     <div className={styles.viewer}>
-      <div className={styles.toolbar}>
-        <button
-          type="button"
-          className={styles.navButton}
-          onClick={() => void goToPage(pageNumber - 1)}
-          disabled={showBusy || pageNumber <= 1}
-          aria-label="Previous page"
-        >
-          Previous page
-        </button>
-        <span className={styles.pageIndicator}>
-          Page {pageNumber} of {numPages || 0}
-        </span>
-        <button
-          type="button"
-          className={styles.navButton}
-          onClick={() => void goToPage(pageNumber + 1)}
-          disabled={showBusy || pageNumber >= numPages}
-          aria-label="Next page"
-        >
-          Next page
-        </button>
-        <button
-          type="button"
-          className={styles.navButton}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            captureSelectionSnapshotFromWindow();
-          }}
-          onClick={() => void handleCreateHighlight("yellow")}
-          disabled={showBusy || !canCreateHighlight || isCreating}
-          aria-label="Highlight selection"
-          data-create-attempts={createTelemetry.attempts}
-          data-create-post-requests={createTelemetry.postRequests}
-          data-create-patch-requests={createTelemetry.patchRequests}
-          data-create-successes={createTelemetry.successes}
-          data-create-errors={createTelemetry.errors}
-          data-create-last-outcome={createTelemetry.lastOutcome}
-          data-page-render-epoch={pageRenderEpoch}
-          data-selection-popover-ignore-outside="true"
-        >
-          {usingAreaHighlightFallback ? "Highlight area" : "Highlight selection"}
-        </button>
-        <div className={styles.zoomControls}>
+      {showToolbar && (
+        <div className={styles.toolbar}>
           <button
             type="button"
             className={styles.navButton}
-            onClick={() => setZoom((value) => clampZoom(value - ZOOM_STEP))}
-            disabled={showBusy || !canZoomOut}
-            aria-label="Zoom out"
+            onClick={goToPreviousPage}
+            disabled={showBusy || !canGoPrev}
+            aria-label="Previous page"
           >
-            Zoom out
+            Previous page
           </button>
-          <span className={styles.zoomLabel}>{zoomPercent}%</span>
+          <span className={styles.pageIndicator}>
+            Page {pageNumber} of {numPages || 0}
+          </span>
           <button
             type="button"
             className={styles.navButton}
-            onClick={() => setZoom((value) => clampZoom(value + ZOOM_STEP))}
-            disabled={showBusy || !canZoomIn}
-            aria-label="Zoom in"
+            onClick={goToNextPage}
+            disabled={showBusy || !canGoNext}
+            aria-label="Next page"
           >
-            Zoom in
+            Next page
           </button>
+          <button
+            type="button"
+            className={styles.navButton}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              captureSelectionSnapshotFromWindow();
+            }}
+            onClick={() => void handleCreateHighlight("yellow")}
+            disabled={showBusy || !canCreateHighlight || isCreating}
+            aria-label="Highlight selection"
+            data-create-attempts={createTelemetry.attempts}
+            data-create-post-requests={createTelemetry.postRequests}
+            data-create-patch-requests={createTelemetry.patchRequests}
+            data-create-successes={createTelemetry.successes}
+            data-create-errors={createTelemetry.errors}
+            data-create-last-outcome={createTelemetry.lastOutcome}
+            data-page-render-epoch={pageRenderEpoch}
+            data-selection-popover-ignore-outside="true"
+          >
+            {usingAreaHighlightFallback ? "Highlight area" : "Highlight selection"}
+          </button>
+          <div className={styles.zoomControls}>
+            <button
+              type="button"
+              className={styles.navButton}
+              onClick={zoomOut}
+              disabled={showBusy || !canZoomOut}
+              aria-label="Zoom out"
+            >
+              Zoom out
+            </button>
+            <span className={styles.zoomLabel}>{zoomPercent}%</span>
+            <button
+              type="button"
+              className={styles.navButton}
+              onClick={zoomIn}
+              disabled={showBusy || !canZoomIn}
+              aria-label="Zoom in"
+            >
+              Zoom in
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {recovering && <div className={styles.notice}>Refreshing secure file access…</div>}
 

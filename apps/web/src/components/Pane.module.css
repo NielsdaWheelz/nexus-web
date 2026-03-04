@@ -84,6 +84,10 @@
   opacity: 1;
 }
 
+.resizeHandle:focus-visible::after {
+  opacity: 1;
+}
+
 /* Mobile: full width panes */
 @media (max-width: 768px) {
   .pane {

@@ -16,6 +16,7 @@ import {
 } from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
 import StateMessage from "@/components/ui/StateMessage";
+import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
@@ -129,15 +130,20 @@ function ConversationsPageInner() {
     <div className={styles.container}>
       {/* Sidebar */}
       <div className={styles.sidebar}>
-        <div className={styles.sidebarHeader}>
-          <h2 className={styles.sidebarTitle}>Chats</h2>
-          <button
-            className={styles.newChatBtn}
-            onClick={() => setShowNewChat(true)}
-          >
-            + New
-          </button>
-        </div>
+        <SurfaceHeader
+          title="Chats"
+          headingLevel={2}
+          className={styles.sidebarHeaderChrome}
+          actions={
+            <button
+              type="button"
+              className={styles.newChatBtn}
+              onClick={() => setShowNewChat(true)}
+            >
+              + New
+            </button>
+          }
+        />
 
         <div className={styles.conversationList}>
           {loading && <StateMessage variant="loading">Loading...</StateMessage>}
@@ -164,6 +170,7 @@ function ConversationsPageInner() {
           {nextCursor && (
             <button
               className={styles.loadMore}
+              aria-label="Load more conversations"
               onClick={() => fetchConversations(nextCursor)}
             >
               Load more

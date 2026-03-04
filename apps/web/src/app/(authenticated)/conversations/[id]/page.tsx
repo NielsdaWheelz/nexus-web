@@ -22,6 +22,7 @@ import {
   usePaneRouter,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
+import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import styles from "../page.module.css";
 
 // ============================================================================
@@ -68,6 +69,7 @@ export default function ConversationPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const messageListRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
@@ -155,6 +157,26 @@ export default function ConversationPage() {
       console.error("Failed to load older messages:", err);
     }
   }, [id, olderCursor]);
+
+  const handleDeleteConversation = useCallback(async () => {
+    if (!confirm("Delete this conversation? This cannot be undone.")) {
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      await apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
+      router.push("/conversations");
+    } catch (err) {
+      if (isApiError(err)) {
+        setError(err.message);
+      } else {
+        setError("Failed to delete conversation");
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }, [id, router]);
 
   // --------------------------------------------------------------------------
   // Streaming message handlers
@@ -256,11 +278,32 @@ export default function ConversationPage() {
   return (
     <div className={styles.container}>
       <div className={styles.main}>
+        <SurfaceHeader
+          title={`Chat ${conversation.id.slice(0, 8)}`}
+          subtitle={`${conversation.message_count} messages`}
+          back={{ label: "Back to Conversations", href: "/conversations" }}
+          className={styles.mainHeaderChrome}
+          options={[
+            {
+              id: "delete-conversation",
+              label: deleting ? "Deleting..." : "Delete conversation",
+              tone: "danger",
+              disabled: deleting,
+              onSelect: () => {
+                void handleDeleteConversation();
+              },
+            },
+          ]}
+        />
         <div className={styles.chatContainer}>
           {/* Message thread */}
           <div ref={messageListRef} className={styles.messageList}>
             {olderCursor && (
-              <button className={styles.loadOlder} onClick={loadOlder}>
+              <button
+                className={styles.loadOlder}
+                aria-label="Load older messages"
+                onClick={loadOlder}
+              >
                 Load older messages
               </button>
             )}
