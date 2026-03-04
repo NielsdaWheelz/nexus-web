@@ -121,7 +121,12 @@ export default function Pane({
               meta={headerMeta}
             />
           )}
-      <div className={`${styles.content} ${contentClassName ?? ""}`.trim()}>{children}</div>
+      <div
+        className={`${styles.content} ${contentClassName ?? ""}`.trim()}
+        data-pane-content="true"
+      >
+        {children}
+      </div>
       <div
         className={styles.resizeHandle}
         role="separator"

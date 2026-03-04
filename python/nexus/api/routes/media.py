@@ -19,8 +19,10 @@ from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.media import FromUrlRequest, UploadInitRequest
+from nexus.schemas.reader import ReaderMediaStatePatch
 from nexus.services import epub_lifecycle, epub_read, image_proxy
 from nexus.services import media as media_service
+from nexus.services import reader as reader_service
 from nexus.services import upload as upload_service
 
 router = APIRouter()
@@ -180,6 +182,29 @@ def get_media_fragments(
     """
     result = media_service.list_fragments_for_viewer(db, viewer.user_id, media_id)
     return success_response([fragment.model_dump(mode="json") for fragment in result])
+
+
+@router.get("/media/{media_id}/reader-state")
+def get_reader_state(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Get effective reader state for media (profile defaults + media overrides)."""
+    result = reader_service.get_reader_media_state(db, viewer.user_id, media_id)
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.patch("/media/{media_id}/reader-state")
+def patch_reader_state(
+    media_id: UUID,
+    body: ReaderMediaStatePatch,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Update reader state for media (partial)."""
+    result = reader_service.patch_reader_media_state(db, viewer.user_id, media_id, body)
+    return success_response(result.model_dump(mode="json"))
 
 
 # =============================================================================

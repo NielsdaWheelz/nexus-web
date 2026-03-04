@@ -122,6 +122,10 @@
   font-size: var(--font-size-sm);
 }
 
+.focusModeBanner {
+  margin-bottom: var(--space-1);
+}
+
 .selectionError {
   padding: var(--space-2);
   background-color: rgba(247, 118, 142, 0.1);

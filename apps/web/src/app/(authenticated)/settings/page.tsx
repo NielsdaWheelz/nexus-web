@@ -1,4 +1,4 @@
-import { ArrowRight, KeyRound, ShieldCheck } from "lucide-react";
+import { ArrowRight, BookOpen, KeyRound, ShieldCheck } from "lucide-react";
 import PageLayout from "@/components/ui/PageLayout";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
@@ -20,6 +20,21 @@ export default function SettingsPage() {
             icon={<KeyRound size={18} />}
             title="API Keys"
             description="Configure OpenAI, Anthropic, and Gemini keys."
+            trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
+          />
+        </AppList>
+      </SectionCard>
+
+      <SectionCard
+        title="Reader"
+        description="Typography, theme, and layout preferences."
+      >
+        <AppList>
+          <AppListItem
+            href="/settings/reader"
+            icon={<BookOpen size={18} />}
+            title="Reader Settings"
+            description="Theme, font, line height, column width, focus mode."
             trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
           />
         </AppList>

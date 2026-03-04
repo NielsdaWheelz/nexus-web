@@ -42,7 +42,11 @@ nexus/
 │   │       ├── 0011_slice7_podcast_subscription_sync_lifecycle.py # S7: async subscription sync state
 │   │       ├── 0012_slice7_podcast_unsubscribe_modes.py        # S7: unsubscribe retention modes
 │   │       ├── 0013_slice7_pr03_transcript_invariants.py       # S7 PR-03: strict transcript timing invariants
-│   │       └── 0014_slice7_pr04_polling_orchestration.py       # S7 PR-04: scheduled poll telemetry + singleton leasing
+│   │       ├── 0014_slice7_pr04_polling_orchestration.py       # S7 PR-04: scheduled poll telemetry + singleton leasing
+│   │       ├── 0015_slice5_epub_nav_locations.py               # S5 PR-07: persisted EPUB nav locations
+│   │       ├── 0016_reader_profiles_and_media_state.py         # Reader profile defaults + per-media state
+│   │       ├── 0017_reader_profile_default_view_mode.py        # Reader profile view mode default/backfill
+│   │       └── 0018_reader_media_state_locator_bounds.py       # Reader state locator bounds hardening
 │   └── alembic.ini
 │
 ├── supabase/                    # Supabase local configuration
@@ -84,6 +88,8 @@ nexus/
 - **EPUB Extraction** (S5): Deterministic chapter fragment materialization from EPUB archives with TOC snapshot, title fallback, resource rewriting, archive safety enforcement, and persisted canonical navigation locations.
 - **EPUB Reader** (S5 PR-05 + hardening): Reader navigation is section-based (`loc` query param) via unified navigation payload (`sections` + TOC links). Dropdown and TOC resolve through the same section ids, with in-fragment anchor targeting preserved for TOC leaf navigation.
 - **EPUB Highlights Hardening**: Linked-items now support explicit scope modes (`This chapter` aligned vs `Entire book` list), deterministic cross-chapter ordering (`fragment_idx`, `start_offset`, `end_offset`, `created_at`, `id`), and a paginated media-wide highlight endpoint for book mode.
+- **Reader Settings + Resume State**: Reader preferences are split into user-level defaults (`reader_profile`) and per-media overrides/progress (`reader_media_state`) with strict schema validation (`extra="forbid"`), DB bounds checks, and explicit locator contracts (`fragment_offset`, `epub_section`, `pdf_page`).
+- **Web Text-Anchor Resume**: Web-article resume stores canonical text offsets instead of raw viewport pixels, so restored position survives reflow (font size/line-height changes) and remains stable across desktop/mobile layouts.
 - **Media Catalog Aggregation**: `GET /media` provides visibility-safe, cross-library media listing with server-side kind/search filtering and keyset pagination (`updated_at DESC, id DESC`) to avoid client fanout over high library counts.
 - **PDF Reader** (S6 PR-07): The web reader uses `pdfjs-dist` `PDFViewer` primitives (official text + annotation layers, `PDFLinkService`, vertical continuous scroll) so text selection, internal/external links, and large-document scrolling stay aligned with upstream PDF.js behavior.
 - **PDF Reader Alignment Hardening**: `PdfReader` enforces PDF.js `content-box` CSS invariants, defers initial scale/page application until viewer pages are ready (avoids invalid page warnings), and degrades to area-based bounds when text-layer/canvas geometry drifts beyond tolerance.
@@ -92,6 +98,7 @@ nexus/
 - **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` remains control-plane only (subscribe + enqueue). `DELETE /podcasts/subscriptions/{podcast_id}` applies explicit unsubscribe retention modes (`mode=1|2|3`). Episode ingest runs in worker data-plane jobs with explicit sync lifecycle states (`pending`, `running`, `complete`, `source_limited`, `failed`).
 - **Podcast Transcription Pipeline** (S7 PR-03): transcript segments are sourced from transcription-provider output (Deepgram), not feed payload transcript fields. Diarized transcription falls back to non-diarized output, transcript text is canonicalized (NFC + whitespace normalization), and persisted segment timing is strictly validated (`t_start_ms < t_end_ms`).
 - **Podcast Active Polling Orchestration** (S7 PR-04): Celery Beat schedules periodic active-subscription polling. Runs are singleton-safe via durable lease rows, stale `running` subscription sync claims are reclaimable, and each run persists deterministic operator telemetry (`processed_count`, `failed_count`, `skipped_count`, `scanned_count`, failure-code breakdown).
+- **Reader Implementation Notes**: See `docs/reader-implementation.md` for the current reader-settings/resume architecture and regression coverage contract.
 
 ## Quick Start
 
@@ -166,11 +173,13 @@ project starts:
 - quote-to-chat E2E assertions for non-PDF linked items validate in-app pane open behavior (`Close pane` control present in-page, no browser popup)
 - seeds a test API key (provider=openai) so the models endpoint returns data
 - seeds a 3-chapter EPUB for EPUB reader tests
+- seeds dedicated reader-resume fixtures (web + EPUB + PDF)
 - writes:
   - `e2e/.seed/pdf-media.json` (PDF reader specs)
   - `e2e/.seed/non-pdf-media.json` (non-PDF linked-items specs)
   - `e2e/.seed/epub-media.json` (EPUB reader specs)
   - `e2e/.seed/youtube-media.json` (YouTube transcript media specs)
+  - `e2e/.seed/reader-resume-media.json` (cross-media reader resume specs)
 
 `globalSetup` loads root `.env` and `.dev-ports` automatically so direct runs like
 `cd e2e && npm test -- tests/pdf-reader.spec.ts --project=chromium` behave like `make test-e2e`.
@@ -184,6 +193,7 @@ npm test -- tests/pane-chrome.spec.ts --project=chromium
 npm test -- tests/non-pdf-linked-items.spec.ts --project=chromium
 npm test -- tests/epub.spec.ts --project=chromium
 npm test -- tests/youtube-transcript.spec.ts --project=chromium
+npm test -- tests/reader-resume.spec.ts --project=chromium
 npm test -- tests/pdf-reader.spec.ts --grep "highlights on non-active page are visible immediately in document scope and click navigates to projected target" --project=chromium
 ```
 
@@ -677,11 +687,13 @@ The chat UI is accessible at `/conversations`:
 | `/api/conversations/messages` | `/conversations/messages` | POST |
 | `/api/conversations/messages/stream` | ~~deprecated~~ | POST (410 Gone) |
 | `/api/stream-token` | `/internal/stream-tokens` | POST |
+| `/api/me/reader-profile` | `/me/reader-profile` | GET, PATCH |
 | `/api/messages/[messageId]` | `/messages/{messageId}` | DELETE |
 | `/api/models` | `/models` | GET |
 | `/api/keys` | `/keys` | GET, POST |
 | `/api/keys/[keyId]` | `/keys/{keyId}` | DELETE |
 | `/api/media` | `/media` | GET |
+| `/api/media/[id]/reader-state` | `/media/{id}/reader-state` | GET, PATCH |
 | `/api/search` | `/search` | GET |
 | `/api/pdfjs/module` | serves `pdfjs-dist/build/pdf.mjs` (CSP-safe) | GET |
 | `/api/pdfjs/worker` | serves `pdfjs-dist/build/pdf.worker.min.mjs` (CSP-safe) | GET |
@@ -704,6 +716,8 @@ When running locally:
 | EPUB Chapters | `GET /media/{id}/chapters`, `GET /media/{id}/chapters/{idx}` (S5 PR-04: chapter manifest + navigation) |
 | EPUB Navigation | `GET /media/{id}/navigation` (canonical section targets + TOC linkage for reader UI) |
 | EPUB TOC | `GET /media/{id}/toc` (legacy deterministic nested TOC tree) |
+| Reader Profile | `GET/PATCH /me/reader-profile` (theme/font/line-height/column/focus/default view mode) |
+| Reader Media State | `GET/PATCH /media/{id}/reader-state` (media overrides + resume locators for web/EPUB/PDF) |
 | Podcasts | `GET /podcasts/discover`, `POST /podcasts/subscriptions`, `GET /podcasts/subscriptions/{podcast_id}`, `DELETE /podcasts/subscriptions/{podcast_id}?mode=1|2|3` |
 | Highlights | `POST/GET /fragments/{id}/highlights`, `GET /media/{id}/highlights` (cursor-paginated, chapter-order), `PATCH/DELETE /highlights/{id}` |
 | Annotations | `PUT/DELETE /highlights/{id}/annotation` |
@@ -752,6 +766,7 @@ Supabase integration tests start and stop Supabase local by default. Set
 - **BFF Smoke Tests**: Verify header attachment and auth flow
 - **Frontend Unit**: Vitest + happy-dom for component and utility tests
 - **Pane Workspace Tests**: Browser-mode Vitest coverage validates persistent pane graph restore, same-origin pane-open event handling, and non-iframe pane rendering.
+- **Reader Regression E2E**: Playwright `reader-resume.spec.ts` enforces settings persistence plus resume semantics across web text anchors, EPUB section locators, and PDF page+zoom locators.
 - **Proxy Tests**: Comprehensive tests for BFF proxy behavior including:
   - Authentication (401 when no session)
   - Header allowlist/blocklist enforcement

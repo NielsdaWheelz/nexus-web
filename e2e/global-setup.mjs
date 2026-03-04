@@ -16,6 +16,7 @@ const PDF_SEED = path.join(E2E_DIR, ".seed", "pdf-media.json");
 const NON_PDF_SEED = path.join(E2E_DIR, ".seed", "non-pdf-media.json");
 const EPUB_SEED = path.join(E2E_DIR, ".seed", "epub-media.json");
 const YOUTUBE_SEED = path.join(E2E_DIR, ".seed", "youtube-media.json");
+const READER_RESUME_SEED = path.join(E2E_DIR, ".seed", "reader-resume-media.json");
 
 function loadEnvFile(filePath) {
   if (!existsSync(filePath)) {
@@ -73,7 +74,8 @@ export default function globalSetup() {
     existsSync(PDF_SEED) &&
     existsSync(NON_PDF_SEED) &&
     existsSync(EPUB_SEED) &&
-    existsSync(YOUTUBE_SEED)
+    existsSync(YOUTUBE_SEED) &&
+    existsSync(READER_RESUME_SEED)
   ) {
     console.log("[global-setup] SKIP_SEED set and seed artifacts exist — skipping.");
     return;
@@ -82,7 +84,7 @@ export default function globalSetup() {
   // Step 1: Ensure the E2E auth user exists in Supabase.
   run("Seed E2E user", "npx tsx seed-e2e-user.ts", E2E_DIR);
 
-  // Step 2: Seed PDF, web articles, API keys, and EPUB via the Python service layer.
+  // Step 2: Ensure schema is up-to-date for feature E2E coverage.
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
     throw new Error(
@@ -90,6 +92,16 @@ export default function globalSetup() {
         "  Hint: source .env or run via `make test-e2e`.",
     );
   }
+  run(
+    "Apply DB migrations",
+    "uv run --project ../python alembic upgrade head",
+    path.join(ROOT, "migrations"),
+    {
+      DATABASE_URL: dbUrl,
+      NEXUS_ENV: process.env.NEXUS_ENV ?? "test",
+    },
+  );
+  // Step 3: Seed PDF, web, EPUB, and reader-resume fixtures.
   run(
     "Seed E2E data",
     "uv run python scripts/seed_e2e_data.py",
@@ -100,7 +112,7 @@ export default function globalSetup() {
     },
   );
 
-  // Step 3: Verify all seed artifacts were created.
+  // Step 4: Verify all seed artifacts were created.
   if (!existsSync(PDF_SEED)) {
     throw new Error(
       `[global-setup] Seed script succeeded but ${PDF_SEED} was not created.\n` +
@@ -122,6 +134,12 @@ export default function globalSetup() {
   if (!existsSync(YOUTUBE_SEED)) {
     throw new Error(
       `[global-setup] Seed script succeeded but ${YOUTUBE_SEED} was not created.\n` +
+        "  This indicates a bug in python/scripts/seed_e2e_data.py.",
+    );
+  }
+  if (!existsSync(READER_RESUME_SEED)) {
+    throw new Error(
+      `[global-setup] Seed script succeeded but ${READER_RESUME_SEED} was not created.\n` +
         "  This indicates a bug in python/scripts/seed_e2e_data.py.",
     );
   }

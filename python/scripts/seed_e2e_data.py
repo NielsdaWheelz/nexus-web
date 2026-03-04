@@ -50,8 +50,10 @@ SEED_FILE_RELATIVE = Path("e2e/.seed/pdf-media.json")
 NON_PDF_SEED_FILE_RELATIVE = Path("e2e/.seed/non-pdf-media.json")
 EPUB_SEED_FILE_RELATIVE = Path("e2e/.seed/epub-media.json")
 YOUTUBE_SEED_FILE_RELATIVE = Path("e2e/.seed/youtube-media.json")
+READER_RESUME_SEED_FILE_RELATIVE = Path("e2e/.seed/reader-resume-media.json")
 UPLOAD_FIXTURE_RELATIVE = Path("e2e/.seed/upload-source.pdf")
 NON_PDF_SOURCE_URL = "https://example.com/e2e-linked-items-seed"
+READER_RESUME_WEB_SOURCE_URL = "https://example.com/e2e-reader-resume-web-seed"
 YOUTUBE_VIDEO_ID = "s8E2Evid001"
 YOUTUBE_PLAYBACK_ONLY_VIDEO_ID = "s8E2Evid002"
 YOUTUBE_WATCH_URL = f"https://www.youtube.com/watch?v={YOUTUBE_VIDEO_ID}"
@@ -101,6 +103,8 @@ EPUB_TOC_ANCHOR_ID = "e2e-deep-anchor-target"
 EPUB_TOC_ANCHOR_NAME = "e2e-deep-anchor-legacy-name"
 EPUB_TOC_ANCHOR_LABEL = "Chapter 1: Deep Anchor Target"
 EPUB_TOC_ANCHOR_HEADING = "Deep Anchor Target"
+READER_RESUME_WEB_ANCHOR_TEXT = "reader resume anchor target omega"
+READER_RESUME_PDF_PAGE_COUNT = 8
 
 
 def _build_pdf_bytes(page_count: int) -> bytes:
@@ -124,8 +128,10 @@ def _build_pdf_bytes(page_count: int) -> bytes:
         doc.close()
 
 
-def _build_epub_bytes() -> bytes:
+def _build_epub_bytes(variant_id: str = "base") -> bytes:
     """Generate a minimal valid EPUB with 3 chapters."""
+    safe_variant = "".join(ch for ch in variant_id if ch.isalnum() or ch in ("-", "_")) or "base"
+    epub_uid = f"e2e-test-epub-{safe_variant}"
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         # mimetype must be first and uncompressed
@@ -206,7 +212,7 @@ def _build_epub_bytes() -> bytes:
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">\n'
             "  <head>\n"
-            '    <meta name="dtb:uid" content="e2e-test-epub-001"/>\n'
+            f'    <meta name="dtb:uid" content="{epub_uid}"/>\n'
             "  </head>\n"
             "  <docTitle><text>E2E Test EPUB</text></docTitle>\n"
             "  <navMap>\n" + "\n".join(nav_points) + "\n  </navMap>\n"
@@ -219,7 +225,7 @@ def _build_epub_bytes() -> bytes:
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid" version="2.0">\n'
             '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
-            '    <dc:identifier id="uid">e2e-test-epub-001</dc:identifier>\n'
+            f'    <dc:identifier id="uid">{epub_uid}</dc:identifier>\n'
             "    <dc:title>E2E Test EPUB</dc:title>\n"
             "    <dc:language>en</dc:language>\n"
             "  </metadata>\n"
@@ -418,6 +424,32 @@ def _write_youtube_seed_file(
     }
     seed_path.write_text(json.dumps(seed_payload, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote E2E YouTube seed metadata: {seed_path}")
+
+
+def _write_reader_resume_seed_file(
+    *,
+    web_media_id: str,
+    web_anchor_text: str,
+    epub_media_id: str,
+    epub_chapter_titles: list[str],
+    pdf_media_id: str,
+    pdf_page_count: int,
+) -> None:
+    """Persist dedicated media IDs for reader resume E2E coverage."""
+    repo_root = Path(__file__).resolve().parents[2]
+    seed_path = repo_root / READER_RESUME_SEED_FILE_RELATIVE
+    seed_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "web_media_id": web_media_id,
+        "web_anchor_text": web_anchor_text,
+        "epub_media_id": epub_media_id,
+        "epub_chapter_titles": epub_chapter_titles,
+        "pdf_media_id": pdf_media_id,
+        "pdf_page_count": pdf_page_count,
+        "seeded_at": datetime.now(UTC).isoformat(),
+    }
+    seed_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(f"Wrote E2E reader-resume seed metadata: {seed_path}")
 
 
 def _clear_fragment_artifacts(db, media_id: UUID) -> None:
@@ -755,6 +787,182 @@ def _seed_epub_media(session_factory, user_id: UUID, settings) -> None:
     print(f"Seeded EPUB media for E2E: {epub_media_id_str}")
 
 
+def _seed_reader_resume_media(session_factory, user_id: UUID, settings) -> None:
+    """Seed dedicated web/epub/pdf media for reader resume E2E coverage."""
+    # ------------------------------------------------------------------
+    # Web article (long canonical text with deterministic anchor token)
+    # ------------------------------------------------------------------
+    web_lines: list[str] = []
+    for idx in range(1, 261):
+        if idx == 190:
+            web_lines.append(
+                f"reader resume paragraph {idx:03d} contains {READER_RESUME_WEB_ANCHOR_TEXT} for anchor restore checks."
+            )
+        else:
+            web_lines.append(
+                f"reader resume paragraph {idx:03d} deterministic filler content for scroll-anchor persistence."
+            )
+    web_canonical_text = "\n".join(web_lines)
+    web_html = "".join(f"<p>{escape(line)}</p>" for line in web_lines)
+
+    with session_factory() as db:
+        ensure_user_and_default_library(db, user_id)
+        provisional = create_provisional_web_article(
+            db=db,
+            viewer_id=user_id,
+            url=READER_RESUME_WEB_SOURCE_URL,
+            enqueue_task=False,
+        )
+        web_media_id = provisional.media_id
+
+    with session_factory() as db:
+        media = db.execute(select(Media).where(Media.id == web_media_id)).scalar_one_or_none()
+        if media is None:
+            raise RuntimeError(f"Reader-resume web media missing: {web_media_id}")
+
+        _clear_fragment_artifacts(db, web_media_id)
+
+        now = datetime.now(UTC)
+        media.title = "E2E reader resume web seed"
+        media.processing_status = ProcessingStatus.ready_for_reading
+        media.failure_stage = None
+        media.last_error_code = None
+        media.last_error_message = None
+        media.failed_at = None
+        media.processing_started_at = now
+        media.processing_completed_at = now
+        media.updated_at = now
+
+        db.add(
+            Fragment(
+                media_id=web_media_id,
+                idx=0,
+                canonical_text=web_canonical_text,
+                html_sanitized=web_html,
+            )
+        )
+        db.commit()
+
+    # ------------------------------------------------------------------
+    # EPUB (separate media id from primary EPUB seed to avoid state races)
+    # ------------------------------------------------------------------
+    epub_bytes = _build_epub_bytes("reader-resume")
+    epub_filename = f"e2e-reader-resume-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.epub"
+
+    with session_factory() as db:
+        ensure_user_and_default_library(db, user_id)
+        epub_init = init_upload(
+            db=db,
+            viewer_id=user_id,
+            kind="epub",
+            filename=epub_filename,
+            content_type="application/epub+zip",
+            size_bytes=len(epub_bytes),
+        )
+
+    epub_media_id_str = epub_init["media_id"]
+    _upload_to_signed_url(
+        supabase_url=settings.supabase_url,
+        service_key=settings.supabase_service_key,
+        bucket=settings.storage_bucket,
+        storage_path=epub_init["storage_path"],
+        token=epub_init["token"],
+        content=epub_bytes,
+        content_type="application/epub+zip",
+    )
+
+    with session_factory() as db:
+        confirm_ingest(db=db, viewer_id=user_id, media_id=UUID(epub_media_id_str))
+
+    epub_media_id = UUID(epub_media_id_str)
+    with session_factory() as db:
+        extraction_result = run_epub_ingest_sync(db, epub_media_id)
+        if isinstance(extraction_result, EpubExtractionError):
+            raise RuntimeError(
+                "Failed to seed reader-resume EPUB artifacts: "
+                f"{extraction_result.error_code} {extraction_result.error_message}"
+            )
+
+        media = db.execute(select(Media).where(Media.id == epub_media_id)).scalar_one_or_none()
+        if media is None:
+            raise RuntimeError(f"Reader-resume EPUB media missing: {epub_media_id_str}")
+
+        now = datetime.now(UTC)
+        media.processing_status = ProcessingStatus.ready_for_reading
+        media.failure_stage = None
+        media.last_error_code = None
+        media.last_error_message = None
+        media.failed_at = None
+        media.processing_completed_at = now
+        media.updated_at = now
+        db.commit()
+
+    # ------------------------------------------------------------------
+    # PDF (separate media id from primary PDF seed to avoid state races)
+    # ------------------------------------------------------------------
+    resume_pdf_bytes = _build_pdf_bytes(READER_RESUME_PDF_PAGE_COUNT)
+    resume_pdf_filename = f"e2e-reader-resume-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.pdf"
+
+    with session_factory() as db:
+        ensure_user_and_default_library(db, user_id)
+        pdf_init = init_upload(
+            db=db,
+            viewer_id=user_id,
+            kind="pdf",
+            filename=resume_pdf_filename,
+            content_type="application/pdf",
+            size_bytes=len(resume_pdf_bytes),
+        )
+
+    pdf_media_id_str = pdf_init["media_id"]
+    _upload_to_signed_url(
+        supabase_url=settings.supabase_url,
+        service_key=settings.supabase_service_key,
+        bucket=settings.storage_bucket,
+        storage_path=pdf_init["storage_path"],
+        token=pdf_init["token"],
+        content=resume_pdf_bytes,
+    )
+
+    with session_factory() as db:
+        confirm_ingest(db=db, viewer_id=user_id, media_id=UUID(pdf_media_id_str))
+
+    pdf_media_id = UUID(pdf_media_id_str)
+    with session_factory() as db:
+        extraction_result = run_pdf_ingest_sync(db, pdf_media_id)
+        if isinstance(extraction_result, PdfExtractionError):
+            raise RuntimeError(
+                "Failed to seed reader-resume PDF artifacts: "
+                f"{extraction_result.error_code} {extraction_result.error_message}"
+            )
+
+        media = db.execute(select(Media).where(Media.id == pdf_media_id)).scalar_one_or_none()
+        if media is None:
+            raise RuntimeError(f"Reader-resume PDF media missing: {pdf_media_id_str}")
+
+        now = datetime.now(UTC)
+        media.processing_status = ProcessingStatus.ready_for_reading
+        media.failure_stage = None
+        media.last_error_code = None
+        media.last_error_message = None
+        media.failed_at = None
+        media.processing_completed_at = now
+        media.updated_at = now
+        db.commit()
+
+    _write_reader_resume_seed_file(
+        web_media_id=str(web_media_id),
+        web_anchor_text=READER_RESUME_WEB_ANCHOR_TEXT,
+        epub_media_id=epub_media_id_str,
+        epub_chapter_titles=[chapter["title"] for chapter in EPUB_CHAPTERS],
+        pdf_media_id=pdf_media_id_str,
+        pdf_page_count=READER_RESUME_PDF_PAGE_COUNT,
+    )
+    print(f"Seeded reader-resume web media for E2E: {web_media_id}")
+    print(f"Seeded reader-resume EPUB media for E2E: {epub_media_id_str}")
+    print(f"Seeded reader-resume PDF media for E2E: {pdf_media_id_str}")
+
+
 def main() -> None:
     nexus_env = os.getenv("NEXUS_ENV", "local")
     if nexus_env not in ("local", "test"):
@@ -881,6 +1089,7 @@ def main() -> None:
     _seed_youtube_transcript_media(session_factory, user_id)
     _seed_api_key(session_factory, user_id)
     _seed_epub_media(session_factory, user_id, settings)
+    _seed_reader_resume_media(session_factory, user_id, settings)
 
 
 if __name__ == "__main__":
