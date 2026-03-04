@@ -128,6 +128,7 @@ interface PdfViewerLike {
   currentPageNumber: number;
   currentScaleValue: string | number;
   pagesCount: number;
+  update?: () => void;
   scrollMode?: number;
   getPageView?: (index: number) => PdfPageViewLike | undefined;
 }
@@ -221,6 +222,7 @@ const ZOOM_STEP = 0.25;
 const PDF_QUAD_EPSILON = 0.001;
 const PDF_VIEWER_TEXT_LAYER_MODE_ENABLE = 1;
 const PDF_LINK_TARGET_BLANK = 2;
+const PDF_GEOMETRY_ALIGNMENT_DELTA_THRESHOLD = 0.02;
 const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
   yellow: "rgba(255, 235, 59, 0.35)",
   green: "rgba(76, 175, 80, 0.3)",
@@ -455,6 +457,63 @@ function deriveScaleFromPageView(pageView: PdfPageViewLike | undefined): number 
   return null;
 }
 
+function toViewerLifecycleError(context: string, error: unknown): Error {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(`PDF viewer lifecycle failure (${context}): ${detail}`);
+}
+
+function applyViewerScale(viewer: PdfViewerLike, scale: number, context: string): void {
+  try {
+    viewer.currentScaleValue = scale;
+    viewer.update?.();
+  } catch (error) {
+    throw toViewerLifecycleError(context, error);
+  }
+}
+
+function applyViewerPageNumber(viewer: PdfViewerLike, pageNumber: number, context: string): void {
+  try {
+    viewer.currentPageNumber = pageNumber;
+  } catch (error) {
+    throw toViewerLifecycleError(context, error);
+  }
+}
+
+function computePageLayerAlignmentDelta(pageElement: HTMLElement): number | null {
+  const textLayer = pageElement.querySelector<HTMLElement>(".textLayer");
+  const canvasSurface =
+    pageElement.querySelector<HTMLElement>(".canvasWrapper") ??
+    pageElement.querySelector<HTMLElement>("canvas");
+  if (!textLayer || !canvasSurface) {
+    return null;
+  }
+  const textRect = textLayer.getBoundingClientRect();
+  const canvasRect = canvasSurface.getBoundingClientRect();
+  if (
+    textRect.width <= PDF_QUAD_EPSILON ||
+    textRect.height <= PDF_QUAD_EPSILON ||
+    canvasRect.width <= PDF_QUAD_EPSILON ||
+    canvasRect.height <= PDF_QUAD_EPSILON
+  ) {
+    return null;
+  }
+
+  const widthScaleDrift = Math.abs(textRect.width / canvasRect.width - 1);
+  const heightScaleDrift = Math.abs(textRect.height / canvasRect.height - 1);
+  const leftOffsetDrift = Math.abs(textRect.left - canvasRect.left) / canvasRect.width;
+  const topOffsetDrift = Math.abs(textRect.top - canvasRect.top) / canvasRect.height;
+  const rightOffsetDrift = Math.abs(textRect.right - canvasRect.right) / canvasRect.width;
+  const bottomOffsetDrift = Math.abs(textRect.bottom - canvasRect.bottom) / canvasRect.height;
+  return Math.max(
+    widthScaleDrift,
+    heightScaleDrift,
+    leftOffsetDrift,
+    topOffsetDrift,
+    rightOffsetDrift,
+    bottomOffsetDrift
+  );
+}
+
 export default function PdfReader({
   mediaId,
   deps,
@@ -474,6 +533,7 @@ export default function PdfReader({
   const [pageScale, setPageScale] = useState(1);
   const [pageRenderEpoch, setPageRenderEpoch] = useState(0);
   const [textLayerUsable, setTextLayerUsable] = useState(false);
+  const [textGeometryReliable, setTextGeometryReliable] = useState(true);
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -499,6 +559,9 @@ export default function PdfReader({
   const runRef = useRef(0);
   const pageNumberRef = useRef(1);
   const pageScaleByNumberRef = useRef<Map<number, number>>(new Map());
+  const pageGeometryReliabilityRef = useRef<Map<number, boolean>>(new Map());
+  const pendingViewerPageRef = useRef<number | null>(null);
+  const pendingViewerScaleRef = useRef<number | null>(null);
   const recoveringFromRenderErrorRef = useRef(false);
 
   const apiFetchDep = deps?.apiFetch ?? apiFetch;
@@ -611,6 +674,24 @@ export default function PdfReader({
     [getTextLayerRootForPage]
   );
 
+  const evaluatePageGeometryReliability = useCallback(
+    (targetPage: number): boolean => {
+      const pageElement = getPageElement(targetPage);
+      if (!pageElement) {
+        return pageGeometryReliabilityRef.current.get(targetPage) ?? true;
+      }
+      const alignmentDelta = computePageLayerAlignmentDelta(pageElement);
+      const isReliable =
+        alignmentDelta === null || alignmentDelta <= PDF_GEOMETRY_ALIGNMENT_DELTA_THRESHOLD;
+      pageGeometryReliabilityRef.current.set(targetPage, isReliable);
+      if (targetPage === pageNumberRef.current) {
+        setTextGeometryReliable(isReliable);
+      }
+      return isReliable;
+    },
+    [getPageElement]
+  );
+
   const clearSelection = useCallback(() => {
     setSelection(null);
     selectionSnapshotRef.current = null;
@@ -693,6 +774,8 @@ export default function PdfReader({
     eventBusRef.current = null;
     linkServiceRef.current = null;
     pdfViewerRef.current = null;
+    pendingViewerPageRef.current = null;
+    pendingViewerScaleRef.current = null;
     removeOverlayLayers();
     if (internalContentRef.current) {
       internalContentRef.current.innerHTML = "";
@@ -757,6 +840,7 @@ export default function PdfReader({
         onPageHighlightsChange?.(nextPage, []);
         rememberPageScale(nextPage);
         setTextLayerUsable(isTextLayerUsableForPage(nextPage));
+        setTextGeometryReliable(evaluatePageGeometryReliability(nextPage));
         setPageRenderEpoch((value) => value + 1);
       };
 
@@ -770,6 +854,29 @@ export default function PdfReader({
             ? Math.floor(event.pagesCount as number)
             : documentRef.current?.numPages ?? 0;
         setNumPages(pagesCount);
+        const viewer = pdfViewerRef.current;
+        const pendingScale = pendingViewerScaleRef.current;
+        const pendingPage = pendingViewerPageRef.current;
+        if (viewer && typeof pendingScale === "number") {
+          try {
+            applyViewerScale(viewer, pendingScale, "pagesloaded/currentScaleValue");
+          } catch (error) {
+            setError(toUserFacingError(error));
+          } finally {
+            pendingViewerScaleRef.current = null;
+          }
+        }
+        if (viewer && typeof pendingPage === "number" && pendingPage > 1) {
+          try {
+            const boundedPage = Math.max(1, Math.min(pendingPage, Math.max(pagesCount, 1)));
+            applyViewerPageNumber(viewer, boundedPage, "pagesloaded/currentPageNumber");
+          } catch (error) {
+            setError(toUserFacingError(error));
+          } finally {
+            pendingViewerPageRef.current = null;
+          }
+        }
+        setTextGeometryReliable(evaluatePageGeometryReliability(pageNumberRef.current));
         window.requestAnimationFrame(() => {
           if (runId !== runRef.current) {
             return;
@@ -796,6 +903,7 @@ export default function PdfReader({
 
         markPageSurfaceForTesting(renderedPage);
         rememberPageScale(renderedPage, event.source);
+        evaluatePageGeometryReliability(renderedPage);
 
         if (
           event.error &&
@@ -821,6 +929,7 @@ export default function PdfReader({
               return;
             }
             setTextLayerUsable(isTextLayerUsableForPage(renderedPage));
+            setTextGeometryReliable(evaluatePageGeometryReliability(renderedPage));
             setPageRenderEpoch((value) => value + 1);
           });
         }
@@ -841,6 +950,7 @@ export default function PdfReader({
     },
     [
       clearSelection,
+      evaluatePageGeometryReliability,
       ensurePdfJsViewer,
       isTextLayerUsableForPage,
       markPageSurfaceForTesting,
@@ -862,6 +972,8 @@ export default function PdfReader({
       }
 
       pageScaleByNumberRef.current.clear();
+      pageGeometryReliabilityRef.current.clear();
+      pendingViewerPageRef.current = null;
       removeOverlayLayers();
 
       linkService.setDocument(doc, null);
@@ -872,18 +984,21 @@ export default function PdfReader({
       setPageNumber(boundedPage);
       setNumPages(doc.numPages);
       setTextLayerUsable(false);
+      setTextGeometryReliable(true);
       setPageScale(zoomRef.current);
       activePageScaleRef.current = zoomRef.current;
 
-      try {
-        viewer.currentScaleValue = `${zoomRef.current}`;
-      } catch {
-        // Ignore for lightweight test shims.
+      pendingViewerScaleRef.current = zoomRef.current;
+      if (viewer.pagesCount > 0) {
+        applyViewerScale(viewer, zoomRef.current, "attachDocument/currentScaleValue");
+        pendingViewerScaleRef.current = null;
       }
-      try {
-        viewer.currentPageNumber = boundedPage;
-      } catch {
-        // Ignore for lightweight test shims.
+      if (boundedPage > 1) {
+        if (viewer.pagesCount > 0) {
+          applyViewerPageNumber(viewer, boundedPage, "attachDocument/currentPageNumber");
+        } else {
+          pendingViewerPageRef.current = boundedPage;
+        }
       }
     },
     [initializeViewerIfNeeded, removeOverlayLayers]
@@ -1029,6 +1144,49 @@ export default function PdfReader({
     [getTextLayerRootForPage, readPageScale]
   );
 
+  const buildAreaSelectionQuads = useCallback(
+    (targetSelection: SelectionState): PdfHighlightQuad[] => {
+      const pageElement = getPageElement(targetSelection.pageNumber);
+      const pageScaleValue = readPageScale(targetSelection.pageNumber);
+      if (!pageElement || pageScaleValue <= 0) {
+        return [];
+      }
+
+      const pageRect = pageElement.getBoundingClientRect();
+      if (pageRect.width <= PDF_QUAD_EPSILON || pageRect.height <= PDF_QUAD_EPSILON) {
+        return [];
+      }
+
+      const selectedRect = targetSelection.rect;
+      const leftPx = Math.max(pageRect.left, selectedRect.left);
+      const rightPx = Math.min(pageRect.right, selectedRect.right);
+      const topPx = Math.max(pageRect.top, selectedRect.top);
+      const bottomPx = Math.min(pageRect.bottom, selectedRect.bottom);
+      if (rightPx - leftPx <= PDF_QUAD_EPSILON || bottomPx - topPx <= PDF_QUAD_EPSILON) {
+        return [];
+      }
+
+      const left = toCanonicalPoint((leftPx - pageRect.left) / pageScaleValue);
+      const right = toCanonicalPoint((rightPx - pageRect.left) / pageScaleValue);
+      const top = toCanonicalPoint((topPx - pageRect.top) / pageScaleValue);
+      const bottom = toCanonicalPoint((bottomPx - pageRect.top) / pageScaleValue);
+
+      return [
+        {
+          x1: left,
+          y1: top,
+          x2: right,
+          y2: top,
+          x3: right,
+          y3: bottom,
+          x4: left,
+          y4: bottom,
+        },
+      ];
+    },
+    [getPageElement, readPageScale]
+  );
+
   const syncSelectionFromWindow = useCallback(() => {
     if (!textLayerUsable) {
       setSelection(null);
@@ -1078,7 +1236,8 @@ export default function PdfReader({
         attempts: prev.attempts + 1,
         lastOutcome: "attempted",
       }));
-      if (!textLayerUsable || isCreating) {
+      const shouldUseAreaFallback = !textGeometryReliable;
+      if ((!(textLayerUsable || shouldUseAreaFallback)) || isCreating) {
         updateCreateTelemetry((prev) => ({
           ...prev,
           lastOutcome: "skipped_not_usable_or_creating",
@@ -1112,14 +1271,20 @@ export default function PdfReader({
         return;
       }
 
-      const exact = activeSelection.range.toString().trim();
-      const quads = buildSelectionQuads(activeSelection.range, activeSelection.pageNumber);
+      const exact = shouldUseAreaFallback ? "" : activeSelection.range.toString().trim();
+      const quads = shouldUseAreaFallback
+        ? buildAreaSelectionQuads(activeSelection)
+        : buildSelectionQuads(activeSelection.range, activeSelection.pageNumber);
       if (quads.length === 0) {
         updateCreateTelemetry((prev) => ({
           ...prev,
           lastOutcome: "skipped_no_geometry",
         }));
-        setSelectionError("No selectable text geometry was found for this selection.");
+        setSelectionError(
+          shouldUseAreaFallback
+            ? "No selectable area geometry was found for this selection."
+            : "No selectable text geometry was found for this selection."
+        );
         clearSelection();
         return;
       }
@@ -1180,6 +1345,7 @@ export default function PdfReader({
     },
     [
       apiFetchDep,
+      buildAreaSelectionQuads,
       buildSelectionQuads,
       clearSelection,
       editingHighlightId,
@@ -1189,6 +1355,7 @@ export default function PdfReader({
       refreshPageHighlights,
       resolveTextLayerRootFromRange,
       selection,
+      textGeometryReliable,
       textLayerUsable,
       updateCreateTelemetry,
     ]
@@ -1213,7 +1380,7 @@ export default function PdfReader({
           await recoverAndRender(nextPage, currentRun);
           return;
         }
-        viewer.currentPageNumber = nextPage;
+        applyViewerPageNumber(viewer, nextPage, "goToPage/currentPageNumber");
       } catch (err) {
         if (isLikelySignedUrlExpiryError(err)) {
           await recoverAndRender(nextPage, currentRun);
@@ -1236,15 +1403,24 @@ export default function PdfReader({
       return;
     }
     pageScaleByNumberRef.current.clear();
-    try {
-      viewer.currentScaleValue = `${zoom}`;
-    } catch {
-      // Ignore for lightweight test shims.
+    pageGeometryReliabilityRef.current.clear();
+    if (viewer.pagesCount > 0) {
+      try {
+        applyViewerScale(viewer, zoom, "zoomEffect/currentScaleValue");
+      } catch (error) {
+        setError(toUserFacingError(error));
+        return;
+      }
+    } else {
+      pendingViewerScaleRef.current = zoom;
     }
     activePageScaleRef.current = zoom;
     setPageScale(zoom);
     setPageRenderEpoch((value) => value + 1);
-  }, [zoom]);
+    window.requestAnimationFrame(() => {
+      setTextGeometryReliable(evaluatePageGeometryReliability(pageNumberRef.current));
+    });
+  }, [evaluatePageGeometryReliability, zoom]);
 
   useEffect(() => {
     let active = true;
@@ -1264,9 +1440,13 @@ export default function PdfReader({
     setSelectionError(null);
     setPageHighlights([]);
     setTextLayerUsable(false);
+    setTextGeometryReliable(true);
     setCreateTelemetry(createInitialCreateTelemetry());
     pageNumberRef.current = 1;
     pageScaleCache.clear();
+    pageGeometryReliabilityRef.current.clear();
+    pendingViewerPageRef.current = null;
+    pendingViewerScaleRef.current = null;
     signedUrlExpiryRef.current = null;
     recoveringFromRenderErrorRef.current = false;
     teardownViewer();
@@ -1303,6 +1483,9 @@ export default function PdfReader({
       runRef.current += 1;
       signedUrlExpiryRef.current = null;
       pageScaleCache.clear();
+      pageGeometryReliabilityRef.current.clear();
+      pendingViewerPageRef.current = null;
+      pendingViewerScaleRef.current = null;
       recoveringFromRenderErrorRef.current = false;
       clearSelection();
       teardownViewer();
@@ -1446,6 +1629,8 @@ export default function PdfReader({
   const zoomPercent = Math.round(zoom * 100);
   const canZoomIn = zoom < MAX_ZOOM - 0.001;
   const canZoomOut = zoom > MIN_ZOOM + 0.001;
+  const usingAreaHighlightFallback = !textGeometryReliable;
+  const canCreateHighlight = textLayerUsable || usingAreaHighlightFallback;
 
   return (
     <div className={styles.viewer}>
@@ -1479,7 +1664,7 @@ export default function PdfReader({
             captureSelectionSnapshotFromWindow();
           }}
           onClick={() => void handleCreateHighlight("yellow")}
-          disabled={showBusy || !textLayerUsable || isCreating}
+          disabled={showBusy || !canCreateHighlight || isCreating}
           aria-label="Highlight selection"
           data-create-attempts={createTelemetry.attempts}
           data-create-post-requests={createTelemetry.postRequests}
@@ -1490,7 +1675,7 @@ export default function PdfReader({
           data-page-render-epoch={pageRenderEpoch}
           data-selection-popover-ignore-outside="true"
         >
-          Highlight selection
+          {usingAreaHighlightFallback ? "Highlight area" : "Highlight selection"}
         </button>
         <div className={styles.zoomControls}>
           <button
@@ -1543,6 +1728,12 @@ export default function PdfReader({
 
       {!loading && !error && !textLayerUsable && (
         <div className={styles.notice}>Text selection is unavailable on this page.</div>
+      )}
+
+      {!loading && !error && textLayerUsable && !textGeometryReliable && (
+        <div className={styles.notice}>
+          Text geometry is misaligned on this page. Highlights will use area-based bounds.
+        </div>
       )}
 
       {selectionError && (
