@@ -17,6 +17,12 @@ The browser **never** calls FastAPI directly. All requests go through Next.js ro
 6. Filter response headers via allowlist
 7. Return the response to the browser with `X-Request-ID`
 
+Authenticated views also run inside an in-app multi-pane workspace:
+- primary content renders in the main pane
+- side panes are route-rendered (no iframes) via `PaneRouteRenderer`
+- pane graph state persists in `localStorage` key `nexus.paneGraph.v1` (max 8 panes)
+- pane-open requests flow through `requestOpenInAppPane(href)` / `nexus:open-pane`
+
 ### Request Tracing
 
 Every request has an `X-Request-ID` for debugging:
@@ -120,6 +126,8 @@ src/
 │   ├── LinkedItemRow.tsx       # Linked-item row component (PR-10)
 │   ├── Navbar.tsx
 │   ├── Pane.tsx
+│   ├── InAppPaneWorkspace.tsx  # Primary + side-pane host
+│   ├── PaneRouteRenderer.tsx   # In-pane route renderer + link interception
 │   └── ...
 ├── lib/                    # Utilities
 │   ├── api/
@@ -133,6 +141,7 @@ src/
 │   │   ├── useHighlightInteraction.ts  # Focus/cycling hook (PR-09)
 │   │   ├── alignmentEngine.ts  # Vertical alignment logic (PR-10)
 │   │   └── highlights.css      # Highlight styles
+│   ├── panes/              # In-app pane graph + pane-scoped navigation runtime
 │   └── supabase/
 │       ├── server.ts       # Server-side Supabase client
 │       └── middleware.ts   # Session refresh + auth redirects
@@ -177,6 +186,12 @@ npm run test:ci
 
 # Run TypeScript type checking
 npm run typecheck
+```
+
+Pane-specific browser-mode checks:
+
+```bash
+npm test -- src/__tests__/components/InAppPaneWorkspace.test.tsx src/__tests__/components/AppList.test.tsx
 ```
 
 ## Highlight Libraries

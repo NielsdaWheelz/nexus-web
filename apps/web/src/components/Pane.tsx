@@ -10,6 +10,7 @@ interface PaneProps {
   minWidth?: number;
   maxWidth?: number;
   onClose?: () => void;
+  contentClassName?: string;
 }
 
 export default function Pane({
@@ -19,6 +20,7 @@ export default function Pane({
   minWidth = 280,
   maxWidth = 900,
   onClose,
+  contentClassName,
 }: PaneProps) {
   const [width, setWidth] = useState(defaultWidth);
   const paneRef = useRef<HTMLDivElement>(null);
@@ -69,7 +71,7 @@ export default function Pane({
           )}
         </div>
       )}
-      <div className={styles.content}>{children}</div>
+      <div className={`${styles.content} ${contentClassName ?? ""}`}>{children}</div>
       <div className={styles.resizeHandle} onMouseDown={handleMouseDown} />
     </div>
   );

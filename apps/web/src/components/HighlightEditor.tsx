@@ -58,6 +58,8 @@ export interface HighlightEditorProps {
   onAnnotationSave: (highlightId: string, body: string) => Promise<void>;
   /** Callback when annotation is deleted */
   onAnnotationDelete: (highlightId: string) => Promise<void>;
+  /** Render a denser inline-friendly layout. */
+  compact?: boolean;
 }
 
 // =============================================================================
@@ -85,6 +87,7 @@ export default function HighlightEditor({
   onDelete,
   onAnnotationSave,
   onAnnotationDelete,
+  compact = false,
 }: HighlightEditorProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isChangingColor, setIsChangingColor] = useState(false);
@@ -126,15 +129,23 @@ export default function HighlightEditor({
   }, [highlight.id, isDeleting, onDelete, toast]);
 
   return (
-    <div className={styles.editor}>
+    <div className={`${styles.editor} ${compact ? styles.compact : ""}`}>
       {/* Highlighted text preview */}
-      <div className={styles.preview}>
-        <span className={styles.previewPrefix}>{highlight.prefix}</span>
-        <mark className={`${styles.previewHighlight} ${styles[`color-${highlight.color}`]}`}>
-          {highlight.exact}
-        </mark>
-        <span className={styles.previewSuffix}>{highlight.suffix}</span>
-      </div>
+      {compact ? (
+        <div className={styles.compactPreview}>
+          <mark className={`${styles.previewHighlight} ${styles[`color-${highlight.color}`]}`}>
+            {highlight.exact}
+          </mark>
+        </div>
+      ) : (
+        <div className={styles.preview}>
+          <span className={styles.previewPrefix}>{highlight.prefix}</span>
+          <mark className={`${styles.previewHighlight} ${styles[`color-${highlight.color}`]}`}>
+            {highlight.exact}
+          </mark>
+          <span className={styles.previewSuffix}>{highlight.suffix}</span>
+        </div>
+      )}
 
       {/* Edit bounds mode */}
       {isEditingBounds ? (

@@ -24,6 +24,7 @@ import {
   useState,
   useCallback,
   useMemo,
+  type ReactNode,
   type RefObject,
 } from "react";
 import LinkedItemRow, { type LinkedItemRowHighlight } from "./LinkedItemRow";
@@ -83,6 +84,8 @@ export interface LinkedItemsPaneProps {
   anchorDescriptors?: AnchorDescriptor[];
   /** Renderer-specific anchor provider. Defaults to HTML anchor lookup. */
   anchorProvider?: AnchorProvider;
+  /** Optional inline-expansion renderer for focused rows. */
+  renderExpandedContent?: (highlightId: string) => ReactNode;
 }
 
 // =============================================================================
@@ -99,6 +102,7 @@ export default function LinkedItemsPane({
   layoutMode = "aligned",
   anchorDescriptors,
   anchorProvider,
+  renderExpandedContent,
 }: LinkedItemsPaneProps) {
   const isAlignedMode = layoutMode === "aligned";
   const resolvedAnchorProvider = anchorProvider ?? DEFAULT_HTML_ANCHOR_PROVIDER;
@@ -479,6 +483,8 @@ export default function LinkedItemsPane({
     return sorted;
   }, [highlights, isAlignedMode]);
 
+  const hasExpandedLinkedItem = Boolean(focusedId && renderExpandedContent);
+
   const listWindow = useMemo(() => {
     if (isAlignedMode) {
       return {
@@ -493,6 +499,15 @@ export default function LinkedItemsPane({
     if (totalRows === 0) {
       return {
         visible: [] as LinkedItemRowHighlight[],
+        topSpacerPx: 0,
+        bottomSpacerPx: 0,
+        overflowCountBelow: 0,
+      };
+    }
+
+    if (hasExpandedLinkedItem) {
+      return {
+        visible: listModeHighlights,
         topSpacerPx: 0,
         bottomSpacerPx: 0,
         overflowCountBelow: 0,
@@ -519,7 +534,7 @@ export default function LinkedItemsPane({
       bottomSpacerPx: (totalRows - end) * LIST_ROW_SLOT_HEIGHT,
       overflowCountBelow: Math.max(totalRows - end, 0),
     };
-  }, [isAlignedMode, listModeHighlights, listScrollTop, listViewportHeight]);
+  }, [hasExpandedLinkedItem, isAlignedMode, listModeHighlights, listScrollTop, listViewportHeight]);
 
   if (highlights.length === 0) {
     return (
@@ -540,19 +555,32 @@ export default function LinkedItemsPane({
         className={`${styles.linkedItemsContainer} ${styles.listMode}`}
       >
         <div style={{ height: `${listWindow.topSpacerPx}px` }} aria-hidden />
-        {listWindow.visible.map((highlight) => (
-          <div key={highlight.id} className={styles.listModeSlot}>
-            <LinkedItemRow
-              highlight={highlight}
-              className={styles.listModeRow}
-              isFocused={focusedId === highlight.id}
-              onClick={handleRowClick}
-              onMouseEnter={handleRowMouseEnter}
-              onMouseLeave={handleRowMouseLeave}
-              onSendToChat={onSendToChat}
-            />
-          </div>
-        ))}
+        {listWindow.visible.map((highlight) => {
+          const expandedContent =
+            focusedId === highlight.id
+              ? (renderExpandedContent?.(highlight.id) ?? null)
+              : null;
+
+          return (
+            <div
+              key={highlight.id}
+              className={`${styles.listModeSlot} ${
+                expandedContent ? styles.listModeSlotExpanded : ""
+              }`}
+            >
+              <LinkedItemRow
+                highlight={highlight}
+                className={styles.listModeRow}
+                isFocused={focusedId === highlight.id}
+                onClick={handleRowClick}
+                onMouseEnter={handleRowMouseEnter}
+                onMouseLeave={handleRowMouseLeave}
+                onSendToChat={onSendToChat}
+                expandedContent={expandedContent ?? undefined}
+              />
+            </div>
+          );
+        })}
         <div style={{ height: `${listWindow.bottomSpacerPx}px` }} aria-hidden />
         {listWindow.overflowCountBelow > 0 && (
           <div className={styles.overflowIndicator}>{listWindow.overflowCountBelow} more below</div>
@@ -578,6 +606,11 @@ export default function LinkedItemsPane({
             onMouseEnter={handleRowMouseEnter}
             onMouseLeave={handleRowMouseLeave}
             onSendToChat={onSendToChat}
+            expandedContent={
+              focusedId === row.highlight.id
+                ? (renderExpandedContent?.(row.highlight.id) ?? undefined)
+                : undefined
+            }
           />
         );
       })}

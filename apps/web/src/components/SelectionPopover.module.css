@@ -6,8 +6,8 @@
 
 .popover {
   display: flex;
-  flex-direction: row;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: var(--space-2);
   padding: var(--space-2);
   background: var(--color-surface);
@@ -32,6 +32,7 @@
 .colorPicker {
   display: flex;
   gap: var(--space-1);
+  justify-content: center;
 }
 
 .colorButton {
@@ -78,8 +79,14 @@
   background: rgba(156, 39, 176, 0.6);
 }
 
-.createButton {
-  padding: var(--space-1) var(--space-3);
+.quoteActions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.actionButton {
+  flex: 1;
+  padding: var(--space-1) var(--space-2);
   background: var(--color-accent);
   color: var(--color-text);
   border: none;
@@ -88,14 +95,15 @@
   font-weight: 500;
   cursor: pointer;
   transition: background-color 100ms ease;
+  white-space: nowrap;
 }
 
-.createButton:hover:not(:disabled) {
+.actionButton:hover:not(:disabled) {
   background: var(--color-accent-hover, var(--color-accent));
   filter: brightness(1.1);
 }
 
-.createButton:disabled {
+.actionButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }

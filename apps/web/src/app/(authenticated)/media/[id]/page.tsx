@@ -10,9 +10,8 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useRef, use, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
@@ -62,6 +61,12 @@ import {
   applyFocusClass,
   reconcileFocusAfterRefetch,
 } from "@/lib/highlights/useHighlightInteraction";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import {
+  usePaneParam,
+  usePaneRouter,
+  usePaneSearchParams,
+} from "@/lib/panes/paneRuntime";
 import {
   fetchAllEpubChapterSummaries,
   normalizeEpubNavigationToc,
@@ -323,14 +328,13 @@ function buildManifestFallbackSections(
 // Component
 // =============================================================================
 
-export default function MediaViewPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = use(params);
-  const router = useRouter();
-  const searchParams = useSearchParams();
+export default function MediaViewPage() {
+  const id = usePaneParam("id");
+  if (!id) {
+    throw new Error("media route requires an id");
+  }
+  const router = usePaneRouter();
+  const searchParams = usePaneSearchParams();
   const { toast } = useToast();
 
   // ---- Core data state ----
@@ -1176,8 +1180,8 @@ export default function MediaViewPage({
   // ==========================================================================
 
   const handleCreateHighlight = useCallback(
-    async (color: HighlightColor) => {
-      if (!selection || !activeContent || !cursorRef.current || isCreating) return;
+    async (color: HighlightColor): Promise<string | null> => {
+      if (!selection || !activeContent || !cursorRef.current || isCreating) return null;
 
       const result = selectionToOffsets(
         selection.range,
@@ -1189,7 +1193,7 @@ export default function MediaViewPage({
       if (!result.success) {
         toast({ variant: "error", message: result.message });
         setSelection(null);
-        return;
+        return null;
       }
 
       const duplicateId = findDuplicateHighlight(
@@ -1202,7 +1206,7 @@ export default function MediaViewPage({
         focusHighlight(duplicateId);
         setSelection(null);
         window.getSelection()?.removeAllRanges();
-        return;
+        return duplicateId;
       }
 
       setIsCreating(true);
@@ -1232,29 +1236,42 @@ export default function MediaViewPage({
 
         setSelection(null);
         window.getSelection()?.removeAllRanges();
+        return newHighlight?.id ?? null;
       } catch (err) {
         if (isApiError(err) && err.code === "E_HIGHLIGHT_CONFLICT") {
-          const newHighlights = await fetchHighlights(activeContent.fragmentId);
-          setHighlights(newHighlights);
-          setHighlightsVersion((v) => v + 1);
-          clearHighlightCache();
-          scheduleMediaHighlightsRefresh();
+          try {
+            const newHighlights = await fetchHighlights(activeContent.fragmentId);
+            setHighlights(newHighlights);
+            setHighlightsVersion((v) => v + 1);
+            clearHighlightCache();
+            scheduleMediaHighlightsRefresh();
 
-          const existing = newHighlights.find(
-            (h) =>
-              h.start_offset === result.startOffset &&
-              h.end_offset === result.endOffset
-          );
-          if (existing) {
-            focusHighlight(existing.id);
+            const existing = newHighlights.find(
+              (h) =>
+                h.start_offset === result.startOffset &&
+                h.end_offset === result.endOffset
+            );
+            if (existing) {
+              focusHighlight(existing.id);
+            }
+
+            setSelection(null);
+            window.getSelection()?.removeAllRanges();
+            return existing?.id ?? null;
+          } catch (refreshErr) {
+            console.error("Failed to refresh highlights after conflict:", refreshErr);
+            toast({ variant: "error", message: "Failed to resolve existing highlight" });
+            return null;
           }
         } else {
           console.error("Failed to create highlight:", err);
           toast({ variant: "error", message: "Failed to create highlight" });
+          return null;
         }
       } finally {
         setIsCreating(false);
       }
+      return null;
     },
     [
       selection,
@@ -1465,15 +1482,38 @@ export default function MediaViewPage({
   // Quote-to-Chat
   // ==========================================================================
 
+  const buildQuoteRoute = useCallback((highlightId: string): string => {
+    const qp = new URLSearchParams({
+      attach_type: "highlight",
+      attach_id: highlightId,
+    });
+    return `/conversations?${qp}`;
+  }, []);
+
+  const openQuoteRoute = useCallback(
+    (highlightId: string) => {
+      const route = buildQuoteRoute(highlightId);
+      if (!requestOpenInAppPane(route)) {
+        router.push(route);
+      }
+    },
+    [buildQuoteRoute, router]
+  );
+
   const handleSendToChat = useCallback(
     (highlightId: string) => {
-      const qp = new URLSearchParams({
-        attach_type: "highlight",
-        attach_id: highlightId,
-      });
-      router.push(`/conversations?${qp}`);
+      openQuoteRoute(highlightId);
     },
-    [router]
+    [openQuoteRoute]
+  );
+
+  const handleQuoteSelectionToNewChat = useCallback(
+    async (color: HighlightColor) => {
+      const highlightId = await handleCreateHighlight(color);
+      if (!highlightId) return;
+      openQuoteRoute(highlightId);
+    },
+    [handleCreateHighlight, openQuoteRoute]
   );
 
   // ==========================================================================
@@ -1510,6 +1550,58 @@ export default function MediaViewPage({
       }
     },
     [clearFocus]
+  );
+
+  const handleCollapseHighlightDetails = useCallback(() => {
+    cancelEditBounds();
+    focusHighlight(null);
+  }, [cancelEditBounds, focusHighlight]);
+
+  const renderExpandedLinkedItem = useCallback(
+    (highlightId: string) => {
+      if (!focusedHighlightForEditor || focusedHighlightForEditor.id !== highlightId) {
+        return null;
+      }
+
+      return (
+        <div className={styles.inlineHighlightEditor}>
+          <div className={styles.inlineHighlightEditorHeader}>
+            <button
+              type="button"
+              className={styles.collapseInlineEditorBtn}
+              onClick={(event) => {
+                event.stopPropagation();
+                handleCollapseHighlightDetails();
+              }}
+            >
+              Collapse
+            </button>
+          </div>
+          <HighlightEditor
+            highlight={focusedHighlightForEditor}
+            isEditingBounds={focusState.editingBounds}
+            onStartEditBounds={startEditBounds}
+            onCancelEditBounds={cancelEditBounds}
+            onColorChange={handleColorChange}
+            onDelete={handleDelete}
+            onAnnotationSave={handleAnnotationSave}
+            onAnnotationDelete={handleAnnotationDelete}
+            compact
+          />
+        </div>
+      );
+    },
+    [
+      focusedHighlightForEditor,
+      focusState.editingBounds,
+      startEditBounds,
+      cancelEditBounds,
+      handleColorChange,
+      handleDelete,
+      handleAnnotationSave,
+      handleAnnotationDelete,
+      handleCollapseHighlightDetails,
+    ]
   );
 
   // ==========================================================================
@@ -1617,6 +1709,7 @@ export default function MediaViewPage({
               navigateToHighlight={pdfNavigationTarget}
               onHighlightNavigationComplete={() => setPdfNavigationTarget(null)}
               onHighlightsMutated={schedulePdfHighlightsRefresh}
+              onQuoteToChat={handleSendToChat}
             />
           ) : isEpub ? (
             <EpubContentPane
@@ -1724,6 +1817,7 @@ export default function MediaViewPage({
             layoutMode={linkedItemsLayoutMode}
             anchorDescriptors={linkedItemsAnchorDescriptors}
             anchorProvider={linkedItemsAnchorProvider}
+            renderExpandedContent={renderExpandedLinkedItem}
           />
 
           {isPdf && (
@@ -1761,29 +1855,6 @@ export default function MediaViewPage({
             </SectionCard>
           )}
 
-          {focusState.focusedId && (
-            <div className={styles.linkedItems}>
-              {focusedHighlightForEditor ? (
-                <div
-                  key={focusedHighlightForEditor.id}
-                  className={`${styles.highlightItem} ${styles.focused}`}
-                >
-                  <HighlightEditor
-                    highlight={focusedHighlightForEditor}
-                    isEditingBounds={focusState.editingBounds}
-                    onStartEditBounds={startEditBounds}
-                    onCancelEditBounds={cancelEditBounds}
-                    onColorChange={handleColorChange}
-                    onDelete={handleDelete}
-                    onAnnotationSave={handleAnnotationSave}
-                    onAnnotationDelete={handleAnnotationDelete}
-                  />
-                </div>
-              ) : (
-                <StateMessage variant="empty">No highlight selected.</StateMessage>
-              )}
-            </div>
-          )}
           {isPdf && (
             <div className={styles.pdfPagePill}>
               <StatusPill variant="info">Active page: {pdfActivePage}</StatusPill>
@@ -1798,6 +1869,7 @@ export default function MediaViewPage({
           selectionRect={selection.rect}
           containerRef={contentRef}
           onCreateHighlight={handleCreateHighlight}
+          onQuoteToNewChat={handleQuoteSelectionToNewChat}
           onDismiss={handleDismissPopover}
           isCreating={isCreating}
         />

@@ -8,7 +8,6 @@
 "use client";
 
 import { Suspense, useEffect, useState, useCallback, useMemo } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ContextItem } from "@/lib/api/sse";
 import {
@@ -18,6 +17,7 @@ import {
 import ChatComposer from "@/components/ChatComposer";
 import StateMessage from "@/components/ui/StateMessage";
 import { AppList, AppListItem } from "@/components/ui/AppList";
+import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 // ============================================================================
@@ -50,8 +50,8 @@ export default function ConversationsPage() {
 }
 
 function ConversationsPageInner() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const router = usePaneRouter();
+  const searchParams = usePaneSearchParams();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

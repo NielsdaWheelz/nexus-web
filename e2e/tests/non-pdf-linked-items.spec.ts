@@ -58,13 +58,10 @@ test.describe("non-pdf linked-items", () => {
     const sendToChatButton = focusRow.locator('button[aria-label="Send to chat"]');
     await expect(sendToChatButton).toBeVisible();
     await sendToChatButton.click();
-
-    await expect(page).toHaveURL(
-      new RegExp(
-        `/conversations\\?attach_type=highlight&attach_id=${seeded.focus_highlight_id}`,
-      ),
-      { timeout: 10_000 },
-    );
+    await expect(page).toHaveURL(new RegExp(`/media/${seeded.media_id}`), { timeout: 10_000 });
+    await expect(page.getByRole("button", { name: "Close pane" }).first()).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(
       page.getByText(new RegExp(`highlight:\\s*${seeded.focus_highlight_id.slice(0, 8)}`)),
     ).toBeVisible();
