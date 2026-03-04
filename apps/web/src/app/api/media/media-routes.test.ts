@@ -84,6 +84,19 @@ describe("media EPUB BFF proxy routes", () => {
     );
   });
 
+  it("GET /api/media/[id]/pdf-highlights/index proxies to /media/{id}/pdf-highlights/index", async () => {
+    const { GET } = await import("./[id]/pdf-highlights/index/route");
+    const req = new Request(
+      "http://localhost/api/media/mid-123/pdf-highlights/index?limit=50&cursor=opaque&mine_only=false"
+    );
+    await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(
+      req,
+      "/media/mid-123/pdf-highlights/index"
+    );
+  });
+
   it("GET /api/media/[id]/highlights proxies to /media/{id}/highlights", async () => {
     const { GET } = await import("./[id]/highlights/route");
     const req = new Request(

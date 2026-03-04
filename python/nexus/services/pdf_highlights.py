@@ -10,10 +10,14 @@ Owns:
 - D17/D18/D19/D20 effective-state comparison and no-op detection
 """
 
+import base64
+import json
 from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import delete, text
+from sqlalchemy import and_, delete, or_, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, highlight_visibility_filter
@@ -25,11 +29,12 @@ from nexus.db.models import (
     Media,
     PdfPageTextSpan,
 )
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
     AnnotationOut,
     CreatePdfHighlightRequest,
+    MediaHighlightPageInfoOut,
     PdfAnchorOut,
     PdfBoundsUpdate,
     PdfQuadOut,
@@ -236,6 +241,48 @@ def _compute_write_time_match(
     }
 
 
+def encode_pdf_highlights_index_cursor(
+    page_number: int,
+    sort_top: Decimal,
+    sort_left: Decimal,
+    created_at: datetime,
+    highlight_id: UUID,
+) -> str:
+    """Encode keyset cursor for document-wide PDF highlight index listing."""
+    payload = {
+        "page_number": page_number,
+        "sort_top": str(sort_top),
+        "sort_left": str(sort_left),
+        "created_at": created_at.isoformat(),
+        "id": str(highlight_id),
+    }
+    json_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(json_bytes).decode("utf-8").rstrip("=")
+
+
+def decode_pdf_highlights_index_cursor(cursor: str) -> tuple[int, Decimal, Decimal, datetime, UUID]:
+    """Decode keyset cursor for document-wide PDF highlight index listing."""
+    try:
+        padding = 4 - len(cursor) % 4
+        if padding < 4:
+            cursor += "=" * padding
+        json_bytes = base64.urlsafe_b64decode(cursor)
+        payload = json.loads(json_bytes.decode("utf-8"))
+
+        page_number = int(payload["page_number"])
+        sort_top = Decimal(payload["sort_top"])
+        sort_left = Decimal(payload["sort_left"])
+        created_at = datetime.fromisoformat(payload["created_at"])
+        highlight_id = UUID(payload["id"])
+    except Exception:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+
+    if page_number < 1:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
+
+    return page_number, sort_top, sort_left, created_at, highlight_id
+
+
 # ---------------------------------------------------------------------------
 # D20: Canonical effective-state comparison
 # ---------------------------------------------------------------------------
@@ -426,6 +473,103 @@ def list_pdf_highlights(
     ).all()
 
     return [_highlight_to_typed_out(h, viewer_id) for h in highlights]
+
+
+def list_pdf_highlights_index(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    *,
+    limit: int = 50,
+    cursor: str | None = None,
+    mine_only: bool = True,
+) -> tuple[list[TypedHighlightOut], MediaHighlightPageInfoOut]:
+    """List PDF highlights across the full document with keyset pagination."""
+    media = _get_pdf_media_for_viewer_or_404(db, viewer_id, media_id)
+
+    if media.processing_status.value not in READY_STATUSES:
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
+
+    query = (
+        db.query(Highlight, HighlightPdfAnchor)
+        .join(HighlightPdfAnchor, Highlight.id == HighlightPdfAnchor.highlight_id)
+        .filter(
+            HighlightPdfAnchor.media_id == media_id,
+            Highlight.anchor_kind == "pdf_page_geometry",
+        )
+    )
+
+    if mine_only:
+        query = query.filter(Highlight.user_id == viewer_id)
+    else:
+        query = query.filter(highlight_visibility_filter(viewer_id, media_id))
+
+    if cursor:
+        (
+            cursor_page_number,
+            cursor_sort_top,
+            cursor_sort_left,
+            cursor_created_at,
+            cursor_highlight_id,
+        ) = decode_pdf_highlights_index_cursor(cursor)
+        query = query.filter(
+            or_(
+                HighlightPdfAnchor.page_number > cursor_page_number,
+                and_(
+                    HighlightPdfAnchor.page_number == cursor_page_number,
+                    HighlightPdfAnchor.sort_top > cursor_sort_top,
+                ),
+                and_(
+                    HighlightPdfAnchor.page_number == cursor_page_number,
+                    HighlightPdfAnchor.sort_top == cursor_sort_top,
+                    HighlightPdfAnchor.sort_left > cursor_sort_left,
+                ),
+                and_(
+                    HighlightPdfAnchor.page_number == cursor_page_number,
+                    HighlightPdfAnchor.sort_top == cursor_sort_top,
+                    HighlightPdfAnchor.sort_left == cursor_sort_left,
+                    Highlight.created_at > cursor_created_at,
+                ),
+                and_(
+                    HighlightPdfAnchor.page_number == cursor_page_number,
+                    HighlightPdfAnchor.sort_top == cursor_sort_top,
+                    HighlightPdfAnchor.sort_left == cursor_sort_left,
+                    Highlight.created_at == cursor_created_at,
+                    Highlight.id > cursor_highlight_id,
+                ),
+            )
+        )
+
+    rows = (
+        query.order_by(
+            HighlightPdfAnchor.page_number.asc(),
+            HighlightPdfAnchor.sort_top.asc(),
+            HighlightPdfAnchor.sort_left.asc(),
+            Highlight.created_at.asc(),
+            Highlight.id.asc(),
+        )
+        .limit(limit + 1)
+        .all()
+    )
+
+    has_more = len(rows) > limit
+    if has_more:
+        rows = rows[:limit]
+
+    highlights_out = [_highlight_to_typed_out(highlight, viewer_id) for highlight, _anchor in rows]
+
+    next_cursor = None
+    if has_more and rows:
+        last_highlight, last_anchor = rows[-1]
+        next_cursor = encode_pdf_highlights_index_cursor(
+            page_number=int(last_anchor.page_number),
+            sort_top=last_anchor.sort_top,
+            sort_left=last_anchor.sort_left,
+            created_at=last_highlight.created_at,
+            highlight_id=last_highlight.id,
+        )
+
+    return highlights_out, MediaHighlightPageInfoOut(has_more=has_more, next_cursor=next_cursor)
 
 
 def update_pdf_highlight_bounds(
