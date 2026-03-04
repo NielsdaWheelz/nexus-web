@@ -223,19 +223,12 @@
   margin-top: var(--space-3);
 }
 
-.highlightScopeHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
+.scopeCard {
   margin-bottom: var(--space-2);
 }
 
-.highlightScopeLabel {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.scopeCardBody {
+  padding-top: var(--space-2);
 }
 
 .highlightScopeToggle {
@@ -263,15 +256,13 @@
   color: var(--color-accent);
 }
 
-.bookHighlightsControls {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.bookHighlightsCard {
   margin-top: var(--space-2);
 }
 
 .loadMoreBtn {
-  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
   border: 1px solid var(--color-border);
   border-radius: 6px;
   background: var(--color-surface);
@@ -286,19 +277,8 @@
   cursor: not-allowed;
 }
 
-.noHighlights {
-  padding: var(--space-6);
-  text-align: center;
-  color: var(--color-text-muted);
-}
-
-.noHighlights p {
-  margin: 0 0 var(--space-2);
-}
-
-.hint {
-  font-size: var(--font-size-sm);
-  opacity: 0.7;
+.pdfPagePill {
+  margin-top: var(--space-2);
 }
 
 .highlightList {

@@ -17,6 +17,7 @@ import {
   stripAttachParams,
 } from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
+import StateMessage from "@/components/ui/StateMessage";
 import styles from "../page.module.css";
 
 // ============================================================================
@@ -230,7 +231,7 @@ export default function ConversationPage({
     return (
       <div className={styles.container}>
         <div className={styles.main}>
-          <div className={styles.loading}>Loading conversation...</div>
+          <StateMessage variant="loading">Loading conversation...</StateMessage>
         </div>
       </div>
     );
@@ -240,10 +241,10 @@ export default function ConversationPage({
     return (
       <div className={styles.container}>
         <div className={styles.main}>
-          <div className={styles.error}>
-            <p>{error || "Conversation not found"}</p>
-            <Link href="/conversations">← Back to Conversations</Link>
-          </div>
+          <StateMessage variant="error">
+            {error || "Conversation not found"}{" "}
+            <Link href="/conversations">Back to Conversations</Link>
+          </StateMessage>
         </div>
       </div>
     );

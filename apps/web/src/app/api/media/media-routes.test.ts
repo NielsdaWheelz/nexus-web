@@ -1,5 +1,5 @@
 /**
- * BFF proxy route tests for EPUB read endpoints.
+ * BFF proxy route tests for media endpoints.
  *
  * Verifies each route handler calls proxyToFastAPI with the exact
  * expected upstream path including query strings where applicable.
@@ -15,6 +15,14 @@ vi.mock("@/lib/api/proxy", () => ({
 describe("media EPUB BFF proxy routes", () => {
   beforeEach(() => {
     mockProxyToFastAPI.mockClear();
+  });
+
+  it("GET /api/media proxies to /media", async () => {
+    const { GET } = await import("./route");
+    const req = new Request("http://localhost/api/media?kind=pdf&limit=20");
+    await GET(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media");
   });
 
   it("GET /api/media/[id]/chapters proxies to /media/{id}/chapters", async () => {

@@ -8,7 +8,6 @@
 "use client";
 
 import { Suspense, useEffect, useState, useCallback, useMemo } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ContextItem } from "@/lib/api/sse";
@@ -17,6 +16,8 @@ import {
   stripAttachParams,
 } from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
+import StateMessage from "@/components/ui/StateMessage";
+import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
 
 // ============================================================================
@@ -42,7 +43,7 @@ interface ConversationsResponse {
 
 export default function ConversationsPage() {
   return (
-    <Suspense fallback={<div className={styles.loading}>Loading...</div>}>
+    <Suspense fallback={<StateMessage variant="loading">Loading...</StateMessage>}>
       <ConversationsPageInner />
     </Suspense>
   );
@@ -139,26 +140,26 @@ function ConversationsPageInner() {
         </div>
 
         <div className={styles.conversationList}>
-          {loading && <div className={styles.loading}>Loading...</div>}
-          {error && <div className={styles.error}>{error}</div>}
+          {loading && <StateMessage variant="loading">Loading...</StateMessage>}
+          {error && <StateMessage variant="error">{error}</StateMessage>}
 
-          {conversations.map((conv) => (
-            <Link
-              key={conv.id}
-              href={`/conversations/${conv.id}`}
-              className={styles.conversationItem}
-            >
-              <div className={styles.conversationMeta}>
-                <span className={styles.conversationId}>
-                  {conv.id.slice(0, 8)}...
-                </span>
-                <span className={styles.conversationDate}>
-                  {conv.message_count} messages ·{" "}
-                  {new Date(conv.updated_at).toLocaleDateString()}
-                </span>
-              </div>
-            </Link>
-          ))}
+          {!loading && !error && conversations.length === 0 && (
+            <StateMessage variant="empty">No conversations yet.</StateMessage>
+          )}
+
+          {conversations.length > 0 && (
+            <AppList>
+              {conversations.map((conv) => (
+                <AppListItem
+                  key={conv.id}
+                  href={`/conversations/${conv.id}`}
+                  title={`${conv.id.slice(0, 8)}...`}
+                  description={`${conv.message_count} messages`}
+                  meta={new Date(conv.updated_at).toLocaleDateString()}
+                />
+              ))}
+            </AppList>
+          )}
 
           {nextCursor && (
             <button

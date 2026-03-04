@@ -83,6 +83,7 @@ nexus/
 - **EPUB Extraction** (S5): Deterministic chapter fragment materialization from EPUB archives with TOC snapshot, title fallback, resource rewriting, archive safety enforcement, and persisted canonical navigation locations.
 - **EPUB Reader** (S5 PR-05 + hardening): Reader navigation is section-based (`loc` query param) via unified navigation payload (`sections` + TOC links). Dropdown and TOC resolve through the same section ids, with in-fragment anchor targeting preserved for TOC leaf navigation.
 - **EPUB Highlights Hardening**: Linked-items now support explicit scope modes (`This chapter` aligned vs `Entire book` list), deterministic cross-chapter ordering (`fragment_idx`, `start_offset`, `end_offset`, `created_at`, `id`), and a paginated media-wide highlight endpoint for book mode.
+- **Media Catalog Aggregation**: `GET /media` provides visibility-safe, cross-library media listing with server-side kind/search filtering and keyset pagination (`updated_at DESC, id DESC`) to avoid client fanout over high library counts.
 - **PDF Reader** (S6 PR-07): The web reader uses `pdfjs-dist` `PDFViewer` primitives (official text + annotation layers, `PDFLinkService`, vertical continuous scroll) so text selection, internal/external links, and large-document scrolling stay aligned with upstream PDF.js behavior.
 - **PDF Reader Alignment Hardening**: `PdfReader` enforces PDF.js `content-box` CSS invariants, defers initial scale/page application until viewer pages are ready (avoids invalid page warnings), and degrades to area-based bounds when text-layer/canvas geometry drifts beyond tolerance.
 - **PDF Linked-Items Adapters + Scope**: Linked-items now use explicit renderer adapters (`HtmlAnchorProvider` / `PdfAnchorProvider`) and typed coordinate transforms (`page` -> `viewer-scroll` -> `pane`) to avoid implicit cross-component `getBoundingClientRect` math; PDF exposes explicit scope controls (`This page` aligned mode, `Entire document` index/list mode) backed by stable ordering keyset semantics (`page_number`, `sort_top`, `sort_left`, `created_at`, `id`).
@@ -676,6 +677,7 @@ The chat UI is accessible at `/conversations`:
 | `/api/models` | `/models` | GET |
 | `/api/keys` | `/keys` | GET, POST |
 | `/api/keys/[keyId]` | `/keys/{keyId}` | DELETE |
+| `/api/media` | `/media` | GET |
 | `/api/search` | `/search` | GET |
 | `/api/pdfjs/module` | serves `pdfjs-dist/build/pdf.mjs` (CSP-safe) | GET |
 | `/api/pdfjs/worker` | serves `pdfjs-dist/build/pdf.worker.min.mjs` (CSP-safe) | GET |
@@ -693,7 +695,7 @@ When running locally:
 |----------|-----------|
 | Libraries | `GET/POST /libraries`, `PATCH/DELETE /libraries/{id}`, members, transfer-ownership (S4 PR-03) |
 | Invitations | `POST/GET /libraries/{id}/invites`, `GET /libraries/invites`, accept/decline/revoke (S4 PR-04) |
-| Media | `GET /media/{id}`, `POST /media/from_url`, `POST /media/upload/init` |
+| Media | `GET /media` (kind/search/cursor pagination), `GET /media/{id}`, `POST /media/from_url`, `POST /media/upload/init` |
 | EPUB Assets | `GET /media/{id}/assets/{asset_key}` (S5 PR-02: EPUB internal asset safe fetch) |
 | EPUB Chapters | `GET /media/{id}/chapters`, `GET /media/{id}/chapters/{idx}` (S5 PR-04: chapter manifest + navigation) |
 | EPUB Navigation | `GET /media/{id}/navigation` (canonical section targets + TOC linkage for reader UI) |

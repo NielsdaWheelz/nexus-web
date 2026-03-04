@@ -1,5 +1,6 @@
 "use client";
 
+import { BookOpen, FileText, X } from "lucide-react";
 import styles from "./Tabsbar.module.css";
 
 export interface Tab {
@@ -31,7 +32,11 @@ export default function Tabsbar({
             onClick={() => onTabClick(tab.id)}
           >
             <span className={styles.icon}>
-              {tab.type === "library" ? "📚" : "📄"}
+              {tab.type === "library" ? (
+                <BookOpen size={16} aria-hidden="true" />
+              ) : (
+                <FileText size={16} aria-hidden="true" />
+              )}
             </span>
             <span className={styles.title}>{tab.title}</span>
             <button
@@ -42,7 +47,7 @@ export default function Tabsbar({
               }}
               aria-label={`Close ${tab.title}`}
             >
-              ×
+              <X size={14} aria-hidden="true" />
             </button>
           </div>
         ))}

@@ -22,6 +22,9 @@ import SelectionPopover from "@/components/SelectionPopover";
 import HighlightEditor, { type Highlight } from "@/components/HighlightEditor";
 import { useToast } from "@/components/Toast";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
+import SectionCard from "@/components/ui/SectionCard";
+import StateMessage from "@/components/ui/StateMessage";
+import StatusPill from "@/components/ui/StatusPill";
 import {
   applyHighlightsToHtmlMemoized,
   clearHighlightCache,
@@ -1217,7 +1220,6 @@ export default function MediaViewPage({
         setHighlightsVersion((v) => v + 1);
         clearHighlightCache();
         scheduleMediaHighlightsRefresh();
-        scheduleMediaHighlightsRefresh();
 
         const newHighlight = newHighlights.find(
           (h) =>
@@ -1378,7 +1380,6 @@ export default function MediaViewPage({
     highlights,
     focusHighlight,
     cancelEditBounds,
-    scheduleMediaHighlightsRefresh,
     toast,
   ]);
 
@@ -1519,7 +1520,7 @@ export default function MediaViewPage({
     return (
       <PaneContainer>
         <Pane title="Loading...">
-          <div className={styles.loading}>Loading media...</div>
+          <StateMessage variant="loading">Loading media...</StateMessage>
         </Pane>
       </PaneContainer>
     );
@@ -1530,7 +1531,7 @@ export default function MediaViewPage({
       <PaneContainer>
         <Pane title="Error">
           <div className={styles.errorContainer}>
-            <div className={styles.error}>{error || "Media not found"}</div>
+            <StateMessage variant="error">{error || "Media not found"}</StateMessage>
             <Link href="/libraries" className={styles.backLink}>
               ← Back to Libraries
             </Link>
@@ -1654,15 +1655,23 @@ export default function MediaViewPage({
       {canRead && (
         <Pane title="Highlights" defaultWidth={360} minWidth={280}>
           {isEpub && (
-            <div className={styles.highlightScopeHeader}>
-              <span className={styles.highlightScopeLabel}>Scope</span>
-              <div className={styles.highlightScopeToggle}>
+            <SectionCard
+              title="Scope"
+              className={styles.scopeCard}
+              bodyClassName={styles.scopeCardBody}
+            >
+              <div
+                className={styles.highlightScopeToggle}
+                role="group"
+                aria-label="Highlight scope"
+              >
                 <button
                   className={`${styles.scopeBtn} ${
                     epubHighlightScope === "chapter" ? styles.scopeBtnActive : ""
                   }`}
                   onClick={() => handleEpubHighlightScopeChange("chapter")}
                   type="button"
+                  aria-pressed={epubHighlightScope === "chapter"}
                 >
                   This chapter
                 </button>
@@ -1672,11 +1681,12 @@ export default function MediaViewPage({
                   }`}
                   onClick={() => handleEpubHighlightScopeChange("book")}
                   type="button"
+                  aria-pressed={epubHighlightScope === "book"}
                 >
                   Entire book
                 </button>
               </div>
-            </div>
+            </SectionCard>
           )}
           {isPdf && (
             <div className={styles.highlightScopeHeader}>
@@ -1733,8 +1743,11 @@ export default function MediaViewPage({
           )}
 
           {isEpub && epubHighlightScope === "book" && (
-            <div className={styles.bookHighlightsControls}>
-              <p className={styles.hint}>Showing highlights from the entire book.</p>
+            <SectionCard
+              title="Book Highlights"
+              description="Showing highlights from the entire book."
+              className={styles.bookHighlightsCard}
+            >
               {mediaHighlightsHasMore && (
                 <button
                   type="button"
@@ -1745,7 +1758,7 @@ export default function MediaViewPage({
                   {mediaHighlightsLoading ? "Loading..." : "Load more"}
                 </button>
               )}
-            </div>
+            </SectionCard>
           )}
 
           {focusState.focusedId && (
@@ -1767,14 +1780,14 @@ export default function MediaViewPage({
                   />
                 </div>
               ) : (
-                <div className={styles.noHighlights}>
-                  <p>No highlight selected.</p>
-                </div>
+                <StateMessage variant="empty">No highlight selected.</StateMessage>
               )}
             </div>
           )}
           {isPdf && (
-            <div className={styles.hint}>Active page: {pdfActivePage}</div>
+            <div className={styles.pdfPagePill}>
+              <StatusPill variant="info">Active page: {pdfActivePage}</StatusPill>
+            </div>
           )}
         </Pane>
       )}

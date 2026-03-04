@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { FolderOpen, Library as LibraryIcon } from "lucide-react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
 import FileUpload from "@/components/FileUpload";
 import AddFromUrl from "@/components/AddFromUrl";
+import StateMessage from "@/components/ui/StateMessage";
+import StatusPill from "@/components/ui/StatusPill";
+import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
 
 interface Library {
@@ -115,43 +118,50 @@ export default function LibrariesPage() {
             </button>
           </form>
 
-          {error && <div className={styles.error}>{error}</div>}
+          {error && <StateMessage variant="error">{error}</StateMessage>}
 
           {loading ? (
-            <div className={styles.loading}>Loading libraries...</div>
+            <StateMessage variant="loading">Loading libraries...</StateMessage>
           ) : libraries.length === 0 ? (
-            <div className={styles.empty}>
-              <p>No libraries yet.</p>
-              <p>Create your first library above!</p>
-            </div>
+            <StateMessage variant="empty">
+              No libraries yet. create your first library above.
+            </StateMessage>
           ) : (
-            <ul className={styles.list}>
+            <AppList>
               {libraries.map((library) => (
-                <li key={library.id} className={styles.item}>
-                  <Link
-                    href={`/libraries/${library.id}`}
-                    className={styles.link}
-                  >
-                    <span className={styles.icon}>
-                      {library.is_default ? "📁" : "📚"}
-                    </span>
-                    <span className={styles.name}>{library.name}</span>
-                    {library.is_default && (
-                      <span className={styles.badge}>Default</span>
-                    )}
-                  </Link>
-                  {!library.is_default && viewerUserId && library.owner_user_id === viewerUserId && (
-                    <button
-                      className={styles.deleteBtn}
-                      onClick={() => handleDeleteLibrary(library)}
-                      aria-label={`Delete ${library.name}`}
-                    >
-                      ×
-                    </button>
-                  )}
-                </li>
+                <AppListItem
+                  key={library.id}
+                  href={`/libraries/${library.id}`}
+                  icon={
+                    library.is_default ? (
+                      <FolderOpen size={18} />
+                    ) : (
+                      <LibraryIcon size={18} />
+                    )
+                  }
+                  title={library.name}
+                  meta={`role ${library.role}`}
+                  trailing={
+                    library.is_default ? (
+                      <StatusPill variant="info">default</StatusPill>
+                    ) : null
+                  }
+                  actions={
+                    !library.is_default &&
+                    viewerUserId &&
+                    library.owner_user_id === viewerUserId ? (
+                      <button
+                        className={styles.deleteBtn}
+                        onClick={() => handleDeleteLibrary(library)}
+                        aria-label={`Delete ${library.name}`}
+                      >
+                        Delete
+                      </button>
+                    ) : null
+                  }
+                />
               ))}
-            </ul>
+            </AppList>
           )}
         </div>
       </Pane>

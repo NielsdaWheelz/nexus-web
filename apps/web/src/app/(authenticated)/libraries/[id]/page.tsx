@@ -2,10 +2,15 @@
 
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
+import MediaKindIcon from "@/components/MediaKindIcon";
+import StateMessage from "@/components/ui/StateMessage";
+import StatusPill from "@/components/ui/StatusPill";
+import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
 
 interface Media {
@@ -108,44 +113,19 @@ export default function LibraryDetailPage({
     }
   };
 
-  const getKindIcon = (kind: string) => {
-    switch (kind) {
-      case "web_article":
-        return "📄";
-      case "epub":
-        return "📖";
-      case "pdf":
-        return "📕";
-      case "podcast_episode":
-        return "🎙️";
-      case "video":
-        return "🎬";
-      default:
-        return "📄";
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "ready":
-      case "ready_for_reading":
-        return styles.statusReady;
-      case "pending":
-      case "extracting":
-      case "embedding":
-        return styles.statusPending;
-      case "failed":
-        return styles.statusFailed;
-      default:
-        return "";
-    }
+  const statusVariant = (status: string) => {
+    if (status === "ready" || status === "ready_for_reading") return "success";
+    if (status === "extracting" || status === "embedding") return "info";
+    if (status === "pending") return "warning";
+    if (status === "failed") return "danger";
+    return "neutral";
   };
 
   if (loading) {
     return (
       <PaneContainer>
         <Pane title="Loading...">
-          <div className={styles.loading}>Loading library...</div>
+          <StateMessage variant="loading">Loading library...</StateMessage>
         </Pane>
       </PaneContainer>
     );
@@ -155,7 +135,7 @@ export default function LibraryDetailPage({
     return (
       <PaneContainer>
         <Pane title="Error">
-          <div className={styles.error}>{error || "Library not found"}</div>
+          <StateMessage variant="error">{error || "Library not found"}</StateMessage>
         </Pane>
       </PaneContainer>
     );
@@ -167,7 +147,8 @@ export default function LibraryDetailPage({
         <div className={styles.content}>
           <div className={styles.header}>
             <Link href="/libraries" className={styles.backLink}>
-              ← Back to Libraries
+              <ArrowLeft size={14} aria-hidden="true" />
+              <span>Back to Libraries</span>
             </Link>
 
             {!library.is_default && library.role === "admin" && (
@@ -190,37 +171,38 @@ export default function LibraryDetailPage({
             )}
           </div>
 
-          {error && <div className={styles.error}>{error}</div>}
+          {error && <StateMessage variant="error">{error}</StateMessage>}
 
           {media.length === 0 ? (
-            <div className={styles.empty}>
-              <p>No media in this library yet.</p>
-            </div>
+            <StateMessage variant="empty">No media in this library yet.</StateMessage>
           ) : (
-            <ul className={styles.list}>
+            <AppList>
               {media.map((item) => (
-                <li key={item.id} className={styles.item}>
-                  <Link href={`/media/${item.id}`} className={styles.link}>
-                    <span className={styles.icon}>{getKindIcon(item.kind)}</span>
-                    <span className={styles.title}>{item.title}</span>
-                    <span
-                      className={`${styles.status} ${getStatusColor(item.processing_status)}`}
-                    >
-                      {item.processing_status}
-                    </span>
-                  </Link>
-                  {library.role === "admin" && (
-                    <button
-                      className={styles.removeBtn}
-                      onClick={() => handleRemoveMedia(item.id)}
-                      aria-label={`Remove ${item.title}`}
-                    >
-                      ×
-                    </button>
-                  )}
-                </li>
+                <AppListItem
+                  key={item.id}
+                  href={`/media/${item.id}`}
+                  icon={<MediaKindIcon kind={item.kind} />}
+                  title={item.title}
+                  description={item.kind.replaceAll("_", " ")}
+                  trailing={
+                    <StatusPill variant={statusVariant(item.processing_status)}>
+                      {item.processing_status.replaceAll("_", " ")}
+                    </StatusPill>
+                  }
+                  actions={
+                    library.role === "admin" ? (
+                      <button
+                        className={styles.removeBtn}
+                        onClick={() => handleRemoveMedia(item.id)}
+                        aria-label={`Remove ${item.title}`}
+                      >
+                        Remove
+                      </button>
+                    ) : null
+                  }
+                />
               ))}
-            </ul>
+            </AppList>
           )}
         </div>
       </Pane>
