@@ -10,8 +10,10 @@ embedding pipeline so downstream failures surface as failure_stage='embed'.
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy.orm import Session
+
 from nexus.celery import celery_app
-from nexus.db.models import FailureStage, Media, ProcessingStatus
+from nexus.db.models import FailureStage, Media, MediaAuthor, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services.pdf_ingest import (
@@ -100,6 +102,8 @@ def ingest_pdf(
 
         assert isinstance(result, PdfExtractionResult)
 
+        _persist_pdf_metadata(db, media, result)
+
         media.processing_status = ProcessingStatus.ready_for_reading
         media.processing_completed_at = now
         media.failure_stage = None
@@ -122,6 +126,7 @@ def ingest_pdf(
         )
 
         _try_embedding_handoff(db, media_uuid, request_id)
+        _try_enrich_dispatch(media_id, request_id)
 
         return {
             "status": "success",
@@ -153,6 +158,39 @@ def ingest_pdf(
         raise
     finally:
         db.close()
+
+
+def _persist_pdf_metadata(db: Session, media: Media, result: PdfExtractionResult) -> None:
+    """Persist PDF document metadata extracted from doc.metadata."""
+    # Update title if PDF has embedded title and current title looks like a filename
+    if result.pdf_title and media.title and ".pdf" in media.title.lower():
+        media.title = result.pdf_title[:255]
+
+    # Split author string on ; or , and create MediaAuthor rows
+    if result.pdf_author:
+        for sep in [";", ","]:
+            if sep in result.pdf_author:
+                names = [n.strip() for n in result.pdf_author.split(sep) if n.strip()]
+                break
+        else:
+            names = [result.pdf_author.strip()]
+
+        for i, name in enumerate(names):
+            if name:
+                db.add(
+                    MediaAuthor(
+                        media_id=media.id,
+                        name=name[:255],
+                        role="author",
+                        sort_order=i,
+                    )
+                )
+
+    if result.pdf_subject and not media.description:
+        media.description = result.pdf_subject[:2000]
+
+    if result.pdf_creation_date and not media.published_date:
+        media.published_date = result.pdf_creation_date
 
 
 def _handle_embedding_only(db, media: Media, media_uuid: UUID, request_id: str | None) -> dict:
@@ -209,6 +247,18 @@ def _try_embedding_handoff(db, media_uuid: UUID, request_id: str | None) -> None
                 "ingest_pdf_failed_to_mark_embed_failure",
                 media_id=str(media_uuid),
             )
+
+
+def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
+    """Best-effort dispatch of metadata enrichment task."""
+    try:
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
+        enrich_metadata.apply_async(
+            args=[media_id], kwargs={"request_id": request_id}, queue="ingest"
+        )
+    except Exception:
+        logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
 
 
 def run_pdf_ingest_sync(

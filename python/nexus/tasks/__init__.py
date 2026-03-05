@@ -17,6 +17,7 @@ Usage in API (enqueue):
 
 import nexus.tasks.ingest_pdf as ingest_pdf  # noqa: F401
 from nexus.tasks.backfill_default_library_closure import backfill_default_library_closure_job
+from nexus.tasks.enrich_metadata import enrich_metadata
 from nexus.tasks.ingest_epub import ingest_epub
 from nexus.tasks.ingest_web_article import ingest_web_article
 from nexus.tasks.ingest_youtube_video import ingest_youtube_video
@@ -29,6 +30,7 @@ __all__ = [
     "ingest_epub",
     "ingest_pdf",
     "ingest_youtube_video",
+    "enrich_metadata",
     "backfill_default_library_closure_job",
     "podcast_active_subscription_poll_job",
     "podcast_sync_subscription_job",

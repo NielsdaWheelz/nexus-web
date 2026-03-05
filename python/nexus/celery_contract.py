@@ -26,6 +26,7 @@ REQUIRED_WORKER_TASK_NAMES: frozenset[str] = frozenset(
         "podcast_sync_subscription_job",
         "podcast_active_subscription_poll_job",
         "reconcile_stale_ingest_media_job",
+        "enrich_metadata",
     }
 )
 

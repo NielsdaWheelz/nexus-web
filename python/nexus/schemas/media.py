@@ -38,12 +38,18 @@ class PlaybackSourceOut(BaseModel):
     embed_url: str | None = None
 
 
-class MediaOut(BaseModel):
-    """Response schema for media.
+class MediaAuthorOut(BaseModel):
+    """Response schema for a media author."""
 
-    Note: `author` is NOT included. The media schema does not have an
-    `author` column in S0. Authors are added in S2 with metadata extraction.
-    """
+    id: UUID
+    name: str
+    role: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MediaOut(BaseModel):
+    """Response schema for media."""
 
     id: UUID
     kind: str  # "web_article", "epub", "pdf", "podcast_episode", "video"
@@ -54,6 +60,11 @@ class MediaOut(BaseModel):
     last_error_code: str | None = None
     playback_source: PlaybackSourceOut | None = None
     capabilities: CapabilitiesOut
+    authors: list[MediaAuthorOut] = []
+    published_date: str | None = None
+    publisher: str | None = None
+    language: str | None = None
+    description: str | None = None
     created_at: datetime
     updated_at: datetime
 

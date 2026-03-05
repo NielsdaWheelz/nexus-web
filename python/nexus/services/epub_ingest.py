@@ -16,7 +16,7 @@ import re
 import time
 import unicodedata
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote, urlparse
@@ -50,6 +50,11 @@ class EpubExtractionResult:
     toc_node_count: int = 0
     asset_count: int = 0
     title: str | None = None
+    creators: list[str] = field(default_factory=list)
+    publisher: str | None = None
+    language: str | None = None
+    description: str | None = None
+    published_date: str | None = None
 
 
 @dataclass(frozen=True)
@@ -230,6 +235,9 @@ def extract_epub_artifacts(
         media.title = title
         media.updated_at = now
 
+        # ---- OPF metadata extraction --------------------------------------
+        opf_meta = _extract_opf_metadata(opf_tree)
+
         # ---- extract readable chapters -------------------------------------
         chapter_specs = _collect_readable_chapters(zf, manifest, spine_idrefs)
         if not chapter_specs:
@@ -393,6 +401,11 @@ def extract_epub_artifacts(
         toc_node_count=len(toc_nodes),
         asset_count=persisted_assets,
         title=title,
+        creators=opf_meta.get("creators", []),
+        publisher=opf_meta.get("publisher"),
+        language=opf_meta.get("language"),
+        description=opf_meta.get("description"),
+        published_date=opf_meta.get("published_date"),
     )
 
 
@@ -589,6 +602,41 @@ def _normalize_title(raw: str) -> str:
     if not t:
         return "Untitled EPUB"
     return t[:255]
+
+
+def _extract_opf_metadata(opf: ET.Element) -> dict:
+    """Extract Dublin Core metadata from OPF document."""
+    meta: dict = {}
+
+    # dc:creator (multiple allowed)
+    creators = []
+    for el in opf.findall(".//opf:metadata/dc:creator", _NS):
+        if el.text and el.text.strip():
+            creators.append(el.text.strip())
+    if creators:
+        meta["creators"] = creators
+
+    # dc:publisher
+    pub_el = opf.find(".//opf:metadata/dc:publisher", _NS)
+    if pub_el is not None and pub_el.text and pub_el.text.strip():
+        meta["publisher"] = pub_el.text.strip()
+
+    # dc:language
+    lang_el = opf.find(".//opf:metadata/dc:language", _NS)
+    if lang_el is not None and lang_el.text and lang_el.text.strip():
+        meta["language"] = lang_el.text.strip()
+
+    # dc:description
+    desc_el = opf.find(".//opf:metadata/dc:description", _NS)
+    if desc_el is not None and desc_el.text and desc_el.text.strip():
+        meta["description"] = desc_el.text.strip()
+
+    # dc:date
+    date_el = opf.find(".//opf:metadata/dc:date", _NS)
+    if date_el is not None and date_el.text and date_el.text.strip():
+        meta["published_date"] = date_el.text.strip()
+
+    return meta
 
 
 def _filename_from_storage_path(path: str) -> str:

@@ -294,6 +294,16 @@ class Media(Base):
     plain_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Document metadata enrichment fields
+    # published_date is TEXT (not DATE) because source data is often partial ("2023", "2023-01")
+    published_date: Mapped[str | None] = mapped_column(Text, nullable=True)
+    publisher: Mapped[str | None] = mapped_column(Text, nullable=True)
+    language: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_enriched_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -350,6 +360,42 @@ class Media(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    authors: Mapped[list["MediaAuthor"]] = relationship(
+        "MediaAuthor",
+        back_populates="media",
+        cascade="all, delete-orphan",
+        order_by=lambda: MediaAuthor.sort_order,
+    )
+
+
+class MediaAuthor(Base):
+    """Author/creator associated with a media item."""
+
+    __tablename__ = "media_authors"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (Index("ix_media_authors_media_id", "media_id"),)
+
+    # Relationship
+    media: Mapped["Media"] = relationship("Media", back_populates="authors")
 
 
 class MediaFile(Base):

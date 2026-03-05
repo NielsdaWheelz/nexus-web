@@ -14,6 +14,7 @@ Per s2_pr04.md spec:
 - All failures use failure_stage='extract'
 """
 
+import re
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -22,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.celery import celery_app
-from nexus.db.models import FailureStage, Fragment, Media, MediaKind, ProcessingStatus
+from nexus.db.models import FailureStage, Fragment, Media, MediaAuthor, MediaKind, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
@@ -208,6 +209,8 @@ def _do_ingest(
     if ingest_result.title:
         media.title = ingest_result.title[:255]  # Truncate to max length
 
+    _persist_web_metadata(db, media, ingest_result)
+
     media.processing_status = ProcessingStatus.ready_for_reading
     media.processing_completed_at = now
     media.updated_at = now
@@ -217,11 +220,57 @@ def _do_ingest(
 
     db.commit()
 
+    _try_enrich_dispatch(str(media_id), request_id)
+
     return {
         "status": "success",
         "canonical_url": canonical_url,
         "title": ingest_result.title,
     }
+
+
+def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
+    """Best-effort dispatch of metadata enrichment task."""
+    try:
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
+        enrich_metadata.apply_async(
+            args=[media_id], kwargs={"request_id": request_id}, queue="ingest"
+        )
+    except Exception:
+        logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
+
+
+def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult) -> None:
+    """Persist web article metadata from Readability extraction."""
+    # Parse byline into author names
+    if ingest_result.byline:
+        # Byline formats: "John Doe", "John Doe, Jane Smith", "By John Doe and Jane Smith"
+        byline = ingest_result.byline.strip()
+        # Strip leading "By " (case-insensitive)
+        byline = re.sub(r"^by\s+", "", byline, flags=re.IGNORECASE)
+        # Split on comma, semicolon, or " and "
+        names = re.split(r"\s*[,;]\s*|\s+and\s+", byline, flags=re.IGNORECASE)
+        for i, name in enumerate(names):
+            name = name.strip()
+            if name:
+                db.add(
+                    MediaAuthor(
+                        media_id=media.id,
+                        name=name[:255],
+                        role="author",
+                        sort_order=i,
+                    )
+                )
+
+    if ingest_result.excerpt and not media.description:
+        media.description = ingest_result.excerpt[:2000]
+
+    if ingest_result.site_name and not media.publisher:
+        media.publisher = ingest_result.site_name[:255]
+
+    if ingest_result.published_time and not media.published_date:
+        media.published_date = ingest_result.published_time[:64]
 
 
 def _try_set_canonical_url(

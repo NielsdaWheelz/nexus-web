@@ -46,6 +46,10 @@ class IngestResult:
     base_url: str
     title: str
     content_html: str
+    byline: str = ""
+    excerpt: str = ""
+    site_name: str = ""
+    published_time: str = ""
 
 
 @dataclass
@@ -124,6 +128,10 @@ def run_node_ingest(
                     base_url=result_data["base_url"],
                     title=result_data.get("title", ""),
                     content_html=result_data["content_html"],
+                    byline=result_data.get("byline") or "",
+                    excerpt=result_data.get("excerpt") or "",
+                    site_name=result_data.get("site_name") or "",
+                    published_time=result_data.get("published_time") or "",
                 )
             except (json.JSONDecodeError, KeyError) as e:
                 return IngestError(
