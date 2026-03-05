@@ -63,7 +63,7 @@
 .loading {
   padding: var(--space-4);
   text-align: center;
-  color: var(--color-text-muted);
+  color: var(--reader-text-muted, var(--color-text-muted));
 }
 
 .errorContainer {
@@ -74,10 +74,10 @@
 
 .error {
   padding: var(--space-3);
-  background-color: rgba(247, 118, 142, 0.1);
-  border: 1px solid var(--color-error);
+  background-color: var(--reader-bg-secondary, var(--color-bg-secondary));
+  border: 1px solid var(--reader-border, var(--color-border));
   border-radius: 6px;
-  color: var(--color-error);
+  color: var(--reader-text-secondary, var(--color-text-secondary));
   font-size: var(--font-size-sm);
 }
 
@@ -116,7 +116,7 @@
 .empty {
   padding: var(--space-8);
   text-align: center;
-  color: var(--color-text-muted);
+  color: var(--reader-text-muted, var(--color-text-muted));
 }
 
 .fragments {
@@ -371,15 +371,15 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--reader-border-subtle, var(--color-border-subtle));
 }
 
 .chapterNavBtn {
   padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--reader-border, var(--color-border));
   border-radius: 4px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
+  background: var(--reader-surface, var(--color-surface));
+  color: var(--reader-text-secondary, var(--color-text-secondary));
   font-size: var(--font-size-sm);
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast);
@@ -388,8 +388,8 @@
 }
 
 .chapterNavBtn:hover:not(:disabled) {
-  background: var(--color-border-subtle);
-  color: var(--color-text-primary);
+  background: var(--reader-bg-secondary, var(--color-bg-secondary));
+  color: var(--reader-text, var(--color-text));
 }
 
 .chapterNavBtn:disabled {
@@ -405,10 +405,10 @@
 .chapterSelect {
   width: 100%;
   padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--reader-border, var(--color-border));
   border-radius: 4px;
-  background: var(--color-surface);
-  color: var(--color-text-primary);
+  background: var(--reader-surface, var(--color-surface));
+  color: var(--reader-text, var(--color-text));
   font-size: var(--font-size-sm);
   cursor: pointer;
   text-overflow: ellipsis;
@@ -419,7 +419,7 @@
    ============================================================================= */
 
 .tocSection {
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--reader-border-subtle, var(--color-border-subtle));
   padding-bottom: var(--space-3);
 }
 
@@ -430,18 +430,18 @@
   padding: var(--space-1) 0;
   border: none;
   background: none;
-  color: var(--color-text-secondary);
+  color: var(--reader-text-secondary, var(--color-text-secondary));
   font-size: var(--font-size-sm);
   cursor: pointer;
   transition: color var(--transition-fast);
 }
 
 .tocToggle:hover {
-  color: var(--color-text-primary);
+  color: var(--reader-text, var(--color-text));
 }
 
 .tocWarning {
-  color: var(--color-text-muted);
+  color: var(--reader-text-muted, var(--color-text-muted));
   font-style: italic;
 }
 
@@ -472,7 +472,7 @@
   border: none;
   border-radius: 4px;
   background: none;
-  color: var(--color-accent);
+  color: var(--reader-accent, var(--color-accent));
   font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;
@@ -481,18 +481,19 @@
 }
 
 .tocLink:hover {
-  background: var(--color-surface);
+  background: var(--reader-surface, var(--color-surface));
 }
 
 .tocLink.tocActive {
-  background: rgba(139, 180, 255, 0.12);
+  background: var(--reader-bg-secondary, var(--color-bg-secondary));
+  color: var(--reader-text, var(--color-text));
   font-weight: 600;
 }
 
 .tocLabel {
   display: block;
   padding: var(--space-1) var(--space-2);
-  color: var(--color-text-muted);
+  color: var(--reader-text-muted, var(--color-text-muted));
   font-size: var(--font-size-sm);
   cursor: default;
 }
