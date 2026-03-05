@@ -264,8 +264,11 @@ export default function ChatComposer({
               currentAsstId = assistant_message_id;
 
               if (!conversationId) {
-                onConversationCreated?.(conversation_id);
-                router.replace(`/conversations/${conversation_id}`);
+                if (onConversationCreated) {
+                  onConversationCreated(conversation_id);
+                } else {
+                  router.replace(`/conversations/${conversation_id}`);
+                }
               }
               break;
             }
@@ -369,8 +372,11 @@ export default function ChatComposer({
         onNonStreamMessages?.(user_message, assistant_message);
 
         if (!conversationId) {
-          onConversationCreated?.(conversation.id);
-          router.replace(`/conversations/${conversation.id}`);
+          if (onConversationCreated) {
+            onConversationCreated(conversation.id);
+          } else {
+            router.replace(`/conversations/${conversation.id}`);
+          }
         }
       } catch (err) {
         if (isApiError(err)) {

@@ -6,6 +6,7 @@ import LibraryDetailPage from "@/app/(authenticated)/libraries/[id]/page";
 import MediaViewPage from "@/app/(authenticated)/media/[id]/page";
 import ConversationsPage from "@/app/(authenticated)/conversations/page";
 import ConversationPage from "@/app/(authenticated)/conversations/[id]/page";
+import NewConversationPage from "@/app/(authenticated)/conversations/new/page";
 import DiscoverPage from "@/app/(authenticated)/discover/page";
 import DocumentsPage from "@/app/(authenticated)/documents/page";
 import PodcastsPage from "@/app/(authenticated)/podcasts/page";
@@ -24,6 +25,7 @@ export type PaneRouteId =
   | "library"
   | "media"
   | "conversations"
+  | "conversationNew"
   | "conversation"
   | "discover"
   | "documents"
@@ -67,6 +69,11 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "conversations",
     pattern: ["conversations"],
     render: () => <ConversationsPage />,
+  },
+  {
+    id: "conversationNew",
+    pattern: ["conversations", "new"],
+    render: () => <NewConversationPage />,
   },
   {
     id: "conversation",

@@ -36,7 +36,7 @@ This PR implements the complete frontend surface area for Slice 3, adding:
    - Idempotency key per send
    - Send disabled while in-flight
 
-6. **Quote-to-Chat**: "send to chat" button on `LinkedItemRow` highlight rows. Route determines target: on `/conversations/:id` → that composer; else → `/conversations?attach_type=highlight&attach_id=...`.
+6. **Quote-to-Chat**: "send to chat" button on `LinkedItemRow` highlight rows. Route determines target: on `/conversations/:id` → that composer; else → `/conversations/new?attach_type=highlight&attach_id=...`.
 
 7. **Keys Management** (`/settings/keys`): Add/update/revoke BYOK keys. Password input with `autoComplete="off"`. Key cleared on submit (success and failure). Only fingerprint shown after submit.
 
