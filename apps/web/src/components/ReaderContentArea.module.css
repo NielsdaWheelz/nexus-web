@@ -7,21 +7,28 @@
   font-family: var(--reader-font-family, var(--font-sans));
   font-size: var(--reader-font-size-px, 16px);
   line-height: var(--reader-line-height, 1.5);
-  max-width: var(--reader-column-width-ch, 65ch);
-  margin: 0 auto;
-  padding: var(--space-4) 0;
-  border-radius: 8px;
+  width: 100%;
+  min-height: 100%;
+  padding: var(--space-4);
 }
 
 .content {
-  /* Inner content wrapper */
+  max-width: var(--reader-column-width-ch, 65ch);
+  margin: 0 auto;
 }
 
 /* Light theme (default) */
 .themeLight {
   --reader-bg: #f8fafc;
+  --reader-bg-secondary: #f1f5f9;
+  --reader-surface: #e2e8f0;
   --reader-text: #1f2937;
-  --reader-text-muted: #4b5563;
+  --reader-text-secondary: #374151;
+  --reader-text-muted: #6b7280;
+  --reader-border: #d1d5db;
+  --reader-border-subtle: #e5e7eb;
+  --reader-accent: #2563eb;
+  --reader-accent-hover: #1d4ed8;
   background-color: var(--reader-bg);
   color: var(--reader-text);
 }
@@ -29,8 +36,15 @@
 /* Dark theme */
 .themeDark {
   --reader-bg: #1e1e2e;
+  --reader-bg-secondary: #28283d;
+  --reader-surface: #313244;
   --reader-text: #cdd6f4;
+  --reader-text-secondary: #bac2de;
   --reader-text-muted: #a6adc8;
+  --reader-border: #45475a;
+  --reader-border-subtle: #363950;
+  --reader-accent: #89b4fa;
+  --reader-accent-hover: #74c7ec;
   background-color: var(--reader-bg);
   color: var(--reader-text);
 }
@@ -38,8 +52,15 @@
 /* Sepia theme */
 .themeSepia {
   --reader-bg: #f4ecd8;
+  --reader-bg-secondary: #ebe3cf;
+  --reader-surface: #dfd6c2;
   --reader-text: #5c4b37;
+  --reader-text-secondary: #6d5a45;
   --reader-text-muted: #8b7355;
+  --reader-border: #c4b99a;
+  --reader-border-subtle: #d4cab0;
+  --reader-accent: #8b6914;
+  --reader-accent-hover: #734f0f;
   background-color: var(--reader-bg);
   color: var(--reader-text);
 }

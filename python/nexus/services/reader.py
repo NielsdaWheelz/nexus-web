@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
@@ -146,19 +147,23 @@ def patch_reader_media_state(
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
+    # Ensure a row exists in a single SQL statement so concurrent first writes
+    # cannot race into duplicate-key failures.
+    db.execute(
+        pg_insert(ReaderMediaState)
+        .values(user_id=viewer_id, media_id=media_id)
+        .on_conflict_do_nothing(
+            index_elements=[ReaderMediaState.user_id, ReaderMediaState.media_id]
+        )
+    )
     state = (
         db.query(ReaderMediaState)
         .filter(
             ReaderMediaState.user_id == viewer_id,
             ReaderMediaState.media_id == media_id,
         )
-        .first()
+        .one()
     )
-
-    if not state:
-        state = ReaderMediaState(user_id=viewer_id, media_id=media_id)
-        db.add(state)
-        db.flush()
     provided = patch.model_fields_set
 
     # Override fields: explicit null clears media-level override and falls back to profile.

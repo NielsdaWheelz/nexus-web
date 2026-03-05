@@ -75,7 +75,7 @@ async function patchReaderState(
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
   return page
-    .locator('span[class*="pageIndicator"]')
+    .locator('span[class*="toolbarLabel"], span[class*="navigationLabel"], span[class*="pageIndicator"]')
     .filter({ hasText: `Page ${pageNumber} of ${pageCount}` });
 }
 

@@ -155,18 +155,45 @@ async function resetEpubReaderState(
   page: Parameters<typeof test>[0]["page"],
   mediaId: string,
 ): Promise<void> {
-  const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
-    data: {
-      view_mode: "scroll",
-      locator_kind: null,
-      fragment_id: null,
-      offset: null,
-      section_id: null,
-      page: null,
-      zoom: null,
-    },
+  let lastStatus: number | null = null;
+  let lastBody = "";
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
+      data: {
+        view_mode: "scroll",
+        locator_kind: null,
+        fragment_id: null,
+        offset: null,
+        section_id: null,
+        page: null,
+        zoom: null,
+      },
+    });
+    if (response.ok()) {
+      return;
+    }
+
+    lastStatus = response.status();
+    lastBody = await response.text();
+    await page.waitForTimeout(200 * (attempt + 1));
+  }
+
+  throw new Error(
+    `Failed to reset EPUB reader state for ${mediaId}. Last status=${lastStatus}, body=${lastBody}`
+  );
+}
+
+async function selectChapterByLabel(
+  page: Parameters<typeof test>[0]["page"],
+  label: string,
+): Promise<void> {
+  const chapterSelect = page.getByLabel("Select chapter");
+  await expect(chapterSelect).toBeVisible({ timeout: 15_000 });
+  await expect(chapterSelect.locator("option").filter({ hasText: label })).toHaveCount(1, {
+    timeout: 10_000,
   });
-  expect(response.ok()).toBeTruthy();
+  await chapterSelect.selectOption({ label });
 }
 
 test.describe("epub", () => {
@@ -289,6 +316,7 @@ test.describe("epub", () => {
     const seed = readSeededEpubMedia();
     await page.goto(`/media/${seed.media_id}`);
 
+    await selectChapterByLabel(page, seed.chapter_titles[0]);
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
@@ -324,6 +352,7 @@ test.describe("epub", () => {
 
     for (let iteration = 0; iteration < 2; iteration++) {
       await page.reload();
+      await selectChapterByLabel(page, seed.chapter_titles[0]);
       await expect(
         page.getByRole("heading", { name: seed.chapter_titles[0] })
       ).toBeVisible({ timeout: 15_000 });
@@ -355,6 +384,7 @@ test.describe("epub", () => {
     const seed = readSeededEpubMedia();
     await page.goto(`/media/${seed.media_id}`);
 
+    await selectChapterByLabel(page, seed.chapter_titles[0]);
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
@@ -375,9 +405,7 @@ test.describe("epub", () => {
       "pink"
     );
 
-    const chapterSelect = page.getByLabel("Select chapter");
-    await expect(chapterSelect).toBeVisible();
-    await chapterSelect.selectOption({ label: seed.chapter_titles[1] });
+    await selectChapterByLabel(page, seed.chapter_titles[1]);
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[1] })
     ).toBeVisible({ timeout: 10_000 });

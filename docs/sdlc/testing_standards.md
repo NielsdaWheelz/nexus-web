@@ -304,6 +304,16 @@ Rule:
 - Prefer Playwright `globalSetup` for centralized seeding/bootstrap so all invocation paths (`make test-e2e`, direct `npm test`, CI) share identical setup guarantees
 - `globalSetup` may load repo `.env`/runtime port files to mirror Makefile behavior when tests are run outside Make
 
+### E2E Determinism and Pane-Aware Assertions
+
+- Normalize persisted per-media state before asserting initial reader UI (for example, reset reader state and explicitly select chapter/page where applicable)
+- For pane-capable navigation actions (quote-to-chat, open-in-pane flows), assert successful behavior across valid outcomes:
+  - URL navigation outcome (`/conversations?...`)
+  - In-app pane outcome (conversation tab/context chip visible)
+  - Queued pane-open outcome (`__nexusPendingPaneOpenQueue`) when pane graph is not yet ready
+- Prefer explicit action-menu interactions (`Actions` -> `menuitem`) over styling-dependent selectors
+- Keep single-flow E2E tests focused on one behavior; use API setup for prerequisites already covered by separate UI stress/interaction tests
+
 ## 8. Test Organization
 
 ### Backend Layout

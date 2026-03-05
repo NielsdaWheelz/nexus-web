@@ -9,8 +9,15 @@ Tests cover:
 - Effective settings merge: media overrides over profile defaults
 """
 
-import pytest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, BrokenBarrierError
 
+import pytest
+from sqlalchemy.sql.dml import Insert
+
+from nexus.db.models import ReaderMediaState
+from nexus.schemas.reader import ReaderMediaStatePatch
+from nexus.services import reader as reader_service
 from tests.factories import create_ready_epub_with_chapters
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -561,3 +568,92 @@ class TestPatchMediaReaderState:
             headers=auth_headers(user_id),
         )
         assert resp.status_code == 400
+
+    def test_patch_reader_state_concurrent_first_write_is_race_safe(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch,
+    ):
+        """Concurrent first-write PATCH calls should not raise duplicate-key errors."""
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, _ = create_ready_epub_with_chapters(session, num_chapters=2)
+
+        direct_db.register_cleanup("reader_media_state", "media_id", media_id)
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        # Scope this test to service-layer race behavior by bypassing visibility checks.
+        monkeypatch.setattr(reader_service, "can_read_media", lambda *_args, **_kwargs: True)
+
+        payload = ReaderMediaStatePatch(
+            view_mode="paged",
+            locator_kind="epub_section",
+            section_id="ch01",
+        )
+        sync_insert_barrier = Barrier(2)
+        sessions = [direct_db.session(), direct_db.session()]
+
+        for session in sessions:
+            original_execute = session.execute
+
+            def execute_with_barrier(
+                statement, *args, _original_execute=original_execute, **kwargs
+            ):
+                is_reader_state_insert = (
+                    isinstance(statement, Insert)
+                    and getattr(statement, "table", None) is ReaderMediaState.__table__
+                )
+                if is_reader_state_insert:
+                    try:
+                        sync_insert_barrier.wait(timeout=5)
+                    except BrokenBarrierError:
+                        pass
+                return _original_execute(statement, *args, **kwargs)
+
+            monkeypatch.setattr(session, "execute", execute_with_barrier)
+
+        def run_patch(session):
+            try:
+                result = reader_service.patch_reader_media_state(
+                    db=session,
+                    viewer_id=user_id,
+                    media_id=media_id,
+                    patch=payload,
+                )
+                return ("ok", result.view_mode, result.section_id)
+            except Exception as exc:  # pragma: no cover - exercised by red phase
+                return ("error", repr(exc))
+            finally:
+                session.close()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(run_patch, sessions))
+
+        errors = [outcome for outcome in outcomes if outcome[0] == "error"]
+        assert not errors, (
+            "Expected concurrent patch_reader_media_state first writes to avoid duplicate-key "
+            f"failures, but saw errors: {errors}"
+        )
+
+        with direct_db.session() as verify_session:
+            rows = (
+                verify_session.query(ReaderMediaState)
+                .filter(
+                    ReaderMediaState.user_id == user_id,
+                    ReaderMediaState.media_id == media_id,
+                )
+                .all()
+            )
+
+        assert len(rows) == 1, (
+            "Expected exactly one reader_media_state row for concurrent first write, "
+            f"found {len(rows)} rows."
+        )
+        assert rows[0].view_mode == "paged"
+        assert rows[0].section_id == "ch01"
