@@ -91,9 +91,8 @@ describe("Pane", () => {
     expect(pane.style.width).toBe("700px");
   });
 
-  it("renders shared pane chrome controls in one header", async () => {
+  it("renders shared pane chrome controls with toolbar", async () => {
     const user = userEvent.setup();
-    const onBack = vi.fn();
     const onPrev = vi.fn();
     const onNext = vi.fn();
     const onDelete = vi.fn();
@@ -102,12 +101,13 @@ describe("Pane", () => {
       <Pane
         title="Design doc"
         subtitle="EPUB"
-        back={{ label: "Back to Libraries", onClick: onBack }}
-        navigation={{
-          label: "Page 2 of 10",
-          previous: { label: "Previous page", onClick: onPrev },
-          next: { label: "Next page", onClick: onNext },
-        }}
+        toolbar={
+          <>
+            <button type="button" onClick={onPrev} aria-label="Previous page">Previous page</button>
+            <span>Page 2 of 10</span>
+            <button type="button" onClick={onNext} aria-label="Next page">Next page</button>
+          </>
+        }
         options={[{ id: "delete", label: "Delete", onSelect: onDelete, tone: "danger" }]}
       >
         <div>Body content</div>
@@ -116,9 +116,7 @@ describe("Pane", () => {
 
     expect(screen.getAllByRole("heading", { name: "Design doc" })).toHaveLength(1);
     expect(screen.getByText("EPUB")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Back to Libraries" }));
-    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Page 2 of 10")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Previous page" }));
     await user.click(screen.getByRole("button", { name: "Next page" }));

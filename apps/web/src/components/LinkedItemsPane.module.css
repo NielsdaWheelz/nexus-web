@@ -96,6 +96,7 @@
    ============================================================================= */
 
 .colorSwatch {
+  display: inline-block;
   flex-shrink: 0;
   width: 12px;
   height: 12px;
@@ -183,35 +184,12 @@
    Send to Chat Button (quote-to-chat trigger)
    ============================================================================= */
 
-.sendToChatBtn {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 var(--space-1);
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  border-radius: 3px;
-  transition: all var(--transition-fast);
+.actionMenu {
   opacity: 0;
-  pointer-events: none;
+  transition: opacity var(--transition-fast);
 }
 
-.linkedItemRowMain:hover .sendToChatBtn {
+.linkedItemRowMain:hover .actionMenu,
+.linkedItemRowMain:focus-within .actionMenu {
   opacity: 1;
-  pointer-events: auto;
-}
-
-.linkedItemRowMain:focus-within .sendToChatBtn,
-.sendToChatBtn:focus-visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.sendToChatBtn:hover {
-  background: var(--color-surface);
-  color: var(--color-accent);
 }

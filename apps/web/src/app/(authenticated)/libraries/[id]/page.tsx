@@ -164,7 +164,6 @@ export default function LibraryDetailPage() {
     <PaneContainer>
       <Pane
         title={library.name}
-        back={{ label: "Back to Libraries", href: "/libraries" }}
         headerActions={
           !library.is_default && library.role === "admin" ? (
             <form className={styles.renameForm} onSubmit={handleRename}>
@@ -219,16 +218,19 @@ export default function LibraryDetailPage() {
                       {item.processing_status.replaceAll("_", " ")}
                     </StatusPill>
                   }
-                  actions={
-                    library.role === "admin" ? (
-                      <button
-                        className={styles.removeBtn}
-                        onClick={() => handleRemoveMedia(item.id)}
-                        aria-label={`Remove ${item.title}`}
-                      >
-                        Remove
-                      </button>
-                    ) : null
+                  options={
+                    library.role === "admin"
+                      ? [
+                          {
+                            id: "remove",
+                            label: "Remove",
+                            tone: "danger" as const,
+                            onSelect: () => {
+                              void handleRemoveMedia(item.id);
+                            },
+                          },
+                        ]
+                      : []
                   }
                 />
               ))}

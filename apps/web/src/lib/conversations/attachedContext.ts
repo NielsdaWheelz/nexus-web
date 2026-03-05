@@ -12,7 +12,16 @@ const UUID_RE =
 
 const SUPPORTED_ATTACH_TYPES = new Set<ContextItem["type"]>(["highlight"]);
 
-const ATTACH_PARAM_KEYS = ["attach_type", "attach_id"] as const;
+const VALID_COLORS = new Set(["yellow", "green", "blue", "pink", "purple"]);
+
+const ATTACH_PARAM_KEYS = [
+  "attach_type",
+  "attach_id",
+  "attach_color",
+  "attach_preview",
+  "attach_media_id",
+  "attach_media_title",
+] as const;
 
 /**
  * Parse attach query params into a ContextItem list.
@@ -30,7 +39,32 @@ export function parseAttachContext(
     return [];
   if (!UUID_RE.test(attachId)) return [];
 
-  return [{ type: attachType as ContextItem["type"], id: attachId }];
+  const item: ContextItem = {
+    type: attachType as ContextItem["type"],
+    id: attachId,
+  };
+
+  const color = searchParams.get("attach_color");
+  if (color && VALID_COLORS.has(color)) {
+    item.color = color as ContextItem["color"];
+  }
+
+  const preview = searchParams.get("attach_preview");
+  if (preview) {
+    item.preview = preview;
+  }
+
+  const mediaId = searchParams.get("attach_media_id");
+  if (mediaId && UUID_RE.test(mediaId)) {
+    item.mediaId = mediaId;
+  }
+
+  const mediaTitle = searchParams.get("attach_media_title");
+  if (mediaTitle) {
+    item.mediaTitle = mediaTitle;
+  }
+
+  return [item];
 }
 
 /**

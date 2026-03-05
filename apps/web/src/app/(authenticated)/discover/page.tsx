@@ -1,3 +1,5 @@
+"use client";
+
 import type { ComponentType } from "react";
 import { ArrowRight, FileText, Library, Mic, Video } from "lucide-react";
 import PageLayout from "@/components/ui/PageLayout";

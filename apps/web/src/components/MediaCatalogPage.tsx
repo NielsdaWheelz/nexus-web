@@ -23,6 +23,8 @@ interface MediaCatalogPageProps {
   allowedKinds: MediaKind[];
   emptyMessage: string;
   headerSlot?: React.ReactNode;
+  /** Called when user requests deletion of a media item. */
+  onDeleteItem?: (itemId: string) => void;
 }
 
 interface MediaItemResponse {
@@ -111,6 +113,7 @@ export default function MediaCatalogPage({
   allowedKinds,
   emptyMessage,
   headerSlot,
+  onDeleteItem,
 }: MediaCatalogPageProps) {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -270,6 +273,18 @@ export default function MediaCatalogPage({
                   <StatusPill variant={statusVariant(item.processing_status)}>
                     {statusLabel(item.processing_status)}
                   </StatusPill>
+                }
+                options={
+                  onDeleteItem
+                    ? [
+                        {
+                          id: "delete",
+                          label: "Delete",
+                          tone: "danger",
+                          onSelect: () => onDeleteItem(item.id),
+                        },
+                      ]
+                    : undefined
                 }
               />
             ))}

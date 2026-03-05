@@ -70,6 +70,11 @@ export type SSEErrorHandler = (error: Error) => void;
 export interface ContextItem {
   type: "highlight" | "annotation" | "media";
   id: string;
+  /** Display fields — optional, for richer rendering */
+  color?: "yellow" | "green" | "blue" | "pink" | "purple";
+  preview?: string;
+  mediaId?: string;
+  mediaTitle?: string;
 }
 
 export interface SendMessageRequest {

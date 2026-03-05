@@ -1,8 +1,9 @@
 "use client";
 
 import type { MouseEvent, ReactNode } from "react";
-import Link from "next/link";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import ContextRow from "@/components/ui/ContextRow";
 import styles from "./AppList.module.css";
 
 interface AppListProps {
@@ -19,6 +20,7 @@ interface AppListItemProps {
   icon?: ReactNode;
   trailing?: ReactNode;
   actions?: ReactNode;
+  options?: ActionMenuOption[];
 }
 
 export function AppList({ children }: AppListProps) {
@@ -35,8 +37,9 @@ export function AppListItem({
   icon,
   trailing,
   actions,
+  options,
 }: AppListItemProps) {
-  const handlePrimaryClick = (event: MouseEvent<HTMLAnchorElement>) => {
+  const handlePrimaryClick = (event: MouseEvent<HTMLElement>) => {
     if (
       !href ||
       event.defaultPrevented ||
@@ -55,34 +58,43 @@ export function AppListItem({
     }
   };
 
+  const resolvedActions =
+    actions || (options && options.length > 0) ? (
+      <>
+        {actions}
+        {options && options.length > 0 && (
+          <ActionMenu options={options} className={styles.actionMenu} />
+        )}
+      </>
+    ) : undefined;
+
   const primaryContent = (
-    <>
-      {icon && <span className={styles.icon}>{icon}</span>}
-      <div className={styles.content}>
-        <span className={styles.title}>{title}</span>
-        {description && <span className={styles.description}>{description}</span>}
-        {meta && <span className={styles.meta}>{meta}</span>}
-      </div>
-      {trailing && <span className={styles.trailing}>{trailing}</span>}
-    </>
+    <ContextRow
+      className={styles.row}
+      href={href}
+      target={target}
+      rel={rel}
+      onMainClick={href ? handlePrimaryClick : undefined}
+      mainClassName={styles.primary}
+      leadingClassName={styles.icon}
+      contentClassName={styles.content}
+      titleClassName={styles.title}
+      descriptionClassName={styles.description}
+      metaClassName={styles.meta}
+      trailingClassName={styles.trailing}
+      actionsClassName={styles.actions}
+      leading={icon}
+      title={title}
+      description={description}
+      meta={meta}
+      trailing={trailing}
+      actions={resolvedActions}
+    />
   );
 
   return (
     <li className={styles.item}>
-      {href ? (
-        <Link
-          href={href}
-          className={styles.primary}
-          target={target}
-          rel={rel}
-          onClick={handlePrimaryClick}
-        >
-          {primaryContent}
-        </Link>
-      ) : (
-        <div className={styles.primary}>{primaryContent}</div>
-      )}
-      {actions && <div className={styles.actions}>{actions}</div>}
+      {primaryContent}
     </li>
   );
 }

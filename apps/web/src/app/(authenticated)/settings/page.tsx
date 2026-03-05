@@ -1,3 +1,5 @@
+"use client";
+
 import { ArrowRight, BookOpen, KeyRound, ShieldCheck } from "lucide-react";
 import PageLayout from "@/components/ui/PageLayout";
 import SectionCard from "@/components/ui/SectionCard";

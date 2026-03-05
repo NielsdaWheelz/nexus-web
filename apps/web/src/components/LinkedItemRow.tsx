@@ -14,7 +14,9 @@
 
 "use client";
 
-import { forwardRef, useCallback } from "react";
+import { forwardRef, useCallback, useMemo } from "react";
+import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import ContextRow from "@/components/ui/ContextRow";
 import styles from "./LinkedItemsPane.module.css";
 
 // =============================================================================
@@ -53,6 +55,8 @@ export interface LinkedItemRowProps {
   className?: string;
   /** Optional expanded inline content rendered beneath the row preview. */
   expandedContent?: React.ReactNode;
+  /** Optional action menu options for the row. */
+  options?: ActionMenuOption[];
 }
 
 // =============================================================================
@@ -84,6 +88,7 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
       style,
       className,
       expandedContent,
+      options: optionsProp,
     },
     ref
   ) {
@@ -95,15 +100,23 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
       onMouseEnter(highlight.id);
     }, [onMouseEnter, highlight.id]);
 
-    const handleSendToChat = useCallback(
-      (e: React.MouseEvent) => {
-        e.stopPropagation();
-        onSendToChat?.(highlight.id);
-      },
-      [onSendToChat, highlight.id]
-    );
-
     const isExpanded = Boolean(expandedContent);
+
+    // Build menu options: "Quote to chat" from onSendToChat + any extra options
+    const menuOptions = useMemo(() => {
+      const items: ActionMenuOption[] = [];
+      if (onSendToChat) {
+        items.push({
+          id: "quote-to-chat",
+          label: "Quote to chat",
+          onSelect: () => onSendToChat(highlight.id),
+        });
+      }
+      if (optionsProp) {
+        items.push(...optionsProp);
+      }
+      return items;
+    }, [onSendToChat, highlight.id, optionsProp]);
 
     // Truncate text for preview
     const previewText =
@@ -117,58 +130,60 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
         data-highlight-id={highlight.id}
         className={`${styles.linkedItemRow} ${isFocused ? styles.rowFocused : ""} ${
           isExpanded ? styles.rowExpanded : ""
-        } ${className ?? ""}`}
+        } ${className ?? ""}`.trim()}
         style={style}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={onMouseLeave}
       >
-        <div
-          className={styles.linkedItemRowMain}
-          onClick={handleClick}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
+        <ContextRow
+          mainClassName={styles.linkedItemRowMain}
+          leading={
+            <span
+              className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
+              aria-hidden="true"
+            />
+          }
+          title={previewText}
+          titleClassName={styles.previewText}
+          trailing={
+            <>
+              {highlight.annotation && (
+                <span className={styles.annotationIndicator} aria-label="Has annotation">
+                  💬
+                </span>
+              )}
+              {menuOptions.length > 0 && (
+                <ActionMenu
+                  options={menuOptions}
+                  className={styles.actionMenu}
+                />
+              )}
+            </>
+          }
+          onMainClick={handleClick}
+          onMainKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
               handleClick();
             }
           }}
-          aria-pressed={isFocused}
-          aria-expanded={isExpanded}
-        >
-          <span
-            className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
-            aria-hidden="true"
-          />
-          <span className={styles.previewText} title={highlight.exact}>
-            {previewText}
-          </span>
-          {highlight.annotation && (
-            <span className={styles.annotationIndicator} aria-label="Has annotation">
-              💬
-            </span>
-          )}
-          {onSendToChat && (
-            <button
-              className={styles.sendToChatBtn}
-              onClick={handleSendToChat}
-              aria-label="Send to chat"
-              title="Quote to chat"
-            >
-              →💬
-            </button>
-          )}
-        </div>
-        {expandedContent && (
-          <div
-            className={styles.rowExpansion}
-            onClick={(e) => {
-              e.stopPropagation();
-            }}
-          >
-            {expandedContent}
-          </div>
-        )}
+          mainRole="button"
+          mainTabIndex={0}
+          ariaPressed={isFocused}
+          ariaExpanded={isExpanded}
+          expandedContent={
+            expandedContent ? (
+              <div
+                onClick={(event) => {
+                  event.stopPropagation();
+                }}
+              >
+                {expandedContent}
+              </div>
+            ) : undefined
+          }
+          expandedClassName={styles.rowExpansion}
+        />
       </div>
     );
   }

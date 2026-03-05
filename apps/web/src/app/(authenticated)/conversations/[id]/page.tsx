@@ -8,7 +8,6 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import Link from "next/link";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ContextItem } from "@/lib/api/sse";
 import {
@@ -16,12 +15,14 @@ import {
   stripAttachParams,
 } from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
+import ConversationContextPane from "@/components/ConversationContextPane";
 import StateMessage from "@/components/ui/StateMessage";
 import {
   usePaneParam,
   usePaneRouter,
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
+import { SplitSurface } from "@/components/workspace";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import styles from "../page.module.css";
 
@@ -267,8 +268,7 @@ export default function ConversationPage() {
       <div className={styles.container}>
         <div className={styles.main}>
           <StateMessage variant="error">
-            {error || "Conversation not found"}{" "}
-            <Link href="/conversations">Back to Conversations</Link>
+            {error || "Conversation not found"}
           </StateMessage>
         </div>
       </div>
@@ -276,58 +276,70 @@ export default function ConversationPage() {
   }
 
   return (
-    <div className={styles.container}>
-      <div className={styles.main}>
-        <SurfaceHeader
-          title={`Chat ${conversation.id.slice(0, 8)}`}
-          subtitle={`${conversation.message_count} messages`}
-          back={{ label: "Back to Conversations", href: "/conversations" }}
-          className={styles.mainHeaderChrome}
-          options={[
-            {
-              id: "delete-conversation",
-              label: deleting ? "Deleting..." : "Delete conversation",
-              tone: "danger",
-              disabled: deleting,
-              onSelect: () => {
-                void handleDeleteConversation();
-              },
-            },
-          ]}
-        />
-        <div className={styles.chatContainer}>
-          {/* Message thread */}
-          <div ref={messageListRef} className={styles.messageList}>
-            {olderCursor && (
-              <button
-                className={styles.loadOlder}
-                aria-label="Load older messages"
-                onClick={loadOlder}
-              >
-                Load older messages
-              </button>
-            )}
+    <SplitSurface
+      primary={
+        <div className={styles.container}>
+          <div className={styles.main}>
+            <SurfaceHeader
+              title={`Chat ${conversation.id.slice(0, 8)}`}
+              subtitle={`${conversation.message_count} messages`}
+              className={styles.mainHeaderChrome}
+              options={[
+                {
+                  id: "delete-conversation",
+                  label: deleting ? "Deleting..." : "Delete conversation",
+                  tone: "danger",
+                  disabled: deleting,
+                  onSelect: () => {
+                    void handleDeleteConversation();
+                  },
+                },
+              ]}
+            />
+            <div className={styles.chatContainer}>
+              {/* Message thread */}
+              <div ref={messageListRef} className={styles.messageList}>
+                {olderCursor && (
+                  <button
+                    className={styles.loadOlder}
+                    aria-label="Load older messages"
+                    onClick={loadOlder}
+                  >
+                    Load older messages
+                  </button>
+                )}
 
-            {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
-            ))}
+                {messages.map((msg) => (
+                  <MessageBubble key={msg.id} message={msg} />
+                ))}
+              </div>
+
+              {/* Composer */}
+              <ChatComposer
+                conversationId={id}
+                attachedContexts={attachedContexts}
+                onRemoveContext={handleRemoveContext}
+                onOptimisticMessages={handleOptimisticMessages}
+                onMetaReceived={handleMetaReceived}
+                onDelta={handleDelta}
+                onDone={handleDone}
+                onNonStreamMessages={handleNonStreamMessages}
+                onMessageSent={clearAttachState}
+              />
+            </div>
           </div>
-
-          {/* Composer */}
-          <ChatComposer
-            conversationId={id}
-            attachedContexts={attachedContexts}
-            onRemoveContext={handleRemoveContext}
-            onOptimisticMessages={handleOptimisticMessages}
-            onMetaReceived={handleMetaReceived}
-            onDelta={handleDelta}
-            onDone={handleDone}
-            onNonStreamMessages={handleNonStreamMessages}
-            onMessageSent={clearAttachState}
-          />
         </div>
-      </div>
-    </div>
+      }
+      secondary={
+        <ConversationContextPane
+          title="Linked items"
+          contexts={attachedContexts}
+          onRemoveContext={handleRemoveContext}
+        />
+      }
+      secondaryTitle="Linked items"
+      secondaryFabLabel="Context"
+    />
   );
 }
 

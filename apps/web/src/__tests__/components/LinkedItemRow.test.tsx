@@ -53,17 +53,18 @@ describe("LinkedItemRow", () => {
     await user.unhover(row);
     expect(onMouseLeave).toHaveBeenCalledTimes(1);
 
-    const sendToChatButton = screen.getByLabelText("Send to chat", {
-      selector: "button",
-    });
-    await user.click(sendToChatButton);
+    // Quote-to-chat is now in ActionMenu
+    const actionsButton = screen.getByRole("button", { name: "Actions" });
+    await user.click(actionsButton);
+    const quoteItem = await screen.findByRole("menuitem", { name: "Quote to chat" });
+    await user.click(quoteItem);
 
     expect(onSendToChat).toHaveBeenCalledTimes(1);
     expect(onSendToChat).toHaveBeenCalledWith("h-1");
     expect(onClick).toHaveBeenCalledTimes(2);
   });
 
-  it("omits quote button when quote callback is absent", () => {
+  it("omits action menu when no callbacks or options given", () => {
     render(
       <LinkedItemRow
         highlight={{
@@ -80,7 +81,7 @@ describe("LinkedItemRow", () => {
     );
 
     expect(
-      screen.queryByLabelText("Send to chat", { selector: "button" })
+      screen.queryByRole("button", { name: "Actions" })
     ).not.toBeInTheDocument();
   });
 });

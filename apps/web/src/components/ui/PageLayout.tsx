@@ -1,16 +1,12 @@
 import type { ReactNode } from "react";
 import styles from "./PageLayout.module.css";
 import SurfaceHeader, {
-  type SurfaceHeaderBackAction,
-  type SurfaceHeaderNavigation,
   type SurfaceHeaderOption,
 } from "./SurfaceHeader";
 
 interface PageLayoutProps {
   title: string;
   description?: string;
-  back?: SurfaceHeaderBackAction;
-  navigation?: SurfaceHeaderNavigation;
   options?: SurfaceHeaderOption[];
   meta?: ReactNode;
   actions?: ReactNode;
@@ -20,8 +16,6 @@ interface PageLayoutProps {
 export default function PageLayout({
   title,
   description,
-  back,
-  navigation,
   options,
   meta,
   actions,
@@ -32,8 +26,6 @@ export default function PageLayout({
       <SurfaceHeader
         title={title}
         subtitle={description}
-        back={back}
-        navigation={navigation}
         options={options}
         actions={actions}
         meta={meta}

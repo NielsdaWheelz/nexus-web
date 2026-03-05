@@ -55,38 +55,6 @@
   text-decoration: underline;
 }
 
-.headerActions {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.headerActionBtn {
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-}
-
-.headerActionBtn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.headerSelect {
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  padding: var(--space-1) var(--space-2);
-  min-width: 12rem;
-}
-
 .zoomLabel {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);

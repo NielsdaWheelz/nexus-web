@@ -1,13 +1,58 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import Navbar from "@/components/Navbar";
 
-// Mock next/navigation
-vi.mock("next/navigation", () => ({
-  usePathname: () => "/libraries",
+const { mockNavigateTab, MOCK_STORE } = vi.hoisted(() => {
+  const mockNavigateTab = vi.fn();
+  return {
+    mockNavigateTab,
+    MOCK_STORE: {
+      state: {
+        schemaVersion: 2,
+        activeGroupId: "group-test-1",
+        groups: [
+          {
+            id: "group-test-1",
+            activeTabId: "tab-test-1",
+            tabs: [{ id: "tab-test-1", href: "/libraries" }],
+          },
+        ],
+      },
+      meta: { lastDecodeError: null, lastEncodeError: null },
+      activateGroup: vi.fn(),
+      activateTab: vi.fn(),
+      openTab: vi.fn(),
+      openGroupWithTab: vi.fn(),
+      navigateTab: mockNavigateTab,
+      closeTab: vi.fn(),
+      closeGroup: vi.fn(),
+      setGroupWidth: vi.fn(),
+      replaceState: vi.fn(),
+    },
+  };
+});
+
+vi.mock("@/lib/workspace/store", () => ({
+  useWorkspaceStore: () => MOCK_STORE,
 }));
 
+// Mock next/navigation (needed by next/link internally)
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/libraries",
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+  }),
+  useSearchParams: () => new URLSearchParams(),
+  useParams: () => ({}),
+}));
+
+import Navbar from "@/components/Navbar";
+
 describe("Navbar", () => {
+  beforeEach(() => {
+    mockNavigateTab.mockClear();
+  });
+
   it("renders the logo", () => {
     render(<Navbar />);
     expect(screen.getByText("Nexus")).toBeInTheDocument();
@@ -32,11 +77,9 @@ describe("Navbar", () => {
     const onToggle = vi.fn();
     render(<Navbar onToggle={onToggle} />);
 
-    // Collapse
     const collapseButton = screen.getByLabelText("Collapse navigation");
     fireEvent.click(collapseButton);
 
-    // Now should show expand button
     const expandButton = screen.getByLabelText("Expand navigation");
     expect(expandButton).toBeInTheDocument();
   });
@@ -44,7 +87,6 @@ describe("Navbar", () => {
   it("highlights active link", () => {
     render(<Navbar />);
     const librariesLink = screen.getByText("Libraries").closest("a");
-    // CSS modules hash the class name, so check for partial match
     expect(librariesLink?.className).toMatch(/active/i);
   });
 });
