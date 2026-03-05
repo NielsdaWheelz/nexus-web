@@ -750,8 +750,12 @@ def _seed_epub_media(session_factory, user_id: UUID, settings) -> None:
     )
 
     with session_factory() as db:
-        confirm_ingest(db=db, viewer_id=user_id, media_id=UUID(epub_media_id_str))
-
+        confirm_result = confirm_ingest(
+            db=db,
+            viewer_id=user_id,
+            media_id=UUID(epub_media_id_str),
+        )
+    epub_media_id_str = confirm_result["media_id"]
     epub_media_id = UUID(epub_media_id_str)
 
     with session_factory() as db:
@@ -872,8 +876,12 @@ def _seed_reader_resume_media(session_factory, user_id: UUID, settings) -> None:
     )
 
     with session_factory() as db:
-        confirm_ingest(db=db, viewer_id=user_id, media_id=UUID(epub_media_id_str))
-
+        confirm_result = confirm_ingest(
+            db=db,
+            viewer_id=user_id,
+            media_id=UUID(epub_media_id_str),
+        )
+    epub_media_id_str = confirm_result["media_id"]
     epub_media_id = UUID(epub_media_id_str)
     with session_factory() as db:
         extraction_result = run_epub_ingest_sync(db, epub_media_id)
@@ -925,8 +933,12 @@ def _seed_reader_resume_media(session_factory, user_id: UUID, settings) -> None:
     )
 
     with session_factory() as db:
-        confirm_ingest(db=db, viewer_id=user_id, media_id=UUID(pdf_media_id_str))
-
+        confirm_result = confirm_ingest(
+            db=db,
+            viewer_id=user_id,
+            media_id=UUID(pdf_media_id_str),
+        )
+    pdf_media_id_str = confirm_result["media_id"]
     pdf_media_id = UUID(pdf_media_id_str)
     with session_factory() as db:
         extraction_result = run_pdf_ingest_sync(db, pdf_media_id)

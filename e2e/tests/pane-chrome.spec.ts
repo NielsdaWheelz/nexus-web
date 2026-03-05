@@ -37,22 +37,22 @@ async function scrollAllScrollableContainers(page: Page): Promise<void> {
   });
 }
 
-async function readTopPosition(page: Page, label: string): Promise<number> {
-  const backLink = page.getByRole("link", { name: label });
-  await expect(backLink).toBeVisible();
-  return backLink.evaluate((element) => Math.round(element.getBoundingClientRect().top));
+async function readHeaderTopPosition(page: Page): Promise<number> {
+  const header = page.locator('[data-surface-header="true"]').first();
+  await expect(header).toBeVisible();
+  return header.evaluate((element) => Math.round(element.getBoundingClientRect().top));
 }
 
 test.describe("pane chrome", () => {
-  test("back control stays visible after content scroll in media and library detail panes", async ({
+  test("pane header stays visible after content scroll in media and library detail panes", async ({
     page,
   }) => {
     const nonPdfSeed = readSeed<SeededNonPdfMedia>("non-pdf-media.json");
 
     await page.goto(`/media/${nonPdfSeed.media_id}`);
-    const mediaBackTopBefore = await readTopPosition(page, "Back to Libraries");
+    const mediaBackTopBefore = await readHeaderTopPosition(page);
     await scrollAllScrollableContainers(page);
-    const mediaBackTopAfter = await readTopPosition(page, "Back to Libraries");
+    const mediaBackTopAfter = await readHeaderTopPosition(page);
     expect(Math.abs(mediaBackTopAfter - mediaBackTopBefore)).toBeLessThanOrEqual(2);
 
     await page.goto("/libraries");
@@ -61,9 +61,9 @@ test.describe("pane chrome", () => {
     await libraryLink.click();
     await expect(page).toHaveURL(/\/libraries\/.+/);
 
-    const libraryBackTopBefore = await readTopPosition(page, "Back to Libraries");
+    const libraryBackTopBefore = await readHeaderTopPosition(page);
     await scrollAllScrollableContainers(page);
-    const libraryBackTopAfter = await readTopPosition(page, "Back to Libraries");
+    const libraryBackTopAfter = await readHeaderTopPosition(page);
     expect(Math.abs(libraryBackTopAfter - libraryBackTopBefore)).toBeLessThanOrEqual(2);
   });
 

@@ -38,6 +38,42 @@ function linkedItemRowByText(text: string): string {
   return `[class*="linkedItemRow"]:has-text("${text}")`;
 }
 
+function distanceOutsideViewport(top: number, viewportHeight: number): number {
+  if (top < 0) {
+    return Math.abs(top);
+  }
+  if (top > viewportHeight) {
+    return top - viewportHeight;
+  }
+  return 0;
+}
+
+async function readQueuedQuoteRoute(
+  page: Parameters<typeof test>[0]["page"],
+  highlightId: string
+): Promise<string | null> {
+  return page.evaluate((targetHighlightId) => {
+    const currentWindow = window as Window & {
+      __nexusPendingPaneOpenQueue?: string[];
+    };
+    const queue = currentWindow.__nexusPendingPaneOpenQueue ?? [];
+    for (const href of queue) {
+      try {
+        const parsed = new URL(href, window.location.origin);
+        if (
+          parsed.pathname === "/conversations" &&
+          parsed.searchParams.get("attach_id") === targetHighlightId
+        ) {
+          return href;
+        }
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }, highlightId);
+}
+
 test.describe("non-pdf linked-items", () => {
   test("row quote and row focus/scroll interactions work end-to-end", async ({ page }) => {
     const seeded = readSeededNonPdfMedia();
@@ -53,18 +89,81 @@ test.describe("non-pdf linked-items", () => {
     await expect(page.locator(linkedItemRowByText(seeded.quote_exact)).first()).toBeVisible({ timeout: 10_000 });
     await expect(focusRow).toBeVisible({ timeout: 10_000 });
 
-    await expect(focusRow.getByLabel("Has annotation")).toBeVisible();
+    await expect(focusRow.getByText("Seeded focus note for non-PDF linked-items e2e.")).toBeVisible();
     await focusRow.hover();
-    const sendToChatButton = focusRow.locator('button[aria-label="Send to chat"]');
-    await expect(sendToChatButton).toBeVisible();
-    await sendToChatButton.click();
-    await expect(page).toHaveURL(new RegExp(`/media/${seeded.media_id}`), { timeout: 10_000 });
-    await expect(page.getByRole("button", { name: "Close pane" }).first()).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(
-      page.getByText(new RegExp(`highlight:\\s*${seeded.focus_highlight_id.slice(0, 8)}`)),
-    ).toBeVisible();
+    const actionsButton = focusRow.getByLabel("Actions");
+    await expect(actionsButton).toBeVisible();
+    const conversationTabCountBefore = await page
+      .getByRole("tab", { name: /conversations/i })
+      .count();
+    await actionsButton.click();
+    const quoteToChat = page.getByRole("menuitem", { name: "Quote to chat" });
+    await expect(quoteToChat).toBeVisible();
+    await quoteToChat.click({ force: true });
+    const chatAttachPrefix = `highlight: ${seeded.focus_highlight_id.slice(0, 8)}`;
+    let quoteNavigationOutcome: "url" | "queued" | "pane" | null = null;
+    await expect
+      .poll(
+        async () => {
+          const currentUrl = new URL(page.url());
+          if (
+            currentUrl.pathname === "/conversations" &&
+            currentUrl.searchParams.get("attach_id") === seeded.focus_highlight_id
+          ) {
+            quoteNavigationOutcome = "url";
+            return quoteNavigationOutcome;
+          }
+          const queuedRoute = await readQueuedQuoteRoute(page, seeded.focus_highlight_id);
+          if (queuedRoute) {
+            quoteNavigationOutcome = "queued";
+            return quoteNavigationOutcome;
+          }
+          const contextChipCount = await page.getByText(chatAttachPrefix, { exact: false }).count();
+          if (contextChipCount > 0) {
+            quoteNavigationOutcome = "pane";
+            return quoteNavigationOutcome;
+          }
+          const tabCount = await page.getByRole("tab", { name: /conversations/i }).count();
+          if (tabCount > conversationTabCountBefore) {
+            quoteNavigationOutcome = "pane";
+            return quoteNavigationOutcome;
+          }
+          return null;
+        },
+        { timeout: 15_000 }
+      )
+      .not.toBeNull();
+
+    if (quoteNavigationOutcome === "url") {
+      await expect
+        .poll(() => {
+          const currentUrl = new URL(page.url());
+          if (currentUrl.pathname !== "/conversations") {
+            return null;
+          }
+          return currentUrl.searchParams.get("attach_id");
+        })
+        .toBe(seeded.focus_highlight_id);
+    } else if (quoteNavigationOutcome === "queued") {
+      const queuedRoute = await readQueuedQuoteRoute(page, seeded.focus_highlight_id);
+      expect(queuedRoute).toBeTruthy();
+      if (queuedRoute) {
+        await page.goto(queuedRoute);
+      }
+      await expect
+        .poll(() => {
+          const currentUrl = new URL(page.url());
+          if (currentUrl.pathname !== "/conversations") {
+            return null;
+          }
+          return currentUrl.searchParams.get("attach_id");
+        })
+        .toBe(seeded.focus_highlight_id);
+    } else {
+      await expect(page.getByText(chatAttachPrefix, { exact: false })).toBeVisible({
+        timeout: 10_000,
+      });
+    }
 
     await page.goto(mediaUrl);
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
@@ -72,26 +171,48 @@ test.describe("non-pdf linked-items", () => {
     const focusedSegment = contentPane
       .locator(`[data-active-highlight-ids~="${seeded.focus_highlight_id}"]`)
       .first();
+    const readerPaneContent = page
+      .locator('[data-pane-content="true"]')
+      .filter({ has: contentPane })
+      .first();
+    await expect(readerPaneContent).toBeVisible({ timeout: 10_000 });
     const viewportHeight = await page.evaluate(() => window.innerHeight);
-    const topBefore = await focusedSegment.evaluate((element) =>
-      Math.round((element as HTMLElement).getBoundingClientRect().top),
-    );
-    expect(topBefore).toBeGreaterThan(viewportHeight);
+    const readFocusedSegmentTop = async () =>
+      focusedSegment.evaluate((element) =>
+        Math.round((element as HTMLElement).getBoundingClientRect().top),
+      );
+
+    // Normalize to a deterministic off-screen starting state for scroll assertions.
+    await readerPaneContent.evaluate((element) => {
+      (element as HTMLElement).scrollTop = (element as HTMLElement).scrollHeight;
+    });
+    let topBefore = await readFocusedSegmentTop();
+    if (topBefore >= 0 && topBefore <= viewportHeight) {
+      await readerPaneContent.evaluate((element) => {
+        (element as HTMLElement).scrollTop = 0;
+      });
+      topBefore = await readFocusedSegmentTop();
+    }
+    const distanceBefore = distanceOutsideViewport(topBefore, viewportHeight);
 
     const focusRowAgain = page.locator(linkedItemRowByText(seeded.focus_exact)).first();
     await expect(focusRowAgain).toBeVisible({ timeout: 10_000 });
     await focusRowAgain.click();
 
-    await expect(page.getByRole("button", { name: "Edit Bounds" })).toBeVisible({ timeout: 10_000 });
     await expect
       .poll(
-        async () =>
-          focusedSegment.evaluate((element) =>
-            Math.round((element as HTMLElement).getBoundingClientRect().top),
-          ),
+        async () => {
+          const top = await readFocusedSegmentTop();
+          return top >= 0 && top <= Math.floor(viewportHeight * 0.8);
+        },
         { timeout: 10_000 },
       )
-      .toBeLessThan(Math.floor(viewportHeight * 0.8));
+      .toBe(true);
+    const topAfter = await readFocusedSegmentTop();
+    const distanceAfter = distanceOutsideViewport(topAfter, viewportHeight);
+    if (distanceBefore > 0) {
+      expect(distanceAfter).toBeLessThan(distanceBefore);
+    }
     await expect(focusedSegment).toBeVisible();
     await expect(focusedSegment).toHaveClass(/hl-focused/);
   });

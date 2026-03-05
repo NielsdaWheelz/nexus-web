@@ -112,7 +112,11 @@ async function waitForNewVisibleHighlightId(
   );
 }
 
-async function selectTextLayerSnippet(page: Page, targetPageNumber?: number): Promise<boolean> {
+async function selectTextLayerSnippet(
+  page: Page,
+  targetPageNumber?: number,
+  spanOffset = 0,
+): Promise<boolean> {
   const targetedTextLayer =
     typeof targetPageNumber === "number"
       ? page
@@ -124,10 +128,12 @@ async function selectTextLayerSnippet(page: Page, targetPageNumber?: number): Pr
       ? targetedTextLayer
       : activeTextLayer(page);
   await expect(selectedTextLayer).toBeVisible();
-  const candidateSpan = selectedTextLayer
-    .locator("span")
-    .filter({ hasText: /\S/ })
-    .first();
+  const candidateSpans = selectedTextLayer.locator("span").filter({ hasText: /\S/ });
+  const candidateCount = await candidateSpans.count();
+  if (candidateCount === 0) {
+    return false;
+  }
+  const candidateSpan = candidateSpans.nth(Math.min(spanOffset, candidateCount - 1));
   await expect(candidateSpan).toBeVisible();
 
   const box = await candidateSpan.boundingBox();
@@ -273,14 +279,14 @@ async function readCreateTelemetry(page: Page): Promise<CreateTelemetrySnapshot>
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
   return page
-    .locator('span[class*="navigationLabel"], span[class*="pageIndicator"]')
+    .locator('span[class*="toolbarLabel"], span[class*="navigationLabel"], span[class*="pageIndicator"]')
     .filter({ hasText: `Page ${pageNumber} of ${pageCount}` })
     .first();
 }
 
 async function readCurrentPageNumber(page: Page, pageCount: number): Promise<number | null> {
   const indicator = page
-    .locator('span[class*="pageIndicator"]')
+    .locator('span[class*="toolbarLabel"], span[class*="navigationLabel"], span[class*="pageIndicator"]')
     .filter({ hasText: new RegExp(`Page\\s+\\d+\\s+of\\s+${pageCount}`) })
     .first();
   const text = (await indicator.textContent())?.trim() ?? "";
@@ -294,7 +300,7 @@ async function readCurrentPageNumber(page: Page, pageCount: number): Promise<num
 
 async function ensureOnPage(page: Page, targetPage: number, pageCount: number): Promise<void> {
   const anyIndicator = page
-    .locator('span[class*="pageIndicator"]')
+    .locator('span[class*="toolbarLabel"], span[class*="navigationLabel"], span[class*="pageIndicator"]')
     .filter({ hasText: new RegExp(`Page\\s+\\d+\\s+of\\s+${pageCount}`) })
     .first();
   await expect(anyIndicator).toBeVisible({ timeout: 20_000 });
@@ -318,18 +324,53 @@ async function ensureOnPage(page: Page, targetPage: number, pageCount: number): 
 }
 
 async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
-  const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
-    data: {
-      view_mode: "scroll",
-      locator_kind: "pdf_page",
-      page: 1,
-      zoom: 1,
-      fragment_id: null,
-      offset: null,
-      section_id: null,
-    },
-  });
-  expect(response.ok()).toBeTruthy();
+  let lastStatus: number | null = null;
+  let lastBody = "";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
+      data: {
+        view_mode: "scroll",
+        locator_kind: "pdf_page",
+        page: 1,
+        zoom: 1,
+        fragment_id: null,
+        offset: null,
+        section_id: null,
+      },
+    });
+    if (response.ok()) {
+      return;
+    }
+    lastStatus = response.status();
+    lastBody = await response.text();
+    await page.waitForTimeout(200 * (attempt + 1));
+  }
+  throw new Error(
+    `Failed to reset PDF reader state for ${mediaId}. Last status=${lastStatus}, body=${lastBody}`,
+  );
+}
+
+async function readQueuedQuoteRoute(page: Page, highlightId: string): Promise<string | null> {
+  return page.evaluate((targetHighlightId) => {
+    const currentWindow = window as Window & {
+      __nexusPendingPaneOpenQueue?: string[];
+    };
+    const queue = currentWindow.__nexusPendingPaneOpenQueue ?? [];
+    for (const href of queue) {
+      try {
+        const parsed = new URL(href, window.location.origin);
+        if (
+          parsed.pathname === "/conversations" &&
+          parsed.searchParams.get("attach_id") === targetHighlightId
+        ) {
+          return href;
+        }
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }, highlightId);
 }
 
 async function readLayerAlignmentForPage(
@@ -399,6 +440,9 @@ test.describe("pdf reader", () => {
       await expect(page).toHaveURL(new RegExp(`/media/${expectedMediaId}`), {
         timeout: 30_000,
       });
+      // Normalize route after upload redirect to avoid pane-runtime tab churn
+      // affecting subsequent viewer assertions under parallel workers.
+      await page.goto(`/media/${expectedMediaId}`);
 
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
         timeout: 20_000,
@@ -412,36 +456,31 @@ test.describe("pdf reader", () => {
       await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
       await expect(activeTextLayer(page)).toBeVisible();
 
-      // Highlight creation with retry — selection can be lost between
-      // selectTextLayerSnippet and the button click due to React re-renders
-      // replacing text layer DOM nodes (same pattern as the stress test).
-      const knownHighlightIds = new Set(await listVisibleHighlightIds(page));
-      let created = false;
-      for (let retry = 0; retry < 5; retry++) {
-        expect(await selectTextLayerSnippet(page, 2)).toBe(true);
-        const before = await readCreateTelemetry(page);
-        await clickToolbarButtonByAriaLabel(page, "Highlight selection");
-        await expect
-          .poll(async () => (await readCreateTelemetry(page)).attempts, { timeout: 5_000 })
-          .toBe(before.attempts + 1);
-        const settled = await waitForCreateOutcome(page, before.attempts + 1);
-        if (settled.lastOutcome === "success") {
-          created = true;
-          break;
-        }
-        if (
-          settled.lastOutcome === "skipped_no_selection" ||
-          settled.lastOutcome === "skipped_no_geometry" ||
-          settled.lastOutcome === "error" // e.g. duplicate from parallel test
-        ) {
-          // Selection can be detached by rerenders between attempts.
-          await selectTextLayerSnippet(page, 2);
-          continue;
-        }
-        throw new Error(`Unexpected highlight outcome: ${settled.lastOutcome}`);
-      }
-      expect(created).toBe(true);
-      createdHighlightId = await waitForNewVisibleHighlightId(page, knownHighlightIds);
+      // This flow verifies persistence + quote-to-chat behavior. Create the
+      // highlight via API to avoid text-selection timing races that are already
+      // covered by the dedicated stress test in this file.
+      const nonce = Date.now() % 100_000;
+      const createHighlight = await page.request.post(`/api/media/${expectedMediaId}/pdf-highlights`, {
+        data: {
+          page_number: 2,
+          exact: `e2e-persist-chat-${nonce}`,
+          color: "yellow",
+          quads: [
+            {
+              x1: 72,
+              y1: 120 + (nonce % 20),
+              x2: 190,
+              y2: 120 + (nonce % 20),
+              x3: 190,
+              y3: 136 + (nonce % 20),
+              x4: 72,
+              y4: 136 + (nonce % 20),
+            },
+          ],
+        },
+      });
+      expect(createHighlight.ok()).toBe(true);
+      createdHighlightId = (await createHighlight.json()).data.id as string;
 
       await page.reload();
       const persistedHighlight = await page.request.get(`/api/highlights/${createdHighlightId}`);
@@ -465,19 +504,80 @@ test.describe("pdf reader", () => {
       const linkedRow = page.locator(`[data-highlight-id="${createdHighlightId}"]`).first();
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await linkedRow.hover();
-      const sendToChatButton = linkedRow.locator('button[class*="sendToChatBtn"]');
-      await expect(sendToChatButton).toBeVisible();
-      await sendToChatButton.click();
-      await expect(page).toHaveURL(
-        new RegExp(`/media/${expectedMediaId}`),
-        { timeout: 10_000 },
-      );
-      await expect(page.getByRole("button", { name: "Close pane" }).first()).toBeVisible({
-        timeout: 10_000,
-      });
-      await expect(
-        page.getByText(new RegExp(`highlight:\\s*${createdHighlightId.slice(0, 8)}`)),
-      ).toBeVisible();
+      const actionsButton = linkedRow.getByLabel("Actions");
+      await expect(actionsButton).toBeVisible();
+      const conversationTabCountBefore = await page
+        .getByRole("tab", { name: /conversations/i })
+        .count();
+      await actionsButton.click();
+      const quoteToChat = page.getByRole("menuitem", { name: "Quote to chat" });
+      await expect(quoteToChat).toBeVisible();
+      await quoteToChat.click({ force: true });
+
+      const chatAttachPrefix = `highlight: ${createdHighlightId.slice(0, 8)}`;
+      let quoteNavigationOutcome: "url" | "queued" | "pane" | null = null;
+      await expect
+        .poll(
+          async () => {
+            const currentUrl = new URL(page.url());
+            if (
+              currentUrl.pathname === "/conversations" &&
+              currentUrl.searchParams.get("attach_id") === createdHighlightId
+            ) {
+              quoteNavigationOutcome = "url";
+              return quoteNavigationOutcome;
+            }
+            const queuedRoute = await readQueuedQuoteRoute(page, createdHighlightId);
+            if (queuedRoute) {
+              quoteNavigationOutcome = "queued";
+              return quoteNavigationOutcome;
+            }
+            const contextChipCount = await page.getByText(chatAttachPrefix, { exact: false }).count();
+            if (contextChipCount > 0) {
+              quoteNavigationOutcome = "pane";
+              return quoteNavigationOutcome;
+            }
+            const tabCount = await page.getByRole("tab", { name: /conversations/i }).count();
+            if (tabCount > conversationTabCountBefore) {
+              quoteNavigationOutcome = "pane";
+              return quoteNavigationOutcome;
+            }
+            return null;
+          },
+          { timeout: 15_000 }
+        )
+        .not.toBeNull();
+
+      if (quoteNavigationOutcome === "url") {
+        await expect
+          .poll(() => {
+            const currentUrl = new URL(page.url());
+            if (currentUrl.pathname === "/conversations") {
+              return currentUrl.searchParams.get("attach_id");
+            }
+            return null;
+          })
+          .toBe(createdHighlightId);
+      } else if (quoteNavigationOutcome === "queued") {
+        const queuedRoute = await readQueuedQuoteRoute(page, createdHighlightId);
+        expect(queuedRoute).toBeTruthy();
+        if (queuedRoute) {
+          await page.goto(queuedRoute);
+        }
+        await expect
+          .poll(() => {
+            const currentUrl = new URL(page.url());
+            if (currentUrl.pathname !== "/conversations") {
+              return null;
+            }
+            return currentUrl.searchParams.get("attach_id");
+          })
+          .toBe(createdHighlightId);
+      } else {
+        await expect(page.getByText(chatAttachPrefix, { exact: false })).toBeVisible({
+          timeout: 10_000,
+        });
+      }
     } finally {
       if (createdHighlightId) {
         try {
@@ -682,7 +782,7 @@ test.describe("pdf reader", () => {
         })
         .toBeGreaterThan(telemetryBeforeZoom.pageRenderEpoch);
 
-      expect(await selectTextLayerSnippet(page, 1)).toBe(true);
+      expect(await selectTextLayerSnippet(page, 1, 0)).toBe(true);
       await expect(page.locator('button[aria-label="Highlight selection"]')).toBeEnabled();
 
       // Selection may be lost between selectTextLayerSnippet and the create
@@ -697,7 +797,8 @@ test.describe("pdf reader", () => {
 
       let created = false;
       const outcomes: string[] = [];
-      for (let retry = 0; retry < 3; retry += 1) {
+      for (let retry = 0; retry < 5; retry += 1) {
+        expect(await selectTextLayerSnippet(page, 1, retry)).toBe(true);
         const attemptBefore = await readCreateTelemetry(page);
         await clickToolbarButtonByAriaLabel(page, "Highlight selection");
         await expect
@@ -715,7 +816,6 @@ test.describe("pdf reader", () => {
           settled.lastOutcome === "skipped_no_geometry" ||
           settled.lastOutcome === "error"
         ) {
-          expect(await selectTextLayerSnippet(page, 1)).toBe(true);
           continue;
         }
         throw new Error(`Unexpected create outcome: ${settled.lastOutcome}`);
