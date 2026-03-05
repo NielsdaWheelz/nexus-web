@@ -1875,7 +1875,7 @@ export default function MediaViewPage() {
     if (media?.title) {
       qp.set("attach_media_title", media.title);
     }
-    return `/conversations?${qp}`;
+    return `/conversations/new?${qp}`;
   }, [highlights, media?.id, media?.title, mediaHighlights, pdfDocumentHighlights, pdfPageHighlights]);
 
   const openQuoteRoute = useCallback(

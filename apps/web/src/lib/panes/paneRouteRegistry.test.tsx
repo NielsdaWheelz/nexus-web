@@ -9,6 +9,23 @@ describe("pane route registry", () => {
     expect(route.render).toBeTypeOf("function");
   });
 
+  it("resolves /conversations/new before :id capture", () => {
+    const route = resolvePaneRoute("/conversations/new");
+    expect(route.id).toBe("conversationNew");
+    expect(route.render).toBeTypeOf("function");
+  });
+
+  it("still resolves /conversations/:id for real IDs", () => {
+    const route = resolvePaneRoute("/conversations/abc-123");
+    expect(route.id).toBe("conversation");
+    expect(route.params.id).toBe("abc-123");
+  });
+
+  it("resolves /conversations/new with query params", () => {
+    const route = resolvePaneRoute("/conversations/new?attach_type=highlight&attach_id=abc");
+    expect(route.id).toBe("conversationNew");
+  });
+
   it("returns unsupported when route is not registered", () => {
     const route = resolvePaneRoute("/not-supported");
     expect(route.id).toBe("unsupported");
