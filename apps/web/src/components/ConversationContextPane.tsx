@@ -2,7 +2,8 @@
 
 import Pane from "@/components/Pane";
 import StateMessage from "@/components/ui/StateMessage";
-import { AppList, AppListItem } from "@/components/ui/AppList";
+import ContextRow from "@/components/ui/ContextRow";
+import ActionMenu from "@/components/ui/ActionMenu";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { ContextItem } from "@/lib/api/sse";
 import styles from "./ConversationContextPane.module.css";
@@ -13,18 +14,29 @@ interface ConversationContextPaneProps {
   title?: string;
 }
 
+function truncate(text: string, max: number): string {
+  return text.length > max ? text.slice(0, max) + "..." : text;
+}
+
 function formatContextTitle(item: ContextItem): string {
-  if (item.preview) {
-    return item.preview;
-  }
+  if (item.preview) return item.preview;
   if (item.type === "highlight") return "Highlight";
   if (item.type === "annotation") return "Annotation";
   return "Media";
 }
 
-function formatContextDescription(item: ContextItem): string {
-  if (item.mediaTitle) return item.mediaTitle;
-  return `id ${item.id.slice(0, 8)}`;
+function formatSurroundingContext(item: ContextItem): string | undefined {
+  const parts: string[] = [];
+  if (item.prefix) parts.push("..." + truncate(item.prefix, 40));
+  if (item.suffix) parts.push(truncate(item.suffix, 40) + "...");
+  return parts.length > 0 ? parts.join(" [selection] ") : undefined;
+}
+
+function formatMeta(item: ContextItem): string | undefined {
+  const parts: string[] = [];
+  if (item.mediaTitle) parts.push(item.mediaTitle);
+  if (item.mediaKind) parts.push(item.mediaKind);
+  return parts.length > 0 ? parts.join(" \u2014 ") : undefined;
 }
 
 export default function ConversationContextPane({
@@ -38,11 +50,11 @@ export default function ConversationContextPane({
         {contexts.length === 0 ? (
           <StateMessage variant="empty">No linked context yet.</StateMessage>
         ) : (
-          <AppList>
+          <div className={styles.contextList}>
             {contexts.map((contextItem, index) => {
-              const options: ActionMenuOption[] = [];
+              const menuOptions: ActionMenuOption[] = [];
               if (onRemoveContext) {
-                options.push({
+                menuOptions.push({
                   id: "remove",
                   label: "Remove",
                   tone: "danger",
@@ -50,7 +62,7 @@ export default function ConversationContextPane({
                 });
               }
               if (contextItem.mediaId) {
-                options.push({
+                menuOptions.push({
                   id: "open-source",
                   label: "Open source",
                   href: `/media/${contextItem.mediaId}`,
@@ -58,9 +70,9 @@ export default function ConversationContextPane({
               }
 
               return (
-                <AppListItem
+                <ContextRow
                   key={`${contextItem.type}-${contextItem.id}-${index}`}
-                  icon={
+                  leading={
                     contextItem.color ? (
                       <span
                         className={`${styles.colorSwatch} ${styles[`swatch-${contextItem.color}`]}`}
@@ -69,13 +81,27 @@ export default function ConversationContextPane({
                     ) : undefined
                   }
                   title={formatContextTitle(contextItem)}
-                  description={formatContextDescription(contextItem)}
-                  meta={contextItem.mediaTitle ? `id ${contextItem.id.slice(0, 8)}` : undefined}
-                  options={options.length > 0 ? options : undefined}
+                  titleClassName={styles.contextTitle}
+                  description={formatSurroundingContext(contextItem)}
+                  descriptionClassName={styles.contextDescription}
+                  meta={formatMeta(contextItem)}
+                  metaClassName={styles.contextMeta}
+                  actions={
+                    menuOptions.length > 0 ? (
+                      <ActionMenu options={menuOptions} />
+                    ) : undefined
+                  }
+                  expandedContent={
+                    contextItem.annotationBody ? (
+                      <div className={styles.annotationNote}>
+                        {contextItem.annotationBody}
+                      </div>
+                    ) : undefined
+                  }
                 />
               );
             })}
-          </AppList>
+          </div>
         )}
       </div>
     </Pane>

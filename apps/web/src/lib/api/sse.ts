@@ -75,6 +75,29 @@ export interface ContextItem {
   preview?: string;
   mediaId?: string;
   mediaTitle?: string;
+  /** Enriched fields — populated via API hydration */
+  prefix?: string;
+  suffix?: string;
+  annotationBody?: string;
+  mediaKind?: string;
+  hydrated?: boolean;
+}
+
+/**
+ * Strip client-side enriched fields from a ContextItem before sending to the API.
+ * Only keeps the wire-format fields that the backend expects.
+ */
+export function toWireContextItem(
+  item: ContextItem,
+): Pick<ContextItem, "type" | "id" | "color" | "preview" | "mediaId" | "mediaTitle"> {
+  return {
+    type: item.type,
+    id: item.id,
+    ...(item.color !== undefined && { color: item.color }),
+    ...(item.preview !== undefined && { preview: item.preview }),
+    ...(item.mediaId !== undefined && { mediaId: item.mediaId }),
+    ...(item.mediaTitle !== undefined && { mediaTitle: item.mediaTitle }),
+  };
 }
 
 export interface SendMessageRequest {
