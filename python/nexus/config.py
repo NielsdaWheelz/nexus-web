@@ -169,6 +169,21 @@ class Settings(BaseSettings):
     # PR-05: LLM settings
     llm_timeout_seconds: float = Field(default=45.0, alias="LLM_TIMEOUT_SECONDS")
 
+    # Metadata enrichment settings
+    metadata_enrichment_enabled: bool = Field(default=True, alias="METADATA_ENRICHMENT_ENABLED")
+    metadata_enrichment_model_openai: str = Field(
+        default="gpt-4o-mini", alias="METADATA_ENRICHMENT_MODEL_OPENAI"
+    )
+    metadata_enrichment_model_anthropic: str = Field(
+        default="claude-3-5-haiku-20241022", alias="METADATA_ENRICHMENT_MODEL_ANTHROPIC"
+    )
+    metadata_enrichment_model_gemini: str = Field(
+        default="gemini-2.0-flash", alias="METADATA_ENRICHMENT_MODEL_GEMINI"
+    )
+    metadata_enrichment_max_content_chars: int = Field(
+        default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"
+    )
+
     # PR-08: Stream token auth
     # HS256 signing key for short-lived stream tokens (base64-encoded 32+ bytes)
     # Required in staging/prod; auto-generated deterministic key in local/test

@@ -8,8 +8,10 @@ Service routes own entry transitions and dispatch.
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy.orm import Session
+
 from nexus.celery import celery_app
-from nexus.db.models import FailureStage, Media, ProcessingStatus
+from nexus.db.models import FailureStage, Media, MediaAuthor, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services.epub_ingest import (
@@ -88,6 +90,8 @@ def ingest_epub(
 
         assert isinstance(result, EpubExtractionResult)
 
+        _persist_epub_metadata(db, media, result)
+
         media.processing_status = ProcessingStatus.ready_for_reading
         media.processing_completed_at = now
         media.failure_stage = None
@@ -96,6 +100,8 @@ def ingest_epub(
         media.failed_at = None
         media.updated_at = now
         db.commit()
+
+        _try_enrich_dispatch(media_id, request_id)
 
         logger.info(
             "ingest_epub_completed",
@@ -137,6 +143,48 @@ def ingest_epub(
         raise
     finally:
         db.close()
+
+
+def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
+    """Best-effort dispatch of metadata enrichment task."""
+    try:
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
+        enrich_metadata.apply_async(
+            args=[media_id], kwargs={"request_id": request_id}, queue="ingest"
+        )
+    except Exception:
+        logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
+
+
+def _persist_epub_metadata(
+    db: Session, media: Media, result: EpubExtractionResult
+) -> None:
+    """Persist EPUB OPF metadata to media and media_authors."""
+    if result.creators:
+        for i, name in enumerate(result.creators):
+            name = name.strip() if name else ""
+            if name:
+                db.add(
+                    MediaAuthor(
+                        media_id=media.id,
+                        name=name[:255],
+                        role="author",
+                        sort_order=i,
+                    )
+                )
+
+    if result.publisher and not media.publisher:
+        media.publisher = result.publisher[:255]
+
+    if result.language and not media.language:
+        media.language = result.language[:32]
+
+    if result.description and not media.description:
+        media.description = result.description[:2000]
+
+    if result.published_date and not media.published_date:
+        media.published_date = result.published_date[:64]
 
 
 def run_epub_ingest_sync(

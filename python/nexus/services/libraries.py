@@ -31,7 +31,7 @@ from nexus.schemas.library import (
     LibraryOut,
     LibraryRole,
 )
-from nexus.schemas.media import MediaOut
+from nexus.schemas.media import MediaAuthorOut, MediaOut
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
@@ -532,7 +532,8 @@ def list_library_media(
                    m.external_playback_url, m.provider, m.provider_id,
                    m.created_at, m.updated_at,
                    EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) as has_file,
-                   EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) as has_fragments
+                   EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) as has_fragments,
+                   m.published_date, m.publisher, m.language, m.description
             FROM media m
             JOIN library_media lm ON lm.media_id = m.id
             WHERE lm.library_id = :library_id
@@ -546,6 +547,22 @@ def list_library_media(
 
     pdf_media_ids = [row[0] for row in rows if row[1] == "pdf"]
     pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
+
+    # Batch-fetch authors for all returned media IDs to avoid N+1
+    page_media_ids = [row[0] for row in rows]
+    authors_by_media: dict = {mid: [] for mid in page_media_ids}
+    if page_media_ids:
+        author_rows = db.execute(
+            text(
+                "SELECT id, media_id, name, role FROM media_authors "
+                "WHERE media_id = ANY(:ids) ORDER BY sort_order"
+            ),
+            {"ids": page_media_ids},
+        ).fetchall()
+        for ar in author_rows:
+            authors_by_media[ar[1]].append(
+                MediaAuthorOut(id=ar[0], name=ar[2], role=ar[3])
+            )
 
     media_list = []
     for row in rows:
@@ -577,6 +594,11 @@ def list_library_media(
                 last_error_code=row[6],
                 playback_source=playback_source,
                 capabilities=capabilities,
+                authors=authors_by_media.get(row[0], []),
+                published_date=row[14],
+                publisher=row[15],
+                language=row[16],
+                description=row[17],
                 created_at=row[10],
                 updated_at=row[11],
             )

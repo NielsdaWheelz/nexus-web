@@ -27,7 +27,7 @@ from nexus.config import Environment, get_settings
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
-from nexus.schemas.media import FragmentOut, FromUrlResponse, MediaOut
+from nexus.schemas.media import FragmentOut, FromUrlResponse, MediaAuthorOut, MediaOut
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready, is_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
@@ -71,7 +71,8 @@ def get_media_for_viewer(
                    m.external_playback_url, m.provider, m.provider_id,
                    m.created_at, m.updated_at,
                    (SELECT EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id)) as has_file,
-                   (SELECT EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id)) as has_fragments
+                   (SELECT EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id)) as has_fragments,
+                   m.published_date, m.publisher, m.language, m.description
             FROM media m
             WHERE m.id = :media_id
         """),
@@ -105,6 +106,18 @@ def get_media_for_viewer(
         provider_id=row[9],
     )
 
+    # Fetch authors for this media
+    author_rows = db.execute(
+        text(
+            "SELECT id, name, role FROM media_authors "
+            "WHERE media_id = :media_id ORDER BY sort_order"
+        ),
+        {"media_id": media_id},
+    ).fetchall()
+    authors = [
+        MediaAuthorOut(id=ar[0], name=ar[1], role=ar[2]) for ar in author_rows
+    ]
+
     return MediaOut(
         id=row[0],
         kind=row[1],
@@ -115,6 +128,11 @@ def get_media_for_viewer(
         last_error_code=row[6],
         playback_source=playback_source,
         capabilities=capabilities,
+        authors=authors,
+        published_date=row[14],
+        publisher=row[15],
+        language=row[16],
+        description=row[17],
         created_at=row[10],
         updated_at=row[11],
     )
@@ -240,7 +258,11 @@ def list_visible_media(
             m.created_at,
             m.updated_at,
             EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file,
-            EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) AS has_fragments
+            EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) AS has_fragments,
+            m.published_date,
+            m.publisher,
+            m.language,
+            m.description
         FROM media m
         JOIN visible_media vm ON vm.media_id = m.id
         WHERE {" AND ".join(where_clauses)}
@@ -254,6 +276,22 @@ def list_visible_media(
 
     pdf_media_ids = [row[0] for row in page_rows if row[1] == MediaKind.pdf.value]
     pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
+
+    # Batch-fetch authors for all returned media IDs to avoid N+1
+    page_media_ids = [row[0] for row in page_rows]
+    authors_by_media: dict[UUID, list[MediaAuthorOut]] = {mid: [] for mid in page_media_ids}
+    if page_media_ids:
+        author_rows = db.execute(
+            text(
+                "SELECT id, media_id, name, role FROM media_authors "
+                "WHERE media_id = ANY(:ids) ORDER BY sort_order"
+            ),
+            {"ids": page_media_ids},
+        ).fetchall()
+        for ar in author_rows:
+            authors_by_media.setdefault(ar[1], []).append(
+                MediaAuthorOut(id=ar[0], name=ar[2], role=ar[3])
+            )
 
     media_list: list[MediaOut] = []
     for row in page_rows:
@@ -288,6 +326,11 @@ def list_visible_media(
                 last_error_code=row[6],
                 playback_source=playback_source,
                 capabilities=capabilities,
+                authors=authors_by_media.get(row[0], []),
+                published_date=row[14],
+                publisher=row[15],
+                language=row[16],
+                description=row[17],
                 created_at=row[10],
                 updated_at=row[11],
             )

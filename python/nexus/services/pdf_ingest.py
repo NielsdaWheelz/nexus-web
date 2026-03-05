@@ -48,6 +48,10 @@ class PdfExtractionResult:
     plain_text: str = ""
     page_spans: list[PdfPageSpan] = field(default_factory=list)
     has_text: bool = False
+    pdf_title: str | None = None
+    pdf_author: str | None = None
+    pdf_subject: str | None = None
+    pdf_creation_date: str | None = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,75 @@ def normalize_pdf_text(raw_text: str) -> str:
     s = re.sub(r"\n{3,}", "\n\n", s)
     s = s.strip()
     return s
+
+
+# ---------------------------------------------------------------------------
+# PDF date parsing
+# ---------------------------------------------------------------------------
+
+
+def _parse_pdf_date(raw: str | None) -> str | None:
+    """Normalize PDF date format D:YYYYMMDDHHmmSS... to ISO 8601.
+
+    Common formats:
+      D:20230115120000+05'30'
+      D:20230115
+      2023-01-15
+      2023
+    Returns None if unparseable.
+    """
+    if not raw or not raw.strip():
+        return None
+
+    s = raw.strip()
+    # Strip leading "D:" prefix
+    if s.startswith("D:"):
+        s = s[2:]
+
+    # Try ISO format with separators first (e.g. "2023-01-15", "2023-01")
+    iso_match = re.match(r"^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?", s)
+    if iso_match and "-" in s[:8]:
+        year = iso_match.group(1)
+        month = iso_match.group(2)
+        day = iso_match.group(3)
+        if month:
+            m = int(month)
+            if m < 1 or m > 12:
+                return year
+            if day:
+                d = int(day)
+                if d < 1 or d > 31:
+                    return f"{year}-{int(month):02d}"
+                return f"{year}-{int(month):02d}-{int(day):02d}"
+            return f"{year}-{int(month):02d}"
+        return year
+
+    # PDF compact format: YYYYMMDD...
+    digits = ""
+    for ch in s:
+        if ch.isdigit():
+            digits += ch
+        else:
+            break
+
+    if len(digits) < 4:
+        return None
+
+    year = digits[:4]
+    month = digits[4:6] if len(digits) >= 6 else None
+    day = digits[6:8] if len(digits) >= 8 else None
+
+    if month:
+        m = int(month)
+        if m < 1 or m > 12:
+            return year
+        if day:
+            d = int(day)
+            if d < 1 or d > 31:
+                return f"{year}-{month}"
+            return f"{year}-{month}-{day}"
+        return f"{year}-{month}"
+    return year
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +206,13 @@ def _extract_with_pymupdf(
             terminal=True,
         )
 
+    # Read document metadata
+    raw_meta = doc.metadata or {}
+    pdf_title = (raw_meta.get("title") or "").strip() or None
+    pdf_author = (raw_meta.get("author") or "").strip() or None
+    pdf_subject = (raw_meta.get("subject") or "").strip() or None
+    pdf_creation_date = _parse_pdf_date(raw_meta.get("creationDate"))
+
     try:
         page_count = len(doc)
         if page_count < 1:
@@ -160,6 +240,10 @@ def _extract_with_pymupdf(
                 plain_text="",
                 page_spans=[],
                 has_text=False,
+                pdf_title=pdf_title,
+                pdf_author=pdf_author,
+                pdf_subject=pdf_subject,
+                pdf_creation_date=pdf_creation_date,
             )
 
         normalized_pages = _build_page_texts_from_raw(raw_page_texts)
@@ -170,6 +254,10 @@ def _extract_with_pymupdf(
             plain_text=normalized,
             page_spans=page_spans,
             has_text=True,
+            pdf_title=pdf_title,
+            pdf_author=pdf_author,
+            pdf_subject=pdf_subject,
+            pdf_creation_date=pdf_creation_date,
         )
     finally:
         doc.close()

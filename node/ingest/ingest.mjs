@@ -13,7 +13,11 @@
  *     "final_url": "https://example.com/actual-article",
  *     "base_url": "https://example.com/actual-article",
  *     "title": "Article Title",
- *     "content_html": "<div>...</div>"
+ *     "content_html": "<div>...</div>",
+ *     "byline": "Author Name",
+ *     "excerpt": "Short description",
+ *     "site_name": "Example.com",
+ *     "published_time": "2023-01-15T00:00:00Z"
  *   }
  *
  * Exit Codes:
@@ -131,6 +135,10 @@ async function ingest(url, timeoutMs) {
             base_url: finalUrl,
             title: article.title || '',
             content_html: article.content,
+            byline: article.byline || '',
+            excerpt: article.excerpt || '',
+            site_name: article.siteName || '',
+            published_time: article.publishedTime || '',
         };
     } finally {
         if (browser) {
