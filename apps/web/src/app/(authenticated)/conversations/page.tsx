@@ -1,24 +1,18 @@
 /**
  * Conversations list page.
  *
- * Shows a sidebar of conversations and an empty state or new-chat composer.
+ * Shows a list of conversations only.
  * Selecting a conversation navigates to `/conversations/[id]`.
  */
 
 "use client";
 
-import { Suspense, useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import type { ContextItem } from "@/lib/api/sse";
-import {
-  parseAttachContext,
-  stripAttachParams,
-} from "@/lib/conversations/attachedContext";
-import ChatComposer from "@/components/ChatComposer";
+import Pane from "@/components/Pane";
+import PaneContainer from "@/components/PaneContainer";
 import StateMessage from "@/components/ui/StateMessage";
-import SurfaceHeader from "@/components/ui/SurfaceHeader";
 import { AppList, AppListItem } from "@/components/ui/AppList";
-import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 // ============================================================================
@@ -43,46 +37,14 @@ interface ConversationsResponse {
 // ============================================================================
 
 export default function ConversationsPage() {
-  return (
-    <Suspense fallback={<StateMessage variant="loading">Loading...</StateMessage>}>
-      <ConversationsPageInner />
-    </Suspense>
-  );
+  return <ConversationsPageInner />;
 }
 
 function ConversationsPageInner() {
-  const router = usePaneRouter();
-  const searchParams = usePaneSearchParams();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [showNewChat, setShowNewChat] = useState(false);
-
-  const initialAttach = useMemo(
-    () => parseAttachContext(searchParams),
-    [searchParams],
-  );
-  const [attachedContexts, setAttachedContexts] =
-    useState<ContextItem[]>(initialAttach);
-
-  useEffect(() => {
-    if (initialAttach.length > 0) {
-      setAttachedContexts(initialAttach);
-      setShowNewChat(true);
-    }
-  }, [initialAttach]);
-
-  const handleRemoveContext = useCallback((index: number) => {
-    setAttachedContexts((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  const clearAttachState = useCallback(() => {
-    setAttachedContexts([]);
-    const cleaned = stripAttachParams(searchParams);
-    const qs = cleaned.toString();
-    router.replace(qs ? `/conversations?${qs}` : "/conversations");
-  }, [router, searchParams]);
 
   // Fetch conversations
   const fetchConversations = useCallback(
@@ -118,33 +80,26 @@ function ConversationsPageInner() {
     fetchConversations();
   }, [fetchConversations]);
 
-  const handleNewConversation = useCallback(
-    (conversationId: string) => {
-      clearAttachState();
-      router.push(`/conversations/${conversationId}`);
+  const handleDelete = useCallback(
+    async (convId: string) => {
+      if (!confirm("Delete this conversation? This cannot be undone.")) return;
+      try {
+        await apiFetch(`/api/conversations/${convId}`, { method: "DELETE" });
+        setConversations((prev) => prev.filter((c) => c.id !== convId));
+      } catch (err) {
+        if (isApiError(err)) {
+          setError(err.message);
+        } else {
+          setError("Failed to delete conversation");
+        }
+      }
     },
-    [router, clearAttachState]
+    []
   );
 
   return (
-    <div className={styles.container}>
-      {/* Sidebar */}
-      <div className={styles.sidebar}>
-        <SurfaceHeader
-          title="Chats"
-          headingLevel={2}
-          className={styles.sidebarHeaderChrome}
-          actions={
-            <button
-              type="button"
-              className={styles.newChatBtn}
-              onClick={() => setShowNewChat(true)}
-            >
-              + New
-            </button>
-          }
-        />
-
+    <PaneContainer>
+      <Pane title="Chats" fluid>
         <div className={styles.conversationList}>
           {loading && <StateMessage variant="loading">Loading...</StateMessage>}
           {error && <StateMessage variant="error">{error}</StateMessage>}
@@ -162,6 +117,14 @@ function ConversationsPageInner() {
                   title={`${conv.id.slice(0, 8)}...`}
                   description={`${conv.message_count} messages`}
                   meta={new Date(conv.updated_at).toLocaleDateString()}
+                  options={[
+                    {
+                      id: "delete",
+                      label: "Delete",
+                      tone: "danger",
+                      onSelect: () => void handleDelete(conv.id),
+                    },
+                  ]}
                 />
               ))}
             </AppList>
@@ -177,32 +140,7 @@ function ConversationsPageInner() {
             </button>
           )}
         </div>
-      </div>
-
-      {/* Main content */}
-      <div className={styles.main}>
-        {showNewChat ? (
-          <div className={styles.chatContainer}>
-            <div className={styles.messageList}>
-              {/* Empty — new conversation */}
-            </div>
-            <ChatComposer
-              conversationId={null}
-              attachedContexts={attachedContexts}
-              onRemoveContext={handleRemoveContext}
-              onConversationCreated={handleNewConversation}
-              onMessageSent={() => fetchConversations()}
-            />
-          </div>
-        ) : (
-          <div className={styles.emptyState}>
-            <p>Select a conversation or start a new chat</p>
-            <p className={styles.emptyHint}>
-              Use the &quot;+ New&quot; button to begin
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
+      </Pane>
+    </PaneContainer>
   );
 }

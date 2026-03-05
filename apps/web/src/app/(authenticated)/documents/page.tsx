@@ -1,3 +1,5 @@
+"use client";
+
 import MediaCatalogPage from "@/components/MediaCatalogPage";
 
 export default function DocumentsPage() {

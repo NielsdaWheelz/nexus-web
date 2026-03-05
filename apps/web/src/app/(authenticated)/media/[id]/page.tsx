@@ -14,6 +14,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
+import { SplitSurface } from "@/components/workspace";
 import ReaderContentArea from "@/components/ReaderContentArea";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import PdfReader, {
@@ -22,9 +23,11 @@ import PdfReader, {
   type PdfReaderControlsState,
 } from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
-import HighlightEditor, { type Highlight } from "@/components/HighlightEditor";
+import { type Highlight } from "@/components/HighlightEditor";
+import HighlightEditPopover from "@/components/HighlightEditPopover";
 import { useToast } from "@/components/Toast";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
+import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
@@ -90,6 +93,7 @@ import TranscriptMediaPane, {
   type TranscriptFragment,
 } from "./TranscriptMediaPane";
 import styles from "./page.module.css";
+import paneStyles from "@/components/Pane.module.css";
 
 // =============================================================================
 // Types
@@ -128,7 +132,6 @@ interface Fragment {
   created_at: string;
 }
 
-type EditorHighlight = Highlight;
 
 interface SelectionState {
   range: Range;
@@ -393,21 +396,6 @@ async function deleteAnnotation(highlightId: string): Promise<void> {
   });
 }
 
-function toEditorHighlightFromPdf(highlight: PdfHighlightOut): EditorHighlight {
-  return {
-    id: highlight.id,
-    fragment_id: "",
-    start_offset: 0,
-    end_offset: 0,
-    color: highlight.color,
-    exact: highlight.exact,
-    prefix: highlight.prefix,
-    suffix: highlight.suffix,
-    created_at: highlight.created_at,
-    updated_at: highlight.updated_at,
-    annotation: highlight.annotation,
-  };
-}
 
 async function fetchChapterDetail(
   mediaId: string,
@@ -664,33 +652,6 @@ export default function MediaViewPage() {
     [pdfDocumentHighlights]
   );
 
-  const focusedHighlightForEditor = useMemo(() => {
-    if (!focusState.focusedId) {
-      return null;
-    }
-    if (isPdf) {
-      const pdfHighlight =
-        pdfPageHighlights.find((h) => h.id === focusState.focusedId) ??
-        pdfDocumentHighlights.find((h) => h.id === focusState.focusedId);
-      return pdfHighlight ? toEditorHighlightFromPdf(pdfHighlight) : null;
-    }
-    if (isEpub && epubHighlightScope === "book") {
-      const mediaHighlight = mediaHighlights.find((h) => h.id === focusState.focusedId);
-      if (mediaHighlight) {
-        return mediaHighlight;
-      }
-    }
-    return highlights.find((h) => h.id === focusState.focusedId) ?? null;
-  }, [
-    focusState.focusedId,
-    highlights,
-    isPdf,
-    pdfPageHighlights,
-    pdfDocumentHighlights,
-    isEpub,
-    epubHighlightScope,
-    mediaHighlights,
-  ]);
 
   const linkedItemsContentRef = isPdf ? pdfContentRef : contentRef;
   const linkedItemsVersion = isPdf
@@ -1889,12 +1850,33 @@ export default function MediaViewPage() {
   // ==========================================================================
 
   const buildQuoteRoute = useCallback((highlightId: string): string => {
+    // Find the highlight data for enriched context
+    const hl =
+      highlights.find((h) => h.id === highlightId) ??
+      mediaHighlights.find((h) => h.id === highlightId) ??
+      pdfDocumentHighlights.find((h) => h.id === highlightId) ??
+      pdfPageHighlights.find((h) => h.id === highlightId);
+
     const qp = new URLSearchParams({
       attach_type: "highlight",
       attach_id: highlightId,
     });
+    if (hl) {
+      if ("color" in hl && hl.color) {
+        qp.set("attach_color", hl.color);
+      }
+      if ("exact" in hl && hl.exact) {
+        qp.set("attach_preview", hl.exact.slice(0, 120));
+      }
+    }
+    if (media?.id) {
+      qp.set("attach_media_id", media.id);
+    }
+    if (media?.title) {
+      qp.set("attach_media_title", media.title);
+    }
     return `/conversations?${qp}`;
-  }, []);
+  }, [highlights, media?.id, media?.title, mediaHighlights, pdfDocumentHighlights, pdfPageHighlights]);
 
   const openQuoteRoute = useCallback(
     (highlightId: string) => {
@@ -1976,56 +1958,61 @@ export default function MediaViewPage() {
     [clearFocus]
   );
 
-  const handleCollapseHighlightDetails = useCallback(() => {
+  // ---- Edit Popover state ----
+  const [editPopoverHighlightId, setEditPopoverHighlightId] = useState<string | null>(null);
+  const [editPopoverAnchorRect, setEditPopoverAnchorRect] = useState<DOMRect | null>(null);
+
+  const editPopoverHighlight = useMemo(() => {
+    if (!editPopoverHighlightId) return null;
+    const hl = linkedPaneHighlights.find((h) => h.id === editPopoverHighlightId);
+    if (!hl) return null;
+    return { id: hl.id, color: hl.color };
+  }, [editPopoverHighlightId, linkedPaneHighlights]);
+
+  const dismissEditPopover = useCallback(() => {
+    setEditPopoverHighlightId(null);
+    setEditPopoverAnchorRect(null);
     cancelEditBounds();
-    focusHighlight(null);
-  }, [cancelEditBounds, focusHighlight]);
+  }, [cancelEditBounds]);
 
-  const renderExpandedLinkedItem = useCallback(
-    (highlightId: string) => {
-      if (!focusedHighlightForEditor || focusedHighlightForEditor.id !== highlightId) {
-        return null;
-      }
-
-      return (
-        <div className={styles.inlineHighlightEditor}>
-          <div className={styles.inlineHighlightEditorHeader}>
-            <button
-              type="button"
-              className={styles.collapseInlineEditorBtn}
-              onClick={(event) => {
-                event.stopPropagation();
-                handleCollapseHighlightDetails();
-              }}
-            >
-              Collapse
-            </button>
-          </div>
-          <HighlightEditor
-            highlight={focusedHighlightForEditor}
-            isEditingBounds={focusState.editingBounds}
-            onStartEditBounds={startEditBounds}
-            onCancelEditBounds={cancelEditBounds}
-            onColorChange={handleColorChange}
-            onDelete={handleDelete}
-            onAnnotationSave={handleAnnotationSave}
-            onAnnotationDelete={handleAnnotationDelete}
-            compact
-          />
-        </div>
-      );
+  const buildRowOptions = useCallback(
+    (highlightId: string): ActionMenuOption[] => {
+      const items: ActionMenuOption[] = [];
+      items.push({
+        id: "edit-highlight",
+        label: "Edit highlight",
+        onSelect: () => {
+          // Find the row element's rect for popover anchoring
+          const linkedItemsContentEl = linkedItemsContentRef.current;
+          const rowEl = linkedItemsContentEl
+            ? linkedItemsContentEl.querySelector<HTMLElement>(
+                `[data-highlight-id="${escapeAttrValue(highlightId)}"]`
+              )
+            : document.querySelector<HTMLElement>(
+                `[data-highlight-id="${escapeAttrValue(highlightId)}"]`
+              );
+          if (rowEl) {
+            setEditPopoverAnchorRect(rowEl.getBoundingClientRect());
+          } else {
+            setEditPopoverAnchorRect(new DOMRect(200, 200, 200, 44));
+          }
+          setEditPopoverHighlightId(highlightId);
+          focusHighlight(highlightId);
+        },
+      });
+      items.push({
+        id: "delete-highlight",
+        label: "Delete",
+        tone: "danger",
+        onSelect: () => {
+          if (window.confirm("Delete this highlight?")) {
+            void handleDelete(highlightId);
+          }
+        },
+      });
+      return items;
     },
-    [
-      focusedHighlightForEditor,
-      focusState.editingBounds,
-      startEditBounds,
-      cancelEditBounds,
-      handleColorChange,
-      handleDelete,
-      handleAnnotationSave,
-      handleAnnotationDelete,
-      handleCollapseHighlightDetails,
-    ]
+    [handleDelete, focusHighlight, linkedItemsContentRef]
   );
 
   const mediaHeaderMeta = (
@@ -2044,58 +2031,33 @@ export default function MediaViewPage() {
     </div>
   );
 
-  const mediaPaneNavigation =
-    isPdf && canRead && pdfControlsState
-      ? {
-          label: `Page ${pdfControlsState.pageNumber} of ${pdfControlsState.numPages || 0}`,
-          previous: {
-            label: "Previous page",
-            onClick: () => {
-              pdfControlsRef.current?.goToPreviousPage();
-            },
-            disabled: !pdfControlsState.canGoPrev,
-          },
-          next: {
-            label: "Next page",
-            onClick: () => {
-              pdfControlsRef.current?.goToNextPage();
-            },
-            disabled: !pdfControlsState.canGoNext,
-          },
-        }
-      : isEpub && canRead
-        ? {
-            label:
-              activeSectionPosition >= 0 && epubSections
-                ? `${activeSectionPosition + 1} / ${epubSections.length}`
-                : undefined,
-            previous: {
-              label: "Previous chapter",
-              onClick: () => {
-                if (prevSection) {
-                  navigateToSection(prevSection.section_id);
-                }
-              },
-              disabled: !prevSection,
-            },
-            next: {
-              label: "Next chapter",
-              onClick: () => {
-                if (nextSection) {
-                  navigateToSection(nextSection.section_id);
-                }
-              },
-              disabled: !nextSection,
-            },
-          }
-        : undefined;
-
-  const mediaPaneActions =
+  const mediaToolbar =
     isPdf && canRead && pdfControlsState ? (
-      <div className={styles.headerActions}>
+      <>
         <button
           type="button"
-          className={styles.headerActionBtn}
+          className={paneStyles.toolbarBtn}
+          onClick={() => pdfControlsRef.current?.goToPreviousPage()}
+          disabled={!pdfControlsState.canGoPrev}
+          aria-label="Previous page"
+        >
+          Previous page
+        </button>
+        <span className={paneStyles.toolbarLabel}>
+          Page {pdfControlsState.pageNumber} of {pdfControlsState.numPages || 0}
+        </span>
+        <button
+          type="button"
+          className={paneStyles.toolbarBtn}
+          onClick={() => pdfControlsRef.current?.goToNextPage()}
+          disabled={!pdfControlsState.canGoNext}
+          aria-label="Next page"
+        >
+          Next page
+        </button>
+        <button
+          type="button"
+          className={paneStyles.toolbarBtn}
           onMouseDown={(event) => {
             event.preventDefault();
             pdfControlsRef.current?.captureSelectionSnapshot();
@@ -2117,7 +2079,7 @@ export default function MediaViewPage() {
         <span className={styles.zoomLabel}>{pdfControlsState.zoomPercent}%</span>
         <button
           type="button"
-          className={styles.headerActionBtn}
+          className={paneStyles.toolbarBtn}
           onClick={() => pdfControlsRef.current?.zoomOut()}
           disabled={!pdfControlsState.canZoomOut}
           aria-label="Zoom out"
@@ -2126,36 +2088,65 @@ export default function MediaViewPage() {
         </button>
         <button
           type="button"
-          className={styles.headerActionBtn}
+          className={paneStyles.toolbarBtn}
           onClick={() => pdfControlsRef.current?.zoomIn()}
           disabled={!pdfControlsState.canZoomIn}
           aria-label="Zoom in"
         >
           Zoom in
         </button>
-      </div>
-    ) : isEpub && canRead && epubSections ? (
-      <div className={styles.headerActions}>
-        <select
-          value={activeSectionId ?? ""}
-          onChange={(event) => {
-            if (event.target.value) {
-              navigateToSection(event.target.value);
-            }
+      </>
+    ) : isEpub && canRead ? (
+      <>
+        <button
+          type="button"
+          className={paneStyles.toolbarBtn}
+          onClick={() => {
+            if (prevSection) navigateToSection(prevSection.section_id);
           }}
-          className={styles.headerSelect}
-          aria-label="Select chapter"
+          disabled={!prevSection}
+          aria-label="Previous chapter"
         >
-          {epubSections.map((section) => (
-            <option key={section.section_id} value={section.section_id}>
-              {section.label}
-            </option>
-          ))}
-        </select>
+          Previous chapter
+        </button>
+        {activeSectionPosition >= 0 && epubSections && (
+          <span className={paneStyles.toolbarLabel}>
+            {activeSectionPosition + 1} / {epubSections.length}
+          </span>
+        )}
+        <button
+          type="button"
+          className={paneStyles.toolbarBtn}
+          onClick={() => {
+            if (nextSection) navigateToSection(nextSection.section_id);
+          }}
+          disabled={!nextSection}
+          aria-label="Next chapter"
+        >
+          Next chapter
+        </button>
+        {epubSections && (
+          <select
+            value={activeSectionId ?? ""}
+            onChange={(event) => {
+              if (event.target.value) {
+                navigateToSection(event.target.value);
+              }
+            }}
+            className={paneStyles.toolbarSelect}
+            aria-label="Select chapter"
+          >
+            {epubSections.map((section) => (
+              <option key={section.section_id} value={section.section_id}>
+                {section.label}
+              </option>
+            ))}
+          </select>
+        )}
         {(hasEpubToc || tocWarning) && (
           <button
             type="button"
-            className={styles.headerActionBtn}
+            className={paneStyles.toolbarBtn}
             onClick={() => setEpubTocExpanded((value) => !value)}
             aria-label={
               epubTocExpanded ? "Collapse table of contents" : "Expand table of contents"
@@ -2164,7 +2155,7 @@ export default function MediaViewPage() {
             {epubTocExpanded ? "Hide TOC" : "Show TOC"}
           </button>
         )}
-      </div>
+      </>
     ) : null;
   // ==========================================================================
   // Render
@@ -2183,7 +2174,7 @@ export default function MediaViewPage() {
   if (error || !media) {
     return (
       <PaneContainer>
-        <Pane title="Error" back={{ label: "Back to Libraries", href: "/libraries" }}>
+        <Pane title="Error">
           <div className={styles.errorContainer}>
             <StateMessage variant="error">{error || "Media not found"}</StateMessage>
           </div>
@@ -2198,7 +2189,6 @@ export default function MediaViewPage() {
       <PaneContainer>
         <Pane
           title={media.title}
-          back={{ label: "Back to Libraries", href: "/libraries" }}
           headerMeta={mediaHeaderMeta}
         >
           <div className={styles.content}>
@@ -2213,16 +2203,16 @@ export default function MediaViewPage() {
   }
 
   return (
-    <PaneContainer
-      mobileLabels={showHighlightsPane ? ["Content", "Highlights"] : undefined}
-    >
-      {/* Content Pane */}
-      <Pane
+    <>
+      <SplitSurface
+        primary={
+          <Pane
+        defaultWidth={920}
+        minWidth={420}
+        maxWidth={1800}
         title={media.title}
-        back={{ label: "Back to Libraries", href: "/libraries" }}
         headerMeta={mediaHeaderMeta}
-        navigation={mediaPaneNavigation}
-        headerActions={mediaPaneActions}
+        toolbar={mediaToolbar}
         options={[
           ...(media.canonical_source_url
             ? [
@@ -2374,10 +2364,10 @@ export default function MediaViewPage() {
           )}
         </div>
       </Pane>
-
-      {/* Linked Items Pane */}
-      {showHighlightsPane && (
-        <Pane title="Highlights" defaultWidth={360} minWidth={280}>
+        }
+        secondary={
+          showHighlightsPane ? (
+            <Pane title="Highlights" defaultWidth={360} minWidth={280} maxWidth={900}>
           {isEpub && (
             <SectionCard
               title="Scope"
@@ -2454,8 +2444,22 @@ export default function MediaViewPage() {
             layoutMode={linkedItemsLayoutMode}
             anchorDescriptors={linkedItemsAnchorDescriptors}
             anchorProvider={linkedItemsAnchorProvider}
-            renderExpandedContent={renderExpandedLinkedItem}
+            onAnnotationSave={handleAnnotationSave}
+            onAnnotationDelete={handleAnnotationDelete}
+            rowOptions={buildRowOptions}
           />
+
+          {editPopoverHighlight && editPopoverAnchorRect && (
+            <HighlightEditPopover
+              highlight={editPopoverHighlight}
+              anchorRect={editPopoverAnchorRect}
+              isEditingBounds={focusState.editingBounds}
+              onStartEditBounds={startEditBounds}
+              onCancelEditBounds={cancelEditBounds}
+              onColorChange={handleColorChange}
+              onDismiss={dismissEditPopover}
+            />
+          )}
 
           {isPdf && (
             <div className={styles.bookHighlightsControls}>
@@ -2497,10 +2501,13 @@ export default function MediaViewPage() {
               <StatusPill variant="info">Active page: {pdfActivePage}</StatusPill>
             </div>
           )}
-        </Pane>
-      )}
+            </Pane>
+          ) : undefined
+        }
+        secondaryTitle="Highlights"
+        secondaryFabLabel="Highlights"
+      />
 
-      {/* Selection Popover */}
       {!isPdf && selection && !focusState.editingBounds && contentRef.current && (
         <SelectionPopover
           selectionRect={selection.rect}
@@ -2511,7 +2518,7 @@ export default function MediaViewPage() {
           isCreating={isCreating}
         />
       )}
-    </PaneContainer>
+    </>
   );
 }
 

@@ -1,34 +1,45 @@
 # PR-02 Pane Graph Addendum: Persistent In-App Multi-Pane Workspace
 
+> **Superseded**: This document describes the v1 localStorage-based pane graph
+> architecture (`PaneGraphProvider`, `InAppPaneWorkspace`, `nexus.paneGraph.v1`).
+> That system has been replaced by a URL-encoded multi-group workspace (schema v2,
+> `ws` query param). See the README "In-App Pane Workspace" section and
+> `apps/web/src/lib/workspace/` for the current contract.
+
 ## purpose
 
 Document the production contract for the in-app pane system introduced for quote-to-chat and shift-open flows.
 
-## architecture
+## architecture (v1 — superseded)
 
-The authenticated layout composes:
+The v1 authenticated layout composed:
 
-1. `PaneGraphProvider` (`apps/web/src/lib/panes/paneGraphStore.tsx`)
-2. `InAppPaneWorkspace` (`apps/web/src/components/InAppPaneWorkspace.tsx`)
-3. `PaneRouteRenderer` (`apps/web/src/components/PaneRouteRenderer.tsx`)
-4. `PaneRuntimeProvider` (`apps/web/src/lib/panes/paneRuntime.tsx`)
+1. `PaneGraphProvider` (`apps/web/src/lib/panes/paneGraphStore.tsx`) — **removed**
+2. `InAppPaneWorkspace` (`apps/web/src/components/InAppPaneWorkspace.tsx`) — **removed**
+3. `PaneRouteRenderer` (`apps/web/src/components/PaneRouteRenderer.tsx`) — still used
+4. `PaneRuntimeProvider` (`apps/web/src/lib/panes/paneRuntime.tsx`) — still used
 
-Design constraints:
+The current (v2) architecture uses `WorkspaceStoreProvider`, `WorkspaceV2Host`,
+`WorkspaceRoot`, `PaneGroup`, and `TabStrip` (all under `apps/web/src/components/workspace/`
+and `apps/web/src/lib/workspace/`).
+
+Design constraints (current):
 
 - side panes render route components directly (no iframe embedding)
-- pane state persists in `localStorage` under `nexus.paneGraph.v1`
-- pane count is bounded (`MAX_PANES = 8`)
+- workspace state is URL-encoded in the `ws` query parameter (schema v2)
+- groups capped at 4, tabs at 12 per group, 24 total
 - pane-open requests use one boundary: `requestOpenInAppPane(href)`
 
 ## supported pane routes
 
-Current explicit route map:
+Current explicit route map (13 routes):
 
-- `/libraries`
-- `/libraries/{id}`
+- `/libraries`, `/libraries/{id}`
 - `/media/{id}`
-- `/conversations`
-- `/conversations/{id}`
+- `/conversations`, `/conversations/{id}`
+- `/discover`, `/documents`, `/podcasts`, `/videos`
+- `/search`
+- `/settings`, `/settings/reader`, `/settings/keys`
 
 Unsupported routes render a controlled fallback message inside the pane.
 
@@ -59,11 +70,18 @@ This keeps route logic shared while allowing pane-local navigation.
 
 Component tests:
 
-- `apps/web/src/__tests__/components/InAppPaneWorkspace.test.tsx`
+- `apps/web/src/__tests__/components/SplitSurface.test.tsx`
+- `apps/web/src/__tests__/components/SurfaceHeader.test.tsx`
 - `apps/web/src/__tests__/components/AppList.test.tsx`
-- `apps/web/src/__tests__/components/PdfReader.test.tsx`
-- `apps/web/src/__tests__/components/LinkedItemsPane.test.tsx`
+- `apps/web/src/__tests__/components/Pane.test.tsx`
 - `apps/web/src/__tests__/components/LinkedItemRow.test.tsx`
+
+Unit tests:
+
+- `apps/web/src/lib/workspace/schema.test.ts`
+- `apps/web/src/lib/workspace/urlCodec.test.ts`
+- `apps/web/src/lib/workspace/store.test.ts`
+- `apps/web/src/lib/panes/paneRouteRegistry.test.tsx`
 
 E2E coverage:
 
@@ -73,4 +91,4 @@ E2E coverage:
 
 - pane titles are currently derived from URL path segments; they are not yet hydrated from server metadata.
 - only listed authenticated routes are pane-renderable; route registry must be extended explicitly.
-- no versioned storage migration path exists yet for future pane graph schema revisions.
+- ActionMenu dropdown may be clipped by `overflow: hidden` ancestors in AppList/LinkedItemsPane (portal-based rendering is a planned follow-up).

@@ -5,7 +5,6 @@ import { apiFetch, isApiError } from "@/lib/api/client";
 import PageLayout from "@/components/ui/PageLayout";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
-import StatusPill from "@/components/ui/StatusPill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import MediaKindIcon from "@/components/MediaKindIcon";
 import styles from "./MediaCatalogPage.module.css";
@@ -23,6 +22,8 @@ interface MediaCatalogPageProps {
   allowedKinds: MediaKind[];
   emptyMessage: string;
   headerSlot?: React.ReactNode;
+  /** Called when user requests deletion of a media item. */
+  onDeleteItem?: (itemId: string) => void;
 }
 
 interface MediaItemResponse {
@@ -101,9 +102,6 @@ function statusVariant(
   return "neutral";
 }
 
-function statusLabel(status: string): string {
-  return status.replaceAll("_", " ");
-}
 
 export default function MediaCatalogPage({
   title,
@@ -111,6 +109,7 @@ export default function MediaCatalogPage({
   allowedKinds,
   emptyMessage,
   headerSlot,
+  onDeleteItem,
 }: MediaCatalogPageProps) {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -264,12 +263,19 @@ export default function MediaCatalogPage({
                 href={`/media/${item.id}`}
                 icon={<MediaKindIcon kind={item.kind} />}
                 title={item.title}
-                description={KIND_LABEL[item.kind]}
-                meta={`Updated ${formatDate(item.updated_at)}`}
-                trailing={
-                  <StatusPill variant={statusVariant(item.processing_status)}>
-                    {statusLabel(item.processing_status)}
-                  </StatusPill>
+                status={statusVariant(item.processing_status)}
+                meta={[KIND_LABEL[item.kind], `Updated ${formatDate(item.updated_at)}`].join(" · ")}
+                options={
+                  onDeleteItem
+                    ? [
+                        {
+                          id: "delete",
+                          label: "Delete",
+                          tone: "danger",
+                          onSelect: () => onDeleteItem(item.id),
+                        },
+                      ]
+                    : undefined
                 }
               />
             ))}

@@ -23,7 +23,7 @@ import { HtmlAnchorProvider } from "./anchorProviders";
 // =============================================================================
 
 /** Fixed height for each linked-item row in pixels */
-export const ROW_HEIGHT = 28;
+export const ROW_HEIGHT = 44;
 
 /** Minimum vertical gap between adjacent rows in pixels */
 export const ROW_GAP = 4;

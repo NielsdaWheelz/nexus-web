@@ -3,8 +3,6 @@
 import { useRef, useState, useCallback, type KeyboardEvent } from "react";
 import styles from "./Pane.module.css";
 import SurfaceHeader, {
-  type SurfaceHeaderBackAction,
-  type SurfaceHeaderNavigation,
   type SurfaceHeaderOption,
 } from "@/components/ui/SurfaceHeader";
 
@@ -12,34 +10,34 @@ interface PaneProps {
   children: React.ReactNode;
   title?: string;
   subtitle?: React.ReactNode;
-  back?: SurfaceHeaderBackAction;
-  navigation?: SurfaceHeaderNavigation;
   options?: SurfaceHeaderOption[];
   headerActions?: React.ReactNode;
   headerMeta?: React.ReactNode;
   header?: React.ReactNode;
+  toolbar?: React.ReactNode;
   defaultWidth?: number;
   minWidth?: number;
   maxWidth?: number;
   onClose?: () => void;
   contentClassName?: string;
+  fluid?: boolean;
 }
 
 export default function Pane({
   children,
   title,
   subtitle,
-  back,
-  navigation,
   options,
   headerActions,
   headerMeta,
   header,
+  toolbar,
   defaultWidth = 480,
   minWidth = 280,
   maxWidth = 900,
   onClose,
   contentClassName,
+  fluid = false,
 }: PaneProps) {
   const [width, setWidth] = useState(defaultWidth);
   const paneRef = useRef<HTMLDivElement>(null);
@@ -93,15 +91,17 @@ export default function Pane({
   );
 
   return (
-    <div ref={paneRef} className={styles.pane} style={{ width }}>
+    <div
+      ref={paneRef}
+      className={`${styles.pane} ${fluid ? styles.fluid : ""}`.trim()}
+      style={fluid ? undefined : { width }}
+    >
       {header
         ? header
         : title && (
             <SurfaceHeader
               title={title}
               subtitle={subtitle}
-              back={back}
-              navigation={navigation}
               options={options}
               actions={
                 <>
@@ -121,21 +121,24 @@ export default function Pane({
               meta={headerMeta}
             />
           )}
+      {toolbar && <div className={styles.toolbar}>{toolbar}</div>}
       <div
         className={`${styles.content} ${contentClassName ?? ""}`.trim()}
         data-pane-content="true"
       >
         {children}
       </div>
-      <div
-        className={styles.resizeHandle}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize pane"
-        tabIndex={0}
-        onMouseDown={handleMouseDown}
-        onKeyDown={handleResizeKeyDown}
-      />
+      {!fluid && (
+        <div
+          className={styles.resizeHandle}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize pane"
+          tabIndex={0}
+          onMouseDown={handleMouseDown}
+          onKeyDown={handleResizeKeyDown}
+        />
+      )}
     </div>
   );
 }

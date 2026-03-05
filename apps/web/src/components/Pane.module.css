@@ -10,37 +10,25 @@
   flex-shrink: 0;
 }
 
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
-  background-color: var(--color-bg-secondary);
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-
-.title {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.fluid {
+  width: 100% !important;
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 auto;
 }
 
 .closeBtn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  height: 28px;
+  width: 28px;
   padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 4px;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-lg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
   cursor: pointer;
   transition: all var(--transition-fast);
 }
@@ -48,6 +36,54 @@
 .closeBtn:hover {
   background-color: var(--color-error);
   color: white;
+  border-color: var(--color-error);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-secondary);
+  flex-wrap: wrap;
+}
+
+.toolbarBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  padding: 0 var(--space-2);
+  cursor: pointer;
+}
+
+.toolbarBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.toolbarLabel {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  min-width: 5rem;
+  text-align: center;
+}
+
+.toolbarSelect {
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  padding: 0 var(--space-2);
+  min-width: 12rem;
 }
 
 .content {

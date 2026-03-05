@@ -6,7 +6,6 @@ import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
 import MediaKindIcon from "@/components/MediaKindIcon";
 import StateMessage from "@/components/ui/StateMessage";
-import StatusPill from "@/components/ui/StatusPill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import { usePaneParam, usePaneRouter } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
@@ -19,6 +18,12 @@ interface Media {
   processing_status: string;
   created_at: string;
   updated_at: string;
+}
+
+function formatDate(value: string): string {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return "unknown date";
+  return new Date(parsed).toLocaleDateString();
 }
 
 interface Library {
@@ -164,7 +169,6 @@ export default function LibraryDetailPage() {
     <PaneContainer>
       <Pane
         title={library.name}
-        back={{ label: "Back to Libraries", href: "/libraries" }}
         headerActions={
           !library.is_default && library.role === "admin" ? (
             <form className={styles.renameForm} onSubmit={handleRename}>
@@ -213,22 +217,21 @@ export default function LibraryDetailPage() {
                   href={`/media/${item.id}`}
                   icon={<MediaKindIcon kind={item.kind} />}
                   title={item.title}
-                  description={item.kind.replaceAll("_", " ")}
-                  trailing={
-                    <StatusPill variant={statusVariant(item.processing_status)}>
-                      {item.processing_status.replaceAll("_", " ")}
-                    </StatusPill>
-                  }
-                  actions={
-                    library.role === "admin" ? (
-                      <button
-                        className={styles.removeBtn}
-                        onClick={() => handleRemoveMedia(item.id)}
-                        aria-label={`Remove ${item.title}`}
-                      >
-                        Remove
-                      </button>
-                    ) : null
+                  status={statusVariant(item.processing_status)}
+                  meta={[item.kind.replaceAll("_", " "), `Updated ${formatDate(item.updated_at)}`].join(" · ")}
+                  options={
+                    library.role === "admin"
+                      ? [
+                          {
+                            id: "remove",
+                            label: "Remove",
+                            tone: "danger" as const,
+                            onSelect: () => {
+                              void handleRemoveMedia(item.id);
+                            },
+                          },
+                        ]
+                      : []
                   }
                 />
               ))}

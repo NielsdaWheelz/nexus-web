@@ -279,7 +279,7 @@ describe("LinkedItemsPane", () => {
       throw new Error("Expected linked-items container to render for virtualization test");
     }
 
-    listContainer.scrollTop = 7000;
+    listContainer.scrollTop = 11100;
     listContainer.dispatchEvent(new Event("scroll"));
 
     await waitFor(() => {

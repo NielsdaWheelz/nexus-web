@@ -2,18 +2,14 @@
 
 import { Suspense, useState } from "react";
 import Navbar from "@/components/Navbar";
-import InAppPaneWorkspace from "@/components/InAppPaneWorkspace";
+import AuthenticatedWorkspaceHost from "@/components/AuthenticatedWorkspaceHost";
 import { ToastProvider } from "@/components/Toast";
-import { PaneGraphProvider } from "@/lib/panes/paneGraphStore";
 import { PaneRootNavigationProvider } from "@/lib/panes/paneRuntime";
 import { ReaderProvider } from "@/lib/reader";
+import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import styles from "./layout.module.css";
 
-export default function AuthenticatedLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function AuthenticatedLayout() {
   const [navbarCollapsed, setNavbarCollapsed] = useState(false);
 
   return (
@@ -21,16 +17,16 @@ export default function AuthenticatedLayout({
       <ReaderProvider>
         <Suspense fallback={null}>
           <PaneRootNavigationProvider>
-            <PaneGraphProvider>
+            <WorkspaceStoreProvider>
               <div
                 className={`${styles.layout} ${navbarCollapsed ? styles.navCollapsed : ""}`}
               >
                 <Navbar onToggle={setNavbarCollapsed} />
                 <main className={styles.main}>
-                  <InAppPaneWorkspace>{children}</InAppPaneWorkspace>
+                  <AuthenticatedWorkspaceHost />
                 </main>
               </div>
-            </PaneGraphProvider>
+            </WorkspaceStoreProvider>
           </PaneRootNavigationProvider>
         </Suspense>
       </ReaderProvider>

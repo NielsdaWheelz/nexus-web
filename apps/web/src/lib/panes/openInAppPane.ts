@@ -116,6 +116,7 @@ export function requestOpenInAppPane(href: string): boolean {
 
   if (!isPaneGraphReady()) {
     enqueuePendingPaneOpen(normalizedHref);
+    return true;
   }
 
   window.dispatchEvent(
