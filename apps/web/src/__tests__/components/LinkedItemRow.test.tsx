@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import LinkedItemRow from "@/components/LinkedItemRow";
 
@@ -37,7 +37,8 @@ describe("LinkedItemRow", () => {
     }
 
     expect(screen.getByText(expectedPreview)).toBeInTheDocument();
-    expect(screen.getByLabelText("Has annotation")).toBeInTheDocument();
+    // Annotation body is now shown inline on line 2
+    expect(screen.getByText("has note")).toBeInTheDocument();
 
     await user.hover(row);
     expect(onMouseEnter).toHaveBeenCalledWith("h-1");
@@ -83,5 +84,124 @@ describe("LinkedItemRow", () => {
     expect(
       screen.queryByRole("button", { name: "Actions" })
     ).not.toBeInTheDocument();
+  });
+
+  it("shows placeholder when no annotation", () => {
+    render(
+      <LinkedItemRow
+        highlight={{
+          id: "h-3",
+          color: "green",
+          exact: "Some text",
+          annotation: null,
+        }}
+        isFocused={false}
+        onClick={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Add a note\u2026")).toBeInTheDocument();
+  });
+
+  it("enters inline edit on annotation click and saves on blur", async () => {
+    const onAnnotationSave = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+
+    render(
+      <LinkedItemRow
+        highlight={{
+          id: "h-4",
+          color: "yellow",
+          exact: "Some text",
+          annotation: null,
+        }}
+        isFocused={false}
+        onClick={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onAnnotationSave={onAnnotationSave}
+      />
+    );
+
+    // Click placeholder to edit
+    await user.click(screen.getByText("Add a note\u2026"));
+
+    const textarea = screen.getByLabelText("Annotation");
+    expect(textarea).toBeInTheDocument();
+
+    await user.type(textarea, "My note");
+    // Blur triggers save
+    textarea.blur();
+
+    await waitFor(() => {
+      expect(onAnnotationSave).toHaveBeenCalledWith("h-4", "My note");
+    });
+  });
+
+  it("cancels inline edit on Escape", async () => {
+    const onAnnotationSave = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+
+    render(
+      <LinkedItemRow
+        highlight={{
+          id: "h-5",
+          color: "pink",
+          exact: "Some text",
+          annotation: { id: "ann-5", body: "existing note" },
+        }}
+        isFocused={false}
+        onClick={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onAnnotationSave={onAnnotationSave}
+      />
+    );
+
+    // Click annotation to edit
+    await user.click(screen.getByText("existing note"));
+
+    const textarea = screen.getByLabelText("Annotation");
+    await user.clear(textarea);
+    await user.type(textarea, "changed");
+    await user.keyboard("{Escape}");
+
+    // Should not save, and textarea should be gone
+    expect(onAnnotationSave).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Annotation")).not.toBeInTheDocument();
+    // Original text is restored
+    expect(screen.getByText("existing note")).toBeInTheDocument();
+  });
+
+  it("saves on Cmd+Enter", async () => {
+    const onAnnotationSave = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+
+    render(
+      <LinkedItemRow
+        highlight={{
+          id: "h-6",
+          color: "blue",
+          exact: "Some text",
+          annotation: null,
+        }}
+        isFocused={false}
+        onClick={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onAnnotationSave={onAnnotationSave}
+      />
+    );
+
+    await user.click(screen.getByText("Add a note\u2026"));
+    const textarea = screen.getByLabelText("Annotation");
+    await user.type(textarea, "quick note");
+    await user.keyboard("{Meta>}{Enter}{/Meta}");
+
+    await waitFor(() => {
+      expect(onAnnotationSave).toHaveBeenCalledWith("h-6", "quick note");
+    });
   });
 });

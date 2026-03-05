@@ -36,12 +36,14 @@ export default function ActionMenu({
   const [menuOpen, setMenuOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuContainerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
   const menuId = useId();
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
   const getFocusableItems = useCallback((): HTMLElement[] => {
-    if (!menuContainerRef.current) return [];
+    if (!menuRef.current) return [];
     return Array.from(
-      menuContainerRef.current.querySelectorAll<HTMLElement>(
+      menuRef.current.querySelectorAll<HTMLElement>(
         '[role="menuitem"]:not([aria-disabled="true"]):not([disabled])'
       )
     );
@@ -49,10 +51,22 @@ export default function ActionMenu({
 
   const closeAndRestoreFocus = useCallback(() => {
     setMenuOpen(false);
+    setMenuPos(null);
     requestAnimationFrame(() => {
       toggleRef.current?.focus();
     });
   }, []);
+
+  // Compute fixed position when menu opens
+  useEffect(() => {
+    if (!menuOpen || !toggleRef.current) return;
+
+    const rect = toggleRef.current.getBoundingClientRect();
+    setMenuPos({
+      top: rect.bottom + 4,
+      left: rect.right,
+    });
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -64,10 +78,13 @@ export default function ActionMenu({
 
     const handlePointerDown = (event: MouseEvent) => {
       if (
+        menuRef.current &&
+        !menuRef.current.contains(event.target as Node) &&
         menuContainerRef.current &&
         !menuContainerRef.current.contains(event.target as Node)
       ) {
         setMenuOpen(false);
+        setMenuPos(null);
       }
     };
 
@@ -77,11 +94,18 @@ export default function ActionMenu({
       }
     };
 
+    const handleScroll = () => {
+      setMenuOpen(false);
+      setMenuPos(null);
+    };
+
     document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", handleScroll, true);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", handleScroll, true);
     };
   }, [closeAndRestoreFocus, getFocusableItems, menuOpen]);
 
@@ -164,11 +188,18 @@ export default function ActionMenu({
       >
         &hellip;
       </button>
-      {menuOpen && (
+      {menuOpen && menuPos && (
         <ul
+          ref={menuRef}
           id={menuId}
           className={styles.menu}
           role="menu"
+          style={{
+            position: "fixed",
+            top: `${menuPos.top}px`,
+            left: `${menuPos.left}px`,
+            transform: "translateX(-100%)",
+          }}
           onKeyDown={handleMenuKeyDown}
         >
           {options.map((option) => (

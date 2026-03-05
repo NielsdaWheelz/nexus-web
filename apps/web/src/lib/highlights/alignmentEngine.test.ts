@@ -449,7 +449,7 @@ describe("computeScrollTarget", () => {
 
 describe("constants", () => {
   it("has expected values per spec", () => {
-    expect(ROW_HEIGHT).toBe(28);
+    expect(ROW_HEIGHT).toBe(44);
     expect(ROW_GAP).toBe(4);
     expect(SCROLL_TARGET_FRACTION).toBe(0.2);
   });

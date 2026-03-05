@@ -23,9 +23,11 @@ import PdfReader, {
   type PdfReaderControlsState,
 } from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
-import HighlightEditor, { type Highlight } from "@/components/HighlightEditor";
+import { type Highlight } from "@/components/HighlightEditor";
+import HighlightEditPopover from "@/components/HighlightEditPopover";
 import { useToast } from "@/components/Toast";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
+import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
@@ -130,7 +132,6 @@ interface Fragment {
   created_at: string;
 }
 
-type EditorHighlight = Highlight;
 
 interface SelectionState {
   range: Range;
@@ -395,21 +396,6 @@ async function deleteAnnotation(highlightId: string): Promise<void> {
   });
 }
 
-function toEditorHighlightFromPdf(highlight: PdfHighlightOut): EditorHighlight {
-  return {
-    id: highlight.id,
-    fragment_id: "",
-    start_offset: 0,
-    end_offset: 0,
-    color: highlight.color,
-    exact: highlight.exact,
-    prefix: highlight.prefix,
-    suffix: highlight.suffix,
-    created_at: highlight.created_at,
-    updated_at: highlight.updated_at,
-    annotation: highlight.annotation,
-  };
-}
 
 async function fetchChapterDetail(
   mediaId: string,
@@ -666,33 +652,6 @@ export default function MediaViewPage() {
     [pdfDocumentHighlights]
   );
 
-  const focusedHighlightForEditor = useMemo(() => {
-    if (!focusState.focusedId) {
-      return null;
-    }
-    if (isPdf) {
-      const pdfHighlight =
-        pdfPageHighlights.find((h) => h.id === focusState.focusedId) ??
-        pdfDocumentHighlights.find((h) => h.id === focusState.focusedId);
-      return pdfHighlight ? toEditorHighlightFromPdf(pdfHighlight) : null;
-    }
-    if (isEpub && epubHighlightScope === "book") {
-      const mediaHighlight = mediaHighlights.find((h) => h.id === focusState.focusedId);
-      if (mediaHighlight) {
-        return mediaHighlight;
-      }
-    }
-    return highlights.find((h) => h.id === focusState.focusedId) ?? null;
-  }, [
-    focusState.focusedId,
-    highlights,
-    isPdf,
-    pdfPageHighlights,
-    pdfDocumentHighlights,
-    isEpub,
-    epubHighlightScope,
-    mediaHighlights,
-  ]);
 
   const linkedItemsContentRef = isPdf ? pdfContentRef : contentRef;
   const linkedItemsVersion = isPdf
@@ -1999,56 +1958,61 @@ export default function MediaViewPage() {
     [clearFocus]
   );
 
-  const handleCollapseHighlightDetails = useCallback(() => {
+  // ---- Edit Popover state ----
+  const [editPopoverHighlightId, setEditPopoverHighlightId] = useState<string | null>(null);
+  const [editPopoverAnchorRect, setEditPopoverAnchorRect] = useState<DOMRect | null>(null);
+
+  const editPopoverHighlight = useMemo(() => {
+    if (!editPopoverHighlightId) return null;
+    const hl = linkedPaneHighlights.find((h) => h.id === editPopoverHighlightId);
+    if (!hl) return null;
+    return { id: hl.id, color: hl.color };
+  }, [editPopoverHighlightId, linkedPaneHighlights]);
+
+  const dismissEditPopover = useCallback(() => {
+    setEditPopoverHighlightId(null);
+    setEditPopoverAnchorRect(null);
     cancelEditBounds();
-    focusHighlight(null);
-  }, [cancelEditBounds, focusHighlight]);
+  }, [cancelEditBounds]);
 
-  const renderExpandedLinkedItem = useCallback(
-    (highlightId: string) => {
-      if (!focusedHighlightForEditor || focusedHighlightForEditor.id !== highlightId) {
-        return null;
-      }
-
-      return (
-        <div className={styles.inlineHighlightEditor}>
-          <div className={styles.inlineHighlightEditorHeader}>
-            <button
-              type="button"
-              className={styles.collapseInlineEditorBtn}
-              onClick={(event) => {
-                event.stopPropagation();
-                handleCollapseHighlightDetails();
-              }}
-            >
-              Collapse
-            </button>
-          </div>
-          <HighlightEditor
-            highlight={focusedHighlightForEditor}
-            isEditingBounds={focusState.editingBounds}
-            onStartEditBounds={startEditBounds}
-            onCancelEditBounds={cancelEditBounds}
-            onColorChange={handleColorChange}
-            onDelete={handleDelete}
-            onAnnotationSave={handleAnnotationSave}
-            onAnnotationDelete={handleAnnotationDelete}
-            compact
-          />
-        </div>
-      );
+  const buildRowOptions = useCallback(
+    (highlightId: string): ActionMenuOption[] => {
+      const items: ActionMenuOption[] = [];
+      items.push({
+        id: "edit-highlight",
+        label: "Edit highlight",
+        onSelect: () => {
+          // Find the row element's rect for popover anchoring
+          const linkedItemsContentEl = linkedItemsContentRef.current;
+          const rowEl = linkedItemsContentEl
+            ? linkedItemsContentEl.querySelector<HTMLElement>(
+                `[data-highlight-id="${escapeAttrValue(highlightId)}"]`
+              )
+            : document.querySelector<HTMLElement>(
+                `[data-highlight-id="${escapeAttrValue(highlightId)}"]`
+              );
+          if (rowEl) {
+            setEditPopoverAnchorRect(rowEl.getBoundingClientRect());
+          } else {
+            setEditPopoverAnchorRect(new DOMRect(200, 200, 200, 44));
+          }
+          setEditPopoverHighlightId(highlightId);
+          focusHighlight(highlightId);
+        },
+      });
+      items.push({
+        id: "delete-highlight",
+        label: "Delete",
+        tone: "danger",
+        onSelect: () => {
+          if (window.confirm("Delete this highlight?")) {
+            void handleDelete(highlightId);
+          }
+        },
+      });
+      return items;
     },
-    [
-      focusedHighlightForEditor,
-      focusState.editingBounds,
-      startEditBounds,
-      cancelEditBounds,
-      handleColorChange,
-      handleDelete,
-      handleAnnotationSave,
-      handleAnnotationDelete,
-      handleCollapseHighlightDetails,
-    ]
+    [handleDelete, focusHighlight, linkedItemsContentRef]
   );
 
   const mediaHeaderMeta = (
@@ -2480,8 +2444,22 @@ export default function MediaViewPage() {
             layoutMode={linkedItemsLayoutMode}
             anchorDescriptors={linkedItemsAnchorDescriptors}
             anchorProvider={linkedItemsAnchorProvider}
-            renderExpandedContent={renderExpandedLinkedItem}
+            onAnnotationSave={handleAnnotationSave}
+            onAnnotationDelete={handleAnnotationDelete}
+            rowOptions={buildRowOptions}
           />
+
+          {editPopoverHighlight && editPopoverAnchorRect && (
+            <HighlightEditPopover
+              highlight={editPopoverHighlight}
+              anchorRect={editPopoverAnchorRect}
+              isEditingBounds={focusState.editingBounds}
+              onStartEditBounds={startEditBounds}
+              onCancelEditBounds={cancelEditBounds}
+              onColorChange={handleColorChange}
+              onDismiss={dismissEditPopover}
+            />
+          )}
 
           {isPdf && (
             <div className={styles.bookHighlightsControls}>

@@ -1,0 +1,130 @@
+.popover {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  animation: popoverFadeIn 150ms ease-out;
+  min-width: 160px;
+}
+
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.closeButton {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.closeButton:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.colorPicker {
+  display: flex;
+  gap: var(--space-1);
+  justify-content: center;
+  padding-right: 20px; /* space for close button */
+}
+
+.colorButton {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 100ms ease, border-color 100ms ease;
+}
+
+.colorButton:hover {
+  transform: scale(1.1);
+}
+
+.colorButton.selected {
+  border-color: var(--color-text);
+  box-shadow: 0 0 0 2px var(--color-surface);
+}
+
+.color-yellow {
+  background: rgba(255, 235, 59, 0.8);
+}
+
+.color-green {
+  background: rgba(76, 175, 80, 0.7);
+}
+
+.color-blue {
+  background: rgba(33, 150, 243, 0.6);
+}
+
+.color-pink {
+  background: rgba(233, 30, 99, 0.6);
+}
+
+.color-purple {
+  background: rgba(156, 39, 176, 0.6);
+}
+
+.editBoundsButton {
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-align: center;
+}
+
+.editBoundsButton:hover {
+  background: var(--color-bg);
+}
+
+.editBoundsButton.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* Focus-visible for keyboard navigation */
+.colorButton:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.editBoundsButton:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.closeButton:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}

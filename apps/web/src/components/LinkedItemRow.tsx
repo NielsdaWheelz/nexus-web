@@ -1,22 +1,24 @@
 /**
  * LinkedItemRow - Individual row component for linked-items pane.
  *
- * Each row represents one highlight and includes:
- * - Color swatch
- * - Truncated exact text preview (single line)
- * - Hover and click affordance
- *
- * The row is positioned absolutely and uses CSS transforms for
- * performant scroll-synchronized positioning.
+ * Each row represents one highlight with two lines:
+ * - Line 1: Color swatch + truncated text preview + ActionMenu
+ * - Line 2: Annotation body or "Add a note…" placeholder (click to edit inline)
  *
  * @see docs/v1/s2/s2_prs/s2_pr10.md §6
  */
 
 "use client";
 
-import { forwardRef, useCallback, useMemo } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
-import ContextRow from "@/components/ui/ContextRow";
 import styles from "./LinkedItemsPane.module.css";
 
 // =============================================================================
@@ -53,10 +55,12 @@ export interface LinkedItemRowProps {
   style?: React.CSSProperties;
   /** Optional class name for mode-specific row styling. */
   className?: string;
-  /** Optional expanded inline content rendered beneath the row preview. */
-  expandedContent?: React.ReactNode;
   /** Optional action menu options for the row. */
   options?: ActionMenuOption[];
+  /** Save annotation callback. Empty body on existing annotation triggers delete. */
+  onAnnotationSave?: (highlightId: string, body: string) => Promise<void>;
+  /** Delete annotation callback. */
+  onAnnotationDelete?: (highlightId: string) => Promise<void>;
 }
 
 // =============================================================================
@@ -70,12 +74,6 @@ const MAX_PREVIEW_LENGTH = 60;
 // Component
 // =============================================================================
 
-/**
- * A single row in the linked-items pane.
- *
- * Uses forwardRef to allow the parent to manipulate transform directly
- * for performant scroll-synchronized positioning.
- */
 const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
   function LinkedItemRow(
     {
@@ -87,11 +85,35 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
       onSendToChat,
       style,
       className,
-      expandedContent,
       options: optionsProp,
+      onAnnotationSave,
+      onAnnotationDelete,
     },
     ref
   ) {
+    const [isEditingAnnotation, setIsEditingAnnotation] = useState(false);
+    const [annotationDraft, setAnnotationDraft] = useState(
+      highlight.annotation?.body ?? ""
+    );
+    const [isSaving, setIsSaving] = useState(false);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    // Sync draft from prop when not editing
+    useEffect(() => {
+      if (!isEditingAnnotation) {
+        setAnnotationDraft(highlight.annotation?.body ?? "");
+      }
+    }, [highlight.annotation?.body, isEditingAnnotation]);
+
+    // Auto-focus textarea on edit start
+    useEffect(() => {
+      if (isEditingAnnotation) {
+        requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+        });
+      }
+    }, [isEditingAnnotation]);
+
     const handleClick = useCallback(() => {
       onClick(highlight.id);
     }, [onClick, highlight.id]);
@@ -100,9 +122,66 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
       onMouseEnter(highlight.id);
     }, [onMouseEnter, highlight.id]);
 
-    const isExpanded = Boolean(expandedContent);
+    const handleAnnotationClick = useCallback(
+      (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (onAnnotationSave) {
+          setIsEditingAnnotation(true);
+        }
+      },
+      [onAnnotationSave]
+    );
 
-    // Build menu options: "Quote to chat" from onSendToChat + any extra options
+    const handleSaveAnnotation = useCallback(async () => {
+      if (isSaving) return;
+      const trimmed = annotationDraft.trim();
+
+      if (trimmed === (highlight.annotation?.body ?? "")) {
+        setIsEditingAnnotation(false);
+        return;
+      }
+
+      setIsSaving(true);
+      try {
+        if (trimmed === "" && highlight.annotation) {
+          await onAnnotationDelete?.(highlight.id);
+        } else if (trimmed !== "") {
+          await onAnnotationSave?.(highlight.id, trimmed);
+        }
+      } finally {
+        setIsSaving(false);
+        setIsEditingAnnotation(false);
+      }
+    }, [
+      annotationDraft,
+      highlight.annotation,
+      highlight.id,
+      isSaving,
+      onAnnotationDelete,
+      onAnnotationSave,
+    ]);
+
+    const handleCancelAnnotation = useCallback(() => {
+      setAnnotationDraft(highlight.annotation?.body ?? "");
+      setIsEditingAnnotation(false);
+    }, [highlight.annotation?.body]);
+
+    const handleTextareaKeyDown = useCallback(
+      (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          handleCancelAnnotation();
+        } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          e.stopPropagation();
+          void handleSaveAnnotation();
+        }
+      },
+      [handleCancelAnnotation, handleSaveAnnotation]
+    );
+
+    // Build menu options
     const menuOptions = useMemo(() => {
       const items: ActionMenuOption[] = [];
       if (onSendToChat) {
@@ -124,66 +203,78 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
         ? `${highlight.exact.slice(0, MAX_PREVIEW_LENGTH)}…`
         : highlight.exact;
 
+    const annotationBody = highlight.annotation?.body;
+
     return (
       <div
         ref={ref}
         data-highlight-id={highlight.id}
         className={`${styles.linkedItemRow} ${isFocused ? styles.rowFocused : ""} ${
-          isExpanded ? styles.rowExpanded : ""
+          isEditingAnnotation ? styles.annotationEditing : ""
         } ${className ?? ""}`.trim()}
         style={style}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={onMouseLeave}
       >
-        <ContextRow
-          mainClassName={styles.linkedItemRowMain}
-          leading={
-            <span
-              className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
-              aria-hidden="true"
-            />
-          }
-          title={previewText}
-          titleClassName={styles.previewText}
-          trailing={
-            <>
-              {highlight.annotation && (
-                <span className={styles.annotationIndicator} role="img" aria-label="Has annotation">
-                  💬
-                </span>
-              )}
-              {menuOptions.length > 0 && (
-                <ActionMenu
-                  options={menuOptions}
-                  className={styles.actionMenu}
-                />
-              )}
-            </>
-          }
-          onMainClick={handleClick}
-          onMainKeyDown={(event) => {
+        {/* Line 1: swatch + text + actions */}
+        <div
+          className={styles.linkedItemRowMain}
+          onClick={handleClick}
+          onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
               handleClick();
             }
           }}
-          mainRole="button"
-          mainTabIndex={0}
-          ariaPressed={isFocused}
-          ariaExpanded={isExpanded}
-          expandedContent={
-            expandedContent ? (
-              <div
-                onClick={(event) => {
-                  event.stopPropagation();
-                }}
-              >
-                {expandedContent}
-              </div>
-            ) : undefined
-          }
-          expandedClassName={styles.rowExpansion}
-        />
+          role="button"
+          tabIndex={0}
+          aria-pressed={isFocused}
+        >
+          <span
+            className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
+            aria-hidden="true"
+          />
+          <span className={styles.previewText}>{previewText}</span>
+          {menuOptions.length > 0 && (
+            <ActionMenu
+              options={menuOptions}
+              className={styles.actionMenu}
+            />
+          )}
+        </div>
+
+        {/* Line 2: annotation or placeholder */}
+        {isEditingAnnotation ? (
+          <textarea
+            ref={textareaRef}
+            className={styles.annotationTextarea}
+            value={annotationDraft}
+            onChange={(e) => setAnnotationDraft(e.target.value)}
+            onBlur={() => void handleSaveAnnotation()}
+            onKeyDown={handleTextareaKeyDown}
+            onClick={(e) => e.stopPropagation()}
+            disabled={isSaving}
+            rows={2}
+            aria-label="Annotation"
+          />
+        ) : (
+          <span
+            className={`${styles.annotationLine} ${
+              !annotationBody ? styles.annotationPlaceholder : ""
+            }`}
+            onClick={handleAnnotationClick}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleAnnotationClick(e as unknown as React.MouseEvent);
+              }
+            }}
+            role="button"
+            tabIndex={0}
+          >
+            {annotationBody || "Add a note\u2026"}
+          </span>
+        )}
       </div>
     );
   }
