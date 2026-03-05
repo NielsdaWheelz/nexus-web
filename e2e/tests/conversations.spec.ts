@@ -21,14 +21,21 @@ test.describe("conversations", () => {
       conversationId = await createConversationViaApi(page);
       await page.goto("/conversations");
 
-      const conversationLink = page.getByRole("link", {
-        name: new RegExp(conversationId.slice(0, 8)),
-      });
+      const conversationLink = page.locator(`a[href="/conversations/${conversationId}"]`).first();
       await expect(conversationLink).toBeVisible();
+      await expect(conversationLink.getByText(/^chat$/i)).toBeVisible();
+      await expect(conversationLink).not.toContainText(
+        new RegExp(conversationId.slice(0, 8), "i"),
+      );
       await conversationLink.click();
 
       await expect(page).toHaveURL(new RegExp(`/conversations/${conversationId}$`));
       expect(readConversationIdFromUrl(page.url())).toBe(conversationId);
+      const conversationTab = page.getByRole("tab", { name: /chat/i }).first();
+      await expect(conversationTab).toBeVisible();
+      await expect(conversationTab).not.toContainText(
+        new RegExp(conversationId.slice(0, 8), "i"),
+      );
     } finally {
       if (conversationId) {
         await page.request.delete(`/api/conversations/${conversationId}`);

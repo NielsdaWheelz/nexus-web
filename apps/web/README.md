@@ -20,8 +20,10 @@ The browser **never** calls FastAPI directly. All requests go through Next.js ro
 Authenticated views also run inside an in-app multi-pane workspace:
 - primary content renders in the main pane
 - side panes are route-rendered (no iframes) via `PaneRouteRenderer`
-- pane graph state persists in `localStorage` key `nexus.paneGraph.v1` (max 8 panes)
-- pane-open requests flow through `requestOpenInAppPane(href)` / `nexus:open-pane`
+- workspace layout state is URL-encoded in the `ws` query param (schema v2)
+- tab labels resolve by descriptor precedence: runtime page title → resource cache → open hint → route static title → safe fallback
+- pane-open requests flow through `requestOpenInAppPane(href, { titleHint?, resourceRef? })` / `nexus:open-pane`
+- resource title cache persists in `localStorage` key `nexus.workspace.resource-title-cache.v1`
 
 ### Request Tracing
 
@@ -148,7 +150,8 @@ src/
 │   │   ├── useHighlightInteraction.ts  # Focus/cycling hook (PR-09)
 │   │   ├── alignmentEngine.ts  # Vertical alignment logic (PR-10)
 │   │   └── highlights.css      # Highlight styles
-│   ├── panes/              # In-app pane graph + pane-scoped navigation runtime
+│   ├── panes/              # In-app pane routing + open-pane transport/runtime
+│   ├── workspace/          # Workspace state + tab descriptor/title resolver
 │   └── supabase/
 │       ├── server.ts       # Server-side Supabase client
 │       └── middleware.ts   # Session refresh + auth redirects

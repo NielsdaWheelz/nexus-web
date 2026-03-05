@@ -20,6 +20,7 @@ import ConversationContextPane from "@/components/ConversationContextPane";
 import {
   usePaneRouter,
   usePaneSearchParams,
+  useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { SplitSurface } from "@/components/workspace";
 import Pane from "@/components/Pane";
@@ -32,6 +33,7 @@ import styles from "../page.module.css";
 export default function NewConversationPage() {
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
+  useSetPaneTitle("New chat");
 
   const initialAttach = useMemo(
     () => parseAttachContext(searchParams),

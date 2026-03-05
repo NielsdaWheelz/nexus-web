@@ -75,6 +75,7 @@ import {
   usePaneParam,
   usePaneRouter,
   usePaneSearchParams,
+  useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { useReaderContext, useReaderState } from "@/lib/reader";
 import {
@@ -504,6 +505,7 @@ export default function MediaViewPage() {
   const [media, setMedia] = useState<Media | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  useSetPaneTitle(media?.title ?? "Media");
 
   // ---- Non-EPUB fragment state ----
   const [fragments, setFragments] = useState<Fragment[]>([]);
@@ -1881,7 +1883,7 @@ export default function MediaViewPage() {
   const openQuoteRoute = useCallback(
     (highlightId: string) => {
       const route = buildQuoteRoute(highlightId);
-      if (!requestOpenInAppPane(route)) {
+      if (!requestOpenInAppPane(route, { titleHint: "New chat" })) {
         router.push(route);
       }
     },

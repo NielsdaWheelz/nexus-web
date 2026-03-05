@@ -12,6 +12,11 @@ interface PaneRouteRendererProps {
   onNavigatePane: (paneId: string, href: string) => void;
   onReplacePane: (paneId: string, href: string) => void;
   onOpenInNewPane: (href: string) => void;
+  onSetPaneTitle?: (
+    paneId: string,
+    title: string | null,
+    metadata: { routeId: string; resourceRef: string | null }
+  ) => void;
 }
 
 class PaneRouteErrorBoundary extends Component<
@@ -124,6 +129,7 @@ export default function PaneRouteRenderer({
   onNavigatePane,
   onReplacePane,
   onOpenInNewPane,
+  onSetPaneTitle,
 }: PaneRouteRendererProps) {
   const route = useMemo(() => resolvePaneRoute(href), [href]);
   const pathParams = useMemo<Record<string, string>>(() => ({ ...route.params }), [route.params]);
@@ -132,10 +138,13 @@ export default function PaneRouteRenderer({
     <PaneRuntimeProvider
       paneId={paneId}
       href={href}
+      routeId={route.id}
+      resourceRef={route.resourceRef}
       pathParams={pathParams}
       onNavigatePane={onNavigatePane}
       onReplacePane={onReplacePane}
       onOpenInNewPane={onOpenInNewPane}
+      onSetPaneTitle={onSetPaneTitle}
     >
       <PaneRouteBoundary>
         <PaneRouteErrorBoundary resetKey={href}>

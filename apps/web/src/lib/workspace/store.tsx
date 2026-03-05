@@ -37,6 +37,16 @@ import {
   setPaneGraphReady,
   type OpenInAppPaneDetail,
 } from "@/lib/panes/openInAppPane";
+import {
+  createResourceTitleCacheEntry,
+  loadResourceTitleCacheFromStorage,
+  normalizeTabTitle,
+  pruneResourceTitleCache,
+  RESOURCE_TITLE_CACHE_TTL_MS,
+  saveResourceTitleCacheToStorage,
+  type ResourceTitleCacheEntry,
+  type TabOpenHint,
+} from "@/lib/workspace/tabDescriptor";
 
 type HistoryMode = "replace" | "push";
 
@@ -49,10 +59,14 @@ interface OpenTabOptions {
   groupId?: string;
   activate?: boolean;
   historyMode?: HistoryMode;
+  titleHint?: string;
+  resourceRef?: string;
 }
 
 interface OpenGroupWithTabOptions {
   historyMode?: HistoryMode;
+  titleHint?: string;
+  resourceRef?: string;
 }
 
 interface NavigateTabOptions {
@@ -62,6 +76,9 @@ interface NavigateTabOptions {
 interface WorkspaceStoreValue {
   state: WorkspaceStateV2;
   meta: WorkspaceStoreMeta;
+  runtimeTitleByTabId: ReadonlyMap<string, string>;
+  openHintByTabId: ReadonlyMap<string, TabOpenHint>;
+  resourceTitleByRef: ReadonlyMap<string, ResourceTitleCacheEntry>;
   activateGroup: (groupId: string) => void;
   activateTab: (groupId: string, tabId: string) => void;
   openTab: (href: string, options?: OpenTabOptions) => void;
@@ -75,6 +92,12 @@ interface WorkspaceStoreValue {
   closeTab: (groupId: string, tabId: string) => void;
   closeGroup: (groupId: string) => void;
   setGroupWidth: (groupId: string, widthPx: number) => void;
+  publishTabTitle: (
+    groupId: string,
+    tabId: string,
+    title: string | null,
+    options?: { resourceRef?: string | null }
+  ) => void;
   replaceState: (nextState: WorkspaceStateV2) => void;
 }
 
@@ -87,8 +110,9 @@ type WorkspaceAction =
       href: string;
       groupId?: string;
       activate: boolean;
+      tabId?: string;
     }
-  | { type: "open_group_with_tab"; href: string }
+  | { type: "open_group_with_tab"; href: string; groupId?: string; tabId?: string }
   | { type: "navigate_tab"; groupId: string; tabId: string; href: string }
   | { type: "close_tab"; groupId: string; tabId: string }
   | { type: "close_group"; groupId: string }
@@ -130,9 +154,10 @@ function evictToMaxTabs(tabs: WorkspaceTabStateV2[], maxTabs: number): Workspace
 function openTabInGroup(
   group: WorkspacePaneGroupStateV2,
   href: string,
-  activate: boolean
+  activate: boolean,
+  tabId?: string
 ): WorkspacePaneGroupStateV2 {
-  const nextTab = { id: createWorkspaceId("tab"), href };
+  const nextTab = { id: tabId ?? createWorkspaceId("tab"), href };
   const nextTabs = evictToMaxTabs([...group.tabs, nextTab], MAX_TABS_PER_GROUP);
   const activeTabId = activate ? nextTab.id : group.activeTabId;
   return ensureActiveTab({
@@ -142,9 +167,13 @@ function openTabInGroup(
   });
 }
 
-function openGroupWithSingleTab(state: WorkspaceStateV2, href: string): WorkspaceStateV2 {
-  const nextTabId = createWorkspaceId("tab");
-  const nextGroupId = createWorkspaceId("group");
+function openGroupWithSingleTab(
+  state: WorkspaceStateV2,
+  href: string,
+  options?: { tabId?: string; groupId?: string }
+): WorkspaceStateV2 {
+  const nextTabId = options?.tabId ?? createWorkspaceId("tab");
+  const nextGroupId = options?.groupId ?? createWorkspaceId("group");
   const nextGroup: WorkspacePaneGroupStateV2 = {
     id: nextGroupId,
     activeTabId: nextTabId,
@@ -195,10 +224,12 @@ function workspaceReducer(state: WorkspaceStateV2, action: WorkspaceAction): Wor
     case "open_tab": {
       const targetGroupId = action.groupId ?? state.activeGroupId;
       if (!state.groups.some((group) => group.id === targetGroupId)) {
-        return openGroupWithSingleTab(state, action.href);
+        return openGroupWithSingleTab(state, action.href, { tabId: action.tabId });
       }
       const groups = state.groups.map((group) =>
-        group.id === targetGroupId ? openTabInGroup(group, action.href, action.activate) : group
+        group.id === targetGroupId
+          ? openTabInGroup(group, action.href, action.activate, action.tabId)
+          : group
       );
       return ensureActiveGroup({
         ...state,
@@ -207,7 +238,10 @@ function workspaceReducer(state: WorkspaceStateV2, action: WorkspaceAction): Wor
       });
     }
     case "open_group_with_tab":
-      return openGroupWithSingleTab(state, action.href);
+      return openGroupWithSingleTab(state, action.href, {
+        groupId: action.groupId,
+        tabId: action.tabId,
+      });
     case "navigate_tab": {
       const groups = state.groups.map((group) => {
         if (group.id !== action.groupId) {
@@ -327,11 +361,21 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     lastDecodeError: null,
     lastEncodeError: null,
   });
+  const [runtimeTitleByTabId, setRuntimeTitleByTabId] = useState<Map<string, string>>(
+    () => new Map()
+  );
+  const [openHintByTabId, setOpenHintByTabId] = useState<Map<string, TabOpenHint>>(
+    () => new Map()
+  );
+  const [resourceTitleByRef, setResourceTitleByRef] = useState<
+    Map<string, ResourceTitleCacheEntry>
+  >(() => loadResourceTitleCacheFromStorage(Date.now()));
   const historyModeRef = useRef<HistoryMode>("replace");
   const skipSyncRef = useRef(false);
   const readyRef = useRef(false);
   const lastDecodeTelemetryRef = useRef<string>("");
   const lastEncodeTelemetryRef = useRef<string>("");
+  const tabHrefByIdRef = useRef<Map<string, string>>(new Map());
 
   const setHistoryMode = useCallback((mode: HistoryMode) => {
     historyModeRef.current = mode;
@@ -362,6 +406,53 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     });
   }, []);
 
+  const upsertResourceTitleForRef = useCallback((resourceRef: string, title: string) => {
+    const normalizedRef = resourceRef.trim();
+    if (!normalizedRef) {
+      return;
+    }
+    const normalizedTitle = normalizeTabTitle(title);
+    if (!normalizedTitle) {
+      return;
+    }
+    setResourceTitleByRef((prev) => {
+      const nowMs = Date.now();
+      const next = pruneResourceTitleCache(prev, nowMs);
+      const entry = createResourceTitleCacheEntry(
+        normalizedTitle,
+        nowMs,
+        RESOURCE_TITLE_CACHE_TTL_MS
+      );
+      if (!entry) {
+        return next;
+      }
+      next.set(normalizedRef, entry);
+      return next;
+    });
+  }, []);
+
+  const setOpenHintForTab = useCallback((tabId: string, hint: TabOpenHint) => {
+    const normalizedTitleHint = normalizeTabTitle(hint.titleHint);
+    const normalizedResourceRef =
+      typeof hint.resourceRef === "string" && hint.resourceRef.trim().length > 0
+        ? hint.resourceRef.trim()
+        : undefined;
+    if (!normalizedTitleHint && !normalizedResourceRef) {
+      return;
+    }
+    setOpenHintByTabId((prev) => {
+      const next = new Map(prev);
+      next.set(tabId, {
+        titleHint: normalizedTitleHint ?? undefined,
+        resourceRef: normalizedResourceRef ?? undefined,
+      });
+      return next;
+    });
+    if (normalizedTitleHint && normalizedResourceRef) {
+      upsertResourceTitleForRef(normalizedResourceRef, normalizedTitleHint);
+    }
+  }, [upsertResourceTitleForRef]);
+
   useEffect(() => {
     const decoded = getWindowLocationState();
     dispatch({ type: "hydrate", state: decoded.state });
@@ -385,21 +476,39 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       setMeta((prev) => ({ ...prev, lastDecodeError: decoded.errorCode }));
       publishDecodeTelemetry(decoded);
     };
-    const enqueueOpenPaneHref = (href: string) => {
-      const normalizedHref = normalizePaneHref(href) ?? normalizeWorkspaceHref(href);
+    const enqueueOpenPaneDetail = (detail: OpenInAppPaneDetail) => {
+      const normalizedHref =
+        normalizePaneHref(detail.href) ?? normalizeWorkspaceHref(detail.href);
       if (!normalizedHref) {
         return;
       }
+      const tabId = createWorkspaceId("tab");
+      const groupId = createWorkspaceId("group");
+      const titleHint = normalizeTabTitle(detail.titleHint);
+      const resourceRef =
+        typeof detail.resourceRef === "string" && detail.resourceRef.trim().length > 0
+          ? detail.resourceRef.trim()
+          : undefined;
+      if (titleHint || resourceRef) {
+        setOpenHintForTab(tabId, {
+          titleHint: titleHint ?? undefined,
+          resourceRef,
+        });
+      }
       historyModeRef.current = "push";
-      dispatch({ type: "open_group_with_tab", href: normalizedHref });
+      dispatch({
+        type: "open_group_with_tab",
+        href: normalizedHref,
+        groupId,
+        tabId,
+      });
     };
     const handleOpenPaneEvent = (event: Event) => {
       const customEvent = event as CustomEvent<OpenInAppPaneDetail>;
-      const href = customEvent.detail?.href;
-      if (!href) {
+      if (!customEvent.detail?.href) {
         return;
       }
-      enqueueOpenPaneHref(href);
+      enqueueOpenPaneDetail(customEvent.detail);
     };
     const handleWindowMessage = (event: MessageEvent<unknown>) => {
       if (event.origin !== window.location.origin) {
@@ -408,15 +517,19 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       if (!isOpenInAppPaneMessage(event.data)) {
         return;
       }
-      enqueueOpenPaneHref(event.data.href);
+      enqueueOpenPaneDetail({
+        href: event.data.href,
+        titleHint: event.data.titleHint,
+        resourceRef: event.data.resourceRef,
+      });
     };
 
     window.addEventListener("popstate", handlePopState);
     window.addEventListener(NEXUS_OPEN_PANE_EVENT, handleOpenPaneEvent);
     window.addEventListener("message", handleWindowMessage);
     setPaneGraphReady(true);
-    for (const queuedHref of consumePendingPaneOpenQueue()) {
-      enqueueOpenPaneHref(queuedHref);
+    for (const queuedDetail of consumePendingPaneOpenQueue()) {
+      enqueueOpenPaneDetail(queuedDetail);
     }
 
     return () => {
@@ -426,7 +539,55 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       window.removeEventListener("message", handleWindowMessage);
       setPaneGraphReady(false);
     };
-  }, [publishDecodeTelemetry]);
+  }, [publishDecodeTelemetry, setOpenHintForTab]);
+
+  useEffect(() => {
+    const liveTabIds = new Set<string>();
+    const nextHrefByTabId = new Map<string, string>();
+    const changedHrefTabIds = new Set<string>();
+
+    for (const group of state.groups) {
+      for (const tab of group.tabs) {
+        liveTabIds.add(tab.id);
+        nextHrefByTabId.set(tab.id, tab.href);
+        const previousHref = tabHrefByIdRef.current.get(tab.id);
+        if (previousHref && previousHref !== tab.href) {
+          changedHrefTabIds.add(tab.id);
+        }
+      }
+    }
+    tabHrefByIdRef.current = nextHrefByTabId;
+
+    setRuntimeTitleByTabId((prev) => {
+      let changed = false;
+      const next = new Map<string, string>();
+      for (const [tabId, title] of prev) {
+        if (!liveTabIds.has(tabId) || changedHrefTabIds.has(tabId)) {
+          changed = true;
+          continue;
+        }
+        next.set(tabId, title);
+      }
+      return changed || next.size !== prev.size ? next : prev;
+    });
+
+    setOpenHintByTabId((prev) => {
+      let changed = false;
+      const next = new Map<string, TabOpenHint>();
+      for (const [tabId, hint] of prev) {
+        if (!liveTabIds.has(tabId) || changedHrefTabIds.has(tabId)) {
+          changed = true;
+          continue;
+        }
+        next.set(tabId, hint);
+      }
+      return changed || next.size !== prev.size ? next : prev;
+    });
+  }, [state.groups]);
+
+  useEffect(() => {
+    saveResourceTitleCacheToStorage(resourceTitleByRef, Date.now());
+  }, [resourceTitleByRef]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -487,17 +648,26 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       if (!normalizedHref) {
         return;
       }
+      const tabId =
+        options?.titleHint || options?.resourceRef ? createWorkspaceId("tab") : undefined;
+      if (tabId && (options?.titleHint || options?.resourceRef)) {
+        setOpenHintForTab(tabId, {
+          titleHint: options.titleHint,
+          resourceRef: options.resourceRef,
+        });
+      }
       dispatchAndSync(
         {
           type: "open_tab",
           href: normalizedHref,
           groupId: options?.groupId,
           activate: options?.activate ?? true,
+          tabId,
         },
         options?.historyMode ?? "push"
       );
     },
-    [dispatchAndSync]
+    [dispatchAndSync, setOpenHintForTab]
   );
 
   const openGroupWithTab = useCallback(
@@ -506,15 +676,25 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       if (!normalizedHref) {
         return;
       }
+      const tabId = createWorkspaceId("tab");
+      const groupId = createWorkspaceId("group");
+      if (options?.titleHint || options?.resourceRef) {
+        setOpenHintForTab(tabId, {
+          titleHint: options.titleHint,
+          resourceRef: options.resourceRef,
+        });
+      }
       dispatchAndSync(
         {
           type: "open_group_with_tab",
           href: normalizedHref,
+          groupId,
+          tabId,
         },
         options?.historyMode ?? "push"
       );
     },
-    [dispatchAndSync]
+    [dispatchAndSync, setOpenHintForTab]
   );
 
   const navigateTab = useCallback(
@@ -557,6 +737,44 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     [dispatchAndSync]
   );
 
+  const publishTabTitle = useCallback(
+    (
+      groupId: string,
+      tabId: string,
+      title: string | null,
+      options?: { resourceRef?: string | null }
+    ) => {
+      const group = state.groups.find((candidate) => candidate.id === groupId);
+      const tab = group?.tabs.find((candidate) => candidate.id === tabId);
+      if (!tab) {
+        return;
+      }
+
+      const normalizedTitle = normalizeTabTitle(title);
+      setRuntimeTitleByTabId((prev) => {
+        const next = new Map(prev);
+        if (!normalizedTitle) {
+          next.delete(tabId);
+        } else {
+          next.set(tabId, normalizedTitle);
+        }
+        return next;
+      });
+
+      if (!normalizedTitle) {
+        return;
+      }
+      const resourceRef =
+        options?.resourceRef ??
+        openHintByTabId.get(tabId)?.resourceRef ??
+        null;
+      if (resourceRef) {
+        upsertResourceTitleForRef(resourceRef, normalizedTitle);
+      }
+    },
+    [openHintByTabId, state.groups, upsertResourceTitleForRef]
+  );
+
   const replaceState = useCallback(
     (nextState: WorkspaceStateV2) => {
       dispatchAndSync({ type: "hydrate", state: nextState }, "replace");
@@ -568,6 +786,9 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     () => ({
       state,
       meta,
+      runtimeTitleByTabId,
+      openHintByTabId,
+      resourceTitleByRef,
       activateGroup,
       activateTab,
       openTab,
@@ -576,6 +797,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       closeTab,
       closeGroup,
       setGroupWidth,
+      publishTabTitle,
       replaceState,
     }),
     [
@@ -587,7 +809,11 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       navigateTab,
       openGroupWithTab,
       openTab,
+      openHintByTabId,
+      publishTabTitle,
       replaceState,
+      resourceTitleByRef,
+      runtimeTitleByTabId,
       setGroupWidth,
       state,
     ]

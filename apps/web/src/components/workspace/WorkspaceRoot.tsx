@@ -4,10 +4,10 @@ import { useEffect, useRef } from "react";
 import PaneGroup from "@/components/workspace/PaneGroup";
 import type { WorkspaceTabView } from "@/components/workspace/TabStrip";
 import {
-  tabTitleFromHref,
   type WorkspacePaneGroupStateV2,
   type WorkspaceTabStateV2,
 } from "@/lib/workspace/schema";
+import type { TabDescriptor } from "@/lib/workspace/tabDescriptor";
 import styles from "./WorkspaceRoot.module.css";
 
 interface WorkspaceRootProps {
@@ -18,7 +18,7 @@ interface WorkspaceRootProps {
   onCloseTab?: (groupId: string, tabId: string) => void;
   onSetGroupWidth?: (groupId: string, widthPx: number) => void;
   renderTabContent: (groupId: string, tabId: string) => React.ReactNode;
-  getTabTitle?: (tab: WorkspaceTabStateV2) => string;
+  getTabDescriptor?: (tab: WorkspaceTabStateV2) => TabDescriptor;
 }
 
 export default function WorkspaceRoot({
@@ -29,7 +29,7 @@ export default function WorkspaceRoot({
   onCloseTab,
   onSetGroupWidth,
   renderTabContent,
-  getTabTitle,
+  getTabDescriptor,
 }: WorkspaceRootProps) {
   const groupRefs = useRef(new Map<string, HTMLElement>());
 
@@ -59,7 +59,7 @@ export default function WorkspaceRoot({
         const tabs: WorkspaceTabView[] = group.tabs.map((tab) => ({
           id: tab.id,
           href: tab.href,
-          title: getTabTitle?.(tab) ?? tabTitleFromHref(tab.href),
+          title: getTabDescriptor?.(tab)?.resolvedTitle ?? "Tab",
         }));
 
         return (

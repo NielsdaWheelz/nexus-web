@@ -39,6 +39,8 @@ logger = get_logger(__name__)
 DEFAULT_LIMIT = 50
 MIN_LIMIT = 1
 MAX_LIMIT = 100
+DEFAULT_CONVERSATION_TITLE = "Chat"
+MAX_CONVERSATION_TITLE_LENGTH = 120
 
 
 # =============================================================================
@@ -128,6 +130,19 @@ def clamp_limit(limit: int) -> int:
     return min(max(limit, MIN_LIMIT), MAX_LIMIT)
 
 
+def derive_conversation_title(content: str | None) -> str:
+    """Derive a conversation title from user content.
+
+    Empty or whitespace-only input falls back to the default title.
+    """
+    if content is None:
+        return DEFAULT_CONVERSATION_TITLE
+    normalized = " ".join(content.split()).strip()
+    if not normalized:
+        return DEFAULT_CONVERSATION_TITLE
+    return normalized[:MAX_CONVERSATION_TITLE_LENGTH].rstrip()
+
+
 def get_conversation_for_visible_read_or_404(
     db: Session, viewer_id: UUID, conversation_id: UUID
 ) -> Conversation:
@@ -183,6 +198,7 @@ def conversation_to_out(
     """
     return ConversationOut(
         id=conversation.id,
+        title=conversation.title,
         owner_user_id=conversation.owner_user_id,
         is_owner=(viewer_id is not None and conversation.owner_user_id == viewer_id),
         sharing=conversation.sharing,
@@ -223,6 +239,7 @@ def create_conversation(db: Session, viewer_id: UUID) -> ConversationOut:
     """
     conversation = Conversation(
         owner_user_id=viewer_id,
+        title=DEFAULT_CONVERSATION_TITLE,
         sharing="private",
         next_seq=1,
     )
@@ -340,7 +357,7 @@ def _list_conversations_mine(
 
     result = db.execute(
         text(f"""
-            SELECT c.id, c.owner_user_id, c.sharing, c.created_at, c.updated_at,
+            SELECT c.id, c.owner_user_id, c.title, c.sharing, c.created_at, c.updated_at,
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
             FROM conversations c
             WHERE c.owner_user_id = :viewer_id
@@ -384,7 +401,7 @@ def _list_conversations_visible(
     result = db.execute(
         text(f"""
             WITH {cte}
-            SELECT c.id, c.owner_user_id, c.sharing, c.created_at, c.updated_at,
+            SELECT c.id, c.owner_user_id, c.title, c.sharing, c.created_at, c.updated_at,
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
             FROM conversations c
             JOIN visible_conversations vc ON vc.id = c.id
@@ -412,11 +429,12 @@ def _build_conversation_page(
         ConversationOut(
             id=row[0],
             owner_user_id=row[1],
+            title=row[2],
             is_owner=(row[1] == viewer_id),
-            sharing=row[2],
-            created_at=row[3],
-            updated_at=row[4],
-            message_count=row[5],
+            sharing=row[3],
+            created_at=row[4],
+            updated_at=row[5],
+            message_count=row[6],
         )
         for row in rows
     ]

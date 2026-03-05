@@ -3,7 +3,6 @@
 import PaneRouteRenderer from "@/components/PaneRouteRenderer";
 import { WorkspaceV2Host } from "@/components/workspace";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { tabTitleFromHref } from "@/lib/workspace/schema";
 import styles from "./AuthenticatedWorkspaceHost.module.css";
 
 function WorkspaceV2TabRoute({
@@ -15,7 +14,7 @@ function WorkspaceV2TabRoute({
   groupId: string;
   tabId: string;
 }) {
-  const { navigateTab, openGroupWithTab } = useWorkspaceStore();
+  const { navigateTab, openGroupWithTab, publishTabTitle } = useWorkspaceStore();
 
   return (
     <div className={styles.routeShell}>
@@ -31,6 +30,11 @@ function WorkspaceV2TabRoute({
         onOpenInNewPane={(nextHref) => {
           openGroupWithTab(nextHref, { historyMode: "push" });
         }}
+        onSetPaneTitle={(_paneId, title, metadata) => {
+          publishTabTitle(groupId, tabId, title, {
+            resourceRef: metadata.resourceRef,
+          });
+        }}
       />
     </div>
   );
@@ -39,7 +43,6 @@ function WorkspaceV2TabRoute({
 export default function AuthenticatedWorkspaceHost() {
   return (
     <WorkspaceV2Host
-      getTabTitle={tabTitleFromHref}
       renderTab={(href, groupId, tabId) => (
         <WorkspaceV2TabRoute href={href} groupId={groupId} tabId={tabId} />
       )}

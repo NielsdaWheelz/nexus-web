@@ -37,6 +37,7 @@ class ConversationOut(BaseModel):
     """
 
     id: UUID
+    title: str
     owner_user_id: UUID
     is_owner: bool
     sharing: str  # "private" | "library" | "public"

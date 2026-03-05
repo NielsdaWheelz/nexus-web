@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo } from "react";
+import { createContext, useContext, useEffect, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { normalizePaneHref } from "@/lib/panes/openInAppPane";
 
@@ -13,10 +13,13 @@ interface PaneRuntimeContextValue {
   paneId: string;
   href: string;
   pathname: string;
+  routeId: string;
+  resourceRef: string | null;
   pathParams: Record<string, string>;
   searchParams: URLSearchParams;
   router: PaneScopedRouter;
   openInNewPane: (href: string) => void;
+  setPaneTitle: (title: string | null) => void;
 }
 
 const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
@@ -29,10 +32,17 @@ const PaneRootNavigationContext = createContext<{
 interface PaneRuntimeProviderProps {
   paneId: string;
   href: string;
+  routeId: string;
+  resourceRef: string | null;
   pathParams?: Record<string, string>;
   onNavigatePane: (paneId: string, href: string) => void;
   onReplacePane: (paneId: string, href: string) => void;
   onOpenInNewPane: (href: string) => void;
+  onSetPaneTitle?: (
+    paneId: string,
+    title: string | null,
+    metadata: { routeId: string; resourceRef: string | null }
+  ) => void;
   children: React.ReactNode;
 }
 
@@ -53,10 +63,13 @@ function parsePaneHref(href: string): { pathname: string; searchParams: URLSearc
 export function PaneRuntimeProvider({
   paneId,
   href,
+  routeId,
+  resourceRef,
   pathParams = {},
   onNavigatePane,
   onReplacePane,
   onOpenInNewPane,
+  onSetPaneTitle,
   children,
 }: PaneRuntimeProviderProps) {
   const parsed = useMemo(() => parsePaneHref(href), [href]);
@@ -65,6 +78,8 @@ export function PaneRuntimeProvider({
       paneId,
       href,
       pathname: parsed.pathname,
+      routeId,
+      resourceRef,
       pathParams,
       searchParams: parsed.searchParams,
       router: {
@@ -90,20 +105,34 @@ export function PaneRuntimeProvider({
         }
         onOpenInNewPane(normalized);
       },
+      setPaneTitle: (title: string | null) => {
+        onSetPaneTitle?.(paneId, title, { routeId, resourceRef });
+      },
     }),
     [
       href,
       onNavigatePane,
       onOpenInNewPane,
       onReplacePane,
+      onSetPaneTitle,
       paneId,
       parsed.pathname,
       parsed.searchParams,
       pathParams,
+      resourceRef,
+      routeId,
     ]
   );
 
   return <PaneRuntimeContext.Provider value={value}>{children}</PaneRuntimeContext.Provider>;
+}
+
+function normalizePaneTitle(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().replace(/\s+/g, " ");
+  return normalized.length > 0 ? normalized : null;
 }
 
 export function PaneRootNavigationProvider({ children }: { children: React.ReactNode }) {
@@ -194,4 +223,16 @@ export function usePaneParam(paramName: string): string | null {
     return rootNavigation.pathParams[paramName];
   }
   return null;
+}
+
+export function useSetPaneTitle(title: string | null | undefined): void {
+  const paneRuntime = usePaneRuntime();
+  const normalizedTitle = normalizePaneTitle(title);
+
+  useEffect(() => {
+    if (!paneRuntime) {
+      return;
+    }
+    paneRuntime.setPaneTitle(normalizedTitle);
+  }, [paneRuntime, normalizedTitle]);
 }

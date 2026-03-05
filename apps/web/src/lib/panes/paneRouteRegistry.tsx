@@ -39,6 +39,8 @@ export type PaneRouteId =
 interface PaneRouteDefinition {
   id: PaneRouteId;
   pattern: RoutePattern;
+  staticTitle: string;
+  resourceRef?: (params: RouteParams) => string | null;
   render: () => ReactNode;
 }
 
@@ -46,6 +48,8 @@ export interface ResolvedPaneRoute {
   id: PaneRouteId | "unsupported";
   pathname: string;
   params: RouteParams;
+  staticTitle: string;
+  resourceRef: string | null;
   render: (() => ReactNode) | null;
 }
 
@@ -53,71 +57,97 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
   {
     id: "libraries",
     pattern: ["libraries"],
+    staticTitle: "Libraries",
     render: () => <LibrariesPage />,
   },
   {
     id: "library",
     pattern: ["libraries", ":id"],
+    staticTitle: "Library",
+    resourceRef: (params) => {
+      const id = params.id;
+      return id ? `library:${id}` : null;
+    },
     render: () => <LibraryDetailPage />,
   },
   {
     id: "media",
     pattern: ["media", ":id"],
+    staticTitle: "Media",
+    resourceRef: (params) => {
+      const id = params.id;
+      return id ? `media:${id}` : null;
+    },
     render: () => <MediaViewPage />,
   },
   {
     id: "conversations",
     pattern: ["conversations"],
+    staticTitle: "Chats",
     render: () => <ConversationsPage />,
   },
   {
     id: "conversationNew",
     pattern: ["conversations", "new"],
+    staticTitle: "New chat",
     render: () => <NewConversationPage />,
   },
   {
     id: "conversation",
     pattern: ["conversations", ":id"],
+    staticTitle: "Chat",
+    resourceRef: (params) => {
+      const id = params.id;
+      return id ? `conversation:${id}` : null;
+    },
     render: () => <ConversationPage />,
   },
   {
     id: "discover",
     pattern: ["discover"],
+    staticTitle: "Discover",
     render: () => <DiscoverPage />,
   },
   {
     id: "documents",
     pattern: ["documents"],
+    staticTitle: "Documents",
     render: () => <DocumentsPage />,
   },
   {
     id: "podcasts",
     pattern: ["podcasts"],
+    staticTitle: "Podcasts",
     render: () => <PodcastsPage />,
   },
   {
     id: "videos",
     pattern: ["videos"],
+    staticTitle: "Videos",
     render: () => <VideosPage />,
   },
   {
     id: "search",
     pattern: ["search"],
+    staticTitle: "Search",
     render: () => <SearchPage />,
   },
   {
     id: "settings",
     pattern: ["settings"],
+    staticTitle: "Settings",
     render: () => <SettingsPage />,
   },
   {
     id: "settingsReader",
     pattern: ["settings", "reader"],
+    staticTitle: "Reader settings",
     render: () => <SettingsReaderPage />,
   },
   {
     id: "settingsKeys",
     pattern: ["settings", "keys"],
+    staticTitle: "API keys",
     render: () => <SettingsKeysPage />,
   },
 ];
@@ -143,7 +173,11 @@ function matchPattern(pathname: string, pattern: RoutePattern): RouteParams | nu
       if (!paramName || !segment) {
         return null;
       }
-      params[paramName] = decodeURIComponent(segment);
+      try {
+        params[paramName] = decodeURIComponent(segment);
+      } catch {
+        return null;
+      }
       continue;
     }
     if (token !== segment) {
@@ -174,6 +208,8 @@ export function resolvePaneRoute(href: string): ResolvedPaneRoute {
       id: definition.id,
       pathname,
       params,
+      staticTitle: definition.staticTitle,
+      resourceRef: definition.resourceRef?.(params) ?? null,
       render: definition.render,
     };
   }
@@ -181,6 +217,8 @@ export function resolvePaneRoute(href: string): ResolvedPaneRoute {
     id: "unsupported",
     pathname,
     params: {},
+    staticTitle: "Tab",
+    resourceRef: null,
     render: null,
   };
 }
