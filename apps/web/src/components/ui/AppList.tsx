@@ -21,6 +21,7 @@ interface AppListItemProps {
   trailing?: ReactNode;
   actions?: ReactNode;
   options?: ActionMenuOption[];
+  status?: "success" | "info" | "warning" | "danger" | "neutral";
 }
 
 export function AppList({ children }: AppListProps) {
@@ -38,6 +39,7 @@ export function AppListItem({
   trailing,
   actions,
   options,
+  status,
 }: AppListItemProps) {
   const handlePrimaryClick = (event: MouseEvent<HTMLElement>) => {
     if (
@@ -58,13 +60,12 @@ export function AppListItem({
     }
   };
 
+  const hasMenu = options && options.length > 0;
   const resolvedActions =
-    actions || (options && options.length > 0) ? (
+    (actions || hasMenu) ? (
       <>
         {actions}
-        {options && options.length > 0 && (
-          <ActionMenu options={options} className={styles.actionMenu} />
-        )}
+        {hasMenu && <ActionMenu options={options} className={styles.actionMenu} />}
       </>
     ) : undefined;
 
@@ -93,7 +94,7 @@ export function AppListItem({
   );
 
   return (
-    <li className={styles.item}>
+    <li className={styles.item} data-status={status}>
       {primaryContent}
     </li>
   );

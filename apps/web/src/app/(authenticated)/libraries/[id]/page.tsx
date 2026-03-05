@@ -6,7 +6,6 @@ import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
 import MediaKindIcon from "@/components/MediaKindIcon";
 import StateMessage from "@/components/ui/StateMessage";
-import StatusPill from "@/components/ui/StatusPill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import { usePaneParam, usePaneRouter } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
@@ -19,6 +18,12 @@ interface Media {
   processing_status: string;
   created_at: string;
   updated_at: string;
+}
+
+function formatDate(value: string): string {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return "unknown date";
+  return new Date(parsed).toLocaleDateString();
 }
 
 interface Library {
@@ -212,12 +217,8 @@ export default function LibraryDetailPage() {
                   href={`/media/${item.id}`}
                   icon={<MediaKindIcon kind={item.kind} />}
                   title={item.title}
-                  description={item.kind.replaceAll("_", " ")}
-                  trailing={
-                    <StatusPill variant={statusVariant(item.processing_status)}>
-                      {item.processing_status.replaceAll("_", " ")}
-                    </StatusPill>
-                  }
+                  status={statusVariant(item.processing_status)}
+                  meta={[item.kind.replaceAll("_", " "), `Updated ${formatDate(item.updated_at)}`].join(" · ")}
                   options={
                     library.role === "admin"
                       ? [

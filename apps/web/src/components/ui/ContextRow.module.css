@@ -1,10 +1,13 @@
 .row {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
   min-width: 0;
 }
 
 .main {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -53,5 +56,6 @@
 }
 
 .expanded {
+  flex-basis: 100%;
   min-width: 0;
 }

@@ -109,6 +109,11 @@ export default function ContextRow({
           rel={rel}
           className={rowMainClassName}
           onClick={onMainClick as ((event: MouseEvent<HTMLAnchorElement>) => void) | undefined}
+          onKeyDown={onMainKeyDown as ((event: KeyboardEvent<HTMLAnchorElement>) => void) | undefined}
+          role={mainRole}
+          tabIndex={mainTabIndex}
+          aria-pressed={ariaPressed}
+          aria-expanded={ariaExpanded}
         >
           {mainContent}
         </a>
