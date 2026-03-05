@@ -22,6 +22,7 @@ import {
   usePaneParam,
   usePaneRouter,
   usePaneSearchParams,
+  useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { SplitSurface } from "@/components/workspace";
 import Pane from "@/components/Pane";
@@ -49,6 +50,7 @@ interface MessagesResponse {
 
 interface Conversation {
   id: string;
+  title: string;
   sharing: string;
   message_count: number;
   created_at: string;
@@ -72,6 +74,7 @@ export default function ConversationPage() {
   const [error, setError] = useState<string | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  useSetPaneTitle(conversation?.title ?? "Chat");
 
   const messageListRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
@@ -300,7 +303,7 @@ export default function ConversationPage() {
           defaultWidth={720}
           minWidth={400}
           maxWidth={1400}
-          title={`Chat ${conversation.id.slice(0, 8)}`}
+          title={conversation.title}
           subtitle={`${conversation.message_count} messages`}
           contentClassName={styles.paneContentChat}
           options={[

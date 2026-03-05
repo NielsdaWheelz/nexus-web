@@ -21,6 +21,7 @@ import styles from "./page.module.css";
 
 interface Conversation {
   id: string;
+  title: string;
   sharing: string;
   message_count: number;
   created_at: string;
@@ -114,7 +115,9 @@ function ConversationsPageInner() {
                 <AppListItem
                   key={conv.id}
                   href={`/conversations/${conv.id}`}
-                  title={`${conv.id.slice(0, 8)}...`}
+                  title={conv.title}
+                  paneTitleHint={conv.title}
+                  paneResourceRef={`conversation:${conv.id}`}
                   description={`${conv.message_count} messages`}
                   meta={new Date(conv.updated_at).toLocaleDateString()}
                   options={[

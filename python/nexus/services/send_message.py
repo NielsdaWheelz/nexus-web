@@ -76,7 +76,13 @@ from nexus.services.api_key_resolver import (
 )
 from nexus.services.context_rendering import PROMPT_VERSION, render_context_blocks
 from nexus.services.contexts import insert_context
-from nexus.services.conversations import conversation_to_out, get_message_count, message_to_out
+from nexus.services.conversations import (
+    DEFAULT_CONVERSATION_TITLE,
+    conversation_to_out,
+    derive_conversation_title,
+    get_message_count,
+    message_to_out,
+)
 from nexus.services.llm import LLMRouter
 from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.prompt import DEFAULT_SYSTEM_PROMPT, render_prompt
@@ -484,6 +490,7 @@ def phase1_prepare(
     else:
         conversation = Conversation(
             owner_user_id=viewer_id,
+            title=derive_conversation_title(content),
             sharing="private",
             next_seq=1,
         )
@@ -492,6 +499,8 @@ def phase1_prepare(
 
     # Lock conversation and assign seq for user message
     user_seq = assign_next_message_seq(db, conversation.id)
+    if user_seq == 1 and conversation.title == DEFAULT_CONVERSATION_TITLE:
+        conversation.title = derive_conversation_title(content)
 
     # Insert user message
     user_message = Message(

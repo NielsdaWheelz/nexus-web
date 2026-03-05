@@ -23,6 +23,9 @@ describe("AppListItem", () => {
     });
 
     expect(requestOpenInAppPaneMock).toHaveBeenCalledTimes(1);
-    expect(requestOpenInAppPaneMock).toHaveBeenCalledWith("/media/123");
+    expect(requestOpenInAppPaneMock).toHaveBeenCalledWith("/media/123", {
+      resourceRef: undefined,
+      titleHint: "Example media",
+    });
   });
 });

@@ -1271,6 +1271,7 @@ class Conversation(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
+    title: Mapped[str] = mapped_column(Text, nullable=False, server_default="Chat")
     sharing: Mapped[str] = mapped_column(Text, nullable=False, server_default="private")
     next_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
@@ -1292,6 +1293,14 @@ class Conversation(Base):
         CheckConstraint(
             "next_seq >= 1",
             name="ck_conversations_next_seq_positive",
+        ),
+        CheckConstraint(
+            "length(btrim(title)) > 0",
+            name="ck_conversations_title_not_blank",
+        ),
+        CheckConstraint(
+            "char_length(title) <= 120",
+            name="ck_conversations_title_max_length",
         ),
     )
 

@@ -7,7 +7,7 @@ import PaneContainer from "@/components/PaneContainer";
 import MediaKindIcon from "@/components/MediaKindIcon";
 import StateMessage from "@/components/ui/StateMessage";
 import { AppList, AppListItem } from "@/components/ui/AppList";
-import { usePaneParam, usePaneRouter } from "@/lib/panes/paneRuntime";
+import { usePaneParam, usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 interface Media {
@@ -45,6 +45,7 @@ export default function LibraryDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState("");
+  useSetPaneTitle(library?.name ?? "Library");
 
   useEffect(() => {
     const fetchData = async () => {
@@ -212,6 +213,8 @@ export default function LibraryDetailPage() {
                   href={`/media/${item.id}`}
                   icon={<MediaKindIcon kind={item.kind} />}
                   title={item.title}
+                  paneTitleHint={item.title}
+                  paneResourceRef={`media:${item.id}`}
                   status={statusVariant(item.processing_status)}
                   meta={[item.kind.replaceAll("_", " "), `Updated ${formatDate(item.updated_at)}`].join(" · ")}
                   options={

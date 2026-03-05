@@ -132,6 +132,8 @@ export default function LibrariesPage() {
                 <AppListItem
                   key={library.id}
                   href={`/libraries/${library.id}`}
+                  paneTitleHint={library.name}
+                  paneResourceRef={`library:${library.id}`}
                   icon={
                     library.is_default ? (
                       <FolderOpen size={18} />

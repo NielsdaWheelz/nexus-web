@@ -352,16 +352,35 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
 
 async function readQueuedQuoteRoute(page: Page, highlightId: string): Promise<string | null> {
   return page.evaluate((targetHighlightId) => {
+    const isQuoteToChatRoute = (pathname: string, attachType: string | null, attachId: string | null) =>
+      (pathname === "/conversations/new" || pathname === "/conversations") &&
+      attachType === "highlight" &&
+      attachId === targetHighlightId;
+
     const currentWindow = window as Window & {
-      __nexusPendingPaneOpenQueue?: string[];
+      __nexusPendingPaneOpenQueue?: Array<
+        string | { href?: string; titleHint?: string; resourceRef?: string }
+      >;
     };
     const queue = currentWindow.__nexusPendingPaneOpenQueue ?? [];
-    for (const href of queue) {
+    for (const entry of queue) {
+      const href =
+        typeof entry === "string"
+          ? entry
+          : typeof entry?.href === "string"
+            ? entry.href
+            : null;
+      if (!href) {
+        continue;
+      }
       try {
         const parsed = new URL(href, window.location.origin);
         if (
-          parsed.pathname === "/conversations" &&
-          parsed.searchParams.get("attach_id") === targetHighlightId
+          isQuoteToChatRoute(
+            parsed.pathname,
+            parsed.searchParams.get("attach_type"),
+            parsed.searchParams.get("attach_id"),
+          )
         ) {
           return href;
         }
@@ -507,7 +526,7 @@ test.describe("pdf reader", () => {
       const actionsButton = linkedRow.getByLabel("Actions");
       await expect(actionsButton).toBeVisible();
       const conversationTabCountBefore = await page
-        .getByRole("tab", { name: /conversations/i })
+        .getByRole("tab", { name: /chat/i })
         .count();
       await actionsButton.click();
       const quoteToChat = page.getByRole("menuitem", { name: "Quote to chat" });
@@ -521,7 +540,9 @@ test.describe("pdf reader", () => {
           async () => {
             const currentUrl = new URL(page.url());
             if (
-              currentUrl.pathname === "/conversations" &&
+              (currentUrl.pathname === "/conversations/new" ||
+                currentUrl.pathname === "/conversations") &&
+              currentUrl.searchParams.get("attach_type") === "highlight" &&
               currentUrl.searchParams.get("attach_id") === createdHighlightId
             ) {
               quoteNavigationOutcome = "url";
@@ -537,7 +558,7 @@ test.describe("pdf reader", () => {
               quoteNavigationOutcome = "pane";
               return quoteNavigationOutcome;
             }
-            const tabCount = await page.getByRole("tab", { name: /conversations/i }).count();
+            const tabCount = await page.getByRole("tab", { name: /chat/i }).count();
             if (tabCount > conversationTabCountBefore) {
               quoteNavigationOutcome = "pane";
               return quoteNavigationOutcome;
@@ -552,10 +573,16 @@ test.describe("pdf reader", () => {
         await expect
           .poll(() => {
             const currentUrl = new URL(page.url());
-            if (currentUrl.pathname === "/conversations") {
-              return currentUrl.searchParams.get("attach_id");
+            if (
+              currentUrl.pathname !== "/conversations/new" &&
+              currentUrl.pathname !== "/conversations"
+            ) {
+              return null;
             }
-            return null;
+            if (currentUrl.searchParams.get("attach_type") !== "highlight") {
+              return null;
+            }
+            return currentUrl.searchParams.get("attach_id");
           })
           .toBe(createdHighlightId);
       } else if (quoteNavigationOutcome === "queued") {
@@ -567,7 +594,13 @@ test.describe("pdf reader", () => {
         await expect
           .poll(() => {
             const currentUrl = new URL(page.url());
-            if (currentUrl.pathname !== "/conversations") {
+            if (
+              currentUrl.pathname !== "/conversations/new" &&
+              currentUrl.pathname !== "/conversations"
+            ) {
+              return null;
+            }
+            if (currentUrl.searchParams.get("attach_type") !== "highlight") {
               return null;
             }
             return currentUrl.searchParams.get("attach_id");

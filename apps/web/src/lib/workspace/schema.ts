@@ -251,22 +251,28 @@ export function getPrimaryHrefFromWorkspaceState(state: WorkspaceStateV2): strin
 }
 
 /**
- * Derive a short human-readable tab title from its href.
- * Shared by WorkspaceRoot (fallback) and AuthenticatedWorkspaceHost.
+ * Legacy href-based title fallback used by older callers.
+ * New pane tabs should use the descriptor pipeline in tabDescriptor.ts.
  */
 export function tabTitleFromHref(href: string): string {
+  const titleCase = (value: string): string =>
+    value
+      .replace(/[-_]+/g, " ")
+      .trim()
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+
   try {
     const parsed = new URL(href, "http://localhost");
     const path = parsed.pathname.replace(/^\/+/, "");
     if (!path) {
-      return "home";
+      return "Home";
     }
-    const [root, id] = path.split("/");
-    if (!id) {
-      return root;
+    const [root] = path.split("/");
+    if (!root) {
+      return "Tab";
     }
-    return `${root} ${id.slice(0, 8)}`;
+    return titleCase(root);
   } catch {
-    return "tab";
+    return "Tab";
   }
 }

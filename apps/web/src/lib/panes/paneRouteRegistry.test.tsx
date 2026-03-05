@@ -7,6 +7,8 @@ describe("pane route registry", () => {
     expect(route.id).toBe("media");
     expect(route.params.id).toBe("abc-123");
     expect(route.render).toBeTypeOf("function");
+    expect(route.staticTitle).toBe("Media");
+    expect(route.resourceRef).toBe("media:abc-123");
   });
 
   it("resolves /conversations/new before :id capture", () => {
@@ -19,6 +21,8 @@ describe("pane route registry", () => {
     const route = resolvePaneRoute("/conversations/abc-123");
     expect(route.id).toBe("conversation");
     expect(route.params.id).toBe("abc-123");
+    expect(route.staticTitle).toBe("Chat");
+    expect(route.resourceRef).toBe("conversation:abc-123");
   });
 
   it("resolves /conversations/new with query params", () => {
@@ -30,6 +34,15 @@ describe("pane route registry", () => {
     const route = resolvePaneRoute("/not-supported");
     expect(route.id).toBe("unsupported");
     expect(route.render).toBeNull();
+    expect(route.staticTitle).toBe("Tab");
+    expect(route.resourceRef).toBeNull();
+  });
+
+  it("treats malformed encoded params as unsupported", () => {
+    const route = resolvePaneRoute("/media/%E0%A4%A");
+    expect(route.id).toBe("unsupported");
+    expect(route.render).toBeNull();
+    expect(route.staticTitle).toBe("Tab");
   });
 
   it("resolves expanded authenticated static routes", () => {

@@ -233,6 +233,7 @@ class TestSendMessageBasic:
         # Verify conversation was created
         assert "conversation" in data
         conversation_id = data["conversation"]["id"]
+        assert data["conversation"]["title"] == "Hello, what is 2+2?"
 
         # Verify user message
         assert data["user_message"]["role"] == "user"
@@ -294,6 +295,43 @@ class TestSendMessageBasic:
         # New messages have higher seqs
         assert data["user_message"]["seq"] == 3
         assert data["assistant_message"]["seq"] == 4
+
+    def test_send_message_to_existing_empty_conversation_sets_first_message_title(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        platform_key_env,
+        mock_openai_api,
+    ):
+        """First message in an existing default-titled conversation derives the title."""
+        _route_openai_completion(mock_openai_api)
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        response = auth_client.post(
+            f"/conversations/{conversation_id}/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "First message should set title",
+                "model_id": str(model_id),
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["conversation"]["id"] == str(conversation_id)
+        assert data["conversation"]["title"] == "First message should set title"
+        assert data["user_message"]["seq"] == 1
+        assert data["assistant_message"]["seq"] == 2
 
 
 # =============================================================================

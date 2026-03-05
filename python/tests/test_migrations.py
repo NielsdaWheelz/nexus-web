@@ -2103,6 +2103,44 @@ class TestS3SchemaConstraints:
             session.rollback()
             assert "ck_conversations_next_seq_positive" in str(exc_info.value)
 
+    def test_conversation_title_not_blank_constraint(self, migrated_engine):
+        """CHECK constraint prevents blank conversation titles."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO conversations (id, owner_user_id, title, sharing, next_seq)
+                        VALUES (:id, :user_id, '   ', 'private', 1)
+                    """),
+                    {"id": uuid4(), "user_id": user_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_conversations_title_not_blank" in str(exc_info.value)
+
+    def test_conversation_title_max_length_constraint(self, migrated_engine):
+        """CHECK constraint enforces bounded conversation titles."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO conversations (id, owner_user_id, title, sharing, next_seq)
+                        VALUES (:id, :user_id, :title, 'private', 1)
+                    """),
+                    {"id": uuid4(), "user_id": user_id, "title": "x" * 121},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_conversations_title_max_length" in str(exc_info.value)
+
     def test_message_pending_only_assistant_constraint(self, migrated_engine):
         """CHECK constraint: pending status only valid for assistant role."""
         with Session(migrated_engine) as session:

@@ -15,6 +15,11 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.services.conversations import (
+    DEFAULT_CONVERSATION_TITLE,
+    MAX_CONVERSATION_TITLE_LENGTH,
+    derive_conversation_title,
+)
 from tests.factories import create_test_conversation, create_test_message
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -24,6 +29,23 @@ pytestmark = pytest.mark.integration
 # =============================================================================
 # Conversation Create Tests
 # =============================================================================
+
+
+class TestConversationTitleDerivation:
+    """Tests for conversation title derivation helper behavior."""
+
+    def test_derive_conversation_title_defaults_for_none_or_blank(self):
+        """None/blank content falls back to default title."""
+        assert derive_conversation_title(None) == DEFAULT_CONVERSATION_TITLE
+        assert derive_conversation_title("") == DEFAULT_CONVERSATION_TITLE
+        assert derive_conversation_title("   \n\t  ") == DEFAULT_CONVERSATION_TITLE
+
+    def test_derive_conversation_title_normalizes_whitespace_and_truncates(self):
+        """Whitespace collapses and output is bounded by max title length."""
+        long_content = f"hello   world {'x' * (MAX_CONVERSATION_TITLE_LENGTH + 20)}"
+        derived = derive_conversation_title(long_content)
+        assert derived.startswith("hello world ")
+        assert len(derived) == MAX_CONVERSATION_TITLE_LENGTH
 
 
 class TestCreateConversation:
@@ -40,6 +62,7 @@ class TestCreateConversation:
 
         assert response.status_code == 201
         data = response.json()["data"]
+        assert data["title"] == "Chat"
         assert data["sharing"] == "private"
         assert data["message_count"] == 0
         assert "id" in data
@@ -99,6 +122,7 @@ class TestListConversations:
 
         assert response.status_code == 200
         assert len(response.json()["data"]) == 3
+        assert all("title" in item for item in response.json()["data"])
 
     def test_list_conversations_ordering(self, auth_client, direct_db: DirectSessionManager):
         """Conversations are ordered by updated_at DESC."""
@@ -203,6 +227,7 @@ class TestGetConversation:
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["id"] == conversation_id
+        assert data["title"] == "Chat"
         assert data["sharing"] == "private"
         assert data["message_count"] == 0
 

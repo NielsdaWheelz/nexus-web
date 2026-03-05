@@ -15,6 +15,8 @@ interface AppListItemProps {
   target?: string;
   rel?: string;
   title: ReactNode;
+  paneTitleHint?: string;
+  paneResourceRef?: string;
   description?: ReactNode;
   meta?: ReactNode;
   icon?: ReactNode;
@@ -33,6 +35,8 @@ export function AppListItem({
   target,
   rel,
   title,
+  paneTitleHint,
+  paneResourceRef,
   description,
   meta,
   icon,
@@ -41,6 +45,9 @@ export function AppListItem({
   options,
   status,
 }: AppListItemProps) {
+  const resolvedPaneTitleHint =
+    paneTitleHint ?? (typeof title === "string" ? title : undefined);
+
   const handlePrimaryClick = (event: MouseEvent<HTMLElement>) => {
     if (
       !href ||
@@ -55,7 +62,12 @@ export function AppListItem({
     }
 
     event.preventDefault();
-    if (!requestOpenInAppPane(href)) {
+    if (
+      !requestOpenInAppPane(href, {
+        titleHint: resolvedPaneTitleHint,
+        resourceRef: paneResourceRef,
+      })
+    ) {
       window.location.assign(href);
     }
   };
