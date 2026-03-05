@@ -42,9 +42,7 @@ class MetadataGaps:
 
 def detect_metadata_gaps(media: Media) -> MetadataGaps:
     """Check which metadata fields are missing or malformed."""
-    title_looks_like_filename = bool(
-        media.title and _FILENAME_EXTENSIONS.search(media.title)
-    )
+    title_looks_like_filename = bool(media.title and _FILENAME_EXTENSIONS.search(media.title))
 
     # Check if authors exist via the relationship
     authors_missing = not media.authors
@@ -86,8 +84,7 @@ def get_content_sample(db: Session, media: Media) -> str:
     # EPUB/Web: use first fragment's canonical_text
     row = db.execute(
         text(
-            "SELECT canonical_text FROM fragments "
-            "WHERE media_id = :media_id ORDER BY idx LIMIT 1"
+            "SELECT canonical_text FROM fragments WHERE media_id = :media_id ORDER BY idx LIMIT 1"
         ),
         {"media_id": media.id},
     ).fetchone()
@@ -103,9 +100,7 @@ def get_content_sample(db: Session, media: Media) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_enrichment_prompt(
-    media: Media, content_sample: str, gaps: MetadataGaps
-) -> str:
+def build_enrichment_prompt(media: Media, content_sample: str, gaps: MetadataGaps) -> str:
     """Build a structured prompt requesting JSON for only the missing fields."""
     requested_fields: list[str] = []
     if gaps.title_looks_like_filename:

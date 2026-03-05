@@ -114,9 +114,7 @@ def get_media_for_viewer(
         ),
         {"media_id": media_id},
     ).fetchall()
-    authors = [
-        MediaAuthorOut(id=ar[0], name=ar[1], role=ar[2]) for ar in author_rows
-    ]
+    authors = [MediaAuthorOut(id=ar[0], name=ar[1], role=ar[2]) for ar in author_rows]
 
     return MediaOut(
         id=row[0],

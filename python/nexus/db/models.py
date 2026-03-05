@@ -392,9 +392,7 @@ class MediaAuthor(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        Index("ix_media_authors_media_id", "media_id"),
-    )
+    __table_args__ = (Index("ix_media_authors_media_id", "media_id"),)
 
     # Relationship
     media: Mapped["Media"] = relationship("Media", back_populates="authors")

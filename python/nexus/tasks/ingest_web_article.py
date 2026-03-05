@@ -241,9 +241,7 @@ def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
         logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
 
 
-def _persist_web_metadata(
-    db: Session, media: Media, ingest_result: IngestResult
-) -> None:
+def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult) -> None:
     """Persist web article metadata from Readability extraction."""
     # Parse byline into author names
     if ingest_result.byline:

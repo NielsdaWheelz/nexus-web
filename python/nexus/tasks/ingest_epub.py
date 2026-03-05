@@ -157,9 +157,7 @@ def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
         logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
 
 
-def _persist_epub_metadata(
-    db: Session, media: Media, result: EpubExtractionResult
-) -> None:
+def _persist_epub_metadata(db: Session, media: Media, result: EpubExtractionResult) -> None:
     """Persist EPUB OPF metadata to media and media_authors."""
     if result.creators:
         for i, name in enumerate(result.creators):

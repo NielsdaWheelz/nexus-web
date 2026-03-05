@@ -560,9 +560,7 @@ def list_library_media(
             {"ids": page_media_ids},
         ).fetchall()
         for ar in author_rows:
-            authors_by_media[ar[1]].append(
-                MediaAuthorOut(id=ar[0], name=ar[2], role=ar[3])
-            )
+            authors_by_media[ar[1]].append(MediaAuthorOut(id=ar[0], name=ar[2], role=ar[3]))
 
     media_list = []
     for row in rows:

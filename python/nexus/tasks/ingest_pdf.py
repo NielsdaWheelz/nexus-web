@@ -160,9 +160,7 @@ def ingest_pdf(
         db.close()
 
 
-def _persist_pdf_metadata(
-    db: Session, media: Media, result: PdfExtractionResult
-) -> None:
+def _persist_pdf_metadata(db: Session, media: Media, result: PdfExtractionResult) -> None:
     """Persist PDF document metadata extracted from doc.metadata."""
     # Update title if PDF has embedded title and current title looks like a filename
     if result.pdf_title and media.title and ".pdf" in media.title.lower():
