@@ -65,67 +65,6 @@
   position: relative;
 }
 
-.optionsToggle {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  padding: 0 var(--space-2);
-}
-
-.optionsMenu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + var(--space-1));
-  z-index: 20;
-  list-style: none;
-  margin: 0;
-  padding: var(--space-1);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-bg);
-  min-width: 10rem;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.25);
-}
-
-.optionItem {
-  width: 100%;
-  display: block;
-  border: none;
-  background: transparent;
-  color: var(--color-text);
-  text-align: left;
-  text-decoration: none;
-  padding: var(--space-2) var(--space-2);
-  border-radius: 6px;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.optionItem:hover {
-  background: var(--color-surface);
-}
-
-.optionItem:disabled,
-.optionItem[aria-disabled="true"] {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.optionItem:disabled:hover,
-.optionItem[aria-disabled="true"]:hover {
-  background: transparent;
-}
-
-.optionItemDanger {
-  color: var(--color-error);
-}
-
 @media (max-width: 900px) {
   .header {
     flex-direction: column;

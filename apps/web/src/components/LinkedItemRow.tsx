@@ -148,7 +148,7 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
           trailing={
             <>
               {highlight.annotation && (
-                <span className={styles.annotationIndicator} aria-label="Has annotation">
+                <span className={styles.annotationIndicator} role="img" aria-label="Has annotation">
                   💬
                 </span>
               )}

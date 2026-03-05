@@ -420,12 +420,12 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     }
 
     return () => {
+      readyRef.current = false;
       window.removeEventListener("popstate", handlePopState);
       window.removeEventListener(NEXUS_OPEN_PANE_EVENT, handleOpenPaneEvent);
       window.removeEventListener("message", handleWindowMessage);
       setPaneGraphReady(false);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-time setup; publishDecodeTelemetry is stable
   }, [publishDecodeTelemetry]);
 
   useEffect(() => {

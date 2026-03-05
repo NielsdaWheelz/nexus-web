@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  useMemo,
-  type ReactNode,
-} from "react";
+import type { ReactNode } from "react";
 import ActionMenu, { type ActionMenuOption } from "./ActionMenu";
 import styles from "./SurfaceHeader.module.css";
 
@@ -30,10 +27,7 @@ export default function SurfaceHeader({
 }: SurfaceHeaderProps) {
   const HeadingTag = headingLevel === 1 ? "h1" : "h2";
   const hasOptions = options.length > 0;
-  const headerClassName = useMemo(
-    () => [styles.header, className].filter(Boolean).join(" "),
-    [className]
-  );
+  const headerClassName = [styles.header, className].filter(Boolean).join(" ");
 
   return (
     <header className={headerClassName} data-surface-header="true">
