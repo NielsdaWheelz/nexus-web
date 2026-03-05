@@ -24,6 +24,7 @@ import { apiFetch, isApiError } from "@/lib/api/client";
 import {
   sseClient,
   sseClientDirect,
+  toWireContextItem,
   type SSEEvent,
   type ContextItem,
   type SendMessageRequest,
@@ -407,7 +408,7 @@ export default function ChatComposer({
       key_mode: "auto",
       contexts:
         attachedContexts.length > 0
-          ? attachedContexts.slice(0, MAX_CONTEXTS)
+          ? attachedContexts.slice(0, MAX_CONTEXTS).map(toWireContextItem)
           : undefined,
     };
 
@@ -453,20 +454,37 @@ export default function ChatComposer({
       {/* Context chips */}
       {attachedContexts.length > 0 && (
         <div className={styles.contextChips}>
-          {attachedContexts.map((ctx, i) => (
-            <span key={`${ctx.type}-${ctx.id}`} className={styles.contextChip}>
-              {ctx.type}: {ctx.id.slice(0, 8)}...
-              {onRemoveContext && (
-                <button
-                  className={styles.chipRemove}
-                  onClick={() => onRemoveContext(i)}
-                  aria-label="Remove context"
-                >
-                  ×
-                </button>
-              )}
-            </span>
-          ))}
+          {attachedContexts.map((ctx, i) => {
+            const chipLabel = ctx.preview
+              ? ctx.preview.length > 60
+                ? ctx.preview.slice(0, 60) + "..."
+                : ctx.preview
+              : `${ctx.type}: ${ctx.id.slice(0, 8)}...`;
+            const swatchClass = ctx.color
+              ? styles[`chipSwatch${ctx.color.charAt(0).toUpperCase()}${ctx.color.slice(1)}` as keyof typeof styles]
+              : undefined;
+
+            return (
+              <span key={`${ctx.type}-${ctx.id}`} className={styles.contextChip}>
+                {ctx.color && (
+                  <span
+                    className={`${styles.chipSwatch} ${swatchClass ?? ""}`}
+                    aria-hidden="true"
+                  />
+                )}
+                <span className={styles.chipText}>{chipLabel}</span>
+                {onRemoveContext && (
+                  <button
+                    className={styles.chipRemove}
+                    onClick={() => onRemoveContext(i)}
+                    aria-label="Remove context"
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            );
+          })}
           {attachedContexts.length >= MAX_CONTEXTS && (
             <span className={styles.contextChip}>Max {MAX_CONTEXTS} reached</span>
           )}

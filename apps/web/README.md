@@ -113,6 +113,7 @@ src/
 │   │       └── [highlightId]/
 │   │           └── annotation/
 │   ├── (authenticated)/    # Protected pages (require login)
+│   │   ├── conversations/      # Chat pages (list, detail, new)
 │   │   ├── libraries/
 │   │   └── media/
 │   ├── login/              # Login page
@@ -122,6 +123,8 @@ src/
 │   ├── SelectionPopover.tsx    # Highlight color picker (PR-09)
 │   ├── HighlightEditor.tsx     # Highlight edit/delete UI (PR-09)
 │   ├── AnnotationEditor.tsx    # Note editor (PR-09)
+│   ├── ChatComposer.tsx        # Chat message input with streaming + context chips
+│   ├── ConversationContextPane.tsx  # Linked context items pane for conversations
 │   ├── LinkedItemsPane.tsx     # Aligned + list/virtualized linked-items container
 │   ├── LinkedItemRow.tsx       # Linked-item row component (PR-10)
 │   ├── Navbar.tsx
@@ -131,7 +134,11 @@ src/
 │   └── ...
 ├── lib/                    # Utilities
 │   ├── api/
-│   │   └── proxy.ts        # BFF proxy helper (proxyToFastAPI)
+│   │   ├── proxy.ts        # BFF proxy helper (proxyToFastAPI)
+│   │   └── sse.ts          # SSE client + ContextItem types + wire format helpers
+│   ├── conversations/      # Chat utilities
+│   │   ├── attachedContext.ts     # Parse/strip attach_* URL params
+│   │   └── hydrateContextItems.ts # Enrich context items via BFF API
 │   ├── highlights/         # Highlight rendering utilities
 │   │   ├── index.ts            # Module exports
 │   │   ├── segmenter.ts        # Overlap segmentation (PR-07)

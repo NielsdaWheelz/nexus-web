@@ -14,6 +14,7 @@ import {
   parseAttachContext,
   stripAttachParams,
 } from "@/lib/conversations/attachedContext";
+import { hydrateContextItems } from "@/lib/conversations/hydrateContextItems";
 import ChatComposer from "@/components/ChatComposer";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import {
@@ -21,7 +22,7 @@ import {
   usePaneSearchParams,
 } from "@/lib/panes/paneRuntime";
 import { SplitSurface } from "@/components/workspace";
-import SurfaceHeader from "@/components/ui/SurfaceHeader";
+import Pane from "@/components/Pane";
 import styles from "../page.module.css";
 
 // ============================================================================
@@ -42,6 +43,23 @@ export default function NewConversationPage() {
   useEffect(() => {
     setAttachedContexts(initialAttach);
   }, [initialAttach]);
+
+  // Hydrate context items with full data from API
+  useEffect(() => {
+    if (attachedContexts.length === 0) return;
+    if (attachedContexts.every((c) => c.hydrated)) return;
+    let cancelled = false;
+    hydrateContextItems(attachedContexts)
+      .then((hydrated) => {
+        if (!cancelled) setAttachedContexts(hydrated);
+      })
+      .catch(() => {
+        // Hydration is best-effort; URL-param data serves as fallback
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachedContexts]);
 
   const handleRemoveContext = useCallback((index: number) => {
     setAttachedContexts((prev) => prev.filter((_, i) => i !== index));
@@ -67,24 +85,24 @@ export default function NewConversationPage() {
   return (
     <SplitSurface
       primary={
-        <div className={styles.container}>
-          <div className={styles.main}>
-            <SurfaceHeader
-              title="New chat"
-              className={styles.mainHeaderChrome}
+        <Pane
+          defaultWidth={720}
+          minWidth={400}
+          maxWidth={1400}
+          title="New chat"
+          contentClassName={styles.paneContentChat}
+        >
+          <div className={styles.chatContainer}>
+            <div className={styles.messageList} />
+            <ChatComposer
+              conversationId={null}
+              attachedContexts={attachedContexts}
+              onRemoveContext={handleRemoveContext}
+              onConversationCreated={handleConversationCreated}
+              onMessageSent={clearAttachState}
             />
-            <div className={styles.chatContainer}>
-              <div className={styles.messageList} />
-              <ChatComposer
-                conversationId={null}
-                attachedContexts={attachedContexts}
-                onRemoveContext={handleRemoveContext}
-                onConversationCreated={handleConversationCreated}
-                onMessageSent={clearAttachState}
-              />
-            </div>
           </div>
-        </div>
+        </Pane>
       }
       secondary={
         <ConversationContextPane

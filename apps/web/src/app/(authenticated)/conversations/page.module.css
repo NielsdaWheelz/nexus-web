@@ -386,6 +386,50 @@
   border-color: var(--color-accent);
 }
 
+/* Pane content override for chat — prevent nested scroll containers */
+.paneContentChat {
+  padding: 0;
+  overflow-y: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Enriched context chip styles */
+.chipSwatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.chipSwatchYellow {
+  background: rgba(255, 235, 59, 0.8);
+}
+
+.chipSwatchGreen {
+  background: rgba(76, 175, 80, 0.7);
+}
+
+.chipSwatchBlue {
+  background: rgba(33, 150, 243, 0.7);
+}
+
+.chipSwatchPink {
+  background: rgba(233, 30, 99, 0.7);
+}
+
+.chipSwatchPurple {
+  background: rgba(156, 39, 176, 0.7);
+}
+
+.chipText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   .container {
