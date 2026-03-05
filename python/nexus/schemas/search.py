@@ -10,7 +10,7 @@ Search returns mixed typed results from different content types:
 - messages (content)
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,30 +27,90 @@ SEARCH_SCOPE_PREFIXES = ("all", "media:", "library:", "conversation:")
 # =============================================================================
 
 
-class SearchResultOut(BaseModel):
-    """Response schema for a single search result.
+class SearchResultSourceOut(BaseModel):
+    """Source metadata shared by media/fragment/annotation search rows."""
 
-    Results are typed and include navigation fields based on type:
-    - media: id, title (snippet source)
-    - fragment: id, media_id, idx
-    - annotation: id, highlight_id, media_id
-    - message: id, conversation_id, seq
-    """
+    media_id: UUID
+    media_kind: str
+    title: str
+    authors: list[str] = Field(default_factory=list)
+    published_date: str | None = None
 
-    type: str  # "media" | "fragment" | "annotation" | "message"
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchResultHighlightOut(BaseModel):
+    """Quote-context snippet for annotation search results."""
+
+    exact: str
+    prefix: str = ""
+    suffix: str = ""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchResultMediaOut(BaseModel):
+    """V2 typed search result for media title hits."""
+
+    type: Literal["media"]
     id: UUID
     score: float
     snippet: str
+    source: SearchResultSourceOut
 
-    # Navigation fields (presence depends on type)
-    title: str | None = None  # media only
-    media_id: UUID | None = None  # fragment, annotation
-    idx: int | None = None  # fragment only
-    highlight_id: UUID | None = None  # annotation only
-    conversation_id: UUID | None = None  # message only
-    seq: int | None = None  # message only
+    model_config = ConfigDict(extra="forbid")
 
-    model_config = ConfigDict(from_attributes=True)
+
+class SearchResultFragmentOut(BaseModel):
+    """V2 typed search result for fragment text hits."""
+
+    type: Literal["fragment"]
+    id: UUID
+    score: float
+    snippet: str
+    fragment_idx: int
+    source: SearchResultSourceOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchResultAnnotationOut(BaseModel):
+    """V2 typed search result for annotation-body hits."""
+
+    type: Literal["annotation"]
+    id: UUID
+    score: float
+    snippet: str
+    highlight_id: UUID
+    fragment_id: UUID
+    fragment_idx: int
+    annotation_body: str
+    highlight: SearchResultHighlightOut
+    source: SearchResultSourceOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchResultMessageOut(BaseModel):
+    """V2 typed search result for conversation message hits."""
+
+    type: Literal["message"]
+    id: UUID
+    score: float
+    snippet: str
+    conversation_id: UUID
+    seq: int
+
+    model_config = ConfigDict(extra="forbid")
+
+
+SearchResultOut = Annotated[
+    SearchResultMediaOut
+    | SearchResultFragmentOut
+    | SearchResultAnnotationOut
+    | SearchResultMessageOut,
+    Field(discriminator="type"),
+]
 
 
 class SearchPageInfo(BaseModel):
@@ -62,6 +122,8 @@ class SearchPageInfo(BaseModel):
     has_more: bool = False
     next_cursor: str | None = None
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class SearchResponse(BaseModel):
     """Response for search endpoint.
@@ -71,3 +133,5 @@ class SearchResponse(BaseModel):
 
     results: list[SearchResultOut] = Field(default_factory=list)
     page: SearchPageInfo = Field(default_factory=SearchPageInfo)
+
+    model_config = ConfigDict(extra="forbid")

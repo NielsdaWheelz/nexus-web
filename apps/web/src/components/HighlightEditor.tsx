@@ -16,6 +16,7 @@ import { useState, useCallback } from "react";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights";
 import { useToast } from "./Toast";
 import AnnotationEditor from "./AnnotationEditor";
+import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import styles from "./HighlightEditor.module.css";
 
 // =============================================================================
@@ -133,17 +134,16 @@ export default function HighlightEditor({
       {/* Highlighted text preview */}
       {compact ? (
         <div className={styles.compactPreview}>
-          <mark className={`${styles.previewHighlight} ${styles[`color-${highlight.color}`]}`}>
-            {highlight.exact}
-          </mark>
+          <HighlightSnippet exact={highlight.exact} color={highlight.color} compact />
         </div>
       ) : (
         <div className={styles.preview}>
-          <span className={styles.previewPrefix}>{highlight.prefix}</span>
-          <mark className={`${styles.previewHighlight} ${styles[`color-${highlight.color}`]}`}>
-            {highlight.exact}
-          </mark>
-          <span className={styles.previewSuffix}>{highlight.suffix}</span>
+          <HighlightSnippet
+            prefix={highlight.prefix}
+            exact={highlight.exact}
+            suffix={highlight.suffix}
+            color={highlight.color}
+          />
         </div>
       )}
 

@@ -32,7 +32,17 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
-from nexus.schemas.search import SearchPageInfo, SearchResponse, SearchResultOut
+from nexus.schemas.search import (
+    SearchPageInfo,
+    SearchResponse,
+    SearchResultAnnotationOut,
+    SearchResultFragmentOut,
+    SearchResultHighlightOut,
+    SearchResultMediaOut,
+    SearchResultMessageOut,
+    SearchResultOut,
+    SearchResultSourceOut,
+)
 from nexus.services.transcript_media import transcript_media_searchable_sql
 
 logger = get_logger(__name__)
@@ -48,6 +58,10 @@ MIN_QUERY_LENGTH = 2
 
 # Number of candidates to fetch per type before merging
 CANDIDATES_PER_TYPE = 200
+
+# Supported search result types (ordered for deterministic behavior)
+ALL_RESULT_TYPES = ("media", "fragment", "annotation", "message")
+VALID_RESULT_TYPES = set(ALL_RESULT_TYPES)
 
 # Type weight multipliers (applied post-rank)
 TYPE_WEIGHTS = {
@@ -259,6 +273,17 @@ def visible_conversation_ids_cte_sql() -> str:
     """
 
 
+def media_authors_rollup_cte_sql() -> str:
+    """Return SQL for CTE that pre-aggregates media authors per media row."""
+    return """
+        SELECT
+            ma.media_id,
+            array_agg(ma.name ORDER BY ma.sort_order ASC, ma.created_at ASC, ma.id ASC) AS source_authors
+        FROM media_authors ma
+        GROUP BY ma.media_id
+    """
+
+
 # =============================================================================
 # Search Implementation
 # =============================================================================
@@ -306,12 +331,22 @@ def search(
     scope_type, scope_id = parse_scope(scope)
     authorize_scope(db, viewer_id, scope_type, scope_id)
 
-    # Normalize types (filter unknowns, use all if empty)
-    valid_types = {"media", "fragment", "annotation", "message"}
-    if types:
-        types = [t for t in types if t in valid_types]
-    if not types:
-        types = list(valid_types)
+    # Normalize types:
+    # - None means caller omitted type filtering -> search all types
+    # - [] means caller explicitly selected no types -> return no results
+    if types is None:
+        normalized_types = list(ALL_RESULT_TYPES)
+    else:
+        normalized_types: list[str] = []
+        seen_types: set[str] = set()
+        for result_type in types:
+            if result_type in VALID_RESULT_TYPES and result_type not in seen_types:
+                normalized_types.append(result_type)
+                seen_types.add(result_type)
+
+    if len(normalized_types) == 0:
+        _log_search(viewer_id, q, scope, normalized_types, 0, start_time)
+        return SearchResponse()
 
     # Decode cursor
     offset = 0
@@ -321,7 +356,7 @@ def search(
     # Execute search queries per type and collect results
     all_results: list[dict] = []
 
-    for result_type in types:
+    for result_type in normalized_types:
         type_results = _search_type(
             db,
             viewer_id,
@@ -358,7 +393,7 @@ def search(
     if has_more:
         next_cursor = encode_search_cursor(offset + limit)
 
-    _log_search(viewer_id, q, scope, types, len(results), start_time)
+    _log_search(viewer_id, q, scope, normalized_types, len(results), start_time)
 
     return SearchResponse(
         results=results,
@@ -419,15 +454,21 @@ def _search_media(
         return []
 
     query = f"""
-        WITH visible_media AS ({visible_media_ids_cte_sql()})
+        WITH
+            visible_media AS ({visible_media_ids_cte_sql()}),
+            media_authors_agg AS ({media_authors_rollup_cte_sql()})
         SELECT
             m.id,
             m.title,
+            m.kind,
+            m.published_date,
+            maa.source_authors,
             ts_rank_cd(m.title_tsv, websearch_to_tsquery('english', :query)) AS score,
             ts_headline('english', m.title, websearch_to_tsquery('english', :query),
                         'MaxWords=50, MinWords=10, MaxFragments=1') AS snippet
         FROM media m
         JOIN visible_media vm ON vm.media_id = m.id
+        LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
         WHERE m.title_tsv @@ websearch_to_tsquery('english', :query)
           AND {transcript_media_filter}
         {scope_filter}
@@ -442,9 +483,15 @@ def _search_media(
         {
             "type": "media",
             "id": row[0],
-            "title": row[1],
-            "raw_score": float(row[2]) if row[2] else 0.0,
-            "snippet": _truncate_snippet(row[3] or row[1]),
+            "source": {
+                "media_id": row[0],
+                "media_kind": row[2],
+                "title": row[1],
+                "authors": list(row[4]) if row[4] else [],
+                "published_date": row[3],
+            },
+            "raw_score": float(row[5]) if row[5] else 0.0,
+            "snippet": _truncate_snippet(row[6] or row[1]),
         }
         for row in rows
     ]
@@ -479,17 +526,24 @@ def _search_fragments(
         return []
 
     query = f"""
-        WITH visible_media AS ({visible_media_ids_cte_sql()})
+        WITH
+            visible_media AS ({visible_media_ids_cte_sql()}),
+            media_authors_agg AS ({media_authors_rollup_cte_sql()})
         SELECT
             f.id,
             f.media_id,
             f.idx,
+            m.kind,
+            m.title,
+            m.published_date,
+            maa.source_authors,
             ts_rank_cd(f.canonical_text_tsv, websearch_to_tsquery('english', :query)) AS score,
             ts_headline('english', f.canonical_text, websearch_to_tsquery('english', :query),
                         'MaxWords=50, MinWords=10, MaxFragments=1') AS snippet
         FROM fragments f
         JOIN media m ON m.id = f.media_id
         JOIN visible_media vm ON vm.media_id = f.media_id
+        LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
         WHERE f.canonical_text_tsv @@ websearch_to_tsquery('english', :query)
           AND {transcript_media_filter}
         {scope_filter}
@@ -504,10 +558,16 @@ def _search_fragments(
         {
             "type": "fragment",
             "id": row[0],
-            "media_id": row[1],
-            "idx": row[2],
-            "raw_score": float(row[3]) if row[3] else 0.0,
-            "snippet": _truncate_snippet(row[4] or ""),
+            "fragment_idx": row[2],
+            "source": {
+                "media_id": row[1],
+                "media_kind": row[3],
+                "title": row[4],
+                "authors": list(row[6]) if row[6] else [],
+                "published_date": row[5],
+            },
+            "raw_score": float(row[7]) if row[7] else 0.0,
+            "snippet": _truncate_snippet(row[8] or ""),
         }
         for row in rows
     ]
@@ -546,11 +606,23 @@ def _search_annotations(
         return []
 
     query = f"""
-        WITH visible_media AS ({visible_media_ids_cte_sql()})
+        WITH
+            visible_media AS ({visible_media_ids_cte_sql()}),
+            media_authors_agg AS ({media_authors_rollup_cte_sql()})
         SELECT
             a.id,
             a.highlight_id,
             f.media_id,
+            f.id AS fragment_id,
+            f.idx AS fragment_idx,
+            h.exact,
+            h.prefix,
+            h.suffix,
+            a.body,
+            m.kind,
+            m.title,
+            m.published_date,
+            maa.source_authors,
             ts_rank_cd(a.body_tsv, websearch_to_tsquery('english', :query)) AS score,
             ts_headline('english', a.body, websearch_to_tsquery('english', :query),
                         'MaxWords=50, MinWords=10, MaxFragments=1') AS snippet
@@ -559,6 +631,7 @@ def _search_annotations(
         JOIN fragments f ON f.id = h.fragment_id
         JOIN media m ON m.id = f.media_id
         JOIN visible_media vm ON vm.media_id = f.media_id
+        LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
         WHERE a.body_tsv @@ websearch_to_tsquery('english', :query)
           AND {transcript_media_filter}
           AND EXISTS (
@@ -583,9 +656,23 @@ def _search_annotations(
             "type": "annotation",
             "id": row[0],
             "highlight_id": row[1],
-            "media_id": row[2],
-            "raw_score": float(row[3]) if row[3] else 0.0,
-            "snippet": _truncate_snippet(row[4] or ""),
+            "fragment_id": row[3],
+            "fragment_idx": row[4],
+            "highlight": {
+                "exact": row[5],
+                "prefix": row[6],
+                "suffix": row[7],
+            },
+            "annotation_body": row[8],
+            "source": {
+                "media_id": row[2],
+                "media_kind": row[9],
+                "title": row[10],
+                "authors": list(row[12]) if row[12] else [],
+                "published_date": row[11],
+            },
+            "raw_score": float(row[13]) if row[13] else 0.0,
+            "snippet": _truncate_snippet(row[14] or ""),
         }
         for row in rows
     ]
@@ -705,19 +792,50 @@ def _truncate_snippet(snippet: str) -> str:
 
 
 def _result_to_out(result: dict) -> SearchResultOut:
-    """Convert internal result dict to SearchResultOut schema."""
-    return SearchResultOut(
-        type=result["type"],
-        id=result["id"],
-        score=round(result["normalized_score"], 4),
-        snippet=result["snippet"],
-        title=result.get("title"),
-        media_id=result.get("media_id"),
-        idx=result.get("idx"),
-        highlight_id=result.get("highlight_id"),
-        conversation_id=result.get("conversation_id"),
-        seq=result.get("seq"),
-    )
+    """Convert internal result dict to a strict v2 discriminated union result."""
+    base_payload = {
+        "id": result["id"],
+        "score": round(result["normalized_score"], 4),
+        "snippet": result["snippet"],
+    }
+    result_type = result["type"]
+
+    if result_type == "media":
+        return SearchResultMediaOut(
+            type="media",
+            source=SearchResultSourceOut.model_validate(result["source"]),
+            **base_payload,
+        )
+
+    if result_type == "fragment":
+        return SearchResultFragmentOut(
+            type="fragment",
+            fragment_idx=result["fragment_idx"],
+            source=SearchResultSourceOut.model_validate(result["source"]),
+            **base_payload,
+        )
+
+    if result_type == "annotation":
+        return SearchResultAnnotationOut(
+            type="annotation",
+            highlight_id=result["highlight_id"],
+            fragment_id=result["fragment_id"],
+            fragment_idx=result["fragment_idx"],
+            annotation_body=result["annotation_body"],
+            highlight=SearchResultHighlightOut.model_validate(result["highlight"]),
+            source=SearchResultSourceOut.model_validate(result["source"]),
+            **base_payload,
+        )
+
+    if result_type == "message":
+        return SearchResultMessageOut(
+            type="message",
+            conversation_id=result["conversation_id"],
+            seq=result["seq"],
+            **base_payload,
+        )
+
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"Unknown search result type: {result_type}")
 
 
 def _log_search(
@@ -739,7 +857,7 @@ def _log_search(
         query_len=len(q),
         query_hash=hash_query(q),
         scope=scope,
-        types_count=len(types) if types else 4,
+        types_count=len(types) if types is not None else len(ALL_RESULT_TYPES),
         results_count=results_count,
         latency_ms=latency_ms,
         user_id=str(viewer_id),

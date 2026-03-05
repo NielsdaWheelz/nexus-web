@@ -487,6 +487,8 @@ export default function MediaViewPage() {
   }
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
+  const requestedFragmentId = searchParams.get("fragment");
+  const requestedHighlightId = searchParams.get("highlight");
   const { toast } = useToast();
   const { profile: readerProfile } = useReaderContext();
   const {
@@ -561,6 +563,7 @@ export default function MediaViewPage() {
     cancelEditBounds,
   } = useHighlightInteraction();
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
+  const urlHighlightAppliedRef = useRef<string | null>(null);
   const pdfDocumentHighlightIdsRef = useRef<Set<string>>(new Set());
 
   // Selection state for creating highlights
@@ -616,6 +619,19 @@ export default function MediaViewPage() {
       fragments[0]
     );
   }, [activeTranscriptFragmentId, fragments, isTranscriptMedia]);
+
+  useEffect(() => {
+    if (!isTranscriptMedia || !requestedFragmentId || fragments.length === 0) {
+      return;
+    }
+    const target = fragments.find((fragment) => fragment.id === requestedFragmentId);
+    if (!target) {
+      return;
+    }
+    if (activeTranscriptFragmentId !== target.id) {
+      setActiveTranscriptFragmentId(target.id);
+    }
+  }, [isTranscriptMedia, requestedFragmentId, fragments, activeTranscriptFragmentId]);
 
   useEffect(() => {
     focusedHighlightIdRef.current = focusState.focusedId;
@@ -1482,6 +1498,39 @@ export default function MediaViewPage() {
     chapterLoading,
     renderedHtml,
     highlights,
+    focusHighlight,
+  ]);
+
+  useEffect(() => {
+    if (!requestedHighlightId) {
+      urlHighlightAppliedRef.current = null;
+      return;
+    }
+    if (!activeContent || !contentRef.current || chapterLoading) {
+      return;
+    }
+    if (urlHighlightAppliedRef.current === requestedHighlightId) {
+      return;
+    }
+    if (!highlights.some((item) => item.id === requestedHighlightId)) {
+      return;
+    }
+
+    const escapedId = escapeAttrValue(requestedHighlightId);
+    const anchor = contentRef.current.querySelector<HTMLElement>(
+      `[data-highlight-anchor="${escapedId}"]`
+    );
+    if (anchor) {
+      anchor.scrollIntoView({ behavior: "auto", block: "center" });
+    }
+    focusHighlight(requestedHighlightId);
+    urlHighlightAppliedRef.current = requestedHighlightId;
+  }, [
+    requestedHighlightId,
+    activeContent,
+    chapterLoading,
+    highlights,
+    renderedHtml,
     focusHighlight,
   ]);
 

@@ -18,12 +18,13 @@ from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.schemas.search import SearchResponse
 from nexus.services import search as search_service
 
 router = APIRouter()
 
 
-@router.get("/search")
+@router.get("/search", response_model=SearchResponse)
 def search(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
@@ -39,7 +40,7 @@ def search(
     limit: int = Query(
         default=20, ge=1, le=50, description="Maximum results per page (default 20, max 50)"
     ),
-) -> dict:
+) -> SearchResponse:
     """Search across all visible content.
 
     Keyword search using PostgreSQL full-text search. Returns mixed typed
@@ -79,7 +80,7 @@ def search(
     """
     # Parse types from comma-separated string
     type_list = None
-    if types:
+    if types is not None:
         type_list = [t.strip() for t in types.split(",") if t.strip()]
 
     result = search_service.search(
@@ -91,9 +92,4 @@ def search(
         cursor=cursor,
         limit=limit,
     )
-
-    # Return response with results and page info
-    return {
-        "results": [r.model_dump(mode="json") for r in result.results],
-        "page": result.page.model_dump(mode="json"),
-    }
+    return result

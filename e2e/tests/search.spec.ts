@@ -25,4 +25,33 @@ test.describe("search", () => {
     await submitSearch(page).click();
     await expect(page.getByText("No results found.")).toBeVisible();
   });
+
+  test("explicit empty type filters return no results", async ({ page }) => {
+    await page.goto("/search");
+    const searchInput = page.getByPlaceholder("Search your content...");
+    await expect(searchInput).toBeVisible();
+
+    await page.getByRole("checkbox", { name: "media" }).uncheck();
+    await page.getByRole("checkbox", { name: "fragment" }).uncheck();
+    await page.getByRole("checkbox", { name: "annotation" }).uncheck();
+    await page.getByRole("checkbox", { name: "message" }).uncheck();
+
+    await searchInput.fill("e2e non-pdf");
+    await submitSearch(page).click();
+
+    await expect(page.getByText("No results found.")).toBeVisible();
+  });
+
+  test("annotation rows surface quote context before metadata", async ({ page }) => {
+    await page.goto("/search");
+    const searchInput = page.getByPlaceholder("Search your content...");
+    await expect(searchInput).toBeVisible();
+
+    await searchInput.fill("seeded note for non-pdf linked-items e2e");
+    await submitSearch(page).click();
+
+    await expect(
+      page.getByRole("link", { name: /e2e non-pdf quote target alpha/i }).first()
+    ).toBeVisible({ timeout: 10_000 });
+  });
 });

@@ -470,7 +470,7 @@ GET /search?q=test&limit=10&cursor=BASE64_CURSOR
 
 **Visibility Enforcement:**
 - Media/fragments: visible via library membership
-- Annotations: owner-only in S3
+- Annotations: visible via highlight/media visibility + library intersection checks
 - Messages: visible via conversation ownership or sharing
 - Pending messages are never searchable
 - Search never leaks invisible content
@@ -480,8 +480,9 @@ GET /search?q=test&limit=10&cursor=BASE64_CURSOR
 - Supports quoted phrases, `-` exclusions, implicit AND
 - Queries < 2 chars return empty results
 - All-stopword queries return empty results
+- `types` omitted means "all types"; explicit `types=` means "no types" (empty results)
 
-**Response Format:**
+**Response Format (v2 discriminated union):**
 ```json
 {
   "results": [
@@ -490,15 +491,35 @@ GET /search?q=test&limit=10&cursor=BASE64_CURSOR
       "id": "uuid",
       "score": 0.85,
       "snippet": "...highlighted text...",
-      "title": "Media Title"
+      "source": {
+        "media_id": "uuid",
+        "media_kind": "web_article",
+        "title": "Media Title",
+        "authors": ["Ada Lovelace"],
+        "published_date": "2024-02-29"
+      }
     },
     {
-      "type": "fragment",
+      "type": "annotation",
       "id": "uuid",
       "score": 0.72,
       "snippet": "...matched text...",
-      "media_id": "uuid",
-      "idx": 0
+      "highlight_id": "uuid",
+      "fragment_id": "uuid",
+      "fragment_idx": 3,
+      "annotation_body": "note text",
+      "highlight": {
+        "exact": "matched quote",
+        "prefix": "prefix text",
+        "suffix": "suffix text"
+      },
+      "source": {
+        "media_id": "uuid",
+        "media_kind": "epub",
+        "title": "Book Title",
+        "authors": [],
+        "published_date": null
+      }
     }
   ],
   "page": {

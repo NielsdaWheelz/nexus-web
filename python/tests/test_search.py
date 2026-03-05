@@ -436,7 +436,7 @@ class TestSearchScopes:
             if result["type"] == "media":
                 assert result["id"] == str(media1)
             elif result["type"] == "fragment":
-                assert result["media_id"] == str(media1)
+                assert result["source"]["media_id"] == str(media1)
 
     def test_scope_media_not_found(self, auth_client):
         """Non-visible media scope returns 404."""
@@ -626,6 +626,58 @@ class TestSearchTypeFiltering:
 
         assert response.status_code == 200
 
+    def test_only_unknown_types_return_no_results(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """When every type is unknown, search returns no results."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Unknown Type Control")
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.get(
+            "/search?q=unknown+type+control&types=totally_invalid",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["results"] == []
+
+    def test_type_filter_empty_returns_no_results(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Explicit empty type filter should return no results (not fallback-to-all)."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(
+                session, user_id, title="Empty Type Filter Needle Title"
+            )
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.get(
+            "/search?q=empty+type+filter+needle&types=",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"Expected 200 for explicit empty types filter, got {response.status_code}: {response.text}"
+        )
+        data = response.json()
+        assert data["results"] == [], (
+            "Expected no results when explicit empty types filter is provided; "
+            f"got {len(data['results'])} results: {data['results']}"
+        )
+
 
 # =============================================================================
 # Pagination Tests
@@ -733,7 +785,7 @@ class TestSearchResultFormat:
     """Tests for search result format."""
 
     def test_media_result_has_required_fields(self, auth_client, direct_db: DirectSessionManager):
-        """Media results include id and title."""
+        """Media results include v2 required source metadata fields."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -758,12 +810,18 @@ class TestSearchResultFormat:
         assert "score" in result
         assert "snippet" in result
         assert result["type"] == "media"
-        assert "title" in result
+        assert "source" in result
+        assert result["source"]["media_id"] == str(media_id)
+        assert result["source"]["media_kind"] == "web_article"
+        assert result["source"]["title"] == "Unique Title For Test"
+        assert "authors" in result["source"]
+        assert "published_date" in result["source"]
+        assert "title" not in result
 
     def test_fragment_result_has_required_fields(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Fragment results include id, media_id, idx."""
+        """Fragment results include v2 required fields + source metadata."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -784,8 +842,12 @@ class TestSearchResultFormat:
         if len(data["results"]) >= 1:
             result = data["results"][0]
             assert result["type"] == "fragment"
-            assert "media_id" in result
-            assert "idx" in result
+            assert "fragment_idx" in result
+            assert "source" in result
+            assert result["source"]["media_id"] == str(media_id)
+            assert result["source"]["media_kind"] == "web_article"
+            assert "idx" not in result
+            assert "media_id" not in result
 
     def test_message_result_has_required_fields(self, auth_client, direct_db: DirectSessionManager):
         """Message results include id, conversation_id, seq."""
@@ -832,6 +894,89 @@ class TestSearchResultFormat:
         for result in data["results"]:
             # Snippet should be <= 303 (300 + "...")
             assert len(result["snippet"]) <= 303
+
+    def test_annotation_results_include_highlight_and_source_metadata(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Annotation search returns strict v2 nested highlight/source contract."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        annotation_body = "Unique metadata-rich annotation lookup term harmonica"
+        source_title = "Metadata Rich Source Title"
+        source_published_date = "2024-02-29"
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title=source_title)
+            highlight_id, annotation_id = create_test_annotation(
+                session,
+                user_id,
+                media_id,
+                body=annotation_body,
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE media
+                    SET published_date = :published_date
+                    WHERE id = :media_id
+                    """
+                ),
+                {"published_date": source_published_date, "media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media_authors (id, media_id, name, sort_order)
+                    VALUES (:id_1, :media_id, :name_1, 1),
+                           (:id_2, :media_id, :name_2, 2)
+                    """
+                ),
+                {
+                    "id_1": uuid4(),
+                    "id_2": uuid4(),
+                    "media_id": media_id,
+                    "name_1": "Ada Lovelace",
+                    "name_2": "Grace Hopper",
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("annotations", "id", annotation_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("media_authors", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.get(
+            "/search?q=harmonica&types=annotation",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"Expected 200 for annotation search, got {response.status_code}: {response.text}"
+        )
+        data = response.json()
+        result = next((r for r in data["results"] if r["id"] == str(annotation_id)), None)
+        assert result is not None, (
+            f"Expected annotation {annotation_id} in results; got {data['results']}"
+        )
+
+        assert result["source"]["media_id"] == str(media_id)
+        assert result["source"]["media_kind"] == "web_article"
+        assert result["source"]["title"] == source_title
+        assert result["source"]["authors"] == ["Ada Lovelace", "Grace Hopper"]
+        assert result["source"]["published_date"] == source_published_date
+        assert result["highlight"]["exact"] == "test exact"
+        assert result["highlight"]["prefix"] == "prefix"
+        assert result["highlight"]["suffix"] == "suffix"
+        assert result["annotation_body"] == annotation_body
+        assert "media_kind" not in result
+        assert "source_title" not in result
+        assert "source_authors" not in result
+        assert "source_published_date" not in result
+        assert "highlight_exact" not in result
+        assert "highlight_prefix" not in result
+        assert "highlight_suffix" not in result
 
 
 # =============================================================================

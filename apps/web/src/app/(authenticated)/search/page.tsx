@@ -15,36 +15,16 @@ import { apiFetch, isApiError } from "@/lib/api/client";
 import PageLayout from "@/components/ui/PageLayout";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
-import StatusPill from "@/components/ui/StatusPill";
-import { AppList, AppListItem } from "@/components/ui/AppList";
+import SearchResultRow from "@/components/search/SearchResultRow";
+import {
+  ALL_SEARCH_TYPES,
+  adaptSearchResultRow,
+  buildSearchQueryParams,
+  type SearchApiResult,
+  type SearchResponseShape,
+  type SearchType,
+} from "@/lib/search/resultRowAdapter";
 import styles from "./page.module.css";
-
-// ============================================================================
-// Types
-// ============================================================================
-
-interface SearchResult {
-  type: "media" | "fragment" | "annotation" | "message";
-  id: string;
-  score: number;
-  snippet: string;
-  title?: string | null;
-  media_id?: string | null;
-  idx?: number | null;
-  highlight_id?: string | null;
-  conversation_id?: string | null;
-  seq?: number | null;
-}
-
-interface SearchResponse {
-  results: SearchResult[];
-  page: {
-    has_more: boolean;
-    next_cursor: string | null;
-  };
-}
-
-const ALL_TYPES = ["media", "fragment", "annotation", "message"] as const;
 
 // ============================================================================
 // Component
@@ -52,8 +32,8 @@ const ALL_TYPES = ["media", "fragment", "annotation", "message"] as const;
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");
-  const [types, setTypes] = useState<Set<string>>(new Set(ALL_TYPES));
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [types, setTypes] = useState<Set<SearchType>>(new Set(ALL_SEARCH_TYPES));
+  const [results, setResults] = useState<SearchApiResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -72,19 +52,15 @@ export default function SearchPage() {
       setError(null);
 
       try {
-        const params = new URLSearchParams({
-          q: trimmed,
-          limit: "20",
+        const params = buildSearchQueryParams({
+          query: trimmed,
+          selectedTypes: types,
+          limit: 20,
+          cursor: cursor ?? null,
         });
-        if (types.size > 0 && types.size < ALL_TYPES.length) {
-          params.set("types", Array.from(types).join(","));
-        }
-        if (cursor) {
-          params.set("cursor", cursor);
-        }
 
-        const response = await apiFetch<SearchResponse>(
-          `/api/search?${params}`
+        const response = await apiFetch<SearchResponseShape>(
+          `/api/search?${params.toString()}`
         );
 
         if (cursor) {
@@ -112,7 +88,7 @@ export default function SearchPage() {
     search();
   };
 
-  const toggleType = (type: string) => {
+  const toggleType = (type: SearchType) => {
     setTypes((prev) => {
       const next = new Set(prev);
       if (next.has(type)) {
@@ -123,49 +99,6 @@ export default function SearchPage() {
       return next;
     });
   };
-
-  // --------------------------------------------------------------------------
-  // Result navigation URL
-  // --------------------------------------------------------------------------
-
-  function getResultHref(result: SearchResult): string {
-    switch (result.type) {
-      case "media":
-        return `/media/${result.id}`;
-      case "fragment":
-        return result.media_id ? `/media/${result.media_id}` : "#";
-      case "annotation":
-        return result.media_id ? `/media/${result.media_id}` : "#";
-      case "message":
-        return result.conversation_id
-          ? `/conversations/${result.conversation_id}`
-          : "#";
-      default:
-        return "#";
-    }
-  }
-
-  function getResultDescription(result: SearchResult): string {
-    switch (result.type) {
-      case "media":
-        return result.title || "Untitled";
-      case "fragment":
-        return `Fragment ${result.idx ?? "?"} of media`;
-      case "annotation":
-        return `Annotation on highlight`;
-      case "message":
-        return `Message #${result.seq ?? "?"} in conversation`;
-      default:
-        return "";
-    }
-  }
-
-  function getTypeVariant(type: SearchResult["type"]) {
-    if (type === "media") return "info";
-    if (type === "fragment") return "success";
-    if (type === "annotation") return "warning";
-    return "neutral";
-  }
 
   // --------------------------------------------------------------------------
   // Render
@@ -197,7 +130,7 @@ export default function SearchPage() {
           </div>
 
           <div className={styles.filters}>
-            {ALL_TYPES.map((type) => (
+            {ALL_SEARCH_TYPES.map((type) => (
               <label key={type} className={styles.filterLabel}>
                 <input
                   type="checkbox"
@@ -230,22 +163,14 @@ export default function SearchPage() {
         )}
 
         {results.length > 0 && (
-          <AppList>
+          <div className={styles.resultRows}>
             {results.map((result) => (
-              <AppListItem
+              <SearchResultRow
                 key={`${result.type}-${result.id}`}
-                href={getResultHref(result)}
-                title={getResultDescription(result)}
-                description={result.snippet || "No snippet available"}
-                meta={`score ${result.score.toFixed(2)}`}
-                trailing={
-                  <StatusPill variant={getTypeVariant(result.type)}>
-                    {result.type}
-                  </StatusPill>
-                }
+                row={adaptSearchResultRow(result)}
               />
             ))}
-          </AppList>
+          </div>
         )}
 
         {nextCursor && (
