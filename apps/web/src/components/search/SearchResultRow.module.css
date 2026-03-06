@@ -1,0 +1,59 @@
+.row {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.main {
+  padding: var(--space-3);
+  text-decoration: none;
+}
+
+.title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  line-height: 1.45;
+}
+
+.primaryText {
+  color: var(--color-text);
+  display: inline;
+}
+
+.segmentMark {
+  border-radius: 2px;
+  padding: 1px 2px;
+  background: color-mix(in oklab, var(--color-accent) 20%, transparent);
+}
+
+.type {
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+
+.meta {
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.score {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.expanded {
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.annotationBody {
+  margin-left: calc(12px + var(--space-3));
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  white-space: pre-wrap;
+}

@@ -75,6 +75,12 @@
   font-size: var(--font-size-xs);
 }
 
+.resultRows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
 .loadMore {
   display: block;
   width: 180px;

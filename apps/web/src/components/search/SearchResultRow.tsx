@@ -1,0 +1,59 @@
+"use client";
+
+import ContextRow from "@/components/ui/ContextRow";
+import HighlightSnippet from "@/components/ui/HighlightSnippet";
+import type { SearchResultRowViewModel } from "@/lib/search/resultRowAdapter";
+import styles from "./SearchResultRow.module.css";
+
+interface SearchResultRowProps {
+  row: SearchResultRowViewModel;
+}
+
+function renderSnippetContent(row: SearchResultRowViewModel) {
+  if (row.highlightSnippet) {
+    return (
+      <HighlightSnippet
+        prefix={row.highlightSnippet.prefix}
+        exact={row.highlightSnippet.exact}
+        suffix={row.highlightSnippet.suffix}
+      />
+    );
+  }
+
+  if (row.snippetSegments.length === 0) {
+    return row.primaryText;
+  }
+
+  return row.snippetSegments.map((segment, idx) =>
+    segment.emphasized ? (
+      <mark key={`seg-${idx}`} className={styles.segmentMark}>
+        {segment.text}
+      </mark>
+    ) : (
+      <span key={`seg-${idx}`}>{segment.text}</span>
+    )
+  );
+}
+
+export default function SearchResultRow({ row }: SearchResultRowProps) {
+  return (
+    <ContextRow
+      className={styles.row}
+      mainClassName={styles.main}
+      href={row.href}
+      title={<span className={styles.primaryText}>{renderSnippetContent(row)}</span>}
+      titleClassName={styles.title}
+      description={row.typeLabel}
+      descriptionClassName={styles.type}
+      meta={row.sourceMeta ?? row.scoreLabel}
+      metaClassName={styles.meta}
+      trailing={<span className={styles.score}>{row.scoreLabel}</span>}
+      expandedContent={
+        row.annotationBody ? (
+          <div className={styles.annotationBody}>{row.annotationBody}</div>
+        ) : undefined
+      }
+      expandedClassName={styles.expanded}
+    />
+  );
+}
