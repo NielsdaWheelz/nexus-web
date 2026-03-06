@@ -97,7 +97,14 @@ export interface SearchResultRowViewModel {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime validation – Layer 1
+// Runtime validation & normalization – Layer 1
+//
+// The API may return results in two shapes:
+//   1. Nested (intended): { source: { media_id, media_kind, ... }, fragment_idx }
+//   2. Flat (current):    { media_id, title, idx, highlight_id, conversation_id, ... }
+//
+// normalizeSearchResult accepts EITHER shape and produces the canonical
+// SearchApiResult union type. Returns null for truly unrecoverable results.
 // ---------------------------------------------------------------------------
 
 /** Runtime check that a source object has the required shape. */
@@ -113,44 +120,131 @@ function isValidSource(value: unknown): value is SearchSourceMetadata {
 }
 
 /**
- * Runtime validation for a single search result from the API.
+ * Resolve source metadata from either a nested `source` object or flat
+ * top-level fields. Returns null if neither format provides a media_id.
+ */
+function resolveSource(r: Record<string, unknown>): SearchSourceMetadata | null {
+  if (isValidSource(r.source)) {
+    return r.source as SearchSourceMetadata;
+  }
+  // Fall back to flat top-level fields
+  const media_id =
+    typeof r.media_id === "string" ? r.media_id : null;
+  if (!media_id) return null;
+  return {
+    media_id,
+    media_kind: typeof r.media_kind === "string" ? r.media_kind : "",
+    title: typeof r.title === "string" ? r.title : "",
+    authors: Array.isArray(r.authors) ? (r.authors as string[]) : [],
+    published_date:
+      typeof r.published_date === "string" ? r.published_date : null,
+  };
+}
+
+/** Runtime check that a highlight object has the required shape. */
+function isValidHighlight(value: unknown): value is SearchHighlightContext {
+  if (typeof value !== "object" || value === null) return false;
+  const h = value as Record<string, unknown>;
+  return (
+    typeof h.exact === "string" &&
+    typeof h.prefix === "string" &&
+    typeof h.suffix === "string"
+  );
+}
+
+/**
+ * Resolve a fragment index from either `fragment_idx` or the legacy `idx` field.
+ */
+function resolveFragmentIdx(r: Record<string, unknown>): number | null {
+  if (typeof r.fragment_idx === "number") return r.fragment_idx;
+  if (typeof r.idx === "number") return r.idx;
+  return null;
+}
+
+/**
+ * Normalize a raw API result object into the canonical SearchApiResult type.
  *
- * Returns `false` for structurally invalid results so they can be filtered
- * out at the API boundary before rendering.
+ * Handles both the intended nested shape (with `source` object) and the
+ * flat shape currently returned by the API. Returns null for results that
+ * cannot be recovered into a valid type.
+ */
+export function normalizeSearchResult(
+  result: unknown,
+): SearchApiResult | null {
+  if (typeof result !== "object" || result === null) return null;
+  const r = result as Record<string, unknown>;
+
+  // Common required fields
+  if (typeof r.id !== "string") return null;
+  if (typeof r.score !== "number") return null;
+  if (typeof r.snippet !== "string") return null;
+
+  const base = { id: r.id, score: r.score, snippet: r.snippet };
+
+  switch (r.type) {
+    case "media": {
+      const source = resolveSource(r);
+      if (!source) return null;
+      return { ...base, type: "media", source };
+    }
+    case "fragment": {
+      const source = resolveSource(r);
+      if (!source) return null;
+      const fragment_idx = resolveFragmentIdx(r);
+      if (fragment_idx === null) return null;
+      return { ...base, type: "fragment", fragment_idx, source };
+    }
+    case "annotation": {
+      const source = resolveSource(r);
+      if (!source) return null;
+      const fragment_idx = resolveFragmentIdx(r);
+      if (fragment_idx === null) return null;
+      if (
+        typeof r.highlight_id !== "string" ||
+        typeof r.fragment_id !== "string" ||
+        typeof r.annotation_body !== "string" ||
+        !isValidHighlight(r.highlight)
+      )
+        return null;
+      return {
+        ...base,
+        type: "annotation",
+        highlight_id: r.highlight_id,
+        fragment_id: r.fragment_id,
+        fragment_idx,
+        annotation_body: r.annotation_body,
+        highlight: r.highlight,
+        source,
+      };
+    }
+    case "message": {
+      if (
+        typeof r.conversation_id !== "string" ||
+        typeof r.seq !== "number"
+      )
+        return null;
+      return {
+        ...base,
+        type: "message",
+        conversation_id: r.conversation_id,
+        seq: r.seq,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Runtime validation for a single search result.
+ *
+ * Returns true if the result can be normalized into a valid SearchApiResult
+ * (accepts both nested and flat API shapes). Delegates to normalizeSearchResult.
  */
 export function isValidSearchResult(
   result: unknown,
 ): result is SearchApiResult {
-  if (typeof result !== "object" || result === null) return false;
-  const r = result as Record<string, unknown>;
-
-  // Common required fields
-  if (typeof r.id !== "string") return false;
-  if (typeof r.score !== "number") return false;
-  if (typeof r.snippet !== "string") return false;
-
-  switch (r.type) {
-    case "media":
-      return isValidSource(r.source);
-    case "fragment":
-      return typeof r.fragment_idx === "number" && isValidSource(r.source);
-    case "annotation":
-      return (
-        typeof r.highlight_id === "string" &&
-        typeof r.fragment_id === "string" &&
-        typeof r.fragment_idx === "number" &&
-        typeof r.annotation_body === "string" &&
-        typeof r.highlight === "object" &&
-        r.highlight !== null &&
-        isValidSource(r.source)
-      );
-    case "message":
-      return (
-        typeof r.conversation_id === "string" && typeof r.seq === "number"
-      );
-    default:
-      return false;
-  }
+  return normalizeSearchResult(result) !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,16 +302,21 @@ function buildSourceMeta(result: SearchApiResult): string | null {
   // all remaining variants carry `source: SearchSourceMetadata`.
   const { source } = result;
 
-  const parts: string[] = [source.title];
+  const parts: string[] = [];
+  if (source.title) {
+    parts.push(source.title);
+  }
   if (source.authors.length > 0) {
     parts.push(source.authors.join(", "));
   }
   if (source.published_date) {
     parts.push(source.published_date);
   }
-  parts.push(formatMediaKind(source.media_kind));
+  if (source.media_kind) {
+    parts.push(formatMediaKind(source.media_kind));
+  }
 
-  return parts.join(" — ");
+  return parts.length > 0 ? parts.join(" — ") : null;
 }
 
 function buildResultHref(result: SearchApiResult): string {

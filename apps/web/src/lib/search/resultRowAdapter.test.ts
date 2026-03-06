@@ -4,6 +4,7 @@ import {
   adaptSearchResultRow,
   buildSearchQueryParams,
   isValidSearchResult,
+  normalizeSearchResult,
   type SearchApiResult,
   type SearchType,
 } from "@/lib/search/resultRowAdapter";
@@ -246,5 +247,186 @@ describe("isValidSearchResult", () => {
         seq: 1,
       }),
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeSearchResult – flat (legacy) API shape
+// ---------------------------------------------------------------------------
+
+describe("normalizeSearchResult", () => {
+  it("passes through a valid nested fragment result", () => {
+    const nested = {
+      type: "fragment",
+      id: "f-1",
+      score: 0.5,
+      snippet: "text",
+      fragment_idx: 3,
+      source: {
+        media_id: "m-1",
+        media_kind: "epub",
+        title: "Title",
+        authors: [],
+        published_date: null,
+      },
+    };
+    const result = normalizeSearchResult(nested);
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe("fragment");
+    expect((result as Extract<SearchApiResult, { type: "fragment" }>).fragment_idx).toBe(3);
+    expect((result as Extract<SearchApiResult, { type: "fragment" }>).source.media_id).toBe("m-1");
+  });
+
+  it("normalizes a flat fragment result (idx + flat media_id)", () => {
+    const flat = {
+      type: "fragment",
+      id: "d2ee603f-db09-4e78-8eae-9fe12fe2178e",
+      score: 1,
+      snippet: "some <b>bold</b> text",
+      title: null,
+      media_id: "7a8ccae8-9465-4c9c-858f-0a1c4d80ff9a",
+      idx: 0,
+      highlight_id: null,
+      conversation_id: null,
+      seq: null,
+    };
+    const result = normalizeSearchResult(flat);
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe("fragment");
+    const frag = result as Extract<SearchApiResult, { type: "fragment" }>;
+    expect(frag.fragment_idx).toBe(0);
+    expect(frag.source.media_id).toBe("7a8ccae8-9465-4c9c-858f-0a1c4d80ff9a");
+    expect(frag.source.title).toBe("");
+    expect(frag.source.media_kind).toBe("");
+  });
+
+  it("normalizes a flat media result", () => {
+    const flat = {
+      type: "media",
+      id: "m-1",
+      score: 0.9,
+      snippet: "snippet",
+      media_id: "m-1",
+      title: null,
+      idx: null,
+    };
+    const result = normalizeSearchResult(flat);
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe("media");
+    expect((result as Extract<SearchApiResult, { type: "media" }>).source.media_id).toBe("m-1");
+  });
+
+  it("normalizes a flat message result", () => {
+    const flat = {
+      type: "message",
+      id: "msg-1",
+      score: 0.3,
+      snippet: "hello",
+      conversation_id: "c-1",
+      seq: 5,
+      media_id: null,
+      title: null,
+    };
+    const result = normalizeSearchResult(flat);
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe("message");
+    const msg = result as Extract<SearchApiResult, { type: "message" }>;
+    expect(msg.conversation_id).toBe("c-1");
+    expect(msg.seq).toBe(5);
+  });
+
+  it("returns null for results missing id", () => {
+    expect(normalizeSearchResult({ type: "fragment", score: 1, snippet: "x" })).toBeNull();
+  });
+
+  it("returns null for unknown type", () => {
+    expect(normalizeSearchResult({ type: "unknown", id: "x", score: 0, snippet: "" })).toBeNull();
+  });
+
+  it("returns null for fragment without media_id or source", () => {
+    expect(
+      normalizeSearchResult({
+        type: "fragment",
+        id: "f-1",
+        score: 0.5,
+        snippet: "text",
+        idx: 0,
+        // no media_id and no source
+      }),
+    ).toBeNull();
+  });
+
+  it("normalizes a flat annotation result", () => {
+    const flat = {
+      type: "annotation",
+      id: "a-1",
+      score: 0.9,
+      snippet: "annotation <b>match</b>",
+      highlight_id: "h-1",
+      fragment_id: "f-1",
+      idx: 5,
+      annotation_body: "note body",
+      highlight: { exact: "q", prefix: "before ", suffix: " after" },
+      media_id: "m-1",
+      title: "Source Title",
+      conversation_id: null,
+      seq: null,
+    };
+    const result = normalizeSearchResult(flat);
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe("annotation");
+    const ann = result as Extract<SearchApiResult, { type: "annotation" }>;
+    expect(ann.fragment_idx).toBe(5);
+    expect(ann.highlight_id).toBe("h-1");
+    expect(ann.annotation_body).toBe("note body");
+    expect(ann.source.media_id).toBe("m-1");
+    expect(ann.source.title).toBe("Source Title");
+    expect(ann.highlight.exact).toBe("q");
+  });
+
+  it("rejects annotation with invalid highlight shape", () => {
+    expect(
+      normalizeSearchResult({
+        type: "annotation",
+        id: "a-1",
+        score: 0.9,
+        snippet: "text",
+        highlight_id: "h-1",
+        fragment_id: "f-1",
+        fragment_idx: 0,
+        annotation_body: "note",
+        highlight: { bogus: true }, // missing exact/prefix/suffix
+        source: {
+          media_id: "m-1",
+          media_kind: "epub",
+          title: "T",
+          authors: [],
+          published_date: null,
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("produces results that adaptSearchResultRow can consume", () => {
+    const flat = {
+      type: "fragment",
+      id: "f-99",
+      score: 0.75,
+      snippet: "some <b>highlighted</b> text",
+      media_id: "m-42",
+      idx: 3,
+      title: null,
+      highlight_id: null,
+      conversation_id: null,
+      seq: null,
+    };
+    const normalized = normalizeSearchResult(flat);
+    expect(normalized).not.toBeNull();
+    const row = adaptSearchResultRow(normalized!);
+    expect(row.key).toBe("fragment-f-99");
+    expect(row.href).toContain("/media/m-42");
+    expect(row.href).toContain("fragment=f-99");
+    expect(row.snippetSegments.length).toBeGreaterThan(0);
+    expect(row.scoreLabel).toBe("score 0.75");
   });
 });
