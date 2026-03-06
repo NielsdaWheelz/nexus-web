@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PdfReader, { type PdfReaderDeps } from "@/components/PdfReader";
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -536,6 +536,64 @@ describe("PdfReader", () => {
     expect((yellowOverlay as HTMLElement).style.backgroundColor).not.toBe(
       (blueOverlay as HTMLElement).style.backgroundColor
     );
+  });
+
+  it("exposes interactive overlay controls when highlight tap callback is provided", async () => {
+    const user = userEvent.setup();
+    const onHighlightTap = vi.fn();
+    const signedUrl = "https://storage.example/signed-overlay-tap";
+    const doc = createFakeDocument(1, {
+      1: createFakePage({ textItems: ["alpha beta gamma"] }),
+    });
+    const pageOneHighlights = [
+      makePdfHighlight("h-tap", "yellow", "alpha", 1, [
+        { x1: 72, y1: 120, x2: 140, y2: 120, x3: 140, y3: 132, x4: 72, y4: 132 },
+      ]),
+    ];
+
+    const { deps } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: pageOneHighlights },
+    });
+
+    render(<PdfReader mediaId="media-tap" deps={deps} onHighlightTap={onHighlightTap} />);
+
+    const overlay = await screen.findByTestId("pdf-highlight-h-tap-0");
+    expect(overlay).toHaveAttribute("role", "button");
+    expect(overlay).toHaveAttribute("tabindex", "0");
+
+    await user.click(overlay);
+    expect(onHighlightTap).toHaveBeenCalledTimes(1);
+    expect(onHighlightTap).toHaveBeenCalledWith("h-tap", expect.any(DOMRect));
+
+    fireEvent.keyDown(overlay, { key: "Enter" });
+    fireEvent.keyDown(overlay, { key: " " });
+    expect(onHighlightTap).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps overlays non-interactive when highlight tap callback is absent", async () => {
+    const signedUrl = "https://storage.example/signed-overlay-no-tap";
+    const doc = createFakeDocument(1, {
+      1: createFakePage({ textItems: ["alpha beta gamma"] }),
+    });
+    const pageOneHighlights = [
+      makePdfHighlight("h-static", "blue", "beta", 1, [
+        { x1: 72, y1: 160, x2: 130, y2: 160, x3: 130, y3: 172, x4: 72, y4: 172 },
+      ]),
+    ];
+
+    const { deps } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: pageOneHighlights },
+    });
+
+    render(<PdfReader mediaId="media-static" deps={deps} />);
+
+    const overlay = await screen.findByTestId("pdf-highlight-h-static-0");
+    expect(overlay).not.toHaveAttribute("role");
+    expect(overlay).not.toHaveAttribute("tabindex");
   });
 
   it("captures text-layer selection and posts persistent PDF highlight geometry", async () => {
