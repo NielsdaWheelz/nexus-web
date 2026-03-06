@@ -2,6 +2,7 @@
 
 import { forwardRef, type ReactNode } from "react";
 import ActionMenu, { type ActionMenuOption } from "./ActionMenu";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./SurfaceHeader.module.css";
 
 export type SurfaceHeaderOption = ActionMenuOption;
@@ -30,10 +31,18 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
 ) {
   const HeadingTag = headingLevel === 1 ? "h1" : "h2";
   const hasOptions = options.length > 0;
-  const headerClassName = [styles.header, className].filter(Boolean).join(" ");
+  const isMobile = useIsMobileViewport();
+  const headerClassName = [styles.header, isMobile ? styles.mobile : "", className]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <header ref={ref} className={headerClassName} data-surface-header="true">
+    <header
+      ref={ref}
+      className={headerClassName}
+      data-surface-header="true"
+      data-mobile={isMobile ? "true" : undefined}
+    >
       <div className={styles.leading}>
         <div className={styles.titles}>
           <HeadingTag className={styles.title}>{title}</HeadingTag>
