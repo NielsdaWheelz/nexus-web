@@ -20,7 +20,7 @@ import {
   ALL_SEARCH_TYPES,
   adaptSearchResultRow,
   buildSearchQueryParams,
-  isValidSearchResult,
+  normalizeSearchResult,
   type SearchApiResult,
   type SearchResponseShape,
   type SearchType,
@@ -64,12 +64,17 @@ export default function SearchPage() {
           `/api/search?${params.toString()}`
         );
 
-        // Layer 1: filter out structurally invalid results at the boundary
-        const valid = response.results.filter((r) => {
-          if (isValidSearchResult(r)) return true;
-          console.warn("[search] dropping malformed result:", r);
-          return false;
-        });
+        // Layer 1: normalize results at the API boundary (handles both
+        // nested and flat response shapes)
+        const valid = response.results
+          .map((r) => {
+            const normalized = normalizeSearchResult(r);
+            if (!normalized) {
+              console.warn("[search] dropping unrecoverable result:", r);
+            }
+            return normalized;
+          })
+          .filter((r): r is SearchApiResult => r !== null);
 
         if (cursor) {
           setResults((prev) => [...prev, ...valid]);
