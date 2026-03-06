@@ -835,7 +835,9 @@ def _result_to_out(result: dict) -> SearchResultOut:
             **base_payload,
         )
 
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"Unknown search result type: {result_type}")
+    raise InvalidRequestError(
+        ApiErrorCode.E_INVALID_REQUEST, f"Unknown search result type: {result_type}"
+    )
 
 
 def _log_search(

@@ -40,7 +40,7 @@ def search(
     limit: int = Query(
         default=20, ge=1, le=50, description="Maximum results per page (default 20, max 50)"
     ),
-) -> SearchResponse:
+) -> dict:
     """Search across all visible content.
 
     Keyword search using PostgreSQL full-text search. Returns mixed typed
