@@ -94,6 +94,7 @@ import TranscriptMediaPane, {
   type TranscriptPlaybackSource,
   type TranscriptFragment,
 } from "./TranscriptMediaPane";
+import ResponsiveToolbar, { type ToolbarItem } from "@/components/ui/ResponsiveToolbar";
 import styles from "./page.module.css";
 import paneStyles from "@/components/Pane.module.css";
 
@@ -2104,30 +2105,51 @@ export default function MediaViewPage() {
     </div>
   );
 
-  const mediaToolbar =
+  // ---------- PDF toolbar items ----------
+  const pdfToolbarItems: ToolbarItem[] =
+    isPdf && canRead && pdfControlsState
+      ? [
+          {
+            id: "prev-page",
+            label: "Previous page",
+            icon: <span aria-hidden="true">‹</span>,
+            onClick: () => pdfControlsRef.current?.goToPreviousPage(),
+            disabled: !pdfControlsState.canGoPrev,
+            priority: "primary",
+          },
+          {
+            id: "next-page",
+            label: "Next page",
+            icon: <span aria-hidden="true">›</span>,
+            onClick: () => pdfControlsRef.current?.goToNextPage(),
+            disabled: !pdfControlsState.canGoNext,
+            priority: "primary",
+          },
+          {
+            id: "zoom-out",
+            label: "Zoom out",
+            icon: <span aria-hidden="true">−</span>,
+            onClick: () => pdfControlsRef.current?.zoomOut(),
+            disabled: !pdfControlsState.canZoomOut,
+            priority: "secondary",
+          },
+          {
+            id: "zoom-in",
+            label: "Zoom in",
+            icon: <span aria-hidden="true">+</span>,
+            onClick: () => pdfControlsRef.current?.zoomIn(),
+            disabled: !pdfControlsState.canZoomIn,
+            priority: "secondary",
+          },
+        ]
+      : [];
+
+  const pdfToolbarDisplays =
     isPdf && canRead && pdfControlsState ? (
       <>
-        <button
-          type="button"
-          className={paneStyles.toolbarBtn}
-          onClick={() => pdfControlsRef.current?.goToPreviousPage()}
-          disabled={!pdfControlsState.canGoPrev}
-          aria-label="Previous page"
-        >
-          Previous page
-        </button>
         <span className={paneStyles.toolbarLabel}>
           Page {pdfControlsState.pageNumber} of {pdfControlsState.numPages || 0}
         </span>
-        <button
-          type="button"
-          className={paneStyles.toolbarBtn}
-          onClick={() => pdfControlsRef.current?.goToNextPage()}
-          disabled={!pdfControlsState.canGoNext}
-          aria-label="Next page"
-        >
-          Next page
-        </button>
         <button
           type="button"
           className={paneStyles.toolbarBtn}
@@ -2149,55 +2171,58 @@ export default function MediaViewPage() {
         >
           {pdfControlsState.highlightLabel}
         </button>
-        <span className={styles.zoomLabel}>{pdfControlsState.zoomPercent}%</span>
-        <button
-          type="button"
-          className={paneStyles.toolbarBtn}
-          onClick={() => pdfControlsRef.current?.zoomOut()}
-          disabled={!pdfControlsState.canZoomOut}
-          aria-label="Zoom out"
-        >
-          Zoom out
-        </button>
-        <button
-          type="button"
-          className={paneStyles.toolbarBtn}
-          onClick={() => pdfControlsRef.current?.zoomIn()}
-          disabled={!pdfControlsState.canZoomIn}
-          aria-label="Zoom in"
-        >
-          Zoom in
-        </button>
+        {!isMobileViewport && (
+          <span className={styles.zoomLabel}>{pdfControlsState.zoomPercent}%</span>
+        )}
       </>
-    ) : isEpub && canRead ? (
+    ) : null;
+
+  // ---------- EPUB toolbar items ----------
+  const epubToolbarItems: ToolbarItem[] =
+    isEpub && canRead
+      ? [
+          {
+            id: "prev-chapter",
+            label: "Previous chapter",
+            icon: <span aria-hidden="true">‹</span>,
+            onClick: () => {
+              if (prevSection) navigateToSection(prevSection.section_id);
+            },
+            disabled: !prevSection,
+            priority: "primary",
+          },
+          {
+            id: "next-chapter",
+            label: "Next chapter",
+            icon: <span aria-hidden="true">›</span>,
+            onClick: () => {
+              if (nextSection) navigateToSection(nextSection.section_id);
+            },
+            disabled: !nextSection,
+            priority: "primary",
+          },
+          ...((hasEpubToc || tocWarning)
+            ? [
+                {
+                  id: "toggle-toc",
+                  label: epubTocExpanded ? "Hide TOC" : "Show TOC",
+                  icon: <span aria-hidden="true">☰</span>,
+                  onClick: () => setEpubTocExpanded((value) => !value),
+                  priority: "secondary" as const,
+                },
+              ]
+            : []),
+        ]
+      : [];
+
+  const epubToolbarDisplays =
+    isEpub && canRead ? (
       <>
-        <button
-          type="button"
-          className={paneStyles.toolbarBtn}
-          onClick={() => {
-            if (prevSection) navigateToSection(prevSection.section_id);
-          }}
-          disabled={!prevSection}
-          aria-label="Previous chapter"
-        >
-          Previous chapter
-        </button>
         {activeSectionPosition >= 0 && epubSections && (
           <span className={paneStyles.toolbarLabel}>
             {activeSectionPosition + 1} / {epubSections.length}
           </span>
         )}
-        <button
-          type="button"
-          className={paneStyles.toolbarBtn}
-          onClick={() => {
-            if (nextSection) navigateToSection(nextSection.section_id);
-          }}
-          disabled={!nextSection}
-          aria-label="Next chapter"
-        >
-          Next chapter
-        </button>
         {epubSections && (
           <select
             value={activeSectionId ?? ""}
@@ -2216,19 +2241,23 @@ export default function MediaViewPage() {
             ))}
           </select>
         )}
-        {(hasEpubToc || tocWarning) && (
-          <button
-            type="button"
-            className={paneStyles.toolbarBtn}
-            onClick={() => setEpubTocExpanded((value) => !value)}
-            aria-label={
-              epubTocExpanded ? "Collapse table of contents" : "Expand table of contents"
-            }
-          >
-            {epubTocExpanded ? "Hide TOC" : "Show TOC"}
-          </button>
-        )}
       </>
+    ) : null;
+
+  // ---------- Combined media toolbar ----------
+  const mediaToolbar =
+    isPdf && canRead && pdfControlsState ? (
+      <ResponsiveToolbar
+        items={pdfToolbarItems}
+        displays={pdfToolbarDisplays}
+        ariaLabel="PDF controls"
+      />
+    ) : isEpub && canRead ? (
+      <ResponsiveToolbar
+        items={epubToolbarItems}
+        displays={epubToolbarDisplays}
+        ariaLabel="EPUB controls"
+      />
     ) : null;
   // ==========================================================================
   // Render

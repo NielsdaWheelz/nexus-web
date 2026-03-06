@@ -173,4 +173,25 @@
   .resizeHandle {
     display: none;
   }
+
+  /* Remove rigid min-widths on toolbar elements for mobile */
+  .toolbar {
+    flex-wrap: nowrap;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .toolbarLabel {
+    min-width: 0;
+  }
+
+  .toolbarSelect {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .toolbarBtn {
+    min-width: 0;
+    padding: 0 var(--space-1);
+  }
 }
