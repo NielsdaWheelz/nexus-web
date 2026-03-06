@@ -122,7 +122,7 @@ describe("SplitSurface", () => {
     });
 
     it("preserves Pane chrome header in the desktop side-by-side view", () => {
-      const { container } = render(
+      render(
         <SplitSurface
           primary={<div>Primary</div>}
           secondary={
@@ -135,13 +135,12 @@ describe("SplitSurface", () => {
         />
       );
 
-      // The desktop aside is CSS-hidden in a mobile viewport but still rendered in DOM.
-      // Verify the Pane chrome is present in the DOM for the desktop layout.
-      const desktopAside = container.querySelector(
-        '[data-split-role="secondary-desktop"]'
-      );
-      expect(desktopAside).not.toBeNull();
-      expect(desktopAside!.querySelector('[data-pane-chrome="true"]')).not.toBeNull();
+      // The desktop aside is CSS-hidden on mobile viewport but still rendered in DOM.
+      // Use { hidden: true } to query inside display:none containers.
+      const desktopAside = screen.getByRole("complementary", { hidden: true });
+      expect(
+        within(desktopAside).getByRole("heading", { name: "Highlights", hidden: true })
+      ).toBeInTheDocument();
     });
 
     it("suppresses Pane chrome inside overlay but not Pane content", async () => {
@@ -164,7 +163,9 @@ describe("SplitSurface", () => {
       const dialog = screen.getByRole("dialog", { name: "Highlights" });
       // Content should still be rendered
       expect(within(dialog).getByText("Highlight items")).toBeInTheDocument();
-      // Pane chrome should NOT be inside the overlay
+      // Pane chrome should NOT be inside the overlay.
+      // No Testing Library query can assert absence of a data-attribute, so DOM access is needed.
+      // eslint-disable-next-line testing-library/no-node-access
       expect(dialog.querySelector('[data-pane-chrome="true"]')).toBeNull();
     });
 
