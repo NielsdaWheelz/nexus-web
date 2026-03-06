@@ -4,14 +4,14 @@
   flex-direction: column;
   align-items: stretch;
   gap: var(--space-2);
-  padding: var(--space-2);
+  padding: var(--space-3);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: 10px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  z-index: 1000;
+  z-index: 320;
   animation: popoverFadeIn 150ms ease-out;
-  min-width: 160px;
+  min-width: 196px;
 }
 
 @keyframes popoverFadeIn {
@@ -27,13 +27,13 @@
 
 .closeButton {
   position: absolute;
-  top: var(--space-1);
-  right: var(--space-1);
+  top: var(--space-2);
+  right: var(--space-2);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   border: none;
   background: transparent;
   color: var(--color-text-muted);
@@ -52,12 +52,12 @@
   display: flex;
   gap: var(--space-1);
   justify-content: center;
-  padding-right: 20px; /* space for close button */
+  padding-right: 30px; /* space for close button */
 }
 
 .colorButton {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
@@ -127,4 +127,107 @@
 .closeButton:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+.annotationSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.annotationLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.annotationInput {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-2);
+  resize: vertical;
+  min-height: 70px;
+}
+
+.annotationActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.annotationSave,
+.annotationDelete {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-xs);
+}
+
+.annotationSave {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.annotationDelete {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+.sheetHandle {
+  display: none;
+}
+
+.mobileSheet {
+  left: max(var(--space-2), env(safe-area-inset-left));
+  right: max(var(--space-2), env(safe-area-inset-right));
+  top: auto;
+  bottom: calc(var(--mobile-bottom-nav-height) + env(safe-area-inset-bottom) + var(--space-2));
+  margin: 0 auto;
+  width: min(100%, 560px);
+  max-height: min(76dvh, 560px);
+  overflow-y: auto;
+  border-radius: 14px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.46);
+}
+
+@media (max-width: 768px) {
+  .mobileSheet {
+    padding: var(--space-3) var(--space-3) max(var(--space-3), env(safe-area-inset-bottom));
+  }
+
+  .sheetHandle {
+    display: block;
+    width: 42px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--color-border);
+    margin: 0 auto var(--space-1);
+  }
+
+  .mobileSheet .closeButton {
+    width: 32px;
+    height: 32px;
+  }
+
+  .mobileSheet .colorButton {
+    width: 32px;
+    height: 32px;
+  }
+
+  .mobileSheet .annotationInput {
+    min-height: 96px;
+    font-size: 16px;
+  }
+
+  .mobileSheet .annotationSave,
+  .mobileSheet .annotationDelete,
+  .mobileSheet .editBoundsButton {
+    min-height: 38px;
+    font-size: var(--font-size-sm);
+  }
 }

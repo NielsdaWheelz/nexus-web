@@ -77,6 +77,7 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useReaderContext, useReaderState } from "@/lib/reader";
 import {
   fetchAllEpubChapterSummaries,
@@ -491,6 +492,7 @@ export default function MediaViewPage() {
   const requestedFragmentId = searchParams.get("fragment");
   const requestedHighlightId = searchParams.get("highlight");
   const { toast } = useToast();
+  const isMobileViewport = useIsMobileViewport();
   const { profile: readerProfile } = useReaderContext();
   const {
     state: readerState,
@@ -1731,6 +1733,10 @@ export default function MediaViewPage() {
         const clickData = parseHighlightElement(highlightEl);
         if (clickData) {
           handleHighlightClick(clickData);
+          if (isMobileViewport) {
+            setEditPopoverHighlightId(clickData.topmostId);
+            setEditPopoverAnchorRect(highlightEl.getBoundingClientRect());
+          }
           return;
         }
       }
@@ -1738,9 +1744,13 @@ export default function MediaViewPage() {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) {
         clearFocus();
+        if (isMobileViewport) {
+          setEditPopoverHighlightId(null);
+          setEditPopoverAnchorRect(null);
+        }
       }
     },
-    [handleHighlightClick, clearFocus]
+    [handleHighlightClick, clearFocus, isMobileViewport]
   );
 
   // ==========================================================================
@@ -2017,7 +2027,7 @@ export default function MediaViewPage() {
     if (!editPopoverHighlightId) return null;
     const hl = linkedPaneHighlights.find((h) => h.id === editPopoverHighlightId);
     if (!hl) return null;
-    return { id: hl.id, color: hl.color };
+    return { id: hl.id, color: hl.color, annotationBody: hl.annotation?.body ?? null };
   }, [editPopoverHighlightId, linkedPaneHighlights]);
 
   const dismissEditPopover = useCallback(() => {
@@ -2025,6 +2035,18 @@ export default function MediaViewPage() {
     setEditPopoverAnchorRect(null);
     cancelEditBounds();
   }, [cancelEditBounds]);
+
+  const handleMobilePdfHighlightTap = useCallback(
+    (highlightId: string, anchorRect: DOMRect) => {
+      if (!isMobileViewport) {
+        return;
+      }
+      focusHighlight(highlightId);
+      setEditPopoverHighlightId(highlightId);
+      setEditPopoverAnchorRect(anchorRect);
+    },
+    [focusHighlight, isMobileViewport]
+  );
 
   const buildRowOptions = useCallback(
     (highlightId: string): ActionMenuOption[] => {
@@ -2351,6 +2373,7 @@ export default function MediaViewPage() {
                 onHighlightNavigationComplete={() => setPdfNavigationTarget(null)}
                 onHighlightsMutated={schedulePdfHighlightsRefresh}
                 onQuoteToChat={handleSendToChat}
+                onHighlightTap={isMobileViewport ? handleMobilePdfHighlightTap : undefined}
                 showToolbar={false}
                 onControlsStateChange={setPdfControlsState}
                 onControlsReady={(controls) => {
@@ -2500,18 +2523,6 @@ export default function MediaViewPage() {
             rowOptions={buildRowOptions}
           />
 
-          {editPopoverHighlight && editPopoverAnchorRect && (
-            <HighlightEditPopover
-              highlight={editPopoverHighlight}
-              anchorRect={editPopoverAnchorRect}
-              isEditingBounds={focusState.editingBounds}
-              onStartEditBounds={startEditBounds}
-              onCancelEditBounds={cancelEditBounds}
-              onColorChange={handleColorChange}
-              onDismiss={dismissEditPopover}
-            />
-          )}
-
           {isPdf && (
             <div className={styles.bookHighlightsControls}>
               <p className={styles.hint}>{pdfLinkedItemsHint}</p>
@@ -2558,6 +2569,20 @@ export default function MediaViewPage() {
         secondaryTitle="Highlights"
         secondaryFabLabel="Highlights"
       />
+
+      {editPopoverHighlight && editPopoverAnchorRect && (
+        <HighlightEditPopover
+          highlight={editPopoverHighlight}
+          anchorRect={editPopoverAnchorRect}
+          isEditingBounds={focusState.editingBounds}
+          onStartEditBounds={startEditBounds}
+          onCancelEditBounds={cancelEditBounds}
+          onColorChange={handleColorChange}
+          onAnnotationSave={handleAnnotationSave}
+          onAnnotationDelete={handleAnnotationDelete}
+          onDismiss={dismissEditPopover}
+        />
+      )}
 
       {!isPdf && selection && !focusState.editingBounds && contentRef.current && (
         <SelectionPopover

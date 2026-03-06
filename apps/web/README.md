@@ -24,6 +24,10 @@ Authenticated views also run inside an in-app multi-pane workspace:
 - tab labels resolve by descriptor precedence: runtime page title → resource cache → open hint → route static title → safe fallback
 - pane-open requests flow through `requestOpenInAppPane(href, { titleHint?, resourceRef? })` / `nexus:open-pane`
 - resource title cache persists in `localStorage` key `nexus.workspace.resource-title-cache.v1`
+- mobile uses a fixed bottom nav and a modal Tabs sheet instead of the desktop sidebar
+- mobile workspace shows one active group at a time (`WorkspaceRoot` controls visibility)
+- pane/page header chrome uses hide-on-scroll reveal-on-scroll-up behavior on mobile
+- split surfaces keep secondary panes behind a right-side drawer toggled by a floating top-right action
 
 ### Request Tracing
 
@@ -131,7 +135,7 @@ src/
 │   ├── LinkedItemRow.tsx       # Linked-item row component (PR-10)
 │   ├── Navbar.tsx
 │   ├── Pane.tsx
-│   ├── InAppPaneWorkspace.tsx  # Primary + side-pane host
+│   ├── AuthenticatedWorkspaceHost.tsx  # Primary + side-pane workspace host
 │   ├── PaneRouteRenderer.tsx   # In-pane route renderer + link interception
 │   └── ...
 ├── lib/                    # Utilities
@@ -201,7 +205,7 @@ npm run typecheck
 Pane-specific browser-mode checks:
 
 ```bash
-npm test -- src/__tests__/components/InAppPaneWorkspace.test.tsx src/__tests__/components/AppList.test.tsx
+npm test -- src/__tests__/components/Navbar.test.tsx src/__tests__/components/Pane.test.tsx src/__tests__/components/SplitSurface.test.tsx src/__tests__/components/WorkspaceRoot.test.tsx src/__tests__/components/HighlightEditPopover.test.tsx
 ```
 
 ## Highlight Libraries

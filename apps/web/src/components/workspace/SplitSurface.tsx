@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import styles from "./SplitSurface.module.css";
 
 interface SplitSurfaceProps {
@@ -19,6 +19,7 @@ export default function SplitSurface({
   defaultSecondaryOpenMobile = false,
 }: SplitSurfaceProps) {
   const [secondaryOpenMobile, setSecondaryOpenMobile] = useState(defaultSecondaryOpenMobile);
+  const secondarySurfaceId = useId();
   const hasSecondary = Boolean(secondary);
 
   useEffect(() => {
@@ -55,9 +56,12 @@ export default function SplitSurface({
       {hasSecondary && (
         <button
           type="button"
-          className={styles.mobileFab}
-          onClick={() => setSecondaryOpenMobile(true)}
+          className={`${styles.mobileFab} ${secondaryOpenMobile ? styles.mobileFabActive : ""}`}
+          onClick={() => setSecondaryOpenMobile((prev) => !prev)}
           aria-label={secondaryFabLabel}
+          aria-controls={secondarySurfaceId}
+          aria-expanded={secondaryOpenMobile}
+          data-open={secondaryOpenMobile ? "true" : "false"}
         >
           {secondaryFabLabel}
         </button>
@@ -69,6 +73,7 @@ export default function SplitSurface({
           onClick={() => setSecondaryOpenMobile(false)}
         >
           <aside
+            id={secondarySurfaceId}
             className={styles.mobileOverlay}
             role="dialog"
             aria-modal="true"

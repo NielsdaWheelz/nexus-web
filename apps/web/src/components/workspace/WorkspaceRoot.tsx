@@ -66,11 +66,16 @@ export default function WorkspaceRoot({
         }));
 
         const isSized = isMultiGroup && group.widthPx != null;
-        const shellClass = `${styles.groupShell} ${isSized ? styles.groupShellSized : ""}`;
+        const isActiveGroup = group.id === activeGroupId;
+        const shellClass = `${styles.groupShell} ${isSized ? styles.groupShellSized : ""} ${
+          isActiveGroup ? styles.groupShellMobileVisible : styles.groupShellMobileHidden
+        }`;
 
         return (
           <div
             key={group.id}
+            data-workspace-group-shell="true"
+            data-mobile-visible={isActiveGroup ? "true" : "false"}
             ref={(element) => {
               if (element) {
                 groupRefs.current.set(group.id, element);
@@ -83,7 +88,7 @@ export default function WorkspaceRoot({
             <PaneGroup
               group={group}
               tabs={tabs}
-              isActiveGroup={group.id === activeGroupId}
+              isActiveGroup={isActiveGroup}
               onActivateGroup={onActivateGroup}
               onActivateTab={onActivateTab}
               onCloseTab={onCloseTab}

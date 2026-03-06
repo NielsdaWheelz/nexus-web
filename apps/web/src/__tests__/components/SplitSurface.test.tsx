@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SplitSurface from "@/components/workspace/SplitSurface";
 
@@ -22,14 +22,47 @@ describe("SplitSurface", () => {
     );
 
     const fab = screen.getByRole("button", { name: "Context" });
+    expect(fab).toHaveAttribute("aria-expanded", "false");
     await user.click(fab);
 
     const dialog = screen.getByRole("dialog", { name: "Linked items" });
+    expect(fab).toHaveAttribute("aria-expanded", "true");
     expect(dialog).toBeInTheDocument();
     expect(within(dialog).getByText("Secondary content")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(fab);
     expect(screen.queryByRole("dialog", { name: "Linked items" })).not.toBeInTheDocument();
+    expect(fab).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("supports escape/backdrop close and restores body overflow", async () => {
+    const user = userEvent.setup();
+    render(
+      <SplitSurface
+        primary={<div>Primary</div>}
+        secondary={<div>Secondary content</div>}
+        secondaryTitle="Linked items"
+        secondaryFabLabel="Context"
+      />
+    );
+
+    const fab = screen.getByRole("button", { name: "Context" });
+    await user.click(fab);
+    expect(document.body.style.overflow).toBe("hidden");
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Linked items" })).not.toBeInTheDocument();
+      expect(document.body.style.overflow).toBe("");
+    });
+
+    await user.click(fab);
+    const dialog = screen.getByRole("dialog", { name: "Linked items" });
+    const backdrop = dialog.parentElement as HTMLElement;
+    await user.click(backdrop);
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Linked items" })).not.toBeInTheDocument();
+      expect(document.body.style.overflow).toBe("");
+    });
   });
 
   it("renders both desktop panes side-by-side when secondary exists", () => {

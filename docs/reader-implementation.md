@@ -14,6 +14,15 @@ this translates the reader research into concrete engineering constraints and re
 
 ## architecture
 
+### mobile reader shell contract
+
+- bottom navigation is fixed to the viewport bottom; desktop sidebar is disabled on narrow viewports
+- tab management uses a mobile tabs sheet (open tabs list + sign-out action)
+- only the active workspace group is visible on mobile to keep one primary pane in view
+- split surfaces hide secondary panes behind a right-side drawer toggled by a floating action
+- pane/page chrome remains at the top but auto-hides on downward scroll and restores on upward scroll
+- highlight editing on mobile uses a sheet-style editor with annotation support
+
 ### reader state split
 
 - `reader_profile`: per-user defaults (theme, font, line height, column width, focus mode, default view mode)

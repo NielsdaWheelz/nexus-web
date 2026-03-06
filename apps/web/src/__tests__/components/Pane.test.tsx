@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Pane from "@/components/Pane";
 
@@ -126,5 +126,50 @@ describe("Pane", () => {
     await user.click(screen.getByRole("button", { name: "Options" }));
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
     expect(onDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides pane chrome on mobile scroll down and restores on scroll up", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    window.dispatchEvent(new Event("resize"));
+
+    render(
+      <div style={{ height: "520px" }}>
+        <Pane
+          title="Mobile Reader"
+          toolbar={<button type="button">Toolbar Action</button>}
+        >
+          <div style={{ height: "2000px" }}>Long content</div>
+        </Pane>
+      </div>
+    );
+
+    const pane = screen
+      .getByText("Long content")
+      .closest<HTMLElement>('[data-mobile-chrome-hidden]');
+    expect(pane).not.toBeNull();
+    const paneEl = pane as HTMLElement;
+    const paneContent = paneEl.querySelector<HTMLElement>('[data-pane-content="true"]');
+    expect(paneContent).not.toBeNull();
+    expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
+
+    (paneContent as HTMLElement).scrollTop = 20;
+    fireEvent.scroll(paneContent as HTMLElement);
+    expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
+
+    (paneContent as HTMLElement).scrollTop = 27;
+    fireEvent.scroll(paneContent as HTMLElement);
+    expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
+
+    (paneContent as HTMLElement).scrollTop = 260;
+    fireEvent.scroll(paneContent as HTMLElement);
+    await waitFor(() => {
+      expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "true");
+    });
+
+    (paneContent as HTMLElement).scrollTop = 12;
+    fireEvent.scroll(paneContent as HTMLElement);
+    await waitFor(() => {
+      expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
+    });
   });
 });
