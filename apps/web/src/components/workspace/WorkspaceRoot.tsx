@@ -53,14 +53,20 @@ export default function WorkspaceRoot({
     );
   }
 
+  const isMultiGroup = groups.length > 1;
+  const workspaceClass = `${styles.workspace} ${isMultiGroup ? styles.workspaceScrollable : ""}`;
+
   return (
-    <div className={styles.workspace} aria-label="Workspace panes">
+    <div className={workspaceClass} aria-label="Workspace panes">
       {groups.map((group) => {
         const tabs: WorkspaceTabView[] = group.tabs.map((tab) => ({
           id: tab.id,
           href: tab.href,
           title: getTabDescriptor?.(tab)?.resolvedTitle ?? "Tab",
         }));
+
+        const isSized = isMultiGroup && group.widthPx != null;
+        const shellClass = `${styles.groupShell} ${isSized ? styles.groupShellSized : ""}`;
 
         return (
           <div
@@ -72,7 +78,7 @@ export default function WorkspaceRoot({
                 groupRefs.current.delete(group.id);
               }
             }}
-            className={styles.groupShell}
+            className={shellClass}
           >
             <PaneGroup
               group={group}
