@@ -103,6 +103,37 @@ describe("HtmlRenderer", () => {
     expect(getComputedStyle(td).borderTopColor).toBe("rgb(130, 140, 150)");
   });
 
+  it("applies overflow-wrap break-word to contain long unbroken text", () => {
+    const longWord = "A".repeat(500);
+    const html = `<p>${longWord}</p>`;
+    render(
+      <div style={{ width: "320px" }}>
+        <HtmlRenderer htmlSanitized={html} />
+      </div>
+    );
+
+    const text = screen.getByText(longWord);
+    const renderer = text.closest("div[class]") as HTMLElement;
+    expect(renderer).not.toBeNull();
+
+    expect(getComputedStyle(renderer).overflowWrap).toBe("break-word");
+  });
+
+  it("applies overflow-x hidden to clip wide server-rendered content", () => {
+    const html = '<div style="width: 9999px; height: 10px;">wide</div>';
+    render(
+      <div style={{ width: "320px" }}>
+        <HtmlRenderer htmlSanitized={html} />
+      </div>
+    );
+
+    const text = screen.getByText("wide");
+    const renderer = text.closest("div[class]") as HTMLElement;
+    expect(renderer).not.toBeNull();
+
+    expect(getComputedStyle(renderer).overflowX).toBe("hidden");
+  });
+
   it("falls back to global tokens when reader tokens are absent", () => {
     const html = `
       <p>Fallback body</p>
