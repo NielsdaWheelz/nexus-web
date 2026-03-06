@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FolderOpen, Library as LibraryIcon } from "lucide-react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import Pane from "@/components/Pane";
@@ -10,6 +10,13 @@ import AddFromUrl from "@/components/AddFromUrl";
 import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
+import type { ActionMenuOption } from "@/components/ui/ActionMenu";
+import LibraryEditDialog from "@/components/LibraryEditDialog";
+import type {
+  LibraryForEdit,
+  LibraryMember,
+  LibraryInvite,
+} from "@/components/LibraryEditDialog";
 import styles from "./page.module.css";
 
 interface Library {
@@ -22,27 +29,22 @@ interface Library {
   updated_at: string;
 }
 
-interface MeResponse {
-  user_id: string;
-  default_library_id: string;
-}
-
 export default function LibrariesPage() {
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newLibraryName, setNewLibraryName] = useState("");
   const [creating, setCreating] = useState(false);
-  const [viewerUserId, setViewerUserId] = useState<string | null>(null);
+
+  /* ---- Edit dialog state ---- */
+  const [editLibrary, setEditLibrary] = useState<Library | null>(null);
+  const [editMembers, setEditMembers] = useState<LibraryMember[]>([]);
+  const [editInvites, setEditInvites] = useState<LibraryInvite[]>([]);
 
   const fetchLibraries = async () => {
     try {
-      const [libsResponse, me] = await Promise.all([
-        apiFetch<{ data: Library[] }>("/api/libraries"),
-        apiFetch<{ data: MeResponse }>("/api/me"),
-      ]);
+      const libsResponse = await apiFetch<{ data: Library[] }>("/api/libraries");
       setLibraries(libsResponse.data);
-      setViewerUserId(me.data.user_id);
       setError(null);
     } catch (err) {
       if (isApiError(err)) {
@@ -94,6 +96,154 @@ export default function LibrariesPage() {
       }
     }
   };
+
+  /* ---- Edit dialog handlers ---- */
+
+  const openEditDialog = useCallback(async (library: Library) => {
+    setEditLibrary(library);
+    try {
+      const [membersResp, invitesResp] = await Promise.all([
+        library.role === "admin"
+          ? apiFetch<{ data: LibraryMember[] }>(
+              `/api/libraries/${library.id}/members`
+            )
+          : Promise.resolve({ data: [] as LibraryMember[] }),
+        library.role === "admin"
+          ? apiFetch<{ data: LibraryInvite[] }>(
+              `/api/libraries/${library.id}/invites`
+            )
+          : Promise.resolve({ data: [] as LibraryInvite[] }),
+      ]);
+      setEditMembers(membersResp.data);
+      setEditInvites(invitesResp.data);
+    } catch (err) {
+      if (isApiError(err)) {
+        setError(err.message);
+      }
+    }
+  }, []);
+
+  const closeEditDialog = useCallback(() => {
+    setEditLibrary(null);
+    setEditMembers([]);
+    setEditInvites([]);
+  }, []);
+
+  const handleRename = useCallback(
+    async (name: string) => {
+      if (!editLibrary) return;
+      await apiFetch(`/api/libraries/${editLibrary.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+      setEditLibrary((prev) => (prev ? { ...prev, name } : null));
+      await fetchLibraries();
+    },
+    [editLibrary]
+  );
+
+  const handleUpdateMemberRole = useCallback(
+    async (userId: string, role: string) => {
+      if (!editLibrary) return;
+      await apiFetch(`/api/libraries/${editLibrary.id}/members/${userId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      });
+      setEditMembers((prev) =>
+        prev.map((m) => (m.user_id === userId ? { ...m, role } : m))
+      );
+    },
+    [editLibrary]
+  );
+
+  const handleRemoveMember = useCallback(
+    async (userId: string) => {
+      if (!editLibrary) return;
+      await apiFetch(`/api/libraries/${editLibrary.id}/members/${userId}`, {
+        method: "DELETE",
+      });
+      setEditMembers((prev) => prev.filter((m) => m.user_id !== userId));
+    },
+    [editLibrary]
+  );
+
+  const handleCreateInvite = useCallback(
+    async (inviteeUserId: string, role: string) => {
+      if (!editLibrary) return;
+      const resp = await apiFetch<{ data: LibraryInvite }>(
+        `/api/libraries/${editLibrary.id}/invites`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            invitee_user_id: inviteeUserId,
+            role,
+          }),
+        }
+      );
+      setEditInvites((prev) => [resp.data, ...prev]);
+    },
+    [editLibrary]
+  );
+
+  const handleRevokeInvite = useCallback(
+    async (inviteId: string) => {
+      await apiFetch(`/api/libraries/invites/${inviteId}`, {
+        method: "DELETE",
+      });
+      setEditInvites((prev) =>
+        prev.map((inv) =>
+          inv.id === inviteId ? { ...inv, status: "revoked" } : inv
+        )
+      );
+    },
+    []
+  );
+
+  const handleDeleteFromDialog = useCallback(async () => {
+    if (!editLibrary) return;
+    if (!confirm(`Delete "${editLibrary.name}"? This cannot be undone.`))
+      return;
+    await apiFetch(`/api/libraries/${editLibrary.id}`, {
+      method: "DELETE",
+    });
+    closeEditDialog();
+    await fetchLibraries();
+  }, [editLibrary, closeEditDialog]);
+
+  /* ---- Build options for list items ---- */
+
+  const buildOptions = (library: Library): ActionMenuOption[] => {
+    if (library.is_default) return [];
+
+    const opts: ActionMenuOption[] = [
+      {
+        id: "edit-library",
+        label: "Edit library",
+        onSelect: () => void openEditDialog(library),
+      },
+    ];
+    if (library.role === "admin") {
+      opts.push({
+        id: "delete-library",
+        label: "Delete library",
+        tone: "danger",
+        onSelect: () => void handleDeleteLibrary(library),
+      });
+    }
+    return opts;
+  };
+
+  /* ---- Edit dialog library data ---- */
+
+  const editLibraryForDialog: LibraryForEdit | null = editLibrary
+    ? {
+        id: editLibrary.id,
+        name: editLibrary.name,
+        is_default: editLibrary.is_default,
+        role: editLibrary.role,
+        owner_user_id: editLibrary.owner_user_id,
+      }
+    : null;
 
   return (
     <PaneContainer>
@@ -148,19 +298,7 @@ export default function LibrariesPage() {
                       <StatusPill variant="info">default</StatusPill>
                     ) : null
                   }
-                  actions={
-                    !library.is_default &&
-                    viewerUserId &&
-                    library.owner_user_id === viewerUserId ? (
-                      <button
-                        className={styles.deleteBtn}
-                        onClick={() => handleDeleteLibrary(library)}
-                        aria-label={`Delete ${library.name}`}
-                      >
-                        Delete
-                      </button>
-                    ) : null
-                  }
+                  options={buildOptions(library)}
                 />
               ))}
             </AppList>
@@ -173,6 +311,22 @@ export default function LibrariesPage() {
           <AddFromUrl />
         </div>
       </Pane>
+
+      {editLibraryForDialog && (
+        <LibraryEditDialog
+          open={!!editLibrary}
+          onClose={closeEditDialog}
+          library={editLibraryForDialog}
+          members={editMembers}
+          invites={editInvites}
+          onRename={handleRename}
+          onUpdateMemberRole={handleUpdateMemberRole}
+          onRemoveMember={handleRemoveMember}
+          onCreateInvite={handleCreateInvite}
+          onRevokeInvite={handleRevokeInvite}
+          onDelete={handleDeleteFromDialog}
+        />
+      )}
     </PaneContainer>
   );
 }
