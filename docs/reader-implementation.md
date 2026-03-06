@@ -22,6 +22,7 @@ this translates the reader research into concrete engineering constraints and re
 - split surfaces hide secondary panes behind a right-side drawer toggled by a floating action
 - pane/page chrome remains at the top but auto-hides on downward scroll and restores on upward scroll
 - highlight editing on mobile uses a sheet-style editor with annotation support
+- pdf viewer on mobile uses `page-width` auto-fit for the initial scale instead of the persisted numeric zoom (user can still manually zoom after load); the viewport uses `dvh` units with a `vh` fallback for correct height under mobile browser chrome
 
 ### reader state split
 

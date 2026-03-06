@@ -205,7 +205,7 @@ npm run typecheck
 Pane-specific browser-mode checks:
 
 ```bash
-npm test -- src/__tests__/components/Navbar.test.tsx src/__tests__/components/Pane.test.tsx src/__tests__/components/SplitSurface.test.tsx src/__tests__/components/WorkspaceRoot.test.tsx src/__tests__/components/HighlightEditPopover.test.tsx
+npm test -- src/__tests__/components/Navbar.test.tsx src/__tests__/components/Pane.test.tsx src/__tests__/components/SplitSurface.test.tsx src/__tests__/components/WorkspaceRoot.test.tsx src/__tests__/components/HighlightEditPopover.test.tsx src/__tests__/components/PdfReader.test.tsx
 ```
 
 ## Highlight Libraries
