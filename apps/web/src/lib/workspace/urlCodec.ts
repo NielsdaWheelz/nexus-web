@@ -11,7 +11,7 @@ import {
 
 export const MAX_WORKSPACE_STATE_PARAM_LENGTH = 1800;
 
-type DecodeSource = "query" | "fallback";
+type DecodeSource = "query" | "inferred" | "fallback";
 
 export interface WorkspaceDecodeResult {
   state: WorkspaceStateV2;
@@ -157,8 +157,8 @@ export function decodeWorkspaceStateFromUrl(
         fallbackHref,
         baseOrigin: options?.baseOrigin,
       }),
-      source: "fallback",
-      errorCode: "missing_query_state",
+      source: "inferred",
+      errorCode: null,
     };
   }
   if (version !== String(WORKSPACE_SCHEMA_VERSION)) {

@@ -58,6 +58,17 @@ describe("workspace url codec", () => {
     expect(parsed.searchParams.get("ws")).toBeNull();
   });
 
+  it("infers workspace state without error when URL has no workspace params", () => {
+    const params = new URLSearchParams();
+    const decoded = decodeWorkspaceStateFromUrl("/libraries", params, {
+      baseOrigin: "http://localhost",
+    });
+    expect(decoded.source).toBe("inferred");
+    expect(decoded.errorCode).toBeNull();
+    expect(decoded.state.schemaVersion).toBe(WORKSPACE_SCHEMA_VERSION);
+    expect(decoded.state.groups).toHaveLength(1);
+  });
+
   it("appends workspace params when state has multiple pane groups", () => {
     const base = createDefaultWorkspaceState("/media/123?foo=bar");
     const state = {
