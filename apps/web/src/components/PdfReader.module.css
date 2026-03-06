@@ -69,8 +69,10 @@
 .pdfViewport {
   position: relative;
   width: 100%;
+  min-width: 280px;
   min-height: 360px;
   height: min(78vh, 980px);
+  height: min(78dvh, 980px);
   border: 1px solid var(--color-border-subtle);
   border-radius: 6px;
   background: #fff;

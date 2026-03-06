@@ -125,6 +125,7 @@ class FakePDFLinkService {
 
 class FakePDFViewer {
   private static updateCallCount = 0;
+  private static _scaleHistory: (string | number)[] = [];
 
   static resetUpdateCallCount() {
     FakePDFViewer.updateCallCount = 0;
@@ -132,6 +133,14 @@ class FakePDFViewer {
 
   static getUpdateCallCount() {
     return FakePDFViewer.updateCallCount;
+  }
+
+  static resetScaleHistory() {
+    FakePDFViewer._scaleHistory = [];
+  }
+
+  static getScaleHistory() {
+    return FakePDFViewer._scaleHistory;
   }
 
   private readonly container: HTMLDivElement;
@@ -304,6 +313,7 @@ class FakePDFViewer {
   }
 
   set currentScaleValue(value: string | number) {
+    FakePDFViewer._scaleHistory.push(value);
     this._currentScaleValue = value;
     if (!this.doc) {
       return;
@@ -1315,5 +1325,51 @@ describe("PdfReader", () => {
     await waitFor(() => {
       expect((stateEvents.at(-1)?.createTelemetry.attempts ?? 0) >= attemptsBefore + 1).toBe(true);
     });
+  });
+
+  it("uses page-width scale mode on mobile viewport instead of numeric zoom", async () => {
+    const originalInnerWidth = window.innerWidth;
+    vi.stubGlobal("innerWidth", 390);
+    window.dispatchEvent(new Event("resize"));
+    FakePDFViewer.resetScaleHistory();
+
+    const url = "https://storage.example/signed-mobile-fit";
+    const doc = createFakeDocument(1);
+    const { deps } = createDeps({
+      urls: [url],
+      docsByUrl: { [url]: doc },
+    });
+
+    render(<PdfReader mediaId="media-mobile-fit" deps={deps} />);
+
+    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    const scaleHistory = FakePDFViewer.getScaleHistory();
+    expect(
+      scaleHistory.some((v) => v === "page-width"),
+      `Expected "page-width" in scale history but got: [${scaleHistory.join(", ")}]`
+    ).toBe(true);
+
+    vi.stubGlobal("innerWidth", originalInnerWidth);
+    window.dispatchEvent(new Event("resize"));
+  });
+
+  it("applies minimum width to PDF viewport element", async () => {
+    const url = "https://storage.example/signed-minw";
+    const doc = createFakeDocument(1);
+    const { deps } = createDeps({
+      urls: [url],
+      docsByUrl: { [url]: doc },
+    });
+
+    render(<PdfReader mediaId="media-minw" deps={deps} />);
+
+    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    const a11yMarker = screen.getByRole("img", { name: "PDF page" });
+    const viewport = a11yMarker.parentElement as HTMLElement;
+    const computedMinWidth = getComputedStyle(viewport).minWidth;
+    expect(
+      parseInt(computedMinWidth, 10),
+      `Expected min-width >= 280px but got: ${computedMinWidth}`
+    ).toBeGreaterThanOrEqual(280);
   });
 });

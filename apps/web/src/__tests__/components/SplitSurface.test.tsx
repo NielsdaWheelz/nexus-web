@@ -78,4 +78,22 @@ describe("SplitSurface", () => {
     expect(screen.getByText("Primary")).toBeInTheDocument();
     expect(screen.getByText("Secondary content")).toBeInTheDocument();
   });
+
+  it("marks primary wrapper with layout role for mobile width targeting", () => {
+    render(
+      <SplitSurface
+        primary={<div>Primary</div>}
+        secondary={<div>Secondary</div>}
+        secondaryFabLabel="Context"
+      />
+    );
+
+    const primary = screen.getByText("Primary").closest(
+      '[data-split-role="primary"]'
+    );
+    expect(
+      primary,
+      "Expected primary wrapper to have data-split-role='primary' for mobile layout CSS targeting"
+    ).not.toBeNull();
+  });
 });

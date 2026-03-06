@@ -17,6 +17,7 @@ import {
   projectPdfQuadToViewportRect,
   type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./PdfReader.module.css";
 
 export type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
@@ -533,7 +534,7 @@ function toViewerLifecycleError(context: string, error: unknown): Error {
   return new Error(`PDF viewer lifecycle failure (${context}): ${detail}`);
 }
 
-function applyViewerScale(viewer: PdfViewerLike, scale: number, context: string): void {
+function applyViewerScale(viewer: PdfViewerLike, scale: string | number, context: string): void {
   try {
     viewer.currentScaleValue = scale;
     viewer.update?.();
@@ -605,6 +606,10 @@ export default function PdfReader({
   initialZoom,
   onResumeStateChange,
 }: PdfReaderProps) {
+  const isMobile = useIsMobileViewport();
+  const isMobileRef = useRef(isMobile);
+  const initialMobileFitDoneRef = useRef(false);
+
   const [loading, setLoading] = useState(true);
   const [navigating, setNavigating] = useState(false);
   const [recovering, setRecovering] = useState(false);
@@ -643,7 +648,7 @@ export default function PdfReader({
   const pageScaleByNumberRef = useRef<Map<number, number>>(new Map());
   const pageGeometryReliabilityRef = useRef<Map<number, boolean>>(new Map());
   const pendingViewerPageRef = useRef<number | null>(null);
-  const pendingViewerScaleRef = useRef<number | null>(null);
+  const pendingViewerScaleRef = useRef<string | number | null>(null);
   const recoveringFromRenderErrorRef = useRef(false);
   const processedNavigationKeyRef = useRef<string | null>(null);
   const onPageHighlightsChangeRef = useRef(onPageHighlightsChange);
@@ -663,6 +668,10 @@ export default function PdfReader({
   useEffect(() => {
     onHighlightTapRef.current = onHighlightTap;
   }, [onHighlightTap]);
+
+  useEffect(() => {
+    isMobileRef.current = isMobile;
+  }, [isMobile]);
 
   const onResumeStateChangeRef = useRef(onResumeStateChange);
   useEffect(() => {
@@ -980,7 +989,7 @@ export default function PdfReader({
         const viewer = pdfViewerRef.current;
         const pendingScale = pendingViewerScaleRef.current;
         const pendingPage = pendingViewerPageRef.current;
-        if (viewer && typeof pendingScale === "number") {
+        if (viewer && pendingScale != null) {
           try {
             applyViewerScale(viewer, pendingScale, "pagesloaded/currentScaleValue");
           } catch (error) {
@@ -1107,12 +1116,21 @@ export default function PdfReader({
       setNumPages(doc.numPages);
       setTextLayerUsable(false);
       setTextGeometryReliable(true);
-      setPageScale(zoomRef.current);
-      activePageScaleRef.current = zoomRef.current;
 
-      pendingViewerScaleRef.current = zoomRef.current;
+      const shouldFitPageWidth = isMobileRef.current && !initialMobileFitDoneRef.current;
+      if (shouldFitPageWidth) {
+        initialMobileFitDoneRef.current = true;
+      }
+      const effectiveScale: string | number = shouldFitPageWidth
+        ? "page-width"
+        : zoomRef.current;
+      const numericFallback = typeof effectiveScale === "number" ? effectiveScale : zoomRef.current;
+      setPageScale(numericFallback);
+      activePageScaleRef.current = numericFallback;
+
+      pendingViewerScaleRef.current = effectiveScale;
       if (viewer.pagesCount > 0) {
-        applyViewerScale(viewer, zoomRef.current, "attachDocument/currentScaleValue");
+        applyViewerScale(viewer, effectiveScale, "attachDocument/currentScaleValue");
         pendingViewerScaleRef.current = null;
       }
       if (boundedPage > 1) {
@@ -1688,6 +1706,7 @@ export default function PdfReader({
     pendingViewerScaleRef.current = null;
     signedUrlExpiryRef.current = null;
     recoveringFromRenderErrorRef.current = false;
+    initialMobileFitDoneRef.current = false;
     teardownViewer();
 
     const bootstrap = async () => {
@@ -1726,6 +1745,7 @@ export default function PdfReader({
       pendingViewerPageRef.current = null;
       pendingViewerScaleRef.current = null;
       recoveringFromRenderErrorRef.current = false;
+      initialMobileFitDoneRef.current = false;
       clearSelection();
       teardownViewer();
       const existingDoc = documentRef.current;
