@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./HighlightEditPopover.module.css";
 
 const COLOR_LABELS: Record<HighlightColor, string> = {
@@ -22,12 +23,14 @@ const COLOR_LABELS: Record<HighlightColor, string> = {
 };
 
 export interface HighlightEditPopoverProps {
-  highlight: { id: string; color: HighlightColor };
+  highlight: { id: string; color: HighlightColor; annotationBody?: string | null };
   anchorRect: DOMRect;
   isEditingBounds: boolean;
   onStartEditBounds: () => void;
   onCancelEditBounds: () => void;
   onColorChange: (id: string, color: HighlightColor) => Promise<void>;
+  onAnnotationSave?: (id: string, body: string) => Promise<void>;
+  onAnnotationDelete?: (id: string) => Promise<void>;
   onDismiss: () => void;
 }
 
@@ -38,19 +41,34 @@ export default function HighlightEditPopover({
   onStartEditBounds,
   onCancelEditBounds,
   onColorChange,
+  onAnnotationSave,
+  onAnnotationDelete,
   onDismiss,
 }: HighlightEditPopoverProps) {
+  const isMobileViewport = useIsMobileViewport();
   const popoverRef = useRef<HTMLDivElement>(null);
   const [selectedColor, setSelectedColor] = useState<HighlightColor>(
     highlight.color
   );
+  const [annotationBody, setAnnotationBody] = useState<string>(
+    highlight.annotationBody ?? ""
+  );
+  const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number }>({
     top: 0,
     left: 0,
   });
 
+  useEffect(() => {
+    setSelectedColor(highlight.color);
+    setAnnotationBody(highlight.annotationBody ?? "");
+  }, [highlight.id, highlight.color, highlight.annotationBody]);
+
   // Calculate position after first render
   useEffect(() => {
+    if (isMobileViewport) {
+      return;
+    }
     if (!popoverRef.current) return;
 
     const popoverRect = popoverRef.current.getBoundingClientRect();
@@ -70,7 +88,7 @@ export default function HighlightEditPopover({
     top = Math.max(padding, Math.min(top, viewportHeight - popoverRect.height - padding));
 
     setPosition({ top, left });
-  }, [anchorRect]);
+  }, [anchorRect, isMobileViewport]);
 
   // Escape dismissal
   useEffect(() => {
@@ -86,13 +104,13 @@ export default function HighlightEditPopover({
 
   // Click-outside dismissal
   useEffect(() => {
-    const handleMouseDown = (e: MouseEvent) => {
+    const handlePointerDown = (e: PointerEvent) => {
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         onDismiss();
       }
     };
-    document.addEventListener("mousedown", handleMouseDown);
-    return () => document.removeEventListener("mousedown", handleMouseDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [onDismiss]);
 
   const handleColorSelect = useCallback(
@@ -111,17 +129,47 @@ export default function HighlightEditPopover({
     }
   }, [isEditingBounds, onCancelEditBounds, onStartEditBounds]);
 
+  const handleSaveAnnotation = useCallback(async () => {
+    if (!onAnnotationSave || isSavingAnnotation) return;
+    const trimmed = annotationBody.trim();
+    setIsSavingAnnotation(true);
+    try {
+      if (trimmed === "") {
+        if (onAnnotationDelete) {
+          await onAnnotationDelete(highlight.id);
+        } else {
+          await onAnnotationSave(highlight.id, "");
+        }
+      } else {
+        await onAnnotationSave(highlight.id, trimmed);
+      }
+    } finally {
+      setIsSavingAnnotation(false);
+    }
+  }, [
+    annotationBody,
+    highlight.id,
+    isSavingAnnotation,
+    onAnnotationDelete,
+    onAnnotationSave,
+  ]);
+
   return (
     <div
       ref={popoverRef}
-      className={styles.popover}
-      style={{
-        top: `${position.top}px`,
-        left: `${position.left}px`,
-      }}
+      className={`${styles.popover} ${isMobileViewport ? styles.mobileSheet : ""}`.trim()}
+      style={
+        isMobileViewport
+          ? undefined
+          : {
+              top: `${position.top}px`,
+              left: `${position.left}px`,
+            }
+      }
       role="dialog"
       aria-label="Edit highlight"
     >
+      {isMobileViewport && <div className={styles.sheetHandle} aria-hidden="true" />}
       <button
         type="button"
         className={styles.closeButton}
@@ -153,6 +201,44 @@ export default function HighlightEditPopover({
       >
         {isEditingBounds ? "Done editing bounds" : "Edit bounds"}
       </button>
+
+      {(onAnnotationSave || onAnnotationDelete) && (
+        <div className={styles.annotationSection}>
+          <label htmlFor={`hl-note-${highlight.id}`} className={styles.annotationLabel}>
+            Note
+          </label>
+          <textarea
+            id={`hl-note-${highlight.id}`}
+            className={styles.annotationInput}
+            aria-label="Annotation note"
+            value={annotationBody}
+            onChange={(event) => setAnnotationBody(event.target.value)}
+            rows={3}
+          />
+          <div className={styles.annotationActions}>
+            {onAnnotationDelete && highlight.annotationBody && (
+              <button
+                type="button"
+                className={styles.annotationDelete}
+                onClick={() => void onAnnotationDelete(highlight.id)}
+                disabled={isSavingAnnotation}
+              >
+                Delete note
+              </button>
+            )}
+            {onAnnotationSave && (
+              <button
+                type="button"
+                className={styles.annotationSave}
+                onClick={() => void handleSaveAnnotation()}
+                disabled={isSavingAnnotation}
+              >
+                Save note
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

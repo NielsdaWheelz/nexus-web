@@ -215,6 +215,7 @@ interface PdfReaderProps {
   onHighlightNavigationComplete?: () => void;
   onHighlightsMutated?: () => void;
   onQuoteToChat?: (highlightId: string) => void;
+  onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
   /** Resume: initial page (1-based) from saved reader state */
   initialPageNumber?: number;
   /** Resume: initial zoom scale from saved reader state */
@@ -599,6 +600,7 @@ export default function PdfReader({
   onHighlightNavigationComplete,
   onHighlightsMutated,
   onQuoteToChat,
+  onHighlightTap,
   initialPageNumber,
   initialZoom,
   onResumeStateChange,
@@ -645,6 +647,8 @@ export default function PdfReader({
   const recoveringFromRenderErrorRef = useRef(false);
   const processedNavigationKeyRef = useRef<string | null>(null);
   const onPageHighlightsChangeRef = useRef(onPageHighlightsChange);
+  const onHighlightTapRef = useRef(onHighlightTap);
+  const hasHighlightTapHandler = Boolean(onHighlightTap);
 
   const apiFetchDep = deps?.apiFetch ?? apiFetch;
   const loadPdfJsDep = deps?.loadPdfJs ?? defaultLoadPdfJs;
@@ -655,6 +659,10 @@ export default function PdfReader({
   useEffect(() => {
     onPageHighlightsChangeRef.current = onPageHighlightsChange;
   }, [onPageHighlightsChange]);
+
+  useEffect(() => {
+    onHighlightTapRef.current = onHighlightTap;
+  }, [onHighlightTap]);
 
   const onResumeStateChangeRef = useRef(onResumeStateChange);
   useEffect(() => {
@@ -1860,10 +1868,36 @@ export default function PdfReader({
       rectEl.style.height = `${rect.height}px`;
       rectEl.style.backgroundColor = OVERLAY_COLOR_MAP[rect.color];
       rectEl.style.mixBlendMode = "multiply";
+      if (hasHighlightTapHandler) {
+        rectEl.style.pointerEvents = "auto";
+        rectEl.setAttribute("role", "button");
+        rectEl.setAttribute("tabindex", "0");
+        rectEl.setAttribute("aria-label", `Open highlight ${rect.highlightId}`);
+        rectEl.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onHighlightTapRef.current?.(rect.highlightId, rectEl.getBoundingClientRect());
+        });
+        rectEl.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          onHighlightTapRef.current?.(rect.highlightId, rectEl.getBoundingClientRect());
+        });
+      }
       overlayLayer.append(rectEl);
     }
     pageElement.append(overlayLayer);
-  }, [focusedHighlightId, getPageElement, pageNumber, projectedHighlightRects, removeOverlayLayers]);
+  }, [
+    focusedHighlightId,
+    getPageElement,
+    hasHighlightTapHandler,
+    pageNumber,
+    projectedHighlightRects,
+    removeOverlayLayers,
+  ]);
 
   const showBusy = loading || navigating || recovering;
   const zoomPercent = Math.round(zoom * 100);
