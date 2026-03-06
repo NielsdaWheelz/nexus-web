@@ -262,7 +262,6 @@ export default function Navbar({ onToggle }: NavbarProps) {
                 onClick={() => navigateToHref(item.href)}
               >
                 <Icon size={18} strokeWidth={2} aria-hidden="true" />
-                <span>{item.label}</span>
               </button>
             );
           })}
@@ -277,7 +276,6 @@ export default function Navbar({ onToggle }: NavbarProps) {
             onClick={() => setTabSwitcherOpen((prev) => !prev)}
           >
             <PanelsTopLeft size={18} strokeWidth={2} aria-hidden="true" />
-            <span>Tabs</span>
           </button>
         </nav>
 

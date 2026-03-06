@@ -121,6 +121,23 @@ describe("Navbar", () => {
     expect(screen.getByRole("button", { name: "Tabs" })).toBeInTheDocument();
   });
 
+  it("renders mobile nav buttons as icon-only without visible text labels", () => {
+    vi.stubGlobal("innerWidth", 390);
+    window.dispatchEvent(new Event("resize"));
+
+    render(<Navbar />);
+
+    const nav = screen.getByRole("navigation", { name: "Mobile navigation" });
+    const labels = ["Libraries", "Discover", "Chat", "Search", "Settings", "Tabs"];
+
+    for (const label of labels) {
+      // No visible text label inside the nav button
+      expect(within(nav).queryByText(label)).not.toBeInTheDocument();
+      // Accessible name still present via aria-label
+      expect(within(nav).getByRole("button", { name: label })).toBeInTheDocument();
+    }
+  });
+
   it("opens a mobile tab switcher and allows tab activation", async () => {
     vi.stubGlobal("innerWidth", 390);
     window.dispatchEvent(new Event("resize"));

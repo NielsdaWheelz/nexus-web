@@ -158,11 +158,6 @@
   touch-action: manipulation;
 }
 
-.mobileNavItem span {
-  font-size: var(--font-size-xs);
-  line-height: 1.1;
-}
-
 .mobileNavItem.active,
 .mobileNavItemActive {
   color: var(--color-accent);
