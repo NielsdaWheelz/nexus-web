@@ -60,6 +60,12 @@ export type SearchApiResult =
   | SearchAnnotationResult
   | SearchMessageResult;
 
+/** Result types that carry source metadata. */
+export type SearchResultWithSource =
+  | SearchMediaResult
+  | SearchFragmentResult
+  | SearchAnnotationResult;
+
 export interface SearchResponseShape {
   results: SearchApiResult[];
   page: {
@@ -89,6 +95,67 @@ export interface SearchResultRowViewModel {
   } | null;
   scoreLabel: string;
 }
+
+// ---------------------------------------------------------------------------
+// Runtime validation – Layer 1
+// ---------------------------------------------------------------------------
+
+/** Runtime check that a source object has the required shape. */
+function isValidSource(value: unknown): value is SearchSourceMetadata {
+  if (typeof value !== "object" || value === null) return false;
+  const s = value as Record<string, unknown>;
+  return (
+    typeof s.media_id === "string" &&
+    typeof s.media_kind === "string" &&
+    typeof s.title === "string" &&
+    Array.isArray(s.authors)
+  );
+}
+
+/**
+ * Runtime validation for a single search result from the API.
+ *
+ * Returns `false` for structurally invalid results so they can be filtered
+ * out at the API boundary before rendering.
+ */
+export function isValidSearchResult(
+  result: unknown,
+): result is SearchApiResult {
+  if (typeof result !== "object" || result === null) return false;
+  const r = result as Record<string, unknown>;
+
+  // Common required fields
+  if (typeof r.id !== "string") return false;
+  if (typeof r.score !== "number") return false;
+  if (typeof r.snippet !== "string") return false;
+
+  switch (r.type) {
+    case "media":
+      return isValidSource(r.source);
+    case "fragment":
+      return typeof r.fragment_idx === "number" && isValidSource(r.source);
+    case "annotation":
+      return (
+        typeof r.highlight_id === "string" &&
+        typeof r.fragment_id === "string" &&
+        typeof r.fragment_idx === "number" &&
+        typeof r.annotation_body === "string" &&
+        typeof r.highlight === "object" &&
+        r.highlight !== null &&
+        isValidSource(r.source)
+      );
+    case "message":
+      return (
+        typeof r.conversation_id === "string" && typeof r.seq === "number"
+      );
+    default:
+      return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Query helpers
+// ---------------------------------------------------------------------------
 
 interface BuildSearchQueryParamsInput {
   query: string;
@@ -137,19 +204,20 @@ function buildSourceMeta(result: SearchApiResult): string | null {
     return `message #${result.seq}`;
   }
 
-  const parts: string[] = [];
-  if ("source" in result) {
-    parts.push(result.source.title);
-    if (result.source.authors.length > 0) {
-      parts.push(result.source.authors.join(", "));
-    }
-    if (result.source.published_date) {
-      parts.push(result.source.published_date);
-    }
-    parts.push(formatMediaKind(result.source.media_kind));
-  }
+  // After eliminating "message", TS narrows to SearchResultWithSource —
+  // all remaining variants carry `source: SearchSourceMetadata`.
+  const { source } = result;
 
-  return parts.length > 0 ? parts.join(" — ") : null;
+  const parts: string[] = [source.title];
+  if (source.authors.length > 0) {
+    parts.push(source.authors.join(", "));
+  }
+  if (source.published_date) {
+    parts.push(source.published_date);
+  }
+  parts.push(formatMediaKind(source.media_kind));
+
+  return parts.join(" — ");
 }
 
 function buildResultHref(result: SearchApiResult): string {
@@ -182,9 +250,6 @@ function buildResultHref(result: SearchApiResult): string {
     case "message":
       return `/conversations/${result.conversation_id}`;
   }
-
-  const exhaustive: never = result;
-  throw new Error(`Unsupported search result type: ${String(exhaustive)}`);
 }
 
 function buildPrimaryText(result: SearchApiResult): string {
