@@ -516,4 +516,9 @@
   .tocTree {
     max-height: 200px;
   }
+
+  .transcriptSegments {
+    max-height: 50vh; /* fallback for browsers without dvh support */
+    max-height: 50dvh; /* adapt to mobile screen size instead of hardcoded 320px */
+  }
 }

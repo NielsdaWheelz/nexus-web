@@ -1,7 +1,7 @@
 .layout {
   display: flex;
-  height: 100vh;
-  height: 100dvh;
+  height: 100vh; /* fallback for browsers without dvh support */
+  height: 100dvh; /* adapts to dynamic mobile viewport (address bar show/hide) */
   overflow: hidden;
 }
 
