@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useContext,
   useRef,
   useState,
   useCallback,
@@ -13,6 +14,7 @@ import SurfaceHeader, {
   type SurfaceHeaderOption,
 } from "@/components/ui/SurfaceHeader";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { SplitSurfaceOverlayContext } from "@/components/workspace/SplitSurfaceContext";
 
 interface PaneProps {
   children: React.ReactNode;
@@ -55,11 +57,12 @@ export default function Pane({
   const [mobileChromeHidden, setMobileChromeHidden] = useState(false);
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
   const isMobileViewport = useIsMobileViewport();
+  const insideOverlay = useContext(SplitSurfaceOverlayContext);
   const paneRef = useRef<HTMLDivElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
   const isResizing = useRef(false);
   const lastScrollTopRef = useRef(0);
-  const hasChrome = Boolean(header || title || toolbar);
+  const hasChrome = Boolean(header || title || toolbar) && !insideOverlay;
 
   useEffect(() => {
     if (!isMobileViewport) {

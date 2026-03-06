@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import styles from "./SplitSurface.module.css";
+import { SplitSurfaceOverlayContext } from "./SplitSurfaceContext";
 
 interface SplitSurfaceProps {
   primary: React.ReactNode;
@@ -90,7 +91,9 @@ export default function SplitSurface({
                 Close
               </button>
             </header>
-            <div className={styles.mobileOverlayContent}>{secondary}</div>
+            <SplitSurfaceOverlayContext.Provider value={true}>
+              <div className={styles.mobileOverlayContent}>{secondary}</div>
+            </SplitSurfaceOverlayContext.Provider>
           </aside>
         </div>
       )}
