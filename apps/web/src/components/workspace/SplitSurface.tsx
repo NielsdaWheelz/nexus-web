@@ -49,7 +49,7 @@ export default function SplitSurface({
   return (
     <div className={styles.surface}>
       <div className={styles.desktopRow}>
-        <div className={styles.primary}>{primary}</div>
+        <div className={styles.primary} data-split-role="primary">{primary}</div>
         {hasSecondary && <aside className={styles.secondaryDesktop}>{secondary}</aside>}
       </div>
 
