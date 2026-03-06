@@ -317,6 +317,82 @@ describe("LinkedItemsPane", () => {
     });
   });
 
+  it("has scrollable container in list mode (overflow-y: auto)", async () => {
+    render(
+      <div style={{ height: "200px" }}>
+        <LinkedItemsPane
+          highlights={[
+            {
+              id: "scroll-h1",
+              exact: "scrollable item",
+              color: "yellow",
+              annotation: null,
+              fragment_idx: 0,
+              start_offset: 0,
+              end_offset: 14,
+              created_at: "2026-01-01T00:00:00Z",
+            },
+          ] as never}
+          contentRef={{ current: null }}
+          focusedId={null}
+          onHighlightClick={vi.fn()}
+          layoutMode="list"
+        />
+      </div>
+    );
+
+    await waitFor(() => {
+      expect(getRowButtons()).toHaveLength(1);
+    });
+
+    const container = document.querySelector('[class*="linkedItemsContainer"]') as HTMLElement;
+    expect(container, "Expected linked-items container to exist").toBeTruthy();
+    const style = window.getComputedStyle(container);
+    expect(
+      style.overflowY,
+      "List mode container should have overflow-y: auto for mobile scrolling"
+    ).toBe("auto");
+  });
+
+  it("has non-scrollable container in aligned mode (overflow: hidden)", async () => {
+    const { host, contentRef } = createScrollableContent(
+      '<p><span data-highlight-anchor="clip-h1"></span>clipped item</p>'
+    );
+    host.setAttribute("data-test-scroll-host", "true");
+
+    render(
+      <LinkedItemsPane
+        highlights={[
+          {
+            id: "clip-h1",
+            exact: "clipped item",
+            color: "yellow",
+            annotation: null,
+            start_offset: 0,
+            end_offset: 12,
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        ] as never}
+        contentRef={contentRef}
+        focusedId={null}
+        onHighlightClick={vi.fn()}
+        layoutMode="aligned"
+      />
+    );
+
+    await waitFor(() => {
+      expect(getRowButtons()).toHaveLength(1);
+    });
+
+    const container = document.querySelector('[class*="linkedItemsContainer"]') as HTMLElement;
+    expect(container, "Expected linked-items container to exist").toBeTruthy();
+    const style = window.getComputedStyle(container);
+    expect(
+      style.overflowY,
+      "Aligned mode container should have overflow: hidden — rows are absolutely positioned"
+    ).toBe("hidden");
+  });
+
   it("uses stable_order_key for deterministic list ordering", async () => {
     render(
       <LinkedItemsPane
