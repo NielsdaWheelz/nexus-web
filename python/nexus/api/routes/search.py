@@ -92,4 +92,4 @@ def search(
         cursor=cursor,
         limit=limit,
     )
-    return result
+    return result.model_dump(mode="json")
