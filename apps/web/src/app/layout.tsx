@@ -1,10 +1,16 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "pdfjs-dist/web/pdf_viewer.css";
 
 export const metadata: Metadata = {
   title: "Nexus",
   description: "A reading and annotation platform",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
