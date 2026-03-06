@@ -22,6 +22,14 @@
   flex: 0 0 auto;
 }
 
+.groupShellMobileVisible {
+  display: flex;
+}
+
+.groupShellMobileHidden {
+  display: flex;
+}
+
 .empty {
   display: flex;
   flex: 1;
@@ -52,5 +60,13 @@
 
   .groupShellSized {
     flex: 0 0 100%;
+  }
+
+  .groupShellMobileVisible {
+    display: flex;
+  }
+
+  .groupShellMobileHidden {
+    display: none;
   }
 }

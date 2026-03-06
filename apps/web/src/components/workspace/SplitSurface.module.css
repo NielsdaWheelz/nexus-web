@@ -31,42 +31,83 @@
 }
 
 .mobileFab {
-  position: absolute;
-  right: var(--space-4);
-  bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
-  z-index: 30;
-  border: none;
+  position: fixed;
+  right: max(var(--space-4), env(safe-area-inset-right));
+  top: calc(var(--space-4) + env(safe-area-inset-top));
+  z-index: 260;
+  border: 1px solid transparent;
   border-radius: 999px;
-  padding: var(--space-2) var(--space-3);
+  min-height: 44px;
+  padding: 0 var(--space-3);
   background: var(--color-accent);
   color: var(--color-bg);
   font-size: var(--font-size-xs);
   font-weight: 600;
   box-shadow: var(--shadow-md);
+  backdrop-filter: blur(8px);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast),
+    background-color var(--transition-fast), border-color var(--transition-fast);
   display: none;
+}
+
+.mobileFabActive {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.mobileFab:active {
+  transform: translateY(1px);
 }
 
 .mobileOverlayBackdrop {
   position: fixed;
   inset: 0;
   z-index: 200;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
   display: none;
-  align-items: flex-end;
-  justify-content: stretch;
+  align-items: stretch;
+  justify-content: flex-end;
+  animation: mobileOverlayBackdropIn 160ms ease-out;
 }
 
 .mobileOverlay {
-  width: 100%;
-  max-height: 80vh;
+  width: min(92vw, 440px);
+  height: 100dvh;
   background: var(--color-bg);
-  border-top: 1px solid var(--color-border-subtle);
+  border-left: 1px solid var(--color-border-subtle);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-shadow: -14px 0 28px rgba(0, 0, 0, 0.4);
+  animation: mobileOverlaySlideIn 190ms ease-out;
+}
+
+@keyframes mobileOverlayBackdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes mobileOverlaySlideIn {
+  from {
+    transform: translateX(14px);
+    opacity: 0.98;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 .mobileOverlayHeader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -84,16 +125,20 @@
 .mobileOverlayClose {
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: transparent;
+  background: var(--color-bg);
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  padding: var(--space-1) var(--space-2);
+  min-height: 36px;
+  padding: var(--space-1) var(--space-3);
+  touch-action: manipulation;
 }
 
 .mobileOverlayContent {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  overscroll-behavior: contain;
 }
 
 @media (max-width: 768px) {

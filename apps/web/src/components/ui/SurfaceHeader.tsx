@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { forwardRef, type ReactNode } from "react";
 import ActionMenu, { type ActionMenuOption } from "./ActionMenu";
 import styles from "./SurfaceHeader.module.css";
 
@@ -16,21 +16,24 @@ interface SurfaceHeaderProps {
   className?: string;
 }
 
-export default function SurfaceHeader({
-  title,
-  subtitle,
-  meta,
-  actions,
-  options = [],
-  headingLevel = 2,
-  className,
-}: SurfaceHeaderProps) {
+const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function SurfaceHeader(
+  {
+    title,
+    subtitle,
+    meta,
+    actions,
+    options = [],
+    headingLevel = 2,
+    className,
+  }: SurfaceHeaderProps,
+  ref
+) {
   const HeadingTag = headingLevel === 1 ? "h1" : "h2";
   const hasOptions = options.length > 0;
   const headerClassName = [styles.header, className].filter(Boolean).join(" ");
 
   return (
-    <header className={headerClassName} data-surface-header="true">
+    <header ref={ref} className={headerClassName} data-surface-header="true">
       <div className={styles.leading}>
         <div className={styles.titles}>
           <HeadingTag className={styles.title}>{title}</HeadingTag>
@@ -48,4 +51,6 @@ export default function SurfaceHeader({
       </div>
     </header>
   );
-}
+});
+
+export default SurfaceHeader;
