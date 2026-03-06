@@ -26,7 +26,8 @@ Authenticated views also run inside an in-app multi-pane workspace:
 - resource title cache persists in `localStorage` key `nexus.workspace.resource-title-cache.v1`
 - mobile uses a fixed bottom nav and a modal Tabs sheet instead of the desktop sidebar
 - mobile workspace shows one active group at a time (`WorkspaceRoot` controls visibility)
-- pane/page header chrome uses hide-on-scroll reveal-on-scroll-up behavior on mobile
+- pane/page header chrome uses hide-on-scroll reveal-on-scroll-up behavior on mobile; `SurfaceHeader` hides meta/subtitle on mobile viewports
+- media toolbars use `ResponsiveToolbar` with priority-based items: primary actions render as icon-only buttons on mobile, secondary actions collapse into an overflow menu
 - split surfaces keep secondary panes behind a right-side drawer toggled by a floating top-right action
 
 ### Request Tracing

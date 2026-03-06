@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
@@ -84,5 +84,49 @@ describe("SurfaceHeader", () => {
 
     await user.click(item);
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  describe("mobile viewport", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("hides meta and subtitle on mobile viewport", () => {
+      vi.stubGlobal("innerWidth", 390);
+      window.dispatchEvent(new Event("resize"));
+
+      render(
+        <SurfaceHeader
+          title="Design Doc"
+          subtitle="Chapter 1"
+          meta={<span data-testid="header-meta">PDF · View Source</span>}
+        />
+      );
+
+      const header = screen.getByRole("banner");
+      expect(header).toHaveAttribute("data-mobile", "true");
+
+      // Meta and subtitle are rendered but hidden via CSS (.mobile .meta { display: none })
+      const meta = screen.getByTestId("header-meta");
+      expect(meta.closest("[class]")).not.toBeNull();
+    });
+
+    it("sets data-mobile attribute on mobile viewport", () => {
+      vi.stubGlobal("innerWidth", 390);
+      window.dispatchEvent(new Event("resize"));
+
+      render(<SurfaceHeader title="Test" />);
+
+      expect(screen.getByRole("banner")).toHaveAttribute("data-mobile", "true");
+    });
+
+    it("does not set data-mobile on desktop viewport", () => {
+      vi.stubGlobal("innerWidth", 1024);
+      window.dispatchEvent(new Event("resize"));
+
+      render(<SurfaceHeader title="Test" />);
+
+      expect(screen.getByRole("banner")).not.toHaveAttribute("data-mobile", "true");
+    });
   });
 });

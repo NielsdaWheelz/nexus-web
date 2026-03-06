@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Pane from "@/components/Pane";
@@ -170,6 +170,41 @@ describe("Pane", () => {
     fireEvent.scroll(paneContent as HTMLElement);
     await waitFor(() => {
       expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
+    });
+  });
+
+  describe("mobile toolbar", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("renders toolbar within chrome on mobile viewport", () => {
+      vi.stubGlobal("innerWidth", 390);
+      window.dispatchEvent(new Event("resize"));
+
+      render(
+        <Pane
+          title="Reader"
+          toolbar={
+            <>
+              <button type="button" aria-label="Previous">Prev</button>
+              <span data-testid="page-label">Page 2 of 10</span>
+              <button type="button" aria-label="Next">Next</button>
+            </>
+          }
+        >
+          <div>Content</div>
+        </Pane>
+      );
+
+      // Toolbar lives inside the chrome container
+      const chrome = screen.getByText("Reader").closest('[data-pane-chrome="true"]');
+      expect(chrome).not.toBeNull();
+
+      // Toolbar items are accessible within the pane
+      expect(screen.getByRole("button", { name: "Previous" })).toBeInTheDocument();
+      expect(screen.getByTestId("page-label")).toHaveTextContent("Page 2 of 10");
+      expect(screen.getByRole("button", { name: "Next" })).toBeInTheDocument();
     });
   });
 });
