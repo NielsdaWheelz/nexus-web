@@ -333,7 +333,7 @@ function getWindowLocationState(): WorkspaceDecodeResult {
   if (typeof window === "undefined") {
     return {
       state: createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF),
-      source: "fallback",
+      source: "inferred",
       errorCode: null,
     };
   }
