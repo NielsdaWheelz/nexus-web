@@ -153,3 +153,10 @@
   background: rgba(247, 118, 142, 0.1);
   font-size: var(--font-size-sm);
 }
+
+@media (max-width: 768px) {
+  .pdfViewport {
+    height: min(78vh, 980px); /* fallback */
+    height: min(78dvh, 980px); /* dynamic viewport for mobile address bar */
+  }
+}

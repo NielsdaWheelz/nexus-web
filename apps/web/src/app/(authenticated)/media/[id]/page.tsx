@@ -90,6 +90,7 @@ import {
   type EpubNavigationSection,
   type NormalizedNavigationTocNode,
 } from "@/lib/media/epubReader";
+import { resolveLinkedItemsLayoutMode } from "@/lib/media/linkedItemsLayoutMode";
 import TranscriptMediaPane, {
   type TranscriptPlaybackSource,
   type TranscriptFragment,
@@ -680,14 +681,13 @@ export default function MediaViewPage() {
     : isEpub && epubHighlightScope === "book"
       ? mediaHighlightsVersion
       : highlightsVersion;
-  const linkedItemsLayoutMode: "aligned" | "list" =
-    isPdf
-      ? pdfHighlightScope === "document"
-        ? "list"
-        : "aligned"
-      : isEpub && epubHighlightScope === "book"
-        ? "list"
-        : "aligned";
+  const linkedItemsLayoutMode = resolveLinkedItemsLayoutMode({
+    isPdf,
+    pdfHighlightScope,
+    isEpub,
+    epubHighlightScope,
+    isMobile: isMobileViewport,
+  });
   const linkedItemsAnchorDescriptors: AnchorDescriptor[] | undefined = useMemo(() => {
     if (!isPdf || pdfHighlightScope !== "page") {
       return undefined;

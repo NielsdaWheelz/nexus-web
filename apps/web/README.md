@@ -29,6 +29,8 @@ Authenticated views also run inside an in-app multi-pane workspace:
 - pane/page header chrome uses hide-on-scroll reveal-on-scroll-up behavior on mobile; `SurfaceHeader` hides meta/subtitle on mobile viewports
 - media toolbars use `ResponsiveToolbar` with priority-based items: primary actions render as icon-only buttons on mobile, secondary actions collapse into an overflow menu
 - split surfaces keep secondary panes behind a right-side drawer toggled by a floating top-right action
+- `LinkedItemsPane` uses list mode on mobile (aligned mode requires side-by-side panes, impossible when tabbed)
+- root layout uses `100dvh` with `100vh` fallback for correct dynamic mobile viewport height
 
 ### Request Tracing
 
@@ -146,6 +148,8 @@ src/
 │   ├── conversations/      # Chat utilities
 │   │   ├── attachedContext.ts     # Parse/strip attach_* URL params
 │   │   └── hydrateContextItems.ts # Enrich context items via BFF API
+│   ├── media/              # Media page utilities
+│   │   └── linkedItemsLayoutMode.ts  # Layout mode resolver (list vs aligned)
 │   ├── highlights/         # Highlight rendering utilities
 │   │   ├── index.ts            # Module exports
 │   │   ├── segmenter.ts        # Overlap segmentation (PR-07)
