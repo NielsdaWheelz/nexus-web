@@ -4,15 +4,22 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
+}
+
+.workspaceScrollable {
   overflow-x: auto;
   overflow-y: hidden;
 }
 
 .groupShell {
   display: flex;
-  flex: 0 0 auto;
-  width: max-content;
+  flex: 1 1 0%;
   min-width: 320px;
+}
+
+.groupShellSized {
+  flex: 0 0 auto;
 }
 
 .empty {
@@ -30,6 +37,9 @@
 @media (max-width: 768px) {
   .workspace {
     flex-direction: column;
+  }
+
+  .workspaceScrollable {
     overflow-x: hidden;
     overflow-y: auto;
   }
@@ -37,5 +47,10 @@
   .groupShell {
     width: 100%;
     min-width: 0;
+    flex: 0 0 100%;
+  }
+
+  .groupShellSized {
+    flex: 0 0 100%;
   }
 }
