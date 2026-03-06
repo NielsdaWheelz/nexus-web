@@ -376,6 +376,10 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   const lastDecodeTelemetryRef = useRef<string>("");
   const lastEncodeTelemetryRef = useRef<string>("");
   const tabHrefByIdRef = useRef<Map<string, string>>(new Map());
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const openHintByTabIdRef = useRef(openHintByTabId);
+  openHintByTabIdRef.current = openHintByTabId;
 
   const setHistoryMode = useCallback((mode: HistoryMode) => {
     historyModeRef.current = mode;
@@ -744,7 +748,8 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       title: string | null,
       options?: { resourceRef?: string | null }
     ) => {
-      const group = state.groups.find((candidate) => candidate.id === groupId);
+      const currentState = stateRef.current;
+      const group = currentState.groups.find((candidate) => candidate.id === groupId);
       const tab = group?.tabs.find((candidate) => candidate.id === tabId);
       if (!tab) {
         return;
@@ -752,6 +757,10 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
 
       const normalizedTitle = normalizeTabTitle(title);
       setRuntimeTitleByTabId((prev) => {
+        const existing = prev.get(tabId);
+        if (normalizedTitle ? existing === normalizedTitle : !existing) {
+          return prev;
+        }
         const next = new Map(prev);
         if (!normalizedTitle) {
           next.delete(tabId);
@@ -766,13 +775,13 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       }
       const resourceRef =
         options?.resourceRef ??
-        openHintByTabId.get(tabId)?.resourceRef ??
+        openHintByTabIdRef.current.get(tabId)?.resourceRef ??
         null;
       if (resourceRef) {
         upsertResourceTitleForRef(resourceRef, normalizedTitle);
       }
     },
-    [openHintByTabId, state.groups, upsertResourceTitleForRef]
+    [upsertResourceTitleForRef]
   );
 
   const replaceState = useCallback(
