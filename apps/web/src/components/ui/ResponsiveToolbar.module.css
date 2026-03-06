@@ -1,0 +1,52 @@
+/*
+ * ResponsiveToolbar layout styles.
+ *
+ * Container-level chrome (padding, border, background) comes from the parent
+ * (e.g. Pane's .toolbar wrapper). This component only owns the flex layout
+ * of its items and the overflow menu.
+ */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: nowrap;
+  width: 100%;
+}
+
+.toolbarBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  padding: 0 var(--space-2);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.toolbarBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.toolbarBtn:hover:not(:disabled) {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+@media (max-width: 768px) {
+  .toolbar {
+    gap: var(--space-1);
+  }
+
+  .toolbarBtn {
+    min-width: 0;
+    padding: 0 var(--space-1);
+  }
+}
