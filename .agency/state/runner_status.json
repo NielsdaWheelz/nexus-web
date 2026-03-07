@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
   "status": "ready_for_review",
-  "updated_at": "2026-03-06T09:50:00Z",
-  "summary": "Fixed 4 mobile scrolling issues: LinkedItemsPane uses list mode on mobile, root layout uses 100dvh, PDF viewport uses dvh on mobile, transcript segments use viewport-relative max-height",
+  "updated_at": "2026-03-07T00:48:54Z",
+  "summary": "Senior-level hardening pass complete: backend/frontend podcasts changes reviewed, additional safety fixes applied, targeted tests/build checks run, and commits split for review.",
   "questions": [],
   "blockers": [],
-  "how_to_test": "1. Open any media item on a mobile device or Chrome DevTools mobile emulation (≤768px). 2. Switch to Highlights tab — should now scroll through highlights in list mode. 3. Verify the page fits the visible viewport (no content hidden behind address bar). 4. Open a PDF — viewport should adapt when address bar shows/hides. 5. Open a podcast/video — transcript segments should use ~50% of viewport height, not a fixed 320px. 6. Run `npx vitest run --project=unit` — all 139 tests pass.",
+  "how_to_test": "./scripts/with_test_services.sh bash -lc \"make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_podcasts.py tests/test_reconcile_stale_ingest_media.py tests/test_podcast_transcribe_episode_task.py tests/test_config.py\" && ./scripts/with_test_services.sh bash -lc \"cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:${DATABASE_PORT:-5434}/nexus_test_migrations NEXUS_ENV=test uv run pytest -v tests/test_migrations.py\" && cd apps/web && npm run test -- \"src/app/api/podcasts/podcasts-routes.test.ts\" \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\" \"src/__tests__/components/GlobalPlayerFooter.test.tsx\" \"src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx\" && npm run lint && npm run typecheck && npm run build",
   "risks": [
-    "dvh is not supported in browsers older than Safari 15.4 / Chrome 108 — the 100vh fallback mitigates this",
-    "Forcing list mode on mobile means aligned-mode highlight synchronization is lost — but alignment is meaningless when panes are tabbed"
+    "frontend lint has pre-existing warning debt unrelated to this PR; no new lint errors remain",
+    "podcast retry dispatch still relies on broker availability; enqueue failures are explicit but should be surfaced cleanly in product UX"
   ]
 }
