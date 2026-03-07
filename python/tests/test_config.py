@@ -77,13 +77,24 @@ class TestEpubArchiveSafetyConfigDefaultsAndFloorValidation:
 
 
 class TestPodcastProviderConfiguration:
-    def test_podcasts_enabled_requires_podcast_index_credentials(self):
+    def test_staging_requires_podcast_index_credentials(self):
         with pytest.raises(ValidationError, match="PODCAST_INDEX_API_KEY"):
             _make_settings(
+                NEXUS_ENV="staging",
+                NEXUS_INTERNAL_SECRET="secret",
                 PODCASTS_ENABLED=True,
                 PODCAST_INDEX_API_KEY="",
                 PODCAST_INDEX_API_SECRET="",
             )
+
+    def test_local_auto_disables_without_credentials(self):
+        settings = _make_settings(
+            NEXUS_ENV="local",
+            PODCASTS_ENABLED=True,
+            PODCAST_INDEX_API_KEY="",
+            PODCAST_INDEX_API_SECRET="",
+        )
+        assert settings.podcasts_enabled is False
 
     def test_podcasts_enabled_accepts_valid_podcast_index_credentials(self):
         settings = _make_settings(

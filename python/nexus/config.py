@@ -277,10 +277,20 @@ class Settings(BaseSettings):
             if not self.podcast_index_api_secret:
                 missing_podcast_provider_settings.append("PODCAST_INDEX_API_SECRET")
             if missing_podcast_provider_settings:
-                raise ValueError(
-                    "Podcast features are enabled but provider credentials are missing: "
-                    f"{', '.join(missing_podcast_provider_settings)}"
-                )
+                if self.nexus_env in (Environment.STAGING, Environment.PROD):
+                    raise ValueError(
+                        "Podcast features are enabled but provider credentials are missing: "
+                        f"{', '.join(missing_podcast_provider_settings)}"
+                    )
+                else:
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "Podcast features auto-disabled: missing %s. "
+                        "Set PODCASTS_ENABLED=false or provide credentials to silence this warning.",
+                        ", ".join(missing_podcast_provider_settings),
+                    )
+                    self.podcasts_enabled = False
         if self.ingest_reconcile_schedule_seconds < 1:
             raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 1.")
         if self.ingest_stale_extracting_seconds < 1:
