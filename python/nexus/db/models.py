@@ -136,6 +136,8 @@ class User(Base):
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
+    email: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
+    display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
