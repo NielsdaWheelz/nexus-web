@@ -46,7 +46,11 @@ nexus/
 │   │       ├── 0015_slice5_epub_nav_locations.py               # S5 PR-07: persisted EPUB nav locations
 │   │       ├── 0016_reader_profiles_and_media_state.py         # Reader profile defaults + per-media state
 │   │       ├── 0017_reader_profile_default_view_mode.py        # Reader profile view mode default/backfill
-│   │       └── 0018_reader_media_state_locator_bounds.py       # Reader state locator bounds hardening
+│   │       ├── 0018_reader_media_state_locator_bounds.py       # Reader state locator bounds hardening
+│   │       ├── 0019_media_metadata_and_authors.py             # Media metadata + authors
+│   │       ├── 0020_conversation_titles.py                    # Conversation title column
+│   │       ├── 0021_podcast_transcription_job_lifecycle.py    # S7: podcast transcription job lifecycle
+│   │       └── 0022_user_email_display_name.py                # User email + display_name columns
 │   └── alembic.ini
 │
 ├── supabase/                    # Supabase local configuration
@@ -100,6 +104,7 @@ nexus/
 - **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` remains control-plane only (subscribe + enqueue). `DELETE /podcasts/subscriptions/{podcast_id}` applies explicit unsubscribe retention modes (`mode=1|2|3`). Episode ingest runs in worker data-plane jobs with explicit sync lifecycle states (`pending`, `running`, `complete`, `source_limited`, `failed`).
 - **Podcast Transcription Pipeline** (S7 PR-03): transcript segments are sourced from transcription-provider output (Deepgram), not feed payload transcript fields. Diarized transcription falls back to non-diarized output, transcript text is canonicalized (NFC + whitespace normalization), and persisted segment timing is strictly validated (`t_start_ms < t_end_ms`).
 - **Podcast Active Polling Orchestration** (S7 PR-04): Celery Beat schedules periodic active-subscription polling. Runs are singleton-safe via durable lease rows, stale `running` subscription sync claims are reclaimable, and each run persists deterministic operator telemetry (`processed_count`, `failed_count`, `skipped_count`, `scanned_count`, failure-code breakdown).
+- **User Identity**: Email is synced from Supabase JWT on every authenticated request via bootstrap upsert. Users can set a display name via `PATCH /me`. Library member/invite lists are enriched with email and display_name. User search (`GET /users/search`) matches by email prefix or display_name substring for invite-by-email flows.
 - **Reader Implementation Notes**: See `docs/reader-implementation.md` for the current reader-settings/resume architecture and regression coverage contract.
 
 ## Quick Start
