@@ -18,17 +18,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_LIBRARY_NAME = "My Library"
 
 
-def ensure_user_and_default_library(db: Session, user_id: UUID) -> UUID:
+def ensure_user_and_default_library(db: Session, user_id: UUID, email: str | None = None) -> UUID:
     """Ensure user exists, default library exists, and owner membership exists.
 
     This function is race-safe and idempotent:
     - Concurrent calls converge to correct state
-    - Uses INSERT ON CONFLICT DO NOTHING for idempotent inserts
+    - Uses INSERT ON CONFLICT DO UPDATE for idempotent upsert with email sync
     - Recovers from partial failures (e.g., library exists but membership missing)
 
     Args:
         db: Database session.
         user_id: The user's ID (from JWT sub claim).
+        email: The user's email (from JWT email claim). Synced on each login.
 
     Returns:
         The default library ID.
@@ -37,14 +38,14 @@ def ensure_user_and_default_library(db: Session, user_id: UUID) -> UUID:
         Exception: If bootstrap fails after all recovery attempts.
     """
     with transaction(db):
-        # Step 1: Ensure user exists
+        # Step 1: Ensure user exists, sync email from JWT on each login
         db.execute(
             text("""
-                INSERT INTO users (id)
-                VALUES (:user_id)
-                ON CONFLICT (id) DO NOTHING
+                INSERT INTO users (id, email)
+                VALUES (:user_id, :email)
+                ON CONFLICT (id) DO UPDATE SET email = COALESCE(:email, users.email)
             """),
-            {"user_id": user_id},
+            {"user_id": user_id, "email": email},
         )
 
         # Step 2: Check if default library already exists
@@ -128,7 +129,7 @@ def create_bootstrap_callback(db: Session):
         A callback function that takes user_id and returns default_library_id.
     """
 
-    def callback(user_id: UUID) -> UUID:
-        return ensure_user_and_default_library(db, user_id)
+    def callback(user_id: UUID, email: str | None = None) -> UUID:
+        return ensure_user_and_default_library(db, user_id, email=email)
 
     return callback

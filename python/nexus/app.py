@@ -74,10 +74,10 @@ def create_bootstrap_callback():
     """
     session_factory = get_session_factory()
 
-    def bootstrap(user_id: UUID) -> UUID:
+    def bootstrap(user_id: UUID, email: str | None = None) -> UUID:
         db = session_factory()
         try:
-            return ensure_user_and_default_library(db, user_id)
+            return ensure_user_and_default_library(db, user_id, email=email)
         finally:
             db.close()
 

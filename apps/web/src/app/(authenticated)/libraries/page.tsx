@@ -16,6 +16,7 @@ import type {
   LibraryForEdit,
   LibraryMember,
   LibraryInvite,
+  UserSearchResult,
 } from "@/components/LibraryEditDialog";
 import styles from "./page.module.css";
 
@@ -168,14 +169,18 @@ export default function LibrariesPage() {
   );
 
   const handleCreateInvite = useCallback(
-    async (inviteeUserId: string, role: string) => {
+    async (inviteeIdentifier: string, role: string) => {
       if (!editLibrary) return;
+      // Determine if identifier looks like an email or a UUID
+      const isEmail = inviteeIdentifier.includes("@");
       const resp = await apiFetch<{ data: LibraryInvite }>(
         `/api/libraries/${editLibrary.id}/invites`,
         {
           method: "POST",
           body: JSON.stringify({
-            invitee_user_id: inviteeUserId,
+            ...(isEmail
+              ? { invitee_email: inviteeIdentifier }
+              : { invitee_user_id: inviteeIdentifier }),
             role,
           }),
         }
@@ -183,6 +188,16 @@ export default function LibrariesPage() {
       setEditInvites((prev) => [resp.data, ...prev]);
     },
     [editLibrary]
+  );
+
+  const handleSearchUsers = useCallback(
+    async (query: string): Promise<UserSearchResult[]> => {
+      const resp = await apiFetch<{ data: UserSearchResult[] }>(
+        `/api/users/search?q=${encodeURIComponent(query)}`
+      );
+      return resp.data;
+    },
+    []
   );
 
   const handleRevokeInvite = useCallback(
@@ -325,6 +340,7 @@ export default function LibrariesPage() {
           onCreateInvite={handleCreateInvite}
           onRevokeInvite={handleRevokeInvite}
           onDelete={handleDeleteFromDialog}
+          onSearchUsers={handleSearchUsers}
         />
       )}
     </PaneContainer>

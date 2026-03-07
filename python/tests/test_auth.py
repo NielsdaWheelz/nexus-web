@@ -43,10 +43,10 @@ class TestAuthBoundary:
         """Create a client with auth middleware for testing."""
         session_factory = create_session_factory(engine)
 
-        def bootstrap_callback(user_id: UUID) -> UUID:
+        def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
             db = session_factory()
             try:
-                return ensure_user_and_default_library(db, user_id)
+                return ensure_user_and_default_library(db, user_id, email=email)
             finally:
                 db.close()
 
@@ -119,10 +119,10 @@ class TestInternalHeaderEnforcement:
         """Create a client that requires internal header (simulating staging)."""
         session_factory = create_session_factory(engine)
 
-        def bootstrap_callback(user_id: UUID) -> UUID:
+        def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
             db = session_factory()
             try:
-                return ensure_user_and_default_library(db, user_id)
+                return ensure_user_and_default_library(db, user_id, email=email)
             finally:
                 db.close()
 
@@ -192,10 +192,10 @@ class TestBootstrap:
         """Create a client with auth middleware for testing."""
         session_factory = create_session_factory(engine)
 
-        def bootstrap_callback(user_id: UUID) -> UUID:
+        def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
             db = session_factory()
             try:
-                return ensure_user_and_default_library(db, user_id)
+                return ensure_user_and_default_library(db, user_id, email=email)
             finally:
                 db.close()
 
@@ -304,10 +304,10 @@ class TestBootstrap:
         user_id = create_test_user_id()
         session_factory = create_session_factory(engine)
 
-        def bootstrap_callback(uid: UUID) -> UUID:
+        def bootstrap_callback(uid: UUID, email: str | None = None) -> UUID:
             db = session_factory()
             try:
-                return ensure_user_and_default_library(db, uid)
+                return ensure_user_and_default_library(db, uid, email=email)
             finally:
                 db.close()
 
@@ -389,10 +389,10 @@ class TestBootstrap:
         # Create client and make request
         session_factory = create_session_factory(engine)
 
-        def bootstrap_callback(uid: UUID) -> UUID:
+        def bootstrap_callback(uid: UUID, email: str | None = None) -> UUID:
             db = session_factory()
             try:
-                return ensure_user_and_default_library(db, uid)
+                return ensure_user_and_default_library(db, uid, email=email)
             finally:
                 db.close()
 
@@ -432,10 +432,10 @@ class TestGetMe:
         """Create a client with auth middleware for testing."""
         session_factory = create_session_factory(engine)
 
-        def bootstrap_callback(user_id: UUID) -> UUID:
+        def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
             db = session_factory()
             try:
-                return ensure_user_and_default_library(db, user_id)
+                return ensure_user_and_default_library(db, user_id, email=email)
             finally:
                 db.close()
 
@@ -496,10 +496,10 @@ class TestHealthEndpointNoAuth:
         """Create a client with auth middleware for testing."""
         session_factory = create_session_factory(engine)
 
-        def bootstrap_callback(user_id: UUID) -> UUID:
+        def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
             db = session_factory()
             try:
-                return ensure_user_and_default_library(db, user_id)
+                return ensure_user_and_default_library(db, user_id, email=email)
             finally:
                 db.close()
 

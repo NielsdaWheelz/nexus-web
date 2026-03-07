@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
   "status": "ready_for_review",
-  "updated_at": "2026-03-07T00:48:54Z",
-  "summary": "Senior-level hardening pass complete: backend/frontend podcasts changes reviewed, additional safety fixes applied, targeted tests/build checks run, and commits split for review.",
+  "updated_at": "2026-03-07T04:35:00Z",
+  "summary": "Library member search by email/name: full gold-standard implementation across all layers. Migration, bootstrap email sync, user search API, enriched member/invite responses, invite-by-email, display_name editing, frontend email search autocomplete.",
   "questions": [],
   "blockers": [],
-  "how_to_test": "./scripts/with_test_services.sh bash -lc \"make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_podcasts.py tests/test_reconcile_stale_ingest_media.py tests/test_podcast_transcribe_episode_task.py tests/test_config.py\" && ./scripts/with_test_services.sh bash -lc \"cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:${DATABASE_PORT:-5434}/nexus_test_migrations NEXUS_ENV=test uv run pytest -v tests/test_migrations.py\" && cd apps/web && npm run test -- \"src/app/api/podcasts/podcasts-routes.test.ts\" \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\" \"src/__tests__/components/GlobalPlayerFooter.test.tsx\" \"src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx\" && npm run lint && npm run typecheck && npm run build",
+  "how_to_test": "./scripts/with_test_services.sh bash -lc \"make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_user_profiles.py tests/test_libraries.py tests/test_permissions.py -x --tb=short\" && cd apps/web && npx vitest run src/__tests__/components/LibraryEditDialog.test.tsx && npx tsc --noEmit",
   "risks": [
-    "frontend lint has pre-existing warning debt unrelated to this PR; no new lint errors remain",
-    "podcast retry dispatch still relies on broker availability; enqueue failures are explicit but should be surfaced cleanly in product UX"
+    "email uniqueness constraint assumes 1:1 supabase-auth-to-nexus-user mapping (correct by design)",
+    "display_name search uses ILIKE %query% which is a seq scan — fine for current scale, add GIN trigram index if user base grows to 100k+"
   ]
 }

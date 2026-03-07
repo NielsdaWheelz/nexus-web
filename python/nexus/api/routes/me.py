@@ -1,6 +1,6 @@
 """Current user endpoint.
 
-Returns information about the authenticated viewer.
+Returns information about the authenticated viewer including profile fields.
 """
 
 from typing import Annotated
@@ -12,27 +12,41 @@ from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.reader import ReaderProfilePatch
+from nexus.schemas.user import UpdateProfileRequest
 from nexus.services import reader as reader_service
+from nexus.services import users as users_service
 
 router = APIRouter()
 
 
 @router.get("/me")
-async def get_me(viewer: Annotated[Viewer, Depends(get_viewer)]) -> dict:
+def get_me(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
     """Get current user information.
 
-    Requires authentication. Returns the authenticated user's ID
-    and their default library ID.
-
-    Returns:
-        Success envelope with user_id and default_library_id.
+    Requires authentication. Returns the authenticated user's ID,
+    default library ID, email, and display name.
     """
-    return success_response(
-        {
-            "user_id": str(viewer.user_id),
-            "default_library_id": str(viewer.default_library_id),
-        }
+    profile = users_service.get_user_profile(
+        db, viewer.user_id, viewer.default_library_id, viewer.email
     )
+    return success_response(profile.model_dump(mode="json"))
+
+
+@router.patch("/me")
+def patch_me(
+    body: UpdateProfileRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Update user profile (display_name)."""
+    users_service.update_display_name(db, viewer.user_id, body.display_name)
+    profile = users_service.get_user_profile(
+        db, viewer.user_id, viewer.default_library_id, viewer.email
+    )
+    return success_response(profile.model_dump(mode="json"))
 
 
 @router.get("/me/reader-profile")

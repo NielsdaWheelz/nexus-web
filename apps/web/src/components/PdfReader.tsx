@@ -1759,6 +1759,8 @@ export default function PdfReader({
     attachDocumentToViewer,
     clearSelection,
     fetchSignedUrl,
+    initialPageNumber,
+    initialZoom,
     mediaId,
     openDocument,
     replaceDocument,

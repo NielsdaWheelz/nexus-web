@@ -28,12 +28,11 @@ if not os.environ.get("SUPABASE_ISSUER"):
     os.environ["SUPABASE_ISSUER"] = "http://localhost:54321/auth/v1"
 if not os.environ.get("SUPABASE_AUDIENCES"):
     os.environ["SUPABASE_AUDIENCES"] = "authenticated"
-if not os.environ.get("PODCASTS_ENABLED"):
-    os.environ["PODCASTS_ENABLED"] = "true"
-if not os.environ.get("PODCAST_INDEX_API_KEY"):
-    os.environ["PODCAST_INDEX_API_KEY"] = "test-podcast-index-key"
-if not os.environ.get("PODCAST_INDEX_API_SECRET"):
-    os.environ["PODCAST_INDEX_API_SECRET"] = "test-podcast-index-secret"
+# Podcast env must be unconditionally set for tests — .env may contain
+# PODCASTS_ENABLED=false which Make loads before pytest starts.
+os.environ["PODCASTS_ENABLED"] = "true"
+os.environ.setdefault("PODCAST_INDEX_API_KEY", "test-podcast-index-key")
+os.environ.setdefault("PODCAST_INDEX_API_SECRET", "test-podcast-index-secret")
 
 # Add repo root to sys.path for importing top-level packages (e.g., apps)
 _repo_root = Path(__file__).parent.parent.parent
@@ -179,16 +178,28 @@ def authenticated_app(engine: Engine):
     session_factory = create_session_factory(engine)
 
     # Create bootstrap callback that uses the test session factory
-    def bootstrap_callback(user_id: UUID) -> UUID:
+    def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
         db = session_factory()
         try:
-            return ensure_user_and_default_library(db, user_id)
+            return ensure_user_and_default_library(db, user_id, email=email)
         finally:
             db.close()
 
     # Create app with test verifier and custom bootstrap
     verifier = MockJwtVerifier()
     app = create_app(skip_auth_middleware=True)
+
+    # Override get_db so route handlers use the test engine
+    from nexus.api.deps import get_db
+
+    def _test_get_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _test_get_db
 
     # Manually add auth middleware with our test configuration
     from nexus.auth.middleware import AuthMiddleware
@@ -263,15 +274,27 @@ def auth_client(engine: Engine) -> Generator[TestClient, None, None]:
     """
     session_factory = create_session_factory(engine)
 
-    def bootstrap_callback(user_id: UUID) -> UUID:
+    def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
         db = session_factory()
         try:
-            return ensure_user_and_default_library(db, user_id)
+            return ensure_user_and_default_library(db, user_id, email=email)
         finally:
             db.close()
 
     verifier = MockJwtVerifier()
     app = create_app(skip_auth_middleware=True)
+
+    # Override get_db so route handlers use the test engine
+    from nexus.api.deps import get_db
+
+    def _test_get_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _test_get_db
 
     from nexus.auth.middleware import AuthMiddleware
 

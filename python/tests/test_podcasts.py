@@ -27,6 +27,20 @@ from tests.utils.db import DirectSessionManager
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture(autouse=True)
+def _stub_celery_dispatch(monkeypatch):
+    """Stub Celery apply_async at the async task dispatch boundary.
+
+    EXTERNAL SEAM EXCEPTION (per testing_standards.md §6):
+    Async task dispatch is an external boundary. This stub prevents broker
+    connection attempts while preserving all service-layer behavior. Tests
+    that need to assert dispatch args use unittest.mock.patch locally.
+    """
+    from nexus.tasks.podcast_sync_subscription import podcast_sync_subscription_job
+
+    monkeypatch.setattr(podcast_sync_subscription_job, "apply_async", lambda *a, **kw: None)
+
+
 def _bootstrap_user(auth_client, user_id: UUID) -> UUID:
     response = auth_client.get("/me", headers=auth_headers(user_id))
     assert response.status_code == 200, (
