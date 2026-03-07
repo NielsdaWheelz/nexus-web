@@ -46,10 +46,10 @@ def e2e_client(engine):
 
     session_factory = create_session_factory(engine)
 
-    def bootstrap_callback(user_id: UUID) -> UUID:
+    def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
         db = session_factory()
         try:
-            return ensure_user_and_default_library(db, user_id)
+            return ensure_user_and_default_library(db, user_id, email=email)
         finally:
             db.close()
 

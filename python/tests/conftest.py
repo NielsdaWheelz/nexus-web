@@ -179,10 +179,10 @@ def authenticated_app(engine: Engine):
     session_factory = create_session_factory(engine)
 
     # Create bootstrap callback that uses the test session factory
-    def bootstrap_callback(user_id: UUID) -> UUID:
+    def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
         db = session_factory()
         try:
-            return ensure_user_and_default_library(db, user_id)
+            return ensure_user_and_default_library(db, user_id, email=email)
         finally:
             db.close()
 
@@ -263,10 +263,10 @@ def auth_client(engine: Engine) -> Generator[TestClient, None, None]:
     """
     session_factory = create_session_factory(engine)
 
-    def bootstrap_callback(user_id: UUID) -> UUID:
+    def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
         db = session_factory()
         try:
-            return ensure_user_and_default_library(db, user_id)
+            return ensure_user_and_default_library(db, user_id, email=email)
         finally:
             db.close()
 
