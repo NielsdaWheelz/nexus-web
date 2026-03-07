@@ -20,7 +20,7 @@ from nexus.logging import get_logger
 
 logger = get_logger(__name__)
 
-_RECOVERABLE_KINDS = frozenset({"pdf", "epub"})
+_RECOVERABLE_KINDS = frozenset({"pdf", "epub", "podcast_episode"})
 _MAX_ERROR_MSG_LEN = 1000
 _BATCH_LIMIT = 100
 
@@ -34,7 +34,7 @@ def reconcile_stale_ingest_media_job(
 
     Rows are considered stale when:
     - processing_status = extracting
-    - kind in {pdf, epub}
+    - kind in {pdf, epub, podcast_episode}
     - processing_started_at older than INGEST_STALE_EXTRACTING_SECONDS
     """
     settings = get_settings()
@@ -151,6 +151,16 @@ def _dispatch_recovery_task(media: Media, request_id: str | None) -> None:
         from nexus.tasks.ingest_epub import ingest_epub
 
         ingest_epub.apply_async(
+            args=[media_id],
+            kwargs={"request_id": request_id},
+            queue=INGEST_QUEUE,
+        )
+        return
+
+    if media.kind == "podcast_episode":
+        from nexus.tasks.podcast_transcribe_episode import podcast_transcribe_episode_job
+
+        podcast_transcribe_episode_job.apply_async(
             args=[media_id],
             kwargs={"request_id": request_id},
             queue=INGEST_QUEUE,

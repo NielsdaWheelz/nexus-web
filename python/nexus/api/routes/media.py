@@ -277,15 +277,17 @@ def retry_ingest(
     db: Annotated[Session, Depends(get_db)],
     request: Request,
 ) -> dict:
-    """Retry failed EPUB or PDF extraction.
+    """Retry failed ingest/transcription for supported media kinds.
 
-    Enforces legal-state preconditions, clears old artifacts, and
-    dispatches re-extraction. Only the creator can retry.
+    Routes by media kind:
+    - `pdf` -> PDF retry lifecycle
+    - `epub` -> EPUB retry lifecycle
+    - `podcast_episode` / `video` -> transcription retry lifecycle
 
     Returns 202 with:
         - media_id: UUID of the media
         - processing_status: 'extracting'
-        - retry_enqueued: True if extraction task was dispatched
+        - retry_enqueued: True if a retry task was dispatched
     """
     from nexus.services.pdf_lifecycle import retry_for_viewer_unified
 
