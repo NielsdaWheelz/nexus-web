@@ -38,9 +38,7 @@ def _stub_celery_dispatch(monkeypatch):
     """
     from nexus.tasks.podcast_sync_subscription import podcast_sync_subscription_job
 
-    monkeypatch.setattr(
-        podcast_sync_subscription_job, "apply_async", lambda *a, **kw: None
-    )
+    monkeypatch.setattr(podcast_sync_subscription_job, "apply_async", lambda *a, **kw: None)
 
 
 def _bootstrap_user(auth_client, user_id: UUID) -> UUID:
