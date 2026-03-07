@@ -1724,7 +1724,9 @@ def _enqueue_podcast_subscription_sync(*, user_id: UUID, podcast_id: UUID) -> bo
         raise ApiError(ApiErrorCode.E_INTERNAL, "Failed to enqueue podcast sync job.") from exc
 
 
-def _enqueue_podcast_transcription_job(*, media_id: UUID, requested_by_user_id: UUID | None) -> bool:
+def _enqueue_podcast_transcription_job(
+    *, media_id: UUID, requested_by_user_id: UUID | None
+) -> bool:
     try:
         from nexus.tasks.podcast_transcribe_episode import podcast_transcribe_episode_job
 

@@ -2847,7 +2847,9 @@ class TestPodcastApiSurface:
             return _FakeResponse()
 
         monkeypatch.setattr("nexus.services.podcasts.httpx.get", flaky_get)
-        response = auth_client.get("/podcasts/discover?q=retry&limit=10", headers=auth_headers(user_id))
+        response = auth_client.get(
+            "/podcasts/discover?q=retry&limit=10", headers=auth_headers(user_id)
+        )
         assert response.status_code == 200, (
             "discover should survive transient provider timeout via retry/backoff; "
             f"got {response.status_code}: {response.text}"
@@ -3130,7 +3132,9 @@ class TestPodcastTranscriptionAsyncLifecycle:
 
         from unittest.mock import patch
 
-        with patch("nexus.tasks.podcast_transcribe_episode.podcast_transcribe_episode_job.apply_async") as mock_dispatch:
+        with patch(
+            "nexus.tasks.podcast_transcribe_episode.podcast_transcribe_episode_job.apply_async"
+        ) as mock_dispatch:
             mock_dispatch.return_value = None
             retry_response = auth_client.post(
                 f"/media/{media_id}/retry",
@@ -3178,7 +3182,9 @@ class TestPodcastTranscriptionAsyncLifecycle:
         assert media_row[1] is None
         assert media_row[2] is None
 
-        with patch("nexus.tasks.podcast_transcribe_episode.podcast_transcribe_episode_job.apply_async") as second_dispatch:
+        with patch(
+            "nexus.tasks.podcast_transcribe_episode.podcast_transcribe_episode_job.apply_async"
+        ) as second_dispatch:
             second_retry = auth_client.post(
                 f"/media/{media_id}/retry",
                 headers=auth_headers(user_id),
@@ -3264,7 +3270,9 @@ class TestPodcastTranscriptionAsyncLifecycle:
 
         from unittest.mock import patch
 
-        with patch("nexus.tasks.ingest_youtube_video.ingest_youtube_video.apply_async") as mock_dispatch:
+        with patch(
+            "nexus.tasks.ingest_youtube_video.ingest_youtube_video.apply_async"
+        ) as mock_dispatch:
             mock_dispatch.return_value = None
             retry_response = auth_client.post(
                 f"/media/{media_id}/retry",
@@ -3296,7 +3304,9 @@ class TestPodcastTranscriptionAsyncLifecycle:
         assert media_row[1] is None
         assert media_row[2] is None
 
-        with patch("nexus.tasks.ingest_youtube_video.ingest_youtube_video.apply_async") as second_dispatch:
+        with patch(
+            "nexus.tasks.ingest_youtube_video.ingest_youtube_video.apply_async"
+        ) as second_dispatch:
             second_retry = auth_client.post(
                 f"/media/{media_id}/retry",
                 headers=auth_headers(user_id),
