@@ -37,10 +37,12 @@ class Viewer:
     Attributes:
         user_id: The viewer's user ID (from JWT sub claim).
         default_library_id: The viewer's default library ID.
+        email: The viewer's email (from JWT email claim, if present).
     """
 
     user_id: UUID
     default_library_id: UUID
+    email: str | None = None
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -66,7 +68,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         verifier: TokenVerifier,
         requires_internal_header: bool = False,
         internal_secret: str | None = None,
-        bootstrap_callback: Callable[[UUID], UUID] | None = None,
+        bootstrap_callback: Callable[..., UUID] | None = None,
     ):
         """Initialize the auth middleware.
 
@@ -75,7 +77,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             verifier: TokenVerifier implementation for JWT verification.
             requires_internal_header: Whether to enforce X-Nexus-Internal header.
             internal_secret: The expected internal secret value.
-            bootstrap_callback: Function(user_id) -> default_library_id.
+            bootstrap_callback: Function(user_id, email=None) -> default_library_id.
                               Called after successful auth to ensure user exists.
         """
         super().__init__(app)
@@ -114,13 +116,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         except ApiError as e:
             return self._error_json_response(e.code, e.message, e.status_code)
 
-        # Step 4: Parse user_id from sub
+        # Step 4: Parse user_id and email from claims
         user_id = UUID(payload["sub"])
+        email = payload.get("email")
 
         # Step 5: Bootstrap user/library if callback provided
         if self.bootstrap_callback:
             try:
-                default_library_id = self.bootstrap_callback(user_id)
+                default_library_id = self.bootstrap_callback(user_id, email=email)
             except Exception as e:
                 logger.exception("Bootstrap failed for user %s: %s", user_id, e)
                 return self._error_json_response(
@@ -136,6 +139,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.viewer = Viewer(
             user_id=user_id,
             default_library_id=default_library_id,
+            email=email,
         )
 
         return await call_next(request)

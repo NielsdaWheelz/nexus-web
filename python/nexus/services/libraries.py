@@ -694,8 +694,9 @@ def list_library_members(
 
     result = db.execute(
         text("""
-            SELECT m.user_id, m.role, m.created_at
+            SELECT m.user_id, m.role, m.created_at, u.email, u.display_name
             FROM memberships m
+            JOIN users u ON u.id = m.user_id
             WHERE m.library_id = :library_id
             ORDER BY
                 (m.user_id = :owner_user_id) DESC,
@@ -713,6 +714,8 @@ def list_library_members(
             role=r[1],
             is_owner=(r[0] == owner_user_id),
             created_at=r[2],
+            email=r[3],
+            display_name=r[4],
         )
         for r in result.fetchall()
     ]
@@ -1006,32 +1009,43 @@ def transfer_library_ownership(
 # =============================================================================
 
 
-def _invitation_row_to_out(row: tuple) -> LibraryInvitationOut:
-    """Convert a raw invite query row to LibraryInvitationOut."""
-    return LibraryInvitationOut(
-        id=row[0],
-        library_id=row[1],
-        inviter_user_id=row[2],
-        invitee_user_id=row[3],
-        role=row[4],
-        status=row[5],
-        created_at=row[6],
-        responded_at=row[7],
-    )
+def _invitation_row_to_out(row: tuple, *, with_user_info: bool = False) -> LibraryInvitationOut:
+    """Convert a raw invite query row to LibraryInvitationOut.
+
+    If with_user_info=True, expects columns [0..7] + [8]=email, [9]=display_name.
+    """
+    kwargs: dict = {
+        "id": row[0],
+        "library_id": row[1],
+        "inviter_user_id": row[2],
+        "invitee_user_id": row[3],
+        "role": row[4],
+        "status": row[5],
+        "created_at": row[6],
+        "responded_at": row[7],
+    }
+    if with_user_info and len(row) > 8:
+        kwargs["invitee_email"] = row[8]
+        kwargs["invitee_display_name"] = row[9]
+    return LibraryInvitationOut(**kwargs)
 
 
 def create_library_invite(
     db: Session,
     viewer_id: UUID,
     library_id: UUID,
-    invitee_user_id: UUID,
+    invitee_user_id: UUID | None,
     role: LibraryRole,
+    invitee_email: str | None = None,
 ) -> LibraryInvitationOut:
     """Create an invitation to a library.
 
     Auth: viewer must be admin/owner of target library.
     Default library targets are forbidden.
     Invitee must exist. Existing members and pending invites are conflicts.
+
+    Either invitee_user_id or invitee_email must be provided. If both are
+    provided, invitee_user_id takes precedence.
 
     Raises:
         NotFoundError: Library not found or viewer not member (masked 404).
@@ -1044,13 +1058,27 @@ def create_library_invite(
         _require_admin(lib_row[6])
         _require_non_default(lib_row[1])
 
-        # Invitee must exist
-        invitee_exists = db.execute(
-            text("SELECT 1 FROM users WHERE id = :uid"),
-            {"uid": invitee_user_id},
-        ).fetchone()
-        if invitee_exists is None:
-            raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
+        # Resolve invitee: by user_id or by email
+        # Schema validation ensures at least one is provided; assert defensively.
+        assert invitee_user_id is not None or invitee_email is not None
+
+        if invitee_user_id is None:
+            # Resolve email to user_id
+            row = db.execute(
+                text("SELECT id FROM users WHERE email = :email"),
+                {"email": invitee_email},
+            ).fetchone()
+            if row is None:
+                raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
+            invitee_user_id = row[0]
+        else:
+            # Invitee must exist
+            invitee_exists = db.execute(
+                text("SELECT 1 FROM users WHERE id = :uid"),
+                {"uid": invitee_user_id},
+            ).fetchone()
+            if invitee_exists is None:
+                raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
 
         # Check existing membership (catches self-invite via same path)
         member_exists = db.execute(
@@ -1131,17 +1159,19 @@ def list_library_invites(
 
     result = db.execute(
         text("""
-            SELECT id, library_id, inviter_user_id, invitee_user_id,
-                   role, status, created_at, responded_at
-            FROM library_invitations
-            WHERE library_id = :lid AND status = :status
-            ORDER BY created_at DESC, id DESC
+            SELECT i.id, i.library_id, i.inviter_user_id, i.invitee_user_id,
+                   i.role, i.status, i.created_at, i.responded_at,
+                   u.email, u.display_name
+            FROM library_invitations i
+            JOIN users u ON u.id = i.invitee_user_id
+            WHERE i.library_id = :lid AND i.status = :status
+            ORDER BY i.created_at DESC, i.id DESC
             LIMIT :limit
         """),
         {"lid": library_id, "status": status, "limit": limit},
     )
 
-    return [_invitation_row_to_out(r) for r in result.fetchall()]
+    return [_invitation_row_to_out(r, with_user_info=True) for r in result.fetchall()]
 
 
 def list_viewer_invites(
@@ -1161,17 +1191,19 @@ def list_viewer_invites(
 
     result = db.execute(
         text("""
-            SELECT id, library_id, inviter_user_id, invitee_user_id,
-                   role, status, created_at, responded_at
-            FROM library_invitations
-            WHERE invitee_user_id = :uid AND status = :status
-            ORDER BY created_at DESC, id DESC
+            SELECT i.id, i.library_id, i.inviter_user_id, i.invitee_user_id,
+                   i.role, i.status, i.created_at, i.responded_at,
+                   u.email, u.display_name
+            FROM library_invitations i
+            JOIN users u ON u.id = i.invitee_user_id
+            WHERE i.invitee_user_id = :uid AND i.status = :status
+            ORDER BY i.created_at DESC, i.id DESC
             LIMIT :limit
         """),
         {"uid": viewer_id, "status": status, "limit": limit},
     )
 
-    return [_invitation_row_to_out(r) for r in result.fetchall()]
+    return [_invitation_row_to_out(r, with_user_info=True) for r in result.fetchall()]
 
 
 def accept_library_invite(

@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # MediaOut is defined in schemas/media.py - import from there
 from nexus.schemas.media import MediaOut
@@ -125,6 +125,8 @@ class LibraryMemberOut(BaseModel):
     user_id: UUID
     role: LibraryRole
     is_owner: bool
+    email: str | None = None
+    display_name: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -139,6 +141,8 @@ class LibraryInvitationOut(BaseModel):
     invitee_user_id: UUID
     role: LibraryRole
     status: LibraryInvitationStatusValue
+    invitee_email: str | None = None
+    invitee_display_name: str | None = None
     created_at: datetime
     responded_at: datetime | None
 
@@ -151,12 +155,27 @@ class LibraryInvitationOut(BaseModel):
 
 
 class CreateLibraryInviteRequest(BaseModel):
-    """Request body for creating a library invitation."""
+    """Request body for creating a library invitation.
 
-    invitee_user_id: UUID = Field(..., description="User ID of the invitee")
+    Provide either invitee_user_id or invitee_email (at least one required).
+    If both are provided, invitee_user_id takes precedence.
+    """
+
+    invitee_user_id: UUID | None = Field(
+        default=None, description="User ID of the invitee"
+    )
+    invitee_email: str | None = Field(
+        default=None, description="Email of the invitee (alternative to user_id)"
+    )
     role: LibraryRole = Field(
         ..., description="Role to assign to the invitee ('admin' or 'member')"
     )
+
+    @model_validator(mode="after")
+    def require_identifier(self) -> "CreateLibraryInviteRequest":
+        if self.invitee_user_id is None and self.invitee_email is None:
+            raise ValueError("Either invitee_user_id or invitee_email is required")
+        return self
 
 
 class InviteAcceptMembershipOut(BaseModel):

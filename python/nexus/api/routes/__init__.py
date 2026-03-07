@@ -19,6 +19,7 @@ from nexus.api.routes.media import router as media_router
 from nexus.api.routes.models import router as models_router
 from nexus.api.routes.podcasts import router as podcasts_router
 from nexus.api.routes.search import router as search_router
+from nexus.api.routes.users import router as users_router
 from nexus.config import get_settings
 
 
@@ -41,6 +42,7 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router.include_router(models_router, tags=["models"])
     api_router.include_router(keys_router, tags=["keys"])
     api_router.include_router(search_router, tags=["search"])
+    api_router.include_router(users_router, tags=["users"])
     settings = get_settings()
     if settings.podcasts_enabled:
         api_router.include_router(podcasts_router, tags=["podcasts"])

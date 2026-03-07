@@ -190,7 +190,8 @@ def create_library_invite(
     Admin/owner only. Invitee must exist. Default library targets forbidden.
     """
     result = libraries_service.create_library_invite(
-        db, viewer.user_id, library_id, body.invitee_user_id, body.role
+        db, viewer.user_id, library_id, body.invitee_user_id, body.role,
+        invitee_email=body.invitee_email,
     )
     return success_response(result.model_dump(mode="json"))
 
