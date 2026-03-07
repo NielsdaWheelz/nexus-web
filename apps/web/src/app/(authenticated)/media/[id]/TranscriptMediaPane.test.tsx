@@ -1,5 +1,5 @@
 import { createRef, useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import TranscriptMediaPane, {
@@ -7,6 +7,31 @@ import TranscriptMediaPane, {
   type TranscriptFragment,
   type TranscriptPlaybackSource,
 } from "./TranscriptMediaPane";
+
+const mockSetTrack = vi.fn();
+const mockSeekToMs = vi.fn();
+const mockPlay = vi.fn();
+
+vi.mock("@/lib/player/globalPlayer", () => ({
+  useGlobalPlayer: () => ({
+    track: null,
+    setTrack: mockSetTrack,
+    clearTrack: vi.fn(),
+    seekToMs: mockSeekToMs,
+    play: mockPlay,
+    pause: vi.fn(),
+    isPlaying: false,
+    currentTimeSeconds: 0,
+    durationSeconds: 0,
+    bindAudioElement: vi.fn(),
+  }),
+}));
+
+beforeEach(() => {
+  mockSetTrack.mockReset();
+  mockSeekToMs.mockReset();
+  mockPlay.mockReset();
+});
 
 const VIDEO_PLAYBACK_SOURCE: TranscriptPlaybackSource = {
   kind: "external_video",
@@ -61,6 +86,8 @@ function renderStatefulVideoPane(
 
     return (
       <TranscriptMediaPane
+        mediaId="media-video-1"
+        mediaTitle="Video Episode"
         mediaKind="video"
         playbackSource={options.playbackSource ?? VIDEO_PLAYBACK_SOURCE}
         canonicalSourceUrl="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -104,6 +131,8 @@ function renderStatefulPodcastPane(
 
     return (
       <TranscriptMediaPane
+        mediaId="media-podcast-1"
+        mediaTitle="Podcast Episode"
         mediaKind="podcast_episode"
         playbackSource={options.playbackSource ?? PODCAST_PLAYBACK_SOURCE}
         canonicalSourceUrl="https://example.com/podcasts/e2e-episode"
@@ -215,20 +244,20 @@ describe("TranscriptMediaPane video playback", () => {
 });
 
 describe("TranscriptMediaPane podcast playback", () => {
-  it("keeps transcript click-to-seek behavior for podcast episodes", async () => {
+  it("routes transcript click-to-seek into the global footer player", async () => {
     const user = userEvent.setup();
     const { onSegmentSelect } = renderStatefulPodcastPane();
 
-    const audio = screen.getByLabelText("Podcast audio player") as HTMLAudioElement;
-    audio.currentTime = 0;
+    expect(
+      screen.getByRole("button", { name: "Play in footer" })
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /deep dive segment/i }));
 
     expect(onSegmentSelect).toHaveBeenCalledWith(
       expect.objectContaining({ id: "frag-2", t_start_ms: 12_000 })
     );
-    await waitFor(() => {
-      expect(audio.currentTime).toBeCloseTo(12, 5);
-    });
+    expect(mockSeekToMs).toHaveBeenCalledWith(12_000);
+    expect(mockPlay).toHaveBeenCalled();
   });
 });

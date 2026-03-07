@@ -10,6 +10,8 @@ import NewConversationPage from "@/app/(authenticated)/conversations/new/page";
 import DiscoverPage from "@/app/(authenticated)/discover/page";
 import DocumentsPage from "@/app/(authenticated)/documents/page";
 import PodcastsPage from "@/app/(authenticated)/podcasts/page";
+import PodcastSubscriptionsPage from "@/app/(authenticated)/podcasts/subscriptions/page";
+import PodcastDetailPage from "@/app/(authenticated)/podcasts/[podcastId]/page";
 import VideosPage from "@/app/(authenticated)/videos/page";
 import SearchPage from "@/app/(authenticated)/search/page";
 import SettingsPage from "@/app/(authenticated)/settings/page";
@@ -30,6 +32,8 @@ export type PaneRouteId =
   | "discover"
   | "documents"
   | "podcasts"
+  | "podcastSubscriptions"
+  | "podcastDetail"
   | "videos"
   | "search"
   | "settings"
@@ -119,6 +123,22 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     pattern: ["podcasts"],
     staticTitle: "Podcasts",
     render: () => <PodcastsPage />,
+  },
+  {
+    id: "podcastSubscriptions",
+    pattern: ["podcasts", "subscriptions"],
+    staticTitle: "My podcasts",
+    render: () => <PodcastSubscriptionsPage />,
+  },
+  {
+    id: "podcastDetail",
+    pattern: ["podcasts", ":podcastId"],
+    staticTitle: "Podcast",
+    resourceRef: (params) => {
+      const podcastId = params.podcastId;
+      return podcastId ? `podcast:${podcastId}` : null;
+    },
+    render: () => <PodcastDetailPage />,
   },
   {
     id: "videos",

@@ -2352,6 +2352,8 @@ export default function MediaViewPage() {
 
           {isTranscriptMedia ? (
             <TranscriptMediaPane
+              mediaId={media.id}
+              mediaTitle={media.title}
               mediaKind={media.kind === "video" ? "video" : "podcast_episode"}
               playbackSource={playbackSource}
               canonicalSourceUrl={media.canonical_source_url}

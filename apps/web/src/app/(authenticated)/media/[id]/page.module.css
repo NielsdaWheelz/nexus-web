@@ -155,6 +155,32 @@
   border: 0;
 }
 
+.globalPlayerPrompt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  padding: var(--space-3);
+}
+
+.globalPlayerPrompt p {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.globalPlayerButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
 .playbackFallback {
   display: flex;
   align-items: center;
