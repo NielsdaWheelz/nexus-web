@@ -3,12 +3,12 @@
 import {
   useEffect,
   useMemo,
-  useRef,
   useState,
   type MouseEvent,
   type RefObject,
 } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import styles from "./page.module.css";
 
 const YOUTUBE_EMBED_HOST_ALLOWLIST = new Set([
@@ -35,6 +35,8 @@ export interface TranscriptFragment {
 }
 
 interface TranscriptMediaPaneProps {
+  mediaId: string;
+  mediaTitle: string;
   mediaKind: "podcast_episode" | "video";
   playbackSource: TranscriptPlaybackSource | null;
   canonicalSourceUrl: string | null;
@@ -67,20 +69,6 @@ function toSeekSeconds(timestampMs: number | null | undefined): number | null {
     return null;
   }
   return Math.floor(timestampMs / 1000);
-}
-
-function seekAudioToTimestamp(
-  audioElement: HTMLAudioElement | null,
-  timestampMs: number | null | undefined
-): void {
-  if (!audioElement || timestampMs == null || timestampMs < 0) {
-    return;
-  }
-  try {
-    audioElement.currentTime = timestampMs / 1000;
-  } catch {
-    // Ignore non-fatal media seek errors (for example if metadata is still loading).
-  }
 }
 
 export function isAllowedYoutubeEmbedUrl(rawUrl: string): boolean {
@@ -134,6 +122,8 @@ export function buildYoutubeEmbedSrc(
 }
 
 export default function TranscriptMediaPane({
+  mediaId,
+  mediaTitle,
   mediaKind,
   playbackSource,
   canonicalSourceUrl,
@@ -147,9 +137,9 @@ export default function TranscriptMediaPane({
   onSegmentSelect,
   onContentClick,
 }: TranscriptMediaPaneProps) {
+  const { setTrack, seekToMs, play } = useGlobalPlayer();
   const [seekTargetMs, setSeekTargetMs] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const safeEmbedUrl = useMemo(
     () => resolveSafeVideoEmbedUrl(playbackSource),
@@ -167,6 +157,29 @@ export default function TranscriptMediaPane({
     setSeekTargetMs(null);
   }, [mediaKind, playbackSource?.kind, playbackSource?.source_url, playbackSource?.embed_url]);
 
+  useEffect(() => {
+    if (mediaKind !== "podcast_episode" || playbackSource?.kind !== "external_audio") {
+      return;
+    }
+    setTrack(
+      {
+        media_id: mediaId,
+        title: mediaTitle,
+        stream_url: playbackSource.stream_url,
+        source_url: playbackSource.source_url,
+      },
+      { autoplay: false }
+    );
+  }, [
+    mediaId,
+    mediaKind,
+    mediaTitle,
+    playbackSource?.kind,
+    playbackSource?.source_url,
+    playbackSource?.stream_url,
+    setTrack,
+  ]);
+
   const fallbackSourceUrl = playbackSource?.source_url || canonicalSourceUrl;
   const playerUnavailable =
     mediaKind === "video" &&
@@ -182,7 +195,8 @@ export default function TranscriptMediaPane({
       return;
     }
     if (mediaKind === "podcast_episode") {
-      seekAudioToTimestamp(audioRef.current, fragment.t_start_ms);
+      seekToMs(fragment.t_start_ms);
+      play();
     }
   };
 
@@ -194,16 +208,16 @@ export default function TranscriptMediaPane({
             <p>No playback source is available.</p>
           </div>
         ) : mediaKind === "podcast_episode" && playbackSource.kind === "external_audio" ? (
-          <audio
-            ref={audioRef}
-            aria-label="Podcast audio player"
-            controls
-            preload="none"
-            src={playbackSource.stream_url}
-            className={styles.player}
-            onError={() => setPlaybackError(true)}
-            onCanPlay={() => setPlaybackError(false)}
-          />
+          <div className={styles.globalPlayerPrompt}>
+            <p>Playback is controlled in the global player footer.</p>
+            <button
+              type="button"
+              className={styles.globalPlayerButton}
+              onClick={() => play()}
+            >
+              Play in footer
+            </button>
+          </div>
         ) : mediaKind === "video" && iframeSrc ? (
           <iframe
             title="YouTube video player"
@@ -267,6 +281,7 @@ export default function TranscriptMediaPane({
                   className={`${styles.segmentButton} ${
                     isActive ? styles.segmentButtonActive : ""
                   }`}
+                  aria-current={isActive ? "true" : undefined}
                   onClick={() => handleSegmentClick(fragment)}
                 >
                   <span className={styles.segmentMeta}>

@@ -23,6 +23,7 @@ from nexus.tasks.ingest_web_article import ingest_web_article
 from nexus.tasks.ingest_youtube_video import ingest_youtube_video
 from nexus.tasks.podcast_active_subscription_poll import podcast_active_subscription_poll_job
 from nexus.tasks.podcast_sync_subscription import podcast_sync_subscription_job
+from nexus.tasks.podcast_transcribe_episode import podcast_transcribe_episode_job
 from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
 
 __all__ = [
@@ -34,5 +35,6 @@ __all__ = [
     "backfill_default_library_closure_job",
     "podcast_active_subscription_poll_job",
     "podcast_sync_subscription_job",
+    "podcast_transcribe_episode_job",
     "reconcile_stale_ingest_media_job",
 ]

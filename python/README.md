@@ -119,12 +119,14 @@ nexus/
 | GET | `/keys` | List user's API keys (safe fields only) (S3) |
 | POST | `/keys` | Add or update API key for provider (S3) |
 | DELETE | `/keys/{id}` | Revoke an API key (S3) |
-| POST | `/keys/{id}/test` | Test an API key against its provider (S3) |
 | GET | `/search` | Keyword search across visible content (S3, PR-06) |
 | GET | `/podcasts/discover` | Global podcast discovery metadata (S7) |
+| GET | `/podcasts/subscriptions` | List active subscriptions for current viewer (S7) |
 | POST | `/podcasts/subscriptions` | Create/update subscription and enqueue async sync (S7) |
 | GET | `/podcasts/subscriptions/{podcast_id}` | Read per-user subscription sync lifecycle status (S7) |
 | DELETE | `/podcasts/subscriptions/{podcast_id}` | Unsubscribe with explicit retention mode (`mode=1|2|3`, default `1`) (S7 PR-02) |
+| GET | `/podcasts/{podcast_id}` | Podcast detail for current viewer (S7) |
+| GET | `/podcasts/{podcast_id}/episodes` | List visible episode media for subscribed podcast (S7) |
 | PUT | `/internal/podcasts/users/{user_id}/plan` | Internal operator plan override endpoint (S7) |
 | POST | `/internal/ingest/reconcile` | Internal operator trigger for stale-ingest reconciliation |
 | GET | `/internal/ingest/reconcile/health` | Internal operator stale-ingest backlog snapshot |
@@ -169,7 +171,7 @@ Podcast subscription ingest is split into control-plane and data-plane paths:
   - terminal/readability failure: `E_TRANSCRIPTION_FAILED`, `E_TRANSCRIPTION_TIMEOUT`, `E_TRANSCRIPT_UNAVAILABLE`
   - diagnostic-only fallback signal: `E_DIARIZATION_FAILED` on completed transcription jobs when non-diarized fallback succeeds
 - Sync status is explicit and queryable via `GET /podcasts/subscriptions/{podcast_id}`:
-  `pending`, `running`, `complete`, `source_limited`, `failed`.
+  `pending`, `running`, `partial`, `complete`, `source_limited`, `failed`.
 - `source_limited` indicates upstream source pagination limits prevented fully satisfying requested prefetch depth.
 - Ongoing polling ingest only processes `active` subscriptions and reuses the same sync/idempotency/quota path as direct subscription sync.
 - Scheduled polling runs are singleton-safe at cluster scope (durable `podcast_subscription_poll_runs` lease rows) and persist deterministic counters + failure-code breakdowns in `podcast_subscription_poll_run_failures`.
@@ -186,7 +188,7 @@ PDF/EPUB ingest reliability is guarded by a canonical Celery contract and bounde
 - `nexus.celery_contract` is the source of truth for required worker tasks, task routes, and beat jobs.
 - Worker startup hard-fails if any required task is missing from runtime registration.
 - `scripts/verify_celery_contract.py` enforces contract parity for deploy preflight checks.
-- Beat job `reconcile_stale_ingest_media_job` scans stale `extracting` rows (`pdf`, `epub`) and:
+- Beat job `reconcile_stale_ingest_media_job` scans stale `extracting` rows (`pdf`, `epub`, `podcast_episode`) and:
   - re-dispatches up to `INGEST_STALE_REQUEUE_MAX_ATTEMPTS`
   - fail-closes with deterministic timeout metadata after max attempts
 - Operator endpoints:

@@ -135,18 +135,57 @@ def _subscribe(auth_client, user_id: UUID, payload: dict) -> dict:
 
 
 def _run_subscription_sync(
-    direct_db: DirectSessionManager, user_id: UUID, podcast_id: UUID
+    direct_db: DirectSessionManager,
+    user_id: UUID,
+    podcast_id: UUID,
+    *,
+    run_transcription_jobs: bool = True,
+    stub_enqueue: bool = True,
 ) -> dict:
+    from nexus.services import podcasts as podcast_service
     from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+    from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
 
-    with direct_db.session() as session:
-        result = run_podcast_subscription_sync_now(
-            session,
-            user_id=user_id,
-            podcast_id=podcast_id,
-        )
-        session.commit()
-    return result
+    original_enqueue = podcast_service._enqueue_podcast_transcription_job
+
+    def _enqueue_stub(*, media_id: UUID, requested_by_user_id: UUID | None) -> bool:
+        _ = media_id, requested_by_user_id
+        return True
+
+    if stub_enqueue:
+        podcast_service._enqueue_podcast_transcription_job = _enqueue_stub
+
+    try:
+        with direct_db.session() as session:
+            result = run_podcast_subscription_sync_now(
+                session,
+                user_id=user_id,
+                podcast_id=podcast_id,
+            )
+            if run_transcription_jobs:
+                pending_jobs = session.execute(
+                    text(
+                        """
+                        SELECT j.media_id, j.requested_by_user_id
+                        FROM podcast_transcription_jobs j
+                        JOIN podcast_episodes pe ON pe.media_id = j.media_id
+                        WHERE pe.podcast_id = :podcast_id
+                          AND j.status = 'pending'
+                        ORDER BY j.media_id ASC
+                        """
+                    ),
+                    {"podcast_id": podcast_id},
+                ).fetchall()
+                for row in pending_jobs:
+                    run_podcast_transcribe_now(
+                        session,
+                        media_id=row[0],
+                        requested_by_user_id=row[1],
+                    )
+            session.commit()
+        return result
+    finally:
+        podcast_service._enqueue_podcast_transcription_job = original_enqueue
 
 
 def _podcast_payload(provider_podcast_id: str, title: str) -> dict:
@@ -2601,3 +2640,679 @@ class TestPodcastSubscriptionLifecycleClosure:
             ).fetchall()
 
         assert [row[0] for row in titles] == ["Poll Episode One", "Poll Episode Two"]
+
+
+class TestPodcastApiSurface:
+    def _subscribe_and_sync_single_podcast(
+        self,
+        *,
+        auth_client,
+        monkeypatch,
+        direct_db,
+        user_id: UUID,
+        provider_podcast_id: str,
+        title: str,
+    ) -> tuple[UUID, dict[str, list[dict[str, object]]]]:
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=5,
+        )
+        payload = _podcast_payload(provider_podcast_id, title)
+        episodes_by_podcast: dict[str, list[dict[str, object]]] = {
+            provider_podcast_id: [
+                {
+                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "guid": f"{provider_podcast_id}-guid-1",
+                    "title": "Episode 1",
+                    "audio_url": "https://cdn.example.com/podcast-ep-1.mp3",
+                    "published_at": "2026-03-03T10:00:00Z",
+                    "duration_seconds": 120,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 800, "text": "ep1"}],
+                },
+                {
+                    "provider_episode_id": f"{provider_podcast_id}-ep-2",
+                    "guid": f"{provider_podcast_id}-guid-2",
+                    "title": "Episode 2",
+                    "audio_url": "https://cdn.example.com/podcast-ep-2.mp3",
+                    "published_at": "2026-03-02T10:00:00Z",
+                    "duration_seconds": 90,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "ep2"}],
+                },
+            ]
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(direct_db, user_id, podcast_id)
+        return podcast_id, episodes_by_podcast
+
+    def test_list_subscriptions_returns_podcast_metadata_and_sync_snapshot(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        provider_podcast_id = f"surface-list-{uuid4()}"
+        podcast_id, _ = self._subscribe_and_sync_single_podcast(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            user_id=user_id,
+            provider_podcast_id=provider_podcast_id,
+            title="Surface Podcast",
+        )
+
+        response = auth_client.get("/podcasts/subscriptions", headers=auth_headers(user_id))
+        assert response.status_code == 200, (
+            f"expected 200 from subscriptions list, got {response.status_code}: {response.text}"
+        )
+        rows = response.json()["data"]
+        assert len(rows) == 1, f"expected exactly one subscription row, got: {rows}"
+        row = rows[0]
+        assert row["podcast_id"] == str(podcast_id)
+        assert row["status"] == "active"
+        assert row["sync_status"] in {"complete", "source_limited"}
+        assert row["podcast"]["provider_podcast_id"] == provider_podcast_id
+        assert row["podcast"]["title"] == "Surface Podcast"
+        assert row["podcast"]["feed_url"] == f"https://feeds.example.com/{provider_podcast_id}.xml"
+
+    def test_get_podcast_detail_returns_podcast_and_subscription_payload(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        provider_podcast_id = f"surface-detail-{uuid4()}"
+        podcast_id, _ = self._subscribe_and_sync_single_podcast(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            user_id=user_id,
+            provider_podcast_id=provider_podcast_id,
+            title="Detail Podcast",
+        )
+
+        response = auth_client.get(f"/podcasts/{podcast_id}", headers=auth_headers(user_id))
+        assert response.status_code == 200, (
+            f"expected 200 from podcast detail, got {response.status_code}: {response.text}"
+        )
+        data = response.json()["data"]
+        assert data["podcast"]["id"] == str(podcast_id)
+        assert data["podcast"]["provider_podcast_id"] == provider_podcast_id
+        assert data["podcast"]["title"] == "Detail Podcast"
+        assert data["subscription"]["status"] == "active"
+        assert data["subscription"]["podcast_id"] == str(podcast_id)
+
+    def test_get_podcast_episodes_returns_visible_episode_media(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        provider_podcast_id = f"surface-episodes-{uuid4()}"
+        podcast_id, _ = self._subscribe_and_sync_single_podcast(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            user_id=user_id,
+            provider_podcast_id=provider_podcast_id,
+            title="Episodes Podcast",
+        )
+
+        response = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"expected 200 from podcast episodes list, got {response.status_code}: {response.text}"
+        )
+        rows = response.json()["data"]
+        assert len(rows) == 2, f"expected two episode media rows, got: {rows}"
+        assert rows[0]["kind"] == "podcast_episode"
+        assert rows[0]["playback_source"]["kind"] == "external_audio"
+        assert rows[0]["title"] == "Episode 1"
+        assert rows[1]["title"] == "Episode 2"
+
+    def test_non_subscriber_gets_masked_404_for_podcast_detail_and_episodes(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        subscriber_id = create_test_user_id()
+        other_user_id = create_test_user_id()
+        provider_podcast_id = f"surface-authz-{uuid4()}"
+        podcast_id, _ = self._subscribe_and_sync_single_podcast(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            user_id=subscriber_id,
+            provider_podcast_id=provider_podcast_id,
+            title="Authz Podcast",
+        )
+        _bootstrap_user(auth_client, other_user_id)
+
+        detail_response = auth_client.get(
+            f"/podcasts/{podcast_id}",
+            headers=auth_headers(other_user_id),
+        )
+        assert detail_response.status_code == 404, (
+            "podcast detail should be hidden from non-subscribers to prevent existence leakage, "
+            f"got {detail_response.status_code}: {detail_response.text}"
+        )
+
+        episodes_response = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes",
+            headers=auth_headers(other_user_id),
+        )
+        assert episodes_response.status_code == 404, (
+            "podcast episodes should be hidden from non-subscribers to prevent existence leakage, "
+            f"got {episodes_response.status_code}: {episodes_response.text}"
+        )
+
+    def test_discover_retries_transient_provider_timeout_before_failing(
+        self, auth_client, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        monkeypatch.setenv("PODCAST_INDEX_API_KEY", "test-key")
+        monkeypatch.setenv("PODCAST_INDEX_API_SECRET", "test-secret")
+        clear_settings_cache()
+
+        call_count = {"value": 0}
+
+        class _FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {
+                    "feeds": [
+                        {
+                            "id": "provider-1",
+                            "url": "https://feeds.example.com/provider-1.xml",
+                            "title": "Retry Podcast",
+                            "author": "Retry Author",
+                        }
+                    ]
+                }
+
+        def flaky_get(*args, **kwargs):  # noqa: ANN002, ANN003
+            _ = args, kwargs
+            call_count["value"] += 1
+            if call_count["value"] < 3:
+                raise httpx.TimeoutException("timeout")
+            return _FakeResponse()
+
+        monkeypatch.setattr("nexus.services.podcasts.httpx.get", flaky_get)
+        response = auth_client.get(
+            "/podcasts/discover?q=retry&limit=10", headers=auth_headers(user_id)
+        )
+        assert response.status_code == 200, (
+            "discover should survive transient provider timeout via retry/backoff; "
+            f"got {response.status_code}: {response.text}"
+        )
+        assert call_count["value"] == 3, (
+            f"expected timeout retries before success (3 attempts), got {call_count['value']}"
+        )
+        data = response.json()["data"]
+        assert data[0]["title"] == "Retry Podcast"
+
+
+class TestPodcastTranscriptionAsyncLifecycle:
+    def _seed_single_episode_subscription(
+        self,
+        *,
+        auth_client,
+        monkeypatch,
+        direct_db,
+        run_transcription_jobs: bool,
+    ) -> dict[str, UUID]:
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="paid",
+            daily_transcription_minutes=None,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"tx-lifecycle-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Lifecycle Podcast")
+        episodes_by_podcast = {
+            provider_podcast_id: [
+                {
+                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "guid": f"{provider_podcast_id}-guid-1",
+                    "title": "Lifecycle Episode",
+                    "audio_url": "https://cdn.example.com/lifecycle-1.mp3",
+                    "published_at": "2026-03-04T10:00:00Z",
+                    "duration_seconds": 180,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "seed"}],
+                }
+            ]
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=run_transcription_jobs,
+            stub_enqueue=True,
+        )
+
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text(
+                    """
+                    SELECT pe.media_id
+                    FROM podcast_episodes pe
+                    JOIN podcasts p ON p.id = pe.podcast_id
+                    WHERE p.provider_podcast_id = :provider_podcast_id
+                    """
+                ),
+                {"provider_podcast_id": provider_podcast_id},
+            ).scalar()
+            assert media_id is not None
+
+        return {
+            "user_id": user_id,
+            "podcast_id": podcast_id,
+            "media_id": media_id,
+        }
+
+    def test_sync_creates_pending_transcription_job_without_inline_transcription(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_single_episode_subscription(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            run_transcription_jobs=False,
+        )
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT
+                        m.processing_status,
+                        m.failure_stage,
+                        m.last_error_code,
+                        j.status,
+                        j.attempts,
+                        j.started_at,
+                        j.completed_at
+                    FROM media m
+                    JOIN podcast_transcription_jobs j ON j.media_id = m.id
+                    WHERE m.id = :media_id
+                    """
+                ),
+                {"media_id": seeded["media_id"]},
+            ).fetchone()
+
+        assert row is not None
+        assert row[0] == "extracting"
+        assert row[1] is None
+        assert row[2] is None
+        assert row[3] == "pending"
+        assert row[4] == 0
+        assert row[5] is None
+        assert row[6] is None
+
+    def test_manual_transcription_worker_claims_pending_job_and_marks_completed(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_single_episode_subscription(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            run_transcription_jobs=False,
+        )
+        media_id = seeded["media_id"]
+        user_id = seeded["user_id"]
+
+        monkeypatch.setattr(
+            "nexus.services.podcasts._transcribe_podcast_audio",
+            lambda _audio_url: {
+                "status": "completed",
+                "segments": [
+                    {"t_start_ms": 0, "t_end_ms": 800, "text": "first"},
+                    {"t_start_ms": 900, "t_end_ms": 1700, "text": "second"},
+                ],
+            },
+        )
+
+        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+
+        with direct_db.session() as session:
+            result = run_podcast_transcribe_now(
+                session,
+                media_id=media_id,
+                requested_by_user_id=user_id,
+            )
+            session.commit()
+
+        assert result["status"] == "completed"
+        assert result["segment_count"] == 2
+
+        with direct_db.session() as session:
+            media_row = session.execute(
+                text(
+                    """
+                    SELECT processing_status, failure_stage, last_error_code
+                    FROM media
+                    WHERE id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            job_row = session.execute(
+                text(
+                    """
+                    SELECT status, attempts, started_at, completed_at, error_code
+                    FROM podcast_transcription_jobs
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            fragment_count = session.execute(
+                text("SELECT COUNT(*) FROM fragments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+
+        assert media_row is not None
+        assert media_row[0] == "ready_for_reading"
+        assert media_row[1] is None
+        assert media_row[2] is None
+        assert job_row is not None
+        assert job_row[0] == "completed"
+        assert job_row[1] == 1
+        assert job_row[2] is not None
+        assert job_row[3] is not None
+        assert job_row[4] is None
+        assert fragment_count == 2
+
+    def test_manual_transcription_worker_is_idempotent_after_completion(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_single_episode_subscription(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            run_transcription_jobs=False,
+        )
+        media_id = seeded["media_id"]
+        user_id = seeded["user_id"]
+
+        monkeypatch.setattr(
+            "nexus.services.podcasts._transcribe_podcast_audio",
+            lambda _audio_url: {
+                "status": "completed",
+                "segments": [{"t_start_ms": 0, "t_end_ms": 600, "text": "single"}],
+            },
+        )
+
+        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+
+        with direct_db.session() as session:
+            first = run_podcast_transcribe_now(
+                session,
+                media_id=media_id,
+                requested_by_user_id=user_id,
+            )
+            second = run_podcast_transcribe_now(
+                session,
+                media_id=media_id,
+                requested_by_user_id=user_id,
+            )
+            session.commit()
+
+        assert first["status"] == "completed"
+        assert second["status"] == "skipped"
+        assert second["reason"] == "not_pending"
+        assert second["job_status"] == "completed"
+
+        with direct_db.session() as session:
+            attempts = session.execute(
+                text(
+                    """
+                    SELECT attempts
+                    FROM podcast_transcription_jobs
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar()
+        assert attempts == 1
+
+    def test_retry_endpoint_requeues_failed_podcast_transcription_and_is_idempotent(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_single_episode_subscription(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            run_transcription_jobs=False,
+        )
+        media_id = seeded["media_id"]
+        user_id = seeded["user_id"]
+
+        monkeypatch.setattr(
+            "nexus.services.podcasts._transcribe_podcast_audio",
+            lambda _audio_url: {
+                "status": "failed",
+                "error_code": "E_TRANSCRIPTION_FAILED",
+                "error_message": "simulated terminal failure",
+            },
+        )
+
+        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+
+        with direct_db.session() as session:
+            failed_result = run_podcast_transcribe_now(
+                session,
+                media_id=media_id,
+                requested_by_user_id=user_id,
+            )
+            session.commit()
+        assert failed_result["status"] == "failed"
+
+        from unittest.mock import patch
+
+        with patch(
+            "nexus.tasks.podcast_transcribe_episode.podcast_transcribe_episode_job.apply_async"
+        ) as mock_dispatch:
+            mock_dispatch.return_value = None
+            retry_response = auth_client.post(
+                f"/media/{media_id}/retry",
+                headers=auth_headers(user_id),
+            )
+
+        assert retry_response.status_code == 202, (
+            f"expected podcast retry endpoint to accept failed transcribe media, got "
+            f"{retry_response.status_code}: {retry_response.text}"
+        )
+        retry_data = retry_response.json()["data"]
+        assert retry_data["processing_status"] == "extracting"
+        assert retry_data["retry_enqueued"] is True
+        mock_dispatch.assert_called_once()
+
+        with direct_db.session() as session:
+            job_row = session.execute(
+                text(
+                    """
+                    SELECT status, error_code, started_at, completed_at
+                    FROM podcast_transcription_jobs
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            media_row = session.execute(
+                text(
+                    """
+                    SELECT processing_status, failure_stage, last_error_code
+                    FROM media
+                    WHERE id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+
+        assert job_row is not None
+        assert job_row[0] == "pending"
+        assert job_row[1] is None
+        assert job_row[2] is None
+        assert job_row[3] is None
+        assert media_row is not None
+        assert media_row[0] == "extracting"
+        assert media_row[1] is None
+        assert media_row[2] is None
+
+        with patch(
+            "nexus.tasks.podcast_transcribe_episode.podcast_transcribe_episode_job.apply_async"
+        ) as second_dispatch:
+            second_retry = auth_client.post(
+                f"/media/{media_id}/retry",
+                headers=auth_headers(user_id),
+            )
+        assert second_retry.status_code == 202
+        second_data = second_retry.json()["data"]
+        assert second_data["processing_status"] == "extracting"
+        assert second_data["retry_enqueued"] is False
+        second_dispatch.assert_not_called()
+
+    def test_retry_endpoint_requeues_failed_video_transcription_and_is_idempotent(
+        self, auth_client, direct_db
+    ):
+        user_id = create_test_user_id()
+        default_library_id = _bootstrap_user(auth_client, user_id)
+
+        media_id = uuid4()
+        now = datetime.now(UTC)
+        playback_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id,
+                        kind,
+                        title,
+                        canonical_source_url,
+                        processing_status,
+                        failure_stage,
+                        last_error_code,
+                        last_error_message,
+                        external_playback_url,
+                        provider,
+                        provider_id,
+                        created_by_user_id,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        :id,
+                        'video',
+                        :title,
+                        :canonical_source_url,
+                        'failed',
+                        'transcribe',
+                        'E_TRANSCRIPTION_FAILED',
+                        'simulated failure',
+                        :external_playback_url,
+                        'youtube',
+                        :provider_id,
+                        :created_by_user_id,
+                        :created_at,
+                        :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": media_id,
+                    "title": "Failed Video",
+                    "canonical_source_url": playback_url,
+                    "external_playback_url": playback_url,
+                    "provider_id": "dQw4w9WgXcQ",
+                    "created_by_user_id": user_id,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO default_library_intrinsics (default_library_id, media_id, created_at)
+                    VALUES (:default_library_id, :media_id, :created_at)
+                    """
+                ),
+                {
+                    "default_library_id": default_library_id,
+                    "media_id": media_id,
+                    "created_at": now,
+                },
+            )
+            session.commit()
+
+        from unittest.mock import patch
+
+        with patch(
+            "nexus.tasks.ingest_youtube_video.ingest_youtube_video.apply_async"
+        ) as mock_dispatch:
+            mock_dispatch.return_value = None
+            retry_response = auth_client.post(
+                f"/media/{media_id}/retry",
+                headers=auth_headers(user_id),
+            )
+
+        assert retry_response.status_code == 202, (
+            f"expected video retry endpoint to accept failed transcribe media, got "
+            f"{retry_response.status_code}: {retry_response.text}"
+        )
+        retry_data = retry_response.json()["data"]
+        assert retry_data["processing_status"] == "extracting"
+        assert retry_data["retry_enqueued"] is True
+        mock_dispatch.assert_called_once()
+
+        with direct_db.session() as session:
+            media_row = session.execute(
+                text(
+                    """
+                    SELECT processing_status, failure_stage, last_error_code
+                    FROM media
+                    WHERE id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+        assert media_row is not None
+        assert media_row[0] == "extracting"
+        assert media_row[1] is None
+        assert media_row[2] is None
+
+        with patch(
+            "nexus.tasks.ingest_youtube_video.ingest_youtube_video.apply_async"
+        ) as second_dispatch:
+            second_retry = auth_client.post(
+                f"/media/{media_id}/retry",
+                headers=auth_headers(user_id),
+            )
+        assert second_retry.status_code == 202
+        second_data = second_retry.json()["data"]
+        assert second_data["processing_status"] == "extracting"
+        assert second_data["retry_enqueued"] is False
+        second_dispatch.assert_not_called()

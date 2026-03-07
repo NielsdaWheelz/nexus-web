@@ -98,6 +98,43 @@ def test_reconciler_requeues_stale_pdf_when_attempts_below_limit(db_session: Ses
     assert refreshed.processing_attempts == 2
 
 
+def test_reconciler_requeues_stale_podcast_episode_when_attempts_below_limit(
+    db_session: Session,
+):
+    media_id = _insert_extracting_media(
+        db_session,
+        kind="podcast_episode",
+        attempts=0,
+        started_seconds_ago=120,
+    )
+
+    with (
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_settings",
+            return_value=_recovery_settings(max_attempts=3),
+        ),
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_session_factory",
+            return_value=task_session_factory(db_session),
+        ),
+        patch(
+            "nexus.tasks.podcast_transcribe_episode.podcast_transcribe_episode_job.apply_async"
+        ) as mock_dispatch,
+    ):
+        from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
+
+        result = reconcile_stale_ingest_media_job()
+
+    assert result["scanned"] >= 1, f"Expected at least one stale row scanned, got: {result}"
+    assert result["requeued"] >= 1, f"Expected at least one stale row requeued, got: {result}"
+    mock_dispatch.assert_called_once()
+
+    db_session.expire_all()
+    refreshed = db_session.get(Media, media_id)
+    assert refreshed.processing_status == ProcessingStatus.extracting
+    assert refreshed.processing_attempts == 1
+
+
 def test_reconciler_fails_stale_pdf_after_max_recovery_attempts(db_session: Session):
     media_id = _insert_extracting_media(
         db_session,

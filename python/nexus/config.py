@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
 
     # S7: Podcast discovery + subscription ingestion policy
+    podcasts_enabled: bool = Field(default=True, alias="PODCASTS_ENABLED")
     podcast_index_api_key: str | None = Field(default=None, alias="PODCAST_INDEX_API_KEY")
     podcast_index_api_secret: str | None = Field(default=None, alias="PODCAST_INDEX_API_SECRET")
     podcast_index_base_url: str = Field(
@@ -269,6 +270,17 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_SYNC_RUNNING_LEASE_SECONDS must be >= 1.")
         if self.podcast_transcription_timeout_seconds <= 0:
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
+        if self.podcasts_enabled:
+            missing_podcast_provider_settings: list[str] = []
+            if not self.podcast_index_api_key:
+                missing_podcast_provider_settings.append("PODCAST_INDEX_API_KEY")
+            if not self.podcast_index_api_secret:
+                missing_podcast_provider_settings.append("PODCAST_INDEX_API_SECRET")
+            if missing_podcast_provider_settings:
+                raise ValueError(
+                    "Podcast features are enabled but provider credentials are missing: "
+                    f"{', '.join(missing_podcast_provider_settings)}"
+                )
         if self.ingest_reconcile_schedule_seconds < 1:
             raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 1.")
         if self.ingest_stale_extracting_seconds < 1:

@@ -44,6 +44,40 @@
   font-size: var(--font-size-xs);
 }
 
+.subscriptionsLink {
+  color: var(--color-accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.subscribeButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.subscribeButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.viewPodcastLink {
+  color: var(--color-accent);
+  text-decoration: none;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.subscriptionState {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: capitalize;
+}
+
 @media (max-width: 900px) {
   .discoveryForm {
     flex-direction: column;

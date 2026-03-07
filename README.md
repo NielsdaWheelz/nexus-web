@@ -259,6 +259,15 @@ DATABASE_URL_TEST=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_t
 DATABASE_URL_TEST_MIGRATIONS=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations
 REDIS_URL=redis://localhost:6379/0
 
+# Podcast discovery/subscription provider config (S7 PR-01 / PR-02)
+# make setup writes PODCASTS_ENABLED=false by default so local API boot works
+# without third-party credentials.
+# PODCAST_INDEX_API_KEY=<podcast-index-api-key>
+# PODCAST_INDEX_API_SECRET=<podcast-index-api-secret>
+# If you want podcasts enabled locally, set PODCASTS_ENABLED=true and
+# provide PODCAST_INDEX_API_KEY/PODCAST_INDEX_API_SECRET.
+PODCASTS_ENABLED=false
+
 # Optional: real podcast transcription provider config (S7 PR-03)
 # DEEPGRAM_API_KEY=<deepgram-api-key>
 # DEEPGRAM_BASE_URL=https://api.deepgram.com
@@ -275,7 +284,7 @@ REDIS_URL=redis://localhost:6379/0
 SUPABASE_URL=http://127.0.0.1:54321
 SUPABASE_ANON_KEY=<generated-by-supabase>
 SUPABASE_SERVICE_ROLE_KEY=<generated-by-supabase>
-SUPABASE_SERVICE_KEY=<service-role-key-for-storage>
+SUPABASE_SERVICE_KEY=<same-as-SUPABASE_SERVICE_ROLE_KEY>
 
 # Supabase auth settings (used by FastAPI)
 SUPABASE_ISSUER=http://127.0.0.1:54321/auth/v1
@@ -287,6 +296,7 @@ This file is:
 - **Gitignored** - not committed to the repo
 - **Auto-loaded** by Makefile and scripts
 - **Created fresh** by each `make setup` run
+- **Podcasts-off by default** for local setup until Podcast Index credentials are provided
 
 ### Environment Variables
 
@@ -308,6 +318,14 @@ This file is:
 | `REDIS_URL` | For worker | Redis connection string (e.g., `redis://localhost:6379/0`) |
 | `CELERY_BROKER_URL` | No | Celery broker URL (defaults to `REDIS_URL`) |
 | `CELERY_RESULT_BACKEND` | No | Celery result backend URL (defaults to `REDIS_URL`) |
+
+#### Podcast Discovery + Subscription (S7 PR-01 / PR-02)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PODCASTS_ENABLED` | No | Feature flag for podcasts routes/jobs (default: `true`) |
+| `PODCAST_INDEX_API_KEY` | If `PODCASTS_ENABLED=true` | Podcast Index API key |
+| `PODCAST_INDEX_API_SECRET` | If `PODCASTS_ENABLED=true` | Podcast Index API secret |
 
 #### Podcast Transcription (S7 PR-03)
 
@@ -332,6 +350,7 @@ This file is:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `SUPABASE_URL` | For storage | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Local setup convenience | Value from `supabase status`; set `SUPABASE_SERVICE_KEY` to this value |
 | `SUPABASE_SERVICE_KEY` | For storage | Supabase service role key |
 | `STORAGE_BUCKET` | No | Storage bucket name (default: `media`) |
 | `MAX_PDF_BYTES` | No | Max PDF upload size (default: 100 MB) |

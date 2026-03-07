@@ -215,6 +215,12 @@ DATABASE_URL_TEST=${DATABASE_URL_TEST}
 DATABASE_URL_TEST_MIGRATIONS=${DATABASE_URL_TEST_MIGRATIONS}
 REDIS_URL=${REDIS_URL}
 
+# Podcast features are disabled by default for local setup because
+# Podcast Index credentials are not provisioned automatically by `make setup`.
+PODCASTS_ENABLED=false
+# PODCAST_INDEX_API_KEY=<podcast-index-api-key>
+# PODCAST_INDEX_API_SECRET=<podcast-index-api-secret>
+
 # Supabase local configuration
 SUPABASE_URL=${SUPABASE_URL}
 SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}

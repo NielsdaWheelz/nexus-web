@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import time
 from datetime import UTC, date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -18,16 +19,28 @@ from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.session import transaction
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import (
+    ApiError,
+    ApiErrorCode,
+    ConflictError,
+    ForbiddenError,
+    InvalidRequestError,
+    NotFoundError,
+)
 from nexus.logging import get_logger
+from nexus.schemas.media import MediaOut
 from nexus.schemas.podcast import (
+    PodcastDetailOut,
     PodcastDiscoveryOut,
+    PodcastListItemOut,
     PodcastPlanOut,
     PodcastPlanUpdateRequest,
     PodcastSubscribeOut,
     PodcastSubscribeRequest,
+    PodcastSubscriptionListItemOut,
     PodcastSubscriptionStatusOut,
 )
+from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services.transcript_segments import (
     canonicalize_transcript_segment_text as _shared_canonicalize_transcript_segment_text,
 )
@@ -46,6 +59,9 @@ PODCAST_PROVIDER = "podcast_index"
 PODCAST_INDEX_EPISODE_PAGE_SIZE = 100
 PODCAST_FEED_PAGINATION_MAX_PAGES = 10
 PODCAST_UNSUBSCRIBE_MODES = {1, 2, 3}
+PODCAST_PROVIDER_RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+PODCAST_PROVIDER_MAX_ATTEMPTS = 3
+PODCAST_PROVIDER_BACKOFF_SECONDS = (0.25, 0.5, 1.0)
 _ATOM_NAMESPACE = {"atom": "http://www.w3.org/2005/Atom"}
 _ITUNES_DURATION_XPATH = (
     "*[local-name()='duration' and namespace-uri()='http://www.itunes.com/dtds/podcast-1.0.dtd']"
@@ -78,29 +94,89 @@ class PodcastIndexClient:
             "User-Agent": "nexus-podcast-client/1.0",
         }
 
+    def _retry_delay_seconds(
+        self, *, attempt_index: int, response: httpx.Response | None = None
+    ) -> float:
+        # Respect Retry-After when provider rate-limits requests.
+        if response is not None and response.status_code == 429:
+            retry_after = str(response.headers.get("Retry-After") or "").strip()
+            if retry_after:
+                try:
+                    retry_after_seconds = float(retry_after)
+                    if retry_after_seconds > 0:
+                        return min(retry_after_seconds, 10.0)
+                except ValueError:
+                    pass
+        return PODCAST_PROVIDER_BACKOFF_SECONDS[
+            min(attempt_index, len(PODCAST_PROVIDER_BACKOFF_SECONDS) - 1)
+        ]
+
     def _get_json(self, path: str, *, params: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
-        try:
-            response = httpx.get(
-                url,
-                params=params,
-                headers=self._auth_headers(),
-                timeout=15.0,
-            )
-            response.raise_for_status()
-            payload = response.json()
-        except Exception as exc:
-            raise ApiError(
-                ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
-                "Podcast provider request failed",
-            ) from exc
+        last_exc: Exception | None = None
+        for attempt_index in range(PODCAST_PROVIDER_MAX_ATTEMPTS):
+            try:
+                response = httpx.get(
+                    url,
+                    params=params,
+                    headers=self._auth_headers(),
+                    timeout=15.0,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, dict):
+                    raise ApiError(
+                        ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
+                        "Podcast provider returned an invalid response",
+                    )
+                return payload
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                status_code = exc.response.status_code
+                if (
+                    status_code in PODCAST_PROVIDER_RETRYABLE_STATUS_CODES
+                    and attempt_index < PODCAST_PROVIDER_MAX_ATTEMPTS - 1
+                ):
+                    delay_seconds = self._retry_delay_seconds(
+                        attempt_index=attempt_index,
+                        response=exc.response,
+                    )
+                    logger.warning(
+                        "podcast_provider_retryable_http_error",
+                        provider=PODCAST_PROVIDER,
+                        path=path,
+                        status_code=status_code,
+                        attempt=attempt_index + 1,
+                        max_attempts=PODCAST_PROVIDER_MAX_ATTEMPTS,
+                        retry_delay_seconds=delay_seconds,
+                    )
+                    time.sleep(delay_seconds)
+                    continue
+                break
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_exc = exc
+                if attempt_index < PODCAST_PROVIDER_MAX_ATTEMPTS - 1:
+                    delay_seconds = self._retry_delay_seconds(attempt_index=attempt_index)
+                    logger.warning(
+                        "podcast_provider_retryable_transport_error",
+                        provider=PODCAST_PROVIDER,
+                        path=path,
+                        attempt=attempt_index + 1,
+                        max_attempts=PODCAST_PROVIDER_MAX_ATTEMPTS,
+                        retry_delay_seconds=delay_seconds,
+                        error=str(exc),
+                    )
+                    time.sleep(delay_seconds)
+                    continue
+                break
+            except Exception as exc:
+                last_exc = exc
+                break
 
-        if not isinstance(payload, dict):
-            raise ApiError(
-                ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
-                "Podcast provider returned an invalid response",
-            )
-        return payload
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
+            "Podcast provider request failed",
+        ) from last_exc
 
     def search_podcasts(self, query: str, limit: int) -> list[dict[str, Any]]:
         payload = self._get_json(
@@ -281,6 +357,388 @@ def get_subscription_status(
         last_synced_at=row[10],
         updated_at=row[11],
     )
+
+
+def _podcast_list_item_from_row(row: Any) -> PodcastListItemOut:
+    return PodcastListItemOut(
+        id=row[0],
+        provider=row[1],
+        provider_podcast_id=row[2],
+        title=row[3],
+        author=row[4],
+        feed_url=row[5],
+        website_url=row[6],
+        image_url=row[7],
+        description=row[8],
+        created_at=row[9],
+        updated_at=row[10],
+    )
+
+
+def list_subscriptions(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    limit: int = 100,
+) -> list[PodcastSubscriptionListItemOut]:
+    if limit <= 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    limit = min(limit, 200)
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                ps.podcast_id,
+                ps.status,
+                ps.unsubscribe_mode,
+                ps.sync_status,
+                ps.sync_error_code,
+                ps.sync_error_message,
+                ps.sync_attempts,
+                ps.sync_started_at,
+                ps.sync_completed_at,
+                ps.last_synced_at,
+                ps.updated_at,
+                p.id,
+                p.provider,
+                p.provider_podcast_id,
+                p.title,
+                p.author,
+                p.feed_url,
+                p.website_url,
+                p.image_url,
+                p.description,
+                p.created_at,
+                p.updated_at
+            FROM podcast_subscriptions ps
+            JOIN podcasts p ON p.id = ps.podcast_id
+            WHERE ps.user_id = :user_id
+              AND ps.status = 'active'
+            ORDER BY ps.updated_at DESC, ps.podcast_id DESC
+            LIMIT :limit
+            """
+        ),
+        {"user_id": viewer_id, "limit": limit},
+    ).fetchall()
+    out: list[PodcastSubscriptionListItemOut] = []
+    for row in rows:
+        podcast = _podcast_list_item_from_row(row[11:])
+        out.append(
+            PodcastSubscriptionListItemOut(
+                podcast_id=row[0],
+                status=row[1],
+                unsubscribe_mode=row[2],
+                sync_status=row[3],
+                sync_error_code=row[4],
+                sync_error_message=row[5],
+                sync_attempts=row[6],
+                sync_started_at=row[7],
+                sync_completed_at=row[8],
+                last_synced_at=row[9],
+                updated_at=row[10],
+                podcast=podcast,
+            )
+        )
+    return out
+
+
+def get_podcast_detail_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    podcast_id: UUID,
+) -> PodcastDetailOut:
+    row = db.execute(
+        text(
+            """
+            SELECT
+                ps.user_id,
+                ps.podcast_id,
+                ps.status,
+                ps.unsubscribe_mode,
+                ps.sync_status,
+                ps.sync_error_code,
+                ps.sync_error_message,
+                ps.sync_attempts,
+                ps.sync_started_at,
+                ps.sync_completed_at,
+                ps.last_synced_at,
+                ps.updated_at,
+                p.id,
+                p.provider,
+                p.provider_podcast_id,
+                p.title,
+                p.author,
+                p.feed_url,
+                p.website_url,
+                p.image_url,
+                p.description,
+                p.created_at,
+                p.updated_at
+            FROM podcast_subscriptions ps
+            JOIN podcasts p ON p.id = ps.podcast_id
+            WHERE ps.user_id = :user_id
+              AND ps.podcast_id = :podcast_id
+              AND ps.status = 'active'
+            """
+        ),
+        {"user_id": viewer_id, "podcast_id": podcast_id},
+    ).fetchone()
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
+
+    subscription = PodcastSubscriptionStatusOut(
+        user_id=row[0],
+        podcast_id=row[1],
+        status=row[2],
+        unsubscribe_mode=row[3],
+        sync_status=row[4],
+        sync_error_code=row[5],
+        sync_error_message=row[6],
+        sync_attempts=row[7],
+        sync_started_at=row[8],
+        sync_completed_at=row[9],
+        last_synced_at=row[10],
+        updated_at=row[11],
+    )
+    podcast = _podcast_list_item_from_row(row[12:])
+    return PodcastDetailOut(podcast=podcast, subscription=subscription)
+
+
+def list_podcast_episodes_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    podcast_id: UUID,
+    *,
+    limit: int = 50,
+) -> list[MediaOut]:
+    if limit <= 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    limit = min(limit, 200)
+    detail = get_podcast_detail_for_viewer(db, viewer_id, podcast_id)
+    if detail.subscription.status != "active":
+        return []
+
+    episode_rows = db.execute(
+        text(
+            f"""
+            WITH visible_media AS (
+                {visible_media_ids_cte_sql()}
+            )
+            SELECT pe.media_id
+            FROM podcast_episodes pe
+            JOIN visible_media vm ON vm.media_id = pe.media_id
+            WHERE pe.podcast_id = :podcast_id
+            ORDER BY pe.published_at DESC NULLS LAST, pe.media_id DESC
+            LIMIT :limit
+            """
+        ),
+        {
+            "viewer_id": viewer_id,
+            "podcast_id": podcast_id,
+            "limit": limit,
+        },
+    ).fetchall()
+
+    from nexus.services import media as media_service
+
+    return [
+        media_service.get_media_for_viewer(db, viewer_id, row[0])
+        for row in episode_rows
+        if row and row[0] is not None
+    ]
+
+
+def retry_transcript_media_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    *,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    from nexus.auth.permissions import can_read_media
+
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    media_row = db.execute(
+        text(
+            """
+            SELECT kind, created_by_user_id, processing_status, failure_stage
+            FROM media
+            WHERE id = :media_id
+            FOR UPDATE
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchone()
+    if media_row is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    kind = str(media_row[0] or "")
+    created_by_user_id = media_row[1]
+    processing_status = str(media_row[2] or "")
+    failure_stage = str(media_row[3] or "").strip() or None
+
+    if kind not in {"podcast_episode", "video"}:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            "Retry is only supported for PDF/EPUB/podcast/video media.",
+        )
+    if created_by_user_id != viewer_id:
+        raise ForbiddenError(
+            ApiErrorCode.E_FORBIDDEN,
+            "Only the creator can retry transcription.",
+        )
+
+    if processing_status == "extracting":
+        return {
+            "media_id": str(media_id),
+            "processing_status": "extracting",
+            "retry_enqueued": False,
+        }
+
+    if processing_status != "failed":
+        raise ConflictError(
+            ApiErrorCode.E_RETRY_INVALID_STATE,
+            "Media must be in failed state to retry.",
+        )
+    if failure_stage not in {None, "transcribe"}:
+        raise ConflictError(
+            ApiErrorCode.E_RETRY_NOT_ALLOWED,
+            "Retry not allowed for this failure stage.",
+        )
+
+    now = datetime.now(UTC)
+    db.execute(
+        text(
+            """
+            UPDATE media
+            SET
+                processing_status = 'extracting',
+                failure_stage = NULL,
+                last_error_code = NULL,
+                last_error_message = NULL,
+                processing_started_at = :now,
+                processing_completed_at = NULL,
+                failed_at = NULL,
+                updated_at = :now
+            WHERE id = :media_id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "now": now,
+        },
+    )
+
+    if kind == "podcast_episode":
+        db.execute(
+            text(
+                """
+                INSERT INTO podcast_transcription_jobs (
+                    media_id,
+                    requested_by_user_id,
+                    status,
+                    error_code,
+                    attempts,
+                    started_at,
+                    completed_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :media_id,
+                    :requested_by_user_id,
+                    'pending',
+                    NULL,
+                    0,
+                    NULL,
+                    NULL,
+                    :created_at,
+                    :updated_at
+                )
+                ON CONFLICT (media_id)
+                DO UPDATE SET
+                    requested_by_user_id = EXCLUDED.requested_by_user_id,
+                    status = 'pending',
+                    error_code = NULL,
+                    started_at = NULL,
+                    completed_at = NULL,
+                    updated_at = EXCLUDED.updated_at
+                """
+            ),
+            {
+                "media_id": media_id,
+                "requested_by_user_id": viewer_id,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        enqueued = _enqueue_podcast_transcription_job(
+            media_id=media_id,
+            requested_by_user_id=viewer_id,
+        )
+        if not enqueued:
+            _mark_podcast_transcription_failure(
+                db,
+                media_id=media_id,
+                error_code=ApiErrorCode.E_INTERNAL.value,
+                error_message="Failed to enqueue podcast transcription job",
+                now=now,
+            )
+            db.commit()
+            return {
+                "media_id": str(media_id),
+                "processing_status": "failed",
+                "retry_enqueued": False,
+            }
+        db.commit()
+        return {
+            "media_id": str(media_id),
+            "processing_status": "extracting",
+            "retry_enqueued": True,
+        }
+
+    enqueued = _enqueue_video_transcription_retry(
+        media_id=media_id,
+        requested_by_user_id=viewer_id,
+        request_id=request_id,
+    )
+    if not enqueued:
+        db.execute(
+            text(
+                """
+                UPDATE media
+                SET
+                    processing_status = 'failed',
+                    failure_stage = 'transcribe',
+                    last_error_code = :error_code,
+                    last_error_message = :error_message,
+                    failed_at = :now,
+                    updated_at = :now
+                WHERE id = :media_id
+                """
+            ),
+            {
+                "media_id": media_id,
+                "error_code": ApiErrorCode.E_INTERNAL.value,
+                "error_message": "Failed to enqueue video transcription job",
+                "now": now,
+            },
+        )
+        db.commit()
+        return {
+            "media_id": str(media_id),
+            "processing_status": "failed",
+            "retry_enqueued": False,
+        }
+
+    db.commit()
+    return {
+        "media_id": str(media_id),
+        "processing_status": "extracting",
+        "retry_enqueued": True,
+    }
 
 
 def unsubscribe_from_podcast(
@@ -1044,34 +1502,6 @@ def _sync_subscription_ingest(
         episode = row["episode"]
         media_id = uuid4()
         audio_url = str(episode.get("audio_url") or "").strip() or None
-        transcription_result = _transcribe_podcast_audio(audio_url)
-        transcription_status = str(transcription_result.get("status") or "failed")
-        transcript_segments = _normalize_transcript_segments(transcription_result.get("segments"))
-        transcription_error_code = _normalize_terminal_transcription_error_code(
-            transcription_result.get("error_code")
-        )
-        transcription_error_message = str(transcription_result.get("error_message") or "").strip()
-        diagnostic_error_code = _normalize_diagnostic_transcription_error_code(
-            transcription_result.get("diagnostic_error_code")
-        )
-
-        if transcription_status == "completed" and not transcript_segments:
-            transcription_status = "failed"
-            transcription_error_code = ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value
-            transcription_error_message = "Transcript unavailable"
-            diagnostic_error_code = None
-
-        transcript_available = transcription_status == "completed" and bool(transcript_segments)
-        if not transcript_available:
-            if not transcription_error_code:
-                transcription_error_code = ApiErrorCode.E_TRANSCRIPTION_FAILED.value
-            if not transcription_error_message:
-                transcription_error_message = "Transcription failed"
-
-        processing_status = "ready_for_reading" if transcript_available else "failed"
-        failure_stage = None if transcript_available else "transcribe"
-        last_error_code = None if transcript_available else transcription_error_code
-        last_error_message = None if transcript_available else transcription_error_message
 
         db.execute(
             text(
@@ -1097,10 +1527,10 @@ def _sync_subscription_ingest(
                     'podcast_episode',
                     :title,
                     :canonical_source_url,
-                    :processing_status,
-                    :failure_stage,
-                    :last_error_code,
-                    :last_error_message,
+                    'extracting',
+                    NULL,
+                    NULL,
+                    NULL,
                     :external_playback_url,
                     :provider,
                     :provider_id,
@@ -1114,10 +1544,6 @@ def _sync_subscription_ingest(
                 "id": media_id,
                 "title": str(episode.get("title") or "Untitled Episode"),
                 "canonical_source_url": feed_url,
-                "processing_status": processing_status,
-                "failure_stage": failure_stage,
-                "last_error_code": last_error_code,
-                "last_error_message": last_error_message,
                 "external_playback_url": audio_url,
                 "provider": PODCAST_PROVIDER,
                 "provider_id": str(episode.get("provider_episode_id") or ""),
@@ -1164,17 +1590,6 @@ def _sync_subscription_ingest(
             },
         )
 
-        if transcript_available:
-            _insert_transcript_fragments(db, media_id, transcript_segments, now=now)
-            transcription_status = "completed"
-            transcription_error_code = diagnostic_error_code
-        else:
-            transcription_status = "failed"
-            # Reuse normalized terminal failure code for both media and job state.
-            transcription_error_code = (
-                transcription_error_code or ApiErrorCode.E_TRANSCRIPTION_FAILED.value
-            )
-
         db.execute(
             text(
                 """
@@ -1183,14 +1598,20 @@ def _sync_subscription_ingest(
                     requested_by_user_id,
                     status,
                     error_code,
+                    attempts,
+                    started_at,
+                    completed_at,
                     created_at,
                     updated_at
                 )
                 VALUES (
                     :media_id,
                     :requested_by_user_id,
-                    :status,
-                    :error_code,
+                    'pending',
+                    NULL,
+                    0,
+                    NULL,
+                    NULL,
                     :created_at,
                     :updated_at
                 )
@@ -1199,12 +1620,23 @@ def _sync_subscription_ingest(
             {
                 "media_id": media_id,
                 "requested_by_user_id": viewer_id,
-                "status": transcription_status,
-                "error_code": transcription_error_code,
                 "created_at": now,
                 "updated_at": now,
             },
         )
+
+        enqueued = _enqueue_podcast_transcription_job(
+            media_id=media_id,
+            requested_by_user_id=viewer_id,
+        )
+        if not enqueued:
+            _mark_podcast_transcription_failure(
+                db,
+                media_id=media_id,
+                error_code=ApiErrorCode.E_INTERNAL.value,
+                error_message="Failed to enqueue podcast transcription job",
+                now=now,
+            )
 
         _ensure_in_default_library(db, viewer_id, media_id)
         ingested_episode_count += 1
@@ -1290,6 +1722,319 @@ def _enqueue_podcast_subscription_sync(*, user_id: UUID, podcast_id: UUID) -> bo
             error=str(exc),
         )
         raise ApiError(ApiErrorCode.E_INTERNAL, "Failed to enqueue podcast sync job.") from exc
+
+
+def _enqueue_podcast_transcription_job(
+    *, media_id: UUID, requested_by_user_id: UUID | None
+) -> bool:
+    try:
+        from nexus.tasks.podcast_transcribe_episode import podcast_transcribe_episode_job
+
+        podcast_transcribe_episode_job.apply_async(
+            args=[str(media_id), str(requested_by_user_id) if requested_by_user_id else None],
+            kwargs={},
+            queue="ingest",
+        )
+        return True
+    except Exception as exc:
+        logger.warning(
+            "podcast_transcription_enqueue_failed",
+            media_id=str(media_id),
+            requested_by_user_id=(str(requested_by_user_id) if requested_by_user_id else None),
+            error=str(exc),
+        )
+        return False
+
+
+def _enqueue_video_transcription_retry(
+    *,
+    media_id: UUID,
+    requested_by_user_id: UUID,
+    request_id: str | None,
+) -> bool:
+    try:
+        from nexus.tasks.ingest_youtube_video import ingest_youtube_video
+
+        ingest_youtube_video.apply_async(
+            args=[str(media_id), str(requested_by_user_id)],
+            kwargs={"request_id": request_id},
+            queue="ingest",
+        )
+        return True
+    except Exception as exc:
+        logger.warning(
+            "video_transcription_retry_enqueue_failed",
+            media_id=str(media_id),
+            requested_by_user_id=str(requested_by_user_id),
+            request_id=request_id,
+            error=str(exc),
+        )
+        return False
+
+
+def _mark_podcast_transcription_failure(
+    db: Session,
+    *,
+    media_id: UUID,
+    error_code: str,
+    error_message: str,
+    now: datetime,
+) -> None:
+    db.execute(
+        text(
+            """
+            UPDATE media
+            SET
+                processing_status = 'failed',
+                failure_stage = 'transcribe',
+                last_error_code = :error_code,
+                last_error_message = :error_message,
+                processing_completed_at = NULL,
+                failed_at = :now,
+                updated_at = :now
+            WHERE id = :media_id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "error_code": error_code,
+            "error_message": error_message[:1000],
+            "now": now,
+        },
+    )
+    db.execute(
+        text(
+            """
+            UPDATE podcast_transcription_jobs
+            SET
+                status = 'failed',
+                error_code = :error_code,
+                completed_at = :now,
+                updated_at = :now
+            WHERE media_id = :media_id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "error_code": error_code,
+            "now": now,
+        },
+    )
+
+
+def run_podcast_transcription_now(
+    db: Session,
+    *,
+    media_id: UUID,
+    requested_by_user_id: UUID | None,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    _ = request_id
+    claim_now = datetime.now(UTC)
+    claimed = db.execute(
+        text(
+            """
+            UPDATE podcast_transcription_jobs
+            SET
+                status = 'running',
+                error_code = NULL,
+                attempts = attempts + 1,
+                started_at = :now,
+                completed_at = NULL,
+                updated_at = :now
+            WHERE media_id = :media_id
+              AND status IN ('pending', 'failed')
+            RETURNING 1
+            """
+        ),
+        {
+            "media_id": media_id,
+            "now": claim_now,
+        },
+    ).fetchone()
+
+    if claimed is None:
+        snapshot = db.execute(
+            text(
+                """
+                SELECT status, error_code
+                FROM podcast_transcription_jobs
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": media_id},
+        ).fetchone()
+        if snapshot is None:
+            return {"status": "skipped", "reason": "job_not_found"}
+        return {
+            "status": "skipped",
+            "reason": "not_pending",
+            "job_status": str(snapshot[0]),
+            "error_code": snapshot[1],
+        }
+
+    db.commit()
+
+    media_row = db.execute(
+        text(
+            """
+            SELECT kind, external_playback_url
+            FROM media
+            WHERE id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchone()
+    if media_row is None:
+        db.execute(
+            text(
+                """
+                UPDATE podcast_transcription_jobs
+                SET status = 'failed', error_code = :error_code, completed_at = :now, updated_at = :now
+                WHERE media_id = :media_id
+                """
+            ),
+            {
+                "media_id": media_id,
+                "error_code": ApiErrorCode.E_MEDIA_NOT_FOUND.value,
+                "now": claim_now,
+            },
+        )
+        db.commit()
+        return {"status": "failed", "error_code": ApiErrorCode.E_MEDIA_NOT_FOUND.value}
+
+    if str(media_row[0]) != "podcast_episode":
+        db.execute(
+            text(
+                """
+                UPDATE podcast_transcription_jobs
+                SET status = 'failed', error_code = :error_code, completed_at = :now, updated_at = :now
+                WHERE media_id = :media_id
+                """
+            ),
+            {
+                "media_id": media_id,
+                "error_code": ApiErrorCode.E_INVALID_KIND.value,
+                "now": claim_now,
+            },
+        )
+        db.commit()
+        return {"status": "failed", "error_code": ApiErrorCode.E_INVALID_KIND.value}
+
+    db.execute(
+        text(
+            """
+            UPDATE media
+            SET
+                processing_status = 'extracting',
+                failure_stage = NULL,
+                last_error_code = NULL,
+                last_error_message = NULL,
+                processing_started_at = :now,
+                processing_completed_at = NULL,
+                failed_at = NULL,
+                updated_at = :now
+            WHERE id = :media_id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "now": claim_now,
+        },
+    )
+    db.commit()
+
+    audio_url = str(media_row[1] or "").strip() or None
+    try:
+        transcription_result = _transcribe_podcast_audio(audio_url)
+    except Exception as exc:
+        now = datetime.now(UTC)
+        logger.exception(
+            "podcast_transcription_unhandled_error",
+            media_id=str(media_id),
+            error=str(exc),
+        )
+        _mark_podcast_transcription_failure(
+            db,
+            media_id=media_id,
+            error_code=ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+            error_message="Transcription failed",
+            now=now,
+        )
+        db.commit()
+        return {"status": "failed", "error_code": ApiErrorCode.E_TRANSCRIPTION_FAILED.value}
+    transcription_status = str(transcription_result.get("status") or "failed")
+    transcript_segments = _normalize_transcript_segments(transcription_result.get("segments"))
+    transcription_error_code = _normalize_terminal_transcription_error_code(
+        transcription_result.get("error_code")
+    )
+    transcription_error_message = str(transcription_result.get("error_message") or "").strip()
+    diagnostic_error_code = _normalize_diagnostic_transcription_error_code(
+        transcription_result.get("diagnostic_error_code")
+    )
+    now = datetime.now(UTC)
+
+    if transcription_status == "completed" and not transcript_segments:
+        transcription_status = "failed"
+        transcription_error_code = ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value
+        transcription_error_message = "Transcript unavailable"
+        diagnostic_error_code = None
+
+    if transcription_status == "completed" and transcript_segments:
+        db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id})
+        _insert_transcript_fragments(db, media_id, transcript_segments, now=now)
+        db.execute(
+            text(
+                """
+                UPDATE media
+                SET
+                    processing_status = 'ready_for_reading',
+                    failure_stage = NULL,
+                    last_error_code = NULL,
+                    last_error_message = NULL,
+                    processing_completed_at = :now,
+                    failed_at = NULL,
+                    updated_at = :now
+                WHERE id = :media_id
+                """
+            ),
+            {
+                "media_id": media_id,
+                "now": now,
+            },
+        )
+        db.execute(
+            text(
+                """
+                UPDATE podcast_transcription_jobs
+                SET
+                    status = 'completed',
+                    error_code = :error_code,
+                    completed_at = :now,
+                    updated_at = :now
+                WHERE media_id = :media_id
+                """
+            ),
+            {
+                "media_id": media_id,
+                "error_code": diagnostic_error_code,
+                "now": now,
+            },
+        )
+        db.commit()
+        return {"status": "completed", "segment_count": len(transcript_segments)}
+
+    terminal_error_code = transcription_error_code or ApiErrorCode.E_TRANSCRIPTION_FAILED.value
+    terminal_error_message = transcription_error_message or "Transcription failed"
+    _mark_podcast_transcription_failure(
+        db,
+        media_id=media_id,
+        error_code=terminal_error_code,
+        error_message=terminal_error_message,
+        now=now,
+    )
+    db.commit()
+    return {"status": "failed", "error_code": terminal_error_code}
 
 
 def _get_subscription_sync_snapshot(

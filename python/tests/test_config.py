@@ -16,6 +16,9 @@ def _make_settings(**overrides) -> Settings:
         "SUPABASE_JWKS_URL": "http://localhost:54321/auth/v1/.well-known/jwks.json",
         "SUPABASE_ISSUER": "http://localhost:54321/auth/v1",
         "SUPABASE_AUDIENCES": "authenticated",
+        "PODCASTS_ENABLED": True,
+        "PODCAST_INDEX_API_KEY": "test-key",
+        "PODCAST_INDEX_API_SECRET": "test-secret",
     }
     defaults.update(overrides)
     return Settings(**defaults)
@@ -71,3 +74,33 @@ class TestEpubArchiveSafetyConfigDefaultsAndFloorValidation:
     def test_zero_value_rejected(self):
         with pytest.raises(ValidationError, match="must be >= 1"):
             _make_settings(MAX_EPUB_ARCHIVE_ENTRIES=0)
+
+
+class TestPodcastProviderConfiguration:
+    def test_podcasts_enabled_requires_podcast_index_credentials(self):
+        with pytest.raises(ValidationError, match="PODCAST_INDEX_API_KEY"):
+            _make_settings(
+                PODCASTS_ENABLED=True,
+                PODCAST_INDEX_API_KEY="",
+                PODCAST_INDEX_API_SECRET="",
+            )
+
+    def test_podcasts_enabled_accepts_valid_podcast_index_credentials(self):
+        settings = _make_settings(
+            PODCASTS_ENABLED=True,
+            PODCAST_INDEX_API_KEY="key",
+            PODCAST_INDEX_API_SECRET="secret",
+        )
+        assert settings.podcasts_enabled is True
+        assert settings.podcast_index_api_key == "key"
+        assert settings.podcast_index_api_secret == "secret"
+
+    def test_podcasts_disabled_allows_missing_podcast_index_credentials(self):
+        settings = _make_settings(
+            PODCASTS_ENABLED=False,
+            PODCAST_INDEX_API_KEY=None,
+            PODCAST_INDEX_API_SECRET=None,
+        )
+        assert settings.podcasts_enabled is False
+        assert settings.podcast_index_api_key is None
+        assert settings.podcast_index_api_secret is None

@@ -28,6 +28,12 @@ if not os.environ.get("SUPABASE_ISSUER"):
     os.environ["SUPABASE_ISSUER"] = "http://localhost:54321/auth/v1"
 if not os.environ.get("SUPABASE_AUDIENCES"):
     os.environ["SUPABASE_AUDIENCES"] = "authenticated"
+if not os.environ.get("PODCASTS_ENABLED"):
+    os.environ["PODCASTS_ENABLED"] = "true"
+if not os.environ.get("PODCAST_INDEX_API_KEY"):
+    os.environ["PODCAST_INDEX_API_KEY"] = "test-podcast-index-key"
+if not os.environ.get("PODCAST_INDEX_API_SECRET"):
+    os.environ["PODCAST_INDEX_API_SECRET"] = "test-podcast-index-secret"
 
 # Add repo root to sys.path for importing top-level packages (e.g., apps)
 _repo_root = Path(__file__).parent.parent.parent

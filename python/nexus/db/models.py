@@ -763,6 +763,9 @@ class PodcastTranscriptionJob(Base):
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -776,8 +779,12 @@ class PodcastTranscriptionJob(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'completed', 'failed')",
+            "status IN ('pending', 'running', 'completed', 'failed')",
             name="ck_podcast_transcription_jobs_status",
+        ),
+        CheckConstraint(
+            "attempts >= 0",
+            name="ck_podcast_transcription_jobs_attempts_non_negative",
         ),
     )
 

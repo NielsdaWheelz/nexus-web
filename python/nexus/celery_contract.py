@@ -24,6 +24,7 @@ REQUIRED_WORKER_TASK_NAMES: frozenset[str] = frozenset(
         "ingest_youtube_video",
         "backfill_default_library_closure_job",
         "podcast_sync_subscription_job",
+        "podcast_transcribe_episode_job",
         "podcast_active_subscription_poll_job",
         "reconcile_stale_ingest_media_job",
         "enrich_metadata",
