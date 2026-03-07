@@ -25,12 +25,16 @@ const members: LibraryMember[] = [
     user_id: "user-owner",
     role: "admin",
     is_owner: true,
+    email: "owner@example.com",
+    display_name: "Alice Owner",
     created_at: "2026-01-01T00:00:00Z",
   },
   {
     user_id: "user-member",
     role: "member",
     is_owner: false,
+    email: "member@example.com",
+    display_name: null,
     created_at: "2026-01-02T00:00:00Z",
   },
 ];
@@ -43,6 +47,8 @@ const invites: LibraryInvite[] = [
     invitee_user_id: "user-pending",
     role: "member",
     status: "pending",
+    invitee_email: "pending@example.com",
+    invitee_display_name: "Pending User",
     created_at: "2026-02-01T00:00:00Z",
   },
 ];
@@ -101,12 +107,16 @@ describe("LibraryEditDialog", () => {
 
   /* ---------- Members section ---------- */
 
-  it("renders member list with roles", () => {
+  it("renders member list with display names and emails", () => {
     renderDialog();
 
     const memberSection = screen.getByRole("region", { name: "Members" });
-    expect(within(memberSection).getByText("user-owner")).toBeInTheDocument();
-    expect(within(memberSection).getByText("user-member")).toBeInTheDocument();
+    // Owner has display_name, should show that
+    expect(within(memberSection).getByText("Alice Owner")).toBeInTheDocument();
+    // Member has no display_name, should show email
+    expect(
+      within(memberSection).getByText("member@example.com")
+    ).toBeInTheDocument();
   });
 
   it("shows owner badge on owner row", () => {
@@ -119,10 +129,10 @@ describe("LibraryEditDialog", () => {
     const user = userEvent.setup();
     const { props } = renderDialog();
 
-    // Find the role select for the non-owner member
+    // Find the role select for the non-owner member (shown by email)
     const memberSection = screen.getByRole("region", { name: "Members" });
     const roleSelect = within(memberSection).getByLabelText(
-      "Role for user-member"
+      "Role for member@example.com"
     );
     await user.selectOptions(roleSelect, "admin");
 
@@ -136,10 +146,10 @@ describe("LibraryEditDialog", () => {
     renderDialog();
     const memberSection = screen.getByRole("region", { name: "Members" });
     expect(
-      within(memberSection).queryByLabelText("Role for user-owner")
+      within(memberSection).queryByLabelText("Role for Alice Owner")
     ).not.toBeInTheDocument();
     expect(
-      within(memberSection).queryByLabelText("Remove user-owner")
+      within(memberSection).queryByLabelText("Remove Alice Owner")
     ).not.toBeInTheDocument();
   });
 
@@ -150,7 +160,7 @@ describe("LibraryEditDialog", () => {
     const memberSection = screen.getByRole("region", { name: "Members" });
     await user.click(
       within(memberSection).getByRole("button", {
-        name: "Remove user-member",
+        name: "Remove member@example.com",
       })
     );
 
@@ -159,11 +169,12 @@ describe("LibraryEditDialog", () => {
 
   /* ---------- Invite section ---------- */
 
-  it("renders pending invites", () => {
+  it("renders pending invites with invitee display info", () => {
     renderDialog();
     const inviteSection = screen.getByRole("region", { name: "Invitations" });
+    // Should show display_name since it's set
     expect(
-      within(inviteSection).getByText("user-pending")
+      within(inviteSection).getByText("Pending User")
     ).toBeInTheDocument();
   });
 
@@ -179,18 +190,47 @@ describe("LibraryEditDialog", () => {
     expect(props.onRevokeInvite).toHaveBeenCalledWith("inv-1");
   });
 
-  it("calls onCreateInvite with user ID and role", async () => {
+  it("shows email search input instead of user ID input", () => {
+    renderDialog();
+    const inviteSection = screen.getByRole("region", { name: "Invitations" });
+    expect(
+      within(inviteSection).getByLabelText("Invitee email")
+    ).toBeInTheDocument();
+    expect(
+      within(inviteSection).queryByLabelText("User ID")
+    ).not.toBeInTheDocument();
+  });
+
+  it("calls onCreateInvite with typed email", async () => {
     const user = userEvent.setup();
     const { props } = renderDialog();
 
     const inviteSection = screen.getByRole("region", { name: "Invitations" });
-    const userIdInput = within(inviteSection).getByLabelText("User ID");
-    await user.type(userIdInput, "user-new");
+    const emailInput = within(inviteSection).getByLabelText("Invitee email");
+    await user.type(emailInput, "newuser@example.com");
     await user.click(
       within(inviteSection).getByRole("button", { name: "Invite" })
     );
 
-    expect(props.onCreateInvite).toHaveBeenCalledWith("user-new", "member");
+    expect(props.onCreateInvite).toHaveBeenCalledWith(
+      "newuser@example.com",
+      "member"
+    );
+  });
+
+  it("falls back to user_id when no email/display_name on member", () => {
+    const membersNoEmail: LibraryMember[] = [
+      {
+        user_id: "user-bare",
+        role: "member",
+        is_owner: false,
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    ];
+    renderDialog({ members: membersNoEmail });
+
+    const memberSection = screen.getByRole("region", { name: "Members" });
+    expect(within(memberSection).getByText("user-bare")).toBeInTheDocument();
   });
 
   /* ---------- Delete section ---------- */
@@ -224,7 +264,7 @@ describe("LibraryEditDialog", () => {
 
     // No role selects
     expect(
-      screen.queryByLabelText("Role for user-member")
+      screen.queryByLabelText("Role for member@example.com")
     ).not.toBeInTheDocument();
 
     // No remove buttons
@@ -233,7 +273,9 @@ describe("LibraryEditDialog", () => {
     ).not.toBeInTheDocument();
 
     // No invite form
-    expect(screen.queryByLabelText("User ID")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Invitee email")
+    ).not.toBeInTheDocument();
 
     // No delete button
     expect(

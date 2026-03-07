@@ -163,6 +163,62 @@
   gap: var(--space-2);
 }
 
+.searchWrapper {
+  position: relative;
+  flex: 1;
+}
+
+/* ---- Search results dropdown ---- */
+
+.searchResults {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.searchResultItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+
+.searchResultItem:hover {
+  background-color: var(--color-surface);
+}
+
+.searchResultEmail {
+  color: var(--color-text);
+}
+
+.searchResultName {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.searchingIndicator {
+  position: absolute;
+  top: 50%;
+  right: var(--space-3);
+  transform: translateY(-50%);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
 /* ---- Danger zone ---- */
 
 .dangerZone {
