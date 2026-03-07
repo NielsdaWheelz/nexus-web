@@ -18,9 +18,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_LIBRARY_NAME = "My Library"
 
 
-def ensure_user_and_default_library(
-    db: Session, user_id: UUID, email: str | None = None
-) -> UUID:
+def ensure_user_and_default_library(db: Session, user_id: UUID, email: str | None = None) -> UUID:
     """Ensure user exists, default library exists, and owner membership exists.
 
     This function is race-safe and idempotent:

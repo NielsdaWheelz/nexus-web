@@ -161,9 +161,7 @@ class CreateLibraryInviteRequest(BaseModel):
     If both are provided, invitee_user_id takes precedence.
     """
 
-    invitee_user_id: UUID | None = Field(
-        default=None, description="User ID of the invitee"
-    )
+    invitee_user_id: UUID | None = Field(default=None, description="User ID of the invitee")
     invitee_email: str | None = Field(
         default=None, description="Email of the invitee (alternative to user_id)"
     )

@@ -193,7 +193,9 @@ class TestUserSearch:
 
         auth_client.get("/me", headers=auth_headers(user_a, email=email_a))
         auth_client.get("/me", headers=auth_headers(user_b, email=email_b))
-        auth_client.get("/me", headers=auth_headers(searcher, email=f"searcher-{searcher}@example.com"))
+        auth_client.get(
+            "/me", headers=auth_headers(searcher, email=f"searcher-{searcher}@example.com")
+        )
 
         response = auth_client.get(
             f"/users/search?q=alice-{user_a}",
@@ -216,7 +218,9 @@ class TestUserSearch:
         headers = auth_headers(user_id, email=email)
 
         auth_client.get("/me", headers=headers)
-        auth_client.patch("/me", json={"display_name": f"UniqueTestName-{user_id}"}, headers=headers)
+        auth_client.patch(
+            "/me", json={"display_name": f"UniqueTestName-{user_id}"}, headers=headers
+        )
         auth_client.get("/me", headers=auth_headers(searcher, email=f"s-{searcher}@example.com"))
 
         response = auth_client.get(
@@ -318,7 +322,9 @@ class TestMemberResponseEnrichment:
 
         # Create library
         lib_resp = auth_client.post(
-            "/libraries", json={"name": "Member Test Lib"}, headers=headers,
+            "/libraries",
+            json={"name": "Member Test Lib"},
+            headers=headers,
         )
         assert lib_resp.status_code == 201
         lib_id = lib_resp.json()["data"]["id"]
@@ -355,7 +361,9 @@ class TestMemberResponseEnrichment:
 
         # Create library
         lib_resp = auth_client.post(
-            "/libraries", json={"name": "Invite Test Lib"}, headers=owner_headers,
+            "/libraries",
+            json={"name": "Invite Test Lib"},
+            headers=owner_headers,
         )
         lib_id = lib_resp.json()["data"]["id"]
 
@@ -368,7 +376,8 @@ class TestMemberResponseEnrichment:
 
         # List invites
         response = auth_client.get(
-            f"/libraries/{lib_id}/invites", headers=owner_headers,
+            f"/libraries/{lib_id}/invites",
+            headers=owner_headers,
         )
 
         assert response.status_code == 200
@@ -404,7 +413,9 @@ class TestInviteByEmail:
 
         # Create library
         lib_resp = auth_client.post(
-            "/libraries", json={"name": "Email Invite Lib"}, headers=owner_headers,
+            "/libraries",
+            json={"name": "Email Invite Lib"},
+            headers=owner_headers,
         )
         lib_id = lib_resp.json()["data"]["id"]
 
@@ -428,7 +439,9 @@ class TestInviteByEmail:
         auth_client.get("/me", headers=owner_headers)
 
         lib_resp = auth_client.post(
-            "/libraries", json={"name": "No User Lib"}, headers=owner_headers,
+            "/libraries",
+            json={"name": "No User Lib"},
+            headers=owner_headers,
         )
         lib_id = lib_resp.json()["data"]["id"]
 
@@ -449,7 +462,9 @@ class TestInviteByEmail:
         auth_client.get("/me", headers=owner_headers)
 
         lib_resp = auth_client.post(
-            "/libraries", json={"name": "Neither Lib"}, headers=owner_headers,
+            "/libraries",
+            json={"name": "Neither Lib"},
+            headers=owner_headers,
         )
         lib_id = lib_resp.json()["data"]["id"]
 

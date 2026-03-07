@@ -14,7 +14,9 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.user import UserProfileOut, UserSearchOut
 
 
-def get_user_profile(db: Session, user_id: UUID, default_library_id: UUID, email: str | None) -> UserProfileOut:
+def get_user_profile(
+    db: Session, user_id: UUID, default_library_id: UUID, email: str | None
+) -> UserProfileOut:
     """Get user profile including display_name from DB.
 
     Email comes from the JWT (via Viewer) rather than DB to stay fresh.
@@ -59,9 +61,7 @@ def update_display_name(db: Session, user_id: UUID, display_name: str | None) ->
         )
 
 
-def search_users(
-    db: Session, query: str, viewer_id: UUID, limit: int = 10
-) -> list[UserSearchOut]:
+def search_users(db: Session, query: str, viewer_id: UUID, limit: int = 10) -> list[UserSearchOut]:
     """Search users by email prefix or display_name substring.
 
     Args:
