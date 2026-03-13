@@ -24,7 +24,8 @@ export async function middleware(request: NextRequest) {
   const isDev = process.env.NODE_ENV === "development";
   const cspHeader = [
     `script-src 'self' 'nonce-${nonce}'${isDev ? " 'unsafe-eval'" : ""}`,
-    `style-src 'self' 'unsafe-inline'${isDev ? " https://fonts.googleapis.com" : ""}`,
+    `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
+    `font-src 'self' https://fonts.gstatic.com`,
     `frame-src https://www.youtube.com https://www.youtube-nocookie.com`,
     `worker-src 'self'`,
     `object-src 'none'`,
