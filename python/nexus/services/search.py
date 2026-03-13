@@ -24,6 +24,7 @@ import base64
 import hashlib
 import json
 import time
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -42,6 +43,13 @@ from nexus.schemas.search import (
     SearchResultMessageOut,
     SearchResultOut,
     SearchResultSourceOut,
+    SearchResultTranscriptChunkOut,
+)
+from nexus.services.semantic_chunks import (
+    build_text_embedding,
+    cosine_similarity,
+    lexical_overlap_score,
+    normalize_embedding_payload,
 )
 from nexus.services.transcript_media import transcript_media_searchable_sql
 
@@ -61,7 +69,7 @@ CANDIDATES_PER_TYPE = 200
 
 # Supported search result types (ordered for deterministic behavior)
 ALL_RESULT_TYPES = ("media", "fragment", "annotation", "message")
-VALID_RESULT_TYPES = set(ALL_RESULT_TYPES)
+VALID_RESULT_TYPES = set(ALL_RESULT_TYPES) | {"transcript_chunk"}
 
 # Type weight multipliers (applied post-rank)
 TYPE_WEIGHTS = {
@@ -69,6 +77,7 @@ TYPE_WEIGHTS = {
     "annotation": 1.2,
     "message": 1.0,
     "fragment": 0.9,
+    "transcript_chunk": 1.1,
 }
 
 # Maximum snippet length
@@ -295,6 +304,7 @@ def search(
     q: str,
     scope: str = "all",
     types: list[str] | None = None,
+    semantic: bool = False,
     cursor: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> SearchResponse:
@@ -362,6 +372,7 @@ def search(
             viewer_id,
             q,
             result_type,
+            semantic,
             scope_type,
             scope_id,
             CANDIDATES_PER_TYPE,
@@ -406,6 +417,7 @@ def _search_type(
     viewer_id: UUID,
     q: str,
     result_type: str,
+    semantic: bool,
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
@@ -422,6 +434,10 @@ def _search_type(
         return _search_annotations(db, viewer_id, q, scope_type, scope_id, limit)
     elif result_type == "message":
         return _search_messages(db, viewer_id, q, scope_type, scope_id, limit)
+    elif result_type == "transcript_chunk":
+        if not semantic:
+            return []
+        return _search_transcript_chunks(db, viewer_id, q, scope_type, scope_id, limit)
     return []
 
 
@@ -436,7 +452,6 @@ def _search_media(
     """Search media titles with visibility filtering."""
     # Build scope filter
     scope_filter = ""
-    transcript_media_filter = transcript_media_searchable_sql("m")
     params: dict = {"viewer_id": viewer_id, "query": q, "limit": limit}
 
     if scope_type == "media":
@@ -470,7 +485,6 @@ def _search_media(
         JOIN visible_media vm ON vm.media_id = m.id
         LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
         WHERE m.title_tsv @@ websearch_to_tsquery('english', :query)
-          AND {transcript_media_filter}
         {scope_filter}
         ORDER BY score DESC, m.id ASC
         LIMIT :limit
@@ -543,8 +557,14 @@ def _search_fragments(
         FROM fragments f
         JOIN media m ON m.id = f.media_id
         JOIN visible_media vm ON vm.media_id = f.media_id
+        LEFT JOIN media_transcript_states mts ON mts.media_id = f.media_id
         LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
         WHERE f.canonical_text_tsv @@ websearch_to_tsquery('english', :query)
+          AND (
+              f.transcript_version_id IS NULL
+              OR mts.active_transcript_version_id IS NULL
+              OR f.transcript_version_id = mts.active_transcript_version_id
+          )
           AND {transcript_media_filter}
         {scope_filter}
         ORDER BY score DESC, f.id ASC
@@ -749,6 +769,95 @@ def _search_messages(
     ]
 
 
+def _search_transcript_chunks(
+    db: Session,
+    viewer_id: UUID,
+    q: str,
+    scope_type: str,
+    scope_id: UUID | None,
+    limit: int,
+) -> list[dict]:
+    """Semantic transcript-chunk search with visibility + readiness filtering."""
+    scope_filter = ""
+    transcript_media_filter = transcript_media_searchable_sql("m")
+    params: dict[str, Any] = {"viewer_id": viewer_id, "limit": limit * 5}
+
+    if scope_type == "media":
+        scope_filter = "AND tc.media_id = :scope_id"
+        params["scope_id"] = scope_id
+    elif scope_type == "library":
+        scope_filter = """
+            AND tc.media_id IN (
+                SELECT media_id FROM library_media WHERE library_id = :scope_id
+            )
+        """
+        params["scope_id"] = scope_id
+    elif scope_type == "conversation":
+        return []
+
+    query = f"""
+        WITH
+            visible_media AS ({visible_media_ids_cte_sql()}),
+            media_authors_agg AS ({media_authors_rollup_cte_sql()})
+        SELECT
+            tc.id,
+            tc.media_id,
+            m.kind,
+            m.title,
+            m.published_date,
+            maa.source_authors,
+            tc.chunk_text,
+            tc.t_start_ms,
+            tc.t_end_ms,
+            tc.embedding
+        FROM podcast_transcript_chunks tc
+        JOIN media m ON m.id = tc.media_id
+        JOIN visible_media vm ON vm.media_id = tc.media_id
+        JOIN media_transcript_states mts ON mts.media_id = tc.media_id
+        LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
+        WHERE mts.semantic_status = 'ready'
+          AND mts.active_transcript_version_id = tc.transcript_version_id
+          AND mts.transcript_state IN ('ready', 'partial')
+          AND {transcript_media_filter}
+        {scope_filter}
+        ORDER BY tc.created_at DESC, tc.id ASC
+        LIMIT :limit
+    """
+
+    query_embedding = build_text_embedding(q)
+    result = db.execute(text(query), params)
+    rows = result.fetchall()
+    ranked: list[dict] = []
+    for row in rows:
+        chunk_text = str(row[6] or "")
+        lexical_score = lexical_overlap_score(q, chunk_text)
+        embedding = normalize_embedding_payload(row[9])
+        semantic_score = cosine_similarity(query_embedding, embedding)
+        raw_score = (2.0 * lexical_score) + max(semantic_score, 0.0)
+        if raw_score <= 0.0:
+            continue
+        ranked.append(
+            {
+                "type": "transcript_chunk",
+                "id": row[0],
+                "source": {
+                    "media_id": row[1],
+                    "media_kind": row[2],
+                    "title": row[3],
+                    "authors": list(row[5]) if row[5] else [],
+                    "published_date": row[4],
+                },
+                "t_start_ms": int(row[7]),
+                "t_end_ms": int(row[8]),
+                "raw_score": raw_score,
+                "snippet": _truncate_snippet(chunk_text),
+            }
+        )
+
+    ranked.sort(key=lambda item: (-item["raw_score"], str(item["id"])))
+    return ranked[:limit]
+
+
 def _normalize_scores_by_type(results: list[dict]) -> None:
     """Normalize weighted scores within each type to [0, 1] range.
 
@@ -832,6 +941,15 @@ def _result_to_out(result: dict) -> SearchResultOut:
             type="message",
             conversation_id=result["conversation_id"],
             seq=result["seq"],
+            **base_payload,
+        )
+
+    if result_type == "transcript_chunk":
+        return SearchResultTranscriptChunkOut(
+            type="transcript_chunk",
+            t_start_ms=result["t_start_ms"],
+            t_end_ms=result["t_end_ms"],
+            source=SearchResultSourceOut.model_validate(result["source"]),
             **base_payload,
         )
 

@@ -26,6 +26,8 @@ def derive_capabilities(
     has_fragments: bool = False,
     has_plain_text: bool = False,
     pdf_quote_text_ready: bool = False,
+    transcript_state: str | None = None,
+    transcript_coverage: str | None = None,
 ) -> CapabilitiesOut:
     """Derive capabilities from media state.
 
@@ -61,6 +63,14 @@ def derive_capabilities(
     is_failed = processing_status == ProcessingStatus.failed.value
     is_transcript_unavailable = is_failed and last_error_code == "E_TRANSCRIPT_UNAVAILABLE"
 
+    transcript_ready = status_ready_for_reading
+    if is_transcript_media and transcript_state is not None:
+        is_transcript_unavailable = transcript_state == "unavailable"
+        transcript_ready = (
+            transcript_state in {"ready", "partial"}
+            and (transcript_coverage in {"partial", "full"})
+        )
+
     # =========================================================================
     # can_download_file: True iff media_file exists (for PDF/EPUB)
     # =========================================================================
@@ -90,7 +100,7 @@ def derive_capabilities(
         if is_transcript_unavailable:
             can_read = False
         else:
-            can_read = status_ready_for_reading
+            can_read = transcript_ready
     else:
         # Unknown kind: default to status check
         can_read = status_ready_for_reading

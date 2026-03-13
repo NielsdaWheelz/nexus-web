@@ -18,7 +18,7 @@ Tests cover:
 - Response shape preservation
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
@@ -92,10 +92,10 @@ class TestBasicSearch:
         assert len(media_results) >= 1
         assert any(r["id"] == str(media_id) for r in media_results)
 
-    def test_search_excludes_transcript_unavailable_video_and_podcast_media(
+    def test_search_includes_transcript_unavailable_video_and_podcast_media_in_metadata_results(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Transcript-unavailable transcript media should be excluded from media search."""
+        """Metadata search includes transcript-unavailable transcript media."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -205,8 +205,8 @@ class TestBasicSearch:
         result_ids = {row["id"] for row in response.json()["results"] if row["type"] == "media"}
 
         assert str(ready_video_id) in result_ids
-        assert str(unavailable_video_id) not in result_ids
-        assert str(unavailable_podcast_id) not in result_ids
+        assert str(unavailable_video_id) in result_ids
+        assert str(unavailable_podcast_id) in result_ids
 
     def test_search_finds_fragments(self, auth_client, direct_db: DirectSessionManager):
         """Search finds fragments by canonical_text."""
@@ -1414,3 +1414,224 @@ class TestSearchS4ScopeMasking:
         )
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_CONVERSATION_NOT_FOUND"
+
+
+class TestSemanticTranscriptChunkSearch:
+    """Semantic transcript search over chunk + embedding artifacts."""
+
+    def _seed_transcript_chunk_media(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        *,
+        semantic_status: str,
+    ) -> tuple[UUID, UUID]:
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        version_id = uuid4()
+        chunk_a_id = uuid4()
+        chunk_b_id = uuid4()
+
+        with direct_db.session() as session:
+            default_library_id = get_user_default_library(session, user_id)
+            assert default_library_id is not None
+
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id,
+                        kind,
+                        title,
+                        canonical_source_url,
+                        processing_status,
+                        external_playback_url,
+                        provider,
+                        provider_id,
+                        created_by_user_id
+                    )
+                    VALUES (
+                        :id,
+                        'podcast_episode',
+                        'Semantic Chunk Podcast Episode',
+                        'https://feeds.example.com/semantic.xml',
+                        'ready_for_reading',
+                        'https://cdn.example.com/semantic.mp3',
+                        'podcast_index',
+                        'semantic-episode-1',
+                        :user_id
+                    )
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO library_media (library_id, media_id)
+                    VALUES (:library_id, :media_id)
+                    """
+                ),
+                {"library_id": default_library_id, "media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                    VALUES (:default_library_id, :media_id)
+                    """
+                ),
+                {"default_library_id": default_library_id, "media_id": media_id},
+            )
+
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_transcript_versions (
+                        id,
+                        media_id,
+                        version_no,
+                        transcript_coverage,
+                        is_active,
+                        created_by_user_id
+                    )
+                    VALUES (
+                        :id,
+                        :media_id,
+                        1,
+                        'full',
+                        true,
+                        :created_by_user_id
+                    )
+                    """
+                ),
+                {
+                    "id": version_id,
+                    "media_id": media_id,
+                    "created_by_user_id": user_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media_transcript_states (
+                        media_id,
+                        transcript_state,
+                        transcript_coverage,
+                        semantic_status,
+                        active_transcript_version_id,
+                        last_request_reason
+                    )
+                    VALUES (
+                        :media_id,
+                        'ready',
+                        'full',
+                        :semantic_status,
+                        :active_transcript_version_id,
+                        'search'
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "semantic_status": semantic_status,
+                    "active_transcript_version_id": version_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_transcript_chunks (
+                        id,
+                        transcript_version_id,
+                        media_id,
+                        chunk_idx,
+                        chunk_text,
+                        t_start_ms,
+                        t_end_ms,
+                        embedding
+                    )
+                    VALUES
+                        (
+                            :chunk_a_id,
+                            :version_id,
+                            :media_id,
+                            0,
+                            'transformer attention residual stream explanation',
+                            1000,
+                            5000,
+                            '[1.0, 0.0, 0.0]'::jsonb
+                        ),
+                        (
+                            :chunk_b_id,
+                            :version_id,
+                            :media_id,
+                            1,
+                            'gardening tomatoes and compost aeration tips',
+                            5100,
+                            9000,
+                            '[0.0, 1.0, 0.0]'::jsonb
+                        )
+                    """
+                ),
+                {
+                    "chunk_a_id": chunk_a_id,
+                    "chunk_b_id": chunk_b_id,
+                    "version_id": version_id,
+                    "media_id": media_id,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        return user_id, media_id
+
+    def test_semantic_search_returns_timestamped_transcript_chunks(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+
+        response = auth_client.get(
+            "/search?q=transformer+attention&types=transcript_chunk&semantic=true",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"expected semantic transcript search to succeed, got {response.status_code}: {response.text}"
+        )
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
+        assert chunk_results, "expected semantic transcript chunk results for ready semantic index"
+        top = chunk_results[0]
+        assert top["source"]["media_id"] == str(media_id)
+        assert top["t_start_ms"] == 1000
+        assert top["t_end_ms"] == 5000
+        assert "transformer" in top["snippet"].lower()
+
+    def test_semantic_search_excludes_transcripts_when_index_not_ready(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, _media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="pending",
+        )
+
+        response = auth_client.get(
+            "/search?q=transformer+attention&types=transcript_chunk&semantic=true",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"expected semantic search request to succeed even while indexing, got "
+            f"{response.status_code}: {response.text}"
+        )
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
+        assert chunk_results == [], (
+            "semantic search must not return transcript chunks while semantic index state is pending"
+        )

@@ -34,7 +34,14 @@ def search(
     ),
     types: str | None = Query(
         default=None,
-        description="Comma-separated list of types to search (media, fragment, annotation, message)",
+        description=(
+            "Comma-separated list of types to search "
+            "(media, fragment, annotation, message, transcript_chunk)"
+        ),
+    ),
+    semantic: bool = Query(
+        default=False,
+        description="Enable semantic transcript-chunk search when transcript_chunk type is requested.",
     ),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
     limit: int = Query(
@@ -57,6 +64,7 @@ def search(
     - `fragment` - Search document fragments
     - `annotation` - Search user annotations
     - `message` - Search conversation messages
+    - `transcript_chunk` - Search semantic transcript chunks (requires `semantic=true`)
 
     **Visibility:**
     - Search never returns invisible content
@@ -89,6 +97,7 @@ def search(
         q=q,
         scope=scope,
         types=type_list,
+        semantic=semantic,
         cursor=cursor,
         limit=limit,
     )

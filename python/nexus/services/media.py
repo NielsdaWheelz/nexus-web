@@ -72,8 +72,10 @@ def get_media_for_viewer(
                    m.created_at, m.updated_at,
                    (SELECT EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id)) as has_file,
                    (SELECT EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id)) as has_fragments,
-                   m.published_date, m.publisher, m.language, m.description
+                   m.published_date, m.publisher, m.language, m.description,
+                   mts.transcript_state, mts.transcript_coverage
             FROM media m
+            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
             WHERE m.id = :media_id
         """),
         {"media_id": media_id},
@@ -97,6 +99,8 @@ def get_media_for_viewer(
         external_playback_url_exists=row[7] is not None,
         has_fragments=row[13],
         pdf_quote_text_ready=_pdf_ready,
+        transcript_state=row[18],
+        transcript_coverage=row[19],
     )
     playback_source = derive_playback_source(
         kind=row[1],
@@ -260,9 +264,12 @@ def list_visible_media(
             m.published_date,
             m.publisher,
             m.language,
-            m.description
+            m.description,
+            mts.transcript_state,
+            mts.transcript_coverage
         FROM media m
         JOIN visible_media vm ON vm.media_id = m.id
+        LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
         WHERE {" AND ".join(where_clauses)}
         ORDER BY m.updated_at DESC, m.id DESC
         LIMIT :limit
@@ -305,6 +312,8 @@ def list_visible_media(
             external_playback_url_exists=row[7] is not None,
             has_fragments=row[13],
             pdf_quote_text_ready=pdf_quote_ready,
+            transcript_state=row[18],
+            transcript_coverage=row[19],
         )
         playback_source = derive_playback_source(
             kind=row[1],
@@ -762,7 +771,14 @@ def list_fragments_for_viewer(
                 f.speaker_label,
                 f.created_at
             FROM fragments f
+            LEFT JOIN media_transcript_states mts
+              ON mts.media_id = f.media_id
             WHERE f.media_id = :media_id
+              AND (
+                  f.transcript_version_id IS NULL
+                  OR mts.active_transcript_version_id IS NULL
+                  OR f.transcript_version_id = mts.active_transcript_version_id
+              )
             ORDER BY f.t_start_ms ASC NULLS LAST, f.idx ASC
         """),
         {"media_id": media_id},
