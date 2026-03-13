@@ -5,7 +5,7 @@ Celery worker for asynchronous task processing.
 ## Overview
 
 The worker processes background tasks including:
-- **Web article ingestion**: Fetch URLs via Playwright, extract with Mozilla Readability, sanitize HTML, generate canonical text
+- **Web article ingestion**: Fetch URLs via HTTP, extract with Mozilla Readability, sanitize HTML, generate canonical text
 - **Podcast subscription sync**: Data-plane ingest/transcription for subscribed podcasts
 - **Scheduled podcast active polling**: Periodic active-subscription polling via Celery Beat
 - **Stale ingest reconciliation**: Periodic recovery of PDF/EPUB media stuck in `extracting`
@@ -15,7 +15,6 @@ The worker processes background tasks including:
 
 For web article ingestion, the worker requires:
 - Node.js 20+ (for the ingest script)
-- Playwright with Chromium (installed by `npx playwright install chromium`)
 
 ## Usage
 
@@ -31,7 +30,7 @@ cd python
 PYTHONPATH=$PWD:$PWD/.. \
   DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/postgres \
   REDIS_URL=redis://localhost:6379/0 \
-  uv run celery -A apps.worker.main:celery_app worker -Q ingest --concurrency=1 --loglevel=info
+  uv run celery -A apps.worker.main:celery_app worker -Q ingest --concurrency=2 --loglevel=info
 
 PYTHONPATH=$PWD:$PWD/.. \
   DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/postgres \
@@ -74,7 +73,7 @@ All task logic lives in `python/nexus/tasks/`. This directory contains only the 
 
 | Queue | Purpose | Concurrency |
 |-------|---------|-------------|
-| `ingest` | Web article ingestion (Playwright) | 1 (due to Chromium memory) |
+| `ingest` | Web article ingestion (fetch + Readability) | 2 |
 | `default` | General tasks (future) | N |
 
 ### Web Article Ingestion Flow
@@ -82,7 +81,7 @@ All task logic lives in `python/nexus/tasks/`. This directory contains only the 
 1. API creates provisional media row (`POST /media/from_url`)
 2. API enqueues `ingest_web_article` task to `ingest` queue
 3. Worker task:
-   - Runs Node.js subprocess (Playwright + jsdom + Readability)
+   - Runs Node.js subprocess (fetch + jsdom + Readability)
    - Resolves redirects, computes canonical URL
    - Handles deduplication atomically
    - Sanitizes HTML (XSS protection, image proxy rewriting)
@@ -95,7 +94,7 @@ The worker spawns `node/ingest/ingest.mjs` as a subprocess:
 
 ```
 Python worker → subprocess → node/ingest/ingest.mjs
-                                  ├── Playwright (fetch + JS render)
+                                  ├── fetch() (HTTP with encoding detection)
                                   ├── jsdom (DOM parsing)
                                   └── @mozilla/readability (extraction)
 ```
@@ -108,10 +107,8 @@ Subprocess protocol:
 
 ### Memory Considerations
 
-Chromium browser processes are memory-intensive. Recommendations:
-- Start with `--concurrency=1` for the `ingest` queue
-- Scale by running multiple worker containers rather than increasing concurrency
-- Set container memory limits (e.g., 2GB per worker)
+Without Chromium, the worker is lightweight (~50-100MB per task). Higher concurrency
+is safe — the default is `--concurrency=2` but can be increased further on larger instances.
 
 ## Configuration
 
@@ -141,13 +138,12 @@ Ensure Node.js 20+ is installed and in PATH:
 node --version  # Should be v20.x.x or later
 ```
 
-### Playwright Chromium Missing
+### Node Dependencies Missing
 
-Install Playwright browsers:
+Install ingest dependencies:
 ```bash
 cd node/ingest
 npm ci
-npx playwright install chromium
 ```
 
 ### Task Not Processing
@@ -156,10 +152,3 @@ Check that:
 1. Redis is running and accessible
 2. Worker is connected to the correct queue (`-Q ingest`)
 3. Task was enqueued successfully (check Celery logs)
-
-### Memory Issues
-
-If worker is killed (OOM):
-- Reduce concurrency to 1
-- Increase container memory limit
-- Check for memory leaks in long-running workers

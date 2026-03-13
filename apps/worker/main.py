@@ -1,6 +1,6 @@
 """Celery worker entrypoint.
 
-Run with: celery -A apps.worker.main:celery_app worker -Q ingest --concurrency=1 --loglevel=info
+Run with: celery -A apps.worker.main:celery_app worker -Q ingest --concurrency=2 --loglevel=info
 
 This module imports the Celery app and explicitly registers all tasks.
 Task definitions are in nexus.tasks package - no autodiscovery.
@@ -11,12 +11,12 @@ Logging Convention:
 - Use configure_task_logging() at the start of each task to set up context
 
 Queue Configuration:
-- ingest: Web article ingestion tasks (Playwright + Node.js)
+- ingest: Web article ingestion tasks (fetch + Readability)
 - default: General background tasks
 
 Concurrency Notes:
-- Start with --concurrency=1 for ingest queue due to Chromium memory cost
-- Scale by running multiple workers on separate machines/containers
+- Default is --concurrency=2 for ingest queue
+- Tune based on CPU/network budget and workload profile
 """
 
 from celery.signals import worker_process_init

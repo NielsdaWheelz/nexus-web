@@ -186,7 +186,7 @@ Processing state transitions must be identical in all modes.
 
 | Failure Scenario | `processing_status` | `failure_stage` | `last_error_code` |
 |------------------|---------------------|-----------------|-------------------|
-| Playwright fetch fails | `failed` | `extract` | `E_INGEST_FAILED` |
+| HTTP fetch fails | `failed` | `extract` | `E_INGEST_FAILED` |
 | Fetch timeout | `failed` | `extract` | `E_INGEST_TIMEOUT` |
 | Sanitizer throws | `failed` | `extract` | `E_SANITIZATION_FAILED` |
 | Canonicalization fails | `failed` | `extract` | `E_SANITIZATION_FAILED` |
@@ -208,10 +208,13 @@ Manual retry via `POST /media/{id}/retry`:
 
 ### 5.1 Extraction Pipeline
 
-1. Fetch page using Playwright (Chromium, JS enabled)
-2. Capture final DOM HTML
+1. Fetch page using native HTTP (`fetch`, no JS execution)
+2. Decode using `Content-Type` charset or `<meta charset>` fallback
 3. Run Mozilla Readability on the DOM
 4. Produce extracted HTML body
+
+Limitation: this pipeline does not execute page JavaScript; fully client-rendered SPA shells may
+fail extraction and return `E_INGEST_FAILED`.
 
 Raw HTML is not persisted in v1.
 

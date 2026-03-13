@@ -31,7 +31,7 @@ services:
       - NEXUS_ENV=${NEXUS_ENV:-local}
     depends_on:
       - redis
-    # Limit resources due to Chromium memory usage
+    # Optional resource bounds for worker stability
     deploy:
       resources:
         limits:

@@ -158,12 +158,10 @@ npm install
 echo "Frontend dependencies installed"
 echo ""
 
-# Install node ingest worker dependencies (Playwright + Readability)
+# Install node ingest worker dependencies (fetch + jsdom + Readability)
 echo "Installing node ingest worker dependencies..."
 cd "$PROJECT_ROOT/node/ingest"
-npm install
-echo "Installing Playwright browsers (Chromium)..."
-npx playwright install chromium
+npm ci
 echo "Node ingest worker dependencies installed"
 echo ""
 

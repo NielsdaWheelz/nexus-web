@@ -119,15 +119,12 @@ ensure-services:
 		$(MAKE) dev; \
 	fi
 
-# Ensure Node.js ingest worker dependencies are installed (Playwright + Readability)
-# Playwright install is idempotent and fast when browsers already exist
+# Ensure Node.js ingest worker dependencies are installed (jsdom + Readability)
 ensure-node-ingest:
 	@if [ ! -d "node/ingest/node_modules" ]; then \
 		echo "Installing Node.js ingest worker dependencies..."; \
-		cd node/ingest && npm install; \
+		cd node/ingest && npm ci; \
 	fi
-	@cd node/ingest && npx playwright install chromium >/dev/null 2>&1 || \
-		(echo "Installing Playwright browsers (Chromium)..." && npx playwright install chromium)
 
 # Ensure E2E dependencies are installed
 ensure-e2e-deps:

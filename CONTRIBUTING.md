@@ -7,10 +7,6 @@
    - Node.js 20+
    - Docker
    - [uv](https://github.com/astral-sh/uv)
-   - Playwright (for web article ingestion tests):
-     ```bash
-     npx playwright install --with-deps chromium
-     ```
 
 2. Run setup:
    ```bash
@@ -76,12 +72,9 @@ make verify            # Full verification
 
 ### Web Article Ingestion Tests
 
-Tests that exercise the full web article ingestion pipeline require Node.js and Playwright:
+Tests that exercise the full web article ingestion pipeline require Node.js:
 
 ```bash
-# Install playwright browser
-npx playwright install --with-deps chromium
-
 # Run sync ingestion in tests (no worker required)
 from nexus.tasks.ingest_web_article import run_ingest_sync
 result = run_ingest_sync(db_session, media_id, viewer_id)
@@ -110,7 +103,7 @@ def test_ingestion(httpserver):
 **Fixture Server Contract:**
 - **Localhost URLs**: Allowed in `NEXUS_ENV=test` only
 - **Redirects**: Allowed (301, 302, etc.) - useful for testing dedup
-- **JavaScript execution**: Allowed (Playwright renders with JS)
+- **JavaScript execution**: Not supported in ingest pipeline (fetch-based, no browser rendering)
 - **External network access**: Forbidden in CI (all HTTP must go through httpserver fixtures)
 
 ## Pull Request Checklist

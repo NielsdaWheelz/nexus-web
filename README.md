@@ -57,13 +57,13 @@ nexus/
 │   └── config.toml              # Ports: API=54321, DB=54322
 │
 ├── node/                        # Node.js packages
-│   └── ingest/                  # Web article ingestion (Playwright + Readability)
+│   └── ingest/                  # Web article ingestion (fetch + Readability)
 │
 ├── docker/                      # Docker configs
 │   ├── docker-compose.yml       # Local dev services (redis only)
 │   ├── docker-compose.worker.yml # Worker service config
 │   ├── Dockerfile.api
-│   └── Dockerfile.worker        # Worker image (Python + Node.js + Chromium)
+│   └── Dockerfile.worker        # Worker image (Python + Node.js)
 │
 ├── .github/workflows/           # CI configuration
 │   └── ci.yml                   # GitHub Actions CI pipeline
@@ -553,7 +553,8 @@ The system supports asynchronous URL ingestion with service-layer classification
      - On transcript success: sets `processing_status=ready_for_reading`
      - On transcript-unavailable terminal outcome: sets `processing_status=failed`, `last_error_code=E_TRANSCRIPT_UNAVAILABLE`, preserves playback
    - **Web article path**:
-     - Fetches page via Playwright (JS-enabled browser)
+     - Fetches page via native HTTP (`fetch`, no browser JS rendering)
+     - Decodes HTML using charset header/meta fallback
      - Extracts content using Mozilla Readability
      - Sanitizes HTML (XSS protection, image proxy rewriting)
      - Generates canonical text for highlighting
@@ -572,11 +573,10 @@ make worker
 make beat
 ```
 
-The worker requires Node.js 20+ and Playwright Chromium. On first run:
+The worker requires Node.js 20+. On first run:
 ```bash
 cd node/ingest
 npm ci
-npx playwright install chromium
 ```
 
 ### Ingest Reliability Guardrails
