@@ -1,7 +1,7 @@
 """Celery task for web article ingestion.
 
 This task:
-1. Fetches page via Node subprocess (Playwright + jsdom + Readability)
+1. Fetches page via Node subprocess (fetch + jsdom + Readability)
 2. Resolves canonical URL from final redirect URL
 3. Performs atomic deduplication by canonical URL
 4. Sanitizes HTML and generates canonical text

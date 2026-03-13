@@ -158,7 +158,7 @@ class TestWebArticleHighlightE2E:
             ingest_result = run_ingest_sync(session, media_id, user_id)
 
         if ingest_result.get("status") != "success":
-            pytest.skip("Node.js/Playwright not available for full E2E test")
+            pytest.skip("Node.js not available for full E2E test")
 
         # Step 3: Fetch media and verify capabilities
         media_response = e2e_client.get(
@@ -735,7 +735,7 @@ class TestSanitizationSecurityRegression:
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
-            pytest.skip("Node.js/Playwright not available")
+            pytest.skip("Node.js not available")
 
         db_session.expire_all()
         row = db_session.execute(
@@ -777,7 +777,7 @@ class TestSanitizationSecurityRegression:
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
-            pytest.skip("Node.js/Playwright not available")
+            pytest.skip("Node.js not available")
 
         db_session.expire_all()
         row = db_session.execute(
@@ -819,7 +819,7 @@ class TestSanitizationSecurityRegression:
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
-            pytest.skip("Node.js/Playwright not available")
+            pytest.skip("Node.js not available")
 
         db_session.expire_all()
         row = db_session.execute(
@@ -861,7 +861,7 @@ class TestSanitizationSecurityRegression:
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
-            pytest.skip("Node.js/Playwright not available")
+            pytest.skip("Node.js not available")
 
         db_session.expire_all()
         row = db_session.execute(
@@ -902,7 +902,7 @@ class TestSanitizationSecurityRegression:
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
-            pytest.skip("Node.js/Playwright not available")
+            pytest.skip("Node.js not available")
 
         db_session.expire_all()
         row = db_session.execute(
@@ -943,7 +943,7 @@ class TestSanitizationSecurityRegression:
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
-            pytest.skip("Node.js/Playwright not available")
+            pytest.skip("Node.js not available")
 
         db_session.expire_all()
         row = db_session.execute(
@@ -982,7 +982,7 @@ class TestSanitizationSecurityRegression:
 
         ingest_result = run_ingest_sync(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
-            pytest.skip("Node.js/Playwright not available")
+            pytest.skip("Node.js not available")
 
         db_session.expire_all()
         row = db_session.execute(

@@ -6,6 +6,9 @@ Executes the node/ingest/ingest.mjs script as a subprocess with:
 - Process group isolation for clean kill
 - Structured error handling
 
+The Node script uses native fetch() (Node 20+) for HTTP and
+jsdom + Mozilla Readability for article extraction. No browser required.
+
 Exit codes from Node script:
     0  - Success
     10 - Timeout
@@ -34,7 +37,7 @@ EXIT_FETCH_FAILED = 11
 EXIT_READABILITY_FAILED = 12
 
 # Timeout configuration
-DEFAULT_NODE_TIMEOUT_MS = 30000  # 30s for Playwright fetch
+DEFAULT_NODE_TIMEOUT_MS = 30000  # 30s for HTTP fetch
 SUBPROCESS_TIMEOUT_S = 40  # 40s hard wall-clock limit for subprocess
 
 
@@ -69,7 +72,7 @@ def run_node_ingest(
 
     Args:
         url: The URL to fetch.
-        timeout_ms: Timeout for Playwright page load (passed to node script).
+        timeout_ms: Timeout for HTTP fetch (passed to node script).
         subprocess_timeout_s: Hard wall-clock timeout for the entire subprocess.
 
     Returns:
@@ -105,10 +108,13 @@ def run_node_ingest(
         try:
             stdout, stderr = proc.communicate(input=input_json, timeout=subprocess_timeout_s)
         except subprocess.TimeoutExpired:
-            # Kill entire process group
+            # Kill entire process group (POSIX) or process (Windows fallback)
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
+                if hasattr(os, "killpg"):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                else:
+                    proc.kill()
+            except (ProcessLookupError, OSError):
                 pass  # Process already dead
             proc.wait()
             return IngestError(

@@ -29,10 +29,10 @@ class TestIngestionStateTransitions:
 
     def test_successful_ingest_reaches_ready_for_reading(self, db_session: Session, httpserver):
         """Successful ingestion should transition: pending → extracting → ready_for_reading."""
-        # Skip if node/playwright not available
+        # Skip if node ingest not available
         pytest.importorskip("nexus.services.node_ingest")
 
-        # This test requires node.js and playwright to be installed
+        # This test requires node.js to be installed
         # In CI without those, we test the Python components separately
         from nexus.tasks.ingest_web_article import run_ingest_sync
 
@@ -86,9 +86,9 @@ class TestIngestionStateTransitions:
             assert len(fragment["html_sanitized"]) > 0
             assert len(fragment["canonical_text"]) > 0
         else:
-            # If node.js/playwright not available, task will fail
+            # If node.js not available, task will fail
             # This is expected in some CI environments
-            pytest.skip("Node.js/Playwright not available for full integration test")
+            pytest.skip("Node.js not available for full integration test")
 
     def test_fetch_failure_marks_media_failed(self, db_session: Session, httpserver):
         """Failed fetch should transition to failed state with correct error code."""
