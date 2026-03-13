@@ -1,15 +1,14 @@
 {
   "schema_version": "1.0",
   "status": "ready_for_review",
-  "updated_at": "2026-03-13T03:00:05Z",
-  "summary": "Completed senior hardening pass for podcast transcript refactor: request-reason persistence, admission idempotency safeguards, expanded regression tests, docs alignment, and multi-commit review split.",
+  "updated_at": "2026-03-13T11:19:34Z",
+  "summary": "Completed staff-level PR hardening for transcript phase-3/4: fixed stale running job reclaim, transcript-anchor offset sync, metadata-search gating, migration downgrade safety, and aligned docs/readmes with verified green checks.",
   "questions": [],
   "blockers": [],
-  "how_to_test": "./scripts/with_test_services.sh bash -lc \"make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_podcasts.py tests/test_capabilities.py tests/test_search.py -q\" && cd python && uv run ruff check nexus tests && uv run ruff format --check nexus tests && cd apps/web && npx tsc --noEmit && npm run build",
+  "how_to_test": "make test-migrations-no-services && cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test NEXUS_ENV=test SUPABASE_JWKS_URL=http://127.0.0.1:54321/auth/v1/.well-known/jwks.json SUPABASE_ISSUER=http://127.0.0.1:54321/auth/v1 SUPABASE_AUDIENCES=authenticated uv run pytest -v tests/test_podcasts.py tests/test_search.py tests/test_capabilities.py && make lint-back lint-front typecheck build verify-celery-contract",
   "risks": [
-    "Transcript readiness still relies on processing_status instead of dedicated transcript_state + coverage enums",
-    "Refund semantics beyond enqueue failure (provider/stale-job reclaim) are still pending",
-    "Versioned transcript storage and anchor-preserving re-transcription are not yet implemented",
-    "Semantic transcript search and budget-aware background warming remain out of current implementation scope"
+    "Semantic transcript ranking currently uses deterministic lightweight embeddings and lexical overlap, not pgvector ANN retrieval.",
+    "Deep downgrade past typed-highlight schema drops rows incompatible with legacy non-null fragment offset constraints.",
+    "Podcast fragment idx values can become sparse over many re-transcriptions due idx-shift preservation strategy."
   ]
 }

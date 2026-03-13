@@ -97,6 +97,7 @@ nexus/
 | POST | `/media/from_url` | Create provisional web_article from URL (S2) |
 | POST | `/media/upload/init` | Initialize file upload (PDF/EPUB) |
 | POST | `/media/{id}/ingest` | Confirm upload and process file |
+| POST | `/media/{id}/transcript/request` | Forecast or admit podcast transcript work (`reason`, `dry_run`, quota-fit response) |
 | GET | `/media/{id}/file` | Get signed download URL |
 | POST | `/fragments/{id}/highlights` | Create highlight (S2) |
 | GET | `/fragments/{id}/highlights` | List highlights for fragment (S2) |
@@ -463,6 +464,7 @@ GET /search?q=test&limit=10&cursor=BASE64_CURSOR
 - `fragment` - Document fragment canonical_text
 - `annotation` - Annotation body text
 - `message` - Conversation message content
+- `transcript_chunk` - Transcript chunk semantic search (requires `semantic=true`)
 
 **Scopes:**
 - `all` - All visible content (default)

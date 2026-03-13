@@ -1,43 +1,34 @@
-# podcast-transcript-metadata-first-refactor
+# podcast-transcript-phase3-4
 
 ## summary
-- refactored podcast subscription ingest to metadata-first: sync no longer spends transcript quota or auto-enqueues transcription jobs
-- added explicit transcript admission endpoint `POST /media/{media_id}/transcript/request` with dry-run budget forecast, quota-fit evaluation, and enqueue behavior
-- updated transcript quota accounting to use an atomic reservation-style upsert path for explicit requests
-- updated transcript media capability derivation so playback remains usable for metadata-only/pending podcast episodes
-- hardened transcript admission by persisting `request_reason` on `podcast_transcription_jobs` and validating API response shape against the declared schema
-- added idempotency guard for duplicate requests while a transcript job is already queued/running
-- converted legacy integration tests to explicit-demand behavior while preserving async lifecycle coverage
+- shipped dedicated transcript state + coverage tracking (`media_transcript_states`) and immutable transcript version artifacts (`podcast_transcript_versions`, `podcast_transcript_segments`, `podcast_transcript_chunks`) with active-version projection
+- hardened async lifecycle behavior: stale `running` transcription jobs are reclaimable by workers using a lease cutoff aligned with ingest stale thresholds
+- fixed highlight offset updates so transcript anchors remain offset-consistent after highlight span edits
+- corrected search semantics so metadata title search includes transcript-unavailable podcast/video media while semantic transcript chunk search remains readiness-gated
+- made migration rollback safer by unlinking transcript version metadata from fragments (instead of deleting fragments) and removing only rows incompatible with pre-0009 highlight constraints during deep downgrade
+- aligned docs/readmes with the explicit transcript admission endpoint, transcript chunk search type, migration inventory, and implementation status
 
 ## decisions
-- **control plane / transcript plane split**: `_sync_subscription_ingest` now only creates metadata + library attachment (`processing_status='pending'`) and never creates `podcast_transcription_jobs`
-- **admission API**: transcript requests now require explicit reason (`episode_open`, `search`, `highlight`, `quote`, `background_warming`, `operator_requeue`) and support `dry_run` for budget forecasting
-- **quota reservation semantics**: explicit requests reserve minutes via atomic `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` logic; over-budget requests fail with `E_PODCAST_QUOTA_EXCEEDED`
-- **enqueue failure handling**: failed dispatch refunds reserved minutes and marks the media/job as failed with deterministic internal error state
-- **playback fallback**: transcript media with playback URLs are now playable regardless of transcript readiness, avoiding false "processing-only" UX for metadata-first episodes
-- **reason auditability**: transcript job rows now persist the admission reason via `request_reason` (new migration `0023`)
+- **kept `fragments(media_id, idx)` uniqueness** rather than introducing version-scoped fragment idx uniqueness because EPUB and existing FK shape depend on current semantics; historical transcript rows are preserved via idx shifting on re-transcription
+- **used ingest stale threshold for transcription job lease reclaim** to avoid two divergent stale-job clocks across ingest and transcript execution paths
+- **separated metadata search from transcript readiness gating**: media discovery/search by title remains available even when transcript extraction is unavailable, while transcript content search stays strictly state-gated
+- **kept deterministic local semantic scoring** (hash embedding + lexical overlap) for this phase to avoid adding pgvector infra before correctness contracts settle
+- **downgrade compatibility over strict data retention when crossing pre-typed-highlight schema**: retain transcript fragments/highlights where possible, but allow removal of rows that cannot satisfy historical not-null fragment-offset constraints
 
 ## how to test
 ```bash
-# podcast backend integration coverage
-./scripts/with_test_services.sh bash -lc "make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_podcasts.py -q"
+# migration round-trip
+make test-migrations-no-services
 
-# capabilities unit coverage
-./scripts/with_test_services.sh bash -lc "make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_capabilities.py -q"
+# targeted backend regression suites
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test NEXUS_ENV=test SUPABASE_JWKS_URL=http://127.0.0.1:54321/auth/v1/.well-known/jwks.json SUPABASE_ISSUER=http://127.0.0.1:54321/auth/v1 SUPABASE_AUDIENCES=authenticated uv run pytest -v tests/test_podcasts.py tests/test_search.py tests/test_capabilities.py
 
-# podcast/capability/search regression slice
-./scripts/with_test_services.sh bash -lc "make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_podcasts.py tests/test_capabilities.py tests/test_search.py -q"
-
-# backend lint + format
-cd python && uv run ruff check nexus tests && uv run ruff format --check nexus tests
-
-# frontend type + build compile
-cd apps/web && npx tsc --noEmit
-cd apps/web && npm run build
+# static + build checks
+make lint-back lint-front typecheck build verify-celery-contract
 ```
 
 ## risks
-- transcript readiness is still represented through `processing_status` (`pending` as metadata-not-requested) rather than dedicated `transcript_state` + `coverage` enums
-- refund coverage currently handles enqueue failure path; provider-failure/stale-job reclaim automation is still follow-up work
-- re-transcription still rewrites transcript fragment substrate in place; versioned transcript artifacts/anchors are still pending
-- semantic transcript search (chunking + embeddings + readiness gating) and background warming policy are still not implemented
+- semantic transcript ranking still uses deterministic lightweight vectors, not pgvector ANN; relevance quality and recall/latency at larger scale remain bounded
+- deep downgrade past typed-highlight migrations necessarily drops rows that violate legacy fragment-offset not-null constraints
+- transcript fragment idx preservation can create sparse idx space after repeated re-transcription cycles
+- scheduled stale-job reconciliation is still best-effort; we now reclaim stale `running` claims at worker claim-time but not via a dedicated periodic sweeper yet

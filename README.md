@@ -51,7 +51,8 @@ nexus/
 │   │       ├── 0020_conversation_titles.py                    # Conversation title column
 │   │       ├── 0021_podcast_transcription_job_lifecycle.py    # S7: podcast transcription job lifecycle
 │   │       ├── 0022_user_email_display_name.py                # User email + display_name columns
-│   │       └── 0023_podcast_transcription_request_reason.py   # Podcast transcript request reason contract
+│   │       ├── 0023_podcast_transcription_request_reason.py   # Podcast transcript request reason contract
+│   │       └── 0024_podcast_transcript_state_versioning_semantic.py  # Transcript state bridge, versioned artifacts, semantic chunk search tables
 │   └── alembic.ini
 │
 ├── supabase/                    # Supabase local configuration

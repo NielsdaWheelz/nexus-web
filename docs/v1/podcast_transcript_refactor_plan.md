@@ -14,12 +14,15 @@ Current branch status against this plan:
   - atomic per-user/day quota reservation for transcript admission
   - playback-usable capabilities when transcript is pending/unavailable
   - request reason persisted on `podcast_transcription_jobs.request_reason`
+  - dedicated `media_transcript_states` bridge (`transcript_state`, `transcript_coverage`, `semantic_status`)
+  - immutable `podcast_transcript_versions` with active-version projection per media row
+  - version-aware transcript anchors for highlights (`highlight_transcript_anchors`)
+  - transcript chunk + embedding artifacts with semantic chunk search gating
 - partially implemented:
-  - refund path exists for enqueue failure; broader provider/stale-job refund reconciliation is still pending
-  - transcript readiness is still inferred from `processing_status` rather than dedicated `transcript_state` + `coverage` enums
+  - refund path exists for enqueue failure; broader stale-running and provider timeout refund reconciliation is still pending
+  - stale-running transcription reclaim now exists at worker claim time; scheduled reconciliation still remains best-effort and bounded
+  - semantic ranking currently uses deterministic lightweight embeddings + lexical overlap (no pgvector ANN yet)
 - not implemented yet:
-  - versioned transcript artifacts and anchor-preserving re-transcription
-  - chunk/embedding-backed semantic transcript search
   - budget-aware background warming policy and preemption behavior
 
 ## Why This Refactor Exists
