@@ -4,6 +4,24 @@
 
 Refactor podcast ingestion from eager quota-spending subscription sync into a metadata-first, demand-driven transcript platform that supports durable highlights, timestamp-aware quote-to-chat, and hybrid keyword + semantic episode-content search without quota shocks or anchor loss.
 
+## Implementation Status (2026-03-13)
+
+Current branch status against this plan:
+
+- implemented now:
+  - metadata-first subscription sync with no eager transcript spend
+  - explicit transcript admission endpoint with dry-run forecast
+  - atomic per-user/day quota reservation for transcript admission
+  - playback-usable capabilities when transcript is pending/unavailable
+  - request reason persisted on `podcast_transcription_jobs.request_reason`
+- partially implemented:
+  - refund path exists for enqueue failure; broader provider/stale-job refund reconciliation is still pending
+  - transcript readiness is still inferred from `processing_status` rather than dedicated `transcript_state` + `coverage` enums
+- not implemented yet:
+  - versioned transcript artifacts and anchor-preserving re-transcription
+  - chunk/embedding-backed semantic transcript search
+  - budget-aware background warming policy and preemption behavior
+
 ## Why This Refactor Exists
 
 The current system gets several expensive-to-reverse things right:
