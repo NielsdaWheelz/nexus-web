@@ -8,8 +8,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Copy dependency files
+# Copy dependency files and package source (uv needs the local package to resolve)
 COPY python/pyproject.toml python/uv.lock ./
+COPY python/nexus ./nexus
 
 # Install dependencies
 RUN uv sync --frozen --no-dev
