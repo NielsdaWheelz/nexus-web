@@ -1,65 +1,43 @@
-# auth cutover review + hardening pass
+# podcast-transcript-metadata-first-refactor
 
 ## summary
-- completed a full review/remediation pass across OAuth login, callback handling,
-  signout behavior, linked identities UI, e2e auth bootstrap, and env/docs
-  wiring
-- removed unsafe public error echo in callback redirects and mapped user-visible
-  auth errors to an allowlisted set of safe messages
-- ensured callback-origin policy failures return a controlled 500 instead of an
-  uncaught exception path
-- updated e2e auth bootstrap so setup no longer depends on `/login` hash-token
-  processing (it now persists Supabase session cookies directly in Playwright)
-- fixed setup/ops/docs inconsistencies (`README` artifact removal, loopback URL
-  canonicalization, redirect-origin env documentation)
+- refactored podcast subscription ingest to metadata-first: sync no longer spends transcript quota or auto-enqueues transcription jobs
+- added explicit transcript admission endpoint `POST /media/{media_id}/transcript/request` with dry-run budget forecast, quota-fit evaluation, and enqueue behavior
+- updated transcript quota accounting to use an atomic reservation-style upsert path for explicit requests
+- updated transcript media capability derivation so playback remains usable for metadata-only/pending podcast episodes
+- hardened transcript admission by persisting `request_reason` on `podcast_transcription_jobs` and validating API response shape against the declared schema
+- added idempotency guard for duplicate requests while a transcript job is already queued/running
+- converted legacy integration tests to explicit-demand behavior while preserving async lifecycle coverage
 
 ## decisions
-- **safe auth error surface**: callback and login now display only known
-  allowlisted messages, not arbitrary provider/internal strings
-- **fail-closed callback posture retained**: missing
-  `AUTH_ALLOWED_REDIRECT_ORIGINS` on non-local callbacks still fails closed;
-  route now responds in a controlled way
-- **e2e setup decoupled from client hash import**: security hardening on login
-  does not regress test setup reliability
-- **signout semantics explicit**: `/auth/signout` intentionally uses local-scope
-  signout and this is documented inline
-
-## docs
-- updated root docs: `README.md`
-- updated app docs: `apps/web/README.md`
-- added auth hardening note: `docs/auth/oauth-cutover-hardening.md`
+- **control plane / transcript plane split**: `_sync_subscription_ingest` now only creates metadata + library attachment (`processing_status='pending'`) and never creates `podcast_transcription_jobs`
+- **admission API**: transcript requests now require explicit reason (`episode_open`, `search`, `highlight`, `quote`, `background_warming`, `operator_requeue`) and support `dry_run` for budget forecasting
+- **quota reservation semantics**: explicit requests reserve minutes via atomic `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` logic; over-budget requests fail with `E_PODCAST_QUOTA_EXCEEDED`
+- **enqueue failure handling**: failed dispatch refunds reserved minutes and marks the media/job as failed with deterministic internal error state
+- **playback fallback**: transcript media with playback URLs are now playable regardless of transcript readiness, avoiding false "processing-only" UX for metadata-first episodes
+- **reason auditability**: transcript job rows now persist the admission reason via `request_reason` (new migration `0023`)
 
 ## how to test
 ```bash
-cd apps/web
-npx vitest run --project unit src/lib/auth/callback.test.ts src/lib/auth/messages.test.ts src/lib/auth/redirects.test.ts src/lib/auth/identities.test.ts src/app/auth/callback/route.test.ts src/app/auth/signout/route.test.ts src/lib/supabase/middleware.test.ts src/lib/panes/paneRouteRegistry.test.tsx
-npx vitest run --project browser src/__tests__/components/SettingsPage.test.tsx "src/app/(authenticated)/settings/identities/page.test.tsx" "src/app/login/LoginPageClient.test.tsx"
-npm run lint
-npm run typecheck
-npm run build
+# podcast backend integration coverage
+./scripts/with_test_services.sh bash -lc "make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_podcasts.py -q"
 
-cd ../e2e
-CI=1 WEB_PORT=3001 API_PORT=8001 npx playwright test tests/auth.spec.ts --config=playwright.config.ts
+# capabilities unit coverage
+./scripts/with_test_services.sh bash -lc "make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_capabilities.py -q"
+
+# podcast/capability/search regression slice
+./scripts/with_test_services.sh bash -lc "make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_podcasts.py tests/test_capabilities.py tests/test_search.py -q"
+
+# backend lint + format
+cd python && uv run ruff check nexus tests && uv run ruff format --check nexus tests
+
+# frontend type + build compile
+cd apps/web && npx tsc --noEmit
+cd apps/web && npm run build
 ```
-
-## manual verification
-```bash
-# from repo root, with temporary servers on ports 3001/8001
-curl -i "http://localhost:3001/login?next=%2Flibraries"
-curl -i "http://localhost:3001/auth/callback?next=%2Flibraries"
-curl -i -X POST "http://localhost:3001/auth/signout"
-```
-
-Observed behavior:
-- `/login` returns 200 with Google/GitHub provider entrypoints
-- `/auth/callback` without `code` returns 307 to `/login?...error_description=...`
-- `POST /auth/signout` returns 302 to `/login`
 
 ## risks
-- callback-origin strictness remains intentionally strict and will fail non-local
-  callback traffic when `AUTH_ALLOWED_REDIRECT_ORIGINS` is missing
-- e2e cookie bootstrap depends on current Supabase cookie payload encoding
-  (`base64-...` session format); upstream format changes will require harness
-  updates
-- optional live GitHub provider round-trip remains credential-gated and was
-  skipped in automated verification when credentials were not provided
+- transcript readiness is still represented through `processing_status` (`pending` as metadata-not-requested) rather than dedicated `transcript_state` + `coverage` enums
+- refund coverage currently handles enqueue failure path; provider-failure/stale-job reclaim automation is still follow-up work
+- re-transcription still rewrites transcript fragment substrate in place; versioned transcript artifacts/anchors are still pending
+- semantic transcript search (chunking + embeddings + readiness gating) and background warming policy are still not implemented
