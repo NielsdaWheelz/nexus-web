@@ -31,8 +31,10 @@ celery_app.conf.result_backend = settings.effective_celery_result_backend
 
 # Celery requires explicit SSL config for rediss:// URLs
 if settings.effective_celery_broker_url.startswith("rediss://"):
-    celery_app.conf.broker_use_ssl = {"ssl_cert_reqs": "CERT_REQUIRED"}
-    celery_app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": "CERT_REQUIRED"}
+    import ssl
+
+    celery_app.conf.broker_use_ssl = {"ssl_cert_reqs": ssl.CERT_REQUIRED}
+    celery_app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": ssl.CERT_REQUIRED}
 
 # Task configuration
 celery_app.conf.task_serializer = "json"
