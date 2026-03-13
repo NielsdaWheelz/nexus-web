@@ -14,11 +14,12 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Copy dependency files
+# Copy dependency files and package source (uv needs the local package to resolve)
 COPY python/pyproject.toml python/uv.lock python/README.md ./
+COPY python/nexus ./nexus
 
 # Install Python dependencies
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --no-editable
 
 # =============================================================================
 # Stage 2: Node.js dependencies
@@ -38,8 +39,9 @@ RUN npm ci --omit=dev
 # =============================================================================
 FROM python:3.12-slim
 
-# Install Node.js (needed at runtime for ingest script)
+# Install Node.js and libpq (needed at runtime for ingest script and psycopg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
     curl \
     ca-certificates \
     gnupg \
