@@ -135,6 +135,35 @@ class RetryResponse(BaseModel):
     retry_enqueued: bool
 
 
+TranscriptRequestReason = Literal[
+    "episode_open",
+    "search",
+    "highlight",
+    "quote",
+    "background_warming",
+    "operator_requeue",
+]
+
+
+class TranscriptRequestRequest(BaseModel):
+    """Request schema for POST /media/{id}/transcript/request."""
+
+    reason: TranscriptRequestReason = "episode_open"
+    dry_run: bool = False
+
+
+class TranscriptRequestResponse(BaseModel):
+    """Response schema for transcript admission endpoint."""
+
+    media_id: str
+    processing_status: str
+    request_reason: TranscriptRequestReason
+    required_minutes: int
+    remaining_minutes: int | None = None
+    fits_budget: bool
+    request_enqueued: bool
+
+
 class FileDownloadResponse(BaseModel):
     """Response schema for GET /media/{id}/file."""
 

@@ -68,10 +68,10 @@ def derive_capabilities(
 
     # =========================================================================
     # can_play: True iff external_playback_url exists and conditions met
-    # For transcript media: allowed even if transcript failed
+    # For transcript media: allowed whenever playback URL exists.
     # =========================================================================
     if external_playback_url_exists:
-        can_play = status_ready_for_reading or is_transcript_unavailable
+        can_play = is_transcript_media or status_ready_for_reading or is_transcript_unavailable
     else:
         can_play = False
 

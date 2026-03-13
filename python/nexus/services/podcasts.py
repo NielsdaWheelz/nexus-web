@@ -69,6 +69,14 @@ _ITUNES_DURATION_XPATH = (
 _DEEPGRAM_LISTEN_PATH = "/v1/listen"
 _PODCAST_ACTIVE_POLL_MAX_LIMIT = 1000
 _PODCAST_ACTIVE_POLL_UNEXPECTED_ERROR_CODE = ApiErrorCode.E_INTERNAL.value
+PODCAST_TRANSCRIPT_REQUEST_REASONS = {
+    "episode_open",
+    "search",
+    "highlight",
+    "quote",
+    "background_warming",
+    "operator_requeue",
+}
 
 
 class PodcastIndexClient:
@@ -548,6 +556,240 @@ def list_podcast_episodes_for_viewer(
     ]
 
 
+def request_podcast_transcript_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    *,
+    reason: str,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    from nexus.auth.permissions import can_read_media
+
+    normalized_reason = str(reason or "").strip()
+    if normalized_reason not in PODCAST_TRANSCRIPT_REQUEST_REASONS:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid transcript request reason",
+        )
+
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    now = datetime.now(UTC)
+    usage_date = now.date()
+    media_row = db.execute(
+        text(
+            """
+            SELECT
+                m.kind,
+                m.processing_status,
+                (
+                    SELECT pe.duration_seconds
+                    FROM podcast_episodes pe
+                    WHERE pe.media_id = m.id
+                ) AS duration_seconds,
+                (
+                    SELECT j.status
+                    FROM podcast_transcription_jobs j
+                    WHERE j.media_id = m.id
+                ) AS job_status
+            FROM media m
+            WHERE m.id = :media_id
+            FOR UPDATE
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchone()
+    if media_row is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    media_kind = str(media_row[0] or "")
+    processing_status = str(media_row[1] or "")
+    duration_seconds = _coerce_positive_int(media_row[2])
+    job_status = str(media_row[3] or "").strip() or None
+
+    if media_kind != "podcast_episode":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            "Transcript request is only supported for podcast episodes.",
+        )
+
+    required_minutes = _episode_minutes({"duration_seconds": duration_seconds})
+    plan = _get_effective_plan(db, viewer_id)
+    daily_limit_minutes = plan["daily_transcription_minutes"]
+    used_minutes = _get_usage_minutes(db, viewer_id=viewer_id, usage_date=usage_date)
+    remaining_minutes = (
+        None
+        if daily_limit_minutes is None
+        else max(0, int(daily_limit_minutes) - int(used_minutes))
+    )
+    fits_budget = remaining_minutes is None or required_minutes <= remaining_minutes
+
+    # Already queued/running/readable: idempotent no-op forecast.
+    if processing_status in {
+        "extracting",
+        "ready_for_reading",
+        "embedding",
+        "ready",
+    } or job_status in {"pending", "running"}:
+        effective_status = (
+            "extracting"
+            if processing_status == "pending" and job_status in {"pending", "running"}
+            else processing_status
+        )
+        return {
+            "media_id": str(media_id),
+            "processing_status": effective_status,
+            "request_reason": normalized_reason,
+            "required_minutes": required_minutes,
+            "remaining_minutes": remaining_minutes,
+            "fits_budget": True,
+            "request_enqueued": False,
+        }
+
+    if dry_run:
+        return {
+            "media_id": str(media_id),
+            "processing_status": processing_status,
+            "request_reason": normalized_reason,
+            "required_minutes": required_minutes,
+            "remaining_minutes": remaining_minutes,
+            "fits_budget": fits_budget,
+            "request_enqueued": False,
+        }
+
+    if not fits_budget:
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
+            "Daily podcast transcription quota exceeded",
+        )
+
+    minutes_used_after = _reserve_usage_minutes_or_raise(
+        db,
+        user_id=viewer_id,
+        usage_date=usage_date,
+        required_minutes=required_minutes,
+        daily_limit_minutes=daily_limit_minutes,
+        now=now,
+    )
+    remaining_minutes_after = (
+        None
+        if daily_limit_minutes is None
+        else max(0, int(daily_limit_minutes) - int(minutes_used_after))
+    )
+
+    db.execute(
+        text(
+            """
+            INSERT INTO podcast_transcription_jobs (
+                media_id,
+                requested_by_user_id,
+                request_reason,
+                status,
+                error_code,
+                attempts,
+                started_at,
+                completed_at,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                :media_id,
+                :requested_by_user_id,
+                :request_reason,
+                'pending',
+                NULL,
+                0,
+                NULL,
+                NULL,
+                :created_at,
+                :updated_at
+            )
+            ON CONFLICT (media_id)
+            DO UPDATE SET
+                requested_by_user_id = EXCLUDED.requested_by_user_id,
+                request_reason = EXCLUDED.request_reason,
+                status = 'pending',
+                error_code = NULL,
+                started_at = NULL,
+                completed_at = NULL,
+                updated_at = EXCLUDED.updated_at
+            """
+        ),
+        {
+            "media_id": media_id,
+            "requested_by_user_id": viewer_id,
+            "request_reason": normalized_reason,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+
+    db.execute(
+        text(
+            """
+            UPDATE media
+            SET
+                processing_status = 'extracting',
+                failure_stage = NULL,
+                last_error_code = NULL,
+                last_error_message = NULL,
+                processing_started_at = :now,
+                processing_completed_at = NULL,
+                failed_at = NULL,
+                updated_at = :now
+            WHERE id = :media_id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "now": now,
+        },
+    )
+
+    enqueued = _enqueue_podcast_transcription_job(
+        media_id=media_id,
+        requested_by_user_id=viewer_id,
+    )
+    if not enqueued:
+        _refund_usage_minutes(
+            db,
+            user_id=viewer_id,
+            usage_date=usage_date,
+            refund_minutes=required_minutes,
+            now=now,
+        )
+        _mark_podcast_transcription_failure(
+            db,
+            media_id=media_id,
+            error_code=ApiErrorCode.E_INTERNAL.value,
+            error_message="Failed to enqueue podcast transcription job",
+            now=now,
+        )
+        db.commit()
+        return {
+            "media_id": str(media_id),
+            "processing_status": "failed",
+            "request_reason": normalized_reason,
+            "required_minutes": required_minutes,
+            "remaining_minutes": remaining_minutes,
+            "fits_budget": True,
+            "request_enqueued": False,
+        }
+
+    db.commit()
+    return {
+        "media_id": str(media_id),
+        "processing_status": "extracting",
+        "request_reason": normalized_reason,
+        "required_minutes": required_minutes,
+        "remaining_minutes": remaining_minutes_after,
+        "fits_budget": True,
+        "request_enqueued": True,
+    }
+
+
 def retry_transcript_media_for_viewer(
     db: Session,
     viewer_id: UUID,
@@ -638,6 +880,7 @@ def retry_transcript_media_for_viewer(
                 INSERT INTO podcast_transcription_jobs (
                     media_id,
                     requested_by_user_id,
+                    request_reason,
                     status,
                     error_code,
                     attempts,
@@ -649,6 +892,7 @@ def retry_transcript_media_for_viewer(
                 VALUES (
                     :media_id,
                     :requested_by_user_id,
+                    :request_reason,
                     'pending',
                     NULL,
                     0,
@@ -660,6 +904,7 @@ def retry_transcript_media_for_viewer(
                 ON CONFLICT (media_id)
                 DO UPDATE SET
                     requested_by_user_id = EXCLUDED.requested_by_user_id,
+                    request_reason = EXCLUDED.request_reason,
                     status = 'pending',
                     error_code = NULL,
                     started_at = NULL,
@@ -670,6 +915,7 @@ def retry_transcript_media_for_viewer(
             {
                 "media_id": media_id,
                 "requested_by_user_id": viewer_id,
+                "request_reason": "operator_requeue",
                 "created_at": now,
                 "updated_at": now,
             },
@@ -1461,7 +1707,6 @@ def _sync_subscription_ingest(
     plan: dict[str, Any],
     now: datetime,
 ) -> tuple[int, int]:
-    usage_date = now.date()
     ingested_episode_count = 0
     reused_episode_count = 0
 
@@ -1486,17 +1731,6 @@ def _sync_subscription_ingest(
                 "fallback_identity": fallback_identity,
             }
         )
-
-    required_minutes = sum(_episode_minutes(row["episode"]) for row in new_episodes)
-    _enforce_quota_or_raise(
-        db,
-        viewer_id=viewer_id,
-        usage_date=usage_date,
-        daily_limit_minutes=plan["daily_transcription_minutes"],
-        required_minutes=required_minutes,
-    )
-    if required_minutes > 0:
-        _increment_usage_minutes(db, viewer_id, usage_date, required_minutes, now=now)
 
     for row in new_episodes:
         episode = row["episode"]
@@ -1527,7 +1761,7 @@ def _sync_subscription_ingest(
                     'podcast_episode',
                     :title,
                     :canonical_source_url,
-                    'extracting',
+                    'pending',
                     NULL,
                     NULL,
                     NULL,
@@ -1589,54 +1823,6 @@ def _sync_subscription_ingest(
                 "created_at": now,
             },
         )
-
-        db.execute(
-            text(
-                """
-                INSERT INTO podcast_transcription_jobs (
-                    media_id,
-                    requested_by_user_id,
-                    status,
-                    error_code,
-                    attempts,
-                    started_at,
-                    completed_at,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :media_id,
-                    :requested_by_user_id,
-                    'pending',
-                    NULL,
-                    0,
-                    NULL,
-                    NULL,
-                    :created_at,
-                    :updated_at
-                )
-                """
-            ),
-            {
-                "media_id": media_id,
-                "requested_by_user_id": viewer_id,
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-
-        enqueued = _enqueue_podcast_transcription_job(
-            media_id=media_id,
-            requested_by_user_id=viewer_id,
-        )
-        if not enqueued:
-            _mark_podcast_transcription_failure(
-                db,
-                media_id=media_id,
-                error_code=ApiErrorCode.E_INTERNAL.value,
-                error_message="Failed to enqueue podcast transcription job",
-                now=now,
-            )
 
         _ensure_in_default_library(db, viewer_id, media_id)
         ingested_episode_count += 1
@@ -2386,19 +2572,12 @@ def _plan_defaults(settings, plan_tier: str) -> dict[str, Any]:
     }
 
 
-def _enforce_quota_or_raise(
+def _get_usage_minutes(
     db: Session,
     *,
     viewer_id: UUID,
     usage_date: date,
-    daily_limit_minutes: int | None,
-    required_minutes: int,
-) -> None:
-    if required_minutes <= 0:
-        return
-    if daily_limit_minutes is None:
-        return
-
+) -> int:
     used_minutes = db.execute(
         text(
             """
@@ -2409,12 +2588,92 @@ def _enforce_quota_or_raise(
         ),
         {"user_id": viewer_id, "usage_date": usage_date},
     ).scalar()
-    used_minutes = int(used_minutes or 0)
+    return int(used_minutes or 0)
 
-    if used_minutes + required_minutes > daily_limit_minutes:
+
+def _reserve_usage_minutes_or_raise(
+    db: Session,
+    *,
+    user_id: UUID,
+    usage_date: date,
+    required_minutes: int,
+    daily_limit_minutes: int | None,
+    now: datetime,
+) -> int:
+    if required_minutes <= 0:
+        return _get_usage_minutes(db, viewer_id=user_id, usage_date=usage_date)
+
+    if daily_limit_minutes is None:
+        row = db.execute(
+            text(
+                """
+                INSERT INTO podcast_transcription_usage_daily (
+                    user_id,
+                    usage_date,
+                    minutes_used,
+                    updated_at
+                )
+                VALUES (
+                    :user_id,
+                    :usage_date,
+                    :minutes_used,
+                    :updated_at
+                )
+                ON CONFLICT (user_id, usage_date)
+                DO UPDATE SET
+                    minutes_used = podcast_transcription_usage_daily.minutes_used + EXCLUDED.minutes_used,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING minutes_used
+                """
+            ),
+            {
+                "user_id": user_id,
+                "usage_date": usage_date,
+                "minutes_used": required_minutes,
+                "updated_at": now,
+            },
+        ).fetchone()
+    else:
+        row = db.execute(
+            text(
+                """
+                INSERT INTO podcast_transcription_usage_daily (
+                    user_id,
+                    usage_date,
+                    minutes_used,
+                    updated_at
+                )
+                SELECT
+                    :user_id,
+                    :usage_date,
+                    :minutes_used,
+                    :updated_at
+                WHERE :minutes_used <= :daily_limit_minutes
+                ON CONFLICT (user_id, usage_date)
+                DO UPDATE SET
+                    minutes_used = podcast_transcription_usage_daily.minutes_used + EXCLUDED.minutes_used,
+                    updated_at = EXCLUDED.updated_at
+                WHERE (
+                    podcast_transcription_usage_daily.minutes_used + EXCLUDED.minutes_used
+                    <= :daily_limit_minutes
+                )
+                RETURNING minutes_used
+                """
+            ),
+            {
+                "user_id": user_id,
+                "usage_date": usage_date,
+                "minutes_used": required_minutes,
+                "daily_limit_minutes": daily_limit_minutes,
+                "updated_at": now,
+            },
+        ).fetchone()
+
+    if row is None:
+        used_minutes = _get_usage_minutes(db, viewer_id=user_id, usage_date=usage_date)
         logger.warning(
             "podcast_quota_exceeded",
-            viewer_id=str(viewer_id),
+            viewer_id=str(user_id),
             usage_date=usage_date.isoformat(),
             used_minutes=used_minutes,
             required_minutes=required_minutes,
@@ -2424,41 +2683,34 @@ def _enforce_quota_or_raise(
             ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
             "Daily podcast transcription quota exceeded",
         )
+    return int(row[0] or 0)
 
 
-def _increment_usage_minutes(
+def _refund_usage_minutes(
     db: Session,
+    *,
     user_id: UUID,
     usage_date: date,
-    delta_minutes: int,
-    *,
+    refund_minutes: int,
     now: datetime,
 ) -> None:
+    if refund_minutes <= 0:
+        return
     db.execute(
         text(
             """
-            INSERT INTO podcast_transcription_usage_daily (
-                user_id,
-                usage_date,
-                minutes_used,
-                updated_at
-            )
-            VALUES (
-                :user_id,
-                :usage_date,
-                :minutes_used,
-                :updated_at
-            )
-            ON CONFLICT (user_id, usage_date)
-            DO UPDATE SET
-                minutes_used = podcast_transcription_usage_daily.minutes_used + EXCLUDED.minutes_used,
-                updated_at = EXCLUDED.updated_at
+            UPDATE podcast_transcription_usage_daily
+            SET
+                minutes_used = GREATEST(minutes_used - :refund_minutes, 0),
+                updated_at = :updated_at
+            WHERE user_id = :user_id
+              AND usage_date = :usage_date
             """
         ),
         {
             "user_id": user_id,
             "usage_date": usage_date,
-            "minutes_used": delta_minutes,
+            "refund_minutes": refund_minutes,
             "updated_at": now,
         },
     )

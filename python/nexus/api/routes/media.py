@@ -12,16 +12,22 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
-from nexus.schemas.media import FromUrlRequest, UploadInitRequest
+from nexus.schemas.media import (
+    FromUrlRequest,
+    TranscriptRequestRequest,
+    TranscriptRequestResponse,
+    UploadInitRequest,
+)
 from nexus.schemas.reader import ReaderMediaStatePatch
 from nexus.services import epub_lifecycle, epub_read, image_proxy
 from nexus.services import media as media_service
+from nexus.services import podcasts as podcast_service
 from nexus.services import reader as reader_service
 from nexus.services import upload as upload_service
 
@@ -299,6 +305,26 @@ def retry_ingest(
         request_id=request_id,
     )
     return success_response(result)
+
+
+@router.post("/media/{media_id}/transcript/request")
+def request_podcast_transcript(
+    media_id: UUID,
+    body: TranscriptRequestRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> JSONResponse:
+    """Admit (or forecast) an explicit transcript request for a podcast episode."""
+    result = podcast_service.request_podcast_transcript_for_viewer(
+        db=db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        reason=body.reason,
+        dry_run=body.dry_run,
+    )
+    payload = TranscriptRequestResponse.model_validate(result).model_dump(mode="json")
+    status_code = 202 if result["request_enqueued"] else 200
+    return JSONResponse(status_code=status_code, content=success_response(payload))
 
 
 @router.get("/media/{media_id}/assets/{asset_key:path}")

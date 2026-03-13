@@ -763,6 +763,7 @@ class PodcastTranscriptionJob(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    request_reason: Mapped[str] = mapped_column(Text, nullable=False, server_default="episode_open")
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
@@ -787,6 +788,12 @@ class PodcastTranscriptionJob(Base):
         CheckConstraint(
             "attempts >= 0",
             name="ck_podcast_transcription_jobs_attempts_non_negative",
+        ),
+        CheckConstraint(
+            "request_reason IN ("
+            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue'"
+            ")",
+            name="ck_podcast_transcription_jobs_request_reason",
         ),
     )
 
