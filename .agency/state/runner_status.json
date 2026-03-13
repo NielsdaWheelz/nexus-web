@@ -1,13 +1,14 @@
 {
   "schema_version": "1.0",
   "status": "ready_for_review",
-  "updated_at": "2026-03-07T04:35:00Z",
-  "summary": "Library member search by email/name: full gold-standard implementation across all layers. Migration, bootstrap email sync, user search API, enriched member/invite responses, invite-by-email, display_name editing, frontend email search autocomplete.",
+  "updated_at": "2026-03-13T12:15:58Z",
+  "summary": "completed ingest fetch migration hardening, docs/ops alignment, targeted verification, and docker worker build fix",
   "questions": [],
   "blockers": [],
-  "how_to_test": "./scripts/with_test_services.sh bash -lc \"make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_user_profiles.py tests/test_libraries.py tests/test_permissions.py -x --tb=short\" && cd apps/web && npx vitest run src/__tests__/components/LibraryEditDialog.test.tsx && npx tsc --noEmit",
+  "how_to_test": "./scripts/with_test_services.sh bash -lc \"make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_node_ingest.py tests/test_ingest_web_article.py -q --tb=short\" && cd python && uv run ruff check nexus/services/node_ingest.py nexus/tasks/ingest_web_article.py tests/test_node_ingest.py tests/test_ingest_web_article.py tests/test_web_article_highlight_e2e.py && make typecheck && make build && make verify-celery-contract && printf '{\"url\":\"https://example.com\",\"timeout_ms\":15000}\\n' | node node/ingest/ingest.mjs && docker build -f docker/Dockerfile.worker -t nexus-worker:pr-review .",
   "risks": [
-    "email uniqueness constraint assumes 1:1 supabase-auth-to-nexus-user mapping (correct by design)",
-    "display_name search uses ILIKE %query% which is a seq scan — fine for current scale, add GIN trigram index if user base grows to 100k+"
+    "client-rendered SPA pages remain unsupported by fetch-only ingest (no JavaScript execution)",
+    "10 MiB response-size cap may reject unusually long pages; this is an intentional safety trade-off",
+    "frontend build still reports pre-existing lint warnings in test files"
   ]
 }

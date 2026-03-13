@@ -1,30 +1,46 @@
-# bugfix-library-members-search
+# ingest fetch hardening review
 
 ## summary
-- library member/invite management previously required raw user UUIDs — unusable for real humans
-- implemented full email+display_name user identity layer: migration, bootstrap email sync from JWT, user search API, enriched member/invite responses, invite-by-email, display_name editing, frontend email search autocomplete
-- 19 new backend integration tests, 16 frontend component tests, zero regressions across 160 backend tests
+- completed a full staff-level review/hardening pass for web-article ingest after the Playwright -> native fetch migration
+- hardened `node/ingest/ingest.mjs` with bounded response-size reads, charset-fallback robustness, URL/timeout input validation, and explicit no-JS-render limitation docs
+- aligned runtime/docs/ops surfaces (`README`, `CONTRIBUTING`, worker docs, setup script, CI, S2 spec) and fixed a real worker image build blocker in `docker/Dockerfile.worker` (missing `python/README.md` during `uv sync`)
+- added/updated targeted ingest tests and verified with hermetic backend test runs, lint, typecheck, frontend build, celery-contract verification, CLI smoke, and worker Docker build
 
 ## decisions
-- **email source**: extracted from Supabase JWT payload during bootstrap (every auth request), upserted with `ON CONFLICT DO UPDATE SET email = COALESCE(:email, users.email)` — no extra API call needed
-- **search strategy**: email prefix match (`ILIKE 'query%'`) + display_name substring match (`ILIKE '%query%'`), minimum 3 chars, capped at 20 results, excludes self. uses escaped LIKE wildcards to prevent injection via `%` or `_` chars
-- **invite backward compat**: `CreateLibraryInviteRequest` accepts both `invitee_user_id` (UUID) and `invitee_email` (string), at least one required. frontend detects which to send via `includes("@")`
-- **display_name editing**: `PATCH /me` with `display_name` field, nullable, 1-100 chars. no signup page needed — users can edit from account pane
-- **index strategy**: `text_pattern_ops` index on email for prefix LIKE. display_name search uses seq scan via ILIKE — fine at current scale, add GIN trigram index if user base grows to 100k+
+- **fetch-only ingestion remains the contract**: no browser rendering; JS-hydrated SPAs are explicitly documented as out-of-scope for this pipeline
+- **safety limit**: enforce `MAX_BODY_BYTES = 10 MiB` in Node ingest to prevent unbounded memory use on malicious/oversized responses
+- **charset strategy**: resolve charset from `Content-Type`, then `<meta>`, then UTF-8 fallback; unsupported charset labels degrade gracefully
+- **input validation**: reject non-HTTP(S) URLs and invalid/unsafe timeout values before network work begins
+- **ops consistency**: remove stale ingest-Playwright install steps from setup/CI and update worker docs/concurrency guidance to match fetch-based runtime
+
+## acceptance criteria check
+- [x] ingest runtime no longer requires Playwright/Chromium and still extracts readable content
+- [x] redirect, timeout, HTTP failure, and charset edge-paths covered by tests
+- [x] docs/setup/CI instructions no longer contradict runtime behavior
+- [x] worker container build succeeds with current Dockerfile
 
 ## how to test
 ```bash
-# backend: all tests including 19 new user profile + library member search tests
-./scripts/with_test_services.sh bash -lc "make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_user_profiles.py tests/test_libraries.py tests/test_permissions.py -x --tb=short"
+# targeted backend ingest tests (hermetic postgres + redis)
+./scripts/with_test_services.sh bash -lc "make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_node_ingest.py tests/test_ingest_web_article.py -q --tb=short"
 
-# frontend: component tests for LibraryEditDialog
-cd apps/web && npx vitest run src/__tests__/components/LibraryEditDialog.test.tsx
+# backend lint for touched ingest files
+cd python && uv run ruff check nexus/services/node_ingest.py nexus/tasks/ingest_web_article.py tests/test_node_ingest.py tests/test_ingest_web_article.py tests/test_web_article_highlight_e2e.py
 
-# typecheck
-cd apps/web && npx tsc --noEmit
+# frontend compile gates
+make typecheck && make build
+
+# celery contract preflight
+make verify-celery-contract
+
+# manual CLI smoke
+printf '{"url":"https://example.com","timeout_ms":15000}\n' | node node/ingest/ingest.mjs
+
+# worker image build
+docker build -f docker/Dockerfile.worker -t nexus-worker:pr-review .
 ```
 
 ## risks
-- email uniqueness constraint assumes 1:1 supabase-auth-to-nexus-user mapping (correct by design)
-- display_name search uses ILIKE %query% which is a seq scan — fine for current scale, add GIN trigram index if user base grows to 100k+
-- bootstrap email sync is eventually consistent — email updates propagate on next authenticated request, not instantly
+- client-rendered SPA pages remain a known ingest gap (no JS execution by design)
+- 10 MiB response cap can reject extremely long articles; this is intentional safety trade-off
+- frontend build emits pre-existing test-file lint warnings unrelated to this PR; no new errors introduced
