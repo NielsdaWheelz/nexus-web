@@ -240,9 +240,7 @@ class TestNodeIngestFetch:
 
     def test_response_too_large_returns_ingest_error(self, httpserver):
         oversized_article = (
-            "<html><body><article><p>"
-            + ("A" * (11 * 1024 * 1024))
-            + "</p></article></body></html>"
+            "<html><body><article><p>" + ("A" * (11 * 1024 * 1024)) + "</p></article></body></html>"
         )
         httpserver.expect_request("/oversized").respond_with_data(
             oversized_article,
