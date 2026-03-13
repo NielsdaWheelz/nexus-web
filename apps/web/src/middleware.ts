@@ -16,14 +16,13 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Generate CSP nonce for inline scripts
-  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
-
   // Build CSP header
-  // Next.js dev mode requires 'unsafe-eval' for hot module reloading (HMR).
+  // Using 'unsafe-inline' for scripts because Next.js injects inline scripts
+  // for hydration/RSC that don't carry the middleware nonce on Vercel.
+  // TODO: re-introduce nonce-based CSP once Next.js nonce propagation is wired up.
   const isDev = process.env.NODE_ENV === "development";
   const cspHeader = [
-    `script-src 'self' 'nonce-${nonce}'${isDev ? " 'unsafe-eval'" : ""}`,
+    `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
     `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
     `font-src 'self' https://fonts.gstatic.com`,
     `frame-src https://www.youtube.com https://www.youtube-nocookie.com`,
@@ -37,9 +36,6 @@ export async function middleware(request: NextRequest) {
 
   // Set CSP header
   response.headers.set("Content-Security-Policy", cspHeader);
-
-  // Pass nonce to the request for server components
-  response.headers.set("x-nonce", nonce);
 
   return response;
 }
