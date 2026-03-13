@@ -1555,6 +1555,94 @@ class TestPodcastTranscriptRequestAdmission:
             "admitted request must transition media into queued state"
         )
 
+    def test_transcript_request_refunds_quota_when_enqueue_fails(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_metadata_only_episode(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            daily_transcription_minutes=5,
+            duration_seconds=180,
+        )
+        user_id = seeded["user_id"]
+        media_id = seeded["media_id"]
+        monkeypatch.setattr(
+            "nexus.services.podcasts._enqueue_podcast_transcription_job",
+            lambda **_kwargs: False,
+        )
+
+        request_response = auth_client.post(
+            f"/media/{media_id}/transcript/request",
+            json={"reason": "episode_open"},
+            headers=auth_headers(user_id),
+        )
+        assert request_response.status_code == 200, (
+            "enqueue failure should return a deterministic non-enqueued response, "
+            f"got {request_response.status_code}: {request_response.text}"
+        )
+        payload = request_response.json()["data"]
+        assert payload["request_enqueued"] is False
+        assert payload["processing_status"] == "failed"
+        assert payload["required_minutes"] == 3
+        assert payload["remaining_minutes"] == 5
+        assert payload["fits_budget"] is True
+
+        with direct_db.session() as session:
+            usage_minutes = session.execute(
+                text(
+                    """
+                    SELECT minutes_used
+                    FROM podcast_transcription_usage_daily
+                    WHERE user_id = :user_id AND usage_date = :usage_date
+                    """
+                ),
+                {"user_id": user_id, "usage_date": datetime.now(UTC).date()},
+            ).scalar()
+            job_row = session.execute(
+                text(
+                    """
+                    SELECT status, error_code
+                    FROM podcast_transcription_jobs
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            state_row = session.execute(
+                text(
+                    """
+                    SELECT transcript_state, transcript_coverage, last_error_code
+                    FROM media_transcript_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            audit_outcomes = session.execute(
+                text(
+                    """
+                    SELECT outcome
+                    FROM podcast_transcript_request_audits
+                    WHERE media_id = :media_id
+                    ORDER BY created_at ASC
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchall()
+
+        assert usage_minutes == 0, (
+            "failed enqueue admissions must fully refund reserved quota minutes"
+        )
+        assert job_row is not None
+        assert job_row[0] == "failed"
+        assert job_row[1] == "E_INTERNAL"
+        assert state_row is not None
+        assert state_row[0] == "failed_provider"
+        assert state_row[1] == "none"
+        assert state_row[2] == "E_INTERNAL"
+        assert [row[0] for row in audit_outcomes][-1] == "enqueue_failed"
+
     def test_transcript_request_is_idempotent_when_already_queued(
         self, auth_client, monkeypatch, direct_db
     ):
@@ -3573,6 +3661,90 @@ class TestPodcastTranscriptionAsyncLifecycle:
         assert job_row[4] is None
         assert fragment_count == 2
 
+    def test_manual_transcription_worker_reclaims_stale_running_job(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_single_episode_subscription(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            run_transcription_jobs=False,
+        )
+        media_id = seeded["media_id"]
+        user_id = seeded["user_id"]
+        stale_started_at = datetime.now(UTC) - timedelta(hours=2)
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_transcription_jobs
+                    SET
+                        status = 'running',
+                        started_at = :started_at,
+                        updated_at = :started_at,
+                        completed_at = NULL
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id, "started_at": stale_started_at},
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE media
+                    SET
+                        processing_status = 'extracting',
+                        processing_started_at = :started_at,
+                        processing_completed_at = NULL,
+                        failed_at = NULL,
+                        updated_at = :started_at
+                    WHERE id = :media_id
+                    """
+                ),
+                {"media_id": media_id, "started_at": stale_started_at},
+            )
+            session.commit()
+
+        monkeypatch.setattr(
+            "nexus.services.podcasts._transcribe_podcast_audio",
+            lambda _audio_url: {
+                "status": "completed",
+                "segments": [{"t_start_ms": 0, "t_end_ms": 900, "text": "stale reclaim"}],
+            },
+        )
+
+        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+
+        with direct_db.session() as session:
+            result = run_podcast_transcribe_now(
+                session,
+                media_id=media_id,
+                requested_by_user_id=user_id,
+            )
+            session.commit()
+
+        assert result["status"] == "completed", (
+            "worker should reclaim stale running transcription jobs instead of skipping forever"
+        )
+
+        with direct_db.session() as session:
+            job_row = session.execute(
+                text(
+                    """
+                    SELECT status, attempts, started_at, completed_at
+                    FROM podcast_transcription_jobs
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+        assert job_row is not None
+        assert job_row[0] == "completed"
+        assert job_row[1] == 1
+        assert job_row[2] is not None
+        assert job_row[3] is not None
+
     def test_manual_transcription_worker_is_idempotent_after_completion(
         self, auth_client, monkeypatch, direct_db
     ):
@@ -3722,6 +3894,519 @@ class TestPodcastTranscriptionAsyncLifecycle:
         assert second_data["processing_status"] == "extracting"
         assert second_data["retry_enqueued"] is False
         second_dispatch.assert_not_called()
+
+
+class TestPodcastTranscriptStateVersioningAndAudit:
+    def _seed_metadata_only_episode(
+        self,
+        *,
+        auth_client,
+        monkeypatch,
+        direct_db,
+    ) -> dict[str, UUID]:
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="free",
+            daily_transcription_minutes=60,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"state-version-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "State Version Podcast")
+        episodes = [
+            {
+                "provider_episode_id": "ep-state-version-1",
+                "guid": "guid-state-version-1",
+                "title": "State Version Episode",
+                "audio_url": "https://cdn.example.com/state-version.mp3",
+                "published_at": "2026-03-05T10:00:00Z",
+                "duration_seconds": 180,
+                "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 1000, "text": "seed"}],
+            }
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: episodes},
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+            stub_enqueue=True,
+        )
+
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text(
+                    """
+                    SELECT pe.media_id
+                    FROM podcast_episodes pe
+                    JOIN podcasts p ON p.id = pe.podcast_id
+                    WHERE p.provider_podcast_id = :provider_podcast_id
+                    """
+                ),
+                {"provider_podcast_id": provider_podcast_id},
+            ).scalar()
+            assert media_id is not None
+
+        return {"user_id": user_id, "media_id": media_id}
+
+    def _run_transcription_now(
+        self,
+        *,
+        monkeypatch,
+        direct_db,
+        media_id: UUID,
+        user_id: UUID,
+        segments: list[dict[str, object]],
+    ) -> dict:
+        monkeypatch.setattr(
+            "nexus.services.podcasts._transcribe_podcast_audio",
+            lambda _audio_url: {
+                "status": "completed",
+                "segments": segments,
+                "diagnostic_error_code": None,
+            },
+        )
+
+        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+
+        with direct_db.session() as session:
+            result = run_podcast_transcribe_now(
+                session,
+                media_id=media_id,
+                requested_by_user_id=user_id,
+            )
+            session.commit()
+        return result
+
+    def test_transcript_state_tracks_not_requested_to_ready_with_active_version(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_metadata_only_episode(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+        )
+        user_id = seeded["user_id"]
+        media_id = seeded["media_id"]
+
+        with direct_db.session() as session:
+            initial_state = session.execute(
+                text(
+                    """
+                    SELECT transcript_state, transcript_coverage, semantic_status
+                    FROM media_transcript_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+        assert initial_state is not None
+        assert initial_state[0] == "not_requested"
+        assert initial_state[1] == "none"
+
+        request_response = auth_client.post(
+            f"/media/{media_id}/transcript/request",
+            json={"reason": "episode_open"},
+            headers=auth_headers(user_id),
+        )
+        assert request_response.status_code == 202, (
+            f"expected transcript admission to enqueue work, got {request_response.status_code}: "
+            f"{request_response.text}"
+        )
+
+        with direct_db.session() as session:
+            queued_state = session.execute(
+                text(
+                    """
+                    SELECT transcript_state, transcript_coverage
+                    FROM media_transcript_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+        assert queued_state is not None
+        assert queued_state[0] == "queued"
+        assert queued_state[1] == "none"
+
+        result = self._run_transcription_now(
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            media_id=media_id,
+            user_id=user_id,
+            segments=[
+                {"t_start_ms": 0, "t_end_ms": 900, "text": "first semantic segment"},
+                {"t_start_ms": 1000, "t_end_ms": 2200, "text": "second semantic segment"},
+            ],
+        )
+        assert result["status"] == "completed"
+
+        with direct_db.session() as session:
+            final_state = session.execute(
+                text(
+                    """
+                    SELECT
+                        mts.transcript_state,
+                        mts.transcript_coverage,
+                        mts.semantic_status,
+                        mts.active_transcript_version_id,
+                        m.processing_status
+                    FROM media_transcript_states mts
+                    JOIN media m ON m.id = mts.media_id
+                    WHERE mts.media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            assert final_state is not None
+            active_version_id = final_state[3]
+
+            version_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_transcript_versions WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            segment_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM podcast_transcript_segments
+                    WHERE transcript_version_id = :transcript_version_id
+                    """
+                ),
+                {"transcript_version_id": active_version_id},
+            ).scalar()
+            chunk_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM podcast_transcript_chunks
+                    WHERE transcript_version_id = :transcript_version_id
+                    """
+                ),
+                {"transcript_version_id": active_version_id},
+            ).scalar()
+
+        assert final_state[0] == "ready"
+        assert final_state[1] == "full"
+        assert final_state[2] == "ready"
+        assert final_state[3] is not None
+        assert final_state[4] == "ready_for_reading"
+        assert version_count == 1
+        assert segment_count == 2
+        assert chunk_count == 2
+
+    def test_retranscription_creates_new_version_without_deleting_old_highlight_anchor(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_metadata_only_episode(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+        )
+        user_id = seeded["user_id"]
+        media_id = seeded["media_id"]
+
+        first_request = auth_client.post(
+            f"/media/{media_id}/transcript/request",
+            json={"reason": "episode_open"},
+            headers=auth_headers(user_id),
+        )
+        assert first_request.status_code == 202
+
+        first_run = self._run_transcription_now(
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            media_id=media_id,
+            user_id=user_id,
+            segments=[
+                {
+                    "t_start_ms": 0,
+                    "t_end_ms": 1200,
+                    "text": "alpha transcript line",
+                    "speaker_label": "SpeakerA",
+                },
+                {"t_start_ms": 1300, "t_end_ms": 2400, "text": "alpha follow up"},
+            ],
+        )
+        assert first_run["status"] == "completed"
+
+        fragments_v1_response = auth_client.get(
+            f"/media/{media_id}/fragments",
+            headers=auth_headers(user_id),
+        )
+        assert fragments_v1_response.status_code == 200
+        fragments_v1 = fragments_v1_response.json()["data"]
+        assert len(fragments_v1) == 2
+        first_fragment_id = UUID(fragments_v1[0]["id"])
+
+        highlight_response = auth_client.post(
+            f"/fragments/{first_fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert highlight_response.status_code == 201, (
+            f"expected highlight create 201, got {highlight_response.status_code}: "
+            f"{highlight_response.text}"
+        )
+        highlight_id = UUID(highlight_response.json()["data"]["id"])
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_transcription_jobs
+                    SET
+                        status = 'pending',
+                        error_code = NULL,
+                        started_at = NULL,
+                        completed_at = NULL,
+                        updated_at = :now,
+                        request_reason = 'operator_requeue'
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id, "now": datetime.now(UTC)},
+            )
+            session.commit()
+
+        second_run = self._run_transcription_now(
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            media_id=media_id,
+            user_id=user_id,
+            segments=[
+                {
+                    "t_start_ms": 5000,
+                    "t_end_ms": 6200,
+                    "text": "beta transcript line",
+                    "speaker_label": "SpeakerB",
+                },
+                {"t_start_ms": 6300, "t_end_ms": 7600, "text": "beta follow up"},
+            ],
+        )
+        assert second_run["status"] == "completed"
+
+        fragments_v2_response = auth_client.get(
+            f"/media/{media_id}/fragments",
+            headers=auth_headers(user_id),
+        )
+        assert fragments_v2_response.status_code == 200
+        fragments_v2 = fragments_v2_response.json()["data"]
+        assert len(fragments_v2) == 2
+        assert "beta transcript line" in fragments_v2[0]["canonical_text"]
+        assert all("alpha transcript line" not in row["canonical_text"] for row in fragments_v2)
+
+        with direct_db.session() as session:
+            version_rows = session.execute(
+                text(
+                    """
+                    SELECT id, version_no, is_active
+                    FROM podcast_transcript_versions
+                    WHERE media_id = :media_id
+                    ORDER BY version_no ASC
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchall()
+            assert len(version_rows) == 2
+            first_version_id = version_rows[0][0]
+            assert version_rows[0][1] == 1
+            assert version_rows[0][2] is False
+            assert version_rows[1][1] == 2
+            assert version_rows[1][2] is True
+
+            original_fragment_row = session.execute(
+                text(
+                    """
+                    SELECT id, transcript_version_id
+                    FROM fragments
+                    WHERE id = :fragment_id
+                    """
+                ),
+                {"fragment_id": first_fragment_id},
+            ).fetchone()
+            assert original_fragment_row is not None
+            assert original_fragment_row[1] == first_version_id
+
+            transcript_anchor_row = session.execute(
+                text(
+                    """
+                    SELECT transcript_version_id, t_start_ms, t_end_ms
+                    FROM highlight_transcript_anchors
+                    WHERE highlight_id = :highlight_id
+                    """
+                ),
+                {"highlight_id": highlight_id},
+            ).fetchone()
+
+            from nexus.services.context_rendering import _render_highlight_context
+
+            rendered_context = _render_highlight_context(session, highlight_id)
+
+        assert transcript_anchor_row is not None
+        assert transcript_anchor_row[0] == first_version_id
+        assert transcript_anchor_row[1] == 0
+        assert transcript_anchor_row[2] == 1200
+        assert rendered_context is not None
+        assert "Timestamp: 00:00:00" in rendered_context
+        assert "Speaker: SpeakerA" in rendered_context
+
+        highlight_detail = auth_client.get(
+            f"/highlights/{highlight_id}",
+            headers=auth_headers(user_id),
+        )
+        assert highlight_detail.status_code == 200
+        anchor = highlight_detail.json()["data"]["anchor"]
+        assert anchor["type"] == "fragment_offsets"
+        assert anchor["fragment_id"] == str(first_fragment_id)
+
+    def test_highlight_offset_updates_keep_transcript_anchor_offsets_in_sync(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_metadata_only_episode(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+        )
+        user_id = seeded["user_id"]
+        media_id = seeded["media_id"]
+
+        first_request = auth_client.post(
+            f"/media/{media_id}/transcript/request",
+            json={"reason": "episode_open"},
+            headers=auth_headers(user_id),
+        )
+        assert first_request.status_code == 202
+        first_run = self._run_transcription_now(
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            media_id=media_id,
+            user_id=user_id,
+            segments=[
+                {"t_start_ms": 0, "t_end_ms": 1400, "text": "anchor offset update sample"},
+            ],
+        )
+        assert first_run["status"] == "completed"
+
+        fragments_response = auth_client.get(
+            f"/media/{media_id}/fragments",
+            headers=auth_headers(user_id),
+        )
+        assert fragments_response.status_code == 200
+        first_fragment_id = UUID(fragments_response.json()["data"][0]["id"])
+
+        highlight_response = auth_client.post(
+            f"/fragments/{first_fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 6, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert highlight_response.status_code == 201
+        highlight_id = UUID(highlight_response.json()["data"]["id"])
+
+        update_response = auth_client.patch(
+            f"/highlights/{highlight_id}",
+            json={"start_offset": 2, "end_offset": 8},
+            headers=auth_headers(user_id),
+        )
+        assert update_response.status_code == 200, (
+            f"expected highlight update to succeed, got {update_response.status_code}: "
+            f"{update_response.text}"
+        )
+        anchor_payload = update_response.json()["data"]["anchor"]
+        assert anchor_payload["start_offset"] == 2
+        assert anchor_payload["end_offset"] == 8
+
+        with direct_db.session() as session:
+            anchor_row = session.execute(
+                text(
+                    """
+                    SELECT start_offset, end_offset
+                    FROM highlight_transcript_anchors
+                    WHERE highlight_id = :highlight_id
+                    """
+                ),
+                {"highlight_id": highlight_id},
+            ).fetchone()
+            highlight_row = session.execute(
+                text(
+                    """
+                    SELECT start_offset, end_offset
+                    FROM highlights
+                    WHERE id = :highlight_id
+                    """
+                ),
+                {"highlight_id": highlight_id},
+            ).fetchone()
+
+        assert highlight_row is not None
+        assert highlight_row[0] == 2
+        assert highlight_row[1] == 8
+        assert anchor_row is not None
+        assert anchor_row[0] == 2
+        assert anchor_row[1] == 8
+
+    def test_transcript_request_reason_is_durably_audited_per_request(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        seeded = self._seed_metadata_only_episode(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+        )
+        user_id = seeded["user_id"]
+        media_id = seeded["media_id"]
+
+        dry_run_response = auth_client.post(
+            f"/media/{media_id}/transcript/request",
+            json={"reason": "search", "dry_run": True},
+            headers=auth_headers(user_id),
+        )
+        assert dry_run_response.status_code == 200
+
+        admitted_response = auth_client.post(
+            f"/media/{media_id}/transcript/request",
+            json={"reason": "quote"},
+            headers=auth_headers(user_id),
+        )
+        assert admitted_response.status_code == 202
+
+        duplicate_response = auth_client.post(
+            f"/media/{media_id}/transcript/request",
+            json={"reason": "highlight"},
+            headers=auth_headers(user_id),
+        )
+        assert duplicate_response.status_code == 200
+
+        with direct_db.session() as session:
+            audit_rows = session.execute(
+                text(
+                    """
+                    SELECT request_reason, dry_run, outcome
+                    FROM podcast_transcript_request_audits
+                    WHERE media_id = :media_id
+                    ORDER BY created_at ASC
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchall()
+
+        assert len(audit_rows) >= 3, (
+            "every transcript request attempt must be durably audited with its own reason/outcome"
+        )
+        assert audit_rows[0] == ("search", True, "forecast")
+        assert audit_rows[1] == ("quote", False, "queued")
+        assert audit_rows[2] == ("highlight", False, "idempotent")
 
     def test_retry_endpoint_requeues_failed_video_transcription_and_is_idempotent(
         self, auth_client, direct_db

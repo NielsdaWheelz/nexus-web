@@ -27,12 +27,19 @@ import json
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, update
+from sqlalchemy import and_, delete, func, or_, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_highlight, can_read_media, highlight_visibility_filter
-from nexus.db.models import Annotation, Fragment, Highlight, HighlightFragmentAnchor, Media
+from nexus.db.models import (
+    Annotation,
+    Fragment,
+    Highlight,
+    HighlightFragmentAnchor,
+    HighlightTranscriptAnchor,
+    Media,
+)
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
@@ -423,6 +430,43 @@ def create_highlight_for_fragment(
         )
         db.add(fragment_anchor)
         db.flush()
+
+        if (
+            fragment.transcript_version_id is not None
+            and fragment.t_start_ms is not None
+            and fragment.t_end_ms is not None
+            and fragment.t_end_ms > fragment.t_start_ms
+        ):
+            transcript_segment_row = db.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM podcast_transcript_segments
+                    WHERE transcript_version_id = :transcript_version_id
+                      AND segment_idx = :segment_idx
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "transcript_version_id": fragment.transcript_version_id,
+                    "segment_idx": fragment.idx,
+                },
+            ).fetchone()
+
+            db.add(
+                HighlightTranscriptAnchor(
+                    highlight_id=highlight.id,
+                    transcript_version_id=fragment.transcript_version_id,
+                    transcript_segment_id=(
+                        transcript_segment_row[0] if transcript_segment_row is not None else None
+                    ),
+                    t_start_ms=fragment.t_start_ms,
+                    t_end_ms=fragment.t_end_ms,
+                    start_offset=req.start_offset,
+                    end_offset=req.end_offset,
+                )
+            )
+            db.flush()
         db.commit()
     except IntegrityError as e:
         db.rollback()
@@ -710,6 +754,9 @@ def update_highlight(
                     end_offset=final_end,
                 )
                 db.add(new_fa)
+            if highlight.transcript_anchor is not None:
+                highlight.transcript_anchor.start_offset = final_start
+                highlight.transcript_anchor.end_offset = final_end
 
         db.flush()
         db.commit()
