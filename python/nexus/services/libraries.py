@@ -491,6 +491,7 @@ def list_library_media(
     viewer_id: UUID,
     library_id: UUID,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[MediaOut]:
     """List media in a library.
 
@@ -509,6 +510,8 @@ def list_library_media(
     """
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    if offset < 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Offset must be non-negative")
 
     # Clamp limit to max 200
     limit = min(limit, 200)
@@ -539,8 +542,9 @@ def list_library_media(
             WHERE lm.library_id = :library_id
             ORDER BY lm.created_at DESC, m.id DESC
             LIMIT :limit
+            OFFSET :offset
         """),
-        {"library_id": library_id, "limit": limit},
+        {"library_id": library_id, "limit": limit, "offset": offset},
     )
 
     rows = result.fetchall()

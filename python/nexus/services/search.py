@@ -47,9 +47,8 @@ from nexus.schemas.search import (
 )
 from nexus.services.semantic_chunks import (
     build_text_embedding,
-    cosine_similarity,
-    lexical_overlap_score,
-    normalize_embedding_payload,
+    to_pgvector_literal,
+    transcript_embedding_dimensions,
 )
 from nexus.services.transcript_media import transcript_media_searchable_sql
 
@@ -66,10 +65,14 @@ MIN_QUERY_LENGTH = 2
 
 # Number of candidates to fetch per type before merging
 CANDIDATES_PER_TYPE = 200
+TRANSCRIPT_CHUNK_SCAN_LIMIT = 50000  # Legacy compatibility constant (unused after ANN cutover)
+TRANSCRIPT_CHUNK_MIN_ANN_CANDIDATES = 200
+TRANSCRIPT_CHUNK_ANN_CANDIDATE_MULTIPLIER = 20
 
-# Supported search result types (ordered for deterministic behavior)
-ALL_RESULT_TYPES = ("media", "fragment", "annotation", "message")
-VALID_RESULT_TYPES = set(ALL_RESULT_TYPES) | {"transcript_chunk"}
+# Supported search result types (ordered for deterministic behavior).
+# Omitted type filters must mean "search everything the caller can ask for".
+ALL_RESULT_TYPES = ("media", "fragment", "annotation", "message", "transcript_chunk")
+VALID_RESULT_TYPES = set(ALL_RESULT_TYPES)
 
 # Type weight multipliers (applied post-rank)
 TYPE_WEIGHTS = {
@@ -315,7 +318,7 @@ def search(
         viewer_id: The ID of the viewer.
         q: Search query string.
         scope: Search scope ("all", "media:<id>", "library:<id>", "conversation:<id>").
-        types: List of types to search (media, fragment, annotation, message).
+        types: List of types to search (media, fragment, annotation, message, transcript_chunk).
         cursor: Pagination cursor.
         limit: Maximum results per page (default 20, max 50).
 
@@ -633,8 +636,8 @@ def _search_annotations(
             a.id,
             a.highlight_id,
             f.media_id,
-            f.id AS fragment_id,
-            f.idx AS fragment_idx,
+            COALESCE(f_active.id, f.id) AS fragment_id,
+            COALESCE(f_active.idx, f.idx) AS fragment_idx,
             h.exact,
             h.prefix,
             h.suffix,
@@ -651,6 +654,39 @@ def _search_annotations(
         JOIN fragments f ON f.id = h.fragment_id
         JOIN media m ON m.id = f.media_id
         JOIN visible_media vm ON vm.media_id = f.media_id
+        LEFT JOIN media_transcript_states mts ON mts.media_id = f.media_id
+        LEFT JOIN highlight_transcript_anchors hta ON hta.highlight_id = h.id
+        LEFT JOIN LATERAL (
+            SELECT
+                fa.id,
+                fa.idx
+            FROM fragments fa
+            WHERE fa.media_id = f.media_id
+              AND mts.active_transcript_version_id IS NOT NULL
+              AND fa.transcript_version_id = mts.active_transcript_version_id
+              AND hta.t_start_ms IS NOT NULL
+              AND hta.t_end_ms IS NOT NULL
+              AND fa.t_start_ms IS NOT NULL
+              AND fa.t_end_ms IS NOT NULL
+              AND (
+                  -- Prefer true overlap when active transcript timing shifts slightly.
+                  (fa.t_end_ms > hta.t_start_ms AND fa.t_start_ms < hta.t_end_ms)
+                  -- Fallback for near-miss ranges when overlap is lost by boundary drift.
+                  OR (
+                      ABS(fa.t_start_ms - hta.t_start_ms) <= 2000
+                      AND ABS(fa.t_end_ms - hta.t_end_ms) <= 2000
+                  )
+              )
+            ORDER BY
+                GREATEST(
+                    0,
+                    LEAST(fa.t_end_ms, hta.t_end_ms) - GREATEST(fa.t_start_ms, hta.t_start_ms)
+                ) DESC,
+                ABS(fa.t_start_ms - hta.t_start_ms) ASC,
+                ABS(fa.t_end_ms - hta.t_end_ms) ASC,
+                fa.idx ASC
+            LIMIT 1
+        ) f_active ON TRUE
         LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
         WHERE a.body_tsv @@ websearch_to_tsquery('english', :query)
           AND {transcript_media_filter}
@@ -777,10 +813,45 @@ def _search_transcript_chunks(
     scope_id: UUID | None,
     limit: int,
 ) -> list[dict]:
-    """Semantic transcript-chunk search with visibility + readiness filtering."""
+    """Semantic transcript-chunk search using pgvector ANN + hybrid reranking."""
     scope_filter = ""
     transcript_media_filter = transcript_media_searchable_sql("m")
-    params: dict[str, Any] = {"viewer_id": viewer_id, "limit": limit * 5}
+    embedding_dims = transcript_embedding_dimensions()
+    ann_limit = max(
+        TRANSCRIPT_CHUNK_MIN_ANN_CANDIDATES,
+        int(limit) * TRANSCRIPT_CHUNK_ANN_CANDIDATE_MULTIPLIER,
+    )
+
+    try:
+        embedding_model, query_embedding = build_text_embedding(q)
+    except Exception as exc:
+        logger.warning(
+            "semantic_query_embedding_failed",
+            error=str(exc),
+            query_hash=hash_query(q),
+            user_id=str(viewer_id),
+        )
+        return []
+
+    if len(query_embedding) != embedding_dims:
+        logger.warning(
+            "semantic_query_embedding_dimension_mismatch",
+            expected_dimensions=embedding_dims,
+            actual_dimensions=len(query_embedding),
+            embedding_model=embedding_model,
+            query_hash=hash_query(q),
+            user_id=str(viewer_id),
+        )
+        return []
+
+    params: dict[str, Any] = {
+        "viewer_id": viewer_id,
+        "query": q,
+        "limit": limit,
+        "ann_limit": ann_limit,
+        "query_embedding": to_pgvector_literal(query_embedding),
+        "embedding_model": embedding_model,
+    }
 
     if scope_type == "media":
         scope_filter = "AND tc.media_id = :scope_id"
@@ -798,64 +869,94 @@ def _search_transcript_chunks(
     query = f"""
         WITH
             visible_media AS ({visible_media_ids_cte_sql()}),
-            media_authors_agg AS ({media_authors_rollup_cte_sql()})
+            media_authors_agg AS ({media_authors_rollup_cte_sql()}),
+            query_embedding AS (
+                SELECT CAST(:query_embedding AS vector({embedding_dims})) AS embedding
+            ),
+            ann_candidates AS (
+                SELECT
+                    tc.id,
+                    tc.media_id,
+                    m.kind,
+                    m.title,
+                    m.published_date,
+                    maa.source_authors,
+                    tc.chunk_text,
+                    tc.t_start_ms,
+                    tc.t_end_ms,
+                    tc.created_at,
+                    (1 - (tc.embedding_vector <=> qe.embedding)) AS semantic_similarity,
+                    ts_rank_cd(
+                        to_tsvector('english', tc.chunk_text),
+                        websearch_to_tsquery('english', :query)
+                    ) AS lexical_score
+                FROM podcast_transcript_chunks tc
+                JOIN media m ON m.id = tc.media_id
+                JOIN visible_media vm ON vm.media_id = tc.media_id
+                JOIN media_transcript_states mts ON mts.media_id = tc.media_id
+                LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
+                CROSS JOIN query_embedding qe
+                WHERE mts.semantic_status = 'ready'
+                  AND mts.active_transcript_version_id = tc.transcript_version_id
+                  AND mts.transcript_state IN ('ready', 'partial')
+                  AND tc.embedding_vector IS NOT NULL
+                  AND tc.embedding_model = :embedding_model
+                  AND {transcript_media_filter}
+                {scope_filter}
+                ORDER BY tc.embedding_vector <=> qe.embedding ASC, tc.id ASC
+                LIMIT :ann_limit
+            )
         SELECT
-            tc.id,
-            tc.media_id,
-            m.kind,
-            m.title,
-            m.published_date,
-            maa.source_authors,
-            tc.chunk_text,
-            tc.t_start_ms,
-            tc.t_end_ms,
-            tc.embedding
-        FROM podcast_transcript_chunks tc
-        JOIN media m ON m.id = tc.media_id
-        JOIN visible_media vm ON vm.media_id = tc.media_id
-        JOIN media_transcript_states mts ON mts.media_id = tc.media_id
-        LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
-        WHERE mts.semantic_status = 'ready'
-          AND mts.active_transcript_version_id = tc.transcript_version_id
-          AND mts.transcript_state IN ('ready', 'partial')
-          AND {transcript_media_filter}
-        {scope_filter}
-        ORDER BY tc.created_at DESC, tc.id ASC
+            id,
+            media_id,
+            kind,
+            title,
+            published_date,
+            source_authors,
+            chunk_text,
+            t_start_ms,
+            t_end_ms,
+            (
+                (0.70 * GREATEST(semantic_similarity, 0.0))
+                + (0.25 * GREATEST(lexical_score, 0.0))
+                + (
+                    0.05 * GREATEST(
+                        0.0,
+                        1.0 - LEAST(EXTRACT(EPOCH FROM (now() - created_at)) / 604800.0, 1.0)
+                    )
+                )
+            ) AS raw_score
+        FROM ann_candidates
+        WHERE semantic_similarity > 0.0 OR lexical_score > 0.0
+        ORDER BY raw_score DESC, id ASC
         LIMIT :limit
     """
-
-    query_embedding = build_text_embedding(q)
+    probes = max(10, min(100, ann_limit))
+    try:
+        db.execute(text(f"SET LOCAL ivfflat.probes = {probes}"))
+    except Exception:
+        # Non-pgvector engines or unsupported settings should still run search.
+        db.rollback()
     result = db.execute(text(query), params)
     rows = result.fetchall()
-    ranked: list[dict] = []
-    for row in rows:
-        chunk_text = str(row[6] or "")
-        lexical_score = lexical_overlap_score(q, chunk_text)
-        embedding = normalize_embedding_payload(row[9])
-        semantic_score = cosine_similarity(query_embedding, embedding)
-        raw_score = (2.0 * lexical_score) + max(semantic_score, 0.0)
-        if raw_score <= 0.0:
-            continue
-        ranked.append(
-            {
-                "type": "transcript_chunk",
-                "id": row[0],
-                "source": {
-                    "media_id": row[1],
-                    "media_kind": row[2],
-                    "title": row[3],
-                    "authors": list(row[5]) if row[5] else [],
-                    "published_date": row[4],
-                },
-                "t_start_ms": int(row[7]),
-                "t_end_ms": int(row[8]),
-                "raw_score": raw_score,
-                "snippet": _truncate_snippet(chunk_text),
-            }
-        )
-
-    ranked.sort(key=lambda item: (-item["raw_score"], str(item["id"])))
-    return ranked[:limit]
+    return [
+        {
+            "type": "transcript_chunk",
+            "id": row[0],
+            "source": {
+                "media_id": row[1],
+                "media_kind": row[2],
+                "title": row[3],
+                "authors": list(row[5]) if row[5] else [],
+                "published_date": row[4],
+            },
+            "t_start_ms": int(row[7]),
+            "t_end_ms": int(row[8]),
+            "raw_score": float(row[9]) if row[9] else 0.0,
+            "snippet": _truncate_snippet(str(row[6] or "")),
+        }
+        for row in rows
+    ]
 
 
 def _normalize_scores_by_type(results: list[dict]) -> None:

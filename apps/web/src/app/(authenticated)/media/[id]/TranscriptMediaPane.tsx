@@ -3,6 +3,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type MouseEvent,
   type RefObject,
@@ -34,6 +35,17 @@ export interface TranscriptFragment {
   speaker_label?: string | null;
 }
 
+export interface TranscriptRequestForecast {
+  requiredMinutes: number;
+  remainingMinutes: number | null;
+  fitsBudget: boolean;
+}
+
+export interface TranscriptListeningState {
+  position_ms: number;
+  playback_speed: number;
+}
+
 interface TranscriptMediaPaneProps {
   mediaId: string;
   mediaTitle: string;
@@ -43,6 +55,22 @@ interface TranscriptMediaPaneProps {
   isPlaybackOnlyTranscript: boolean;
   canRead: boolean;
   processingStatus: string;
+  transcriptState:
+    | "not_requested"
+    | "queued"
+    | "running"
+    | "failed_provider"
+    | "failed_quota"
+    | "unavailable"
+    | "ready"
+    | "partial"
+    | null;
+  transcriptCoverage: "none" | "partial" | "full" | null;
+  transcriptRequestInFlight: boolean;
+  transcriptRequestForecast: TranscriptRequestForecast | null;
+  listeningState: TranscriptListeningState | null;
+  onResumeFromSavedPosition?: (positionMs: number) => void;
+  onRequestTranscript: () => void;
   fragments: TranscriptFragment[];
   activeFragment: TranscriptFragment | null;
   renderedHtml: string;
@@ -130,6 +158,13 @@ export default function TranscriptMediaPane({
   isPlaybackOnlyTranscript,
   canRead,
   processingStatus,
+  transcriptState,
+  transcriptCoverage,
+  transcriptRequestInFlight,
+  transcriptRequestForecast,
+  listeningState,
+  onResumeFromSavedPosition,
+  onRequestTranscript,
   fragments,
   activeFragment,
   renderedHtml,
@@ -140,6 +175,7 @@ export default function TranscriptMediaPane({
   const { setTrack, seekToMs, play } = useGlobalPlayer();
   const [seekTargetMs, setSeekTargetMs] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState(false);
+  const resumeNoticeMediaIdRef = useRef<string | null>(null);
 
   const safeEmbedUrl = useMemo(
     () => resolveSafeVideoEmbedUrl(playbackSource),
@@ -161,6 +197,15 @@ export default function TranscriptMediaPane({
     if (mediaKind !== "podcast_episode" || playbackSource?.kind !== "external_audio") {
       return;
     }
+    const trackOptions: {
+      autoplay: false;
+      seek_seconds?: number;
+      playback_rate?: number;
+    } = { autoplay: false };
+    if (listeningState) {
+      trackOptions.seek_seconds = Math.max(0, Math.floor(listeningState.position_ms / 1000));
+      trackOptions.playback_rate = listeningState.playback_speed;
+    }
     setTrack(
       {
         media_id: mediaId,
@@ -168,9 +213,10 @@ export default function TranscriptMediaPane({
         stream_url: playbackSource.stream_url,
         source_url: playbackSource.source_url,
       },
-      { autoplay: false }
+      trackOptions
     );
   }, [
+    listeningState,
     mediaId,
     mediaKind,
     mediaTitle,
@@ -180,6 +226,20 @@ export default function TranscriptMediaPane({
     setTrack,
   ]);
 
+  useEffect(() => {
+    if (!onResumeFromSavedPosition || mediaKind !== "podcast_episode" || !listeningState) {
+      return;
+    }
+    if (listeningState.position_ms <= 0) {
+      return;
+    }
+    if (resumeNoticeMediaIdRef.current === mediaId) {
+      return;
+    }
+    resumeNoticeMediaIdRef.current = mediaId;
+    onResumeFromSavedPosition(listeningState.position_ms);
+  }, [listeningState, mediaId, mediaKind, onResumeFromSavedPosition]);
+
   const fallbackSourceUrl = playbackSource?.source_url || canonicalSourceUrl;
   const playerUnavailable =
     mediaKind === "video" &&
@@ -187,6 +247,11 @@ export default function TranscriptMediaPane({
   const showSourceFallbackAction =
     Boolean(fallbackSourceUrl) &&
     (mediaKind === "video" || playbackError || playerUnavailable);
+  const requestDisabled =
+    transcriptRequestInFlight ||
+    (transcriptRequestForecast ? !transcriptRequestForecast.fitsBudget : false);
+  const isReadablePartialTranscript =
+    canRead && (transcriptState === "partial" || transcriptCoverage === "partial");
 
   const handleSegmentClick = (fragment: TranscriptFragment) => {
     onSegmentSelect(fragment);
@@ -261,49 +326,111 @@ export default function TranscriptMediaPane({
         </div>
       ) : !canRead ? (
         <div className={styles.notReady}>
-          <p>This media is still being processed.</p>
-          <p>Status: {processingStatus}</p>
-        </div>
-      ) : fragments.length === 0 ? (
-        <div className={styles.empty}>
-          <p>No transcript segments available.</p>
-        </div>
-      ) : (
-        <div className={styles.transcriptLayout}>
-          <div className={styles.transcriptSegments}>
-            {fragments.map((fragment) => {
-              const ts = formatTimestampMs(fragment.t_start_ms);
-              const isActive = fragment.id === activeFragment?.id;
-              return (
-                <button
-                  key={fragment.id}
-                  type="button"
-                  className={`${styles.segmentButton} ${
-                    isActive ? styles.segmentButtonActive : ""
-                  }`}
-                  aria-current={isActive ? "true" : undefined}
-                  onClick={() => handleSegmentClick(fragment)}
-                >
-                  <span className={styles.segmentMeta}>
-                    {ts && <span>{ts}</span>}
-                    {fragment.speaker_label && <span>{fragment.speaker_label}</span>}
-                  </span>
-                  <span className={styles.segmentText}>{fragment.canonical_text}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {activeFragment && (
-            <div
-              ref={contentRef}
-              className={styles.transcriptActiveFragment}
-              onClick={onContentClick}
-            >
-              <HtmlRenderer htmlSanitized={renderedHtml} className={styles.fragment} />
-            </div>
+          {transcriptState === "not_requested" ||
+          transcriptState === "failed_provider" ||
+          transcriptState === "failed_quota" ? (
+            <>
+              <p>
+                {transcriptState === "failed_provider"
+                  ? "Previous transcription failed. You can retry on demand."
+                  : transcriptState === "failed_quota"
+                    ? "Daily transcript quota was exceeded for this episode."
+                    : "Transcript has not been requested yet."}
+              </p>
+              {transcriptRequestForecast && (
+                <>
+                  <p>Estimated cost: {transcriptRequestForecast.requiredMinutes} min</p>
+                  <p>
+                    Remaining today:{" "}
+                    {transcriptRequestForecast.remainingMinutes == null
+                      ? "unlimited"
+                      : `${transcriptRequestForecast.remainingMinutes} min`}
+                  </p>
+                </>
+              )}
+              <button
+                type="button"
+                className={styles.globalPlayerButton}
+                disabled={requestDisabled}
+                onClick={() => onRequestTranscript()}
+              >
+                {transcriptRequestInFlight ? "Requesting..." : "Transcribe this episode"}
+              </button>
+              {transcriptRequestForecast && !transcriptRequestForecast.fitsBudget && (
+                <p>Not enough daily quota for this request.</p>
+              )}
+            </>
+          ) : transcriptState === "queued" || transcriptState === "running" ? (
+            <>
+              <p>
+                {transcriptState === "queued"
+                  ? "Transcript request queued."
+                  : "Transcript transcription is currently running."}
+              </p>
+              <p>Status: {processingStatus}</p>
+            </>
+          ) : transcriptState === "unavailable" ? (
+            <>
+              <p>Transcript unavailable for this episode.</p>
+              <p>Error: E_TRANSCRIPT_UNAVAILABLE</p>
+            </>
+          ) : (
+            <>
+              <p>This media is still being processed.</p>
+              <p>Status: {processingStatus}</p>
+              {transcriptCoverage && <p>Coverage: {transcriptCoverage}</p>}
+            </>
           )}
         </div>
+      ) : (
+        <>
+          {isReadablePartialTranscript && (
+            <div className={styles.partialCoverageWarning}>
+              <p>Transcript is partial; search and highlights may miss sections.</p>
+            </div>
+          )}
+          {fragments.length === 0 ? (
+            <div className={styles.empty}>
+              <p>No transcript segments available.</p>
+            </div>
+          ) : (
+            <div className={styles.transcriptLayout}>
+              <div className={styles.transcriptSegments}>
+                {fragments.map((fragment) => {
+                  const ts = formatTimestampMs(fragment.t_start_ms);
+                  const isActive = fragment.id === activeFragment?.id;
+                  return (
+                    <button
+                      key={fragment.id}
+                      type="button"
+                      className={`${styles.segmentButton} ${
+                        isActive ? styles.segmentButtonActive : ""
+                      }`}
+                      aria-current={isActive ? "true" : undefined}
+                      onClick={() => handleSegmentClick(fragment)}
+                    >
+                      <span className={styles.segmentMeta}>
+                        {ts && <span>{ts}</span>}
+                        {fragment.speaker_label && <span>{fragment.speaker_label}</span>}
+                      </span>
+                      <span className={styles.segmentText}>{fragment.canonical_text}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {activeFragment && (
+                <div
+                  ref={contentRef}
+                  className={styles.transcriptActiveFragment}
+                  onClick={onContentClick}
+                >
+                  <HtmlRenderer htmlSanitized={renderedHtml} className={styles.fragment} />
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

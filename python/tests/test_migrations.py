@@ -3412,3 +3412,248 @@ class TestS6PR01Migration0009:
                 {"hid": h_id, "mid": mid},
             )
             session.commit()
+
+
+class TestMigration0026SemanticChunkBackfill:
+    """Regression tests for semantic chunk backfill over legacy transcripts."""
+
+    @pytest.fixture(autouse=True)
+    def isolate_migration(self):
+        run_alembic_command("downgrade base")
+        yield
+        run_alembic_command("downgrade base")
+        run_alembic_command("upgrade head")
+
+    @pytest.fixture
+    def migration_engine(self):
+        database_url = get_test_database_url()
+        engine = create_engine(database_url)
+        yield engine
+        engine.dispose()
+
+    def test_upgrade_backfills_semantic_chunks_for_pre_0024_transcripts(self, migration_engine):
+        result = run_alembic_command("upgrade 0023")
+        assert result.returncode == 0, f"upgrade 0023 failed: {result.stderr}"
+
+        user_id = uuid4()
+        media_id = uuid4()
+        fragment_1 = uuid4()
+        fragment_2 = uuid4()
+
+        with Session(migration_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:media_id, 'podcast_episode', 'legacy transcript', 'ready_for_reading', :user_id)
+                    """
+                ),
+                {"media_id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (
+                        id,
+                        media_id,
+                        idx,
+                        html_sanitized,
+                        canonical_text,
+                        t_start_ms,
+                        t_end_ms,
+                        speaker_label
+                    )
+                    VALUES (
+                        :id,
+                        :media_id,
+                        :idx,
+                        :html_sanitized,
+                        :canonical_text,
+                        :t_start_ms,
+                        :t_end_ms,
+                        :speaker_label
+                    )
+                    """
+                ),
+                {
+                    "id": fragment_1,
+                    "media_id": media_id,
+                    "idx": 0,
+                    "html_sanitized": "<p>first legacy segment</p>",
+                    "canonical_text": "first legacy segment",
+                    "t_start_ms": 0,
+                    "t_end_ms": 1000,
+                    "speaker_label": "Host",
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (
+                        id,
+                        media_id,
+                        idx,
+                        html_sanitized,
+                        canonical_text,
+                        t_start_ms,
+                        t_end_ms,
+                        speaker_label
+                    )
+                    VALUES (
+                        :id,
+                        :media_id,
+                        :idx,
+                        :html_sanitized,
+                        :canonical_text,
+                        :t_start_ms,
+                        :t_end_ms,
+                        :speaker_label
+                    )
+                    """
+                ),
+                {
+                    "id": fragment_2,
+                    "media_id": media_id,
+                    "idx": 1,
+                    "html_sanitized": "<p>second legacy segment</p>",
+                    "canonical_text": "second legacy segment",
+                    "t_start_ms": 1200,
+                    "t_end_ms": 2200,
+                    "speaker_label": "Guest",
+                },
+            )
+            session.commit()
+
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+        with Session(migration_engine) as session:
+            state_row = session.execute(
+                text(
+                    """
+                    SELECT transcript_state, transcript_coverage, semantic_status, active_transcript_version_id
+                    FROM media_transcript_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            version_row = session.execute(
+                text(
+                    """
+                    SELECT id, version_no, is_active
+                    FROM podcast_transcript_versions
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            segment_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            chunk_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_transcript_chunks WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            chunk_models = session.execute(
+                text(
+                    """
+                    SELECT DISTINCT embedding_model
+                    FROM podcast_transcript_chunks
+                    WHERE media_id = :media_id
+                    ORDER BY embedding_model
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchall()
+
+        assert state_row is not None
+        assert state_row[0] == "ready"
+        assert state_row[1] == "full"
+        assert state_row[2] == "pending", (
+            "legacy transcript rows backfilled before pgvector cutover must be marked pending "
+            "until re-indexed with production semantic embeddings"
+        )
+        assert state_row[3] is not None
+        assert version_row is not None
+        assert version_row[1] == 1
+        assert version_row[2] is True
+        assert segment_count == 2
+        assert chunk_count == 2, "legacy transcript segments must be backfilled into chunks"
+        assert chunk_models == [("hash_v1_frozen_0026",)], (
+            "migration 0026 must use a frozen in-migration embedding implementation "
+            "so fresh installs stay time-stable even if runtime embedding code changes"
+        )
+
+
+class TestPodcastListeningStateMigration:
+    """Schema assertions for podcast listening-state persistence table."""
+
+    def test_head_contains_podcast_listening_state_table_contract(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            columns = session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_listening_states'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
+            pk_columns = session.execute(
+                text(
+                    """
+                    SELECT a.attname
+                    FROM pg_index i
+                    JOIN pg_class c ON c.oid = i.indrelid
+                    JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
+                    WHERE c.relname = 'podcast_listening_states'
+                      AND i.indisprimary
+                    ORDER BY a.attname
+                    """
+                )
+            ).fetchall()
+            constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'podcast_listening_states'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'podcast_listening_states'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+
+        column_names = {row[0] for row in columns}
+        assert {
+            "user_id",
+            "media_id",
+            "position_ms",
+            "duration_ms",
+            "playback_speed",
+            "updated_at",
+        }.issubset(column_names), f"Unexpected podcast_listening_states columns: {column_names}"
+
+        assert [row[0] for row in pk_columns] == ["media_id", "user_id"], (
+            f"Expected composite PK over (user_id, media_id), got {[row[0] for row in pk_columns]}"
+        )
+
+        constraint_names = {row[0] for row in constraints}
+        assert "ck_podcast_listening_states_position_ms_non_negative" in constraint_names
+        assert "ck_podcast_listening_states_playback_speed_positive" in constraint_names
+
+        index_names = {row[0] for row in indexes}
+        assert "ix_podcast_listening_states_media_id" in index_names

@@ -73,6 +73,23 @@ function renderStatefulVideoPane(
     canRead?: boolean;
     processingStatus?: string;
     fragments?: TranscriptFragment[];
+    transcriptState?:
+      | "not_requested"
+      | "queued"
+      | "running"
+      | "failed_provider"
+      | "failed_quota"
+      | "unavailable"
+      | "ready"
+      | "partial";
+    transcriptCoverage?: "none" | "partial" | "full";
+    transcriptRequestInFlight?: boolean;
+    transcriptRequestForecast?: {
+      requiredMinutes: number;
+      remainingMinutes: number | null;
+      fitsBudget: boolean;
+    } | null;
+    onRequestTranscript?: () => void;
   } = {}
 ) {
   const onSegmentSelect = vi.fn();
@@ -94,6 +111,12 @@ function renderStatefulVideoPane(
         isPlaybackOnlyTranscript={options.isPlaybackOnlyTranscript ?? false}
         canRead={options.canRead ?? true}
         processingStatus={options.processingStatus ?? "ready_for_reading"}
+        transcriptState={options.transcriptState ?? "ready"}
+        transcriptCoverage={options.transcriptCoverage ?? "full"}
+        transcriptRequestInFlight={options.transcriptRequestInFlight ?? false}
+        transcriptRequestForecast={options.transcriptRequestForecast ?? null}
+        listeningState={null}
+        onRequestTranscript={options.onRequestTranscript ?? vi.fn()}
         fragments={fragments}
         activeFragment={activeFragment}
         renderedHtml="<p>active transcript html</p>"
@@ -118,6 +141,25 @@ function renderStatefulPodcastPane(
     canRead?: boolean;
     processingStatus?: string;
     fragments?: TranscriptFragment[];
+    transcriptState?:
+      | "not_requested"
+      | "queued"
+      | "running"
+      | "failed_provider"
+      | "failed_quota"
+      | "unavailable"
+      | "ready"
+      | "partial";
+    transcriptCoverage?: "none" | "partial" | "full";
+    transcriptRequestInFlight?: boolean;
+    transcriptRequestForecast?: {
+      requiredMinutes: number;
+      remainingMinutes: number | null;
+      fitsBudget: boolean;
+    } | null;
+    listeningState?: { position_ms: number; playback_speed: number } | null;
+    onResumeFromSavedPosition?: (positionMs: number) => void;
+    onRequestTranscript?: () => void;
   } = {}
 ) {
   const onSegmentSelect = vi.fn();
@@ -139,6 +181,13 @@ function renderStatefulPodcastPane(
         isPlaybackOnlyTranscript={options.isPlaybackOnlyTranscript ?? false}
         canRead={options.canRead ?? true}
         processingStatus={options.processingStatus ?? "ready_for_reading"}
+        transcriptState={options.transcriptState ?? "ready"}
+        transcriptCoverage={options.transcriptCoverage ?? "full"}
+        transcriptRequestInFlight={options.transcriptRequestInFlight ?? false}
+        transcriptRequestForecast={options.transcriptRequestForecast ?? null}
+        listeningState={options.listeningState ?? null}
+        onResumeFromSavedPosition={options.onResumeFromSavedPosition}
+        onRequestTranscript={options.onRequestTranscript ?? vi.fn()}
         fragments={fragments}
         activeFragment={activeFragment}
         renderedHtml="<p>active transcript html</p>"
@@ -244,6 +293,30 @@ describe("TranscriptMediaPane video playback", () => {
 });
 
 describe("TranscriptMediaPane podcast playback", () => {
+  it("hydrates saved listening state into global player setup and resume notification", () => {
+    const onResumeFromSavedPosition = vi.fn();
+    renderStatefulPodcastPane({
+      listeningState: {
+        position_ms: 12_000,
+        playback_speed: 1.5,
+      },
+      onResumeFromSavedPosition,
+    });
+
+    expect(mockSetTrack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        media_id: "media-podcast-1",
+        title: "Podcast Episode",
+      }),
+      {
+        autoplay: false,
+        seek_seconds: 12,
+        playback_rate: 1.5,
+      }
+    );
+    expect(onResumeFromSavedPosition).toHaveBeenCalledWith(12_000);
+  });
+
   it("routes transcript click-to-seek into the global footer player", async () => {
     const user = userEvent.setup();
     const { onSegmentSelect } = renderStatefulPodcastPane();
@@ -259,5 +332,44 @@ describe("TranscriptMediaPane podcast playback", () => {
     );
     expect(mockSeekToMs).toHaveBeenCalledWith(12_000);
     expect(mockPlay).toHaveBeenCalled();
+  });
+
+  it("shows explicit on-demand transcription controls with budget forecast", async () => {
+    const user = userEvent.setup();
+    const onRequestTranscript = vi.fn();
+    renderStatefulPodcastPane({
+      canRead: false,
+      processingStatus: "pending",
+      fragments: [],
+      transcriptState: "not_requested",
+      transcriptCoverage: "none",
+      transcriptRequestForecast: {
+        requiredMinutes: 3,
+        remainingMinutes: 7,
+        fitsBudget: true,
+      },
+      onRequestTranscript,
+    });
+
+    expect(screen.getByRole("button", { name: /transcribe this episode/i })).toBeVisible();
+    expect(screen.getByText("Estimated cost: 3 min")).toBeVisible();
+    expect(screen.getByText("Remaining today: 7 min")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: /transcribe this episode/i }));
+    expect(onRequestTranscript).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns when readable transcript coverage is partial", () => {
+    renderStatefulPodcastPane({
+      canRead: true,
+      processingStatus: "ready_for_reading",
+      transcriptState: "partial",
+      transcriptCoverage: "partial",
+      fragments: FRAGMENTS,
+    });
+
+    expect(
+      screen.getByText("Transcript is partial; search and highlights may miss sections.")
+    ).toBeVisible();
   });
 });

@@ -66,9 +66,8 @@ def derive_capabilities(
     transcript_ready = status_ready_for_reading
     if is_transcript_media and transcript_state is not None:
         is_transcript_unavailable = transcript_state == "unavailable"
-        transcript_ready = (
-            transcript_state in {"ready", "partial"}
-            and (transcript_coverage in {"partial", "full"})
+        transcript_ready = transcript_state in {"ready", "partial"} and (
+            transcript_coverage in {"partial", "full"}
         )
 
     # =========================================================================

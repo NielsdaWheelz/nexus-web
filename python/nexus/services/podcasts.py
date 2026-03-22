@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import threading
 import time
 from datetime import UTC, date, datetime, timedelta
 from email.utils import parsedate_to_datetime
@@ -16,10 +17,10 @@ import httpx
 from lxml import etree
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import Environment, get_settings
-from nexus.db.session import transaction
+from nexus.db.session import create_session_factory, transaction
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -33,16 +34,25 @@ from nexus.schemas.media import MediaOut
 from nexus.schemas.podcast import (
     PodcastDetailOut,
     PodcastDiscoveryOut,
+    PodcastEffectivePlanOut,
     PodcastListItemOut,
     PodcastPlanOut,
+    PodcastPlanSnapshotOut,
     PodcastPlanUpdateRequest,
+    PodcastPlanUsageOut,
     PodcastSubscribeOut,
     PodcastSubscribeRequest,
     PodcastSubscriptionListItemOut,
     PodcastSubscriptionStatusOut,
+    PodcastSubscriptionSyncRefreshOut,
 )
 from nexus.services.search import visible_media_ids_cte_sql
-from nexus.services.semantic_chunks import chunk_transcript_segments
+from nexus.services.semantic_chunks import (
+    chunk_transcript_segments,
+    current_transcript_embedding_model,
+    to_pgvector_literal,
+    transcript_embedding_dimensions,
+)
 from nexus.services.transcript_segments import (
     canonicalize_transcript_segment_text as _shared_canonicalize_transcript_segment_text,
 )
@@ -390,9 +400,12 @@ def list_subscriptions(
     viewer_id: UUID,
     *,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[PodcastSubscriptionListItemOut]:
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    if offset < 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Offset must be non-negative")
     limit = min(limit, 200)
     rows = db.execute(
         text(
@@ -426,9 +439,10 @@ def list_subscriptions(
               AND ps.status = 'active'
             ORDER BY ps.updated_at DESC, ps.podcast_id DESC
             LIMIT :limit
+            OFFSET :offset
             """
         ),
-        {"user_id": viewer_id, "limit": limit},
+        {"user_id": viewer_id, "limit": limit, "offset": offset},
     ).fetchall()
     out: list[PodcastSubscriptionListItemOut] = []
     for row in rows:
@@ -520,9 +534,12 @@ def list_podcast_episodes_for_viewer(
     podcast_id: UUID,
     *,
     limit: int = 50,
+    offset: int = 0,
 ) -> list[MediaOut]:
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    if offset < 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Offset must be non-negative")
     limit = min(limit, 200)
     detail = get_podcast_detail_for_viewer(db, viewer_id, podcast_id)
     if detail.subscription.status != "active":
@@ -540,12 +557,14 @@ def list_podcast_episodes_for_viewer(
             WHERE pe.podcast_id = :podcast_id
             ORDER BY pe.published_at DESC NULLS LAST, pe.media_id DESC
             LIMIT :limit
+            OFFSET :offset
             """
         ),
         {
             "viewer_id": viewer_id,
             "podcast_id": podcast_id,
             "limit": limit,
+            "offset": offset,
         },
     ).fetchall()
 
@@ -558,6 +577,46 @@ def list_podcast_episodes_for_viewer(
     ]
 
 
+def _semantic_index_requires_repair(
+    db: Session,
+    *,
+    transcript_version_id: UUID,
+) -> bool:
+    """Whether active transcript chunks are absent/stale for the current embedding model."""
+    active_embedding_model = current_transcript_embedding_model()
+    row = db.execute(
+        text(
+            """
+            SELECT
+                EXISTS (
+                    SELECT 1
+                    FROM podcast_transcript_chunks tc
+                    WHERE tc.transcript_version_id = :transcript_version_id
+                ) AS has_chunks,
+                EXISTS (
+                    SELECT 1
+                    FROM podcast_transcript_chunks tc
+                    WHERE tc.transcript_version_id = :transcript_version_id
+                      AND (
+                          tc.embedding_vector IS NULL
+                          OR tc.embedding_model IS NULL
+                          OR tc.embedding_model <> :active_embedding_model
+                      )
+                ) AS has_stale_chunks
+            """
+        ),
+        {
+            "transcript_version_id": transcript_version_id,
+            "active_embedding_model": active_embedding_model,
+        },
+    ).fetchone()
+    if row is None:
+        return True
+    has_chunks = bool(row[0])
+    has_stale_chunks = bool(row[1])
+    return (not has_chunks) or has_stale_chunks
+
+
 def request_podcast_transcript_for_viewer(
     db: Session,
     viewer_id: UUID,
@@ -565,6 +624,7 @@ def request_podcast_transcript_for_viewer(
     *,
     reason: str,
     dry_run: bool = False,
+    _auto_commit: bool = True,
 ) -> dict[str, Any]:
     from nexus.auth.permissions import can_read_media
 
@@ -606,7 +666,17 @@ def request_podcast_transcript_for_viewer(
                     SELECT mts.transcript_coverage
                     FROM media_transcript_states mts
                     WHERE mts.media_id = m.id
-                ) AS transcript_coverage
+                ) AS transcript_coverage,
+                (
+                    SELECT mts.semantic_status
+                    FROM media_transcript_states mts
+                    WHERE mts.media_id = m.id
+                ) AS semantic_status,
+                (
+                    SELECT mts.active_transcript_version_id
+                    FROM media_transcript_states mts
+                    WHERE mts.media_id = m.id
+                ) AS active_transcript_version_id
             FROM media m
             WHERE m.id = :media_id
             FOR UPDATE
@@ -624,6 +694,8 @@ def request_podcast_transcript_for_viewer(
     job_status = str(media_row[4] or "").strip() or None
     transcript_state = str(media_row[5] or "").strip() or None
     transcript_coverage = str(media_row[6] or "").strip() or None
+    semantic_status = str(media_row[7] or "").strip() or "none"
+    active_transcript_version_id = media_row[8]
 
     if media_kind != "podcast_episode":
         raise InvalidRequestError(
@@ -653,11 +725,12 @@ def request_podcast_transcript_for_viewer(
     required_minutes = _episode_minutes({"duration_seconds": duration_seconds})
     plan = _get_effective_plan(db, viewer_id)
     daily_limit_minutes = plan["daily_transcription_minutes"]
-    used_minutes = _get_usage_minutes(db, viewer_id=viewer_id, usage_date=usage_date)
+    usage_snapshot = _get_usage_snapshot(db, viewer_id=viewer_id, usage_date=usage_date)
+    consumed_minutes = usage_snapshot["total"]
     remaining_minutes = (
         None
         if daily_limit_minutes is None
-        else max(0, int(daily_limit_minutes) - int(used_minutes))
+        else max(0, int(daily_limit_minutes) - int(consumed_minutes))
     )
     fits_budget = remaining_minutes is None or required_minutes <= remaining_minutes
 
@@ -665,6 +738,17 @@ def request_podcast_transcript_for_viewer(
         "partial",
         "full",
     }
+    semantic_needs_repair = already_ready and semantic_status in {"pending", "failed"}
+    if (
+        already_ready
+        and not semantic_needs_repair
+        and active_transcript_version_id is not None
+        and _semantic_index_requires_repair(
+            db,
+            transcript_version_id=active_transcript_version_id,
+        )
+    ):
+        semantic_needs_repair = True
     already_inflight = transcript_state in {"queued", "running"} or job_status in {
         "pending",
         "running",
@@ -690,10 +774,13 @@ def request_podcast_transcript_for_viewer(
             fits_budget=fits_budget,
             now=now,
         )
-        db.commit()
+        if _auto_commit:
+            db.commit()
         return {
             "media_id": str(media_id),
             "processing_status": effective_status,
+            "transcript_state": transcript_state or "not_requested",
+            "transcript_coverage": transcript_coverage or "none",
             "request_reason": normalized_reason,
             "required_minutes": required_minutes,
             "remaining_minutes": remaining_minutes,
@@ -701,7 +788,50 @@ def request_podcast_transcript_for_viewer(
             "request_enqueued": False,
         }
 
-    # Already queued/running/readable: idempotent no-op.
+    if semantic_needs_repair:
+        semantic_repair_enqueued = _enqueue_podcast_semantic_repair_job(
+            media_id=media_id,
+            requested_by_user_id=viewer_id,
+            request_reason=normalized_reason,
+        )
+        if semantic_repair_enqueued:
+            _set_media_transcript_state(
+                db,
+                media_id=media_id,
+                transcript_state=transcript_state or "ready",
+                transcript_coverage=transcript_coverage or "full",
+                semantic_status="pending",
+                last_request_reason=normalized_reason,
+                last_error_code=None,
+                now=now,
+            )
+
+        _record_podcast_transcript_request_audit(
+            db,
+            media_id=media_id,
+            requested_by_user_id=viewer_id,
+            request_reason=normalized_reason,
+            dry_run=False,
+            outcome="queued" if semantic_repair_enqueued else "enqueue_failed",
+            required_minutes=required_minutes,
+            remaining_minutes=remaining_minutes,
+            fits_budget=True,
+            now=now,
+        )
+        db.commit()
+        return {
+            "media_id": str(media_id),
+            "processing_status": "ready_for_reading",
+            "transcript_state": transcript_state or "ready",
+            "transcript_coverage": transcript_coverage or "full",
+            "request_reason": normalized_reason,
+            "required_minutes": required_minutes,
+            "remaining_minutes": remaining_minutes,
+            "fits_budget": True,
+            "request_enqueued": semantic_repair_enqueued,
+        }
+
+    # Already queued/running/readable without semantic backlog: idempotent no-op.
     if already_ready or already_inflight:
         _record_podcast_transcript_request_audit(
             db,
@@ -719,6 +849,8 @@ def request_podcast_transcript_for_viewer(
         return {
             "media_id": str(media_id),
             "processing_status": effective_status,
+            "transcript_state": transcript_state or ("ready" if already_ready else "queued"),
+            "transcript_coverage": transcript_coverage or ("full" if already_ready else "none"),
             "request_reason": normalized_reason,
             "required_minutes": required_minutes,
             "remaining_minutes": remaining_minutes,
@@ -745,7 +877,7 @@ def request_podcast_transcript_for_viewer(
             "Daily podcast transcription quota exceeded",
         )
 
-    minutes_used_after = _reserve_usage_minutes_or_raise(
+    usage_snapshot_after = _reserve_usage_minutes_or_raise(
         db,
         user_id=viewer_id,
         usage_date=usage_date,
@@ -756,7 +888,7 @@ def request_podcast_transcript_for_viewer(
     remaining_minutes_after = (
         None
         if daily_limit_minutes is None
-        else max(0, int(daily_limit_minutes) - int(minutes_used_after))
+        else max(0, int(daily_limit_minutes) - int(usage_snapshot_after["total"]))
     )
 
     db.execute(
@@ -766,6 +898,8 @@ def request_podcast_transcript_for_viewer(
                 media_id,
                 requested_by_user_id,
                 request_reason,
+                reserved_minutes,
+                reservation_usage_date,
                 status,
                 error_code,
                 attempts,
@@ -778,6 +912,8 @@ def request_podcast_transcript_for_viewer(
                 :media_id,
                 :requested_by_user_id,
                 :request_reason,
+                :reserved_minutes,
+                :reservation_usage_date,
                 'pending',
                 NULL,
                 0,
@@ -790,6 +926,8 @@ def request_podcast_transcript_for_viewer(
             DO UPDATE SET
                 requested_by_user_id = EXCLUDED.requested_by_user_id,
                 request_reason = EXCLUDED.request_reason,
+                reserved_minutes = EXCLUDED.reserved_minutes,
+                reservation_usage_date = EXCLUDED.reservation_usage_date,
                 status = 'pending',
                 error_code = NULL,
                 started_at = NULL,
@@ -801,6 +939,8 @@ def request_podcast_transcript_for_viewer(
             "media_id": media_id,
             "requested_by_user_id": viewer_id,
             "request_reason": normalized_reason,
+            "reserved_minutes": required_minutes,
+            "reservation_usage_date": usage_date,
             "created_at": now,
             "updated_at": now,
         },
@@ -845,13 +985,6 @@ def request_podcast_transcript_for_viewer(
         requested_by_user_id=viewer_id,
     )
     if not enqueued:
-        _refund_usage_minutes(
-            db,
-            user_id=viewer_id,
-            usage_date=usage_date,
-            refund_minutes=required_minutes,
-            now=now,
-        )
         _mark_podcast_transcription_failure(
             db,
             media_id=media_id,
@@ -875,6 +1008,8 @@ def request_podcast_transcript_for_viewer(
         return {
             "media_id": str(media_id),
             "processing_status": "failed",
+            "transcript_state": "failed_provider",
+            "transcript_coverage": "none",
             "request_reason": normalized_reason,
             "required_minutes": required_minutes,
             "remaining_minutes": remaining_minutes,
@@ -898,12 +1033,45 @@ def request_podcast_transcript_for_viewer(
     return {
         "media_id": str(media_id),
         "processing_status": "extracting",
+        "transcript_state": "queued",
+        "transcript_coverage": "none",
         "request_reason": normalized_reason,
         "required_minutes": required_minutes,
         "remaining_minutes": remaining_minutes_after,
         "fits_budget": True,
         "request_enqueued": True,
     }
+
+
+def forecast_podcast_transcripts_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    requests: list[tuple[UUID, str]],
+) -> list[dict[str, Any]]:
+    """Return dry-run transcript forecasts for many podcast episodes in one commit."""
+
+    if not requests:
+        return []
+
+    results: list[dict[str, Any]] = []
+    try:
+        for media_id, reason in requests:
+            results.append(
+                request_podcast_transcript_for_viewer(
+                    db,
+                    viewer_id,
+                    media_id,
+                    reason=reason,
+                    dry_run=True,
+                    _auto_commit=False,
+                )
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return results
 
 
 def retry_transcript_media_for_viewer(
@@ -966,6 +1134,20 @@ def retry_transcript_media_for_viewer(
             "Retry not allowed for this failure stage.",
         )
 
+    if kind == "podcast_episode":
+        admission = request_podcast_transcript_for_viewer(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            reason="operator_requeue",
+            dry_run=False,
+        )
+        return {
+            "media_id": admission["media_id"],
+            "processing_status": admission["processing_status"],
+            "retry_enqueued": bool(admission["request_enqueued"]),
+        }
+
     now = datetime.now(UTC)
     db.execute(
         text(
@@ -988,88 +1170,6 @@ def retry_transcript_media_for_viewer(
             "now": now,
         },
     )
-
-    if kind == "podcast_episode":
-        db.execute(
-            text(
-                """
-                INSERT INTO podcast_transcription_jobs (
-                    media_id,
-                    requested_by_user_id,
-                    request_reason,
-                    status,
-                    error_code,
-                    attempts,
-                    started_at,
-                    completed_at,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :media_id,
-                    :requested_by_user_id,
-                    :request_reason,
-                    'pending',
-                    NULL,
-                    0,
-                    NULL,
-                    NULL,
-                    :created_at,
-                    :updated_at
-                )
-                ON CONFLICT (media_id)
-                DO UPDATE SET
-                    requested_by_user_id = EXCLUDED.requested_by_user_id,
-                    request_reason = EXCLUDED.request_reason,
-                    status = 'pending',
-                    error_code = NULL,
-                    started_at = NULL,
-                    completed_at = NULL,
-                    updated_at = EXCLUDED.updated_at
-                """
-            ),
-            {
-                "media_id": media_id,
-                "requested_by_user_id": viewer_id,
-                "request_reason": "operator_requeue",
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-        _set_media_transcript_state(
-            db,
-            media_id=media_id,
-            transcript_state="queued",
-            transcript_coverage="none",
-            semantic_status="none",
-            last_request_reason="operator_requeue",
-            last_error_code=None,
-            now=now,
-        )
-        enqueued = _enqueue_podcast_transcription_job(
-            media_id=media_id,
-            requested_by_user_id=viewer_id,
-        )
-        if not enqueued:
-            _mark_podcast_transcription_failure(
-                db,
-                media_id=media_id,
-                error_code=ApiErrorCode.E_INTERNAL.value,
-                error_message="Failed to enqueue podcast transcription job",
-                now=now,
-            )
-            db.commit()
-            return {
-                "media_id": str(media_id),
-                "processing_status": "failed",
-                "retry_enqueued": False,
-            }
-        db.commit()
-        return {
-            "media_id": str(media_id),
-            "processing_status": "extracting",
-            "retry_enqueued": True,
-        }
 
     enqueued = _enqueue_video_transcription_retry(
         media_id=media_id,
@@ -2023,6 +2123,116 @@ def update_user_plan(
     )
 
 
+def get_user_plan_snapshot(db: Session, user_id: UUID) -> PodcastPlanSnapshotOut:
+    usage_date = datetime.now(UTC).date()
+    effective_plan = _get_effective_plan(db, user_id)
+    usage_snapshot = _get_usage_snapshot(db, viewer_id=user_id, usage_date=usage_date)
+
+    daily_limit_minutes = effective_plan["daily_transcription_minutes"]
+    remaining_minutes = (
+        None
+        if daily_limit_minutes is None
+        else max(0, int(daily_limit_minutes) - int(usage_snapshot["total"]))
+    )
+
+    return PodcastPlanSnapshotOut(
+        plan=PodcastEffectivePlanOut(
+            plan_tier=effective_plan["plan_tier"],
+            daily_transcription_minutes=daily_limit_minutes,
+            initial_episode_window=effective_plan["initial_episode_window"],
+        ),
+        usage=PodcastPlanUsageOut(
+            usage_date=usage_date,
+            used_minutes=usage_snapshot["used"],
+            reserved_minutes=usage_snapshot["reserved"],
+            total_minutes=usage_snapshot["total"],
+            remaining_minutes=remaining_minutes,
+        ),
+    )
+
+
+def refresh_subscription_sync_for_viewer(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    podcast_id: UUID,
+) -> PodcastSubscriptionSyncRefreshOut:
+    settings = get_settings()
+    now = datetime.now(UTC)
+    running_lease_cutoff = now - timedelta(seconds=settings.podcast_sync_running_lease_seconds)
+    should_enqueue = False
+
+    with transaction(db):
+        row = db.execute(
+            text(
+                """
+                SELECT
+                    status,
+                    sync_status,
+                    COALESCE(sync_started_at, updated_at)
+                FROM podcast_subscriptions
+                WHERE user_id = :user_id AND podcast_id = :podcast_id
+                FOR UPDATE
+                """
+            ),
+            {
+                "user_id": viewer_id,
+                "podcast_id": podcast_id,
+            },
+        ).fetchone()
+        if row is None or row[0] != "active":
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
+
+        sync_status = str(row[1] or "")
+        sync_started_or_updated_at = row[2]
+        running_and_healthy = sync_status == "running" and (
+            sync_started_or_updated_at is not None
+            and sync_started_or_updated_at >= running_lease_cutoff
+        )
+
+        if not running_and_healthy:
+            db.execute(
+                text(
+                    """
+                    UPDATE podcast_subscriptions
+                    SET
+                        sync_status = 'pending',
+                        sync_error_code = NULL,
+                        sync_error_message = NULL,
+                        sync_started_at = NULL,
+                        sync_completed_at = NULL,
+                        updated_at = :updated_at
+                    WHERE user_id = :user_id
+                      AND podcast_id = :podcast_id
+                      AND status = 'active'
+                    """
+                ),
+                {
+                    "user_id": viewer_id,
+                    "podcast_id": podcast_id,
+                    "updated_at": now,
+                },
+            )
+            should_enqueue = True
+
+    sync_enqueued = False
+    if should_enqueue:
+        sync_enqueued = _enqueue_podcast_subscription_sync(user_id=viewer_id, podcast_id=podcast_id)
+
+    snapshot = _get_subscription_sync_snapshot(db, viewer_id, podcast_id)
+    if snapshot is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
+
+    return PodcastSubscriptionSyncRefreshOut(
+        podcast_id=podcast_id,
+        sync_status=snapshot["sync_status"],
+        sync_error_code=snapshot["sync_error_code"],
+        sync_error_message=snapshot["sync_error_message"],
+        sync_attempts=snapshot["sync_attempts"],
+        sync_enqueued=sync_enqueued,
+    )
+
+
 def _enqueue_podcast_subscription_sync(*, user_id: UUID, podcast_id: UUID) -> bool:
     try:
         from nexus.tasks.podcast_sync_subscription import podcast_sync_subscription_job
@@ -2068,6 +2278,41 @@ def _enqueue_podcast_transcription_job(
                 "podcast_transcription_enqueue_deferred_in_test",
                 media_id=str(media_id),
                 requested_by_user_id=(str(requested_by_user_id) if requested_by_user_id else None),
+            )
+            return True
+        return False
+
+
+def _enqueue_podcast_semantic_repair_job(
+    *,
+    media_id: UUID,
+    requested_by_user_id: UUID | None,
+    request_reason: str,
+) -> bool:
+    try:
+        from nexus.tasks.podcast_reindex_semantic import podcast_reindex_semantic_job
+
+        podcast_reindex_semantic_job.apply_async(
+            args=[str(media_id), str(requested_by_user_id) if requested_by_user_id else None],
+            kwargs={"request_reason": request_reason},
+            queue="ingest",
+        )
+        return True
+    except Exception as exc:
+        logger.warning(
+            "podcast_semantic_repair_enqueue_failed",
+            media_id=str(media_id),
+            requested_by_user_id=(str(requested_by_user_id) if requested_by_user_id else None),
+            request_reason=request_reason,
+            error=str(exc),
+        )
+        settings = get_settings()
+        if settings.nexus_env == Environment.TEST:
+            logger.info(
+                "podcast_semantic_repair_enqueue_deferred_in_test",
+                media_id=str(media_id),
+                requested_by_user_id=(str(requested_by_user_id) if requested_by_user_id else None),
+                request_reason=request_reason,
             )
             return True
         return False
@@ -2163,6 +2408,7 @@ def _mark_podcast_transcription_failure(
             "now": now,
         },
     )
+    _release_reserved_usage_for_media(db, media_id=media_id, now=now)
     _set_media_transcript_state(
         db,
         media_id=media_id,
@@ -2175,6 +2421,112 @@ def _mark_podcast_transcription_failure(
     )
 
 
+def mark_podcast_transcription_failure_for_recovery(
+    db: Session,
+    *,
+    media_id: UUID,
+    error_code: str,
+    error_message: str,
+    now: datetime,
+) -> None:
+    """Fail-close podcast transcription with full job/quota/transcript-state repair.
+
+    Used by operational recovery paths (for example stale-ingest reconciler) that
+    must not leave orphaned running jobs or reserved quota.
+    """
+    _mark_podcast_transcription_failure(
+        db,
+        media_id=media_id,
+        error_code=error_code,
+        error_message=error_message,
+        now=now,
+    )
+
+
+def _transcription_heartbeat_interval_seconds(*, stale_extracting_seconds: int) -> float:
+    # Keep lease heartbeats comfortably below stale reclaim cutoff.
+    return max(1.0, min(30.0, float(stale_extracting_seconds) / 2.0))
+
+
+def _run_transcription_job_heartbeat(
+    session_factory: sessionmaker[Session],
+    *,
+    stop_event: threading.Event,
+    media_id: UUID,
+    interval_seconds: float,
+) -> None:
+    while not stop_event.wait(interval_seconds):
+        heartbeat_now = datetime.now(UTC)
+        try:
+            with session_factory() as heartbeat_db:
+                heartbeat_db.execute(
+                    text(
+                        """
+                        UPDATE podcast_transcription_jobs
+                        SET updated_at = :now
+                        WHERE media_id = :media_id
+                          AND status = 'running'
+                        """
+                    ),
+                    {"media_id": media_id, "now": heartbeat_now},
+                )
+                heartbeat_db.execute(
+                    text(
+                        """
+                        UPDATE media
+                        SET updated_at = :now
+                        WHERE id = :media_id
+                          AND processing_status = 'extracting'
+                        """
+                    ),
+                    {"media_id": media_id, "now": heartbeat_now},
+                )
+                heartbeat_db.commit()
+        except Exception:
+            logger.warning(
+                "podcast_transcription_heartbeat_failed",
+                media_id=str(media_id),
+            )
+
+
+def _start_transcription_job_heartbeat(
+    db: Session,
+    *,
+    media_id: UUID,
+    stale_extracting_seconds: int,
+) -> tuple[threading.Event, threading.Thread]:
+    bind = db.get_bind()
+    engine = getattr(bind, "engine", bind)
+    session_factory = create_session_factory(engine)
+    stop_event = threading.Event()
+    interval_seconds = _transcription_heartbeat_interval_seconds(
+        stale_extracting_seconds=stale_extracting_seconds
+    )
+    heartbeat_thread = threading.Thread(
+        target=_run_transcription_job_heartbeat,
+        kwargs={
+            "session_factory": session_factory,
+            "stop_event": stop_event,
+            "media_id": media_id,
+            "interval_seconds": interval_seconds,
+        },
+        daemon=True,
+        name=f"podcast-transcription-heartbeat-{media_id}",
+    )
+    heartbeat_thread.start()
+    return stop_event, heartbeat_thread
+
+
+def _stop_transcription_job_heartbeat(
+    heartbeat: tuple[threading.Event, threading.Thread] | None,
+) -> None:
+    if heartbeat is None:
+        return
+    stop_event, heartbeat_thread = heartbeat
+    stop_event.set()
+    heartbeat_thread.join(timeout=2.0)
+
+
 def run_podcast_transcription_now(
     db: Session,
     *,
@@ -2184,11 +2536,10 @@ def run_podcast_transcription_now(
 ) -> dict[str, Any]:
     _ = request_id
     claim_now = datetime.now(UTC)
+    stale_extracting_seconds = get_settings().ingest_stale_extracting_seconds
     # Allow recovery workers to reclaim stale running jobs. We intentionally
     # reuse the ingest stale threshold so media/job stale detection is aligned.
-    running_lease_cutoff = claim_now - timedelta(
-        seconds=get_settings().ingest_stale_extracting_seconds
-    )
+    running_lease_cutoff = claim_now - timedelta(seconds=stale_extracting_seconds)
     claimed = db.execute(
         text(
             """
@@ -2205,7 +2556,7 @@ def run_podcast_transcription_now(
                     status IN ('pending', 'failed')
                     OR (
                         status = 'running'
-                        AND COALESCE(started_at, updated_at) < :running_lease_cutoff
+                        AND COALESCE(updated_at, started_at) < :running_lease_cutoff
                     )
               )
             RETURNING request_reason
@@ -2324,6 +2675,18 @@ def run_podcast_transcription_now(
     db.commit()
 
     audio_url = str(media_row[1] or "").strip() or None
+    heartbeat: tuple[threading.Event, threading.Thread] | None = None
+    try:
+        heartbeat = _start_transcription_job_heartbeat(
+            db,
+            media_id=media_id,
+            stale_extracting_seconds=stale_extracting_seconds,
+        )
+    except Exception:
+        logger.warning(
+            "podcast_transcription_heartbeat_start_failed",
+            media_id=str(media_id),
+        )
     try:
         transcription_result = _transcribe_podcast_audio(audio_url)
     except Exception as exc:
@@ -2342,6 +2705,8 @@ def run_podcast_transcription_now(
         )
         db.commit()
         return {"status": "failed", "error_code": ApiErrorCode.E_TRANSCRIPTION_FAILED.value}
+    finally:
+        _stop_transcription_job_heartbeat(heartbeat)
     transcription_status = str(transcription_result.get("status") or "failed")
     transcript_segments = _normalize_transcript_segments(transcription_result.get("segments"))
     transcription_error_code = _normalize_terminal_transcription_error_code(
@@ -2391,13 +2756,35 @@ def run_podcast_transcription_now(
             transcript_segments=transcript_segments,
             now=now,
         )
-        _insert_transcript_chunks_for_version(
-            db,
-            media_id=media_id,
-            transcript_version_id=transcript_version_id,
-            transcript_segments=transcript_segments,
-            now=now,
-        )
+        semantic_status = "ready"
+        semantic_error_code: str | None = None
+        try:
+            _insert_transcript_chunks_for_version(
+                db,
+                media_id=media_id,
+                transcript_version_id=transcript_version_id,
+                transcript_segments=transcript_segments,
+                now=now,
+            )
+        except Exception as exc:
+            # Transcript text remains usable even when semantic indexing fails.
+            semantic_status = "failed"
+            semantic_error_code = ApiErrorCode.E_INTERNAL.value
+            logger.exception(
+                "podcast_transcript_semantic_index_failed",
+                media_id=str(media_id),
+                transcript_version_id=str(transcript_version_id),
+                error=str(exc),
+            )
+            db.execute(
+                text(
+                    """
+                    DELETE FROM podcast_transcript_chunks
+                    WHERE transcript_version_id = :transcript_version_id
+                    """
+                ),
+                {"transcript_version_id": transcript_version_id},
+            )
         db.execute(
             text(
                 """
@@ -2441,12 +2828,13 @@ def run_podcast_transcription_now(
             media_id=media_id,
             transcript_state="ready",
             transcript_coverage="full",
-            semantic_status="ready",
+            semantic_status=semantic_status,
             active_transcript_version_id=transcript_version_id,
             last_request_reason=request_reason,
-            last_error_code=None,
+            last_error_code=semantic_error_code,
             now=now,
         )
+        _commit_reserved_usage_for_media(db, media_id=media_id, now=now)
         db.commit()
         return {
             "status": "completed",
@@ -2465,6 +2853,190 @@ def run_podcast_transcription_now(
     )
     db.commit()
     return {"status": "failed", "error_code": terminal_error_code}
+
+
+def repair_podcast_transcript_semantic_index_now(
+    db: Session,
+    *,
+    media_id: UUID,
+    request_reason: str = "operator_requeue",
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    _ = request_id
+    now = datetime.now(UTC)
+    active_embedding_model = current_transcript_embedding_model()
+    normalized_reason = (
+        request_reason
+        if request_reason in PODCAST_TRANSCRIPT_REQUEST_REASONS
+        else "operator_requeue"
+    )
+
+    lock_acquired = db.execute(
+        text("SELECT pg_try_advisory_xact_lock(hashtext(:lock_key))"),
+        {"lock_key": f"podcast-semantic-repair:{media_id}"},
+    ).scalar()
+    if not bool(lock_acquired):
+        return {"status": "skipped", "reason": "locked"}
+
+    claim_row = db.execute(
+        text(
+            """
+            UPDATE media_transcript_states AS mts
+            SET
+                semantic_status = 'pending',
+                last_request_reason = :request_reason,
+                last_error_code = NULL,
+                updated_at = :now
+            WHERE mts.media_id = :media_id
+              AND mts.transcript_state IN ('ready', 'partial')
+              AND mts.transcript_coverage IN ('partial', 'full')
+              AND mts.active_transcript_version_id IS NOT NULL
+              AND (
+                  mts.semantic_status IN ('pending', 'failed')
+                  OR (
+                      mts.semantic_status = 'ready'
+                      AND (
+                          NOT EXISTS (
+                              SELECT 1
+                              FROM podcast_transcript_chunks tc
+                              WHERE tc.transcript_version_id = mts.active_transcript_version_id
+                          )
+                          OR EXISTS (
+                              SELECT 1
+                              FROM podcast_transcript_chunks tc
+                              WHERE tc.transcript_version_id = mts.active_transcript_version_id
+                                AND (
+                                    tc.embedding_vector IS NULL
+                                    OR tc.embedding_model IS NULL
+                                    OR tc.embedding_model <> :active_embedding_model
+                                )
+                          )
+                      )
+                  )
+              )
+            RETURNING mts.active_transcript_version_id, mts.transcript_state, mts.transcript_coverage
+            """
+        ),
+        {
+            "media_id": media_id,
+            "request_reason": normalized_reason,
+            "now": now,
+            "active_embedding_model": active_embedding_model,
+        },
+    ).fetchone()
+    if claim_row is None:
+        return {"status": "skipped", "reason": "not_repairable"}
+
+    transcript_version_id = claim_row[0]
+    transcript_state = str(claim_row[1] or "ready")
+    transcript_coverage = str(claim_row[2] or "full")
+    segment_rows = db.execute(
+        text(
+            """
+            SELECT canonical_text, t_start_ms, t_end_ms, speaker_label
+            FROM podcast_transcript_segments
+            WHERE transcript_version_id = :transcript_version_id
+            ORDER BY segment_idx ASC
+            """
+        ),
+        {"transcript_version_id": transcript_version_id},
+    ).fetchall()
+
+    transcript_segments: list[dict[str, Any]] = []
+    for row in segment_rows:
+        canonical_text = str(row[0] or "").strip()
+        t_start_ms = row[1]
+        t_end_ms = row[2]
+        if not canonical_text or t_start_ms is None or t_end_ms is None:
+            continue
+        transcript_segments.append(
+            {
+                "text": canonical_text,
+                "t_start_ms": int(t_start_ms),
+                "t_end_ms": int(t_end_ms),
+                "speaker_label": row[3],
+            }
+        )
+
+    if not transcript_segments:
+        _set_media_transcript_state(
+            db,
+            media_id=media_id,
+            transcript_state=transcript_state,
+            transcript_coverage=transcript_coverage,
+            semantic_status="failed",
+            active_transcript_version_id=transcript_version_id,
+            last_request_reason=normalized_reason,
+            last_error_code=ApiErrorCode.E_INTERNAL.value,
+            now=now,
+        )
+        return {
+            "status": "failed",
+            "error_code": ApiErrorCode.E_INTERNAL.value,
+            "reason": "segments_missing",
+        }
+
+    try:
+        db.execute(
+            text(
+                """
+                DELETE FROM podcast_transcript_chunks
+                WHERE transcript_version_id = :transcript_version_id
+                """
+            ),
+            {"transcript_version_id": transcript_version_id},
+        )
+        _insert_transcript_chunks_for_version(
+            db,
+            media_id=media_id,
+            transcript_version_id=transcript_version_id,
+            transcript_segments=transcript_segments,
+            now=now,
+        )
+        _set_media_transcript_state(
+            db,
+            media_id=media_id,
+            transcript_state=transcript_state,
+            transcript_coverage=transcript_coverage,
+            semantic_status="ready",
+            active_transcript_version_id=transcript_version_id,
+            last_request_reason=normalized_reason,
+            last_error_code=None,
+            now=now,
+        )
+        return {
+            "status": "completed",
+            "transcript_version_id": str(transcript_version_id),
+            "chunk_count": len(transcript_segments),
+        }
+    except Exception as exc:
+        logger.exception(
+            "podcast_semantic_repair_failed",
+            media_id=str(media_id),
+            transcript_version_id=str(transcript_version_id),
+            error=str(exc),
+        )
+        db.execute(
+            text(
+                """
+                DELETE FROM podcast_transcript_chunks
+                WHERE transcript_version_id = :transcript_version_id
+                """
+            ),
+            {"transcript_version_id": transcript_version_id},
+        )
+        _set_media_transcript_state(
+            db,
+            media_id=media_id,
+            transcript_state=transcript_state,
+            transcript_coverage=transcript_coverage,
+            semantic_status="failed",
+            active_transcript_version_id=transcript_version_id,
+            last_request_reason=normalized_reason,
+            last_error_code=ApiErrorCode.E_INTERNAL.value,
+            now=now,
+        )
+        return {"status": "failed", "error_code": ApiErrorCode.E_INTERNAL.value}
 
 
 def _get_subscription_sync_snapshot(
@@ -2797,9 +3369,15 @@ def _ensure_media_transcript_state_row(
         transcript_state = "ready"
     elif processing_status == "extracting":
         transcript_state = "running"
-    elif processing_status == "failed" and last_error_code == ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value:
+    elif (
+        processing_status == "failed"
+        and last_error_code == ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value
+    ):
         transcript_state = "unavailable"
-    elif processing_status == "failed" and last_error_code == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED.value:
+    elif (
+        processing_status == "failed"
+        and last_error_code == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED.value
+    ):
         transcript_state = "failed_quota"
     elif processing_status == "failed":
         transcript_state = "failed_provider"
@@ -2976,6 +3554,11 @@ def _create_next_transcript_version(
     request_reason: str,
     now: datetime,
 ) -> UUID:
+    # Serialize version allocation per media to avoid MAX(version_no)+1 races.
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+        {"lock_key": f"podcast-transcript-version:{media_id}"},
+    )
     db.execute(
         text(
             """
@@ -3091,10 +3674,11 @@ def _insert_transcript_chunks_for_version(
     now: datetime,
 ) -> None:
     chunks = chunk_transcript_segments(transcript_segments)
+    embedding_dims = transcript_embedding_dimensions()
     for chunk in chunks:
         db.execute(
             text(
-                """
+                f"""
                 INSERT INTO podcast_transcript_chunks (
                     transcript_version_id,
                     media_id,
@@ -3103,6 +3687,7 @@ def _insert_transcript_chunks_for_version(
                     t_start_ms,
                     t_end_ms,
                     embedding,
+                    embedding_vector,
                     embedding_model,
                     created_at
                 )
@@ -3114,7 +3699,8 @@ def _insert_transcript_chunks_for_version(
                     :t_start_ms,
                     :t_end_ms,
                     CAST(:embedding AS jsonb),
-                    'hash_v1',
+                    CAST(:embedding_vector AS vector({embedding_dims})),
+                    :embedding_model,
                     :created_at
                 )
                 """
@@ -3127,6 +3713,8 @@ def _insert_transcript_chunks_for_version(
                 "t_start_ms": chunk["t_start_ms"],
                 "t_end_ms": chunk["t_end_ms"],
                 "embedding": json.dumps(chunk["embedding"]),
+                "embedding_vector": to_pgvector_literal(chunk["embedding"]),
+                "embedding_model": chunk["embedding_model"],
                 "created_at": now,
             },
         )
@@ -3171,23 +3759,29 @@ def _plan_defaults(settings, plan_tier: str) -> dict[str, Any]:
     }
 
 
-def _get_usage_minutes(
+def _get_usage_snapshot(
     db: Session,
     *,
     viewer_id: UUID,
     usage_date: date,
-) -> int:
-    used_minutes = db.execute(
+) -> dict[str, int]:
+    row = db.execute(
         text(
             """
-            SELECT minutes_used
+            SELECT minutes_used, minutes_reserved
             FROM podcast_transcription_usage_daily
             WHERE user_id = :user_id AND usage_date = :usage_date
             """
         ),
         {"user_id": viewer_id, "usage_date": usage_date},
-    ).scalar()
-    return int(used_minutes or 0)
+    ).fetchone()
+    used_minutes = int((row[0] if row is not None else 0) or 0)
+    reserved_minutes = int((row[1] if row is not None else 0) or 0)
+    return {
+        "used": used_minutes,
+        "reserved": reserved_minutes,
+        "total": used_minutes + reserved_minutes,
+    }
 
 
 def _reserve_usage_minutes_or_raise(
@@ -3198,9 +3792,9 @@ def _reserve_usage_minutes_or_raise(
     required_minutes: int,
     daily_limit_minutes: int | None,
     now: datetime,
-) -> int:
+) -> dict[str, int]:
     if required_minutes <= 0:
-        return _get_usage_minutes(db, viewer_id=user_id, usage_date=usage_date)
+        return _get_usage_snapshot(db, viewer_id=user_id, usage_date=usage_date)
 
     if daily_limit_minutes is None:
         row = db.execute(
@@ -3210,25 +3804,30 @@ def _reserve_usage_minutes_or_raise(
                     user_id,
                     usage_date,
                     minutes_used,
+                    minutes_reserved,
                     updated_at
                 )
                 VALUES (
                     :user_id,
                     :usage_date,
-                    :minutes_used,
+                    0,
+                    :minutes_reserved,
                     :updated_at
                 )
                 ON CONFLICT (user_id, usage_date)
                 DO UPDATE SET
-                    minutes_used = podcast_transcription_usage_daily.minutes_used + EXCLUDED.minutes_used,
+                    minutes_reserved = (
+                        podcast_transcription_usage_daily.minutes_reserved
+                        + EXCLUDED.minutes_reserved
+                    ),
                     updated_at = EXCLUDED.updated_at
-                RETURNING minutes_used
+                RETURNING minutes_used, minutes_reserved
                 """
             ),
             {
                 "user_id": user_id,
                 "usage_date": usage_date,
-                "minutes_used": required_minutes,
+                "minutes_reserved": required_minutes,
                 "updated_at": now,
             },
         ).fetchone()
@@ -3240,41 +3839,49 @@ def _reserve_usage_minutes_or_raise(
                     user_id,
                     usage_date,
                     minutes_used,
+                    minutes_reserved,
                     updated_at
                 )
                 SELECT
                     :user_id,
                     :usage_date,
-                    :minutes_used,
+                    0,
+                    :minutes_reserved,
                     :updated_at
-                WHERE :minutes_used <= :daily_limit_minutes
+                WHERE :minutes_reserved <= :daily_limit_minutes
                 ON CONFLICT (user_id, usage_date)
                 DO UPDATE SET
-                    minutes_used = podcast_transcription_usage_daily.minutes_used + EXCLUDED.minutes_used,
+                    minutes_reserved = (
+                        podcast_transcription_usage_daily.minutes_reserved
+                        + EXCLUDED.minutes_reserved
+                    ),
                     updated_at = EXCLUDED.updated_at
                 WHERE (
-                    podcast_transcription_usage_daily.minutes_used + EXCLUDED.minutes_used
+                    podcast_transcription_usage_daily.minutes_used
+                    + podcast_transcription_usage_daily.minutes_reserved
+                    + EXCLUDED.minutes_reserved
                     <= :daily_limit_minutes
                 )
-                RETURNING minutes_used
+                RETURNING minutes_used, minutes_reserved
                 """
             ),
             {
                 "user_id": user_id,
                 "usage_date": usage_date,
-                "minutes_used": required_minutes,
+                "minutes_reserved": required_minutes,
                 "daily_limit_minutes": daily_limit_minutes,
                 "updated_at": now,
             },
         ).fetchone()
 
     if row is None:
-        used_minutes = _get_usage_minutes(db, viewer_id=user_id, usage_date=usage_date)
+        usage_snapshot = _get_usage_snapshot(db, viewer_id=user_id, usage_date=usage_date)
         logger.warning(
             "podcast_quota_exceeded",
             viewer_id=str(user_id),
             usage_date=usage_date.isoformat(),
-            used_minutes=used_minutes,
+            used_minutes=usage_snapshot["used"],
+            reserved_minutes=usage_snapshot["reserved"],
             required_minutes=required_minutes,
             daily_limit_minutes=daily_limit_minutes,
         )
@@ -3282,37 +3889,145 @@ def _reserve_usage_minutes_or_raise(
             ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
             "Daily podcast transcription quota exceeded",
         )
-    return int(row[0] or 0)
+    used_after = int(row[0] or 0)
+    reserved_after = int(row[1] or 0)
+    return {
+        "used": used_after,
+        "reserved": reserved_after,
+        "total": used_after + reserved_after,
+    }
 
 
-def _refund_usage_minutes(
+def _clear_job_reservation(
     db: Session,
     *,
-    user_id: UUID,
-    usage_date: date,
-    refund_minutes: int,
+    media_id: UUID,
     now: datetime,
 ) -> None:
-    if refund_minutes <= 0:
-        return
     db.execute(
         text(
             """
-            UPDATE podcast_transcription_usage_daily
+            UPDATE podcast_transcription_jobs
             SET
-                minutes_used = GREATEST(minutes_used - :refund_minutes, 0),
-                updated_at = :updated_at
-            WHERE user_id = :user_id
-              AND usage_date = :usage_date
+                reserved_minutes = 0,
+                reservation_usage_date = NULL,
+                updated_at = :now
+            WHERE media_id = :media_id
+            """
+        ),
+        {"media_id": media_id, "now": now},
+    )
+
+
+def _release_reserved_usage_for_media(
+    db: Session,
+    *,
+    media_id: UUID,
+    now: datetime,
+) -> None:
+    reservation_row = db.execute(
+        text(
+            """
+            SELECT requested_by_user_id, reservation_usage_date, reserved_minutes
+            FROM podcast_transcription_jobs
+            WHERE media_id = :media_id
+            FOR UPDATE
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchone()
+    if reservation_row is None:
+        return
+
+    user_id = reservation_row[0]
+    usage_date = reservation_row[1]
+    reserved_minutes = int(reservation_row[2] or 0)
+    if user_id is not None and usage_date is not None and reserved_minutes > 0:
+        db.execute(
+            text(
+                """
+                UPDATE podcast_transcription_usage_daily
+                SET
+                    minutes_reserved = GREATEST(minutes_reserved - :reserved_minutes, 0),
+                    updated_at = :updated_at
+                WHERE user_id = :user_id
+                  AND usage_date = :usage_date
+                """
+            ),
+            {
+                "user_id": user_id,
+                "usage_date": usage_date,
+                "reserved_minutes": reserved_minutes,
+                "updated_at": now,
+            },
+        )
+    _clear_job_reservation(db, media_id=media_id, now=now)
+
+
+def _commit_reserved_usage_for_media(
+    db: Session,
+    *,
+    media_id: UUID,
+    now: datetime,
+) -> None:
+    reservation_row = db.execute(
+        text(
+            """
+            SELECT requested_by_user_id, reservation_usage_date, reserved_minutes
+            FROM podcast_transcription_jobs
+            WHERE media_id = :media_id
+            FOR UPDATE
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchone()
+    if reservation_row is None:
+        return
+
+    user_id = reservation_row[0]
+    usage_date = reservation_row[1]
+    reserved_minutes = int(reservation_row[2] or 0)
+    if user_id is None or usage_date is None or reserved_minutes <= 0:
+        _clear_job_reservation(db, media_id=media_id, now=now)
+        return
+
+    db.execute(
+        text(
+            """
+            INSERT INTO podcast_transcription_usage_daily (
+                user_id,
+                usage_date,
+                minutes_used,
+                minutes_reserved,
+                updated_at
+            )
+            VALUES (
+                :user_id,
+                :usage_date,
+                :minutes_used,
+                0,
+                :updated_at
+            )
+            ON CONFLICT (user_id, usage_date)
+            DO UPDATE SET
+                minutes_used = (
+                    podcast_transcription_usage_daily.minutes_used + EXCLUDED.minutes_used
+                ),
+                minutes_reserved = GREATEST(
+                    podcast_transcription_usage_daily.minutes_reserved - EXCLUDED.minutes_used,
+                    0
+                ),
+                updated_at = EXCLUDED.updated_at
             """
         ),
         {
             "user_id": user_id,
             "usage_date": usage_date,
-            "refund_minutes": refund_minutes,
+            "minutes_used": reserved_minutes,
             "updated_at": now,
         },
     )
+    _clear_job_reservation(db, media_id=media_id, now=now)
 
 
 def _episode_minutes(episode: dict[str, Any]) -> int:

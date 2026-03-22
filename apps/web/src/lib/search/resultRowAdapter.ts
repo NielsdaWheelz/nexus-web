@@ -3,6 +3,7 @@ export const ALL_SEARCH_TYPES = [
   "fragment",
   "annotation",
   "message",
+  "transcript_chunk",
 ] as const;
 
 export type SearchType = (typeof ALL_SEARCH_TYPES)[number];
@@ -54,17 +55,26 @@ export interface SearchMessageResult extends SearchBaseResult {
   seq: number;
 }
 
+export interface SearchTranscriptChunkResult extends SearchBaseResult {
+  type: "transcript_chunk";
+  t_start_ms: number;
+  t_end_ms: number;
+  source: SearchSourceMetadata;
+}
+
 export type SearchApiResult =
   | SearchMediaResult
   | SearchFragmentResult
   | SearchAnnotationResult
-  | SearchMessageResult;
+  | SearchMessageResult
+  | SearchTranscriptChunkResult;
 
 /** Result types that carry source metadata. */
 export type SearchResultWithSource =
   | SearchMediaResult
   | SearchFragmentResult
-  | SearchAnnotationResult;
+  | SearchAnnotationResult
+  | SearchTranscriptChunkResult;
 
 export interface SearchResponseShape {
   results: SearchApiResult[];
@@ -230,6 +240,23 @@ export function normalizeSearchResult(
         seq: r.seq,
       };
     }
+    case "transcript_chunk": {
+      const source = resolveSource(r);
+      if (!source) return null;
+      if (
+        typeof r.t_start_ms !== "number" ||
+        typeof r.t_end_ms !== "number"
+      ) {
+        return null;
+      }
+      return {
+        ...base,
+        type: "transcript_chunk",
+        t_start_ms: r.t_start_ms,
+        t_end_ms: r.t_end_ms,
+        source,
+      };
+    }
     default:
       return null;
   }
@@ -348,6 +375,11 @@ function buildResultHref(result: SearchApiResult): string {
     }
     case "message":
       return `/conversations/${result.conversation_id}`;
+    case "transcript_chunk": {
+      const params = new URLSearchParams();
+      params.set("t_start_ms", String(result.t_start_ms));
+      return `/media/${result.source.media_id}?${params.toString()}`;
+    }
   }
 }
 
@@ -362,6 +394,10 @@ function buildPrimaryText(result: SearchApiResult): string {
     return sanitizeSnippet(result.snippet) || `Message #${result.seq}`;
   }
   return sanitizeSnippet(result.snippet);
+}
+
+function formatTypeLabel(type: SearchType): string {
+  return type === "transcript_chunk" ? "transcript chunk" : type;
 }
 
 export function buildSearchQueryParams({
@@ -379,8 +415,11 @@ export function buildSearchQueryParams({
   if (orderedSelected.length === 0) {
     // Explicitly differentiate from omitted types (which means "all").
     params.set("types", "");
-  } else if (orderedSelected.length < ALL_SEARCH_TYPES.length) {
+  } else {
     params.set("types", orderedSelected.join(","));
+  }
+  if (orderedSelected.includes("transcript_chunk")) {
+    params.set("semantic", "true");
   }
 
   if (cursor) {
@@ -404,7 +443,7 @@ export function adaptSearchResultRow(result: SearchApiResult): SearchResultRowVi
     key: `${result.type}-${result.id}`,
     href: buildResultHref(result),
     type: result.type,
-    typeLabel: result.type,
+    typeLabel: formatTypeLabel(result.type),
     primaryText: buildPrimaryText(result),
     snippetSegments: parseSnippetSegments(result.snippet),
     sourceMeta: buildSourceMeta(result),

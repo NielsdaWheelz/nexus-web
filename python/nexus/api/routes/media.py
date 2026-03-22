@@ -20,6 +20,8 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.media import (
     FromUrlRequest,
+    ListeningStateUpsertRequest,
+    TranscriptForecastBatchRequest,
     TranscriptRequestRequest,
     TranscriptRequestResponse,
     UploadInitRequest,
@@ -213,6 +215,29 @@ def patch_reader_state(
     return success_response(result.model_dump(mode="json"))
 
 
+@router.get("/media/{media_id}/listening-state")
+def get_listening_state(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Get per-media listening state for the authenticated viewer."""
+    result = media_service.get_listening_state_for_viewer(db, viewer.user_id, media_id)
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.put("/media/{media_id}/listening-state", status_code=204)
+def put_listening_state(
+    media_id: UUID,
+    body: ListeningStateUpsertRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Upsert per-media listening state for the authenticated viewer."""
+    media_service.upsert_listening_state_for_viewer(db, viewer.user_id, media_id, body)
+    return Response(status_code=204)
+
+
 # =============================================================================
 # Upload / Ingest Endpoints
 # =============================================================================
@@ -325,6 +350,24 @@ def request_podcast_transcript(
     payload = TranscriptRequestResponse.model_validate(result).model_dump(mode="json")
     status_code = 202 if result["request_enqueued"] else 200
     return JSONResponse(status_code=status_code, content=success_response(payload))
+
+
+@router.post("/media/transcript/forecasts")
+def forecast_podcast_transcripts(
+    body: TranscriptForecastBatchRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Return dry-run transcript forecasts for many visible podcast episodes."""
+    result = podcast_service.forecast_podcast_transcripts_for_viewer(
+        db=db,
+        viewer_id=viewer.user_id,
+        requests=[(item.media_id, item.reason) for item in body.requests],
+    )
+    payload = [
+        TranscriptRequestResponse.model_validate(row).model_dump(mode="json") for row in result
+    ]
+    return success_response(payload)
 
 
 @router.get("/media/{media_id}/assets/{asset_key:path}")

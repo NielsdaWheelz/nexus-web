@@ -2,15 +2,16 @@
  * Search page — keyword search across visible content.
  *
  * Per s3_pr07 §8:
- * - Query input + type filters (media/fragment/annotation/message)
+ * - Query input + type filters (media/fragment/annotation/message/transcript_chunk)
  * - Results list with type badge, snippet, click navigation
  * - media/fragment/annotation → /media/:id
  * - message → /conversations/:conversationId
+ * - transcript_chunk → /media/:id?t_start_ms=<timestamp>
  */
 
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import PageLayout from "@/components/ui/PageLayout";
 import SectionCard from "@/components/ui/SectionCard";
@@ -113,6 +114,14 @@ export default function SearchPage() {
     });
   };
 
+  useEffect(() => {
+    // Query/filter edits invalidate the previous cursor window.
+    setResults([]);
+    setNextCursor(null);
+    setHasSearched(false);
+    setError(null);
+  }, [query, types]);
+
   // --------------------------------------------------------------------------
   // Render
   // --------------------------------------------------------------------------
@@ -120,7 +129,7 @@ export default function SearchPage() {
   return (
     <PageLayout
       title="Search"
-      description="Keyword search across media, fragments, annotations, and chat messages."
+      description="Search across media, fragments, annotations, chat, and transcript chunks."
     >
       <SectionCard title="Query">
         <form className={styles.searchForm} onSubmit={handleSubmit}>
@@ -167,7 +176,7 @@ export default function SearchPage() {
 
         {!hasSearched && (
           <StateMessage variant="info">
-            Enter a query to search across your media, annotations, and conversations.
+            Enter a query to search across your media, annotations, transcript chunks, and conversations.
           </StateMessage>
         )}
 

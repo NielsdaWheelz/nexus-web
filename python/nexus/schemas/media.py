@@ -38,6 +38,21 @@ class PlaybackSourceOut(BaseModel):
     embed_url: str | None = None
 
 
+class ListeningStateOut(BaseModel):
+    """Per-media listening state for the authenticated viewer."""
+
+    position_ms: int = Field(ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)
+    playback_speed: float = Field(gt=0)
+
+
+class MediaListeningStateOut(BaseModel):
+    """Condensed listening state embedded into media detail responses."""
+
+    position_ms: int = Field(ge=0)
+    playback_speed: float = Field(gt=0)
+
+
 class MediaAuthorOut(BaseModel):
     """Response schema for a media author."""
 
@@ -56,9 +71,12 @@ class MediaOut(BaseModel):
     title: str
     canonical_source_url: str | None
     processing_status: str  # "pending", "extracting", "ready_for_reading", etc.
+    transcript_state: str | None = None
+    transcript_coverage: str | None = None
     failure_stage: str | None = None
     last_error_code: str | None = None
     playback_source: PlaybackSourceOut | None = None
+    listening_state: MediaListeningStateOut | None = None
     capabilities: CapabilitiesOut
     authors: list[MediaAuthorOut] = []
     published_date: str | None = None
@@ -152,11 +170,36 @@ class TranscriptRequestRequest(BaseModel):
     dry_run: bool = False
 
 
+class ListeningStateUpsertRequest(BaseModel):
+    """Body for PUT /media/{id}/listening-state."""
+
+    position_ms: int = Field(ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)
+    playback_speed: float | None = Field(default=None, gt=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TranscriptForecastBatchItemRequest(BaseModel):
+    """One media forecast request for POST /media/transcript/forecasts."""
+
+    media_id: UUID
+    reason: TranscriptRequestReason = "episode_open"
+
+
+class TranscriptForecastBatchRequest(BaseModel):
+    """Batch forecast request for transcript admission without enqueueing work."""
+
+    requests: list[TranscriptForecastBatchItemRequest] = Field(min_length=1, max_length=100)
+
+
 class TranscriptRequestResponse(BaseModel):
     """Response schema for transcript admission endpoint."""
 
     media_id: str
     processing_status: str
+    transcript_state: str
+    transcript_coverage: str
     request_reason: TranscriptRequestReason
     required_minutes: int
     remaining_minutes: int | None = None

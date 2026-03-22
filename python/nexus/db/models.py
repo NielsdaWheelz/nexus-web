@@ -15,6 +15,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -385,6 +386,11 @@ class Media(Base):
     )
     podcast_episode: Mapped["PodcastEpisode | None"] = relationship(
         "PodcastEpisode", back_populates="media", cascade="all, delete-orphan", uselist=False
+    )
+    podcast_listening_states: Mapped[list["PodcastListeningState"]] = relationship(
+        "PodcastListeningState",
+        back_populates="media",
+        cascade="all, delete-orphan",
     )
     podcast_transcription_job: Mapped["PodcastTranscriptionJob | None"] = relationship(
         "PodcastTranscriptionJob",
@@ -803,6 +809,50 @@ class PodcastEpisode(Base):
     podcast: Mapped["Podcast"] = relationship("Podcast", back_populates="episodes")
 
 
+class PodcastListeningState(Base):
+    """Per-user playback state for podcast/audio media resume."""
+
+    __tablename__ = "podcast_listening_states"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    playback_speed: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "position_ms >= 0",
+            name="ck_podcast_listening_states_position_ms_non_negative",
+        ),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms >= 0",
+            name="ck_podcast_listening_states_duration_ms_non_negative",
+        ),
+        CheckConstraint(
+            "playback_speed > 0",
+            name="ck_podcast_listening_states_playback_speed_positive",
+        ),
+        Index("ix_podcast_listening_states_media_id", "media_id"),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="podcast_listening_states")
+    user: Mapped["User"] = relationship("User")
+
+
 class PodcastTranscriptionJob(Base):
     """One transcription-work record per globally ingested podcast episode."""
 
@@ -819,6 +869,8 @@ class PodcastTranscriptionJob(Base):
         nullable=True,
     )
     request_reason: Mapped[str] = mapped_column(Text, nullable=False, server_default="episode_open")
+    reserved_minutes: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    reservation_usage_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
@@ -843,6 +895,10 @@ class PodcastTranscriptionJob(Base):
         CheckConstraint(
             "attempts >= 0",
             name="ck_podcast_transcription_jobs_attempts_non_negative",
+        ),
+        CheckConstraint(
+            "reserved_minutes >= 0",
+            name="ck_podcast_transcription_jobs_reserved_minutes_non_negative",
         ),
         CheckConstraint(
             "request_reason IN ("
@@ -902,6 +958,7 @@ class PodcastTranscriptionUsageDaily(Base):
     )
     usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
     minutes_used: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    minutes_reserved: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -910,8 +967,8 @@ class PodcastTranscriptionUsageDaily(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "minutes_used >= 0",
-            name="ck_podcast_transcription_usage_daily_minutes_non_negative",
+            "minutes_used >= 0 AND minutes_reserved >= 0",
+            name="ck_podcast_transcription_usage_daily_non_negative",
         ),
     )
 
@@ -1512,7 +1569,9 @@ class HighlightTranscriptAnchor(Base):
     )
 
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="transcript_anchor")
-    transcript_version: Mapped["PodcastTranscriptVersion"] = relationship("PodcastTranscriptVersion")
+    transcript_version: Mapped["PodcastTranscriptVersion"] = relationship(
+        "PodcastTranscriptVersion"
+    )
     transcript_segment: Mapped["PodcastTranscriptSegment | None"] = relationship(
         "PodcastTranscriptSegment"
     )

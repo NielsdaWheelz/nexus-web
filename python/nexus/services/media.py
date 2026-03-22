@@ -19,15 +19,24 @@ if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
 
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
 from nexus.config import Environment, get_settings
-from nexus.db.models import Media, MediaKind, ProcessingStatus
+from nexus.db.models import Media, MediaKind, PodcastListeningState, ProcessingStatus
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
-from nexus.schemas.media import FragmentOut, FromUrlResponse, MediaAuthorOut, MediaOut
+from nexus.schemas.media import (
+    FragmentOut,
+    FromUrlResponse,
+    ListeningStateOut,
+    ListeningStateUpsertRequest,
+    MediaAuthorOut,
+    MediaListeningStateOut,
+    MediaOut,
+)
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready, is_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
@@ -64,23 +73,41 @@ def get_media_for_viewer(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     # Fetch the media data with additional fields needed for capabilities
-    result = db.execute(
+    row = db.execute(
         text("""
-            SELECT m.id, m.kind, m.title, m.canonical_source_url,
-                   m.processing_status, m.failure_stage, m.last_error_code,
-                   m.external_playback_url, m.provider, m.provider_id,
-                   m.created_at, m.updated_at,
-                   (SELECT EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id)) as has_file,
-                   (SELECT EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id)) as has_fragments,
-                   m.published_date, m.publisher, m.language, m.description,
-                   mts.transcript_state, mts.transcript_coverage
+            SELECT
+                m.id,
+                m.kind,
+                m.title,
+                m.canonical_source_url,
+                m.processing_status,
+                m.failure_stage,
+                m.last_error_code,
+                m.external_playback_url,
+                m.provider,
+                m.provider_id,
+                m.created_at,
+                m.updated_at,
+                (SELECT EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id)) AS has_file,
+                (SELECT EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id)) AS has_fragments,
+                m.published_date,
+                m.publisher,
+                m.language,
+                m.description,
+                mts.transcript_state,
+                mts.transcript_coverage,
+                pls.position_ms AS listening_position_ms,
+                pls.playback_speed AS listening_playback_speed
             FROM media m
-            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+            LEFT JOIN media_transcript_states mts
+              ON mts.media_id = m.id
+            LEFT JOIN podcast_listening_states pls
+              ON pls.media_id = m.id
+             AND pls.user_id = :viewer_id
             WHERE m.id = :media_id
         """),
-        {"media_id": media_id},
-    )
-    row = result.fetchone()
+        {"media_id": media_id, "viewer_id": viewer_id},
+    ).mappings().one_or_none()
 
     if row is None:
         # This should not happen if can_read_media returned True,
@@ -88,26 +115,27 @@ def get_media_for_viewer(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     _pdf_ready = False
-    if row[1] == MediaKind.pdf.value:
+    if row["kind"] == MediaKind.pdf.value:
         _pdf_ready = is_pdf_quote_text_ready(db, media_id)
 
+    processing_status = _status_to_str(row["processing_status"])
     capabilities = derive_capabilities(
-        kind=row[1],
-        processing_status=row[4],
-        last_error_code=row[6],
-        media_file_exists=row[12],
-        external_playback_url_exists=row[7] is not None,
-        has_fragments=row[13],
+        kind=row["kind"],
+        processing_status=processing_status,
+        last_error_code=row["last_error_code"],
+        media_file_exists=row["has_file"],
+        external_playback_url_exists=row["external_playback_url"] is not None,
+        has_fragments=row["has_fragments"],
         pdf_quote_text_ready=_pdf_ready,
-        transcript_state=row[18],
-        transcript_coverage=row[19],
+        transcript_state=row["transcript_state"],
+        transcript_coverage=row["transcript_coverage"],
     )
     playback_source = derive_playback_source(
-        kind=row[1],
-        external_playback_url=row[7],
-        canonical_source_url=row[3],
-        provider=row[8],
-        provider_id=row[9],
+        kind=row["kind"],
+        external_playback_url=row["external_playback_url"],
+        canonical_source_url=row["canonical_source_url"],
+        provider=row["provider"],
+        provider_id=row["provider_id"],
     )
 
     # Fetch authors for this media
@@ -120,24 +148,104 @@ def get_media_for_viewer(
     ).fetchall()
     authors = [MediaAuthorOut(id=ar[0], name=ar[1], role=ar[2]) for ar in author_rows]
 
+    listening_state = None
+    if (
+        row["listening_position_ms"] is not None
+        and row["listening_playback_speed"] is not None
+    ):
+        listening_state = MediaListeningStateOut(
+            position_ms=int(row["listening_position_ms"]),
+            playback_speed=float(row["listening_playback_speed"]),
+        )
+
     return MediaOut(
-        id=row[0],
-        kind=row[1],
-        title=row[2],
-        canonical_source_url=row[3],
-        processing_status=row[4],
-        failure_stage=row[5],
-        last_error_code=row[6],
+        id=row["id"],
+        kind=row["kind"],
+        title=row["title"],
+        canonical_source_url=row["canonical_source_url"],
+        processing_status=processing_status,
+        transcript_state=row["transcript_state"],
+        transcript_coverage=row["transcript_coverage"],
+        failure_stage=row["failure_stage"],
+        last_error_code=row["last_error_code"],
         playback_source=playback_source,
+        listening_state=listening_state,
         capabilities=capabilities,
         authors=authors,
-        published_date=row[14],
-        publisher=row[15],
-        language=row[16],
-        description=row[17],
-        created_at=row[10],
-        updated_at=row[11],
+        published_date=row["published_date"],
+        publisher=row["publisher"],
+        language=row["language"],
+        description=row["description"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
+
+
+def get_listening_state_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+) -> ListeningStateOut:
+    """Get listener state for one media item scoped to the viewer."""
+    if not _can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    state = (
+        db.query(PodcastListeningState)
+        .filter(
+            PodcastListeningState.user_id == viewer_id,
+            PodcastListeningState.media_id == media_id,
+        )
+        .one_or_none()
+    )
+    if state is None:
+        return ListeningStateOut(position_ms=0, duration_ms=None, playback_speed=1.0)
+
+    return ListeningStateOut(
+        position_ms=int(state.position_ms),
+        duration_ms=int(state.duration_ms) if state.duration_ms is not None else None,
+        playback_speed=float(state.playback_speed),
+    )
+
+
+def upsert_listening_state_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    body: ListeningStateUpsertRequest,
+) -> None:
+    """Upsert listener state for one media item scoped to the viewer."""
+    if not _can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    insert_values = {
+        "user_id": viewer_id,
+        "media_id": media_id,
+        "position_ms": body.position_ms,
+        "duration_ms": body.duration_ms,
+        "playback_speed": body.playback_speed if body.playback_speed is not None else 1.0,
+    }
+    update_values: dict[str, object] = {
+        "position_ms": body.position_ms,
+        "updated_at": datetime.now(UTC),
+    }
+    if body.duration_ms is not None:
+        update_values["duration_ms"] = body.duration_ms
+    if body.playback_speed is not None:
+        update_values["playback_speed"] = body.playback_speed
+
+    db.execute(
+        pg_insert(PodcastListeningState)
+        .values(**insert_values)
+        .on_conflict_do_update(
+            index_elements=[
+                PodcastListeningState.user_id,
+                PodcastListeningState.media_id,
+            ],
+            set_=update_values,
+        )
+    )
+    db.commit()
 
 
 def _encode_media_cursor(updated_at: datetime, media_id: UUID) -> str:
@@ -329,6 +437,8 @@ def list_visible_media(
                 title=row[2],
                 canonical_source_url=row[3],
                 processing_status=processing_status,
+                transcript_state=row[18],
+                transcript_coverage=row[19],
                 failure_stage=row[5],
                 last_error_code=row[6],
                 playback_source=playback_source,

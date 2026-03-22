@@ -303,12 +303,19 @@ def list_library_media(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=100, ge=1, description="Maximum results (clamped to 200)"),
+    offset: int = Query(default=0, ge=0),
 ) -> dict:
     """List media in a library.
 
     Returns media ordered by library_media.created_at DESC, media.id DESC.
     """
-    result = libraries_service.list_library_media(db, viewer.user_id, library_id, limit=limit)
+    result = libraries_service.list_library_media(
+        db,
+        viewer.user_id,
+        library_id,
+        limit=limit,
+        offset=offset,
+    )
     return success_response([media.model_dump(mode="json") for media in result])
 
 

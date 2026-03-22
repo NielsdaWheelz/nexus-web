@@ -1,14 +1,13 @@
 {
   "schema_version": "1.0",
   "status": "ready_for_review",
-  "updated_at": "2026-03-13T11:19:34Z",
-  "summary": "Completed staff-level PR hardening for transcript phase-3/4: fixed stale running job reclaim, transcript-anchor offset sync, metadata-search gating, migration downgrade safety, and aligned docs/readmes with verified green checks.",
+  "updated_at": "2026-03-22T06:49:15Z",
+  "summary": "Completed S7 PR-05 strict cutover: listening-state persistence backend APIs/migration, media detail hydration, global player controls + persistence semantics, and resume UX wiring with green frontend/backend tests.",
   "questions": [],
   "blockers": [],
-  "how_to_test": "make test-migrations-no-services && cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test NEXUS_ENV=test SUPABASE_JWKS_URL=http://127.0.0.1:54321/auth/v1/.well-known/jwks.json SUPABASE_ISSUER=http://127.0.0.1:54321/auth/v1 SUPABASE_AUDIENCES=authenticated uv run pytest -v tests/test_podcasts.py tests/test_search.py tests/test_capabilities.py && make lint-back lint-front typecheck build verify-celery-contract",
+  "how_to_test": "cd apps/web && npm run typecheck && npm test -- \"src/app/api/media/media-routes.test.ts\" \"src/__tests__/components/GlobalPlayerFooter.test.tsx\" \"src/__tests__/components/GlobalPlayerPersistence.test.tsx\" \"src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx\" \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\" && cd ../python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q tests/test_media.py::TestGetMedia::test_get_media_success tests/test_media.py::TestMediaListeningState::test_get_listening_state_returns_defaults_when_absent tests/test_media.py::TestMediaListeningState::test_put_then_get_listening_state_upserts_and_preserves_optional_fields tests/test_media.py::TestMediaListeningState::test_get_media_hydrates_listening_state_when_present tests/test_media.py::TestMediaListeningState::test_listening_state_endpoints_mask_unreadable_media && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations uv run pytest -q tests/test_migrations.py::TestPodcastListeningStateMigration::test_head_contains_podcast_listening_state_table_contract && uv run ruff check nexus/db/models.py nexus/schemas/media.py nexus/services/media.py nexus/api/routes/media.py tests/test_media.py tests/test_migrations.py",
   "risks": [
-    "Semantic transcript ranking currently uses deterministic lightweight embeddings and lexical overlap, not pgvector ANN retrieval.",
-    "Deep downgrade past typed-highlight schema drops rows incompatible with legacy non-null fragment offset constraints.",
-    "Podcast fragment idx values can become sparse over many re-transcriptions due idx-shift preservation strategy."
+    "beforeunload keepalive writes are best-effort and can still miss the last state update on abrupt tab/app termination.",
+    "listening-state persistence currently performs direct per-event upserts; heavy playback concurrency may need write coalescing in a later hardening pass."
   ]
 }

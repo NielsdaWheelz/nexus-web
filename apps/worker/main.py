@@ -37,6 +37,7 @@ from nexus.tasks import (
     ingest_web_article,  # noqa: F401
     ingest_youtube_video,  # noqa: F401
     podcast_active_subscription_poll_job,  # noqa: F401
+    podcast_reindex_semantic_job,  # noqa: F401
     podcast_sync_subscription_job,  # noqa: F401
     reconcile_stale_ingest_media_job,  # noqa: F401
 )

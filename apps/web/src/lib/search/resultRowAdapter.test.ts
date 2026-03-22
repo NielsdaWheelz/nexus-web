@@ -26,7 +26,7 @@ describe("buildSearchQueryParams", () => {
     expect(params.get("types")).toBe("");
   });
 
-  it("omits type filters when all types are selected", () => {
+  it("serializes all type filters when all types are selected", () => {
     const params = buildSearchQueryParams({
       query: "needle",
       selectedTypes: setOf(...ALL_SEARCH_TYPES),
@@ -34,7 +34,32 @@ describe("buildSearchQueryParams", () => {
       limit: 20,
     });
 
-    expect(params.has("types")).toBe(false);
+    expect(params.get("types")).toBe(ALL_SEARCH_TYPES.join(","));
+    expect(params.get("semantic")).toBe("true");
+  });
+
+  it("enables semantic mode when transcript-chunk search is selected", () => {
+    const params = buildSearchQueryParams({
+      query: "transformer attention",
+      selectedTypes: setOf("transcript_chunk"),
+      cursor: null,
+      limit: 20,
+    });
+
+    expect(params.get("types")).toBe("transcript_chunk");
+    expect(params.get("semantic")).toBe("true");
+  });
+
+  it("does not set semantic mode for non-transcript searches", () => {
+    const params = buildSearchQueryParams({
+      query: "needle",
+      selectedTypes: setOf("media", "annotation"),
+      cursor: null,
+      limit: 20,
+    });
+
+    expect(params.get("types")).toBe("media,annotation");
+    expect(params.has("semantic")).toBe(false);
   });
 });
 
@@ -113,6 +138,28 @@ describe("adaptSearchResultRow", () => {
     expect(row.href).toBe("/conversations/conv-1");
     expect(row.sourceMeta).toBe("message #12");
     expect(row.primaryText).toBe("Message #12");
+  });
+
+  it("builds timestamp navigation hrefs for transcript chunk rows", () => {
+    const result = {
+      type: "transcript_chunk",
+      id: "chunk-1",
+      score: 0.88,
+      snippet: "transformer attention residual stream",
+      t_start_ms: 42000,
+      t_end_ms: 47000,
+      source: {
+        media_id: "media-podcast-1",
+        media_kind: "podcast_episode",
+        title: "Episode 42",
+        authors: ["Host"],
+        published_date: "2026-03-10",
+      },
+    } as SearchApiResult;
+
+    const row = adaptSearchResultRow(result);
+    expect(row.href).toBe("/media/media-podcast-1?t_start_ms=42000");
+    expect(row.typeLabel).toBe("transcript chunk");
   });
 });
 
@@ -333,6 +380,31 @@ describe("normalizeSearchResult", () => {
     const msg = result as Extract<SearchApiResult, { type: "message" }>;
     expect(msg.conversation_id).toBe("c-1");
     expect(msg.seq).toBe(5);
+  });
+
+  it("normalizes transcript chunk results", () => {
+    const nested = {
+      type: "transcript_chunk",
+      id: "chunk-1",
+      score: 0.61,
+      snippet: "transformer attention",
+      t_start_ms: 1200,
+      t_end_ms: 3400,
+      source: {
+        media_id: "m-1",
+        media_kind: "podcast_episode",
+        title: "Episode One",
+        authors: ["Host"],
+        published_date: null,
+      },
+    };
+    const result = normalizeSearchResult(nested);
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe("transcript_chunk");
+    const chunk = result as Extract<SearchApiResult, { type: "transcript_chunk" }>;
+    expect(chunk.t_start_ms).toBe(1200);
+    expect(chunk.t_end_ms).toBe(3400);
+    expect(chunk.source.media_id).toBe("m-1");
   });
 
   it("returns null for results missing id", () => {

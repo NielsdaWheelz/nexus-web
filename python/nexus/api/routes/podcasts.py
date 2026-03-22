@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
@@ -44,9 +45,10 @@ def list_subscriptions(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> dict:
     """List active podcast subscriptions for the viewer."""
-    rows = podcast_service.list_subscriptions(db, viewer.user_id, limit=limit)
+    rows = podcast_service.list_subscriptions(db, viewer.user_id, limit=limit, offset=offset)
     return success_response([row.model_dump(mode="json") for row in rows])
 
 
@@ -59,6 +61,21 @@ def get_subscription_status(
     """Read viewer-visible sync status for one podcast subscription."""
     out = podcast_service.get_subscription_status(db, viewer.user_id, podcast_id)
     return success_response(out.model_dump(mode="json"))
+
+
+@router.post("/podcasts/subscriptions/{podcast_id}/sync", status_code=202)
+def refresh_subscription_sync(
+    podcast_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> JSONResponse:
+    """Queue a manual subscription sync refresh for the viewer."""
+    out = podcast_service.refresh_subscription_sync_for_viewer(
+        db,
+        viewer_id=viewer.user_id,
+        podcast_id=podcast_id,
+    )
+    return JSONResponse(status_code=202, content=success_response(out.model_dump(mode="json")))
 
 
 @router.delete("/podcasts/subscriptions/{podcast_id}")
@@ -78,6 +95,30 @@ def unsubscribe_from_podcast(
     return success_response(out.model_dump(mode="json"))
 
 
+@router.get("/podcasts/plan")
+def get_podcast_plan_snapshot(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Read the viewer's effective podcast plan and today's quota usage."""
+    out = podcast_service.get_user_plan_snapshot(db, viewer.user_id)
+    return success_response(out.model_dump(mode="json"))
+
+
+@router.put("/podcasts/plan")
+def update_self_podcast_plan(
+    body: PodcastPlanUpdateRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Public plan writes are disabled; entitlement updates are internal-only."""
+    _ = body, viewer, db
+    raise ForbiddenError(
+        ApiErrorCode.E_FORBIDDEN,
+        "Podcast plan changes are managed by internal billing controls.",
+    )
+
+
 @router.get("/podcasts/{podcast_id}")
 def get_podcast_detail(
     podcast_id: UUID,
@@ -95,6 +136,7 @@ def list_podcast_episodes(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> dict:
     """List viewer-visible episodes for one subscribed podcast."""
     rows = podcast_service.list_podcast_episodes_for_viewer(
@@ -102,19 +144,6 @@ def list_podcast_episodes(
         viewer.user_id,
         podcast_id,
         limit=limit,
+        offset=offset,
     )
     return success_response([row.model_dump(mode="json") for row in rows])
-
-
-@router.put("/internal/podcasts/users/{user_id}/plan")
-def update_podcast_plan(
-    user_id: UUID,
-    body: PodcastPlanUpdateRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Manual podcast plan assignment (self only)."""
-    if viewer.user_id != user_id:
-        raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Cannot update another user's podcast plan")
-    out = podcast_service.update_user_plan(db, user_id, body)
-    return success_response(out.model_dump(mode="json"))

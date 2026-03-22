@@ -1,3 +1,6 @@
+codex resume 019cdbb4-d89a-7b31-8c03-039944248bff
+claude --resume 3984bbdf-62ca-4e26-9259-8fb029da28db
+
 # Podcast Transcript Refactor — Spec + Plan
 
 ## Goal

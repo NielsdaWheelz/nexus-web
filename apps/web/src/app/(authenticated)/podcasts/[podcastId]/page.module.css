@@ -19,6 +19,44 @@
   cursor: not-allowed;
 }
 
+.syncButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.syncButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.subscriptionActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.unsubscribeModeLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.unsubscribeModeSelect {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-size: var(--font-size-xs);
+}
+
 .unsubscribedLabel {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
@@ -27,6 +65,12 @@
 .syncState {
   margin: 0;
   color: var(--color-text-muted);
+}
+
+.syncError {
+  margin: 8px 0 0;
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
 }
 
 .libraryButton {
@@ -42,4 +86,73 @@
 .libraryButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.episodeActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reasonLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.reasonSelect {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-size: var(--font-size-xs);
+}
+
+.requestButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.requestButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.loadMoreButton {
+  margin-top: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.loadMoreButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.transcriptRequestHint {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.transcriptStatus {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.transcriptQuotaWarning {
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
 }

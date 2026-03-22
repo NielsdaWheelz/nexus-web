@@ -70,4 +70,27 @@ describe("podcast BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/pod-123/episodes");
   });
+
+  it("POST /api/podcasts/subscriptions/[podcastId]/sync proxies to /podcasts/subscriptions/{podcastId}/sync", async () => {
+    const { POST } = await import("./subscriptions/[podcastId]/sync/route");
+    const req = new Request("http://localhost/api/podcasts/subscriptions/pod-123/sync", {
+      method: "POST",
+    });
+    await POST(req, { params: Promise.resolve({ podcastId: "pod-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/subscriptions/pod-123/sync");
+  });
+
+  it("GET /api/podcasts/plan proxies to /podcasts/plan", async () => {
+    const { GET } = await import("./plan/route");
+    const req = new Request("http://localhost/api/podcasts/plan");
+    await GET(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/plan");
+  });
+
+  it("PUT /api/podcasts/plan is not exposed", async () => {
+    const routeModule = await import("./plan/route");
+    expect("PUT" in routeModule).toBe(false);
+  });
 });

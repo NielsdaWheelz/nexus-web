@@ -115,3 +115,28 @@ class TestPodcastProviderConfiguration:
         assert settings.podcasts_enabled is False
         assert settings.podcast_index_api_key is None
         assert settings.podcast_index_api_secret is None
+
+
+class TestTranscriptEmbeddingConfiguration:
+    def test_transcript_embedding_dimensions_must_match_schema_dimension(self):
+        with pytest.raises(ValidationError, match="TRANSCRIPT_EMBEDDING_DIMENSIONS must equal 256"):
+            _make_settings(TRANSCRIPT_EMBEDDING_DIMENSIONS=384)
+
+
+class TestPodcastPlanAdminPrincipalConfiguration:
+    def test_defaults_include_billing_admin_roles(self):
+        settings = _make_settings()
+        assert settings.podcast_plan_admin_role_set == {"podcast_plan_admin", "billing_admin"}
+
+    def test_email_allowlist_is_normalized(self):
+        settings = _make_settings(
+            PODCAST_PLAN_ADMIN_EMAILS=" Billing@Example.com,ops@example.com ",
+        )
+        assert settings.podcast_plan_admin_email_set == {
+            "billing@example.com",
+            "ops@example.com",
+        }
+
+    def test_invalid_admin_user_id_list_is_rejected(self):
+        with pytest.raises(ValidationError, match="PODCAST_PLAN_ADMIN_USER_IDS"):
+            _make_settings(PODCAST_PLAN_ADMIN_USER_IDS="not-a-uuid")

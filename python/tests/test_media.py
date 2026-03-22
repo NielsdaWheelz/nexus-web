@@ -63,6 +63,18 @@ def create_seeded_media(session: Session) -> UUID:
     )
 
 
+def add_media_to_default_library(auth_client, user_id: str, media_id: UUID) -> str:
+    """Bootstrap user and attach media to their default library."""
+    me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+    library_id = me_resp.json()["data"]["default_library_id"]
+    auth_client.post(
+        f"/libraries/{library_id}/media",
+        json={"media_id": str(media_id)},
+        headers=auth_headers(user_id),
+    )
+    return library_id
+
+
 # =============================================================================
 # GET /media/{id} Tests
 # =============================================================================
@@ -273,6 +285,200 @@ class TestGetMedia:
         assert playback_source["provider_video_id"] == video_id
         assert playback_source["watch_url"] == playback_url
         assert playback_source["embed_url"] == f"https://www.youtube.com/embed/{video_id}"
+
+
+class TestMediaListeningState:
+    """Integration tests for /media/{id}/listening-state and media hydration."""
+
+    def test_get_listening_state_returns_defaults_when_absent(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.podcast_episode.value,
+                    title="Listening Episode",
+                    canonical_source_url="https://example.com/episode",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                    external_playback_url="https://cdn.example.com/episode.mp3",
+                )
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_default_library(auth_client, user_id, media_id)
+        response = auth_client.get(
+            f"/media/{media_id}/listening-state",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"Expected 200 but got {response.status_code}: {response.json()}"
+        )
+        data = response.json()["data"]
+        assert data["position_ms"] == 0
+        assert data["duration_ms"] is None
+        assert data["playback_speed"] == 1.0
+
+    def test_put_then_get_listening_state_upserts_and_preserves_optional_fields(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.podcast_episode.value,
+                    title="State Upsert Episode",
+                    canonical_source_url="https://example.com/episode-upsert",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                    external_playback_url="https://cdn.example.com/episode-upsert.mp3",
+                )
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_default_library(auth_client, user_id, media_id)
+
+        put_resp = auth_client.put(
+            f"/media/{media_id}/listening-state",
+            headers=auth_headers(user_id),
+            json={"position_ms": 30_000, "duration_ms": 120_000, "playback_speed": 1.5},
+        )
+        assert put_resp.status_code == 204, (
+            f"Expected 204 but got {put_resp.status_code}: {put_resp.text}"
+        )
+
+        first_get = auth_client.get(
+            f"/media/{media_id}/listening-state",
+            headers=auth_headers(user_id),
+        )
+        assert first_get.status_code == 200, (
+            f"Expected 200 but got {first_get.status_code}: {first_get.json()}"
+        )
+        first_data = first_get.json()["data"]
+        assert first_data["position_ms"] == 30_000
+        assert first_data["duration_ms"] == 120_000
+        assert first_data["playback_speed"] == 1.5
+
+        second_put = auth_client.put(
+            f"/media/{media_id}/listening-state",
+            headers=auth_headers(user_id),
+            json={"position_ms": 45_000},
+        )
+        assert second_put.status_code == 204, (
+            f"Expected 204 but got {second_put.status_code}: {second_put.text}"
+        )
+
+        second_get = auth_client.get(
+            f"/media/{media_id}/listening-state",
+            headers=auth_headers(user_id),
+        )
+        assert second_get.status_code == 200, (
+            f"Expected 200 but got {second_get.status_code}: {second_get.json()}"
+        )
+        second_data = second_get.json()["data"]
+        assert second_data["position_ms"] == 45_000
+        assert second_data["duration_ms"] == 120_000
+        assert second_data["playback_speed"] == 1.5
+
+    def test_get_media_hydrates_listening_state_when_present(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.podcast_episode.value,
+                    title="Hydration Episode",
+                    canonical_source_url="https://example.com/episode-hydration",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                    external_playback_url="https://cdn.example.com/episode-hydration.mp3",
+                )
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_default_library(auth_client, user_id, media_id)
+        put_resp = auth_client.put(
+            f"/media/{media_id}/listening-state",
+            headers=auth_headers(user_id),
+            json={"position_ms": 12_000, "playback_speed": 1.25},
+        )
+        assert put_resp.status_code == 204, (
+            f"Expected 204 but got {put_resp.status_code}: {put_resp.text}"
+        )
+
+        media_resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert media_resp.status_code == 200, (
+            f"Expected 200 but got {media_resp.status_code}: {media_resp.json()}"
+        )
+        payload = media_resp.json()["data"]
+        assert payload["listening_state"] == {"position_ms": 12_000, "playback_speed": 1.25}
+
+    def test_listening_state_endpoints_mask_unreadable_media(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.podcast_episode.value,
+                    title="Private Listening Episode",
+                    canonical_source_url="https://example.com/private-episode",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                    external_playback_url="https://cdn.example.com/private-episode.mp3",
+                )
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_default_library(auth_client, user_a, media_id)
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        get_resp = auth_client.get(
+            f"/media/{media_id}/listening-state",
+            headers=auth_headers(user_b),
+        )
+        assert get_resp.status_code == 404, (
+            f"Expected 404 but got {get_resp.status_code}: {get_resp.json()}"
+        )
+        assert get_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+        put_resp = auth_client.put(
+            f"/media/{media_id}/listening-state",
+            headers=auth_headers(user_b),
+            json={"position_ms": 1_000},
+        )
+        assert put_resp.status_code == 404, (
+            f"Expected 404 but got {put_resp.status_code}: {put_resp.json()}"
+        )
+        assert put_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
 
 
 # =============================================================================

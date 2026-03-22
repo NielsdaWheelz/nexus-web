@@ -144,4 +144,56 @@ describe("media EPUB BFF proxy routes", () => {
       "/media/mid-123/pdf-highlights"
     );
   });
+
+  it("POST /api/media/[id]/transcript/request proxies to /media/{id}/transcript/request", async () => {
+    const { POST } = await import("./[id]/transcript/request/route");
+    const req = new Request("http://localhost/api/media/mid-123/transcript/request", {
+      method: "POST",
+      body: JSON.stringify({ reason: "search", dry_run: true }),
+    });
+    await POST(req, { params: Promise.resolve({ id: "mid-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(
+      req,
+      "/media/mid-123/transcript/request"
+    );
+  });
+
+  it("GET /api/media/[id]/listening-state proxies to /media/{id}/listening-state", async () => {
+    const { GET } = await import("./[id]/listening-state/route");
+    const req = new Request("http://localhost/api/media/mid-123/listening-state");
+    await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(
+      req,
+      "/media/mid-123/listening-state"
+    );
+  });
+
+  it("PUT /api/media/[id]/listening-state proxies to /media/{id}/listening-state", async () => {
+    const { PUT } = await import("./[id]/listening-state/route");
+    const req = new Request("http://localhost/api/media/mid-123/listening-state", {
+      method: "PUT",
+      body: JSON.stringify({ position_ms: 30_000, playback_speed: 1.5 }),
+    });
+    await PUT(req, { params: Promise.resolve({ id: "mid-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(
+      req,
+      "/media/mid-123/listening-state"
+    );
+  });
+
+  it("POST /api/media/transcript/forecasts proxies to /media/transcript/forecasts", async () => {
+    const { POST } = await import("./transcript/forecasts/route");
+    const req = new Request("http://localhost/api/media/transcript/forecasts", {
+      method: "POST",
+      body: JSON.stringify({
+        requests: [{ media_id: "mid-123", reason: "search" }],
+      }),
+    });
+    await POST(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/transcript/forecasts");
+  });
 });

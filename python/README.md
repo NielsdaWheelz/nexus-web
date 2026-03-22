@@ -128,7 +128,7 @@ nexus/
 | DELETE | `/podcasts/subscriptions/{podcast_id}` | Unsubscribe with explicit retention mode (`mode=1|2|3`, default `1`) (S7 PR-02) |
 | GET | `/podcasts/{podcast_id}` | Podcast detail for current viewer (S7) |
 | GET | `/podcasts/{podcast_id}/episodes` | List visible episode media for subscribed podcast (S7) |
-| PUT | `/internal/podcasts/users/{user_id}/plan` | Internal operator plan override endpoint (S7) |
+| PUT | `/internal/podcasts/users/{user_id}/plan` | Internal operator plan override endpoint (S7); requires billing/admin principal authorization |
 | POST | `/internal/ingest/reconcile` | Internal operator trigger for stale-ingest reconciliation |
 | GET | `/internal/ingest/reconcile/health` | Internal operator stale-ingest backlog snapshot |
 

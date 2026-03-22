@@ -18,6 +18,7 @@ Tests cover:
 - Response shape preservation
 """
 
+import json
 from uuid import UUID, uuid4
 
 import pytest
@@ -39,6 +40,17 @@ from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+def _basis_embedding(index: int) -> list[float]:
+    from nexus.services.semantic_chunks import transcript_embedding_dimensions
+
+    dims = transcript_embedding_dimensions()
+    vector = [0.0] * dims
+    if 0 <= index < dims:
+        vector[index] = 1.0
+    return vector
+
 
 # =============================================================================
 # Basic Search Tests
@@ -1433,6 +1445,15 @@ class TestSemanticTranscriptChunkSearch:
         version_id = uuid4()
         chunk_a_id = uuid4()
         chunk_b_id = uuid4()
+        from nexus.services.semantic_chunks import (
+            current_transcript_embedding_model,
+            to_pgvector_literal,
+        )
+
+        embedding_model = current_transcript_embedding_model()
+        embedding_dims = len(_basis_embedding(0))
+        embedding_a = _basis_embedding(0)
+        embedding_b = _basis_embedding(1)
 
         with direct_db.session() as session:
             default_library_id = get_user_default_library(session, user_id)
@@ -1542,7 +1563,7 @@ class TestSemanticTranscriptChunkSearch:
             )
             session.execute(
                 text(
-                    """
+                    f"""
                     INSERT INTO podcast_transcript_chunks (
                         id,
                         transcript_version_id,
@@ -1551,7 +1572,9 @@ class TestSemanticTranscriptChunkSearch:
                         chunk_text,
                         t_start_ms,
                         t_end_ms,
-                        embedding
+                        embedding,
+                        embedding_vector,
+                        embedding_model
                     )
                     VALUES
                         (
@@ -1562,7 +1585,9 @@ class TestSemanticTranscriptChunkSearch:
                             'transformer attention residual stream explanation',
                             1000,
                             5000,
-                            '[1.0, 0.0, 0.0]'::jsonb
+                            CAST(:embedding_a_json AS jsonb),
+                            CAST(:embedding_a_vector AS vector({embedding_dims})),
+                            :embedding_model
                         ),
                         (
                             :chunk_b_id,
@@ -1572,7 +1597,9 @@ class TestSemanticTranscriptChunkSearch:
                             'gardening tomatoes and compost aeration tips',
                             5100,
                             9000,
-                            '[0.0, 1.0, 0.0]'::jsonb
+                            CAST(:embedding_b_json AS jsonb),
+                            CAST(:embedding_b_vector AS vector({embedding_dims})),
+                            :embedding_model
                         )
                     """
                 ),
@@ -1581,6 +1608,11 @@ class TestSemanticTranscriptChunkSearch:
                     "chunk_b_id": chunk_b_id,
                     "version_id": version_id,
                     "media_id": media_id,
+                    "embedding_a_json": json.dumps(embedding_a),
+                    "embedding_b_json": json.dumps(embedding_b),
+                    "embedding_a_vector": to_pgvector_literal(embedding_a),
+                    "embedding_b_vector": to_pgvector_literal(embedding_b),
+                    "embedding_model": embedding_model,
                 },
             )
             session.commit()
@@ -1614,6 +1646,30 @@ class TestSemanticTranscriptChunkSearch:
         assert top["t_end_ms"] == 5000
         assert "transformer" in top["snippet"].lower()
 
+    def test_semantic_search_with_omitted_types_includes_transcript_chunks_by_default(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+
+        response = auth_client.get(
+            "/search?q=transformer+attention&semantic=true",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"expected semantic search with omitted types to succeed, got "
+            f"{response.status_code}: {response.text}"
+        )
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
+        assert chunk_results, (
+            "omitting types while semantic=true must still include transcript_chunk "
+            "in default all-types search"
+        )
+        assert any(row["source"]["media_id"] == str(media_id) for row in chunk_results)
+
     def test_semantic_search_excludes_transcripts_when_index_not_ready(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -1634,4 +1690,547 @@ class TestSemanticTranscriptChunkSearch:
         chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
         assert chunk_results == [], (
             "semantic search must not return transcript chunks while semantic index state is pending"
+        )
+
+    def test_semantic_search_scans_corpus_not_just_newest_chunks(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+
+        with direct_db.session() as session:
+            from nexus.services.semantic_chunks import (
+                current_transcript_embedding_model,
+                to_pgvector_literal,
+            )
+
+            version_id = session.execute(
+                text(
+                    """
+                    SELECT active_transcript_version_id
+                    FROM media_transcript_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar()
+            assert version_id is not None
+            embedding_model = current_transcript_embedding_model()
+            embedding_dims = len(_basis_embedding(0))
+            irrelevant_embedding = _basis_embedding(1)
+
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_transcript_chunks
+                    SET created_at = now() - interval '7 days'
+                    WHERE media_id = :media_id
+                      AND chunk_text ILIKE '%transformer attention residual stream explanation%'
+                    """
+                ),
+                {"media_id": media_id},
+            )
+
+            for offset in range(0, 120):
+                session.execute(
+                    text(
+                        f"""
+                        INSERT INTO podcast_transcript_chunks (
+                            transcript_version_id,
+                            media_id,
+                            chunk_idx,
+                            chunk_text,
+                            t_start_ms,
+                            t_end_ms,
+                            embedding,
+                            embedding_vector,
+                            embedding_model,
+                            created_at
+                        )
+                        VALUES (
+                            :transcript_version_id,
+                            :media_id,
+                            :chunk_idx,
+                            :chunk_text,
+                            :t_start_ms,
+                            :t_end_ms,
+                            CAST(:embedding AS jsonb),
+                            CAST(:embedding_vector AS vector({embedding_dims})),
+                            :embedding_model,
+                            now() + (:offset_seconds || ' seconds')::interval
+                        )
+                        """
+                    ),
+                    {
+                        "transcript_version_id": version_id,
+                        "media_id": media_id,
+                        "chunk_idx": 1000 + offset,
+                        "chunk_text": f"irrelevant gardening chunk {offset}",
+                        "t_start_ms": 20_000 + (offset * 1_000),
+                        "t_end_ms": 20_900 + (offset * 1_000),
+                        "offset_seconds": offset,
+                        "embedding": json.dumps(irrelevant_embedding),
+                        "embedding_vector": to_pgvector_literal(irrelevant_embedding),
+                        "embedding_model": embedding_model,
+                    },
+                )
+            session.commit()
+
+        response = auth_client.get(
+            "/search?q=transformer+attention&types=transcript_chunk&semantic=true",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"expected semantic transcript search to succeed, got {response.status_code}: {response.text}"
+        )
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
+        assert chunk_results, (
+            "semantic retrieval must still find older relevant transcript chunks when many newer "
+            "irrelevant chunks exist"
+        )
+        assert any("transformer" in result["snippet"].lower() for result in chunk_results), (
+            "semantic retrieval should not silently drop old but relevant chunks due to recency-only "
+            "candidate selection"
+        )
+
+    def test_semantic_search_is_not_truncated_by_python_scan_limit(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        from nexus.services import search as search_service
+
+        monkeypatch.setattr(search_service, "TRANSCRIPT_CHUNK_SCAN_LIMIT", 5)
+
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+
+        with direct_db.session() as session:
+            from nexus.services.semantic_chunks import (
+                current_transcript_embedding_model,
+                to_pgvector_literal,
+            )
+
+            version_id = session.execute(
+                text(
+                    """
+                    SELECT active_transcript_version_id
+                    FROM media_transcript_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar()
+            assert version_id is not None
+            embedding_model = current_transcript_embedding_model()
+            embedding_dims = len(_basis_embedding(0))
+            irrelevant_embedding = _basis_embedding(1)
+            relevant_embedding = _basis_embedding(0)
+
+            session.execute(
+                text("DELETE FROM podcast_transcript_chunks WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            )
+            for offset in range(0, 30):
+                session.execute(
+                    text(
+                        f"""
+                        INSERT INTO podcast_transcript_chunks (
+                            transcript_version_id,
+                            media_id,
+                            chunk_idx,
+                            chunk_text,
+                            t_start_ms,
+                            t_end_ms,
+                            embedding,
+                            embedding_vector,
+                            embedding_model,
+                            created_at
+                        )
+                        VALUES (
+                            :transcript_version_id,
+                            :media_id,
+                            :chunk_idx,
+                            :chunk_text,
+                            :t_start_ms,
+                            :t_end_ms,
+                            CAST(:embedding AS jsonb),
+                            CAST(:embedding_vector AS vector({embedding_dims})),
+                            :embedding_model,
+                            now() - interval '1 day'
+                        )
+                        """
+                    ),
+                    {
+                        "transcript_version_id": version_id,
+                        "media_id": media_id,
+                        "chunk_idx": offset,
+                        "chunk_text": f"irrelevant corpus filler chunk {offset}",
+                        "t_start_ms": 1_000 + (offset * 1_000),
+                        "t_end_ms": 1_900 + (offset * 1_000),
+                        "embedding": json.dumps(irrelevant_embedding),
+                        "embedding_vector": to_pgvector_literal(irrelevant_embedding),
+                        "embedding_model": embedding_model,
+                    },
+                )
+            session.execute(
+                text(
+                    f"""
+                    INSERT INTO podcast_transcript_chunks (
+                        transcript_version_id,
+                        media_id,
+                        chunk_idx,
+                        chunk_text,
+                        t_start_ms,
+                        t_end_ms,
+                        embedding,
+                        embedding_vector,
+                        embedding_model,
+                        created_at
+                    )
+                    VALUES (
+                        :transcript_version_id,
+                        :media_id,
+                        999,
+                        'transformer attention residual stream explanation',
+                        61_000,
+                        66_000,
+                        CAST(:embedding AS jsonb),
+                        CAST(:embedding_vector AS vector({embedding_dims})),
+                        :embedding_model,
+                        now()
+                    )
+                    """
+                ),
+                {
+                    "transcript_version_id": version_id,
+                    "media_id": media_id,
+                    "embedding": json.dumps(relevant_embedding),
+                    "embedding_vector": to_pgvector_literal(relevant_embedding),
+                    "embedding_model": embedding_model,
+                },
+            )
+            session.commit()
+
+        response = auth_client.get(
+            "/search?q=transformer+attention&types=transcript_chunk&semantic=true",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"expected semantic transcript search to succeed, got {response.status_code}: {response.text}"
+        )
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
+        assert any("transformer attention" in row["snippet"].lower() for row in chunk_results), (
+            "semantic retrieval must not silently miss relevant chunks because of a bounded "
+            "python-side candidate scan window"
+        )
+
+
+class TestSearchTranscriptVersionNavigation:
+    def test_annotation_search_maps_to_active_fragment_when_anchor_targets_old_version(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        version_v1 = uuid4()
+        version_v2 = uuid4()
+        old_fragment_id = uuid4()
+        active_fragment_id = uuid4()
+        highlight_id = uuid4()
+        annotation_id = uuid4()
+        now_ts = "2026-03-10T10:00:00Z"
+
+        with direct_db.session() as session:
+            default_library_id = get_user_default_library(session, user_id)
+            assert default_library_id is not None
+
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id,
+                        kind,
+                        title,
+                        canonical_source_url,
+                        processing_status,
+                        external_playback_url,
+                        provider,
+                        provider_id,
+                        created_by_user_id
+                    )
+                    VALUES (
+                        :id,
+                        'podcast_episode',
+                        'Version Navigation Episode',
+                        'https://feeds.example.com/version-nav.xml',
+                        'ready_for_reading',
+                        'https://cdn.example.com/version-nav.mp3',
+                        'podcast_index',
+                        'version-nav-episode-1',
+                        :user_id
+                    )
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO library_media (library_id, media_id)
+                    VALUES (:library_id, :media_id)
+                    """
+                ),
+                {"library_id": default_library_id, "media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                    VALUES (:default_library_id, :media_id)
+                    """
+                ),
+                {"default_library_id": default_library_id, "media_id": media_id},
+            )
+
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_transcript_versions (
+                        id,
+                        media_id,
+                        version_no,
+                        transcript_coverage,
+                        is_active,
+                        request_reason,
+                        created_by_user_id,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES
+                        (
+                            :version_v1,
+                            :media_id,
+                            1,
+                            'full',
+                            false,
+                            'episode_open',
+                            :user_id,
+                            :now_ts,
+                            :now_ts
+                        ),
+                        (
+                            :version_v2,
+                            :media_id,
+                            2,
+                            'full',
+                            true,
+                            'operator_requeue',
+                            :user_id,
+                            :now_ts,
+                            :now_ts
+                        )
+                    """
+                ),
+                {
+                    "version_v1": version_v1,
+                    "version_v2": version_v2,
+                    "media_id": media_id,
+                    "user_id": user_id,
+                    "now_ts": now_ts,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media_transcript_states (
+                        media_id,
+                        transcript_state,
+                        transcript_coverage,
+                        semantic_status,
+                        active_transcript_version_id,
+                        last_request_reason
+                    )
+                    VALUES (
+                        :media_id,
+                        'ready',
+                        'full',
+                        'ready',
+                        :active_version_id,
+                        'operator_requeue'
+                    )
+                    """
+                ),
+                {"media_id": media_id, "active_version_id": version_v2},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (
+                        id,
+                        media_id,
+                        idx,
+                        html_sanitized,
+                        canonical_text,
+                        t_start_ms,
+                        t_end_ms,
+                        transcript_version_id,
+                        created_at
+                    )
+                    VALUES
+                        (
+                            :old_fragment_id,
+                            :media_id,
+                            1000000,
+                            '<p>old transcript segment</p>',
+                            'old transcript segment',
+                            0,
+                            1000,
+                            :version_v1,
+                            :now_ts
+                        ),
+                        (
+                            :active_fragment_id,
+                            :media_id,
+                            0,
+                            '<p>active transcript segment</p>',
+                            'active transcript segment',
+                            80,
+                            1080,
+                            :version_v2,
+                            :now_ts
+                        )
+                    """
+                ),
+                {
+                    "old_fragment_id": old_fragment_id,
+                    "active_fragment_id": active_fragment_id,
+                    "media_id": media_id,
+                    "version_v1": version_v1,
+                    "version_v2": version_v2,
+                    "now_ts": now_ts,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO highlights (
+                        id,
+                        user_id,
+                        fragment_id,
+                        start_offset,
+                        end_offset,
+                        color,
+                        exact,
+                        prefix,
+                        suffix,
+                        created_at
+                    )
+                    VALUES (
+                        :highlight_id,
+                        :user_id,
+                        :fragment_id,
+                        0,
+                        6,
+                        'yellow',
+                        'active',
+                        'before',
+                        'after',
+                        :now_ts
+                    )
+                    """
+                ),
+                {
+                    "highlight_id": highlight_id,
+                    "user_id": user_id,
+                    "fragment_id": old_fragment_id,
+                    "now_ts": now_ts,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO annotations (
+                        id,
+                        highlight_id,
+                        body,
+                        created_at
+                    )
+                    VALUES (
+                        :annotation_id,
+                        :highlight_id,
+                        'anchor remap needle body text',
+                        :now_ts
+                    )
+                    """
+                ),
+                {
+                    "annotation_id": annotation_id,
+                    "highlight_id": highlight_id,
+                    "now_ts": now_ts,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO highlight_transcript_anchors (
+                        highlight_id,
+                        transcript_version_id,
+                        transcript_segment_id,
+                        t_start_ms,
+                        t_end_ms,
+                        start_offset,
+                        end_offset,
+                        created_at
+                    )
+                    VALUES (
+                        :highlight_id,
+                        :transcript_version_id,
+                        NULL,
+                        0,
+                        1000,
+                        0,
+                        6,
+                        :now_ts
+                    )
+                    """
+                ),
+                {
+                    "highlight_id": highlight_id,
+                    "transcript_version_id": version_v1,
+                    "now_ts": now_ts,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("highlight_transcript_anchors", "highlight_id", highlight_id)
+        direct_db.register_cleanup("annotations", "id", annotation_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+        direct_db.register_cleanup("fragments", "id", old_fragment_id)
+        direct_db.register_cleanup("fragments", "id", active_fragment_id)
+        direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
+        direct_db.register_cleanup("podcast_transcript_versions", "id", version_v1)
+        direct_db.register_cleanup("podcast_transcript_versions", "id", version_v2)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.get(
+            "/search?q=anchor+remap+needle&types=annotation",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"expected annotation search to succeed, got {response.status_code}: {response.text}"
+        )
+        annotation_rows = [row for row in response.json()["results"] if row["type"] == "annotation"]
+        assert annotation_rows, "expected annotation search row for remap assertion"
+        assert annotation_rows[0]["id"] == str(annotation_id)
+        assert annotation_rows[0]["fragment_id"] == str(active_fragment_id), (
+            "annotation search deep-links must target the active transcript version fragment rather than "
+            "a stale historical fragment id"
         )
