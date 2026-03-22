@@ -1,38 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { applyResolvedSupabaseEnv, loadRootFileEnv } from "./supabase-env.mjs";
 
 const ROOT_DIR = path.resolve(__dirname, "..");
-
-function loadEnvFile(filePath: string): Record<string, string> {
-  if (!existsSync(filePath)) {
-    return {};
-  }
-  const parsed: Record<string, string> = {};
-  const raw = readFileSync(filePath, "utf-8");
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) {
-      continue;
-    }
-    const eqIdx = trimmed.indexOf("=");
-    const key = trimmed.slice(0, eqIdx).trim();
-    let value = trimmed.slice(eqIdx + 1).trim();
-    if (
-      (value.startsWith("\"") && value.endsWith("\"")) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    parsed[key] = value;
-  }
-  return parsed;
-}
-
-const fileEnv = {
-  ...loadEnvFile(path.join(ROOT_DIR, ".env")),
-  ...loadEnvFile(path.join(ROOT_DIR, ".dev-ports")),
-};
+applyResolvedSupabaseEnv(ROOT_DIR, process.env);
+const fileEnv = loadRootFileEnv(ROOT_DIR) as Record<string, string>;
 const WEB_PORT = process.env.WEB_PORT ?? fileEnv.WEB_PORT ?? "3000";
 const API_PORT = process.env.API_PORT ?? fileEnv.API_PORT ?? "8000";
 
