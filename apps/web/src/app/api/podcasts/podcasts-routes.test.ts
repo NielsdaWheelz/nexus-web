@@ -89,6 +89,27 @@ describe("podcast BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/plan");
   });
 
+  it("POST /api/podcasts/import/opml proxies to /podcasts/import/opml", async () => {
+    const { POST } = await import("./import/opml/route");
+    const body = new FormData();
+    body.append("file", new File(["<opml/>"], "podcasts.opml", { type: "application/xml" }));
+    const req = new Request("http://localhost/api/podcasts/import/opml", {
+      method: "POST",
+      body,
+    });
+    await POST(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/import/opml");
+  });
+
+  it("GET /api/podcasts/export/opml proxies to /podcasts/export/opml", async () => {
+    const { GET } = await import("./export/opml/route");
+    const req = new Request("http://localhost/api/podcasts/export/opml");
+    await GET(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/export/opml");
+  });
+
   it("PUT /api/podcasts/plan is not exposed", async () => {
     const routeModule = await import("./plan/route");
     expect("PUT" in routeModule).toBe(false);

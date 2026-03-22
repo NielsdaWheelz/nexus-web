@@ -1,3 +1,114 @@
+.sectionActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.secondaryAction {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.secondaryAction:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.primaryAction {
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.primaryAction:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1000;
+}
+
+.modalCard {
+  width: min(560px, 100%);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modalTitle {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  color: var(--color-text);
+}
+
+.modalDescription {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.fileLabel {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.fileInput {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.importSummary {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.importSummaryTitle {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.importErrors {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--color-text-muted);
+}
+
+.modalActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .unsubscribeButton {
   border: 1px solid var(--color-border);
   background: var(--color-bg-panel);

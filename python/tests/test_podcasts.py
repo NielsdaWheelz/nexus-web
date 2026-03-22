@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from lxml import etree
 from sqlalchemy import text
 
 from nexus.config import clear_settings_cache
@@ -542,6 +543,22 @@ def _podcast_payload(provider_podcast_id: str, title: str) -> dict:
         "image_url": f"https://example.com/{provider_podcast_id}.png",
         "description": f"Description for {title}",
     }
+
+
+def _build_opml_document(outline_rows: list[str]) -> bytes:
+    """Build a minimal OPML 2.0 file for import/export integration tests."""
+    outlines = "\n".join(outline_rows)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<opml version=\"2.0\">\n"
+        "  <head>\n"
+        "    <title>Nexus Test Podcasts</title>\n"
+        "  </head>\n"
+        "  <body>\n"
+        f"{outlines}\n"
+        "  </body>\n"
+        "</opml>\n"
+    ).encode()
 
 
 class TestPodcastDiscovery:
@@ -4807,6 +4824,311 @@ class TestPodcastApiSurface:
         )
         data = response.json()["data"]
         assert data[0]["title"] == "Retry Podcast"
+
+
+class TestPodcastOpmlImportExport:
+    def test_import_opml_handles_nested_groups_feed_identity_and_idempotency(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        from unittest.mock import patch
+
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        feed_suffix = uuid4()
+        existing_provider_id = f"opml-existing-{uuid4()}"
+        existing_feed_url = f"https://feeds.example.com/{feed_suffix}-existing.xml"
+        existing_payload = _podcast_payload(existing_provider_id, "Existing Podcast")
+        existing_payload["feed_url"] = existing_feed_url
+        _subscribe(auth_client, user_id, existing_payload)
+
+        known_feed_url = f"https://feeds.example.com/{feed_suffix}-known.xml"
+        unknown_feed_url = f"https://feeds.example.com/{feed_suffix}-private.xml"
+
+        def fake_lookup(self, feed_url: str) -> dict[str, object] | None:
+            _ = self
+            if str(feed_url).rstrip("/") == known_feed_url:
+                return {
+                    "id": "known-provider-id",
+                    "title": "Known Provider Podcast",
+                    "author": "Known Provider Author",
+                    "url": known_feed_url,
+                    "link": "https://example.com/known-provider",
+                    "image": "https://example.com/known-provider.png",
+                    "description": "Known provider description",
+                }
+            return None
+
+        monkeypatch.setattr(
+            "nexus.services.podcasts.PodcastIndexClient.lookup_podcast_by_feed_url",
+            fake_lookup,
+            raising=False,
+        )
+
+        opml_payload = _build_opml_document(
+            [
+                '    <outline text="Top-level group">',
+                f'      <outline type="rss" text="Existing Podcast" xmlUrl="{existing_feed_url}" />',
+                '      <outline text="Nested group">',
+                (
+                    f'        <outline type="rss" text="Known from OPML slash" '
+                    f'xmlUrl="{known_feed_url}/" htmlUrl="https://example.com/known-opml" />'
+                ),
+                (
+                    f'        <outline type="rss" text="Known from OPML no slash" '
+                    f'xmlUrl="{known_feed_url}" />'
+                ),
+                (
+                    f'        <outline type="rss" text="Unknown From OPML" '
+                    f'xmlUrl="{unknown_feed_url}" htmlUrl="https://private.example.com/show" />'
+                ),
+                '        <outline type="rss" text="Missing Feed URL" />',
+                "      </outline>",
+                "    </outline>",
+            ]
+        )
+
+        with patch(
+            "nexus.tasks.podcast_sync_subscription.podcast_sync_subscription_job.apply_async"
+        ) as first_dispatch:
+            first_response = auth_client.post(
+                "/podcasts/import/opml",
+                files={"file": ("subscriptions.opml", opml_payload, "application/xml")},
+                headers=auth_headers(user_id),
+            )
+
+        assert first_response.status_code == 200, (
+            "valid OPML import should succeed and return summary metrics, "
+            f"got {first_response.status_code}: {first_response.text}"
+        )
+        first_summary = first_response.json()["data"]
+        assert first_summary["total"] == 5, (
+            "total should count all RSS outlines (including invalid/missing xmlUrl) in nested groups, "
+            f"got {first_summary}"
+        )
+        assert first_summary["imported"] == 2, (
+            "existing subscription and duplicate normalized feed should be skipped; "
+            f"got {first_summary}"
+        )
+        assert first_summary["skipped_already_subscribed"] == 2, (
+            "existing active subscription and duplicate normalized feed should count as already subscribed; "
+            f"got {first_summary}"
+        )
+        assert first_summary["skipped_invalid"] == 1, (
+            "missing xmlUrl outline should be counted as skipped_invalid, "
+            f"got {first_summary}"
+        )
+        assert first_dispatch.call_count == 2, (
+            "sync dispatch should run once per newly imported subscription, "
+            f"got {first_dispatch.call_count} dispatches"
+        )
+
+        subscriptions_response = auth_client.get(
+            "/podcasts/subscriptions?limit=10&sort=alpha",
+            headers=auth_headers(user_id),
+        )
+        assert subscriptions_response.status_code == 200, (
+            "subscriptions list should succeed after OPML import, "
+            f"got {subscriptions_response.status_code}: {subscriptions_response.text}"
+        )
+        titles = [row["podcast"]["title"] for row in subscriptions_response.json()["data"]]
+        assert titles == ["Existing Podcast", "Known Provider Podcast", "Unknown From OPML"], (
+            "import should preserve existing subscription, enrich known provider metadata, and fallback "
+            "to OPML metadata for unknown feeds"
+        )
+
+        with direct_db.session() as session:
+            normalized_known_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM podcasts
+                    WHERE feed_url = :feed_url
+                    """
+                ),
+                {"feed_url": known_feed_url},
+            ).scalar()
+            unknown_row = session.execute(
+                text(
+                    """
+                    SELECT title, website_url
+                    FROM podcasts
+                    WHERE feed_url = :feed_url
+                    """
+                ),
+                {"feed_url": unknown_feed_url},
+            ).fetchone()
+
+        assert normalized_known_count == 1, (
+            "feed identity normalization must avoid duplicate podcast rows for slash/no-slash variants, "
+            f"got {normalized_known_count} rows for {known_feed_url}"
+        )
+        assert unknown_row is not None, "unknown feed should still create a podcast row from OPML metadata"
+        assert unknown_row[0] == "Unknown From OPML", (
+            "unknown feed should fall back to OPML outline text for podcast title, "
+            f"got {unknown_row}"
+        )
+        assert unknown_row[1] == "https://private.example.com/show", (
+            "unknown feed should preserve OPML htmlUrl as website_url, "
+            f"got {unknown_row}"
+        )
+
+        with patch(
+            "nexus.tasks.podcast_sync_subscription.podcast_sync_subscription_job.apply_async"
+        ) as second_dispatch:
+            second_response = auth_client.post(
+                "/podcasts/import/opml",
+                files={"file": ("subscriptions.opml", opml_payload, "application/xml")},
+                headers=auth_headers(user_id),
+            )
+
+        assert second_response.status_code == 200, (
+            "re-importing the same OPML file should remain a successful no-op, "
+            f"got {second_response.status_code}: {second_response.text}"
+        )
+        second_summary = second_response.json()["data"]
+        assert second_summary["total"] == 5
+        assert second_summary["imported"] == 0, (
+            "second import must be idempotent and create zero new subscriptions, "
+            f"got {second_summary}"
+        )
+        assert second_summary["skipped_already_subscribed"] == 4, (
+            "second import should report all valid RSS outlines as already subscribed, "
+            f"got {second_summary}"
+        )
+        assert second_summary["skipped_invalid"] == 1
+        assert second_dispatch.call_count == 0, (
+            "idempotent import should not enqueue new sync jobs on second run, "
+            f"got {second_dispatch.call_count} dispatches"
+        )
+
+    def test_import_opml_rejects_non_xml_payload(self, auth_client):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        response = auth_client.post(
+            "/podcasts/import/opml",
+            files={"file": ("subscriptions.txt", b"not xml", "text/plain")},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 400, (
+            "non-XML uploads must be rejected with a clear invalid-request response, "
+            f"got {response.status_code}: {response.text}"
+        )
+        error = response.json()["error"]
+        assert error["code"] == "E_INVALID_REQUEST"
+        assert "xml" in str(error["message"]).lower(), (
+            f"error message should clearly indicate XML requirement, got: {error}"
+        )
+
+    def test_import_opml_rejects_files_over_1mb(self, auth_client):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        oversized_payload = b"<opml>" + (b"x" * (1_000_001)) + b"</opml>"
+        response = auth_client.post(
+            "/podcasts/import/opml",
+            files={"file": ("oversized.opml", oversized_payload, "application/xml")},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 400, (
+            "uploads above the 1MB cap must be rejected to protect request processing limits, "
+            f"got {response.status_code}: {response.text}"
+        )
+        error_message = str(response.json()["error"]["message"]).lower().replace(" ", "")
+        assert "1mb" in error_message, (
+            "oversized file rejection should mention the 1MB limit explicitly, "
+            f"got message: {response.json()['error']['message']}"
+        )
+
+    def test_import_opml_rejects_more_than_200_rss_outlines(self, auth_client):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        outline_rows = [
+            (
+                f'    <outline type="rss" text="Podcast {idx}" '
+                f'xmlUrl="https://feeds.example.com/{idx}.xml" />'
+            )
+            for idx in range(201)
+        ]
+        too_many_opml = _build_opml_document(outline_rows)
+        response = auth_client.post(
+            "/podcasts/import/opml",
+            files={"file": ("too-many.opml", too_many_opml, "application/xml")},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 400, (
+            "imports with more than 200 RSS outlines must be rejected to bound synchronous work, "
+            f"got {response.status_code}: {response.text}"
+        )
+        assert "200" in str(response.json()["error"]["message"]), (
+            "outline-limit error should mention the 200-outline cap explicitly, "
+            f"got: {response.json()['error']}"
+        )
+
+    def test_export_opml_returns_active_subscriptions_with_download_headers(
+        self, auth_client
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        first_provider = f"opml-export-active-{uuid4()}"
+        second_provider = f"opml-export-unsubscribed-{uuid4()}"
+        first_payload = _podcast_payload(first_provider, "Export Active Podcast")
+        second_payload = _podcast_payload(second_provider, "Export Unsubscribed Podcast")
+
+        first_sub = _subscribe(auth_client, user_id, first_payload)
+        second_sub = _subscribe(auth_client, user_id, second_payload)
+
+        unsubscribe_response = auth_client.delete(
+            f"/podcasts/subscriptions/{second_sub['podcast_id']}?mode=1",
+            headers=auth_headers(user_id),
+        )
+        assert unsubscribe_response.status_code == 200, (
+            f"unsubscribe setup failed: {unsubscribe_response.status_code} {unsubscribe_response.text}"
+        )
+
+        export_response = auth_client.get(
+            "/podcasts/export/opml",
+            headers=auth_headers(user_id),
+        )
+        assert export_response.status_code == 200, (
+            "export endpoint should return OPML for active subscriptions, "
+            f"got {export_response.status_code}: {export_response.text}"
+        )
+        assert export_response.headers.get("content-type", "").startswith("application/xml"), (
+            "export should return XML content-type for browser/importer compatibility, "
+            f"got headers={dict(export_response.headers)}"
+        )
+        assert (
+            export_response.headers.get("content-disposition")
+            == 'attachment; filename="nexus-podcasts.opml"'
+        ), (
+            "export should include attachment filename for download UX, "
+            f"got headers={dict(export_response.headers)}"
+        )
+
+        root = etree.fromstring(export_response.content)
+        assert root.tag == "opml"
+        assert root.attrib.get("version") == "2.0"
+
+        rss_outlines = root.xpath(".//outline[@type='rss']")
+        exported_feed_urls = {str(outline.attrib.get("xmlUrl") or "") for outline in rss_outlines}
+        exported_titles = {str(outline.attrib.get("text") or "") for outline in rss_outlines}
+        assert first_payload["feed_url"] in exported_feed_urls, (
+            "active subscription feed should be present in OPML export, "
+            f"got {exported_feed_urls}"
+        )
+        assert second_payload["feed_url"] not in exported_feed_urls, (
+            "unsubscribed podcasts must be excluded from OPML export, "
+            f"got {exported_feed_urls}"
+        )
+        assert first_payload["title"] in exported_titles, (
+            "export should include podcast title in OPML text attribute, "
+            f"got titles={exported_titles}"
+        )
+        assert str(first_sub["podcast_id"]) != str(second_sub["podcast_id"])
 
 
 class TestPodcastTranscriptionAsyncLifecycle:

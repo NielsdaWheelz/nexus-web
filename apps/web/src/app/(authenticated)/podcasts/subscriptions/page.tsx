@@ -66,6 +66,17 @@ interface PodcastPlanSnapshot {
   };
 }
 
+interface PodcastOpmlImportResult {
+  total: number;
+  imported: number;
+  skipped_already_subscribed: number;
+  skipped_invalid: number;
+  errors: Array<{
+    feed_url: string | null;
+    error: string;
+  }>;
+}
+
 export default function PodcastSubscriptionsPage() {
   const [rows, setRows] = useState<PodcastSubscriptionRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,6 +91,11 @@ export default function PodcastSubscriptionsPage() {
   const [unsubscribeMode, setUnsubscribeMode] = useState<1 | 2 | 3>(1);
   const [plan, setPlan] = useState<PodcastPlanSnapshot | null>(null);
   const [planLoading, setPlanLoading] = useState(true);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<PodcastOpmlImportResult | null>(null);
   useSetPaneTitle("My podcasts");
 
   const loadSubscriptions = useCallback(async (offset = 0, append = false) => {
@@ -197,6 +213,58 @@ export default function PodcastSubscriptionsPage() {
     [rows]
   );
 
+  const openImportModal = useCallback(() => {
+    setImportError(null);
+    setImportResult(null);
+    setImportFile(null);
+    setIsImportModalOpen(true);
+  }, []);
+
+  const closeImportModal = useCallback(() => {
+    setIsImportModalOpen(false);
+    setImportBusy(false);
+  }, []);
+
+  const handleImportOpml = useCallback(async () => {
+    if (!importFile) {
+      setImportError("Select an OPML/XML file to import.");
+      return;
+    }
+    setImportBusy(true);
+    setImportError(null);
+    setImportResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", importFile);
+      const response = await fetch("/api/podcasts/import/opml", {
+        method: "POST",
+        body: formData,
+      });
+      const responseBody = (await response.json().catch(() => null)) as
+        | { data?: PodcastOpmlImportResult; error?: { message?: string } }
+        | null;
+
+      if (!response.ok) {
+        const fallbackMessage = "Failed to import OPML file";
+        throw new Error(responseBody?.error?.message || fallbackMessage);
+      }
+      if (!responseBody?.data) {
+        throw new Error("Import response missing summary payload");
+      }
+
+      setImportResult(responseBody.data);
+      await loadSubscriptions(0, false);
+    } catch (opmlImportError) {
+      if (opmlImportError instanceof Error && opmlImportError.message) {
+        setImportError(opmlImportError.message);
+      } else {
+        setImportError("Failed to import OPML file");
+      }
+    } finally {
+      setImportBusy(false);
+    }
+  }, [importFile, loadSubscriptions]);
+
   return (
     <PageLayout
       title="My podcasts"
@@ -220,7 +288,29 @@ export default function PodcastSubscriptionsPage() {
         )}
       </SectionCard>
 
-      <SectionCard title="Subscriptions" actions={<span>{activeCount} active</span>}>
+      <SectionCard
+        title="Subscriptions"
+        actions={
+          <div className={styles.sectionActions}>
+            <button
+              type="button"
+              className={styles.secondaryAction}
+              onClick={openImportModal}
+              aria-label="Import OPML"
+            >
+              Import OPML
+            </button>
+            <a
+              href="/api/podcasts/export/opml"
+              className={styles.secondaryAction}
+              aria-label="Export OPML"
+            >
+              Export OPML
+            </a>
+            <span>{activeCount} active</span>
+          </div>
+        }
+      >
         <div className={styles.unsubscribeModeRow}>
           <label htmlFor="unsubscribe-mode" className={styles.unsubscribeModeLabel}>
             Unsubscribe behavior
@@ -323,6 +413,72 @@ export default function PodcastSubscriptionsPage() {
           </button>
         )}
       </SectionCard>
+
+      {isImportModalOpen && (
+        <div className={styles.modalBackdrop} role="dialog" aria-modal="true" aria-label="Import OPML">
+          <div className={styles.modalCard}>
+            <h3 className={styles.modalTitle}>Import OPML</h3>
+            <p className={styles.modalDescription}>
+              Upload an OPML or XML file to bulk subscribe podcasts.
+            </p>
+            <label htmlFor="opml-file-input" className={styles.fileLabel}>
+              OPML file
+            </label>
+            <input
+              id="opml-file-input"
+              type="file"
+              accept=".opml,.xml,application/xml,text/xml"
+              onChange={(event) => {
+                const selected = event.target.files?.[0] ?? null;
+                setImportFile(selected);
+              }}
+              className={styles.fileInput}
+              aria-label="OPML file"
+            />
+
+            {importError && <StateMessage variant="error">{importError}</StateMessage>}
+            {importResult && (
+              <div className={styles.importSummary}>
+                <p className={styles.importSummaryTitle}>Import complete</p>
+                <p>Total found: {importResult.total}</p>
+                <p>Imported: {importResult.imported}</p>
+                <p>Already subscribed: {importResult.skipped_already_subscribed}</p>
+                <p>Invalid/skipped: {importResult.skipped_invalid}</p>
+                {importResult.errors.length > 0 && (
+                  <ul className={styles.importErrors}>
+                    {importResult.errors.map((errorRow, idx) => (
+                      <li key={`${errorRow.feed_url ?? "missing-feed"}-${idx}`}>
+                        {errorRow.feed_url ? `${errorRow.feed_url}: ` : ""}
+                        {errorRow.error}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            <div className={styles.modalActions}>
+              <button
+                type="button"
+                className={styles.primaryAction}
+                onClick={() => void handleImportOpml()}
+                disabled={importBusy || !importFile}
+                aria-label="Import"
+              >
+                {importBusy ? "Importing..." : "Import"}
+              </button>
+              <button
+                type="button"
+                className={styles.secondaryAction}
+                onClick={closeImportModal}
+                aria-label="Close"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageLayout>
   );
 }

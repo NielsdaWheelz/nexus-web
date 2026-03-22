@@ -41,6 +41,19 @@ class PodcastSubscribeOut(BaseModel):
     window_size: int
 
 
+class PodcastOpmlImportErrorOut(BaseModel):
+    feed_url: str | None = None
+    error: str
+
+
+class PodcastOpmlImportOut(BaseModel):
+    total: int = Field(ge=0)
+    imported: int = Field(ge=0)
+    skipped_already_subscribed: int = Field(ge=0)
+    skipped_invalid: int = Field(ge=0)
+    errors: list[PodcastOpmlImportErrorOut] = Field(default_factory=list)
+
+
 class PodcastPlanUpdateRequest(BaseModel):
     plan_tier: Literal["free", "paid"]
     daily_transcription_minutes: int | None = Field(default=None, ge=0)

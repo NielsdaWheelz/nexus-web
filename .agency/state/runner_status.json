@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0",
   "status": "ready_for_review",
-  "updated_at": "2026-03-22T16:40:01Z",
-  "summary": "Completed projection drift hardening: shared media select/join query builders now back both ID-batch and visible-media list paths, with shared MediaOut construction retained.",
+  "updated_at": "2026-03-22T16:58:45Z",
+  "summary": "Completed S7 PR-08 OPML import/export cutover: backend import/export endpoints with feed-identity normalization and validation, BFF proxy routes, subscriptions UI import modal + export action, and acceptance-driven test coverage.",
   "questions": [],
   "blockers": [],
-  "how_to_test": "make migrate-test && cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q tests/test_media_list.py tests/test_media.py::TestMediaListeningState tests/test_media.py::TestMediaListeningStateBatch tests/test_podcasts.py::TestPodcastApiSurface::test_get_podcast_episodes_supports_state_sort_search_and_derived_episode_state tests/test_podcasts.py::TestPodcastApiSurface::test_list_subscriptions_returns_unplayed_count_and_supports_sort_modes && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations uv run pytest -q tests/test_migrations.py::TestPodcastListeningStateMigration::test_head_contains_podcast_listening_state_table_contract && cd ../apps/web && npm run typecheck && npm test -- \"src/app/api/media/media-routes.test.ts\" \"src/app/api/podcasts/podcasts-routes.test.ts\" \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\"",
+  "how_to_test": "cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q tests/test_podcasts.py::TestPodcastOpmlImportExport && cd ../apps/web && npm test -- \"src/app/api/podcasts/podcasts-routes.test.ts\" \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\" && cd ../python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q tests/test_podcasts.py",
   "risks": [
-    "Hydration logic drift is reduced by shared constructors, but large page sizes may still require profiling/tuning because capabilities and author payloads are assembled per row in Python.",
-    "Mark-all-as-played intentionally applies to currently visible rows (current filter/search/page), not full historical podcast corpus.",
-    "Subscriptions unplayed_count is computed live with joins/aggregates and may need index/tuning work for very large user subscription sets."
+    "OPML import executes provider lookup and transactional writes per outline; throughput is bounded by the 200-outline cap but may need batching if limits grow.",
+    "Export emits the required core OPML fields (xmlUrl/text/htmlUrl) but omits optional app-specific metadata some importers may support.",
+    "Provider identity collisions across feed URLs are handled defensively but remain a rare edge case that may need reconciliation tooling if seen in production."
   ]
 }

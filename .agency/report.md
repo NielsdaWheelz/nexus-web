@@ -440,3 +440,39 @@ cd apps/web && npm test -- \
 - media-out hydration drift risk is reduced via shared constructors, but capabilities/author payloads are still assembled per row in Python after batched SQL fetches; very large pages may still need profiling/tuning.
 - mark-all-as-played intentionally applies to currently visible rows (current filter/search/page) rather than every historical episode in the subscription.
 - subscription `unplayed_count` is computed live via joins/aggregates; users with many subscriptions and very large episode corpora may need future index/tuning work.
+
+## s7 pr-08 opml import/export cutover addendum (2026-03-22)
+
+### summary
+- added backend OPML contracts: `POST /podcasts/import/opml` (multipart upload, recursive RSS outline traversal, feed-identity subscription import summary) and `GET /podcasts/export/opml` (active-subscription OPML 2.0 download).
+- implemented OPML import safeguards: XML/type validation, 1MB upload cap, 200-outline cap, xmlUrl validation + normalization (including trailing-slash identity normalization), and string sanitization for imported metadata.
+- wired import behavior to create/reactivate subscriptions idempotently, skip already-active subscriptions, fallback to OPML metadata when PodcastIndex feed lookup misses, and enqueue sync jobs only for newly imported subscriptions.
+- added web BFF passthrough routes for OPML import/export and upgraded subscriptions UI with import modal + upload flow + result breakdown and direct OPML export download action.
+- added red/green coverage for backend OPML acceptance paths, BFF route wiring, and subscriptions UI import/export behavior.
+
+### decisions
+- **feed url is the import identity**: import resolves podcasts by normalized feed URL first and uses trailing-slash normalization so slash/no-slash variants do not fork duplicate podcasts/subscriptions.
+- **strict synchronous control plane, async data plane**: OPML parse/subscription creation runs in-request; sync/ingest remains queued per new import.
+- **graceful provider degradation**: provider feed lookup is best effort; unknown feeds still import from OPML metadata with stable feed-derived provider IDs.
+- **explicit no-compat cutover**: OPML import/export is first-class on podcast routes and subscriptions UI without fallback to legacy/manual-only migration paths.
+
+### how to test
+```bash
+# backend OPML coverage
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q \
+  tests/test_podcasts.py::TestPodcastOpmlImportExport
+
+# backend podcast regression sweep
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q \
+  tests/test_podcasts.py
+
+# frontend BFF + subscriptions flow coverage
+cd apps/web && npm test -- \
+  "src/app/api/podcasts/podcasts-routes.test.ts" \
+  "src/app/(authenticated)/podcasts/podcasts-flows.test.tsx"
+```
+
+### risks
+- import currently performs one provider lookup and one transaction per RSS outline; at the 200-outline cap this is acceptable but may require batching/caching optimization if limits are increased later.
+- export currently emits feed/title/website only (no extended OPML metadata fields beyond acceptance scope); some third-party importers may ignore or expect additional optional attributes.
+- provider identity collisions (same provider podcast id mapped to different feed urls) are handled defensively, but this remains a rare edge case that may need dedicated reconciliation tooling if observed in production.

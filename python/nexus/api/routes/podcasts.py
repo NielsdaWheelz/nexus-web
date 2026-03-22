@@ -3,8 +3,8 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
@@ -57,6 +57,38 @@ def list_subscriptions(
         sort=sort,
     )
     return success_response([row.model_dump(mode="json") for row in rows])
+
+
+@router.post("/podcasts/import/opml")
+def import_subscriptions_from_opml(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    file: Annotated[UploadFile, File(...)],
+) -> dict:
+    """Import podcast subscriptions from an uploaded OPML file."""
+    payload = file.file.read()
+    out = podcast_service.import_subscriptions_from_opml(
+        db,
+        viewer.user_id,
+        file_name=file.filename,
+        content_type=file.content_type,
+        payload=payload,
+    )
+    return success_response(out.model_dump(mode="json"))
+
+
+@router.get("/podcasts/export/opml")
+def export_subscriptions_as_opml(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Export active podcast subscriptions as an OPML file download."""
+    opml_bytes = podcast_service.export_subscriptions_as_opml(db, viewer.user_id)
+    return Response(
+        content=opml_bytes,
+        media_type="application/xml",
+        headers={"Content-Disposition": 'attachment; filename="nexus-podcasts.opml"'},
+    )
 
 
 @router.get("/podcasts/subscriptions/{podcast_id}")

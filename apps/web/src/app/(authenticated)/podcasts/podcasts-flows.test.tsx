@@ -360,6 +360,94 @@ describe("podcasts product flows", () => {
     });
   });
 
+  it("imports subscriptions from OPML and exposes OPML export download", async () => {
+    const user = userEvent.setup();
+    let subscriptionsFetchCount = 0;
+    const importBodies: Array<{ hasFile: boolean; fileName: string | null }> = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/plan") {
+        return jsonResponse({
+          data: {
+            plan: {
+              plan_tier: "free",
+              daily_transcription_minutes: 60,
+              initial_episode_window: 3,
+            },
+            usage: {
+              usage_date: "2026-03-06",
+              used_minutes: 12,
+              reserved_minutes: 3,
+              total_minutes: 15,
+              remaining_minutes: 45,
+            },
+          },
+        });
+      }
+      if (url.pathname === "/api/podcasts/subscriptions") {
+        subscriptionsFetchCount += 1;
+        if (subscriptionsFetchCount === 1) {
+          return jsonResponse({ data: [] });
+        }
+        return jsonResponse({ data: [buildSubscriptionRow(200)] });
+      }
+      if (url.pathname === "/api/podcasts/import/opml" && init?.method === "POST") {
+        const body = init.body;
+        if (!(body instanceof FormData)) {
+          throw new Error("Expected OPML import request body to be FormData");
+        }
+        const uploaded = body.get("file");
+        importBodies.push({
+          hasFile: uploaded instanceof File,
+          fileName: uploaded instanceof File ? uploaded.name : null,
+        });
+        return jsonResponse({
+          data: {
+            total: 2,
+            imported: 1,
+            skipped_already_subscribed: 1,
+            skipped_invalid: 0,
+            errors: [],
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call in test: ${url.pathname}${url.search}`);
+    });
+
+    render(<PodcastSubscriptionsPage />);
+
+    expect(await screen.findByText(/No active podcast subscriptions yet/i)).toBeInTheDocument();
+    const exportLink = screen.getByRole("link", { name: "Export OPML" });
+    expect(exportLink).toHaveAttribute("href", "/api/podcasts/export/opml");
+
+    await user.click(screen.getByRole("button", { name: "Import OPML" }));
+    const fileInput = screen.getByLabelText("OPML file");
+    const opmlFile = new File(
+      ['<?xml version="1.0"?><opml version="2.0"><body /></opml>'],
+      "subscriptions.opml",
+      { type: "application/xml" }
+    );
+    await user.upload(fileInput, opmlFile);
+    await user.click(screen.getByRole("button", { name: "Import" }));
+
+    expect(await screen.findByText("Import complete")).toBeInTheDocument();
+    expect(screen.getByText(/Total found: 2/i)).toBeInTheDocument();
+    expect(screen.getByText(/Imported: 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Already subscribed: 1/i)).toBeInTheDocument();
+    expect(await screen.findByText("Systems Podcast 200")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(importBodies).toEqual([
+        {
+          hasFile: true,
+          fileName: "subscriptions.opml",
+        },
+      ]);
+      expect(subscriptionsFetchCount).toBeGreaterThanOrEqual(2);
+    });
+  });
+
   it("renders podcast detail with sync controls, transcript demand reasons, and paginated episodes", async () => {
     const user = userEvent.setup();
     mockUsePaneParam.mockImplementation((paramName) =>

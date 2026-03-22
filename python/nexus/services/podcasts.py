@@ -10,7 +10,7 @@ import time
 from datetime import UTC, date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -36,6 +36,8 @@ from nexus.schemas.podcast import (
     PodcastDiscoveryOut,
     PodcastEffectivePlanOut,
     PodcastListItemOut,
+    PodcastOpmlImportErrorOut,
+    PodcastOpmlImportOut,
     PodcastPlanOut,
     PodcastPlanSnapshotOut,
     PodcastPlanUpdateRequest,
@@ -93,6 +95,11 @@ PODCAST_TRANSCRIPT_REQUEST_REASONS = {
 PODCAST_EPISODE_STATES = {"all", "unplayed", "in_progress", "played"}
 PODCAST_EPISODE_SORT_OPTIONS = {"newest", "oldest", "duration_asc", "duration_desc"}
 PODCAST_SUBSCRIPTION_SORT_OPTIONS = {"recent_episode", "unplayed_count", "alpha"}
+PODCAST_OPML_MAX_BYTES = 1_000_000
+PODCAST_OPML_MAX_OUTLINES = 200
+PODCAST_OPML_MAX_TITLE_LENGTH = 512
+PODCAST_OPML_MAX_URL_LENGTH = 2048
+PODCAST_OPML_MAX_ERROR_LENGTH = 300
 
 
 class PodcastIndexClient:
@@ -240,6 +247,47 @@ class PodcastIndexClient:
             )
         return results
 
+    def lookup_podcast_by_feed_url(self, feed_url: str) -> dict[str, Any] | None:
+        payload = self._get_json(
+            "/podcasts/byfeedurl",
+            params={"url": feed_url},
+        )
+        candidate: dict[str, Any] | None = None
+        if isinstance(payload.get("feed"), dict):
+            candidate = payload["feed"]
+        elif isinstance(payload.get("feeds"), list):
+            feeds = payload["feeds"]
+            first = feeds[0] if feeds else None
+            if isinstance(first, dict):
+                candidate = first
+        if candidate is None:
+            return None
+
+        provider_podcast_id = str(candidate.get("id") or "").strip()
+        normalized_feed_url = str(candidate.get("url") or feed_url or "").strip()
+        if not provider_podcast_id or not normalized_feed_url:
+            return None
+
+        return {
+            "provider_podcast_id": provider_podcast_id,
+            "title": str(candidate.get("title") or "Untitled Podcast"),
+            "author": (
+                str(candidate.get("author")) if candidate.get("author") is not None else None
+            ),
+            "feed_url": normalized_feed_url,
+            "website_url": (
+                str(candidate.get("link")) if candidate.get("link") is not None else None
+            ),
+            "image_url": (
+                str(candidate.get("image")) if candidate.get("image") is not None else None
+            ),
+            "description": (
+                str(candidate.get("description"))
+                if candidate.get("description") is not None
+                else None
+            ),
+        }
+
     def fetch_recent_episodes(self, provider_podcast_id: str, limit: int) -> list[dict[str, Any]]:
         payload = self._get_json(
             "/episodes/byfeedid",
@@ -304,6 +352,181 @@ def discover_podcasts(query: str, *, limit: int = 10) -> list[PodcastDiscoveryOu
     client = get_podcast_index_client()
     rows = client.search_podcasts(query, limit)
     return [PodcastDiscoveryOut(**row) for row in rows]
+
+
+def import_subscriptions_from_opml(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    file_name: str | None,
+    content_type: str | None,
+    payload: bytes,
+) -> PodcastOpmlImportOut:
+    _validate_opml_upload(content_type=content_type, payload=payload)
+    outline_rows = _parse_opml_rss_outlines(payload)
+    if len(outline_rows) > PODCAST_OPML_MAX_OUTLINES:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"OPML import supports at most {PODCAST_OPML_MAX_OUTLINES} RSS outlines per file.",
+        )
+
+    summary = PodcastOpmlImportOut(
+        total=len(outline_rows),
+        imported=0,
+        skipped_already_subscribed=0,
+        skipped_invalid=0,
+        errors=[],
+    )
+    client = get_podcast_index_client()
+
+    for outline in outline_rows:
+        raw_feed_url = _sanitize_opml_string(
+            outline.get("xmlUrl") or outline.get("xmlurl"),
+            max_length=PODCAST_OPML_MAX_URL_LENGTH,
+        )
+        if not raw_feed_url:
+            summary.skipped_invalid += 1
+            continue
+
+        try:
+            normalized_feed_url = _validate_and_normalize_feed_url(raw_feed_url)
+        except InvalidRequestError as exc:
+            summary.skipped_invalid += 1
+            summary.errors.append(
+                PodcastOpmlImportErrorOut(
+                    feed_url=raw_feed_url,
+                    error=_truncate_opml_error(exc.message),
+                )
+            )
+            continue
+
+        opml_title = _sanitize_opml_string(
+            outline.get("text") or outline.get("title"),
+            max_length=PODCAST_OPML_MAX_TITLE_LENGTH,
+        )
+        opml_website_url = _normalize_optional_opml_url(
+            _sanitize_opml_string(
+                outline.get("htmlUrl") or outline.get("htmlurl"),
+                max_length=PODCAST_OPML_MAX_URL_LENGTH,
+            )
+        )
+
+        try:
+            with transaction(db):
+                now = datetime.now(UTC)
+                podcast_id = _select_podcast_id_by_feed_url(db, normalized_feed_url)
+                if podcast_id is None:
+                    provider_row: dict[str, Any] | None = None
+                    try:
+                        provider_row = client.lookup_podcast_by_feed_url(normalized_feed_url)
+                    except ApiError as provider_exc:
+                        logger.warning(
+                            "podcast_opml_provider_lookup_failed",
+                            feed_url=normalized_feed_url,
+                            error=provider_exc.message,
+                        )
+                    except Exception as provider_exc:  # pragma: no cover - defensive
+                        logger.warning(
+                            "podcast_opml_provider_lookup_unexpected_error",
+                            feed_url=normalized_feed_url,
+                            error=str(provider_exc),
+                        )
+
+                    subscribe_body = _build_opml_subscribe_request(
+                        normalized_feed_url=normalized_feed_url,
+                        opml_title=opml_title,
+                        opml_website_url=opml_website_url,
+                        provider_row=provider_row,
+                    )
+                    podcast_id = _upsert_podcast_from_opml(
+                        db,
+                        subscribe_body,
+                        now=now,
+                    )
+
+                existing_status = _get_subscription_status_value(db, viewer_id, podcast_id)
+                if existing_status == "active":
+                    summary.skipped_already_subscribed += 1
+                    continue
+
+                _upsert_subscription(
+                    db,
+                    viewer_id,
+                    podcast_id,
+                    now=now,
+                    auto_queue=False,
+                )
+                _enqueue_podcast_subscription_sync(user_id=viewer_id, podcast_id=podcast_id)
+                summary.imported += 1
+        except ApiError as exc:
+            summary.errors.append(
+                PodcastOpmlImportErrorOut(
+                    feed_url=normalized_feed_url,
+                    error=_truncate_opml_error(exc.message),
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception(
+                "podcast_opml_import_unexpected_error",
+                feed_url=normalized_feed_url,
+                file_name=file_name,
+                error=str(exc),
+            )
+            summary.errors.append(
+                PodcastOpmlImportErrorOut(
+                    feed_url=normalized_feed_url,
+                    error=_truncate_opml_error("Unexpected OPML import error"),
+                )
+            )
+
+    return summary
+
+
+def export_subscriptions_as_opml(db: Session, viewer_id: UUID) -> bytes:
+    rows = db.execute(
+        text(
+            """
+            SELECT p.title, p.feed_url, p.website_url
+            FROM podcast_subscriptions ps
+            JOIN podcasts p ON p.id = ps.podcast_id
+            WHERE ps.user_id = :user_id
+              AND ps.status = 'active'
+            ORDER BY LOWER(p.title) ASC, p.id ASC
+            """
+        ),
+        {"user_id": viewer_id},
+    ).fetchall()
+
+    root = etree.Element("opml", version="2.0")
+    head = etree.SubElement(root, "head")
+    etree.SubElement(head, "title").text = "Nexus Podcasts"
+    etree.SubElement(head, "dateCreated").text = datetime.now(UTC).strftime(
+        "%a, %d %b %Y %H:%M:%S GMT"
+    )
+    body = etree.SubElement(root, "body")
+    group = etree.SubElement(body, "outline", text="Podcasts")
+
+    for row in rows:
+        title = _sanitize_opml_string(str(row[0] or ""), max_length=PODCAST_OPML_MAX_TITLE_LENGTH)
+        feed_url = str(row[1] or "").strip()
+        website_url = _normalize_optional_opml_url(str(row[2] or "").strip())
+        if not feed_url:
+            continue
+        outline_attrs = {
+            "type": "rss",
+            "text": title or feed_url,
+            "xmlUrl": feed_url,
+        }
+        if website_url:
+            outline_attrs["htmlUrl"] = website_url
+        etree.SubElement(group, "outline", **outline_attrs)
+
+    return etree.tostring(
+        root,
+        encoding="UTF-8",
+        xml_declaration=True,
+        pretty_print=True,
+    )
 
 
 def subscribe_to_podcast(
@@ -3464,6 +3687,250 @@ def _upsert_subscription(
     return existing is None
 
 
+def _validate_opml_upload(*, content_type: str | None, payload: bytes) -> None:
+    normalized_content_type = str(content_type or "").split(";")[0].strip().lower()
+    if (
+        normalized_content_type
+        and normalized_content_type not in {"application/octet-stream", "binary/octet-stream"}
+        and "xml" not in normalized_content_type
+        and "opml" not in normalized_content_type
+    ):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "OPML import requires an XML file upload.",
+        )
+    if not payload:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "OPML file is empty.")
+    if len(payload) > PODCAST_OPML_MAX_BYTES:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "OPML file exceeds the 1MB size limit.",
+        )
+
+
+def _parse_opml_rss_outlines(payload: bytes) -> list[dict[str, str]]:
+    try:
+        parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False)
+        root = etree.fromstring(payload, parser=parser)
+    except Exception as exc:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid XML file. Please upload a valid OPML document.",
+        ) from exc
+
+    root_tag = str(root.tag or "")
+    if "}" in root_tag:
+        root_tag = root_tag.split("}", 1)[1]
+    if root_tag.lower() != "opml":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid OPML document. Root element must be <opml>.",
+        )
+
+    outline_nodes = root.xpath(
+        ".//*[local-name()='outline' and "
+        "translate(@type, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')='rss']"
+    )
+    rows: list[dict[str, str]] = []
+    for node in outline_nodes:
+        attrib_items = getattr(node, "attrib", {})
+        rows.append({str(key): str(value) for key, value in attrib_items.items()})
+    return rows
+
+
+def _sanitize_opml_string(value: Any, *, max_length: int) -> str | None:
+    if value is None:
+        return None
+    cleaned = "".join(
+        ch for ch in str(value) if ch in {"\n", "\r", "\t"} or ord(ch) >= 32
+    ).strip()
+    if not cleaned:
+        return None
+    return cleaned[:max_length]
+
+
+def _truncate_opml_error(message: str) -> str:
+    return str(message or "Unknown error")[:PODCAST_OPML_MAX_ERROR_LENGTH]
+
+
+def _normalize_optional_opml_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    try:
+        validate_requested_url(url)
+    except InvalidRequestError:
+        return None
+    return normalize_url_for_display(url)
+
+
+def _stable_opml_provider_podcast_id(normalized_feed_url: str) -> str:
+    digest = hashlib.sha1(normalized_feed_url.encode("utf-8")).hexdigest()
+    return f"opml-{digest}"
+
+
+def _build_opml_subscribe_request(
+    *,
+    normalized_feed_url: str,
+    opml_title: str | None,
+    opml_website_url: str | None,
+    provider_row: dict[str, Any] | None,
+) -> PodcastSubscribeRequest:
+    provider_podcast_id = _sanitize_opml_string(
+        provider_row.get("provider_podcast_id") if provider_row else None,
+        max_length=PODCAST_OPML_MAX_TITLE_LENGTH,
+    )
+    provider_title = _sanitize_opml_string(
+        provider_row.get("title") if provider_row else None,
+        max_length=PODCAST_OPML_MAX_TITLE_LENGTH,
+    )
+    provider_author = _sanitize_opml_string(
+        provider_row.get("author") if provider_row else None,
+        max_length=PODCAST_OPML_MAX_TITLE_LENGTH,
+    )
+    provider_website = _normalize_optional_opml_url(
+        _sanitize_opml_string(
+            provider_row.get("website_url") if provider_row else None,
+            max_length=PODCAST_OPML_MAX_URL_LENGTH,
+        )
+    )
+    provider_image = _normalize_optional_opml_url(
+        _sanitize_opml_string(
+            provider_row.get("image_url") if provider_row else None,
+            max_length=PODCAST_OPML_MAX_URL_LENGTH,
+        )
+    )
+    provider_description = _sanitize_opml_string(
+        provider_row.get("description") if provider_row else None,
+        max_length=4000,
+    )
+
+    return PodcastSubscribeRequest(
+        provider_podcast_id=provider_podcast_id
+        or _stable_opml_provider_podcast_id(normalized_feed_url),
+        title=provider_title or opml_title or normalized_feed_url,
+        author=provider_author,
+        feed_url=normalized_feed_url,
+        website_url=provider_website or opml_website_url,
+        image_url=provider_image,
+        description=provider_description,
+        auto_queue=False,
+    )
+
+
+def _select_podcast_id_by_feed_url(db: Session, normalized_feed_url: str) -> UUID | None:
+    row = db.execute(
+        text(
+            """
+            SELECT id
+            FROM podcasts
+            WHERE feed_url = :feed_url
+            """
+        ),
+        {"feed_url": normalized_feed_url},
+    ).fetchone()
+    if row is None:
+        return None
+    return row[0]
+
+
+def _upsert_podcast_from_opml(
+    db: Session,
+    body: PodcastSubscribeRequest,
+    *,
+    now: datetime,
+) -> UUID:
+    try:
+        row = db.execute(
+            text(
+                """
+                INSERT INTO podcasts (
+                    provider,
+                    provider_podcast_id,
+                    title,
+                    author,
+                    feed_url,
+                    website_url,
+                    image_url,
+                    description,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :provider,
+                    :provider_podcast_id,
+                    :title,
+                    :author,
+                    :feed_url,
+                    :website_url,
+                    :image_url,
+                    :description,
+                    :created_at,
+                    :updated_at
+                )
+                ON CONFLICT (feed_url)
+                DO UPDATE SET
+                    title = EXCLUDED.title,
+                    author = COALESCE(EXCLUDED.author, podcasts.author),
+                    website_url = COALESCE(EXCLUDED.website_url, podcasts.website_url),
+                    image_url = COALESCE(EXCLUDED.image_url, podcasts.image_url),
+                    description = COALESCE(EXCLUDED.description, podcasts.description),
+                    updated_at = EXCLUDED.updated_at
+                RETURNING id
+                """
+            ),
+            {
+                "provider": PODCAST_PROVIDER,
+                "provider_podcast_id": body.provider_podcast_id,
+                "title": body.title,
+                "author": body.author,
+                "feed_url": body.feed_url,
+                "website_url": body.website_url,
+                "image_url": body.image_url,
+                "description": body.description,
+                "created_at": now,
+                "updated_at": now,
+            },
+        ).fetchone()
+    except IntegrityError:
+        # Provider identity may already exist with a different feed URL.
+        # In that case, reuse the existing podcast row and keep import idempotent.
+        fallback_row = db.execute(
+            text(
+                """
+                SELECT id
+                FROM podcasts
+                WHERE provider = :provider
+                  AND provider_podcast_id = :provider_podcast_id
+                """
+            ),
+            {
+                "provider": PODCAST_PROVIDER,
+                "provider_podcast_id": body.provider_podcast_id,
+            },
+        ).fetchone()
+        if fallback_row is None:
+            raise
+        return fallback_row[0]
+    return row[0]
+
+
+def _get_subscription_status_value(db: Session, viewer_id: UUID, podcast_id: UUID) -> str | None:
+    row = db.execute(
+        text(
+            """
+            SELECT status
+            FROM podcast_subscriptions
+            WHERE user_id = :user_id
+              AND podcast_id = :podcast_id
+            """
+        ),
+        {"user_id": viewer_id, "podcast_id": podcast_id},
+    ).fetchone()
+    if row is None:
+        return None
+    return str(row[0] or "")
+
+
 def _find_existing_episode_media_id(
     db: Session,
     *,
@@ -4251,7 +4718,14 @@ def _augment_provider_episodes_with_feed_pagination(
 
 def _validate_and_normalize_feed_url(feed_url: str) -> str:
     validate_requested_url(feed_url)
-    return normalize_url_for_display(feed_url)
+    normalized = normalize_url_for_display(feed_url)
+    split = urlsplit(normalized)
+    normalized_path = split.path or ""
+    if normalized_path and normalized_path != "/":
+        normalized_path = normalized_path.rstrip("/")
+    if not normalized_path:
+        normalized_path = "/"
+    return urlunsplit((split.scheme, split.netloc, normalized_path, split.query, ""))
 
 
 def _is_safe_feed_page_url(page_url: str) -> bool:
