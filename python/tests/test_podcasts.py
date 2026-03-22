@@ -4452,6 +4452,260 @@ class TestPodcastApiSurface:
         assert rows[0]["title"] == "Episode 1"
         assert rows[1]["title"] == "Episode 2"
 
+    def test_sync_extracts_podcasting20_chapters_and_exposes_episode_and_media_contract(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        provider_podcast_id = f"surface-chapters-p20-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Podcasting2 Chapters Podcast")
+        episodes_by_podcast = {
+            provider_podcast_id: [
+                {
+                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "guid": f"{provider_podcast_id}-guid-1",
+                    "title": "Chapter Episode",
+                    "audio_url": "https://cdn.example.com/chapter-episode.mp3",
+                    "published_at": "2026-03-06T10:00:00Z",
+                    "duration_seconds": 1800,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "alpha"}],
+                }
+            ]
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+
+        chapter_json_url = "https://cdn.example.com/chapters/chapter-episode.json"
+        chapter_json_payload = {
+            "version": "1.2.0",
+            "chapters": [
+                {
+                    "startTime": "00:00:00.000",
+                    "title": "Intro",
+                    "url": "https://example.com/chapters/intro",
+                    "img": "https://cdn.example.com/images/intro.jpg",
+                },
+                {
+                    "startTime": "00:05:00.000",
+                    "endTime": "00:20:00.000",
+                    "title": "Deep Dive",
+                    "url": "https://example.com/chapters/deep-dive",
+                },
+            ],
+        }
+        feed_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Podcasting2 Chapters Podcast</title>
+    <item>
+      <guid>{provider_podcast_id}-guid-1</guid>
+      <title>Chapter Episode</title>
+      <pubDate>Fri, 06 Mar 2026 10:00:00 GMT</pubDate>
+      <enclosure url="https://cdn.example.com/chapter-episode.mp3" />
+      <itunes:duration>00:30:00</itunes:duration>
+      <podcast:chapters
+        url="{chapter_json_url}"
+        type="application/json+chapters"
+      />
+    </item>
+  </channel>
+</rss>
+"""
+
+        def fake_http_get(url: str, **kwargs):  # noqa: ANN003
+            _ = kwargs
+            if url == payload["feed_url"]:
+                return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
+            if url == chapter_json_url:
+                return httpx.Response(
+                    200,
+                    json=chapter_json_payload,
+                    request=httpx.Request("GET", url),
+                )
+            raise AssertionError(f"unexpected chapter fetch url: {url}")
+
+        monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_http_get)
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
+
+        episodes_response = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert episodes_response.status_code == 200, (
+            "expected episode list to include chapter contract after sync, "
+            f"got {episodes_response.status_code}: {episodes_response.text}"
+        )
+        episode_rows = episodes_response.json()["data"]
+        assert len(episode_rows) == 1
+        episode = episode_rows[0]
+        chapter_rows = episode["chapters"]
+        assert [row["chapter_idx"] for row in chapter_rows] == [0, 1]
+        assert [row["title"] for row in chapter_rows] == ["Intro", "Deep Dive"]
+        assert chapter_rows[0]["t_start_ms"] == 0
+        assert chapter_rows[1]["t_start_ms"] == 300_000
+        assert chapter_rows[1]["t_end_ms"] == 1_200_000
+        assert chapter_rows[0]["url"] == "https://example.com/chapters/intro"
+        assert chapter_rows[0]["image_url"] == "https://cdn.example.com/images/intro.jpg"
+
+        media_id = UUID(episode["id"])
+        media_response = auth_client.get(
+            f"/media/{media_id}",
+            headers=auth_headers(user_id),
+        )
+        assert media_response.status_code == 200, (
+            "expected media detail to surface chapters contract, "
+            f"got {media_response.status_code}: {media_response.text}"
+        )
+        media_payload = media_response.json()["data"]
+        assert media_payload["chapters"] == chapter_rows
+
+        with direct_db.session() as session:
+            persisted_rows = session.execute(
+                text(
+                    """
+                    SELECT chapter_idx, title, t_start_ms, t_end_ms, source
+                    FROM podcast_episode_chapters
+                    WHERE media_id = :media_id
+                    ORDER BY chapter_idx ASC
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchall()
+        assert persisted_rows == [
+            (0, "Intro", 0, None, "rss_podcasting20"),
+            (1, "Deep Dive", 300_000, 1_200_000, "rss_podcasting20"),
+        ], f"unexpected persisted podcasting2 chapter rows: {persisted_rows}"
+
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
+        with direct_db.session() as session:
+            chapter_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_episode_chapters WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+        assert chapter_count == 2, (
+            "re-sync must remain idempotent for chapter rows by (media_id, chapter_idx), "
+            f"got chapter_count={chapter_count}"
+        )
+
+    def test_sync_extracts_podlove_chapters_when_podcasting20_is_absent(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        provider_podcast_id = f"surface-chapters-podlove-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Podlove Chapters Podcast")
+        episodes_by_podcast = {
+            provider_podcast_id: [
+                {
+                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "guid": f"{provider_podcast_id}-guid-1",
+                    "title": "Podlove Episode",
+                    "audio_url": "https://cdn.example.com/podlove-episode.mp3",
+                    "published_at": "2026-03-06T10:00:00Z",
+                    "duration_seconds": 1200,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "alpha"}],
+                }
+            ]
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+
+        feed_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:psc="http://podlove.org/simple-chapters">
+  <channel>
+    <title>Podlove Chapters Podcast</title>
+    <item>
+      <guid>{provider_podcast_id}-guid-1</guid>
+      <title>Podlove Episode</title>
+      <pubDate>Fri, 06 Mar 2026 10:00:00 GMT</pubDate>
+      <enclosure url="https://cdn.example.com/podlove-episode.mp3" />
+      <psc:chapters version="1.2">
+        <psc:chapter
+          start="00:00:00.000"
+          title="Opening"
+          href="https://example.com/opening"
+          image="https://cdn.example.com/images/opening.jpg"
+        />
+        <psc:chapter start="00:07:30.000" title="Interview" />
+      </psc:chapters>
+    </item>
+  </channel>
+</rss>
+"""
+
+        def fake_http_get(url: str, **kwargs):  # noqa: ANN003
+            _ = kwargs
+            if url == payload["feed_url"]:
+                return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
+            raise AssertionError(f"unexpected feed fetch url: {url}")
+
+        monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_http_get)
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
+
+        episodes_response = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert episodes_response.status_code == 200, (
+            "expected episodes endpoint to include podlove-derived chapters, "
+            f"got {episodes_response.status_code}: {episodes_response.text}"
+        )
+        episode_rows = episodes_response.json()["data"]
+        assert len(episode_rows) == 1
+        chapter_rows = episode_rows[0]["chapters"]
+        assert [row["title"] for row in chapter_rows] == ["Opening", "Interview"]
+        assert [row["chapter_idx"] for row in chapter_rows] == [0, 1]
+        assert chapter_rows[0]["t_start_ms"] == 0
+        assert chapter_rows[1]["t_start_ms"] == 450_000
+        assert chapter_rows[0]["url"] == "https://example.com/opening"
+        assert chapter_rows[0]["image_url"] == "https://cdn.example.com/images/opening.jpg"
+
+        with direct_db.session() as session:
+            source_rows = session.execute(
+                text(
+                    """
+                    SELECT source
+                    FROM podcast_episode_chapters
+                    WHERE media_id = :media_id
+                    ORDER BY chapter_idx ASC
+                    """
+                ),
+                {"media_id": UUID(episode_rows[0]["id"])},
+            ).fetchall()
+        assert source_rows == [("rss_podlove",), ("rss_podlove",)], (
+            f"expected podlove chapters to persist with rss_podlove source, got {source_rows}"
+        )
+
     def test_non_subscriber_gets_masked_404_for_podcast_detail_and_episodes(
         self, auth_client, monkeypatch, direct_db
     ):

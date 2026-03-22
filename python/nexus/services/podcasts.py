@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import threading
 import time
 from datetime import UTC, date, datetime, timedelta
@@ -100,6 +101,16 @@ PODCAST_OPML_MAX_OUTLINES = 200
 PODCAST_OPML_MAX_TITLE_LENGTH = 512
 PODCAST_OPML_MAX_URL_LENGTH = 2048
 PODCAST_OPML_MAX_ERROR_LENGTH = 300
+PODCAST_CHAPTER_SOURCE_PODCASTING20 = "rss_podcasting20"
+PODCAST_CHAPTER_SOURCE_PODLOVE = "rss_podlove"
+_PODCAST_CHAPTERS_20_CONTENT_TYPES = {
+    "application/json+chapters",
+    "application/json",
+    "text/json",
+}
+_CHAPTER_TIMESTAMP_PATTERN = re.compile(
+    r"^(?:(?P<hours>\d+):)?(?P<minutes>[0-5]?\d):(?P<seconds>[0-5]?\d(?:\.\d+)?)$"
+)
 
 
 class PodcastIndexClient:
@@ -2214,6 +2225,10 @@ def run_podcast_subscription_sync_now(
             key=lambda ep: _published_sort_key(ep.get("published_at")),
             reverse=True,
         )[:window_size]
+        selected_episodes = _hydrate_selected_episode_chapters_from_feed(
+            selected_episodes=selected_episodes,
+            feed_url=podcast["feed_url"],
+        )
         source_limited = (
             len(provider_episode_candidates) >= PODCAST_INDEX_EPISODE_PAGE_SIZE
             and len(episode_candidates) < prefetch_limit
@@ -2301,8 +2316,8 @@ def _sync_subscription_ingest(
     ingested_episode_count = 0
     reused_episode_count = 0
     ingested_media_ids: list[UUID] = []
+    chapter_sync_rows: list[tuple[UUID, list[dict[str, Any]] | None]] = []
 
-    new_episodes: list[dict[str, Any]] = []
     for episode in selected_episodes:
         guid = _normalize_guid(episode.get("guid"))
         fallback_identity = _compute_fallback_identity(podcast_id, episode)
@@ -2312,120 +2327,119 @@ def _sync_subscription_ingest(
             guid=guid,
             fallback_identity=fallback_identity,
         )
+        media_id: UUID
         if existing_media_id is not None:
-            _ensure_in_default_library(db, viewer_id, existing_media_id)
+            media_id = existing_media_id
+            _ensure_in_default_library(db, viewer_id, media_id)
             reused_episode_count += 1
-            continue
-        new_episodes.append(
-            {
-                "episode": episode,
-                "guid": guid,
-                "fallback_identity": fallback_identity,
-            }
-        )
+        else:
+            media_id = uuid4()
+            audio_url = str(episode.get("audio_url") or "").strip() or None
+            db.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id,
+                        kind,
+                        title,
+                        canonical_source_url,
+                        processing_status,
+                        failure_stage,
+                        last_error_code,
+                        last_error_message,
+                        external_playback_url,
+                        provider,
+                        provider_id,
+                        created_by_user_id,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        :id,
+                        'podcast_episode',
+                        :title,
+                        :canonical_source_url,
+                        'pending',
+                        NULL,
+                        NULL,
+                        NULL,
+                        :external_playback_url,
+                        :provider,
+                        :provider_id,
+                        :created_by_user_id,
+                        :created_at,
+                        :updated_at
+                    )
+                    """
+                ),
+                {
+                    "id": media_id,
+                    "title": str(episode.get("title") or "Untitled Episode"),
+                    "canonical_source_url": feed_url,
+                    "external_playback_url": audio_url,
+                    "provider": PODCAST_PROVIDER,
+                    "provider_id": str(episode.get("provider_episode_id") or ""),
+                    "created_by_user_id": viewer_id,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            _ensure_media_transcript_state_row(
+                db,
+                media_id=media_id,
+                processing_status="pending",
+                last_error_code=None,
+                now=now,
+            )
+            db.execute(
+                text(
+                    """
+                    INSERT INTO podcast_episodes (
+                        media_id,
+                        podcast_id,
+                        provider_episode_id,
+                        guid,
+                        fallback_identity,
+                        published_at,
+                        duration_seconds,
+                        created_at
+                    )
+                    VALUES (
+                        :media_id,
+                        :podcast_id,
+                        :provider_episode_id,
+                        :guid,
+                        :fallback_identity,
+                        :published_at,
+                        :duration_seconds,
+                        :created_at
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "podcast_id": podcast_id,
+                    "provider_episode_id": str(episode.get("provider_episode_id") or ""),
+                    "guid": guid,
+                    "fallback_identity": fallback_identity,
+                    "published_at": _parse_iso_datetime(episode.get("published_at")),
+                    "duration_seconds": _coerce_positive_int(episode.get("duration_seconds")),
+                    "created_at": now,
+                },
+            )
+            _ensure_in_default_library(db, viewer_id, media_id)
+            ingested_episode_count += 1
+            ingested_media_ids.append(media_id)
 
-    for row in new_episodes:
-        episode = row["episode"]
-        media_id = uuid4()
-        audio_url = str(episode.get("audio_url") or "").strip() or None
+        chapter_sync_rows.append((media_id, episode.get("rss_chapters")))
 
-        db.execute(
-            text(
-                """
-                INSERT INTO media (
-                    id,
-                    kind,
-                    title,
-                    canonical_source_url,
-                    processing_status,
-                    failure_stage,
-                    last_error_code,
-                    last_error_message,
-                    external_playback_url,
-                    provider,
-                    provider_id,
-                    created_by_user_id,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :id,
-                    'podcast_episode',
-                    :title,
-                    :canonical_source_url,
-                    'pending',
-                    NULL,
-                    NULL,
-                    NULL,
-                    :external_playback_url,
-                    :provider,
-                    :provider_id,
-                    :created_by_user_id,
-                    :created_at,
-                    :updated_at
-                )
-                """
-            ),
-            {
-                "id": media_id,
-                "title": str(episode.get("title") or "Untitled Episode"),
-                "canonical_source_url": feed_url,
-                "external_playback_url": audio_url,
-                "provider": PODCAST_PROVIDER,
-                "provider_id": str(episode.get("provider_episode_id") or ""),
-                "created_by_user_id": viewer_id,
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-        _ensure_media_transcript_state_row(
+    for media_id, chapter_rows in chapter_sync_rows:
+        _upsert_podcast_episode_chapters(
             db,
             media_id=media_id,
-            processing_status="pending",
-            last_error_code=None,
+            chapter_rows=chapter_rows,
             now=now,
         )
-
-        db.execute(
-            text(
-                """
-                INSERT INTO podcast_episodes (
-                    media_id,
-                    podcast_id,
-                    provider_episode_id,
-                    guid,
-                    fallback_identity,
-                    published_at,
-                    duration_seconds,
-                    created_at
-                )
-                VALUES (
-                    :media_id,
-                    :podcast_id,
-                    :provider_episode_id,
-                    :guid,
-                    :fallback_identity,
-                    :published_at,
-                    :duration_seconds,
-                    :created_at
-                )
-                """
-            ),
-            {
-                "media_id": media_id,
-                "podcast_id": podcast_id,
-                "provider_episode_id": str(episode.get("provider_episode_id") or ""),
-                "guid": row["guid"],
-                "fallback_identity": row["fallback_identity"],
-                "published_at": _parse_iso_datetime(episode.get("published_at")),
-                "duration_seconds": _coerce_positive_int(episode.get("duration_seconds")),
-                "created_at": now,
-            },
-        )
-
-        _ensure_in_default_library(db, viewer_id, media_id)
-        ingested_episode_count += 1
-        ingested_media_ids.append(media_id)
 
     playback_queue_service.append_subscription_media_if_enabled(
         db,
@@ -2435,6 +2449,140 @@ def _sync_subscription_ingest(
     )
 
     return ingested_episode_count, reused_episode_count
+
+
+def _upsert_podcast_episode_chapters(
+    db: Session,
+    *,
+    media_id: UUID,
+    chapter_rows: list[dict[str, Any]] | None,
+    now: datetime,
+) -> None:
+    normalized_rows = _normalize_chapter_rows_for_persistence(chapter_rows)
+    if normalized_rows is None:
+        return
+
+    for chapter_idx, chapter in enumerate(normalized_rows):
+        db.execute(
+            text(
+                """
+                INSERT INTO podcast_episode_chapters (
+                    media_id,
+                    chapter_idx,
+                    title,
+                    t_start_ms,
+                    t_end_ms,
+                    url,
+                    image_url,
+                    source,
+                    created_at
+                )
+                VALUES (
+                    :media_id,
+                    :chapter_idx,
+                    :title,
+                    :t_start_ms,
+                    :t_end_ms,
+                    :url,
+                    :image_url,
+                    :source,
+                    :created_at
+                )
+                ON CONFLICT (media_id, chapter_idx)
+                DO UPDATE SET
+                    title = EXCLUDED.title,
+                    t_start_ms = EXCLUDED.t_start_ms,
+                    t_end_ms = EXCLUDED.t_end_ms,
+                    url = EXCLUDED.url,
+                    image_url = EXCLUDED.image_url,
+                    source = EXCLUDED.source
+                """
+            ),
+            {
+                "media_id": media_id,
+                "chapter_idx": chapter_idx,
+                "title": chapter["title"],
+                "t_start_ms": chapter["t_start_ms"],
+                "t_end_ms": chapter["t_end_ms"],
+                "url": chapter["url"],
+                "image_url": chapter["image_url"],
+                "source": chapter["source"],
+                "created_at": now,
+            },
+        )
+
+    if normalized_rows:
+        keep_indices = list(range(len(normalized_rows)))
+        db.execute(
+            text(
+                """
+                DELETE FROM podcast_episode_chapters
+                WHERE media_id = :media_id
+                  AND NOT (chapter_idx = ANY(:keep_indices))
+                """
+            ),
+            {
+                "media_id": media_id,
+                "keep_indices": keep_indices,
+            },
+        )
+    else:
+        db.execute(
+            text("DELETE FROM podcast_episode_chapters WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        )
+
+
+def _normalize_chapter_rows_for_persistence(
+    chapter_rows: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    if chapter_rows is None:
+        return None
+    if not isinstance(chapter_rows, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for chapter in chapter_rows:
+        if not isinstance(chapter, dict):
+            continue
+        title = str(chapter.get("title") or "").strip()
+        if not title:
+            continue
+        t_start_ms = _coerce_non_negative_int(chapter.get("t_start_ms"))
+        if t_start_ms is None:
+            continue
+        t_end_ms = _coerce_non_negative_int(chapter.get("t_end_ms"))
+        if t_end_ms is not None and t_end_ms < t_start_ms:
+            t_end_ms = None
+        source = str(chapter.get("source") or "").strip()
+        if source not in {
+            PODCAST_CHAPTER_SOURCE_PODCASTING20,
+            PODCAST_CHAPTER_SOURCE_PODLOVE,
+            "embedded_mp4",
+            "embedded_id3",
+        }:
+            continue
+        normalized.append(
+            {
+                "title": title,
+                "t_start_ms": t_start_ms,
+                "t_end_ms": t_end_ms,
+                "url": _normalize_podcast_chapter_link(chapter.get("url"), base_url=None),
+                "image_url": _normalize_podcast_chapter_link(chapter.get("image_url"), base_url=None),
+                "source": source,
+            }
+        )
+
+    normalized.sort(key=lambda row: (row["t_start_ms"], row["title"].lower()))
+    deduped: list[dict[str, Any]] = []
+    seen_keys: set[tuple[int, str]] = set()
+    for row in normalized:
+        dedupe_key = (row["t_start_ms"], row["title"].lower())
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        deduped.append(row)
+    return deduped
 
 
 def update_user_plan(
@@ -4695,13 +4843,22 @@ def _augment_provider_episodes_with_feed_pagination(
         return provider_episode_candidates
 
     combined = list(provider_episode_candidates)
-    seen = {_episode_dedupe_key(episode) for episode in combined}
+    episode_by_dedupe_key = {_episode_dedupe_key(episode): episode for episode in combined}
+    seen = set(episode_by_dedupe_key.keys())
     for episode in supplemental:
         dedupe_key = _episode_dedupe_key(episode)
         if dedupe_key in seen:
+            existing = episode_by_dedupe_key.get(dedupe_key)
+            if (
+                existing is not None
+                and existing.get("rss_chapters") is None
+                and episode.get("rss_chapters") is not None
+            ):
+                existing["rss_chapters"] = episode.get("rss_chapters")
             continue
         seen.add(dedupe_key)
         combined.append(episode)
+        episode_by_dedupe_key[dedupe_key] = episode
         if len(combined) >= prefetch_limit:
             break
 
@@ -4714,6 +4871,44 @@ def _augment_provider_episodes_with_feed_pagination(
         prefetch_limit=prefetch_limit,
     )
     return combined
+
+
+def _hydrate_selected_episode_chapters_from_feed(
+    *,
+    selected_episodes: list[dict[str, Any]],
+    feed_url: str,
+) -> list[dict[str, Any]]:
+    if not selected_episodes:
+        return selected_episodes
+
+    for episode in selected_episodes:
+        episode.setdefault("rss_chapters", None)
+
+    normalized_feed_url = str(feed_url or "").strip()
+    if not normalized_feed_url:
+        return selected_episodes
+
+    feed_lookup_limit = max(PODCAST_INDEX_EPISODE_PAGE_SIZE, len(selected_episodes) * 4)
+    feed_episodes = _fetch_feed_episodes_paginated(normalized_feed_url, feed_lookup_limit)
+    if not feed_episodes:
+        return selected_episodes
+
+    feed_episode_by_match_key: dict[str, dict[str, Any]] = {}
+    for feed_episode in feed_episodes:
+        for match_key in _episode_match_keys(feed_episode):
+            feed_episode_by_match_key.setdefault(match_key, feed_episode)
+
+    for episode in selected_episodes:
+        if episode.get("rss_chapters") is not None:
+            continue
+        for match_key in _episode_match_keys(episode):
+            feed_episode = feed_episode_by_match_key.get(match_key)
+            if feed_episode is None:
+                continue
+            episode["rss_chapters"] = feed_episode.get("rss_chapters")
+            break
+
+    return selected_episodes
 
 
 def _validate_and_normalize_feed_url(feed_url: str) -> str:
@@ -4837,7 +5032,7 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
 
     episodes: list[dict[str, Any]] = []
     for item in item_nodes:
-        episode = _episode_from_feed_item(item)
+        episode = _episode_from_feed_item(item, base_url=str(response.url))
         if episode is not None:
             episodes.append(episode)
 
@@ -4845,7 +5040,9 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
     return episodes, next_page_url
 
 
-def _episode_from_feed_item(item: Any) -> dict[str, Any] | None:
+def _episode_from_feed_item(
+    item: Any, *, base_url: str | None = None
+) -> dict[str, Any] | None:
     title = str(item.xpath("string(./title)")).strip() or "Untitled Episode"
     guid = _normalize_guid(item.xpath("string(./guid)") or item.xpath("string(./id)"))
 
@@ -4874,6 +5071,8 @@ def _episode_from_feed_item(item: Any) -> dict[str, Any] | None:
         seed = f"{title}|{published_at or ''}"
         provider_episode_id = f"feed-{hashlib.sha1(seed.encode()).hexdigest()}"
 
+    chapter_rows = _extract_rss_chapters_from_feed_item(item, base_url=base_url)
+
     return {
         "provider_episode_id": provider_episode_id,
         "guid": guid,
@@ -4882,7 +5081,194 @@ def _episode_from_feed_item(item: Any) -> dict[str, Any] | None:
         "published_at": published_at,
         "duration_seconds": duration_seconds,
         "transcript_segments": None,
+        "rss_chapters": chapter_rows,
     }
+
+
+def _extract_rss_chapters_from_feed_item(
+    item: Any,
+    *,
+    base_url: str | None,
+) -> list[dict[str, Any]] | None:
+    podcasting20_url = _extract_podcasting20_chapter_url(item, base_url=base_url)
+    if podcasting20_url is not None:
+        return _fetch_podcasting20_chapters(podcasting20_url)
+    return _parse_podlove_chapters(item, base_url=base_url)
+
+
+def _extract_podcasting20_chapter_url(item: Any, *, base_url: str | None) -> str | None:
+    chapter_tag_nodes = item.xpath("./*[local-name()='chapters' and @url]")
+    if not chapter_tag_nodes:
+        return None
+    chapter_tag = chapter_tag_nodes[0]
+    chapter_type = str(chapter_tag.attrib.get("type") or "").strip().lower()
+    if chapter_type and chapter_type not in _PODCAST_CHAPTERS_20_CONTENT_TYPES:
+        return None
+    raw_url = chapter_tag.attrib.get("url")
+    resolved_url = _normalize_podcast_chapter_link(raw_url, base_url=base_url)
+    if resolved_url is None:
+        return None
+    if not _is_safe_feed_page_url(resolved_url):
+        return None
+    return resolved_url
+
+
+def _fetch_podcasting20_chapters(chapters_url: str) -> list[dict[str, Any]] | None:
+    try:
+        response = httpx.get(
+            chapters_url,
+            headers={"User-Agent": "nexus-podcast-client/1.0"},
+            timeout=15.0,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        logger.warning(
+            "podcast_chapters_json_fetch_failed",
+            chapters_url=chapters_url,
+            error=str(exc),
+        )
+        return None
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        logger.warning(
+            "podcast_chapters_json_invalid",
+            chapters_url=chapters_url,
+            error=str(exc),
+        )
+        return None
+    return _parse_podcasting20_chapter_payload(payload, base_url=chapters_url)
+
+
+def _parse_podcasting20_chapter_payload(
+    payload: Any, *, base_url: str | None
+) -> list[dict[str, Any]]:
+    chapter_entries: list[Any]
+    if isinstance(payload, dict):
+        raw_chapters = payload.get("chapters")
+        chapter_entries = raw_chapters if isinstance(raw_chapters, list) else []
+    elif isinstance(payload, list):
+        chapter_entries = payload
+    else:
+        chapter_entries = []
+
+    parsed_rows: list[dict[str, Any]] = []
+    for entry in chapter_entries:
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get("title") or "").strip()
+        if not title:
+            continue
+        t_start_ms = _parse_chapter_timestamp_ms(
+            entry.get("startTime") or entry.get("start_time") or entry.get("start")
+        )
+        if t_start_ms is None:
+            continue
+        t_end_ms = _parse_chapter_timestamp_ms(
+            entry.get("endTime") or entry.get("end_time") or entry.get("end")
+        )
+        if t_end_ms is not None and t_end_ms < t_start_ms:
+            t_end_ms = None
+        parsed_rows.append(
+            {
+                "title": title,
+                "t_start_ms": t_start_ms,
+                "t_end_ms": t_end_ms,
+                "url": _normalize_podcast_chapter_link(
+                    entry.get("url") or entry.get("href"),
+                    base_url=base_url,
+                ),
+                "image_url": _normalize_podcast_chapter_link(
+                    entry.get("img") or entry.get("image") or entry.get("image_url"),
+                    base_url=base_url,
+                ),
+                "source": PODCAST_CHAPTER_SOURCE_PODCASTING20,
+            }
+        )
+    parsed_rows.sort(key=lambda row: row["t_start_ms"])
+    return parsed_rows
+
+
+def _parse_podlove_chapters(item: Any, *, base_url: str | None) -> list[dict[str, Any]]:
+    chapter_nodes = item.xpath(".//*[local-name()='chapters']/*[local-name()='chapter']")
+    if not chapter_nodes:
+        return []
+
+    parsed_rows: list[dict[str, Any]] = []
+    for chapter_node in chapter_nodes:
+        title = str(chapter_node.attrib.get("title") or "").strip()
+        if not title:
+            continue
+        t_start_ms = _parse_chapter_timestamp_ms(chapter_node.attrib.get("start"))
+        if t_start_ms is None:
+            continue
+        t_end_ms = _parse_chapter_timestamp_ms(chapter_node.attrib.get("end"))
+        if t_end_ms is not None and t_end_ms < t_start_ms:
+            t_end_ms = None
+        parsed_rows.append(
+            {
+                "title": title,
+                "t_start_ms": t_start_ms,
+                "t_end_ms": t_end_ms,
+                "url": _normalize_podcast_chapter_link(
+                    chapter_node.attrib.get("href") or chapter_node.attrib.get("url"),
+                    base_url=base_url,
+                ),
+                "image_url": _normalize_podcast_chapter_link(
+                    chapter_node.attrib.get("image") or chapter_node.attrib.get("img"),
+                    base_url=base_url,
+                ),
+                "source": PODCAST_CHAPTER_SOURCE_PODLOVE,
+            }
+        )
+    parsed_rows.sort(key=lambda row: row["t_start_ms"])
+    return parsed_rows
+
+
+def _normalize_podcast_chapter_link(raw_url: Any, *, base_url: str | None) -> str | None:
+    if raw_url is None:
+        return None
+    normalized_raw = str(raw_url).strip()
+    if not normalized_raw:
+        return None
+    resolved_url = urljoin(base_url, normalized_raw) if base_url else normalized_raw
+    try:
+        validate_requested_url(resolved_url)
+    except InvalidRequestError:
+        return None
+    return resolved_url
+
+
+def _parse_chapter_timestamp_ms(raw_value: Any) -> int | None:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, (int, float)):
+        if raw_value < 0:
+            return None
+        return int(math.floor(float(raw_value) * 1000.0))
+
+    raw_text = str(raw_value).strip()
+    if not raw_text:
+        return None
+
+    try:
+        numeric_seconds = float(raw_text)
+    except ValueError:
+        numeric_seconds = None
+    if numeric_seconds is not None:
+        if numeric_seconds < 0:
+            return None
+        return int(math.floor(numeric_seconds * 1000.0))
+
+    match = _CHAPTER_TIMESTAMP_PATTERN.match(raw_text)
+    if match is None:
+        return None
+    hours = int(match.group("hours") or "0")
+    minutes = int(match.group("minutes"))
+    seconds = float(match.group("seconds"))
+    total_seconds = (hours * 3600.0) + (minutes * 60.0) + seconds
+    return int(math.floor(total_seconds * 1000.0))
 
 
 def _extract_feed_next_page_url(root: Any, base_url: str) -> str | None:
@@ -4958,6 +5344,28 @@ def _episode_dedupe_key(episode: dict[str, Any]) -> tuple[str, str, str, str]:
     return (guid, audio_url, title, published_at)
 
 
+def _episode_match_keys(episode: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    guid = _normalize_guid(episode.get("guid"))
+    if guid:
+        keys.append(f"guid:{guid.lower()}")
+
+    audio_url = str(episode.get("audio_url") or "").strip().lower()
+    if audio_url:
+        keys.append(f"audio:{audio_url}")
+
+    provider_episode_id = str(episode.get("provider_episode_id") or "").strip().lower()
+    if provider_episode_id:
+        keys.append(f"provider:{provider_episode_id}")
+
+    title = str(episode.get("title") or "").strip().lower()
+    normalized_published_at = _normalize_provider_published_at(episode.get("published_at")) or ""
+    if title and normalized_published_at:
+        keys.append(f"title_published:{title}|{normalized_published_at.lower()}")
+
+    return keys
+
+
 def _normalize_guid(value: Any) -> str | None:
     if value is None:
         return None
@@ -5011,6 +5419,18 @@ def _coerce_positive_int(raw_value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     if value <= 0:
+        return None
+    return value
+
+
+def _coerce_non_negative_int(raw_value: Any) -> int | None:
+    if raw_value is None:
+        return None
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
         return None
     return value
 

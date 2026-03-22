@@ -30,6 +30,25 @@ function formatClock(seconds: number): string {
   return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
 }
 
+function resolveCurrentChapter(
+  chapters: NonNullable<ReturnType<typeof useGlobalPlayer>["track"]>["chapters"],
+  currentSeconds: number
+) {
+  if (!chapters || chapters.length === 0) {
+    return null;
+  }
+  const currentMs = Math.max(0, Math.floor(currentSeconds * 1000));
+  let activeChapter = null;
+  for (const chapter of chapters) {
+    if (chapter.t_start_ms <= currentMs) {
+      activeChapter = chapter;
+      continue;
+    }
+    break;
+  }
+  return activeChapter;
+}
+
 export default function GlobalPlayerFooter() {
   const isMobile = useIsMobileViewport();
   const [queueOpen, setQueueOpen] = useState(false);
@@ -81,6 +100,19 @@ export default function GlobalPlayerFooter() {
     "--progress-percent": `${progressPercent}%`,
     "--buffered-percent": `${Math.max(progressPercent, bufferedPercent)}%`,
   } as CSSProperties;
+  const chapterMarkers =
+    durationSafe > 0 && Array.isArray(track.chapters)
+      ? track.chapters
+          .map((chapter) => ({
+            ...chapter,
+            leftPercent: Math.max(
+              0,
+              Math.min(100, (chapter.t_start_ms / 1000 / durationSafe) * 100)
+            ),
+          }))
+          .filter((chapter) => Number.isFinite(chapter.leftPercent))
+      : [];
+  const currentChapter = resolveCurrentChapter(track.chapters ?? [], currentSafe);
 
   const onSeek = (nextValue: number) => {
     if (durationSafe <= 0) {
@@ -136,9 +168,16 @@ export default function GlobalPlayerFooter() {
     >
       <div className={styles.metaRow}>
         <span className={styles.kicker}>Now playing</span>
-        <a href={`/media/${track.media_id}`} className={styles.trackLink}>
-          {track.title}
-        </a>
+        <div className={styles.metaText}>
+          <a href={`/media/${track.media_id}`} className={styles.trackLink}>
+            {track.title}
+          </a>
+          {currentChapter && (
+            <span className={styles.chapterLabel}>
+              Chapter {currentChapter.chapter_idx + 1}: {currentChapter.title}
+            </span>
+          )}
+        </div>
       </div>
 
       <div
@@ -196,6 +235,18 @@ export default function GlobalPlayerFooter() {
 
         <div className={styles.seekArea}>
           <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
+          {chapterMarkers.length > 0 && (
+            <div className={styles.chapterTicks} aria-hidden="true">
+              {chapterMarkers.map((chapter) => (
+                <span
+                  key={`${chapter.chapter_idx}-${chapter.t_start_ms}`}
+                  className={styles.chapterTick}
+                  style={{ left: `${chapter.leftPercent}%` }}
+                  title={chapter.title}
+                />
+              ))}
+            </div>
+          )}
           <input
             type="range"
             min={0}

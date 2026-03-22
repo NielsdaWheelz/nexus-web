@@ -3802,3 +3802,64 @@ class TestLibraryMediaOrderingMigration:
 
         index_names = {row[0] for row in indexes}
         assert "ix_library_media_library_position" in index_names
+
+
+class TestPodcastEpisodeChapterMigration:
+    """Schema assertions for podcast episode chapter persistence contract."""
+
+    def test_head_contains_podcast_episode_chapters_table_contract(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            columns = session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_episode_chapters'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
+            constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'podcast_episode_chapters'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'podcast_episode_chapters'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+
+        column_names = {row[0] for row in columns}
+        assert {
+            "id",
+            "media_id",
+            "chapter_idx",
+            "title",
+            "t_start_ms",
+            "t_end_ms",
+            "url",
+            "image_url",
+            "source",
+            "created_at",
+        }.issubset(column_names), (
+            "podcast chapter migration must persist canonical chapter contract fields; "
+            f"got columns {column_names}"
+        )
+
+        constraint_names = {row[0] for row in constraints}
+        assert "uq_podcast_episode_chapters_media_idx" in constraint_names
+        assert "ck_podcast_episode_chapters_source" in constraint_names
+
+        index_names = {row[0] for row in indexes}
+        assert "ix_podcast_episode_chapters_media_t_start_ms" in index_names

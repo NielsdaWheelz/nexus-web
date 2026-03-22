@@ -36,6 +36,16 @@ export interface GlobalPlayerTrack {
   title: string;
   stream_url: string;
   source_url: string;
+  chapters?: GlobalPlayerChapter[];
+}
+
+export interface GlobalPlayerChapter {
+  chapter_idx: number;
+  title: string;
+  t_start_ms: number;
+  t_end_ms: number | null;
+  url: string | null;
+  image_url: string | null;
 }
 
 interface SetTrackOptions {
@@ -131,6 +141,62 @@ function normalizeVolume(value: number | null | undefined): number {
   return Math.min(1, Math.max(0, value));
 }
 
+function normalizeTrackChapters(
+  chapters: GlobalPlayerChapter[] | null | undefined
+): GlobalPlayerChapter[] {
+  if (!Array.isArray(chapters)) {
+    return [];
+  }
+  return chapters
+    .filter(
+      (chapter) =>
+        chapter != null &&
+        Number.isFinite(chapter.chapter_idx) &&
+        typeof chapter.title === "string" &&
+        Number.isFinite(chapter.t_start_ms) &&
+        chapter.t_start_ms >= 0
+    )
+    .map((chapter) => ({
+      chapter_idx: Math.max(0, Math.floor(chapter.chapter_idx)),
+      title: chapter.title.trim(),
+      t_start_ms: Math.max(0, Math.floor(chapter.t_start_ms)),
+      t_end_ms:
+        typeof chapter.t_end_ms === "number" && Number.isFinite(chapter.t_end_ms)
+          ? Math.max(0, Math.floor(chapter.t_end_ms))
+          : null,
+      url: chapter.url ?? null,
+      image_url: chapter.image_url ?? null,
+    }))
+    .filter((chapter) => chapter.title.length > 0)
+    .sort((lhs, rhs) =>
+      lhs.t_start_ms === rhs.t_start_ms
+        ? lhs.chapter_idx - rhs.chapter_idx
+        : lhs.t_start_ms - rhs.t_start_ms
+    );
+}
+
+function areTrackChaptersEqual(
+  lhs: GlobalPlayerChapter[] | null | undefined,
+  rhs: GlobalPlayerChapter[] | null | undefined
+): boolean {
+  const lhsNormalized = normalizeTrackChapters(lhs);
+  const rhsNormalized = normalizeTrackChapters(rhs);
+  if (lhsNormalized.length !== rhsNormalized.length) {
+    return false;
+  }
+  return lhsNormalized.every((chapter, index) => {
+    const rhsChapter = rhsNormalized[index];
+    return (
+      chapter.chapter_idx === rhsChapter.chapter_idx &&
+      chapter.title === rhsChapter.title &&
+      chapter.t_start_ms === rhsChapter.t_start_ms &&
+      chapter.t_end_ms === rhsChapter.t_end_ms &&
+      chapter.url === rhsChapter.url &&
+      chapter.image_url === rhsChapter.image_url
+    );
+  });
+}
+
 export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const [track, setTrackState] = useState<GlobalPlayerTrack | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
@@ -204,6 +270,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
 
   const setTrack = useCallback(
     (nextTrack: GlobalPlayerTrack, options: SetTrackOptions = {}) => {
+      const normalizedNextTrack: GlobalPlayerTrack = {
+        ...nextTrack,
+        chapters: normalizeTrackChapters(nextTrack.chapters),
+      };
       if (track && track.media_id !== nextTrack.media_id) {
         flushCurrentTrackState(track.media_id);
       }
@@ -211,14 +281,15 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       setTrackState((prev) => {
         if (
           prev &&
-          prev.media_id === nextTrack.media_id &&
-          prev.stream_url === nextTrack.stream_url &&
-          prev.title === nextTrack.title &&
-          prev.source_url === nextTrack.source_url
+          prev.media_id === normalizedNextTrack.media_id &&
+          prev.stream_url === normalizedNextTrack.stream_url &&
+          prev.title === normalizedNextTrack.title &&
+          prev.source_url === normalizedNextTrack.source_url &&
+          areTrackChaptersEqual(prev.chapters, normalizedNextTrack.chapters)
         ) {
           return prev;
         }
-        return nextTrack;
+        return normalizedNextTrack;
       });
       setRequestVersion((value) => value + 1);
     },

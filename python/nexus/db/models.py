@@ -390,6 +390,12 @@ class Media(Base):
     podcast_episode: Mapped["PodcastEpisode | None"] = relationship(
         "PodcastEpisode", back_populates="media", cascade="all, delete-orphan", uselist=False
     )
+    podcast_episode_chapters: Mapped[list["PodcastEpisodeChapter"]] = relationship(
+        "PodcastEpisodeChapter",
+        back_populates="media",
+        cascade="all, delete-orphan",
+        order_by=lambda: PodcastEpisodeChapter.chapter_idx,
+    )
     podcast_listening_states: Mapped[list["PodcastListeningState"]] = relationship(
         "PodcastListeningState",
         back_populates="media",
@@ -822,6 +828,66 @@ class PodcastEpisode(Base):
 
     media: Mapped["Media"] = relationship("Media", back_populates="podcast_episode")
     podcast: Mapped["Podcast"] = relationship("Podcast", back_populates="episodes")
+
+
+class PodcastEpisodeChapter(Base):
+    """Episode-level chapter markers extracted from RSS metadata."""
+
+    __tablename__ = "podcast_episode_chapters"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    chapter_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    t_start_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    t_end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "media_id",
+            "chapter_idx",
+            name="uq_podcast_episode_chapters_media_idx",
+        ),
+        CheckConstraint(
+            "chapter_idx >= 0",
+            name="ck_podcast_episode_chapters_idx_non_negative",
+        ),
+        CheckConstraint(
+            "t_start_ms >= 0",
+            name="ck_podcast_episode_chapters_start_non_negative",
+        ),
+        CheckConstraint(
+            "t_end_ms IS NULL OR t_end_ms >= t_start_ms",
+            name="ck_podcast_episode_chapters_end_not_before_start",
+        ),
+        CheckConstraint(
+            "source IN ('rss_podcasting20', 'rss_podlove', 'embedded_mp4', 'embedded_id3')",
+            name="ck_podcast_episode_chapters_source",
+        ),
+        Index(
+            "ix_podcast_episode_chapters_media_t_start_ms",
+            "media_id",
+            "t_start_ms",
+        ),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="podcast_episode_chapters")
 
 
 class PodcastListeningState(Base):

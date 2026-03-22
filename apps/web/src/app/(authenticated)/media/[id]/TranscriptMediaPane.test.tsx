@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import TranscriptMediaPane, {
   isAllowedYoutubeEmbedUrl,
+  type TranscriptChapter,
   type TranscriptFragment,
   type TranscriptPlaybackSource,
 } from "./TranscriptMediaPane";
@@ -11,6 +12,7 @@ import TranscriptMediaPane, {
 const mockSetTrack = vi.fn();
 const mockSeekToMs = vi.fn();
 const mockPlay = vi.fn();
+let mockCurrentTimeSeconds = 0;
 const mockAddToQueue = vi.fn(
   async (mediaId: string, insertPosition: "next" | "last") => {
     const response = await fetch("/api/playback/queue/items", {
@@ -35,7 +37,7 @@ vi.mock("@/lib/player/globalPlayer", () => ({
     play: mockPlay,
     pause: vi.fn(),
     isPlaying: false,
-    currentTimeSeconds: 0,
+    currentTimeSeconds: mockCurrentTimeSeconds,
     durationSeconds: 0,
     bufferedSeconds: 0,
     playbackRate: 1,
@@ -59,6 +61,7 @@ beforeEach(() => {
   mockSeekToMs.mockReset();
   mockPlay.mockReset();
   mockAddToQueue.mockClear();
+  mockCurrentTimeSeconds = 0;
 });
 
 const VIDEO_PLAYBACK_SOURCE: TranscriptPlaybackSource = {
@@ -91,6 +94,25 @@ const FRAGMENTS: TranscriptFragment[] = [
     t_start_ms: 12_000,
     t_end_ms: 20_000,
     speaker_label: "Guest",
+  },
+];
+
+const PODCAST_CHAPTERS: TranscriptChapter[] = [
+  {
+    chapter_idx: 0,
+    title: "Intro",
+    t_start_ms: 0,
+    t_end_ms: 300_000,
+    url: "https://example.com/chapters/intro",
+    image_url: "https://cdn.example.com/images/intro.jpg",
+  },
+  {
+    chapter_idx: 1,
+    title: "Deep Dive",
+    t_start_ms: 300_000,
+    t_end_ms: null,
+    url: null,
+    image_url: null,
   },
 ];
 
@@ -143,6 +165,7 @@ function renderStatefulVideoPane(
         transcriptCoverage={options.transcriptCoverage ?? "full"}
         transcriptRequestInFlight={options.transcriptRequestInFlight ?? false}
         transcriptRequestForecast={options.transcriptRequestForecast ?? null}
+        chapters={[]}
         listeningState={null}
         onRequestTranscript={options.onRequestTranscript ?? vi.fn()}
         fragments={fragments}
@@ -185,6 +208,7 @@ function renderStatefulPodcastPane(
       remainingMinutes: number | null;
       fitsBudget: boolean;
     } | null;
+    chapters?: TranscriptChapter[];
     listeningState?: { position_ms: number; playback_speed: number } | null;
     onResumeFromSavedPosition?: (positionMs: number) => void;
     onRequestTranscript?: () => void;
@@ -213,6 +237,7 @@ function renderStatefulPodcastPane(
         transcriptCoverage={options.transcriptCoverage ?? "full"}
         transcriptRequestInFlight={options.transcriptRequestInFlight ?? false}
         transcriptRequestForecast={options.transcriptRequestForecast ?? null}
+        chapters={options.chapters ?? []}
         listeningState={options.listeningState ?? null}
         onResumeFromSavedPosition={options.onResumeFromSavedPosition}
         onRequestTranscript={options.onRequestTranscript ?? vi.fn()}
@@ -452,5 +477,51 @@ describe("TranscriptMediaPane podcast playback", () => {
     expect(
       screen.getByText("Transcript is partial; search and highlights may miss sections.")
     ).toBeVisible();
+  });
+
+  it("renders chapter list with links/images and seeks via chapter click", async () => {
+    const user = userEvent.setup();
+    renderStatefulPodcastPane({
+      canRead: true,
+      fragments: FRAGMENTS,
+      chapters: PODCAST_CHAPTERS,
+    });
+
+    expect(screen.getByRole("heading", { name: "Chapters" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Intro" })).toHaveAttribute(
+      "href",
+      "https://example.com/chapters/intro"
+    );
+    expect(screen.getByRole("img", { name: "Intro thumbnail" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Jump to chapter 2: Deep Dive" }));
+    expect(mockSeekToMs).toHaveBeenCalledWith(300_000);
+    expect(mockPlay).toHaveBeenCalled();
+  });
+
+  it("highlights active chapter from playback time and renders inline chapter headings", () => {
+    mockCurrentTimeSeconds = 360;
+    renderStatefulPodcastPane({
+      canRead: true,
+      fragments: FRAGMENTS,
+      chapters: PODCAST_CHAPTERS,
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Jump to chapter 2: Deep Dive" })
+    ).toHaveAttribute("aria-current", "true");
+    expect(screen.getByText("Chapter 1: Intro")).toBeVisible();
+    expect(screen.getByText("Chapter 2: Deep Dive")).toBeVisible();
+  });
+
+  it("omits chapter UI when episode has no chapters", () => {
+    renderStatefulPodcastPane({
+      canRead: true,
+      fragments: FRAGMENTS,
+      chapters: [],
+    });
+
+    expect(screen.queryByRole("heading", { name: "Chapters" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Chapter 1: Intro")).not.toBeInTheDocument();
   });
 });

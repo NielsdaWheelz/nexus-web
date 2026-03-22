@@ -9,7 +9,10 @@ import {
   type RefObject,
 } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import {
+  useGlobalPlayer,
+  type GlobalPlayerChapter,
+} from "@/lib/player/globalPlayer";
 import styles from "./page.module.css";
 
 const YOUTUBE_EMBED_HOST_ALLOWLIST = new Set([
@@ -33,6 +36,15 @@ export interface TranscriptFragment {
   t_start_ms?: number | null;
   t_end_ms?: number | null;
   speaker_label?: string | null;
+}
+
+export interface TranscriptChapter {
+  chapter_idx: number;
+  title: string;
+  t_start_ms: number;
+  t_end_ms?: number | null;
+  url?: string | null;
+  image_url?: string | null;
 }
 
 export interface TranscriptRequestForecast {
@@ -68,6 +80,7 @@ interface TranscriptMediaPaneProps {
   transcriptCoverage: "none" | "partial" | "full" | null;
   transcriptRequestInFlight: boolean;
   transcriptRequestForecast: TranscriptRequestForecast | null;
+  chapters: TranscriptChapter[];
   listeningState: TranscriptListeningState | null;
   onResumeFromSavedPosition?: (positionMs: number) => void;
   onRequestTranscript: () => void;
@@ -97,6 +110,56 @@ function toSeekSeconds(timestampMs: number | null | undefined): number | null {
     return null;
   }
   return Math.floor(timestampMs / 1000);
+}
+
+function normalizeTranscriptChapters(
+  chapters: TranscriptChapter[]
+): GlobalPlayerChapter[] {
+  return chapters
+    .filter(
+      (chapter) =>
+        chapter != null &&
+        Number.isFinite(chapter.chapter_idx) &&
+        typeof chapter.title === "string" &&
+        chapter.title.trim().length > 0 &&
+        Number.isFinite(chapter.t_start_ms) &&
+        chapter.t_start_ms >= 0
+    )
+    .map((chapter) => ({
+      chapter_idx: Math.max(0, Math.floor(chapter.chapter_idx)),
+      title: chapter.title.trim(),
+      t_start_ms: Math.max(0, Math.floor(chapter.t_start_ms)),
+      t_end_ms:
+        typeof chapter.t_end_ms === "number" && Number.isFinite(chapter.t_end_ms)
+          ? Math.max(0, Math.floor(chapter.t_end_ms))
+          : null,
+      url: chapter.url ?? null,
+      image_url: chapter.image_url ?? null,
+    }))
+    .sort((lhs, rhs) =>
+      lhs.t_start_ms === rhs.t_start_ms
+        ? lhs.chapter_idx - rhs.chapter_idx
+        : lhs.t_start_ms - rhs.t_start_ms
+    );
+}
+
+function resolveActiveChapter(
+  chapters: GlobalPlayerChapter[],
+  currentTimeSeconds: number
+): GlobalPlayerChapter | null {
+  if (chapters.length === 0) {
+    return null;
+  }
+  const currentMs = Math.max(0, Math.floor(currentTimeSeconds * 1000));
+  let active: GlobalPlayerChapter | null = null;
+  for (const chapter of chapters) {
+    if (chapter.t_start_ms <= currentMs) {
+      active = chapter;
+      continue;
+    }
+    break;
+  }
+  return active;
 }
 
 export function isAllowedYoutubeEmbedUrl(rawUrl: string): boolean {
@@ -162,6 +225,7 @@ export default function TranscriptMediaPane({
   transcriptCoverage,
   transcriptRequestInFlight,
   transcriptRequestForecast,
+  chapters,
   listeningState,
   onResumeFromSavedPosition,
   onRequestTranscript,
@@ -172,10 +236,19 @@ export default function TranscriptMediaPane({
   onSegmentSelect,
   onContentClick,
 }: TranscriptMediaPaneProps) {
-  const { setTrack, seekToMs, play, addToQueue, queueItems } = useGlobalPlayer();
+  const { setTrack, seekToMs, play, addToQueue, queueItems, currentTimeSeconds } =
+    useGlobalPlayer();
   const [seekTargetMs, setSeekTargetMs] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState(false);
   const resumeNoticeMediaIdRef = useRef<string | null>(null);
+  const normalizedChapters = useMemo(() => normalizeTranscriptChapters(chapters), [chapters]);
+  const activeChapter = useMemo(
+    () =>
+      mediaKind === "podcast_episode"
+        ? resolveActiveChapter(normalizedChapters, currentTimeSeconds)
+        : null,
+    [currentTimeSeconds, mediaKind, normalizedChapters]
+  );
 
   const safeEmbedUrl = useMemo(
     () => resolveSafeVideoEmbedUrl(playbackSource),
@@ -212,10 +285,12 @@ export default function TranscriptMediaPane({
         title: mediaTitle,
         stream_url: playbackSource.stream_url,
         source_url: playbackSource.source_url,
+        chapters: normalizedChapters,
       },
       trackOptions
     );
   }, [
+    normalizedChapters,
     listeningState,
     mediaId,
     mediaKind,
@@ -265,6 +340,53 @@ export default function TranscriptMediaPane({
       play();
     }
   };
+
+  const handleChapterClick = (chapter: GlobalPlayerChapter) => {
+    if (mediaKind === "video") {
+      setSeekTargetMs(chapter.t_start_ms);
+      return;
+    }
+    if (mediaKind === "podcast_episode") {
+      seekToMs(chapter.t_start_ms);
+      play();
+    }
+  };
+
+  const transcriptTimeline = useMemo(() => {
+    if (normalizedChapters.length === 0) {
+      return fragments.map((fragment) => ({ kind: "segment" as const, fragment }));
+    }
+    const entries: Array<
+      | { kind: "chapter"; chapter: GlobalPlayerChapter }
+      | { kind: "segment"; fragment: TranscriptFragment }
+    > = [];
+    let chapterCursor = 0;
+    for (const fragment of fragments) {
+      const fragmentStartMs =
+        typeof fragment.t_start_ms === "number" && Number.isFinite(fragment.t_start_ms)
+          ? fragment.t_start_ms
+          : Number.MAX_SAFE_INTEGER;
+      while (
+        chapterCursor < normalizedChapters.length &&
+        normalizedChapters[chapterCursor].t_start_ms <= fragmentStartMs
+      ) {
+        entries.push({
+          kind: "chapter",
+          chapter: normalizedChapters[chapterCursor],
+        });
+        chapterCursor += 1;
+      }
+      entries.push({ kind: "segment", fragment });
+    }
+    while (chapterCursor < normalizedChapters.length) {
+      entries.push({
+        kind: "chapter",
+        chapter: normalizedChapters[chapterCursor],
+      });
+      chapterCursor += 1;
+    }
+    return entries;
+  }, [fragments, normalizedChapters]);
 
   return (
     <div className={styles.transcriptPane}>
@@ -340,6 +462,53 @@ export default function TranscriptMediaPane({
           </div>
         )}
       </div>
+
+      {mediaKind === "podcast_episode" && normalizedChapters.length > 0 && (
+        <section className={styles.chapterPanel} aria-label="Episode chapters">
+          <h3 className={styles.chapterHeading}>Chapters</h3>
+          <ol className={styles.chapterList}>
+            {normalizedChapters.map((chapter) => {
+              const timestamp = formatTimestampMs(chapter.t_start_ms);
+              const isActiveChapter = activeChapter?.chapter_idx === chapter.chapter_idx;
+              return (
+                <li key={`${chapter.chapter_idx}-${chapter.t_start_ms}`} className={styles.chapterItem}>
+                  {chapter.image_url && (
+                    <img
+                      src={chapter.image_url}
+                      alt={`${chapter.title} thumbnail`}
+                      className={styles.chapterThumbnail}
+                    />
+                  )}
+                  <div className={styles.chapterBody}>
+                    <button
+                      type="button"
+                      className={`${styles.chapterSeekButton} ${
+                        isActiveChapter ? styles.chapterSeekButtonActive : ""
+                      }`}
+                      aria-label={`Jump to chapter ${chapter.chapter_idx + 1}: ${chapter.title}`}
+                      aria-current={isActiveChapter ? "true" : undefined}
+                      onClick={() => handleChapterClick(chapter)}
+                    >
+                      <span className={styles.chapterTimestamp}>{timestamp ?? "00:00:00"}</span>
+                      <span className={styles.chapterTitle}>{chapter.title}</span>
+                    </button>
+                    {chapter.url && (
+                      <a
+                        href={chapter.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.chapterExternalLink}
+                      >
+                        {chapter.title}
+                      </a>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      )}
 
       {isPlaybackOnlyTranscript ? (
         <div className={styles.notReady}>
@@ -418,24 +587,41 @@ export default function TranscriptMediaPane({
           ) : (
             <div className={styles.transcriptLayout}>
               <div className={styles.transcriptSegments}>
-                {fragments.map((fragment) => {
-                  const ts = formatTimestampMs(fragment.t_start_ms);
-                  const isActive = fragment.id === activeFragment?.id;
+                {transcriptTimeline.map((entry) => {
+                  if (entry.kind === "chapter") {
+                    const chapterTimestamp = formatTimestampMs(entry.chapter.t_start_ms);
+                    return (
+                      <div
+                        key={`inline-chapter-${entry.chapter.chapter_idx}-${entry.chapter.t_start_ms}`}
+                        className={styles.inlineChapterDivider}
+                      >
+                        <span className={styles.inlineChapterTitle}>
+                          Chapter {entry.chapter.chapter_idx + 1}: {entry.chapter.title}
+                        </span>
+                        {chapterTimestamp && (
+                          <span className={styles.inlineChapterTimestamp}>{chapterTimestamp}</span>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  const ts = formatTimestampMs(entry.fragment.t_start_ms);
+                  const isActive = entry.fragment.id === activeFragment?.id;
                   return (
                     <button
-                      key={fragment.id}
+                      key={entry.fragment.id}
                       type="button"
                       className={`${styles.segmentButton} ${
                         isActive ? styles.segmentButtonActive : ""
                       }`}
                       aria-current={isActive ? "true" : undefined}
-                      onClick={() => handleSegmentClick(fragment)}
+                      onClick={() => handleSegmentClick(entry.fragment)}
                     >
                       <span className={styles.segmentMeta}>
                         {ts && <span>{ts}</span>}
-                        {fragment.speaker_label && <span>{fragment.speaker_label}</span>}
+                        {entry.fragment.speaker_label && <span>{entry.fragment.speaker_label}</span>}
                       </span>
-                      <span className={styles.segmentText}>{fragment.canonical_text}</span>
+                      <span className={styles.segmentText}>{entry.fragment.canonical_text}</span>
                     </button>
                   );
                 })}

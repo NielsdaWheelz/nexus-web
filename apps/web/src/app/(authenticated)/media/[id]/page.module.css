@@ -231,6 +231,101 @@
   gap: var(--space-4);
 }
 
+.chapterPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+.chapterHeading {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.chapterList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.chapterItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chapterThumbnail {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+}
+
+.chapterBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.chapterSeekButton {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  padding: var(--space-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chapterSeekButton:hover {
+  border-color: var(--color-border);
+}
+
+.chapterSeekButtonActive {
+  border-color: var(--color-accent);
+}
+
+.chapterTimestamp {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.chapterTitle {
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapterExternalLink {
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.chapterExternalLink:hover {
+  text-decoration: underline;
+}
+
 .transcriptSegments {
   display: flex;
   flex-direction: column;
@@ -271,6 +366,26 @@
 .segmentText {
   font-size: var(--font-size-sm);
   line-height: 1.45;
+}
+
+.inlineChapterDivider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-1);
+  border-top: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text-muted);
+}
+
+.inlineChapterTitle {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.inlineChapterTimestamp {
+  font-size: var(--font-size-xs);
 }
 
 .transcriptActiveFragment {

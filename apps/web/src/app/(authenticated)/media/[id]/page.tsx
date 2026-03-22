@@ -92,6 +92,7 @@ import {
 } from "@/lib/media/epubReader";
 import { resolveLinkedItemsLayoutMode } from "@/lib/media/linkedItemsLayoutMode";
 import TranscriptMediaPane, {
+  type TranscriptChapter,
   type TranscriptPlaybackSource,
   type TranscriptFragment,
 } from "./TranscriptMediaPane";
@@ -133,6 +134,7 @@ interface Media {
     can_download_file: boolean;
   };
   playback_source?: TranscriptPlaybackSource | null;
+  chapters?: TranscriptChapter[];
   listening_state?: {
     position_ms: number;
     playback_speed: number;
@@ -2599,6 +2601,7 @@ export default function MediaViewPage() {
               transcriptCoverage={transcriptCoverage}
               transcriptRequestInFlight={transcriptRequestInFlight}
               transcriptRequestForecast={transcriptRequestForecast}
+              chapters={media.chapters ?? []}
               listeningState={media.listening_state ?? null}
               onResumeFromSavedPosition={(positionMs) =>
                 toast({

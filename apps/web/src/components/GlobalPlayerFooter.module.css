@@ -9,8 +9,14 @@
 
 .metaRow {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: var(--space-2);
+  min-width: 0;
+}
+
+.metaText {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
 }
 
@@ -32,6 +38,12 @@
 
 .trackLink:hover {
   text-decoration: underline;
+}
+
+.chapterLabel {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
 }
 
 .controlsRow {
@@ -91,8 +103,28 @@
   pointer-events: none;
 }
 
+.chapterTicks {
+  position: absolute;
+  inset: 50% 0 auto 0;
+  height: 8px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.chapterTick {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 8px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-text) 55%, transparent);
+  pointer-events: auto;
+}
+
 .seekSlider {
   position: relative;
+  z-index: 1;
   width: 100%;
   background: transparent;
   -webkit-appearance: none;

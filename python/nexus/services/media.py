@@ -38,6 +38,7 @@ from nexus.schemas.media import (
     MediaAuthorOut,
     MediaListeningStateOut,
     MediaOut,
+    PodcastEpisodeChapterOut,
 )
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
@@ -184,6 +185,7 @@ def list_media_for_viewer_by_ids(
 
     pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
     authors_by_media = _load_media_authors_by_ids(db, list(row_by_media_id.keys()))
+    chapters_by_media = _load_podcast_episode_chapters_by_ids(db, list(row_by_media_id.keys()))
 
     media_list: list[MediaOut] = []
     for media_id in ordered_media_ids:
@@ -194,6 +196,7 @@ def list_media_for_viewer_by_ids(
             _media_out_from_row(
                 row=row,
                 authors=authors_by_media.get(media_id, []),
+                chapters=chapters_by_media.get(media_id, []),
                 pdf_quote_ready=pdf_readiness.get(media_id, False),
             )
         )
@@ -223,6 +226,49 @@ def _load_media_authors_by_ids(
     return authors_by_media
 
 
+def _load_podcast_episode_chapters_by_ids(
+    db: Session,
+    media_ids: list[UUID],
+) -> dict[UUID, list[PodcastEpisodeChapterOut]]:
+    chapters_by_media: dict[UUID, list[PodcastEpisodeChapterOut]] = {
+        media_id: [] for media_id in media_ids
+    }
+    if not media_ids:
+        return chapters_by_media
+
+    chapter_rows = db.execute(
+        text(
+            """
+            SELECT
+                media_id,
+                chapter_idx,
+                title,
+                t_start_ms,
+                t_end_ms,
+                url,
+                image_url
+            FROM podcast_episode_chapters
+            WHERE media_id = ANY(:ids)
+            ORDER BY media_id ASC, chapter_idx ASC
+            """
+        ),
+        {"ids": media_ids},
+    ).fetchall()
+    for chapter_row in chapter_rows:
+        chapter_media_id = UUID(str(chapter_row[0]))
+        chapters_by_media.setdefault(chapter_media_id, []).append(
+            PodcastEpisodeChapterOut(
+                chapter_idx=int(chapter_row[1]),
+                title=str(chapter_row[2]),
+                t_start_ms=int(chapter_row[3]),
+                t_end_ms=int(chapter_row[4]) if chapter_row[4] is not None else None,
+                url=str(chapter_row[5]) if chapter_row[5] is not None else None,
+                image_url=str(chapter_row[6]) if chapter_row[6] is not None else None,
+            )
+        )
+    return chapters_by_media
+
+
 def _media_listening_state_from_row(
     row: Mapping[str, object],
 ) -> MediaListeningStateOut | None:
@@ -244,6 +290,7 @@ def _media_out_from_row(
     *,
     row: Mapping[str, object],
     authors: list[MediaAuthorOut],
+    chapters: list[PodcastEpisodeChapterOut] | None = None,
     pdf_quote_ready: bool = False,
 ) -> MediaOut:
     processing_status = _status_to_str(row["processing_status"])
@@ -277,6 +324,7 @@ def _media_out_from_row(
         last_error_code=row["last_error_code"],
         playback_source=playback_source,
         listening_state=_media_listening_state_from_row(row),
+        chapters=chapters or [],
         capabilities=capabilities,
         authors=authors,
         published_date=row["published_date"],
@@ -605,6 +653,7 @@ def list_visible_media(
 
     page_media_ids = [UUID(str(row["id"])) for row in page_rows]
     authors_by_media = _load_media_authors_by_ids(db, page_media_ids)
+    chapters_by_media = _load_podcast_episode_chapters_by_ids(db, page_media_ids)
 
     media_list: list[MediaOut] = []
     for row in page_rows:
@@ -613,6 +662,7 @@ def list_visible_media(
             _media_out_from_row(
                 row=row,
                 authors=authors_by_media.get(media_id, []),
+                chapters=chapters_by_media.get(media_id, []),
                 pdf_quote_ready=pdf_readiness.get(media_id, False),
             )
         )

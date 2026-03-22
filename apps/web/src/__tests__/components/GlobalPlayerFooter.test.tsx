@@ -5,6 +5,25 @@ import userEvent from "@testing-library/user-event";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 
+const PODCAST_CHAPTERS = [
+  {
+    chapter_idx: 0,
+    title: "Intro",
+    t_start_ms: 0,
+    t_end_ms: 60_000,
+    url: null,
+    image_url: null,
+  },
+  {
+    chapter_idx: 1,
+    title: "Deep Dive",
+    t_start_ms: 60_000,
+    t_end_ms: 120_000,
+    url: null,
+    image_url: null,
+  },
+];
+
 function setViewportWidth(width: number): void {
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
@@ -44,6 +63,7 @@ function RouteA() {
             title: "Episode Alpha",
             stream_url: "https://cdn.example.com/episode-alpha.mp3",
             source_url: "https://example.com/episode-alpha",
+            chapters: PODCAST_CHAPTERS,
           },
           { autoplay: false }
         )
@@ -165,5 +185,22 @@ describe("GlobalPlayerFooter", () => {
 
     await user.keyboard("{ArrowRight}");
     expect(Math.floor(audio.currentTime)).toBe(45);
+  });
+
+  it("shows current chapter label and scrubber chapter tick markers", async () => {
+    const user = userEvent.setup();
+    render(<RouteHarness />);
+
+    await user.click(screen.getByRole("button", { name: "Load episode" }));
+
+    const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
+    setAudioMetrics(audio, { duration: 120, currentTime: 75, bufferedEnd: 100 });
+    fireEvent(audio, new Event("durationchange"));
+    fireEvent(audio, new Event("timeupdate"));
+    fireEvent(audio, new Event("progress"));
+
+    expect(screen.getByText("Chapter 2: Deep Dive")).toBeVisible();
+    expect(screen.getByTitle("Intro")).toBeVisible();
+    expect(screen.getByTitle("Deep Dive")).toBeVisible();
   });
 });

@@ -476,3 +476,41 @@ cd apps/web && npm test -- \
 - import currently performs one provider lookup and one transaction per RSS outline; at the 200-outline cap this is acceptable but may require batching/caching optimization if limits are increased later.
 - export currently emits feed/title/website only (no extended OPML metadata fields beyond acceptance scope); some third-party importers may ignore or expect additional optional attributes.
 - provider identity collisions (same provider podcast id mapped to different feed urls) are handled defensively, but this remains a rare edge case that may need dedicated reconciliation tooling if observed in production.
+
+## s7 pr-09 podcast chapter support cutover addendum (2026-03-22)
+
+### summary
+- added first-class podcast chapter persistence with migration `0032` (`podcast_episode_chapters`) including ordering, source constraints, and temporal integrity checks.
+- implemented rss chapter extraction during subscription sync for both Podcasting 2.0 JSON (`<podcast:chapters>`) and Podlove Simple Chapters (`<psc:chapters>`), with normalization, deterministic ordering, and idempotent upsert/delete semantics.
+- extended backend media contracts so `GET /media/{id}` and podcast episode list hydration surface `chapters[]` consistently through `MediaOut`.
+- cut frontend player/transcript experiences over to chapter-aware rendering: global footer now shows active chapter + scrubber tick marks; transcript pane now renders chapter list, chapter click seek, active chapter highlighting, and inline chapter dividers.
+- added red/green coverage for migration schema contract, sync extraction + API exposure, transcript pane chapter UX, and footer chapter metadata/ticks.
+
+### decisions
+- **hard cutover, no fallback parser path:** chapter support is now explicit in schema/contracts; no compatibility shim to legacy ad hoc chapter handling was introduced.
+- **feed-source precedence:** when Podcasting 2.0 chapter references exist and parse successfully, they win; Podlove chapters are used as fallback only when Podcasting 2.0 chapter payload is absent/unusable.
+- **idempotent replace semantics per media:** sync writes normalize chapter rows, upsert by `(media_id, chapter_idx)`, and remove stale trailing rows to prevent drift after feed edits.
+- **single hydration path for chapter payloads:** chapter projection is batched in media service and reused by both list and detail media responses to avoid endpoint-specific divergence.
+- **player state carries chapters as track metadata:** chapter markers/active chapter resolution are driven from normalized `GlobalPlayerTrack.chapters`, keeping footer and pane behavior consistent.
+
+### how to test
+```bash
+# migrate schema (includes 0032)
+make migrate-test
+
+# backend chapter contracts
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_sync_extracts_podcasting20_chapters_and_exposes_episode_and_media_contract \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_sync_extracts_podlove_chapters_when_podcasting20_is_absent \
+  tests/test_migrations.py::TestPodcastEpisodeChapterMigration::test_head_contains_podcast_episode_chapters_table_contract
+
+# frontend chapter UX contracts
+cd apps/web && npm run test -- \
+  "src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx" \
+  "src/__tests__/components/GlobalPlayerFooter.test.tsx"
+```
+
+### risks
+- chapter URL fetch for Podcasting 2.0 JSON is synchronous per selected episode during sync; large subscriptions with many chapter manifests may increase sync latency.
+- chapter image/link payloads are normalized but treated as external content; downstream clients still need conservative rendering/sandbox posture for untrusted feeds.
+- active chapter highlighting in the transcript pane depends on current player time updates; very low-frequency time updates can make highlight transitions appear slightly delayed.

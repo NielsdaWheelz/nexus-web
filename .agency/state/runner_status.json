@@ -1,14 +1,13 @@
 {
   "schema_version": "1.0",
   "status": "ready_for_review",
-  "updated_at": "2026-03-22T16:58:45Z",
-  "summary": "Completed S7 PR-08 OPML import/export cutover: backend import/export endpoints with feed-identity normalization and validation, BFF proxy routes, subscriptions UI import modal + export action, and acceptance-driven test coverage.",
+  "updated_at": "2026-03-22T18:01:44Z",
+  "summary": "Completed S7 PR-09 podcast chapter support cutover: added chapter persistence/migration, RSS chapter extraction + idempotent sync persistence, chapter API hydration, and chapter-aware player/transcript UI with focused green tests.",
   "questions": [],
   "blockers": [],
-  "how_to_test": "cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q tests/test_podcasts.py::TestPodcastOpmlImportExport && cd ../apps/web && npm test -- \"src/app/api/podcasts/podcasts-routes.test.ts\" \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\" && cd ../python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q tests/test_podcasts.py",
+  "how_to_test": "make migrate-test && cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q tests/test_podcasts.py::TestPodcastApiSurface::test_sync_extracts_podcasting20_chapters_and_exposes_episode_and_media_contract tests/test_podcasts.py::TestPodcastApiSurface::test_sync_extracts_podlove_chapters_when_podcasting20_is_absent tests/test_migrations.py::TestPodcastEpisodeChapterMigration::test_head_contains_podcast_episode_chapters_table_contract && cd ../apps/web && npm run test -- \"src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx\" \"src/__tests__/components/GlobalPlayerFooter.test.tsx\"",
   "risks": [
-    "OPML import executes provider lookup and transactional writes per outline; throughput is bounded by the 200-outline cap but may need batching if limits grow.",
-    "Export emits the required core OPML fields (xmlUrl/text/htmlUrl) but omits optional app-specific metadata some importers may support.",
-    "Provider identity collisions across feed URLs are handled defensively but remain a rare edge case that may need reconciliation tooling if seen in production."
+    "Podcasting 2.0 chapter manifest fetching is synchronous and can add subscription sync latency for feeds with many chapter manifests.",
+    "External chapter image/link data is normalized but still untrusted feed content; presentation surfaces should remain defensive."
   ]
 }

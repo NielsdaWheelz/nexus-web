@@ -56,6 +56,17 @@ class MediaListeningStateOut(BaseModel):
     is_completed: bool = False
 
 
+class PodcastEpisodeChapterOut(BaseModel):
+    """Podcast episode chapter marker payload."""
+
+    chapter_idx: int = Field(ge=0)
+    title: str
+    t_start_ms: int = Field(ge=0)
+    t_end_ms: int | None = Field(default=None, ge=0)
+    url: str | None = None
+    image_url: str | None = None
+
+
 class MediaAuthorOut(BaseModel):
     """Response schema for a media author."""
 
@@ -81,6 +92,7 @@ class MediaOut(BaseModel):
     playback_source: PlaybackSourceOut | None = None
     listening_state: MediaListeningStateOut | None = None
     episode_state: Literal["unplayed", "in_progress", "played"] | None = None
+    chapters: list[PodcastEpisodeChapterOut] = []
     capabilities: CapabilitiesOut
     authors: list[MediaAuthorOut] = []
     published_date: str | None = None
