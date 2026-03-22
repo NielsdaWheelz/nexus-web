@@ -17,6 +17,7 @@ import SearchPage from "@/app/(authenticated)/search/page";
 import SettingsPage from "@/app/(authenticated)/settings/page";
 import SettingsReaderPage from "@/app/(authenticated)/settings/reader/page";
 import SettingsKeysPage from "@/app/(authenticated)/settings/keys/page";
+import SettingsIdentitiesPage from "@/app/(authenticated)/settings/identities/page";
 
 type RouteParamValue = string;
 type RouteParams = Record<string, RouteParamValue>;
@@ -38,7 +39,8 @@ export type PaneRouteId =
   | "search"
   | "settings"
   | "settingsReader"
-  | "settingsKeys";
+  | "settingsKeys"
+  | "settingsIdentities";
 
 interface PaneRouteDefinition {
   id: PaneRouteId;
@@ -169,6 +171,12 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     pattern: ["settings", "keys"],
     staticTitle: "API keys",
     render: () => <SettingsKeysPage />,
+  },
+  {
+    id: "settingsIdentities",
+    pattern: ["settings", "identities"],
+    staticTitle: "Linked identities",
+    render: () => <SettingsIdentitiesPage />,
   },
 ];
 
