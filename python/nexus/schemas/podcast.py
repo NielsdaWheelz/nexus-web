@@ -25,11 +25,13 @@ class PodcastSubscribeRequest(BaseModel):
     website_url: str | None = None
     image_url: str | None = None
     description: str | None = None
+    auto_queue: bool = False
 
 
 class PodcastSubscribeOut(BaseModel):
     podcast_id: UUID
     subscription_created: bool
+    auto_queue: bool
     sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
     sync_enqueued: bool
     sync_error_code: str | None = None
@@ -58,6 +60,7 @@ class PodcastSubscriptionStatusOut(BaseModel):
     podcast_id: UUID
     status: Literal["active", "unsubscribed"]
     unsubscribe_mode: Literal[1, 2, 3] = 1
+    auto_queue: bool = False
     sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
     sync_error_code: str | None = None
     sync_error_message: str | None = None
@@ -86,6 +89,7 @@ class PodcastSubscriptionListItemOut(BaseModel):
     podcast_id: UUID
     status: Literal["active", "unsubscribed"]
     unsubscribe_mode: Literal[1, 2, 3] = 1
+    auto_queue: bool = False
     sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
     sync_error_code: str | None = None
     sync_error_message: str | None = None

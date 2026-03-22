@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import PageLayout from "@/components/ui/PageLayout";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
@@ -207,6 +208,7 @@ function toTranscriptForecastState(
 
 export default function PodcastDetailPage() {
   const podcastId = usePaneParam("podcastId");
+  const { addToQueue, queueItems } = useGlobalPlayer();
   const [detail, setDetail] = useState<PodcastDetailResponse | null>(null);
   const [episodes, setEpisodes] = useState<PodcastEpisodeMedia[]>([]);
   const [hasMoreEpisodes, setHasMoreEpisodes] = useState(false);
@@ -706,6 +708,9 @@ export default function PodcastDetailPage() {
   );
 
   const activeEpisodeCount = useMemo(() => episodes.length, [episodes]);
+  const queueMediaIds = useMemo(() => {
+    return new Set(queueItems.map((item) => item.media_id));
+  }, [queueItems]);
 
   if (!podcastId) {
     return (
@@ -818,6 +823,7 @@ export default function PodcastDetailPage() {
               const actionLabel = inLibrary
                 ? `Remove ${episode.title} from library`
                 : `Add ${episode.title} to library`;
+              const inQueue = queueMediaIds.has(episode.id);
               return (
                 <AppListItem
                   key={episode.id}
@@ -827,6 +833,27 @@ export default function PodcastDetailPage() {
                   meta={`${episode.processing_status} · ${formatEpisodeTranscriptMeta(episode)}`}
                   actions={
                     <div className={styles.episodeActions}>
+                      <button
+                        type="button"
+                        className={styles.queueButton}
+                        aria-label={`Play next for ${episode.title}`}
+                        onClick={() => {
+                          void addToQueue(episode.id, "next");
+                        }}
+                      >
+                        Play next
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.queueButton}
+                        aria-label={`Add ${episode.title} to queue`}
+                        onClick={() => {
+                          void addToQueue(episode.id, "last");
+                        }}
+                      >
+                        Add to queue
+                      </button>
+                      {inQueue && <span className={styles.queueBadge}>In Queue</span>}
                       {canRequestTranscript ? (
                         <>
                           <label className={styles.reasonLabel}>

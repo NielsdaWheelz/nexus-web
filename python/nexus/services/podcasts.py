@@ -47,6 +47,7 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionSyncRefreshOut,
 )
 from nexus.services.search import visible_media_ids_cte_sql
+from nexus.services import playback_queue as playback_queue_service
 from nexus.services.semantic_chunks import (
     chunk_transcript_segments,
     current_transcript_embedding_model,
@@ -314,7 +315,13 @@ def subscribe_to_podcast(
 
     with transaction(db):
         podcast_id = _upsert_podcast(db, normalized_body, now=now)
-        subscription_created = _upsert_subscription(db, viewer_id, podcast_id, now=now)
+        subscription_created = _upsert_subscription(
+            db,
+            viewer_id,
+            podcast_id,
+            now=now,
+            auto_queue=body.auto_queue,
+        )
         sync_enqueued = _enqueue_podcast_subscription_sync(user_id=viewer_id, podcast_id=podcast_id)
         snapshot = _get_subscription_sync_snapshot(db, viewer_id, podcast_id)
         if snapshot is None:
@@ -323,6 +330,7 @@ def subscribe_to_podcast(
     return PodcastSubscribeOut(
         podcast_id=podcast_id,
         subscription_created=subscription_created,
+        auto_queue=bool(snapshot["auto_queue"]),
         sync_status=snapshot["sync_status"],
         sync_enqueued=sync_enqueued,
         sync_error_code=snapshot["sync_error_code"],
@@ -346,6 +354,7 @@ def get_subscription_status(
                 podcast_id,
                 status,
                 unsubscribe_mode,
+                auto_queue,
                 sync_status,
                 sync_error_code,
                 sync_error_message,
@@ -368,14 +377,15 @@ def get_subscription_status(
         podcast_id=row[1],
         status=row[2],
         unsubscribe_mode=row[3],
-        sync_status=row[4],
-        sync_error_code=row[5],
-        sync_error_message=row[6],
-        sync_attempts=row[7],
-        sync_started_at=row[8],
-        sync_completed_at=row[9],
-        last_synced_at=row[10],
-        updated_at=row[11],
+        auto_queue=bool(row[4]),
+        sync_status=row[5],
+        sync_error_code=row[6],
+        sync_error_message=row[7],
+        sync_attempts=row[8],
+        sync_started_at=row[9],
+        sync_completed_at=row[10],
+        last_synced_at=row[11],
+        updated_at=row[12],
     )
 
 
@@ -414,6 +424,7 @@ def list_subscriptions(
                 ps.podcast_id,
                 ps.status,
                 ps.unsubscribe_mode,
+                ps.auto_queue,
                 ps.sync_status,
                 ps.sync_error_code,
                 ps.sync_error_message,
@@ -446,20 +457,21 @@ def list_subscriptions(
     ).fetchall()
     out: list[PodcastSubscriptionListItemOut] = []
     for row in rows:
-        podcast = _podcast_list_item_from_row(row[11:])
+        podcast = _podcast_list_item_from_row(row[12:])
         out.append(
             PodcastSubscriptionListItemOut(
                 podcast_id=row[0],
                 status=row[1],
                 unsubscribe_mode=row[2],
-                sync_status=row[3],
-                sync_error_code=row[4],
-                sync_error_message=row[5],
-                sync_attempts=row[6],
-                sync_started_at=row[7],
-                sync_completed_at=row[8],
-                last_synced_at=row[9],
-                updated_at=row[10],
+                auto_queue=bool(row[3]),
+                sync_status=row[4],
+                sync_error_code=row[5],
+                sync_error_message=row[6],
+                sync_attempts=row[7],
+                sync_started_at=row[8],
+                sync_completed_at=row[9],
+                last_synced_at=row[10],
+                updated_at=row[11],
                 podcast=podcast,
             )
         )
@@ -479,6 +491,7 @@ def get_podcast_detail_for_viewer(
                 ps.podcast_id,
                 ps.status,
                 ps.unsubscribe_mode,
+                ps.auto_queue,
                 ps.sync_status,
                 ps.sync_error_code,
                 ps.sync_error_message,
@@ -515,16 +528,17 @@ def get_podcast_detail_for_viewer(
         podcast_id=row[1],
         status=row[2],
         unsubscribe_mode=row[3],
-        sync_status=row[4],
-        sync_error_code=row[5],
-        sync_error_message=row[6],
-        sync_attempts=row[7],
-        sync_started_at=row[8],
-        sync_completed_at=row[9],
-        last_synced_at=row[10],
-        updated_at=row[11],
+        auto_queue=bool(row[4]),
+        sync_status=row[5],
+        sync_error_code=row[6],
+        sync_error_message=row[7],
+        sync_attempts=row[8],
+        sync_started_at=row[9],
+        sync_completed_at=row[10],
+        last_synced_at=row[11],
+        updated_at=row[12],
     )
-    podcast = _podcast_list_item_from_row(row[12:])
+    podcast = _podcast_list_item_from_row(row[13:])
     return PodcastDetailOut(podcast=podcast, subscription=subscription)
 
 
@@ -1935,6 +1949,7 @@ def _sync_subscription_ingest(
 ) -> tuple[int, int]:
     ingested_episode_count = 0
     reused_episode_count = 0
+    ingested_media_ids: list[UUID] = []
 
     new_episodes: list[dict[str, Any]] = []
     for episode in selected_episodes:
@@ -2059,6 +2074,14 @@ def _sync_subscription_ingest(
 
         _ensure_in_default_library(db, viewer_id, media_id)
         ingested_episode_count += 1
+        ingested_media_ids.append(media_id)
+
+    playback_queue_service.append_subscription_media_if_enabled(
+        db,
+        viewer_id=viewer_id,
+        podcast_id=podcast_id,
+        media_ids=ingested_media_ids,
+    )
 
     return ingested_episode_count, reused_episode_count
 
@@ -3047,7 +3070,7 @@ def _get_subscription_sync_snapshot(
     row = db.execute(
         text(
             """
-            SELECT sync_status, sync_error_code, sync_error_message, sync_attempts, last_synced_at
+            SELECT auto_queue, sync_status, sync_error_code, sync_error_message, sync_attempts, last_synced_at
             FROM podcast_subscriptions
             WHERE user_id = :user_id AND podcast_id = :podcast_id
             """
@@ -3057,11 +3080,12 @@ def _get_subscription_sync_snapshot(
     if row is None:
         return None
     return {
-        "sync_status": row[0],
-        "sync_error_code": row[1],
-        "sync_error_message": row[2],
-        "sync_attempts": int(row[3] or 0),
-        "last_synced_at": row[4],
+        "auto_queue": bool(row[0]),
+        "sync_status": row[1],
+        "sync_error_code": row[2],
+        "sync_error_message": row[3],
+        "sync_attempts": int(row[4] or 0),
+        "last_synced_at": row[5],
     }
 
 
@@ -3247,7 +3271,14 @@ def _upsert_podcast(db: Session, body: PodcastSubscribeRequest, *, now: datetime
     return row[0]
 
 
-def _upsert_subscription(db: Session, user_id: UUID, podcast_id: UUID, *, now: datetime) -> bool:
+def _upsert_subscription(
+    db: Session,
+    user_id: UUID,
+    podcast_id: UUID,
+    *,
+    now: datetime,
+    auto_queue: bool,
+) -> bool:
     existing = db.execute(
         text(
             """
@@ -3266,6 +3297,7 @@ def _upsert_subscription(db: Session, user_id: UUID, podcast_id: UUID, *, now: d
                 podcast_id,
                 status,
                 unsubscribe_mode,
+                auto_queue,
                 sync_status,
                 created_at,
                 updated_at
@@ -3275,6 +3307,7 @@ def _upsert_subscription(db: Session, user_id: UUID, podcast_id: UUID, *, now: d
                 :podcast_id,
                 'active',
                 1,
+                :auto_queue,
                 'pending',
                 :created_at,
                 :updated_at
@@ -3283,6 +3316,7 @@ def _upsert_subscription(db: Session, user_id: UUID, podcast_id: UUID, *, now: d
             DO UPDATE SET
                 status = 'active',
                 unsubscribe_mode = 1,
+                auto_queue = EXCLUDED.auto_queue,
                 sync_status = 'pending',
                 sync_error_code = NULL,
                 sync_error_message = NULL,
@@ -3294,6 +3328,7 @@ def _upsert_subscription(db: Session, user_id: UUID, podcast_id: UUID, *, now: d
         {
             "user_id": user_id,
             "podcast_id": podcast_id,
+            "auto_queue": auto_queue,
             "created_at": now,
             "updated_at": now,
         },

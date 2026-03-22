@@ -1,13 +1,14 @@
 {
   "schema_version": "1.0",
   "status": "ready_for_review",
-  "updated_at": "2026-03-22T06:49:15Z",
-  "summary": "Completed S7 PR-05 strict cutover: listening-state persistence backend APIs/migration, media detail hydration, global player controls + persistence semantics, and resume UX wiring with green frontend/backend tests.",
+  "updated_at": "2026-03-22T15:36:50Z",
+  "summary": "Completed dnd-kit cutover for playback queue and libraries with a shared sortable component, persisted library ordering migration, and validated backend/frontend reorder flows.",
   "questions": [],
   "blockers": [],
-  "how_to_test": "cd apps/web && npm run typecheck && npm test -- \"src/app/api/media/media-routes.test.ts\" \"src/__tests__/components/GlobalPlayerFooter.test.tsx\" \"src/__tests__/components/GlobalPlayerPersistence.test.tsx\" \"src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx\" \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\" && cd ../python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q tests/test_media.py::TestGetMedia::test_get_media_success tests/test_media.py::TestMediaListeningState::test_get_listening_state_returns_defaults_when_absent tests/test_media.py::TestMediaListeningState::test_put_then_get_listening_state_upserts_and_preserves_optional_fields tests/test_media.py::TestMediaListeningState::test_get_media_hydrates_listening_state_when_present tests/test_media.py::TestMediaListeningState::test_listening_state_endpoints_mask_unreadable_media && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations uv run pytest -q tests/test_migrations.py::TestPodcastListeningStateMigration::test_head_contains_podcast_listening_state_table_contract && uv run ruff check nexus/db/models.py nexus/schemas/media.py nexus/services/media.py nexus/api/routes/media.py tests/test_media.py tests/test_migrations.py",
+  "how_to_test": "make migrate-test && cd apps/web && npm run typecheck && npm test -- \"src/app/api/playback/playback-routes.test.ts\" \"src/app/api/libraries/libraries-media-routes.test.ts\" \"src/__tests__/components/GlobalPlayerFooter.test.tsx\" \"src/__tests__/components/GlobalPlayerQueue.test.tsx\" \"src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx\" \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\" && cd ../python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q tests/test_playback_queue.py tests/test_libraries.py::TestReorderLibraryMedia tests/test_libraries.py::TestListLibraryMedia::test_list_media_ordering && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations uv run pytest -q tests/test_migrations.py::TestPlaybackQueueMigration::test_head_contains_playback_queue_table_and_auto_queue_flag tests/test_migrations.py::TestLibraryMediaOrderingMigration::test_head_contains_library_media_position_contract",
   "risks": [
-    "beforeunload keepalive writes are best-effort and can still miss the last state update on abrupt tab/app termination.",
-    "listening-state persistence currently performs direct per-event upserts; heavy playback concurrency may need write coalescing in a later hardening pass."
+    "library page drag interactions do not yet have dedicated frontend component tests; behavior is validated by backend contract tests plus route proxy tests.",
+    "internal/non-route library_media writers can temporarily produce sparse positions until normalization paths run.",
+    "shared SortableList is currently vertical-only and will need extension for future non-vertical drag surfaces."
   ]
 }

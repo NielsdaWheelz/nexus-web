@@ -182,6 +182,9 @@ class User(Base):
     memberships: Mapped[list["Membership"]] = relationship(
         "Membership", back_populates="user", cascade="all, delete-orphan"
     )
+    playback_queue_items: Mapped[list["PlaybackQueueItem"]] = relationship(
+        "PlaybackQueueItem", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Library(Base):
@@ -392,6 +395,11 @@ class Media(Base):
         back_populates="media",
         cascade="all, delete-orphan",
     )
+    playback_queue_items: Mapped[list["PlaybackQueueItem"]] = relationship(
+        "PlaybackQueueItem",
+        back_populates="media",
+        cascade="all, delete-orphan",
+    )
     podcast_transcription_job: Mapped["PodcastTranscriptionJob | None"] = relationship(
         "PodcastTranscriptionJob",
         back_populates="media",
@@ -552,6 +560,12 @@ class LibraryMedia(Base):
         server_default=text("now()"),
         nullable=False,
     )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+    __table_args__ = (
+        CheckConstraint("position >= 0", name="ck_library_media_position_non_negative"),
+        Index("ix_library_media_library_position", "library_id", "position"),
+    )
 
     # Relationships
     library: Mapped["Library"] = relationship("Library", back_populates="library_media")
@@ -623,6 +637,7 @@ class PodcastSubscription(Base):
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
     unsubscribe_mode: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    auto_queue: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     sync_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     sync_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -851,6 +866,51 @@ class PodcastListeningState(Base):
 
     media: Mapped["Media"] = relationship("Media", back_populates="podcast_listening_states")
     user: Mapped["User"] = relationship("User")
+
+
+class PlaybackQueueItem(Base):
+    """Per-user ordered playback queue item."""
+
+    __tablename__ = "playback_queue_items"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    added_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "media_id", name="uq_playback_queue_items_user_media"),
+        CheckConstraint(
+            "position >= 0",
+            name="ck_playback_queue_items_position_non_negative",
+        ),
+        CheckConstraint(
+            "source IN ('manual', 'auto_subscription', 'auto_playlist')",
+            name="ck_playback_queue_items_source",
+        ),
+        Index("ix_playback_queue_items_user_position", "user_id", "position"),
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="playback_queue_items")
+    media: Mapped["Media"] = relationship("Media", back_populates="playback_queue_items")
 
 
 class PodcastTranscriptionJob(Base):

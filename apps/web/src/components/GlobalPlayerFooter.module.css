@@ -36,7 +36,7 @@
 
 .controlsRow {
   display: grid;
-  grid-template-columns: auto auto auto minmax(180px, 1fr) auto auto auto;
+  grid-template-columns: auto auto auto auto auto minmax(180px, 1fr) auto auto auto auto;
   align-items: center;
   gap: var(--space-2);
   outline: none;
@@ -60,6 +60,11 @@
 
 .transportButton:hover {
   border-color: var(--color-border-strong);
+}
+
+.transportButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .seekArea {
@@ -160,6 +165,31 @@
   accent-color: var(--color-accent, #4f7cff);
 }
 
+.queueButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.queueBadge {
+  min-width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--color-accent, #4f7cff);
+  color: white;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  padding: 0 4px;
+}
+
 .hiddenAudio {
   width: 1px;
   height: 1px;
@@ -167,6 +197,155 @@
   pointer-events: none;
   position: absolute;
   left: -9999px;
+}
+
+.queueOverlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, black 45%, transparent);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 60;
+}
+
+.queuePanel {
+  width: min(460px, 92vw);
+  height: 100%;
+  background: var(--color-bg-panel);
+  border-left: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+  gap: var(--space-3);
+}
+
+.queueHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.queueTitle {
+  margin: 0;
+  font-size: var(--font-size-md);
+}
+
+.queueCloseButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.queueEmpty {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.queueList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow-y: auto;
+}
+
+.queueListItem {
+  list-style: none;
+}
+
+.queueListItemInner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: var(--space-2);
+  background: var(--color-bg);
+}
+
+.queueListItemInner[data-current="true"] {
+  border-color: var(--color-accent, #4f7cff);
+}
+
+.queueListItem[data-dragging="true"] .queueListItemInner {
+  box-shadow: 0 8px 22px color-mix(in srgb, #000 24%, transparent);
+}
+
+.queueDragHandle {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text-muted);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: grab;
+  touch-action: none;
+}
+
+.queueDragHandle:active {
+  cursor: grabbing;
+}
+
+.queueItemMain {
+  border: none;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  gap: 2px;
+  cursor: pointer;
+  padding: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.queueItemTitle {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queueItemMeta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.queueItemRemoveButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.queueFooter {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.queueClearButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
 }
 
 @media (max-width: 900px) {
@@ -179,7 +358,7 @@
   }
 
   .controlsRow {
-    grid-template-columns: auto auto auto minmax(120px, 1fr) auto auto;
+    grid-template-columns: auto auto auto auto auto minmax(120px, 1fr) auto auto auto;
     gap: 6px;
   }
 
@@ -193,5 +372,9 @@
 
   .speedControl {
     justify-self: end;
+  }
+
+  .queuePanel {
+    width: 100%;
   }
 }

@@ -194,6 +194,25 @@
   cursor: pointer;
 }
 
+.podcastPlaybackActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.queueBadge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: var(--font-size-xs);
+}
+
 .playbackFallback {
   display: flex;
   align-items: center;

@@ -753,6 +753,115 @@ class TestPodcastSubscriptionSyncLifecycle:
         assert status_row[0] == "complete"
         assert [row[0] for row in media_rows] == ["Episode Newer", "Episode Newest"]
 
+    def test_sync_job_auto_queue_opt_in_appends_new_episodes_to_playback_queue(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+
+        opted_in_user = create_test_user_id()
+        opted_out_user = create_test_user_id()
+        _bootstrap_user(auth_client, opted_in_user)
+        _bootstrap_user(auth_client, opted_out_user)
+        for user_id in (opted_in_user, opted_out_user):
+            _set_plan(
+                auth_client,
+                user_id,
+                user_id,
+                plan_tier="free",
+                daily_transcription_minutes=500,
+                initial_episode_window=2,
+            )
+
+        provider_podcast_id = f"auto-queue-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Auto Queue Podcast")
+        episodes = [
+            {
+                "provider_episode_id": "ep-1",
+                "guid": "guid-1",
+                "title": "Episode One",
+                "audio_url": "https://cdn.example.com/one.mp3",
+                "published_at": "2026-02-01T00:00:00Z",
+                "duration_seconds": 60,
+                "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 1000, "text": "one"}],
+            },
+            {
+                "provider_episode_id": "ep-2",
+                "guid": "guid-2",
+                "title": "Episode Two",
+                "audio_url": "https://cdn.example.com/two.mp3",
+                "published_at": "2026-03-01T00:00:00Z",
+                "duration_seconds": 65,
+                "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 1000, "text": "two"}],
+            },
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: episodes},
+        )
+
+        opted_in_subscribe = auth_client.post(
+            "/podcasts/subscriptions",
+            json={**payload, "auto_queue": True},
+            headers=auth_headers(opted_in_user),
+        )
+        assert opted_in_subscribe.status_code == 200, (
+            f"Expected 200 subscribe for auto_queue opt-in, got {opted_in_subscribe.status_code}: "
+            f"{opted_in_subscribe.text}"
+        )
+        opted_in_podcast_id = UUID(opted_in_subscribe.json()["data"]["podcast_id"])
+
+        opted_out_subscribe = auth_client.post(
+            "/podcasts/subscriptions",
+            json=payload,
+            headers=auth_headers(opted_out_user),
+        )
+        assert opted_out_subscribe.status_code == 200
+        opted_out_podcast_id = UUID(opted_out_subscribe.json()["data"]["podcast_id"])
+
+        with direct_db.session() as session:
+            run_podcast_subscription_sync_now(
+                session,
+                user_id=opted_in_user,
+                podcast_id=opted_in_podcast_id,
+            )
+            run_podcast_subscription_sync_now(
+                session,
+                user_id=opted_out_user,
+                podcast_id=opted_out_podcast_id,
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            opted_in_rows = session.execute(
+                text(
+                    """
+                    SELECT source
+                    FROM playback_queue_items
+                    WHERE user_id = :user_id
+                    ORDER BY position ASC
+                    """
+                ),
+                {"user_id": opted_in_user},
+            ).fetchall()
+            opted_out_rows = session.execute(
+                text(
+                    """
+                    SELECT source
+                    FROM playback_queue_items
+                    WHERE user_id = :user_id
+                    ORDER BY position ASC
+                    """
+                ),
+                {"user_id": opted_out_user},
+            ).fetchall()
+
+        assert len(opted_in_rows) == 2, (
+            "auto_queue opt-in subscriptions must append newly ingested episodes to playback queue"
+        )
+        assert {row[0] for row in opted_in_rows} == {"auto_subscription"}
+        assert opted_out_rows == [], "default subscription should not auto-append queue rows"
+
     def test_sync_job_marks_source_limited_when_provider_cap_hit(
         self, auth_client, monkeypatch, direct_db
     ):

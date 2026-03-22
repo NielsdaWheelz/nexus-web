@@ -294,3 +294,98 @@ cd python && uv run ruff check \
 ### risks
 - `beforeunload` persistence relies on browser keepalive semantics; mobile/browser-specific lifecycle behavior can still drop the very last write despite periodic sync.
 - current listener-state writes are direct per-event upserts; high-concurrency heavy listeners may eventually require write coalescing or queue-based buffering.
+
+## dnd-kit queue + libraries ordering addendum (2026-03-22)
+
+### summary
+- replaced native html drag/drop in the global queue panel with `@dnd-kit` sortable interactions.
+- introduced a shared reusable sortable primitive (`SortableList`) and used it in both playback queue and library detail media rows.
+- added durable ordering for library media via new `library_media.position` schema + migration `0030`.
+- added backend reorder contract `PUT /libraries/{library_id}/media/order` with full-set validation and admin-only enforcement.
+- updated library list semantics from recency-only (`created_at DESC`) to persisted position order with deterministic tie-breakers.
+- added bff proxy route for library reorder and coverage for queue/library route proxying + backend reorder behavior.
+
+### decisions
+- **single reusable dnd layer**: queue and libraries use one shared sortable component to avoid divergence in drag behavior.
+- **persisted library order, not client-only order**: library drag-drop writes to backend order endpoint and survives refresh/session/device.
+- **full-set reorder payload**: library reorder uses complete `media_ids[]` replacement to keep server validation simple and atomic.
+- **admin-only library ordering**: reorder writes are restricted to admin members to match existing library media mutation policy.
+- **append-first ordering model**: newly added library media gets the next position; reorder updates are normalized server-side.
+
+### how to test
+```bash
+# schema
+make migrate-test
+
+# frontend
+cd apps/web && npm run typecheck
+cd apps/web && npm test -- \
+  "src/app/api/playback/playback-routes.test.ts" \
+  "src/app/api/libraries/libraries-media-routes.test.ts" \
+  "src/__tests__/components/GlobalPlayerFooter.test.tsx" \
+  "src/__tests__/components/GlobalPlayerQueue.test.tsx" \
+  "src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx" \
+  "src/app/(authenticated)/podcasts/podcasts-flows.test.tsx"
+
+# backend
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q \
+  tests/test_playback_queue.py \
+  tests/test_libraries.py::TestReorderLibraryMedia \
+  tests/test_libraries.py::TestListLibraryMedia::test_list_media_ordering
+
+# migration contracts
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations uv run pytest -q \
+  tests/test_migrations.py::TestPlaybackQueueMigration::test_head_contains_playback_queue_table_and_auto_queue_flag \
+  tests/test_migrations.py::TestLibraryMediaOrderingMigration::test_head_contains_library_media_position_contract
+```
+
+### risks
+- library ordering currently has no dedicated ui component tests for drag gesture interactions on the library detail page; behavior is covered indirectly via backend reorder contracts and route tests.
+- library order uses explicit position writes plus periodic normalization, but non-route internal writers can still create temporary position gaps before normalization.
+- `SortableList` currently targets vertical list strategy only; if grid/horizontal drag surfaces are added later, the shared primitive must be extended carefully.
+
+## s7 pr-06 playback queue cutover addendum (2026-03-22)
+
+### summary
+- added a first-class per-user playback queue backend contract: `playback_queue_items` schema + service-layer operations for list/add/remove/reorder/clear/next, with strict viewer scoping and duplicate-elision semantics.
+- exposed full queue API surface to web through dedicated node-runtime bff proxies under `/api/playback/queue*`.
+- integrated queue-aware transport behavior into the global player: next/previous controls, >3s previous-restart threshold, ended-event auto-advance, queue hydration, and queue state in player context.
+- added queue interaction surfaces in media and podcast detail ux: `Play next` and `Add to queue` actions, in-queue badge feedback, and a queue panel with remove/clear/reorder affordances.
+- extended podcast subscription sync with `auto_queue` opt-in so newly ingested episodes can be appended automatically for opted-in subscriptions only.
+- delivered red/green coverage across backend queue API + migration contract + auto-queue sync behavior, plus frontend player/queue behaviors and bff wiring.
+
+### decisions
+- **strict cutover, no compatibility shim**: queue behavior is server-owned and authoritative (`playback_queue_items`), with no fallback to client-only queue state.
+- **single shared player state**: queue and active track are managed in `GlobalPlayerProvider`, so page-level actions update one source of truth used by footer controls and panes.
+- **deterministic next/previous semantics**: `next` resolves from ordered server queue by current media id; `previous` restarts current track when playback has crossed 3 seconds, otherwise jumps to prior queue item.
+- **queue mutation safety over cleverness**: backend reindexing runs after each mutation and now flushes pending ORM inserts before SQL normalization to avoid duplicate-position drift.
+- **subscription auto-queue is explicit opt-in**: `auto_queue` defaults false and only opted-in active subscriptions append newly ingested episodes.
+
+### how to test
+```bash
+# apply schema (includes playback queue migration 0029)
+make migrate-test
+
+# frontend queue + player + podcast/media integration coverage
+cd apps/web && npm run typecheck
+cd apps/web && npm test -- \
+  "src/app/api/playback/playback-routes.test.ts" \
+  "src/__tests__/components/GlobalPlayerFooter.test.tsx" \
+  "src/__tests__/components/GlobalPlayerQueue.test.tsx" \
+  "src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx" \
+  "src/app/(authenticated)/podcasts/podcasts-flows.test.tsx"
+
+# backend queue + auto-queue sync behavior
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q \
+  tests/test_playback_queue.py \
+  tests/test_podcasts.py::TestPodcastSubscriptionSyncLifecycle::test_sync_job_auto_queue_opt_in_appends_new_episodes_to_playback_queue
+
+# migration contract assertion
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations uv run pytest -q \
+  tests/test_migrations.py::TestPlaybackQueueMigration::test_head_contains_playback_queue_table_and_auto_queue_flag
+```
+
+### risks
+- footer queue panel currently uses native html drag/drop ordering (not `@dnd-kit` yet); accessibility and touch ergonomics are acceptable for now but not best-in-class for high-volume queue management.
+- queue actions in media/podcast rows are intentionally optimistic at interaction level but still silently recover on api failure; if stronger user feedback is required, explicit toast/error surfacing should be added in a follow-up.
+- auto-advance depends on `ended` firing from the active audio element; unusual stream failures that bypass `ended` will not advance automatically without additional error-event fallbacks.

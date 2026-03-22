@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import PodcastsPage from "./page";
 import PodcastSubscriptionsPage from "./subscriptions/page";
 import PodcastDetailPage from "./[podcastId]/page";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 
 const mockUsePaneParam = vi.fn<(param: string) => string | null>();
 const mockPush = vi.fn<(href: string) => void>();
@@ -608,7 +609,11 @@ describe("podcasts product flows", () => {
         throw new Error(`Unexpected fetch call in test: ${url.pathname}${url.search}`);
       });
 
-    render(<PodcastDetailPage />);
+    render(
+      <GlobalPlayerProvider>
+        <PodcastDetailPage />
+      </GlobalPlayerProvider>
+    );
 
     expect(await screen.findByText("Episode 0")).toBeInTheDocument();
     expect(await screen.findByText(/E_SYNC_PROVIDER_TIMEOUT/)).toBeInTheDocument();
@@ -697,6 +702,112 @@ describe("podcasts product flows", () => {
         })
       ).toBe(true);
       expect(mediaZeroRefreshCalls).toBeGreaterThan(1);
+    });
+  });
+
+  it("shows play-next/add-to-queue controls and swaps to in-queue badge", async () => {
+    const user = userEvent.setup();
+    mockUsePaneParam.mockImplementation((paramName) =>
+      paramName === "podcastId" ? "podcast-1" : null
+    );
+
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/podcasts/podcast-1") {
+          return jsonResponse({
+            data: {
+              podcast: {
+                id: "podcast-1",
+                provider: "podcast_index",
+                provider_podcast_id: "provider-1",
+                title: "Queue Podcast",
+                author: "Systems Team",
+                feed_url: "https://feeds.example.com/queue.xml",
+                website_url: null,
+                image_url: null,
+                description: "Queue podcast",
+                created_at: "2026-03-06T00:00:00Z",
+                updated_at: "2026-03-06T00:00:00Z",
+              },
+              subscription: {
+                user_id: "user-1",
+                podcast_id: "podcast-1",
+                status: "active",
+                unsubscribe_mode: 1,
+                sync_status: "complete",
+                sync_error_code: null,
+                sync_error_message: null,
+                sync_attempts: 1,
+                sync_started_at: null,
+                sync_completed_at: null,
+                last_synced_at: null,
+                updated_at: "2026-03-06T00:00:00Z",
+              },
+            },
+          });
+        }
+        if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+          return jsonResponse({ data: [buildEpisode(0)] });
+        }
+        if (url.pathname === "/api/me") {
+          return jsonResponse({
+            data: {
+              user_id: "user-1",
+              default_library_id: null,
+            },
+          });
+        }
+        if (url.pathname === "/api/playback/queue" && (init?.method ?? "GET") === "GET") {
+          return jsonResponse({ data: [] });
+        }
+        if (url.pathname === "/api/playback/queue/items" && init?.method === "POST") {
+          return jsonResponse({
+            data: [
+              {
+                item_id: "queue-item-0",
+                media_id: "media-0",
+                title: "Episode 0",
+                podcast_title: "Queue Podcast",
+                duration_seconds: 120,
+                stream_url: "https://cdn.example.com/e0.mp3",
+                source_url: "https://cdn.example.com/e0.mp3",
+                position: 0,
+                source: "manual",
+                added_at: "2026-03-06T00:00:00Z",
+                listening_state: null,
+              },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch call in test: ${url.pathname}${url.search}`);
+      });
+
+    render(
+      <GlobalPlayerProvider>
+        <PodcastDetailPage />
+      </GlobalPlayerProvider>
+    );
+
+    expect(await screen.findByText("Episode 0")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play next for Episode 0" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add Episode 0 to queue" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Add Episode 0 to queue" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("In Queue")).toBeInTheDocument();
+      expect(
+        fetchMock.mock.calls.some(([input, init]) => {
+          const url = new URL(String(input), "http://localhost");
+          if (url.pathname !== "/api/playback/queue/items" || init?.method !== "POST") {
+            return false;
+          }
+          const body = JSON.parse(String(init.body ?? "{}"));
+          return body.insert_position === "last" && body.media_ids?.includes("media-0");
+        })
+      ).toBe(true);
     });
   });
 
@@ -802,7 +913,11 @@ describe("podcasts product flows", () => {
         throw new Error(`Unexpected fetch call in test: ${url.pathname}${url.search}`);
       });
 
-    render(<PodcastDetailPage />);
+    render(
+      <GlobalPlayerProvider>
+        <PodcastDetailPage />
+      </GlobalPlayerProvider>
+    );
 
     expect(await screen.findByText("Budget Episode")).toBeInTheDocument();
 

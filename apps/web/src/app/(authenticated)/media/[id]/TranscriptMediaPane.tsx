@@ -172,7 +172,7 @@ export default function TranscriptMediaPane({
   onSegmentSelect,
   onContentClick,
 }: TranscriptMediaPaneProps) {
-  const { setTrack, seekToMs, play } = useGlobalPlayer();
+  const { setTrack, seekToMs, play, addToQueue, queueItems } = useGlobalPlayer();
   const [seekTargetMs, setSeekTargetMs] = useState<number | null>(null);
   const [playbackError, setPlaybackError] = useState(false);
   const resumeNoticeMediaIdRef = useRef<string | null>(null);
@@ -252,6 +252,7 @@ export default function TranscriptMediaPane({
     (transcriptRequestForecast ? !transcriptRequestForecast.fitsBudget : false);
   const isReadablePartialTranscript =
     canRead && (transcriptState === "partial" || transcriptCoverage === "partial");
+  const isInQueue = queueItems.some((item) => item.media_id === mediaId);
 
   const handleSegmentClick = (fragment: TranscriptFragment) => {
     onSegmentSelect(fragment);
@@ -275,13 +276,34 @@ export default function TranscriptMediaPane({
         ) : mediaKind === "podcast_episode" && playbackSource.kind === "external_audio" ? (
           <div className={styles.globalPlayerPrompt}>
             <p>Playback is controlled in the global player footer.</p>
-            <button
-              type="button"
-              className={styles.globalPlayerButton}
-              onClick={() => play()}
-            >
-              Play in footer
-            </button>
+            <div className={styles.podcastPlaybackActions}>
+              <button
+                type="button"
+                className={styles.globalPlayerButton}
+                onClick={() => play()}
+              >
+                Play in footer
+              </button>
+              <button
+                type="button"
+                className={styles.globalPlayerButton}
+                onClick={() => {
+                  void addToQueue(mediaId, "next");
+                }}
+              >
+                Play next
+              </button>
+              <button
+                type="button"
+                className={styles.globalPlayerButton}
+                onClick={() => {
+                  void addToQueue(mediaId, "last");
+                }}
+              >
+                Add to queue
+              </button>
+              {isInQueue && <span className={styles.queueBadge}>In Queue</span>}
+            </div>
           </div>
         ) : mediaKind === "video" && iframeSrc ? (
           <iframe

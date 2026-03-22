@@ -3657,3 +3657,129 @@ class TestPodcastListeningStateMigration:
 
         index_names = {row[0] for row in indexes}
         assert "ix_podcast_listening_states_media_id" in index_names
+
+
+class TestPlaybackQueueMigration:
+    """Schema assertions for playback queue table and subscription auto-queue toggle."""
+
+    def test_head_contains_playback_queue_table_and_auto_queue_flag(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            queue_columns = session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'playback_queue_items'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
+            queue_constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'playback_queue_items'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            queue_indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'playback_queue_items'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+            auto_queue_column = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_subscriptions'
+                      AND column_name = 'auto_queue'
+                    """
+                )
+            ).fetchone()
+
+        queue_column_names = {row[0] for row in queue_columns}
+        assert {
+            "id",
+            "user_id",
+            "media_id",
+            "position",
+            "added_at",
+            "source",
+        }.issubset(queue_column_names), (
+            "playback queue migration must provide durable ordered queue schema; "
+            f"got columns {queue_column_names}"
+        )
+
+        queue_constraint_names = {row[0] for row in queue_constraints}
+        assert "uq_playback_queue_items_user_media" in queue_constraint_names
+        assert "ck_playback_queue_items_position_non_negative" in queue_constraint_names
+        assert "ck_playback_queue_items_source" in queue_constraint_names
+
+        queue_index_names = {row[0] for row in queue_indexes}
+        assert "ix_playback_queue_items_user_position" in queue_index_names
+
+        assert auto_queue_column is not None, (
+            "podcast_subscriptions.auto_queue must exist for sync-driven queue opt-in"
+        )
+        assert auto_queue_column[1] == "boolean", (
+            f"Expected auto_queue boolean column, got {auto_queue_column[1]}"
+        )
+
+
+class TestLibraryMediaOrderingMigration:
+    """Schema assertions for durable library media ordering."""
+
+    def test_head_contains_library_media_position_contract(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            position_column = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_name = 'library_media'
+                      AND column_name = 'position'
+                    """
+                )
+            ).fetchone()
+            constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'library_media'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'library_media'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+
+        assert position_column is not None, (
+            "library_media.position must exist to support persisted drag-reorder semantics"
+        )
+        assert position_column[1] in {"integer", "bigint"}, (
+            f"Expected library_media.position integer-like type, got {position_column[1]}"
+        )
+        assert position_column[2] == "NO", "library_media.position must be non-null"
+
+        constraint_names = {row[0] for row in constraints}
+        assert "ck_library_media_position_non_negative" in constraint_names
+
+        index_names = {row[0] for row in indexes}
+        assert "ix_library_media_library_position" in index_names

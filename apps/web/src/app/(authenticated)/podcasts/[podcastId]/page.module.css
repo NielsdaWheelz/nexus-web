@@ -83,6 +83,25 @@
   cursor: pointer;
 }
 
+.queueButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.queueBadge {
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: var(--font-size-xs);
+}
+
 .libraryButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;

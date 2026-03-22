@@ -1,8 +1,13 @@
 "use client";
 
-import { type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import {
+  countUpcomingQueueItems,
+  type PlaybackQueueItem,
+} from "@/lib/player/playbackQueueClient";
+import SortableList from "@/components/sortable/SortableList";
 import styles from "./GlobalPlayerFooter.module.css";
 
 const SKIP_BACK_SECONDS = 15;
@@ -27,8 +32,10 @@ function formatClock(seconds: number): string {
 
 export default function GlobalPlayerFooter() {
   const isMobile = useIsMobileViewport();
+  const [queueOpen, setQueueOpen] = useState(false);
   const {
     track,
+    setTrack,
     bindAudioElement,
     isPlaying,
     play,
@@ -42,7 +49,22 @@ export default function GlobalPlayerFooter() {
     skipBySeconds,
     setPlaybackRate,
     setVolume,
+    queueItems,
+    refreshQueue,
+    removeFromQueue,
+    reorderQueue,
+    clearQueue,
+    playNextInQueue,
+    playPreviousInQueue,
+    hasNextInQueue,
   } = useGlobalPlayer();
+
+  useEffect(() => {
+    if (!queueOpen || !track) {
+      return;
+    }
+    void refreshQueue();
+  }, [queueOpen, refreshQueue, track]);
 
   if (!track) {
     return null;
@@ -81,6 +103,29 @@ export default function GlobalPlayerFooter() {
   const speedValue = SPEED_OPTIONS.includes(playbackRate as (typeof SPEED_OPTIONS)[number])
     ? playbackRate
     : 1;
+  const upcomingCount = countUpcomingQueueItems(queueItems, track.media_id);
+
+  const handleQueueItemPlay = (item: PlaybackQueueItem) => {
+    setTrack(
+      {
+        media_id: item.media_id,
+        title: item.title,
+        stream_url: item.stream_url,
+        source_url: item.source_url,
+      },
+      {
+        autoplay: true,
+        seek_seconds:
+          item.listening_state != null ? Math.floor(item.listening_state.position_ms / 1000) : undefined,
+        playback_rate: item.listening_state?.playback_speed,
+      }
+    );
+    setQueueOpen(false);
+  };
+
+  const handleQueueReorder = (nextItems: PlaybackQueueItem[]) => {
+    void reorderQueue(nextItems.map((item) => item.item_id));
+  };
 
   return (
     <footer
@@ -106,6 +151,15 @@ export default function GlobalPlayerFooter() {
         <button
           type="button"
           className={styles.transportButton}
+          onClick={() => void playPreviousInQueue()}
+          aria-label="Previous in queue"
+        >
+          ⏮
+        </button>
+
+        <button
+          type="button"
+          className={styles.transportButton}
           onClick={() => skipBySeconds(-SKIP_BACK_SECONDS)}
           aria-label="Back 15 seconds"
         >
@@ -128,6 +182,16 @@ export default function GlobalPlayerFooter() {
           aria-label="Forward 30 seconds"
         >
           30s ►►
+        </button>
+
+        <button
+          type="button"
+          className={styles.transportButton}
+          onClick={() => void playNextInQueue()}
+          aria-label="Next in queue"
+          disabled={!hasNextInQueue}
+        >
+          ⏭
         </button>
 
         <div className={styles.seekArea}>
@@ -182,6 +246,16 @@ export default function GlobalPlayerFooter() {
             />
           </label>
         )}
+
+        <button
+          type="button"
+          className={styles.queueButton}
+          onClick={() => setQueueOpen(true)}
+          aria-label={`Open playback queue (${upcomingCount} upcoming)`}
+        >
+          Queue
+          <span className={styles.queueBadge}>{upcomingCount}</span>
+        </button>
       </div>
 
       <audio
@@ -191,6 +265,86 @@ export default function GlobalPlayerFooter() {
         className={styles.hiddenAudio}
         aria-label="Global podcast player"
       />
+
+      {queueOpen && (
+        <div className={styles.queueOverlay}>
+          <section className={styles.queuePanel} role="dialog" aria-label="Playback queue panel">
+            <header className={styles.queueHeader}>
+              <h2 className={styles.queueTitle}>Playback queue</h2>
+              <button
+                type="button"
+                className={styles.queueCloseButton}
+                onClick={() => setQueueOpen(false)}
+                aria-label="Close playback queue"
+              >
+                Close
+              </button>
+            </header>
+
+            {queueItems.length === 0 ? (
+              <p className={styles.queueEmpty}>Queue is empty.</p>
+            ) : (
+              <SortableList
+                className={styles.queueList}
+                itemClassName={styles.queueListItem}
+                items={queueItems}
+                getItemId={(item) => item.item_id}
+                onReorder={handleQueueReorder}
+                renderItem={({ item, handleProps }) => {
+                  const isCurrent = item.media_id === track.media_id;
+                  return (
+                    <div className={styles.queueListItemInner} data-current={isCurrent ? "true" : "false"}>
+                      <button
+                        type="button"
+                        className={styles.queueDragHandle}
+                        aria-label={`Reorder ${item.title}`}
+                        {...handleProps.attributes}
+                        {...handleProps.listeners}
+                      >
+                        ⋮⋮
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.queueItemMain}
+                        onClick={() => handleQueueItemPlay(item)}
+                        aria-label={`Play ${item.title} from queue`}
+                      >
+                        <span className={styles.queueItemTitle}>{item.title}</span>
+                        <span className={styles.queueItemMeta}>
+                          {item.podcast_title ?? "Unknown podcast"}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.queueItemRemoveButton}
+                        aria-label={`Remove ${item.title} from queue`}
+                        onClick={() => {
+                          void removeFromQueue(item.item_id);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                }}
+              />
+            )}
+
+            <footer className={styles.queueFooter}>
+              <button
+                type="button"
+                className={styles.queueClearButton}
+                aria-label="Clear queue"
+                onClick={() => {
+                  void clearQueue();
+                }}
+              >
+                Clear queue
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
     </footer>
   );
 }

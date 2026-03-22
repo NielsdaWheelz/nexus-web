@@ -11,6 +11,20 @@ import TranscriptMediaPane, {
 const mockSetTrack = vi.fn();
 const mockSeekToMs = vi.fn();
 const mockPlay = vi.fn();
+const mockAddToQueue = vi.fn(
+  async (mediaId: string, insertPosition: "next" | "last") => {
+    const response = await fetch("/api/playback/queue/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        media_ids: [mediaId],
+        insert_position: insertPosition,
+      }),
+    });
+    const body = await response.json();
+    return body.data ?? [];
+  }
+);
 
 vi.mock("@/lib/player/globalPlayer", () => ({
   useGlobalPlayer: () => ({
@@ -23,6 +37,19 @@ vi.mock("@/lib/player/globalPlayer", () => ({
     isPlaying: false,
     currentTimeSeconds: 0,
     durationSeconds: 0,
+    bufferedSeconds: 0,
+    playbackRate: 1,
+    volume: 1,
+    queueItems: [],
+    refreshQueue: vi.fn(async () => {}),
+    addToQueue: mockAddToQueue,
+    removeFromQueue: vi.fn(async () => {}),
+    reorderQueue: vi.fn(async () => {}),
+    clearQueue: vi.fn(async () => {}),
+    playNextInQueue: vi.fn(async () => {}),
+    playPreviousInQueue: vi.fn(async () => {}),
+    hasNextInQueue: false,
+    hasPreviousInQueue: false,
     bindAudioElement: vi.fn(),
   }),
 }));
@@ -31,6 +58,7 @@ beforeEach(() => {
   mockSetTrack.mockReset();
   mockSeekToMs.mockReset();
   mockPlay.mockReset();
+  mockAddToQueue.mockClear();
 });
 
 const VIDEO_PLAYBACK_SOURCE: TranscriptPlaybackSource = {
@@ -332,6 +360,59 @@ describe("TranscriptMediaPane podcast playback", () => {
     );
     expect(mockSeekToMs).toHaveBeenCalledWith(12_000);
     expect(mockPlay).toHaveBeenCalled();
+  });
+
+  it("renders play-next/add-to-queue actions and posts add-to-queue intent", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/playback/queue" && (init?.method ?? "GET") === "GET") {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.pathname === "/api/playback/queue/items" && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                item_id: "item-1",
+                media_id: "media-podcast-1",
+                title: "Podcast Episode",
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    renderStatefulPodcastPane();
+
+    expect(screen.getByRole("button", { name: /play next/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /add to queue/i })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: /add to queue/i }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([input, init]) => {
+          const url = new URL(String(input), "http://localhost");
+          if (url.pathname !== "/api/playback/queue/items" || init?.method !== "POST") {
+            return false;
+          }
+          const body = JSON.parse(String(init.body ?? "{}"));
+          return body.insert_position === "last" && body.media_ids?.includes("media-podcast-1");
+        })
+      ).toBe(true);
+    });
   });
 
   it("shows explicit on-demand transcription controls with budget forecast", async () => {
