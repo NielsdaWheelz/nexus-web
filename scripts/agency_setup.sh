@@ -42,6 +42,11 @@ find_available_port() {
     return 1
 }
 
+canonicalize_loopback_url() {
+    local url=$1
+    echo "$url" | sed 's#://127\.0\.0\.1:#://localhost:#'
+}
+
 # Use provided redis port or find available one
 if [ -n "${REDIS_PORT:-}" ]; then
     export REDIS_PORT
@@ -100,6 +105,8 @@ if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ] || [ -z "$SUPABASE_SERV
     echo "Status output: $SUPABASE_STATUS"
     exit 1
 fi
+
+SUPABASE_URL=$(canonicalize_loopback_url "$SUPABASE_URL")
 
 echo "Supabase URL: $SUPABASE_URL"
 echo ""
@@ -175,6 +182,7 @@ REDIS_URL="redis://localhost:${REDIS_PORT}/0"
 SUPABASE_ISSUER="${SUPABASE_URL}/auth/v1"
 SUPABASE_JWKS_URL="${SUPABASE_URL}/auth/v1/.well-known/jwks.json"
 SUPABASE_AUDIENCES="authenticated"
+AUTH_ALLOWED_REDIRECT_ORIGINS="http://localhost:3000,http://localhost:3001"
 
 # Run migrations on dev database (using default 'postgres' db)
 echo "Running migrations on dev database..."
@@ -229,6 +237,7 @@ SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
 SUPABASE_ISSUER=${SUPABASE_ISSUER}
 SUPABASE_JWKS_URL=${SUPABASE_JWKS_URL}
 SUPABASE_AUDIENCES=${SUPABASE_AUDIENCES}
+AUTH_ALLOWED_REDIRECT_ORIGINS=${AUTH_ALLOWED_REDIRECT_ORIGINS}
 EOF
 echo "Created .env file"
 echo ""
@@ -244,6 +253,7 @@ FASTAPI_BASE_URL=http://localhost:8000
 NEXUS_ENV=local
 NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL}
 NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+AUTH_ALLOWED_REDIRECT_ORIGINS=${AUTH_ALLOWED_REDIRECT_ORIGINS}
 EOF
 echo "Created apps/web/.env.local"
 echo ""

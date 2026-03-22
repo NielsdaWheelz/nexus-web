@@ -11,6 +11,8 @@ export
 
 # Supabase local database port (fixed by supabase/config.toml)
 SUPABASE_DB_PORT ?= 54322
+SUPABASE_URL ?= http://localhost:54321
+AUTH_ALLOWED_REDIRECT_ORIGINS ?= http://localhost:3000,http://localhost:3001
 
 # Database URLs using Supabase local Postgres
 DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:$(SUPABASE_DB_PORT)/postgres
@@ -194,6 +196,7 @@ web:
 		NEXUS_ENV=$${NEXUS_ENV:-local} \
 		NEXT_PUBLIC_SUPABASE_URL=$${NEXT_PUBLIC_SUPABASE_URL:-$(SUPABASE_URL)} \
 		NEXT_PUBLIC_SUPABASE_ANON_KEY=$${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$(SUPABASE_ANON_KEY)} \
+		AUTH_ALLOWED_REDIRECT_ORIGINS=$${AUTH_ALLOWED_REDIRECT_ORIGINS:-$(AUTH_ALLOWED_REDIRECT_ORIGINS)} \
 		npm run dev
 
 worker:
@@ -280,8 +283,8 @@ verify: lint fmt-check typecheck build _verify-tests
 
 verify-celery-contract:
 	cd python && \
-		SUPABASE_JWKS_URL=$${SUPABASE_JWKS_URL:-http://127.0.0.1:54321/auth/v1/.well-known/jwks.json} \
-		SUPABASE_ISSUER=$${SUPABASE_ISSUER:-http://127.0.0.1:54321/auth/v1} \
+		SUPABASE_JWKS_URL=$${SUPABASE_JWKS_URL:-http://localhost:54321/auth/v1/.well-known/jwks.json} \
+		SUPABASE_ISSUER=$${SUPABASE_ISSUER:-http://localhost:54321/auth/v1} \
 		SUPABASE_AUDIENCES=$${SUPABASE_AUDIENCES:-authenticated} \
 		PYTHONPATH=$$PWD:$$PWD/.. uv run python scripts/verify_celery_contract.py
 

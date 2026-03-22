@@ -286,15 +286,16 @@ PODCASTS_ENABLED=false
 # PODCAST_SYNC_RUNNING_LEASE_SECONDS=1800
 
 # Supabase local configuration
-SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_URL=http://localhost:54321
 SUPABASE_ANON_KEY=<generated-by-supabase>
 SUPABASE_SERVICE_ROLE_KEY=<generated-by-supabase>
 SUPABASE_SERVICE_KEY=<same-as-SUPABASE_SERVICE_ROLE_KEY>
 
 # Supabase auth settings (used by FastAPI)
-SUPABASE_ISSUER=http://127.0.0.1:54321/auth/v1
-SUPABASE_JWKS_URL=http://127.0.0.1:54321/auth/v1/.well-known/jwks.json
+SUPABASE_ISSUER=http://localhost:54321/auth/v1
+SUPABASE_JWKS_URL=http://localhost:54321/auth/v1/.well-known/jwks.json
 SUPABASE_AUDIENCES=authenticated
+AUTH_ALLOWED_REDIRECT_ORIGINS=http://localhost:3000,http://localhost:3001
 ```
 
 This file is:
@@ -395,19 +396,40 @@ python -c "import os, base64; print(base64.b64encode(os.urandom(32)).decode())"
 | `NEXUS_ENV` | No | Environment (default: `local`) |
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon key |
+| `AUTH_ALLOWED_REDIRECT_ORIGINS` | Required outside local/test | Comma-separated allowlist for callback redirect origins |
 | `NEXT_PUBLIC_ENABLE_STREAMING` | No | Enable SSE streaming chat (default: `0`, set to `1` to enable) |
+
+#### OAuth Provider Configuration
+
+Interactive login is Google/GitHub-only. For each environment:
+
+1. Provision Google and GitHub OAuth credentials.
+2. Set `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID`, `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_SECRET`,
+   `SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID`, and
+   `SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_SECRET`.
+3. Enable the matching provider blocks in `supabase/config.toml` for local/self-hosted Supabase.
+4. Register the Supabase callback URL with the provider:
+   `http://localhost:54321/auth/v1/callback` for local Supabase.
+5. Register the app redirect URLs with Supabase Auth:
+   `http://localhost:3000/auth/callback` and `http://localhost:3000/libraries`.
+6. Optional (for live provider callback E2E coverage): set `E2E_GITHUB_USERNAME`,
+   `E2E_GITHUB_PASSWORD`, and (if prompted) `E2E_GITHUB_OTP_CODE` so
+   `e2e/tests/auth.spec.ts` can run the full GitHub OAuth callback round-trip
+   assertion.
 
 ## Authentication
 
 ### Request Flow
 
-1. Browser authenticates with Supabase via Next.js
-2. Next.js stores session in cookies (@supabase/ssr)
-3. Next.js route handlers:
+1. Browser starts Google or GitHub sign-in through Supabase Auth
+2. Supabase redirects back to `/auth/callback`, which exchanges the auth code for the app session
+3. Next.js stores the session in cookies via `@supabase/ssr`
+4. Next.js route handlers:
    - Extract access token from session (server-side only)
    - Forward to FastAPI with `Authorization: Bearer <token>`
    - Attach `X-Nexus-Internal` header
-4. FastAPI validates JWT via Supabase JWKS and derives user identity
+5. FastAPI validates JWT via Supabase JWKS and derives user identity
+6. The first authenticated backend request bootstraps the app-local user row and default library
 
 ### Security Model
 
@@ -415,6 +437,7 @@ python -c "import os, base64; print(base64.b64encode(os.urandom(32)).decode())"
 - **BFF gate**: In staging/prod, FastAPI rejects requests without internal header
 - **Visibility masking**: Unauthorized access returns 404 (not 403) to hide existence
 - **Supabase JWKS verification**: All environments verify JWTs via Supabase JWKS endpoint
+- **Safe post-auth redirects**: Unauthenticated users are sent to `/login?next=...`; callback redirects are normalized to in-app paths only
 
 ### BFF Proxy
 
