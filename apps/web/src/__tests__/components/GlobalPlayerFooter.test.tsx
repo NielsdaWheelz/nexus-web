@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
@@ -11,6 +11,25 @@ function setViewportWidth(width: number): void {
     value: width,
   });
   window.dispatchEvent(new Event("resize"));
+}
+
+function setAudioMetrics(
+  audio: HTMLAudioElement,
+  values: { duration: number; currentTime: number; bufferedEnd: number }
+): void {
+  Object.defineProperty(audio, "duration", {
+    configurable: true,
+    value: values.duration,
+  });
+  Object.defineProperty(audio, "buffered", {
+    configurable: true,
+    value: {
+      length: 1,
+      start: () => 0,
+      end: () => values.bufferedEnd,
+    },
+  });
+  audio.currentTime = values.currentTime;
 }
 
 function RouteA() {
@@ -51,6 +70,7 @@ function RouteHarness() {
 describe("GlobalPlayerFooter", () => {
   beforeEach(() => {
     setViewportWidth(1280);
+    window.localStorage.clear();
   });
 
   it("persists selected track across route changes on desktop", async () => {
@@ -79,5 +99,71 @@ describe("GlobalPlayerFooter", () => {
       const footer = screen.getByRole("contentinfo", { name: "Global player footer" });
       expect(footer).toHaveAttribute("data-mobile", "true");
     });
+  });
+
+  it("renders scrubber, skip, speed, and volume controls", async () => {
+    const user = userEvent.setup();
+    render(<RouteHarness />);
+
+    await user.click(screen.getByRole("button", { name: "Load episode" }));
+
+    const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
+    setAudioMetrics(audio, { duration: 120, currentTime: 60, bufferedEnd: 90 });
+    fireEvent(audio, new Event("durationchange"));
+    fireEvent(audio, new Event("timeupdate"));
+    fireEvent(audio, new Event("progress"));
+
+    const seekSlider = screen.getByRole("slider", { name: /seek playback position/i });
+    fireEvent.input(seekSlider, { target: { value: "90" } });
+    fireEvent.change(seekSlider, { target: { value: "90" } });
+    expect(Math.floor(audio.currentTime)).toBe(90);
+
+    await user.click(screen.getByRole("button", { name: /back 15 seconds/i }));
+    expect(Math.floor(audio.currentTime)).toBe(75);
+
+    await user.click(screen.getByRole("button", { name: /forward 30 seconds/i }));
+    expect(Math.floor(audio.currentTime)).toBe(105);
+
+    audio.currentTime = 5;
+    fireEvent(audio, new Event("timeupdate"));
+    await user.click(screen.getByRole("button", { name: /back 15 seconds/i }));
+    expect(Math.floor(audio.currentTime)).toBe(0);
+
+    audio.currentTime = 118;
+    fireEvent(audio, new Event("timeupdate"));
+    await user.click(screen.getByRole("button", { name: /forward 30 seconds/i }));
+    expect(Math.floor(audio.currentTime)).toBe(120);
+
+    const speedControl = screen.getByRole("combobox", { name: /playback speed/i });
+    await user.selectOptions(speedControl, "1.5");
+    expect(audio.playbackRate).toBeCloseTo(1.5, 3);
+
+    const volumeSlider = screen.getByRole("slider", { name: /volume/i });
+    fireEvent.input(volumeSlider, { target: { value: "0.3" } });
+    fireEvent.change(volumeSlider, { target: { value: "0.3" } });
+    expect(audio.volume).toBeCloseTo(0.3, 3);
+    expect(window.localStorage.getItem("nexus.globalPlayer.volume")).toBe("0.3");
+  });
+
+  it("supports arrow-key skip shortcuts when player controls are focused", async () => {
+    const user = userEvent.setup();
+    render(<RouteHarness />);
+
+    await user.click(screen.getByRole("button", { name: "Load episode" }));
+
+    const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
+    setAudioMetrics(audio, { duration: 120, currentTime: 30, bufferedEnd: 60 });
+    fireEvent(audio, new Event("durationchange"));
+    fireEvent(audio, new Event("timeupdate"));
+    fireEvent(audio, new Event("progress"));
+
+    const controls = screen.getByRole("group", { name: /global player controls/i });
+    controls.focus();
+
+    await user.keyboard("{ArrowLeft}");
+    expect(Math.floor(audio.currentTime)).toBe(15);
+
+    await user.keyboard("{ArrowRight}");
+    expect(Math.floor(audio.currentTime)).toBe(45);
   });
 });

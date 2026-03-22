@@ -1,14 +1,13 @@
 .footer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(280px, 36vw);
-  align-items: center;
-  gap: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   border-top: 1px solid var(--color-border);
   background: var(--color-bg-panel);
-  padding: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-4) var(--space-3);
 }
 
-.meta {
+.metaRow {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
@@ -31,13 +30,24 @@
   white-space: nowrap;
 }
 
-.timecode {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-  white-space: nowrap;
+.trackLink:hover {
+  text-decoration: underline;
 }
 
-.playPause {
+.controlsRow {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(180px, 1fr) auto auto auto;
+  align-items: center;
+  gap: var(--space-2);
+  outline: none;
+}
+
+.controlsRow:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-border-strong) 70%, transparent);
+  border-radius: 8px;
+}
+
+.transportButton {
   border: 1px solid var(--color-border);
   background: var(--color-bg);
   color: var(--color-text);
@@ -45,27 +55,143 @@
   padding: 6px 10px;
   font-size: var(--font-size-xs);
   cursor: pointer;
+  white-space: nowrap;
 }
 
-.player {
+.transportButton:hover {
+  border-color: var(--color-border-strong);
+}
+
+.seekArea {
+  position: relative;
+  min-width: 140px;
+}
+
+.seekTrack {
+  --progress-percent: 0%;
+  --buffered-percent: 0%;
+  position: absolute;
+  inset: 50% 0 auto 0;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      to right,
+      var(--color-accent, #4f7cff) 0 var(--progress-percent),
+      color-mix(in srgb, var(--color-accent, #4f7cff) 35%, var(--color-bg-subtle, #d9dce5))
+        var(--progress-percent) var(--buffered-percent),
+      var(--color-bg-subtle, #d9dce5) var(--buffered-percent) 100%
+    );
+  pointer-events: none;
+}
+
+.seekSlider {
+  position: relative;
   width: 100%;
-  min-width: 0;
-  height: 36px;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 24px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.seekSlider::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+
+.seekSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--color-border-strong) 70%, #000);
+  background: var(--color-bg);
+  margin-top: -4px;
+}
+
+.seekSlider::-moz-range-track {
+  height: 4px;
+  background: transparent;
+  border: none;
+}
+
+.seekSlider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--color-border-strong) 70%, #000);
+  background: var(--color-bg);
+}
+
+.timecode {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.controlLabel {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.speedControl,
+.volumeControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.select {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: var(--font-size-xs);
+}
+
+.volumeSlider {
+  width: 96px;
+  accent-color: var(--color-accent, #4f7cff);
+}
+
+.hiddenAudio {
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  left: -9999px;
 }
 
 @media (max-width: 900px) {
   .footer {
-    grid-template-columns: 1fr;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3)
-      calc(var(--space-2) + env(safe-area-inset-bottom));
+    padding: var(--space-2) var(--space-3) calc(var(--space-2) + env(safe-area-inset-bottom));
   }
 
-  .meta {
+  .metaRow {
     flex-wrap: wrap;
   }
 
-  .player {
-    height: 32px;
+  .controlsRow {
+    grid-template-columns: auto auto auto minmax(120px, 1fr) auto auto;
+    gap: 6px;
+  }
+
+  .seekArea {
+    min-width: 120px;
+  }
+
+  .transportButton {
+    padding: 6px 8px;
+  }
+
+  .speedControl {
+    justify-self: end;
   }
 }
