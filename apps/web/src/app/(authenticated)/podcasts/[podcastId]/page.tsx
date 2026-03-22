@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import {
+  usePaneParam,
+  usePaneRouter,
+  usePaneSearchParams,
+  useSetPaneTitle,
+} from "@/lib/panes/paneRuntime";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import PageLayout from "@/components/ui/PageLayout";
 import SectionCard from "@/components/ui/SectionCard";
@@ -15,8 +20,12 @@ const EPISODES_PAGE_SIZE = 100;
 const LIBRARY_MEDIA_PAGE_SIZE = 200;
 const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
 const TRANSCRIPT_FORECAST_BATCH_SIZE = 100;
+const EPISODE_SEARCH_DEBOUNCE_MS = 300;
 
 type TranscriptRequestReason = "search" | "highlight" | "quote";
+type EpisodeState = "unplayed" | "in_progress" | "played";
+type EpisodeStateFilter = "all" | EpisodeState;
+type EpisodeSort = "newest" | "oldest" | "duration_asc" | "duration_desc";
 type EpisodeTranscriptState =
   | "not_requested"
   | "queued"
@@ -89,6 +98,13 @@ interface PodcastEpisodeMedia {
         source_url: string;
       }
     | null;
+  listening_state: {
+    position_ms: number;
+    duration_ms: number | null;
+    playback_speed: number;
+    is_completed: boolean;
+  } | null;
+  episode_state: EpisodeState | null;
   capabilities: MediaCapabilities;
   authors: Array<{ id: string; name: string; role: string | null }>;
   published_date: string | null;
@@ -146,6 +162,45 @@ interface TranscriptRequestForecastState {
   request_enqueued: boolean;
   reason: TranscriptRequestReason;
   source: "forecast" | "request";
+}
+
+function deriveEpisodeState(episode: PodcastEpisodeMedia): EpisodeState {
+  if (episode.episode_state === "unplayed") {
+    return "unplayed";
+  }
+  if (episode.episode_state === "in_progress") {
+    return "in_progress";
+  }
+  if (episode.episode_state === "played") {
+    return "played";
+  }
+  if (episode.listening_state?.is_completed) {
+    return "played";
+  }
+  if ((episode.listening_state?.position_ms ?? 0) > 0) {
+    return "in_progress";
+  }
+  return "unplayed";
+}
+
+function episodeMatchesFilter(episodeState: EpisodeState, filter: EpisodeStateFilter): boolean {
+  return filter === "all" || episodeState === filter;
+}
+
+function formatEpisodeStateLabel(episodeState: EpisodeState): string {
+  if (episodeState === "in_progress") {
+    return "in progress";
+  }
+  return episodeState;
+}
+
+function getEpisodeProgressPercent(episode: PodcastEpisodeMedia): number {
+  const listeningState = episode.listening_state;
+  if (!listeningState || listeningState.duration_ms == null || listeningState.duration_ms <= 0) {
+    return 0;
+  }
+  const rawPercent = Math.floor((listeningState.position_ms / listeningState.duration_ms) * 100);
+  return Math.max(0, Math.min(100, rawPercent));
 }
 
 function formatEpisodeTranscriptMeta(episode: PodcastEpisodeMedia): string {
@@ -208,14 +263,38 @@ function toTranscriptForecastState(
 
 export default function PodcastDetailPage() {
   const podcastId = usePaneParam("podcastId");
+  const paneRouter = usePaneRouter();
+  const paneSearchParams = usePaneSearchParams();
   const { addToQueue, queueItems } = useGlobalPlayer();
   const [detail, setDetail] = useState<PodcastDetailResponse | null>(null);
   const [episodes, setEpisodes] = useState<PodcastEpisodeMedia[]>([]);
+  const [episodeStateFilter, setEpisodeStateFilter] = useState<EpisodeStateFilter>(() => {
+    const stateParam = paneSearchParams.get("state");
+    if (stateParam === "unplayed" || stateParam === "in_progress" || stateParam === "played") {
+      return stateParam;
+    }
+    return "all";
+  });
+  const [episodeSort, setEpisodeSort] = useState<EpisodeSort>(() => {
+    const sortParam = paneSearchParams.get("sort");
+    if (
+      sortParam === "oldest" ||
+      sortParam === "duration_asc" ||
+      sortParam === "duration_desc"
+    ) {
+      return sortParam;
+    }
+    return "newest";
+  });
+  const [episodeSearchInput, setEpisodeSearchInput] = useState(() => paneSearchParams.get("q") ?? "");
+  const [episodeSearchQuery, setEpisodeSearchQuery] = useState(() => paneSearchParams.get("q") ?? "");
   const [hasMoreEpisodes, setHasMoreEpisodes] = useState(false);
   const [loadingMoreEpisodes, setLoadingMoreEpisodes] = useState(false);
   const [defaultLibraryId, setDefaultLibraryId] = useState<string | null>(null);
   const [libraryMediaIds, setLibraryMediaIds] = useState<Set<string>>(new Set());
   const [busyMediaIds, setBusyMediaIds] = useState<Set<string>>(new Set());
+  const [markingEpisodeIds, setMarkingEpisodeIds] = useState<Set<string>>(new Set());
+  const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const [requestingTranscriptMediaIds, setRequestingTranscriptMediaIds] = useState<Set<string>>(
     new Set()
   );
@@ -262,11 +341,19 @@ export default function PodcastDetailPage() {
     setLoading(true);
     setError(null);
     try {
+      const episodeParams = new URLSearchParams({
+        limit: String(EPISODES_PAGE_SIZE),
+        offset: "0",
+        state: episodeStateFilter,
+        sort: episodeSort,
+      });
+      if (episodeSearchQuery.trim()) {
+        episodeParams.set("q", episodeSearchQuery.trim());
+      }
+
       const [detailResp, episodesResp, meResp] = await Promise.all([
         apiFetch<{ data: PodcastDetailResponse }>(`/api/podcasts/${podcastId}`),
-        apiFetch<{ data: PodcastEpisodeMedia[] }>(
-          `/api/podcasts/${podcastId}/episodes?limit=${EPISODES_PAGE_SIZE}&offset=0`
-        ),
+        apiFetch<{ data: PodcastEpisodeMedia[] }>(`/api/podcasts/${podcastId}/episodes?${episodeParams}`),
         apiFetch<{ data: MeResponse }>("/api/me"),
       ]);
       setDetail(detailResp.data);
@@ -292,11 +379,33 @@ export default function PodcastDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [loadAllLibraryMediaIds, podcastId]);
+  }, [episodeSearchQuery, episodeSort, episodeStateFilter, loadAllLibraryMediaIds, podcastId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const debounceTimer = setTimeout(() => {
+      setEpisodeSearchQuery(episodeSearchInput.trim());
+    }, EPISODE_SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(debounceTimer);
+    };
+  }, [episodeSearchInput]);
+
+  useEffect(() => {
+    if (!podcastId) {
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set("state", episodeStateFilter);
+    params.set("sort", episodeSort);
+    if (episodeSearchQuery) {
+      params.set("q", episodeSearchQuery);
+    }
+    paneRouter.replace(`/podcasts/${podcastId}?${params.toString()}`);
+  }, [episodeSearchQuery, episodeSort, episodeStateFilter, paneRouter, podcastId]);
 
   const handleAddToLibrary = useCallback(
     async (mediaId: string) => {
@@ -368,8 +477,17 @@ export default function PodcastDetailPage() {
     setLoadingMoreEpisodes(true);
     setError(null);
     try {
+      const episodeParams = new URLSearchParams({
+        limit: String(EPISODES_PAGE_SIZE),
+        offset: String(episodes.length),
+        state: episodeStateFilter,
+        sort: episodeSort,
+      });
+      if (episodeSearchQuery.trim()) {
+        episodeParams.set("q", episodeSearchQuery.trim());
+      }
       const response = await apiFetch<{ data: PodcastEpisodeMedia[] }>(
-        `/api/podcasts/${podcastId}/episodes?limit=${EPISODES_PAGE_SIZE}&offset=${episodes.length}`
+        `/api/podcasts/${podcastId}/episodes?${episodeParams}`
       );
       setEpisodes((prev) => [...prev, ...response.data]);
       setHasMoreEpisodes(response.data.length === EPISODES_PAGE_SIZE);
@@ -382,7 +500,15 @@ export default function PodcastDetailPage() {
     } finally {
       setLoadingMoreEpisodes(false);
     }
-  }, [episodes.length, hasMoreEpisodes, loadingMoreEpisodes, podcastId]);
+  }, [
+    episodeSearchQuery,
+    episodeSort,
+    episodeStateFilter,
+    episodes.length,
+    hasMoreEpisodes,
+    loadingMoreEpisodes,
+    podcastId,
+  ]);
 
   const handleRefreshSync = useCallback(async () => {
     if (!podcastId) {
@@ -477,7 +603,13 @@ export default function PodcastDetailPage() {
     setEpisodes((prev) =>
       prev.map((episode) => {
         const refreshed = refreshedByMediaId.get(episode.id);
-        return refreshed ? { ...episode, ...refreshed } : episode;
+        return refreshed
+          ? {
+              ...episode,
+              ...refreshed,
+              episode_state: refreshed.episode_state ?? episode.episode_state,
+            }
+          : episode;
       })
     );
   }, []);
@@ -488,6 +620,141 @@ export default function PodcastDetailPage() {
     },
     [refreshEpisodeStates]
   );
+
+  const applyEpisodeCompletionState = useCallback(
+    (episode: PodcastEpisodeMedia, isCompleted: boolean): PodcastEpisodeMedia => {
+      const previousListeningState = episode.listening_state;
+      const nextListeningState = isCompleted
+        ? {
+            position_ms: previousListeningState?.position_ms ?? 0,
+            duration_ms: previousListeningState?.duration_ms ?? null,
+            playback_speed: previousListeningState?.playback_speed ?? 1,
+            is_completed: true,
+          }
+        : {
+            position_ms: 0,
+            duration_ms: previousListeningState?.duration_ms ?? null,
+            playback_speed: previousListeningState?.playback_speed ?? 1,
+            is_completed: false,
+          };
+      return {
+        ...episode,
+        listening_state: nextListeningState,
+        episode_state: isCompleted ? "played" : "unplayed",
+      };
+    },
+    []
+  );
+
+  const handleMarkEpisodeCompletion = useCallback(
+    async (episode: PodcastEpisodeMedia, isCompleted: boolean) => {
+      const mediaId = episode.id;
+      setMarkingEpisodeIds((prev) => new Set(prev).add(mediaId));
+      setError(null);
+      const previousEpisodes = episodes;
+      setEpisodes((prev) =>
+        prev.flatMap((candidate) => {
+          if (candidate.id !== mediaId) {
+            return [candidate];
+          }
+          const optimisticEpisode = applyEpisodeCompletionState(candidate, isCompleted);
+          if (!episodeMatchesFilter(deriveEpisodeState(optimisticEpisode), episodeStateFilter)) {
+            return [];
+          }
+          return [optimisticEpisode];
+        })
+      );
+      try {
+        await apiFetch(`/api/media/${mediaId}/listening-state`, {
+          method: "PUT",
+          body: JSON.stringify(
+            isCompleted
+              ? {
+                  is_completed: true,
+                }
+              : {
+                  is_completed: false,
+                  position_ms: 0,
+                }
+          ),
+        });
+      } catch (markError) {
+        setEpisodes(previousEpisodes);
+        if (isApiError(markError)) {
+          setError(markError.message);
+        } else {
+          setError(isCompleted ? "Failed to mark episode as played" : "Failed to mark episode as unplayed");
+        }
+      } finally {
+        setMarkingEpisodeIds((prev) => {
+          const next = new Set(prev);
+          next.delete(mediaId);
+          return next;
+        });
+      }
+    },
+    [applyEpisodeCompletionState, episodeStateFilter, episodes]
+  );
+
+  const visibleUnplayedEpisodeIds = useMemo(
+    () =>
+      episodes
+        .filter((episode) => deriveEpisodeState(episode) === "unplayed")
+        .map((episode) => episode.id),
+    [episodes]
+  );
+
+  const handleMarkAllVisibleUnplayedAsPlayed = useCallback(async () => {
+    if (visibleUnplayedEpisodeIds.length === 0) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `Mark ${visibleUnplayedEpisodeIds.length} visible episode${visibleUnplayedEpisodeIds.length === 1 ? "" : "s"} as played?`
+      )
+    ) {
+      return;
+    }
+    setMarkAllAsPlayedBusy(true);
+    setError(null);
+    const previousEpisodes = episodes;
+    const targetIds = new Set(visibleUnplayedEpisodeIds);
+    setEpisodes((prev) =>
+      prev.flatMap((episode) => {
+        if (!targetIds.has(episode.id)) {
+          return [episode];
+        }
+        const optimisticEpisode = applyEpisodeCompletionState(episode, true);
+        if (!episodeMatchesFilter(deriveEpisodeState(optimisticEpisode), episodeStateFilter)) {
+          return [];
+        }
+        return [optimisticEpisode];
+      })
+    );
+    try {
+      await apiFetch("/api/media/listening-state/batch", {
+        method: "POST",
+        body: JSON.stringify({
+          media_ids: visibleUnplayedEpisodeIds,
+          is_completed: true,
+        }),
+      });
+    } catch (markError) {
+      setEpisodes(previousEpisodes);
+      if (isApiError(markError)) {
+        setError(markError.message);
+      } else {
+        setError("Failed to mark visible episodes as played");
+      }
+    } finally {
+      setMarkAllAsPlayedBusy(false);
+    }
+  }, [
+    applyEpisodeCompletionState,
+    episodeStateFilter,
+    episodes,
+    visibleUnplayedEpisodeIds,
+  ]);
 
   const applyTranscriptForecasts = useCallback(
     (
@@ -798,16 +1065,79 @@ export default function PodcastDetailPage() {
         )}
       </SectionCard>
 
-      <SectionCard title="Episodes" actions={<span>{activeEpisodeCount} episodes</span>}>
+      <SectionCard
+        title="Episodes"
+        actions={
+          <div className={styles.episodeHeaderActions}>
+            <span>{activeEpisodeCount} episodes</span>
+            <button
+              type="button"
+              className={styles.markAllButton}
+              onClick={() => void handleMarkAllVisibleUnplayedAsPlayed()}
+              disabled={markAllAsPlayedBusy || visibleUnplayedEpisodeIds.length === 0}
+            >
+              {markAllAsPlayedBusy ? "Marking..." : "Mark all as played"}
+            </button>
+          </div>
+        }
+      >
         {!loading && episodes.length === 0 && !error && (
           <StateMessage variant="empty">No episodes found for this podcast.</StateMessage>
         )}
+
+        <div className={styles.episodeFilterBar}>
+          <div className={styles.episodeFilterPills}>
+            {([
+              ["all", "All"],
+              ["unplayed", "Unplayed"],
+              ["in_progress", "In Progress"],
+              ["played", "Played"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={styles.episodeFilterPill}
+                aria-pressed={episodeStateFilter === value}
+                onClick={() => setEpisodeStateFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <label className={styles.episodeSortLabel}>
+            Episode sort
+            <select
+              aria-label="Episode sort"
+              value={episodeSort}
+              onChange={(event) => setEpisodeSort(event.target.value as EpisodeSort)}
+              className={styles.episodeSortSelect}
+            >
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="duration_asc">Shortest</option>
+              <option value="duration_desc">Longest</option>
+            </select>
+          </label>
+          <label className={styles.episodeSearchLabel}>
+            Search episodes
+            <input
+              type="search"
+              aria-label="Search episodes"
+              className={styles.episodeSearchInput}
+              placeholder="Search titles..."
+              value={episodeSearchInput}
+              onChange={(event) => setEpisodeSearchInput(event.target.value)}
+            />
+          </label>
+        </div>
 
         {episodes.length > 0 && (
           <AppList>
             {episodes.map((episode) => {
               const inLibrary = libraryMediaIds.has(episode.id);
               const busy = busyMediaIds.has(episode.id);
+              const episodeState = deriveEpisodeState(episode);
+              const episodeProgressPercent = getEpisodeProgressPercent(episode);
               const canRequestTranscript = canRequestTranscriptForEpisode(episode);
               const transcriptProvisioningInProgress =
                 shouldPollTranscriptProvisioningForEpisode(episode);
@@ -828,9 +1158,40 @@ export default function PodcastDetailPage() {
                 <AppListItem
                   key={episode.id}
                   href={`/media/${episode.id}`}
-                  title={episode.title}
-                  description={episode.capabilities.can_play ? "Playable episode" : "Processing"}
-                  meta={`${episode.processing_status} · ${formatEpisodeTranscriptMeta(episode)}`}
+                  title={
+                    <span className={styles.episodeTitle}>
+                      {episodeState === "unplayed" && (
+                        <span className={styles.unplayedDot} aria-hidden="true" />
+                      )}
+                      <span
+                        className={
+                          episodeState === "played" ? styles.playedEpisodeTitleText : undefined
+                        }
+                      >
+                        {episode.title}
+                      </span>
+                    </span>
+                  }
+                  description={
+                    <span className={styles.episodeDescription}>
+                      <span>{episode.capabilities.can_play ? "Playable episode" : "Processing"}</span>
+                      {episodeState === "in_progress" && (
+                        <span
+                          className={styles.inProgressBar}
+                          role="progressbar"
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={episodeProgressPercent}
+                        >
+                          <span
+                            className={styles.inProgressBarFill}
+                            style={{ width: `${episodeProgressPercent}%` }}
+                          />
+                        </span>
+                      )}
+                    </span>
+                  }
+                  meta={`${episode.processing_status} · ${formatEpisodeTranscriptMeta(episode)} · ${formatEpisodeStateLabel(episodeState)}`}
                   actions={
                     <div className={styles.episodeActions}>
                       <button
@@ -852,6 +1213,25 @@ export default function PodcastDetailPage() {
                         }}
                       >
                         Add to queue
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.markStateButton}
+                        aria-label={
+                          episodeState === "played"
+                            ? `Mark as unplayed for ${episode.title}`
+                            : `Mark as played for ${episode.title}`
+                        }
+                        disabled={markingEpisodeIds.has(episode.id)}
+                        onClick={() =>
+                          void handleMarkEpisodeCompletion(episode, episodeState !== "played")
+                        }
+                      >
+                        {markingEpisodeIds.has(episode.id)
+                          ? "Saving..."
+                          : episodeState === "played"
+                            ? "Mark as unplayed"
+                            : "Mark as played"}
                       </button>
                       {inQueue && <span className={styles.queueBadge}>In Queue</span>}
                       {canRequestTranscript ? (

@@ -184,6 +184,20 @@ describe("media EPUB BFF proxy routes", () => {
     );
   });
 
+  it("POST /api/media/listening-state/batch proxies to /media/listening-state/batch", async () => {
+    const { POST } = await import("./listening-state/batch/route");
+    const req = new Request("http://localhost/api/media/listening-state/batch", {
+      method: "POST",
+      body: JSON.stringify({
+        media_ids: ["mid-123", "mid-456"],
+        is_completed: true,
+      }),
+    });
+    await POST(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/listening-state/batch");
+  });
+
   it("POST /api/media/transcript/forecasts proxies to /media/transcript/forecasts", async () => {
     const { POST } = await import("./transcript/forecasts/route");
     const req = new Request("http://localhost/api/media/transcript/forecasts", {

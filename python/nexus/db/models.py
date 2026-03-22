@@ -842,6 +842,7 @@ class PodcastListeningState(Base):
     position_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     playback_speed: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
+    is_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),

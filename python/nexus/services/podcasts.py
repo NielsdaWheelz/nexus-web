@@ -46,8 +46,8 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionStatusOut,
     PodcastSubscriptionSyncRefreshOut,
 )
-from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services import playback_queue as playback_queue_service
+from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services.semantic_chunks import (
     chunk_transcript_segments,
     current_transcript_embedding_model,
@@ -90,6 +90,9 @@ PODCAST_TRANSCRIPT_REQUEST_REASONS = {
     "background_warming",
     "operator_requeue",
 }
+PODCAST_EPISODE_STATES = {"all", "unplayed", "in_progress", "played"}
+PODCAST_EPISODE_SORT_OPTIONS = {"newest", "oldest", "duration_asc", "duration_desc"}
+PODCAST_SUBSCRIPTION_SORT_OPTIONS = {"recent_episode", "unplayed_count", "alpha"}
 
 
 class PodcastIndexClient:
@@ -411,15 +414,71 @@ def list_subscriptions(
     *,
     limit: int = 100,
     offset: int = 0,
+    sort: str = "recent_episode",
 ) -> list[PodcastSubscriptionListItemOut]:
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
     if offset < 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Offset must be non-negative")
+    if sort not in PODCAST_SUBSCRIPTION_SORT_OPTIONS:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid podcast subscriptions sort option",
+        )
+
     limit = min(limit, 200)
+
+    if sort == "alpha":
+        order_by_sql = "LOWER(p.title) ASC, ps.podcast_id ASC"
+    elif sort == "unplayed_count":
+        order_by_sql = (
+            "COALESCE(sa.unplayed_count, 0) DESC, "
+            "sa.latest_published_at DESC NULLS LAST, "
+            "ps.updated_at DESC, "
+            "ps.podcast_id DESC"
+        )
+    else:
+        order_by_sql = (
+            "sa.latest_published_at DESC NULLS LAST, "
+            "ps.updated_at DESC, "
+            "ps.podcast_id DESC"
+        )
+
     rows = db.execute(
         text(
-            """
+            f"""
+            WITH visible_media AS (
+                {visible_media_ids_cte_sql()}
+            ),
+            episode_states AS (
+                SELECT
+                    pe.podcast_id,
+                    pe.media_id,
+                    pe.published_at,
+                    CASE
+                        WHEN pls.is_completed IS TRUE THEN 'played'
+                        WHEN COALESCE(pls.position_ms, 0) > 0 THEN 'in_progress'
+                        ELSE 'unplayed'
+                    END AS episode_state
+                FROM podcast_episodes pe
+                JOIN visible_media vm
+                  ON vm.media_id = pe.media_id
+                LEFT JOIN podcast_listening_states pls
+                  ON pls.user_id = :user_id
+                 AND pls.media_id = pe.media_id
+            ),
+            subscription_aggregates AS (
+                SELECT
+                    ps.podcast_id,
+                    COUNT(*) FILTER (WHERE es.episode_state = 'unplayed') AS unplayed_count,
+                    MAX(es.published_at) AS latest_published_at
+                FROM podcast_subscriptions ps
+                LEFT JOIN episode_states es
+                  ON es.podcast_id = ps.podcast_id
+                WHERE ps.user_id = :user_id
+                  AND ps.status = 'active'
+                GROUP BY ps.podcast_id
+            )
             SELECT
                 ps.podcast_id,
                 ps.status,
@@ -443,21 +502,24 @@ def list_subscriptions(
                 p.image_url,
                 p.description,
                 p.created_at,
-                p.updated_at
+                p.updated_at,
+                COALESCE(sa.unplayed_count, 0) AS unplayed_count,
+                sa.latest_published_at
             FROM podcast_subscriptions ps
             JOIN podcasts p ON p.id = ps.podcast_id
+            LEFT JOIN subscription_aggregates sa ON sa.podcast_id = ps.podcast_id
             WHERE ps.user_id = :user_id
               AND ps.status = 'active'
-            ORDER BY ps.updated_at DESC, ps.podcast_id DESC
+            ORDER BY {order_by_sql}
             LIMIT :limit
             OFFSET :offset
             """
         ),
-        {"user_id": viewer_id, "limit": limit, "offset": offset},
+        {"user_id": viewer_id, "viewer_id": viewer_id, "limit": limit, "offset": offset},
     ).fetchall()
     out: list[PodcastSubscriptionListItemOut] = []
     for row in rows:
-        podcast = _podcast_list_item_from_row(row[12:])
+        podcast = _podcast_list_item_from_row(row[12:23])
         out.append(
             PodcastSubscriptionListItemOut(
                 podcast_id=row[0],
@@ -472,6 +534,7 @@ def list_subscriptions(
                 sync_completed_at=row[9],
                 last_synced_at=row[10],
                 updated_at=row[11],
+                unplayed_count=int(row[23] or 0),
                 podcast=podcast,
             )
         )
@@ -542,6 +605,10 @@ def get_podcast_detail_for_viewer(
     return PodcastDetailOut(podcast=podcast, subscription=subscription)
 
 
+def _escape_ilike_pattern(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def list_podcast_episodes_for_viewer(
     db: Session,
     viewer_id: UUID,
@@ -549,46 +616,107 @@ def list_podcast_episodes_for_viewer(
     *,
     limit: int = 50,
     offset: int = 0,
+    state: str = "all",
+    sort: str = "newest",
+    q: str | None = None,
 ) -> list[MediaOut]:
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
     if offset < 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Offset must be non-negative")
+    if state not in PODCAST_EPISODE_STATES:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid podcast episode state")
+    if sort not in PODCAST_EPISODE_SORT_OPTIONS:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid podcast episode sort option")
+
     limit = min(limit, 200)
     detail = get_podcast_detail_for_viewer(db, viewer_id, podcast_id)
     if detail.subscription.status != "active":
         return []
+
+    normalized_query = q.strip() if q else None
+    if normalized_query == "":
+        normalized_query = None
+
+    if sort == "oldest":
+        order_by_sql = "published_at ASC NULLS LAST, media_id ASC"
+    elif sort == "duration_asc":
+        order_by_sql = "duration_seconds ASC NULLS LAST, published_at DESC NULLS LAST, media_id DESC"
+    elif sort == "duration_desc":
+        order_by_sql = "duration_seconds DESC NULLS LAST, published_at DESC NULLS LAST, media_id DESC"
+    else:
+        order_by_sql = "published_at DESC NULLS LAST, media_id DESC"
+
+    where_clauses = ["pe.podcast_id = :podcast_id"]
+    params: dict[str, object] = {
+        "viewer_id": viewer_id,
+        "podcast_id": podcast_id,
+        "episode_state": state,
+        "limit": limit,
+        "offset": offset,
+    }
+    if normalized_query:
+        where_clauses.append(r"m.title ILIKE :query_pattern ESCAPE '\'")
+        params["query_pattern"] = f"%{_escape_ilike_pattern(normalized_query)}%"
 
     episode_rows = db.execute(
         text(
             f"""
             WITH visible_media AS (
                 {visible_media_ids_cte_sql()}
+            ),
+            episode_rows AS (
+                SELECT
+                    pe.media_id,
+                    pe.published_at,
+                    pe.duration_seconds,
+                    CASE
+                        WHEN pls.is_completed IS TRUE THEN 'played'
+                        WHEN COALESCE(pls.position_ms, 0) > 0 THEN 'in_progress'
+                        ELSE 'unplayed'
+                    END AS episode_state
+                FROM podcast_episodes pe
+                JOIN visible_media vm
+                  ON vm.media_id = pe.media_id
+                JOIN media m
+                  ON m.id = pe.media_id
+                LEFT JOIN podcast_listening_states pls
+                  ON pls.user_id = :viewer_id
+                 AND pls.media_id = pe.media_id
+                WHERE {" AND ".join(where_clauses)}
             )
-            SELECT pe.media_id
-            FROM podcast_episodes pe
-            JOIN visible_media vm ON vm.media_id = pe.media_id
-            WHERE pe.podcast_id = :podcast_id
-            ORDER BY pe.published_at DESC NULLS LAST, pe.media_id DESC
+            SELECT media_id, episode_state
+            FROM episode_rows
+            WHERE (:episode_state = 'all' OR episode_state = :episode_state)
+            ORDER BY {order_by_sql}
             LIMIT :limit
             OFFSET :offset
             """
         ),
-        {
-            "viewer_id": viewer_id,
-            "podcast_id": podcast_id,
-            "limit": limit,
-            "offset": offset,
-        },
-    ).fetchall()
+        params,
+    ).mappings().fetchall()
+
+    ordered_media_ids: list[UUID] = []
+    episode_state_by_media_id: dict[UUID, str] = {}
+    for row in episode_rows:
+        media_id = row["media_id"]
+        if media_id is None:
+            continue
+        normalized_media_id = UUID(str(media_id))
+        ordered_media_ids.append(normalized_media_id)
+        episode_state_by_media_id[normalized_media_id] = str(row["episode_state"])
+
+    if not ordered_media_ids:
+        return []
 
     from nexus.services import media as media_service
 
-    return [
-        media_service.get_media_for_viewer(db, viewer_id, row[0])
-        for row in episode_rows
-        if row and row[0] is not None
-    ]
+    episodes = media_service.list_media_for_viewer_by_ids(db, viewer_id, ordered_media_ids)
+    for episode in episodes:
+        episode_state = episode_state_by_media_id.get(episode.id)
+        if episode_state is not None:
+            episode.episode_state = episode_state
+    return episodes
 
 
 def _semantic_index_requires_repair(

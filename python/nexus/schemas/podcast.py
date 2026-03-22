@@ -98,6 +98,7 @@ class PodcastSubscriptionListItemOut(BaseModel):
     sync_completed_at: datetime | None = None
     last_synced_at: datetime | None = None
     updated_at: datetime
+    unplayed_count: int = Field(ge=0, default=0)
     podcast: PodcastListItemOut
 
 

@@ -34,7 +34,28 @@
   text-transform: capitalize;
 }
 
+.trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.unplayedBadge {
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: var(--font-size-xs);
+}
+
 .unsubscribeModeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.sortRow {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -46,7 +67,21 @@
   font-size: var(--font-size-sm);
 }
 
+.sortLabel {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
 .unsubscribeModeSelect {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: var(--font-size-sm);
+}
+
+.sortSelect {
   border: 1px solid var(--color-border);
   background: var(--color-bg-panel);
   color: var(--color-text);

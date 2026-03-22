@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CapabilitiesOut(BaseModel):
@@ -44,13 +44,16 @@ class ListeningStateOut(BaseModel):
     position_ms: int = Field(ge=0)
     duration_ms: int | None = Field(default=None, ge=0)
     playback_speed: float = Field(gt=0)
+    is_completed: bool = False
 
 
 class MediaListeningStateOut(BaseModel):
     """Condensed listening state embedded into media detail responses."""
 
     position_ms: int = Field(ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)
     playback_speed: float = Field(gt=0)
+    is_completed: bool = False
 
 
 class MediaAuthorOut(BaseModel):
@@ -77,6 +80,7 @@ class MediaOut(BaseModel):
     last_error_code: str | None = None
     playback_source: PlaybackSourceOut | None = None
     listening_state: MediaListeningStateOut | None = None
+    episode_state: Literal["unplayed", "in_progress", "played"] | None = None
     capabilities: CapabilitiesOut
     authors: list[MediaAuthorOut] = []
     published_date: str | None = None
@@ -173,9 +177,32 @@ class TranscriptRequestRequest(BaseModel):
 class ListeningStateUpsertRequest(BaseModel):
     """Body for PUT /media/{id}/listening-state."""
 
-    position_ms: int = Field(ge=0)
+    position_ms: int | None = Field(default=None, ge=0)
     duration_ms: int | None = Field(default=None, ge=0)
     playback_speed: float | None = Field(default=None, gt=0)
+    is_completed: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_has_mutation_field(self) -> "ListeningStateUpsertRequest":
+        if (
+            self.position_ms is None
+            and self.duration_ms is None
+            and self.playback_speed is None
+            and self.is_completed is None
+        ):
+            raise ValueError(
+                "At least one of position_ms, duration_ms, playback_speed, or is_completed is required"
+            )
+        return self
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ListeningStateBatchUpsertRequest(BaseModel):
+    """Body for POST /media/listening-state/batch."""
+
+    media_ids: list[UUID] = Field(min_length=1, max_length=1000)
+    is_completed: bool
 
     model_config = ConfigDict(extra="forbid")
 

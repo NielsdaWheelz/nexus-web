@@ -12,6 +12,7 @@ const mockPush = vi.fn<(href: string) => void>();
 vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
   usePaneRouter: () => ({ push: mockPush, replace: mockPush }),
+  usePaneSearchParams: () => new URLSearchParams(),
   useSetPaneTitle: () => {},
 }));
 
@@ -35,6 +36,7 @@ function buildSubscriptionRow(index: number, overrides: Record<string, unknown> 
     sync_completed_at: null,
     last_synced_at: null,
     updated_at: "2026-03-06T00:00:00Z",
+    unplayed_count: 0,
     podcast: {
       id: `podcast-${index}`,
       provider: "podcast_index",
@@ -61,6 +63,8 @@ function buildEpisode(index: number, overrides: Record<string, unknown> = {}) {
     processing_status: "ready_for_reading",
     transcript_state: "ready",
     transcript_coverage: "full",
+    listening_state: null,
+    episode_state: "unplayed",
     failure_stage: null,
     last_error_code: null,
     playback_source: {
@@ -702,6 +706,159 @@ describe("podcasts product flows", () => {
         })
       ).toBe(true);
       expect(mediaZeroRefreshCalls).toBeGreaterThan(1);
+    });
+  });
+
+  it("renders episode-state controls and sends filtered/sorted/searched episode queries", async () => {
+    const user = userEvent.setup();
+    mockUsePaneParam.mockImplementation((paramName) =>
+      paramName === "podcastId" ? "podcast-1" : null
+    );
+    const episodeQueryCalls: Array<{ state: string; sort: string; q: string }> = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/podcast-1") {
+        return jsonResponse({
+          data: {
+            podcast: {
+              id: "podcast-1",
+              provider: "podcast_index",
+              provider_podcast_id: "provider-1",
+              title: "Systems Podcast",
+              author: "Systems Team",
+              feed_url: "https://feeds.example.com/systems.xml",
+              website_url: null,
+              image_url: null,
+              description: "Systems thinking show",
+              created_at: "2026-03-06T00:00:00Z",
+              updated_at: "2026-03-06T00:00:00Z",
+            },
+            subscription: {
+              user_id: "user-1",
+              podcast_id: "podcast-1",
+              status: "active",
+              unsubscribe_mode: 1,
+              sync_status: "complete",
+              sync_error_code: null,
+              sync_error_message: null,
+              sync_attempts: 1,
+              sync_started_at: null,
+              sync_completed_at: null,
+              last_synced_at: null,
+              updated_at: "2026-03-06T00:00:00Z",
+            },
+          },
+        });
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+        episodeQueryCalls.push({
+          state: url.searchParams.get("state") ?? "",
+          sort: url.searchParams.get("sort") ?? "",
+          q: url.searchParams.get("q") ?? "",
+        });
+        return jsonResponse({
+          data: [
+            buildEpisode(0, {
+              title: "Interview Episode",
+              transcript_state: "ready",
+              transcript_coverage: "full",
+              episode_state: "unplayed",
+              listening_state: null,
+            }),
+          ],
+        });
+      }
+      if (url.pathname === "/api/me") {
+        return jsonResponse({
+          data: {
+            user_id: "user-1",
+            default_library_id: null,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call in test: ${url.pathname}${url.search}`);
+    });
+
+    render(
+      <GlobalPlayerProvider>
+        <PodcastDetailPage />
+      </GlobalPlayerProvider>
+    );
+
+    expect(await screen.findByText("Interview Episode")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unplayed" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "In Progress" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Played" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Episode sort")).toBeInTheDocument();
+    expect(screen.getByLabelText("Search episodes")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Mark as played for Interview Episode" })
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Unplayed" }));
+    await user.selectOptions(screen.getByLabelText("Episode sort"), "duration_desc");
+    await user.type(screen.getByLabelText("Search episodes"), "interview");
+
+    await waitFor(() => {
+      expect(
+        episodeQueryCalls.some(
+          (call) =>
+            call.state === "unplayed" && call.sort === "duration_desc" && call.q === "interview"
+        )
+      ).toBe(true);
+    });
+  });
+
+  it("shows subscription unplayed badges and supports subscription sorting", async () => {
+    const user = userEvent.setup();
+    const subscriptionQueryCalls: Array<{ sort: string }> = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/plan") {
+        return jsonResponse({
+          data: {
+            plan: {
+              plan_tier: "free",
+              daily_transcription_minutes: 60,
+              initial_episode_window: 3,
+            },
+            usage: {
+              usage_date: "2026-03-06",
+              used_minutes: 12,
+              reserved_minutes: 3,
+              total_minutes: 15,
+              remaining_minutes: 45,
+            },
+          },
+        });
+      }
+      if (url.pathname === "/api/podcasts/subscriptions") {
+        subscriptionQueryCalls.push({ sort: url.searchParams.get("sort") ?? "" });
+        return jsonResponse({
+          data: [
+            buildSubscriptionRow(0, { unplayed_count: 12 }),
+            buildSubscriptionRow(1, { unplayed_count: 0 }),
+          ],
+        });
+      }
+      throw new Error(`Unexpected fetch call in test: ${url.pathname}${url.search}`);
+    });
+
+    render(<PodcastSubscriptionsPage />);
+
+    expect(await screen.findByText("Systems Podcast 0")).toBeInTheDocument();
+    expect(screen.getByText("12 new")).toBeInTheDocument();
+    expect(screen.queryByText("0 new")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Subscription sort")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Subscription sort"), "unplayed_count");
+
+    await waitFor(() => {
+      expect(subscriptionQueryCalls.some((call) => call.sort === "recent_episode")).toBe(true);
+      expect(subscriptionQueryCalls.some((call) => call.sort === "unplayed_count")).toBe(true);
     });
   });
 

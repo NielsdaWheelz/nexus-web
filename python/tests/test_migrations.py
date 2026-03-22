@@ -3636,6 +3636,16 @@ class TestPodcastListeningStateMigration:
                     """
                 )
             ).fetchall()
+            is_completed_column = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_listening_states'
+                      AND column_name = 'is_completed'
+                    """
+                )
+            ).fetchone()
 
         column_names = {row[0] for row in columns}
         assert {
@@ -3644,6 +3654,7 @@ class TestPodcastListeningStateMigration:
             "position_ms",
             "duration_ms",
             "playback_speed",
+            "is_completed",
             "updated_at",
         }.issubset(column_names), f"Unexpected podcast_listening_states columns: {column_names}"
 
@@ -3657,6 +3668,14 @@ class TestPodcastListeningStateMigration:
 
         index_names = {row[0] for row in indexes}
         assert "ix_podcast_listening_states_media_id" in index_names
+
+        assert is_completed_column is not None, (
+            "podcast_listening_states.is_completed must exist for played/unplayed state derivation"
+        )
+        assert is_completed_column[1] == "boolean", (
+            f"Expected is_completed boolean type, got {is_completed_column[1]}"
+        )
+        assert is_completed_column[2] == "NO", "is_completed must be non-null"
 
 
 class TestPlaybackQueueMigration:

@@ -389,3 +389,54 @@ cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322
 - footer queue panel currently uses native html drag/drop ordering (not `@dnd-kit` yet); accessibility and touch ergonomics are acceptable for now but not best-in-class for high-volume queue management.
 - queue actions in media/podcast rows are intentionally optimistic at interaction level but still silently recover on api failure; if stronger user feedback is required, explicit toast/error surfacing should be added in a follow-up.
 - auto-advance depends on `ended` firing from the active audio element; unusual stream failures that bypass `ended` will not advance automatically without additional error-event fallbacks.
+
+## s7 pr-07 episode state + filtering cutover addendum (2026-03-22)
+
+### summary
+- added durable completion-state semantics to listening persistence by introducing `podcast_listening_states.is_completed` and extending `/media/{id}/listening-state` get/put contracts to surface and mutate completion state explicitly.
+- implemented 95% completion auto-marking on position writes in media service logic, while supporting explicit manual overrides (`is_completed=true/false`) without requiring position writes.
+- added batch completion endpoint `POST /media/listening-state/batch` with strict viewer visibility validation and episode-kind enforcement for multi-episode mark-as-played flows.
+- extended podcast episodes list contract with server-side `state`/`sort`/`q` query support plus per-row `episode_state` + full `listening_state` payload (`position_ms`, `duration_ms`, `playback_speed`, `is_completed`).
+- extended subscriptions list contract with per-row `unplayed_count` and server-side sort modes (`recent_episode`, `unplayed_count`, `alpha`).
+- cut frontend podcast detail and subscriptions UIs over to the new contracts: state pills, sort select, debounced search, mark played/unplayed actions, mark-all-visible-as-played flow, unplayed-count badges, and subscription sorting controls.
+- added a backend regression guard that fails if episodes listing ever falls back to per-episode `get_media_for_viewer` lookups, protecting the batch-hydration refactor.
+- refactored media hydration assembly into shared helpers so `get_media_for_viewer`, `list_media_for_viewer_by_ids`, and `list_visible_media` construct `MediaOut` payloads through one canonical code path.
+- extracted shared media projection query builders (`_media_select_projection_sql` + `_media_listening_state_join_sql`) so both ID-batch hydration and visible-media listing derive row shape from a single source.
+
+### decisions
+- **derived-state source of truth**: episode state is never persisted as a standalone column; it is derived from `position_ms` + `is_completed`, with `is_completed` as the sole explicit override bit.
+- **position writes are completion-aware**: auto-complete is applied in service logic (not db trigger) only on position writes; manual `is_completed` overrides always win when provided.
+- **batch writes are strict and explicit**: batch mark validates full viewer visibility set and rejects unknown/invisible IDs before any mutation.
+- **query-driven UI state**: podcast detail filter/sort/search controls are encoded in pane URL query params and drive server-side list fetches directly.
+- **episode hydration is batch-first**: episodes list now resolves all media rows in one viewer-scoped batch query plus one batched authors read, then reattaches derived episode state without per-item media lookups.
+- **projection drift guardrail**: media row select columns now come from one internal builder, with explicit null listening-state placeholders for queries that intentionally do not join listening state.
+
+### how to test
+```bash
+# schema
+make migrate-test
+
+# backend
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q \
+  tests/test_media_list.py \
+  tests/test_media.py::TestMediaListeningState \
+  tests/test_media.py::TestMediaListeningStateBatch \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_get_podcast_episodes_supports_state_sort_search_and_derived_episode_state \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_list_subscriptions_returns_unplayed_count_and_supports_sort_modes
+
+# migration contract
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations uv run pytest -q \
+  tests/test_migrations.py::TestPodcastListeningStateMigration::test_head_contains_podcast_listening_state_table_contract
+
+# frontend
+cd apps/web && npm run typecheck
+cd apps/web && npm test -- \
+  "src/app/api/media/media-routes.test.ts" \
+  "src/app/api/podcasts/podcasts-routes.test.ts" \
+  "src/app/(authenticated)/podcasts/podcasts-flows.test.tsx"
+```
+
+### risks
+- media-out hydration drift risk is reduced via shared constructors, but capabilities/author payloads are still assembled per row in Python after batched SQL fetches; very large pages may still need profiling/tuning.
+- mark-all-as-played intentionally applies to currently visible rows (current filter/search/page) rather than every historical episode in the subscription.
+- subscription `unplayed_count` is computed live via joins/aggregates; users with many subscriptions and very large episode corpora may need future index/tuning work.

@@ -1,6 +1,6 @@
 """Podcast discovery and subscription routes."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -46,9 +46,16 @@ def list_subscriptions(
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=100, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    sort: Literal["recent_episode", "unplayed_count", "alpha"] = Query(default="recent_episode"),
 ) -> dict:
     """List active podcast subscriptions for the viewer."""
-    rows = podcast_service.list_subscriptions(db, viewer.user_id, limit=limit, offset=offset)
+    rows = podcast_service.list_subscriptions(
+        db,
+        viewer.user_id,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+    )
     return success_response([row.model_dump(mode="json") for row in rows])
 
 
@@ -137,6 +144,9 @@ def list_podcast_episodes(
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    state: Literal["all", "unplayed", "in_progress", "played"] = Query(default="all"),
+    sort: Literal["newest", "oldest", "duration_asc", "duration_desc"] = Query(default="newest"),
+    q: str | None = Query(default=None),
 ) -> dict:
     """List viewer-visible episodes for one subscribed podcast."""
     rows = podcast_service.list_podcast_episodes_for_viewer(
@@ -145,5 +155,8 @@ def list_podcast_episodes(
         podcast_id,
         limit=limit,
         offset=offset,
+        state=state,
+        sort=sort,
+        q=q,
     )
     return success_response([row.model_dump(mode="json") for row in rows])

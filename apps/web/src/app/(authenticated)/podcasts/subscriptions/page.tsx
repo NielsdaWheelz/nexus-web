@@ -10,6 +10,7 @@ import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
 
 const SUBSCRIPTIONS_PAGE_SIZE = 100;
+type SubscriptionSort = "recent_episode" | "unplayed_count" | "alpha";
 
 interface PodcastListItem {
   id: string;
@@ -37,6 +38,7 @@ interface PodcastSubscriptionRow {
   sync_completed_at: string | null;
   last_synced_at: string | null;
   updated_at: string;
+  unplayed_count: number;
   podcast: PodcastListItem;
 }
 
@@ -74,6 +76,7 @@ export default function PodcastSubscriptionsPage() {
   const [planError, setPlanError] = useState<string | null>(null);
   const [busyPodcastIds, setBusyPodcastIds] = useState<Set<string>>(new Set());
   const [refreshingPodcastIds, setRefreshingPodcastIds] = useState<Set<string>>(new Set());
+  const [subscriptionSort, setSubscriptionSort] = useState<SubscriptionSort>("recent_episode");
   const [unsubscribeMode, setUnsubscribeMode] = useState<1 | 2 | 3>(1);
   const [plan, setPlan] = useState<PodcastPlanSnapshot | null>(null);
   const [planLoading, setPlanLoading] = useState(true);
@@ -88,7 +91,7 @@ export default function PodcastSubscriptionsPage() {
     setError(null);
     try {
       const response = await apiFetch<{ data: PodcastSubscriptionRow[] }>(
-        `/api/podcasts/subscriptions?limit=${SUBSCRIPTIONS_PAGE_SIZE}&offset=${offset}`
+        `/api/podcasts/subscriptions?limit=${SUBSCRIPTIONS_PAGE_SIZE}&offset=${offset}&sort=${subscriptionSort}`
       );
       setRows((prev) => (append ? [...prev, ...response.data] : response.data));
       setHasMore(response.data.length === SUBSCRIPTIONS_PAGE_SIZE);
@@ -106,7 +109,7 @@ export default function PodcastSubscriptionsPage() {
         setLoading(false);
       }
     }
-  }, []);
+  }, [subscriptionSort]);
 
   const loadPlanSnapshot = useCallback(async () => {
     setPlanLoading(true);
@@ -234,6 +237,22 @@ export default function PodcastSubscriptionsPage() {
             <option value="3">Remove from default and single-member libraries</option>
           </select>
         </div>
+        <div className={styles.sortRow}>
+          <label htmlFor="subscription-sort" className={styles.sortLabel}>
+            Subscription sort
+          </label>
+          <select
+            id="subscription-sort"
+            value={subscriptionSort}
+            onChange={(event) => setSubscriptionSort(event.target.value as SubscriptionSort)}
+            className={styles.sortSelect}
+            aria-label="Subscription sort"
+          >
+            <option value="recent_episode">Recent Episode</option>
+            <option value="unplayed_count">Most Unplayed</option>
+            <option value="alpha">A-Z</option>
+          </select>
+        </div>
 
         {loading && <StateMessage variant="loading">Loading subscriptions...</StateMessage>}
         {error && <StateMessage variant="error">{error}</StateMessage>}
@@ -257,7 +276,14 @@ export default function PodcastSubscriptionsPage() {
                     ? `${row.sync_status} sync - ${row.sync_error_code}: ${row.sync_error_message || "unknown error"}`
                     : `${row.sync_status} sync`
                 }
-                trailing={<span className={styles.status}>{row.sync_status}</span>}
+                trailing={
+                  <span className={styles.trailing}>
+                    {row.unplayed_count > 0 && (
+                      <span className={styles.unplayedBadge}>{row.unplayed_count} new</span>
+                    )}
+                    <span className={styles.status}>{row.sync_status}</span>
+                  </span>
+                }
                 actions={
                   <>
                     <button

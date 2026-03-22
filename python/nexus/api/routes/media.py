@@ -20,6 +20,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.media import (
     FromUrlRequest,
+    ListeningStateBatchUpsertRequest,
     ListeningStateUpsertRequest,
     TranscriptForecastBatchRequest,
     TranscriptRequestRequest,
@@ -235,6 +236,17 @@ def put_listening_state(
 ) -> Response:
     """Upsert per-media listening state for the authenticated viewer."""
     media_service.upsert_listening_state_for_viewer(db, viewer.user_id, media_id, body)
+    return Response(status_code=204)
+
+
+@router.post("/media/listening-state/batch", status_code=204)
+def post_listening_state_batch(
+    body: ListeningStateBatchUpsertRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Batch mark many visible podcast episodes played/unplayed."""
+    media_service.batch_mark_listening_state_for_viewer(db, viewer.user_id, body)
     return Response(status_code=204)
 
 

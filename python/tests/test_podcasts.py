@@ -4469,6 +4469,295 @@ class TestPodcastApiSurface:
             f"got {episodes_response.status_code}: {episodes_response.text}"
         )
 
+    def test_get_podcast_episodes_supports_state_sort_search_and_derived_episode_state(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        provider_podcast_id = f"surface-state-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "State Podcast")
+        episodes_by_podcast = {
+            provider_podcast_id: [
+                {
+                    "provider_episode_id": f"{provider_podcast_id}-ep-alpha",
+                    "guid": f"{provider_podcast_id}-guid-alpha",
+                    "title": "Interview Alpha",
+                    "audio_url": "https://cdn.example.com/state-alpha.mp3",
+                    "published_at": "2026-03-01T10:00:00Z",
+                    "duration_seconds": 120,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "alpha"}],
+                },
+                {
+                    "provider_episode_id": f"{provider_podcast_id}-ep-daily",
+                    "guid": f"{provider_podcast_id}-guid-daily",
+                    "title": "Daily Roundup",
+                    "audio_url": "https://cdn.example.com/state-daily.mp3",
+                    "published_at": "2026-03-02T10:00:00Z",
+                    "duration_seconds": 1800,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "daily"}],
+                },
+                {
+                    "provider_episode_id": f"{provider_podcast_id}-ep-gamma",
+                    "guid": f"{provider_podcast_id}-guid-gamma",
+                    "title": "Interview Gamma",
+                    "audio_url": "https://cdn.example.com/state-gamma.mp3",
+                    "published_at": "2026-03-03T10:00:00Z",
+                    "duration_seconds": 600,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "gamma"}],
+                },
+            ]
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
+        import nexus.services.media as media_service
+
+        def _unexpected_per_episode_media_lookup(*_args, **_kwargs):
+            raise AssertionError(
+                "podcast episodes listing must use batched media hydration, not per-episode "
+                "get_media_for_viewer calls"
+            )
+
+        monkeypatch.setattr(
+            media_service,
+            "get_media_for_viewer",
+            _unexpected_per_episode_media_lookup,
+        )
+
+        all_episodes_response = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?state=all&sort=newest&limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert all_episodes_response.status_code == 200, (
+            f"expected episodes list to succeed, got {all_episodes_response.status_code}: "
+            f"{all_episodes_response.text}"
+        )
+        all_rows = all_episodes_response.json()["data"]
+        row_by_title = {row["title"]: row for row in all_rows}
+        assert set(row_by_title) == {"Interview Alpha", "Daily Roundup", "Interview Gamma"}
+
+        in_progress_media_id = row_by_title["Daily Roundup"]["id"]
+        played_media_id = row_by_title["Interview Gamma"]["id"]
+
+        in_progress_put = auth_client.put(
+            f"/media/{in_progress_media_id}/listening-state",
+            json={"position_ms": 900_000, "duration_ms": 1_800_000},
+            headers=auth_headers(user_id),
+        )
+        assert in_progress_put.status_code == 204, (
+            "position write should succeed before state-filter assertions; "
+            f"got {in_progress_put.status_code}: {in_progress_put.text}"
+        )
+        played_put = auth_client.put(
+            f"/media/{played_media_id}/listening-state",
+            json={"is_completed": True},
+            headers=auth_headers(user_id),
+        )
+        assert played_put.status_code == 204, (
+            "manual mark-as-played should succeed before state-filter assertions; "
+            f"got {played_put.status_code}: {played_put.text}"
+        )
+
+        filtered_response = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?state=unplayed&sort=oldest&q=interview",
+            headers=auth_headers(user_id),
+        )
+        assert filtered_response.status_code == 200, (
+            f"expected filtered/sorted/search episodes list to succeed, got "
+            f"{filtered_response.status_code}: {filtered_response.text}"
+        )
+        filtered_rows = filtered_response.json()["data"]
+        assert [row["title"] for row in filtered_rows] == ["Interview Alpha"], (
+            "state=unplayed + sort=oldest + q=interview should return only the oldest matching "
+            f"unplayed row, got {[row['title'] for row in filtered_rows]}"
+        )
+        assert filtered_rows[0]["episode_state"] == "unplayed"
+        assert filtered_rows[0]["listening_state"] is None
+
+        in_progress_response = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?state=in_progress&sort=newest",
+            headers=auth_headers(user_id),
+        )
+        assert in_progress_response.status_code == 200
+        in_progress_rows = in_progress_response.json()["data"]
+        assert [row["title"] for row in in_progress_rows] == ["Daily Roundup"]
+        assert in_progress_rows[0]["episode_state"] == "in_progress"
+        assert in_progress_rows[0]["listening_state"]["position_ms"] == 900_000
+        assert in_progress_rows[0]["listening_state"]["is_completed"] is False
+
+        played_response = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?state=played&sort=newest",
+            headers=auth_headers(user_id),
+        )
+        assert played_response.status_code == 200
+        played_rows = played_response.json()["data"]
+        assert [row["title"] for row in played_rows] == ["Interview Gamma"]
+        assert played_rows[0]["episode_state"] == "played"
+        assert played_rows[0]["listening_state"]["is_completed"] is True
+
+        duration_sort_response = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?state=all&sort=duration_desc",
+            headers=auth_headers(user_id),
+        )
+        assert duration_sort_response.status_code == 200
+        duration_titles = [row["title"] for row in duration_sort_response.json()["data"]]
+        assert duration_titles == ["Daily Roundup", "Interview Gamma", "Interview Alpha"], (
+            "duration_desc should return longest-to-shortest ordering"
+        )
+
+    def test_list_subscriptions_returns_unplayed_count_and_supports_sort_modes(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        provider_alpha = f"surface-unplayed-alpha-{uuid4()}"
+        provider_beta = f"surface-unplayed-beta-{uuid4()}"
+        alpha_payload = _podcast_payload(provider_alpha, "Alpha Show")
+        beta_payload = _podcast_payload(provider_beta, "Beta Show")
+        episodes_by_podcast = {
+            provider_alpha: [
+                {
+                    "provider_episode_id": f"{provider_alpha}-ep-1",
+                    "guid": f"{provider_alpha}-guid-1",
+                    "title": "Alpha Episode 1",
+                    "audio_url": "https://cdn.example.com/alpha-1.mp3",
+                    "published_at": "2026-03-05T10:00:00Z",
+                    "duration_seconds": 240,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "alpha1"}],
+                },
+                {
+                    "provider_episode_id": f"{provider_alpha}-ep-2",
+                    "guid": f"{provider_alpha}-guid-2",
+                    "title": "Alpha Episode 2",
+                    "audio_url": "https://cdn.example.com/alpha-2.mp3",
+                    "published_at": "2026-03-01T10:00:00Z",
+                    "duration_seconds": 180,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "alpha2"}],
+                },
+            ],
+            provider_beta: [
+                {
+                    "provider_episode_id": f"{provider_beta}-ep-1",
+                    "guid": f"{provider_beta}-guid-1",
+                    "title": "Beta Episode 1",
+                    "audio_url": "https://cdn.example.com/beta-1.mp3",
+                    "published_at": "2026-03-04T10:00:00Z",
+                    "duration_seconds": 240,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "beta1"}],
+                },
+                {
+                    "provider_episode_id": f"{provider_beta}-ep-2",
+                    "guid": f"{provider_beta}-guid-2",
+                    "title": "Beta Episode 2",
+                    "audio_url": "https://cdn.example.com/beta-2.mp3",
+                    "published_at": "2026-03-03T10:00:00Z",
+                    "duration_seconds": 240,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "beta2"}],
+                },
+            ],
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[alpha_payload, beta_payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+
+        alpha_subscribe = _subscribe(auth_client, user_id, alpha_payload)
+        beta_subscribe = _subscribe(auth_client, user_id, beta_payload)
+        alpha_podcast_id = UUID(alpha_subscribe["podcast_id"])
+        beta_podcast_id = UUID(beta_subscribe["podcast_id"])
+
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            alpha_podcast_id,
+            run_transcription_jobs=False,
+        )
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            beta_podcast_id,
+            run_transcription_jobs=False,
+        )
+
+        alpha_episodes_response = auth_client.get(
+            f"/podcasts/{alpha_podcast_id}/episodes?state=all&sort=newest&limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert alpha_episodes_response.status_code == 200
+        alpha_rows = alpha_episodes_response.json()["data"]
+        mark_played_response = auth_client.put(
+            f"/media/{alpha_rows[0]['id']}/listening-state",
+            json={"is_completed": True},
+            headers=auth_headers(user_id),
+        )
+        assert mark_played_response.status_code == 204, (
+            "marking one alpha episode played should leave one unplayed for count assertions; "
+            f"got {mark_played_response.status_code}: {mark_played_response.text}"
+        )
+
+        by_unplayed_response = auth_client.get(
+            "/podcasts/subscriptions?sort=unplayed_count&limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert by_unplayed_response.status_code == 200, (
+            f"expected subscriptions list sorted by unplayed_count to succeed, got "
+            f"{by_unplayed_response.status_code}: {by_unplayed_response.text}"
+        )
+        by_unplayed_rows = by_unplayed_response.json()["data"]
+        assert [row["podcast"]["title"] for row in by_unplayed_rows] == [
+            "Beta Show",
+            "Alpha Show",
+        ], "unplayed_count sort should return most-unplayed subscriptions first"
+        assert by_unplayed_rows[0]["unplayed_count"] == 2
+        assert by_unplayed_rows[1]["unplayed_count"] == 1
+
+        alpha_sort_response = auth_client.get(
+            "/podcasts/subscriptions?sort=alpha&limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert alpha_sort_response.status_code == 200
+        alpha_titles = [row["podcast"]["title"] for row in alpha_sort_response.json()["data"]]
+        assert alpha_titles == ["Alpha Show", "Beta Show"], (
+            f"alpha sort should return alphabetical podcast titles, got {alpha_titles}"
+        )
+
+        recent_sort_response = auth_client.get(
+            "/podcasts/subscriptions?sort=recent_episode&limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert recent_sort_response.status_code == 200
+        recent_rows = recent_sort_response.json()["data"]
+        assert [row["podcast"]["title"] for row in recent_rows] == [
+            "Alpha Show",
+            "Beta Show",
+        ], "recent_episode sort should prioritize subscriptions with the newest episode timestamp"
+
+        default_sort_response = auth_client.get(
+            "/podcasts/subscriptions?limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert default_sort_response.status_code == 200
+        default_rows = default_sort_response.json()["data"]
+        assert [row["podcast"]["title"] for row in default_rows] == [
+            "Alpha Show",
+            "Beta Show",
+        ], "default subscriptions ordering should match recent_episode sort"
+        assert all("unplayed_count" in row for row in default_rows), (
+            "subscriptions payload must include unplayed_count per row for UI badge rendering"
+        )
+
     def test_discover_retries_transient_provider_timeout_before_failing(
         self, auth_client, monkeypatch
     ):
