@@ -23,6 +23,7 @@ __all__ = [
     "CreateLibraryRequest",
     "UpdateLibraryRequest",
     "AddMediaRequest",
+    "LibraryMediaOrderRequest",
     "UpdateLibraryMemberRequest",
     "TransferLibraryOwnershipRequest",
     "LibraryOut",
@@ -67,6 +68,14 @@ class AddMediaRequest(BaseModel):
     """Request body for adding media to a library."""
 
     media_id: UUID = Field(..., description="ID of the media to add")
+
+
+class LibraryMediaOrderRequest(BaseModel):
+    """Request body for replacing library media order."""
+
+    media_ids: list[UUID] = Field(min_length=1, max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class UpdateLibraryMemberRequest(BaseModel):

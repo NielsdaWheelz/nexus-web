@@ -6,7 +6,7 @@ import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
 import MediaKindIcon from "@/components/MediaKindIcon";
 import StateMessage from "@/components/ui/StateMessage";
-import { AppList, AppListItem } from "@/components/ui/AppList";
+import SortableList from "@/components/sortable/SortableList";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import type {
   LibraryForEdit,
@@ -51,6 +51,7 @@ export default function LibraryDetailPage() {
   const [media, setMedia] = useState<Media[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reorderBusy, setReorderBusy] = useState(false);
   useSetPaneTitle(library?.name ?? "Library");
 
   /* ---- Edit dialog state ---- */
@@ -245,12 +246,29 @@ export default function LibraryDetailPage() {
     router.push("/libraries");
   }, [library, closeEditDialog, router]);
 
-  const statusVariant = (status: string) => {
-    if (status === "ready" || status === "ready_for_reading") return "success";
-    if (status === "extracting" || status === "embedding") return "info";
-    if (status === "pending") return "warning";
-    if (status === "failed") return "danger";
-    return "neutral";
+  const handleReorderMedia = (nextMedia: Media[]) => {
+    if (!library || library.role !== "admin") {
+      return;
+    }
+    const previousMedia = media;
+    setMedia(nextMedia);
+    setReorderBusy(true);
+    setError(null);
+    void apiFetch(`/api/libraries/${id}/media/order`, {
+      method: "PUT",
+      body: JSON.stringify({ media_ids: nextMedia.map((item) => item.id) }),
+    })
+      .catch((err: unknown) => {
+        setMedia(previousMedia);
+        if (isApiError(err)) {
+          setError(err.message);
+          return;
+        }
+        setError("Failed to reorder library media");
+      })
+      .finally(() => {
+        setReorderBusy(false);
+      });
   };
 
   if (loading) {
@@ -312,34 +330,63 @@ export default function LibraryDetailPage() {
           {media.length === 0 ? (
             <StateMessage variant="empty">No media in this library yet.</StateMessage>
           ) : (
-            <AppList>
-              {media.map((item) => (
-                <AppListItem
-                  key={item.id}
-                  href={`/media/${item.id}`}
-                  icon={<MediaKindIcon kind={item.kind} />}
-                  title={item.title}
-                  paneTitleHint={item.title}
-                  paneResourceRef={`media:${item.id}`}
-                  status={statusVariant(item.processing_status)}
-                  meta={[item.kind.replaceAll("_", " "), `Updated ${formatDate(item.updated_at)}`].join(" · ")}
-                  options={
-                    library.role === "admin"
-                      ? [
-                          {
-                            id: "remove",
-                            label: "Remove",
-                            tone: "danger" as const,
-                            onSelect: () => {
-                              void handleRemoveMedia(item.id);
-                            },
-                          },
-                        ]
-                      : []
-                  }
-                />
-              ))}
-            </AppList>
+            <SortableList
+              className={styles.mediaList}
+              itemClassName={styles.mediaListItem}
+              items={media}
+              getItemId={(item) => item.id}
+              onReorder={handleReorderMedia}
+              renderItem={({ item, handleProps, isDragging }) => {
+                const dragHandleBindings =
+                  library.role === "admin"
+                    ? {
+                        ...handleProps.attributes,
+                        ...handleProps.listeners,
+                      }
+                    : undefined;
+                return (
+                  <div className={styles.mediaRow} data-dragging={isDragging ? "true" : "false"}>
+                    <div className={styles.mediaRowMain}>
+                      {library.role === "admin" && (
+                        <button
+                          type="button"
+                          className={styles.dragHandle}
+                          aria-label={`Reorder ${item.title}`}
+                          disabled={reorderBusy}
+                          {...dragHandleBindings}
+                        >
+                          ⋮⋮
+                        </button>
+                      )}
+                      <a href={`/media/${item.id}`} className={styles.mediaLink}>
+                        <span className={styles.mediaTitleRow}>
+                          <MediaKindIcon kind={item.kind} />
+                          <span className={styles.mediaTitle}>{item.title}</span>
+                        </span>
+                        <span className={styles.mediaMeta}>
+                          {[
+                            item.kind.replaceAll("_", " "),
+                            item.processing_status,
+                            `Updated ${formatDate(item.updated_at)}`,
+                          ].join(" · ")}
+                        </span>
+                      </a>
+                    </div>
+                    {library.role === "admin" && (
+                      <button
+                        type="button"
+                        className={styles.removeButton}
+                        onClick={() => {
+                          void handleRemoveMedia(item.id);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                );
+              }}
+            />
           )}
         </div>
       </Pane>

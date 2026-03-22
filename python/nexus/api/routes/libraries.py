@@ -25,6 +25,7 @@ from nexus.schemas.library import (
     CreateLibraryInviteRequest,
     CreateLibraryRequest,
     LibraryInvitationStatusValue,
+    LibraryMediaOrderRequest,
     TransferLibraryOwnershipRequest,
     UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
@@ -307,7 +308,7 @@ def list_library_media(
 ) -> dict:
     """List media in a library.
 
-    Returns media ordered by library_media.created_at DESC, media.id DESC.
+    Returns media ordered by library_media.position ASC and recency tiebreakers.
     """
     result = libraries_service.list_library_media(
         db,
@@ -316,6 +317,18 @@ def list_library_media(
         limit=limit,
         offset=offset,
     )
+    return success_response([media.model_dump(mode="json") for media in result])
+
+
+@router.put("/libraries/{library_id}/media/order")
+def put_library_media_order(
+    library_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    body: LibraryMediaOrderRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Replace full media ordering for a library."""
+    result = libraries_service.reorder_library_media(db, viewer.user_id, library_id, body)
     return success_response([media.model_dump(mode="json") for media in result])
 
 
