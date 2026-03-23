@@ -4,7 +4,14 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from nexus.db.models import Media, MediaKind, Podcast, PodcastEpisode, ProcessingStatus
+from nexus.db.models import (
+    Media,
+    MediaKind,
+    Podcast,
+    PodcastEpisode,
+    PodcastSubscription,
+    ProcessingStatus,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -26,6 +33,22 @@ def _create_podcast_episode_media(
     podcast_title: str,
     duration_seconds: int,
 ) -> UUID:
+    _, media_id = _create_podcast_episode_media_with_podcast_id(
+        direct_db,
+        title=title,
+        podcast_title=podcast_title,
+        duration_seconds=duration_seconds,
+    )
+    return media_id
+
+
+def _create_podcast_episode_media_with_podcast_id(
+    direct_db: DirectSessionManager,
+    *,
+    title: str,
+    podcast_title: str,
+    duration_seconds: int,
+) -> tuple[UUID, UUID]:
     media_id = uuid4()
     podcast_id = uuid4()
     provider_podcast_id = f"provider-{podcast_id}"
@@ -77,7 +100,7 @@ def _create_podcast_episode_media(
     direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("podcasts", "id", podcast_id)
-    return media_id
+    return podcast_id, media_id
 
 
 def _add_media_to_library(auth_client, user_id: UUID, library_id: UUID, media_id: UUID) -> None:
@@ -182,6 +205,39 @@ class TestPlaybackQueueApi:
         assert first_item["podcast_title"] == "Queue Podcast"
         assert first_item["duration_seconds"] == 60
         assert first_item["listening_state"]["position_ms"] == 5_000
+
+    def test_queue_rows_expose_subscription_default_playback_speed(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap_user_default_library(auth_client, user_id)
+        podcast_id, media_id = _create_podcast_episode_media_with_podcast_id(
+            direct_db,
+            title="Episode Subscription Speed",
+            podcast_title="Queue Subscription Podcast",
+            duration_seconds=95,
+        )
+        _add_media_to_library(auth_client, user_id, library_id, media_id)
+
+        with direct_db.session() as session:
+            session.add(
+                PodcastSubscription(
+                    user_id=user_id,
+                    podcast_id=podcast_id,
+                    default_playback_speed=1.75,
+                )
+            )
+            session.commit()
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+
+        queued = _queue_media(auth_client, user_id, [media_id], insert_position="last")
+        queue_item = queued["data"][0]
+        assert queue_item["listening_state"] is None, (
+            "Queue contract must keep listening_state null until per-episode state exists."
+        )
+        assert queue_item["subscription_default_playback_speed"] == 1.75, (
+            "Queue rows must expose subscription default speed for first-play inheritance."
+        )
 
     def test_put_order_requires_exact_item_set_and_reorders_atomically(
         self, auth_client, direct_db: DirectSessionManager

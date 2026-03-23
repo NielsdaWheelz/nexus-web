@@ -4452,6 +4452,162 @@ class TestPodcastApiSurface:
         assert rows[0]["title"] == "Episode 1"
         assert rows[1]["title"] == "Episode 2"
 
+    def test_patch_subscription_settings_updates_contract_and_episode_default_speed(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        provider_podcast_id = f"surface-settings-{uuid4()}"
+        podcast_id, _ = self._subscribe_and_sync_single_podcast(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            user_id=user_id,
+            provider_podcast_id=provider_podcast_id,
+            title="Settings Podcast",
+        )
+
+        patch_response = auth_client.patch(
+            f"/podcasts/subscriptions/{podcast_id}/settings",
+            headers=auth_headers(user_id),
+            json={"default_playback_speed": 1.5, "auto_queue": True},
+        )
+        assert patch_response.status_code == 200, (
+            "settings patch should support setting default speed + auto_queue together, "
+            f"got {patch_response.status_code}: {patch_response.text}"
+        )
+        patched = patch_response.json()["data"]
+        assert patched["podcast_id"] == str(podcast_id)
+        assert patched["default_playback_speed"] == 1.5
+        assert patched["auto_queue"] is True
+
+        partial_patch = auth_client.patch(
+            f"/podcasts/subscriptions/{podcast_id}/settings",
+            headers=auth_headers(user_id),
+            json={"auto_queue": False},
+        )
+        assert partial_patch.status_code == 200, (
+            "PATCH semantics must allow auto_queue-only updates without resetting speed, "
+            f"got {partial_patch.status_code}: {partial_patch.text}"
+        )
+        partial_payload = partial_patch.json()["data"]
+        assert partial_payload["default_playback_speed"] == 1.5
+        assert partial_payload["auto_queue"] is False
+
+        subscriptions_response = auth_client.get(
+            "/podcasts/subscriptions",
+            headers=auth_headers(user_id),
+        )
+        assert subscriptions_response.status_code == 200, (
+            "subscriptions list should include updated settings fields, "
+            f"got {subscriptions_response.status_code}: {subscriptions_response.text}"
+        )
+        rows = subscriptions_response.json()["data"]
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["podcast_id"] == str(podcast_id)
+        assert row["default_playback_speed"] == 1.5
+        assert row["auto_queue"] is False
+
+        detail_response = auth_client.get(
+            f"/podcasts/{podcast_id}",
+            headers=auth_headers(user_id),
+        )
+        assert detail_response.status_code == 200, (
+            "podcast detail should include updated subscription settings fields, "
+            f"got {detail_response.status_code}: {detail_response.text}"
+        )
+        detail_payload = detail_response.json()["data"]
+        assert detail_payload["subscription"]["default_playback_speed"] == 1.5
+        assert detail_payload["subscription"]["auto_queue"] is False
+
+        episodes_response = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert episodes_response.status_code == 200, (
+            "episodes list should include subscription_default_playback_speed for first-play inheritance, "
+            f"got {episodes_response.status_code}: {episodes_response.text}"
+        )
+        episodes = episodes_response.json()["data"]
+        assert len(episodes) == 2
+        assert all(
+            episode["subscription_default_playback_speed"] == 1.5 for episode in episodes
+        ), f"expected all episode rows to carry subscription default speed override: {episodes}"
+
+        clear_response = auth_client.patch(
+            f"/podcasts/subscriptions/{podcast_id}/settings",
+            headers=auth_headers(user_id),
+            json={"default_playback_speed": None},
+        )
+        assert clear_response.status_code == 200, (
+            "explicit null default_playback_speed must clear override, "
+            f"got {clear_response.status_code}: {clear_response.text}"
+        )
+        assert clear_response.json()["data"]["default_playback_speed"] is None
+
+        episodes_after_clear = auth_client.get(
+            f"/podcasts/{podcast_id}/episodes?limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert episodes_after_clear.status_code == 200
+        episodes_after_clear_payload = episodes_after_clear.json()["data"]
+        assert all(
+            episode["subscription_default_playback_speed"] is None
+            for episode in episodes_after_clear_payload
+        ), (
+            "cleared override must surface as null in episode rows so frontend falls back to 1.0x, "
+            f"got {episodes_after_clear_payload}"
+        )
+
+    def test_patch_subscription_settings_rejects_out_of_range_default_speed(
+        self, auth_client, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        provider_podcast_id = f"surface-settings-invalid-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Invalid Settings Podcast")
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: []},
+        )
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = subscribe_data["podcast_id"]
+
+        too_low = auth_client.patch(
+            f"/podcasts/subscriptions/{podcast_id}/settings",
+            headers=auth_headers(user_id),
+            json={"default_playback_speed": 0.49},
+        )
+        assert too_low.status_code == 400, (
+            "default_playback_speed below 0.5 must be rejected, "
+            f"got {too_low.status_code}: {too_low.text}"
+        )
+        assert too_low.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+        too_high = auth_client.patch(
+            f"/podcasts/subscriptions/{podcast_id}/settings",
+            headers=auth_headers(user_id),
+            json={"default_playback_speed": 3.01},
+        )
+        assert too_high.status_code == 400, (
+            "default_playback_speed above 3.0 must be rejected, "
+            f"got {too_high.status_code}: {too_high.text}"
+        )
+        assert too_high.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+        empty_payload = auth_client.patch(
+            f"/podcasts/subscriptions/{podcast_id}/settings",
+            headers=auth_headers(user_id),
+            json={},
+        )
+        assert empty_payload.status_code == 400, (
+            "PATCH settings must require at least one field to prevent silent no-op writes, "
+            f"got {empty_payload.status_code}: {empty_payload.text}"
+        )
+        assert empty_payload.json()["error"]["code"] == "E_INVALID_REQUEST"
+
     def test_sync_extracts_podcasting20_chapters_and_exposes_episode_and_media_contract(
         self, auth_client, monkeypatch, direct_db
     ):

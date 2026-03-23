@@ -53,12 +53,17 @@ def list_queue_for_viewer(db: Session, viewer_id: UUID) -> list[PlaybackQueueIte
                 p.title AS podcast_title,
                 pe.duration_seconds,
                 pls.position_ms AS listening_position_ms,
-                pls.playback_speed AS listening_playback_speed
+                pls.playback_speed AS listening_playback_speed,
+                ps.default_playback_speed AS subscription_default_playback_speed
             FROM playback_queue_items q
             JOIN visible_media vm ON vm.media_id = q.media_id
             JOIN media m ON m.id = q.media_id
             LEFT JOIN podcast_episodes pe ON pe.media_id = q.media_id
             LEFT JOIN podcasts p ON p.id = pe.podcast_id
+            LEFT JOIN podcast_subscriptions ps
+              ON ps.user_id = :viewer_id
+             AND ps.podcast_id = pe.podcast_id
+             AND ps.status = 'active'
             LEFT JOIN podcast_listening_states pls
               ON pls.user_id = :viewer_id
              AND pls.media_id = q.media_id
@@ -287,6 +292,9 @@ def _row_to_queue_item(row: dict[str, object]) -> PlaybackQueueItemOut | None:
         source=str(row["source"]),
         added_at=row["added_at"],
         listening_state=listening_state,
+        subscription_default_playback_speed=float(row["subscription_default_playback_speed"])
+        if row["subscription_default_playback_speed"] is not None
+        else None,
     )
 
 

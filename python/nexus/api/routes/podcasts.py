@@ -11,7 +11,11 @@ from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.errors import ApiErrorCode, ForbiddenError
 from nexus.responses import success_response
-from nexus.schemas.podcast import PodcastPlanUpdateRequest, PodcastSubscribeRequest
+from nexus.schemas.podcast import (
+    PodcastPlanUpdateRequest,
+    PodcastSubscribeRequest,
+    PodcastSubscriptionSettingsPatchRequest,
+)
 from nexus.services import podcasts as podcast_service
 
 router = APIRouter()
@@ -99,6 +103,23 @@ def get_subscription_status(
 ) -> dict:
     """Read viewer-visible sync status for one podcast subscription."""
     out = podcast_service.get_subscription_status(db, viewer.user_id, podcast_id)
+    return success_response(out.model_dump(mode="json"))
+
+
+@router.patch("/podcasts/subscriptions/{podcast_id}/settings")
+def patch_subscription_settings(
+    podcast_id: UUID,
+    body: PodcastSubscriptionSettingsPatchRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Patch per-subscription playback settings for the authenticated viewer."""
+    out = podcast_service.update_subscription_settings_for_viewer(
+        db,
+        viewer_id=viewer.user_id,
+        podcast_id=podcast_id,
+        body=body,
+    )
     return success_response(out.model_dump(mode="json"))
 
 

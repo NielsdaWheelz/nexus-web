@@ -31,6 +31,7 @@ class PlaybackQueueItemOut(BaseModel):
     source: PlaybackQueueSource
     added_at: datetime
     listening_state: PlaybackQueueListeningStateOut | None = None
+    subscription_default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
 
 
 class PlaybackQueueAddRequest(BaseModel):

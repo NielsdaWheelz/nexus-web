@@ -3723,6 +3723,16 @@ class TestPlaybackQueueMigration:
                     """
                 )
             ).fetchone()
+            default_playback_speed_column = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_subscriptions'
+                      AND column_name = 'default_playback_speed'
+                    """
+                )
+            ).fetchone()
 
         queue_column_names = {row[0] for row in queue_columns}
         assert {
@@ -3750,6 +3760,16 @@ class TestPlaybackQueueMigration:
         )
         assert auto_queue_column[1] == "boolean", (
             f"Expected auto_queue boolean column, got {auto_queue_column[1]}"
+        )
+        assert default_playback_speed_column is not None, (
+            "podcast_subscriptions.default_playback_speed must exist for per-subscription speed inheritance"
+        )
+        assert default_playback_speed_column[1] == "double precision", (
+            "default_playback_speed should be FLOAT for player-speed precision parity, "
+            f"got {default_playback_speed_column[1]}"
+        )
+        assert default_playback_speed_column[2] == "YES", (
+            "default_playback_speed must be nullable so null means inherit global default 1.0x"
         )
 
 

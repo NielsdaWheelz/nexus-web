@@ -82,6 +82,28 @@
   padding: 8px;
 }
 
+.settingsFieldLabel {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.settingsSelect {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: var(--font-size-sm);
+}
+
+.settingsToggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
 .importSummary {
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -135,6 +157,21 @@
 }
 
 .syncButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.settingsButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.settingsButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }

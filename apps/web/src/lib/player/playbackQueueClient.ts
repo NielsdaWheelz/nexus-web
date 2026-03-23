@@ -21,6 +21,7 @@ export interface PlaybackQueueItem {
   source: PlaybackQueueSource;
   added_at: string;
   listening_state: PlaybackQueueListeningState | null;
+  subscription_default_playback_speed?: number | null;
 }
 
 interface ApiEnvelope<T> {

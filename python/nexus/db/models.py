@@ -644,6 +644,7 @@ class PodcastSubscription(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
     unsubscribe_mode: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     auto_queue: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    default_playback_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
     sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     sync_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     sync_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -682,6 +683,10 @@ class PodcastSubscription(Base):
         CheckConstraint(
             "sync_attempts >= 0",
             name="ck_podcast_subscriptions_sync_attempts_non_negative",
+        ),
+        CheckConstraint(
+            "default_playback_speed IS NULL OR (default_playback_speed >= 0.5 AND default_playback_speed <= 3.0)",
+            name="ck_podcast_subscriptions_default_playback_speed_range",
         ),
     )
 

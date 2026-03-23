@@ -34,6 +34,21 @@
   cursor: not-allowed;
 }
 
+.settingsButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.settingsButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .subscriptionActions {
   display: flex;
   align-items: center;
@@ -159,6 +174,75 @@
   margin: 8px 0 0;
   color: var(--color-danger);
   font-size: var(--font-size-sm);
+}
+
+.settingsSummary {
+  margin: 8px 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1000;
+}
+
+.modalCard {
+  width: min(560px, 100%);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modalTitle {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  color: var(--color-text);
+}
+
+.modalDescription {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.settingsFieldLabel {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.settingsSelect {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: var(--font-size-sm);
+}
+
+.settingsToggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.modalActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .libraryButton {

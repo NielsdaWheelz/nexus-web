@@ -81,6 +81,20 @@ describe("podcast BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/subscriptions/pod-123/sync");
   });
 
+  it("PATCH /api/podcasts/subscriptions/[podcastId]/settings proxies to /podcasts/subscriptions/{podcastId}/settings", async () => {
+    const { PATCH } = await import("./subscriptions/[podcastId]/settings/route");
+    const req = new Request("http://localhost/api/podcasts/subscriptions/pod-123/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ default_playback_speed: 1.5 }),
+    });
+    await PATCH(req, { params: Promise.resolve({ podcastId: "pod-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(
+      req,
+      "/podcasts/subscriptions/pod-123/settings"
+    );
+  });
+
   it("GET /api/podcasts/plan proxies to /podcasts/plan", async () => {
     const { GET } = await import("./plan/route");
     const req = new Request("http://localhost/api/podcasts/plan");

@@ -636,7 +636,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
             queueItem.listening_state != null
               ? Math.max(0, Math.floor(queueItem.listening_state.position_ms / 1000))
               : undefined,
-          playback_rate: queueItem.listening_state?.playback_speed,
+          playback_rate:
+            queueItem.listening_state?.playback_speed ??
+            queueItem.subscription_default_playback_speed ??
+            undefined,
         }
       );
     },

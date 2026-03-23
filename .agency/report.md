@@ -670,3 +670,90 @@ cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322
 - batch transcript endpoint currently commits per-item through existing single-admission service calls; this is intentional for quota correctness but can leave partially-applied outcomes when later items fail.
 - show-notes timestamp parsing is regex-based and may interpret non-timestamp numeric tokens that match `mm:ss`/`hh:mm:ss` shape as seek actions.
 - backend verification for pr-12 could not be executed in this environment without `DATABASE_URL`; only syntax/lint + frontend behavior were validated locally.
+
+## s7 pr-13 per-subscription settings cutover addendum (2026-03-23)
+
+### summary
+- added backend schema support for per-subscription default speed via migration `0034` and `PodcastSubscription.default_playback_speed` (`NULL` = inherit 1.0x, enforced 0.5-3.0 range).
+- added `PATCH /podcasts/subscriptions/{podcast_id}/settings` with strict patch semantics (partial updates only for provided fields, null clears speed override, out-of-range speed rejected).
+- extended podcast subscription list/detail contracts to include `default_playback_speed` + `auto_queue`.
+- extended media hydration contract with `subscription_default_playback_speed` so first-play initialization can use subscription-level speed when episode-level listening state is absent.
+- added bff proxy route `PATCH /api/podcasts/subscriptions/{podcastId}/settings`.
+- added subscriptions-list and podcast-detail settings panels (default speed dropdown + auto-queue toggle + save), with detail-page visual summary line (`{speed}x default speed · Auto-queue on/off`).
+- wired transcript media pane first-play behavior to prefer `subscriptionDefaultPlaybackSpeed` only when no per-episode listening state exists; existing per-episode speed remains authoritative on resume.
+
+### decisions
+- **strict patch semantics**: request validation requires at least one settings field; omitted fields are preserved, explicit `null` only applies to `default_playback_speed`.
+- **nullable speed override**: `NULL` remains the canonical “inherit default 1.0x” signal rather than writing sentinel `1.0` values.
+- **frontend-controlled first-play inheritance**: no backend-side implicit listening-state creation; frontend chooses startup speed using episode/media payload fields.
+- **single-source summary formatting**: podcast detail derives the visible settings summary directly from live subscription payload to reduce drift between controls and displayed state.
+
+### how to test
+```bash
+# migrate schema (includes 0034)
+make migrate-test
+
+# backend targeted contract + migration checks
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_list_subscriptions_returns_podcast_metadata_and_sync_snapshot \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_get_podcast_detail_returns_podcast_and_subscription_payload \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_get_podcast_episodes_returns_visible_episode_media \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_patch_subscription_settings_updates_contract_and_episode_default_speed \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_patch_subscription_settings_rejects_out_of_range_default_speed \
+  tests/test_media.py::TestMediaListeningState::test_get_media_hydrates_listening_state_when_present \
+  tests/test_migrations.py::TestPlaybackQueueMigration::test_head_contains_playback_queue_table_and_auto_queue_flag
+
+# backend lint on touched files
+cd python && uv run ruff check \
+  nexus/api/routes/podcasts.py \
+  nexus/db/models.py \
+  nexus/schemas/media.py \
+  nexus/schemas/podcast.py \
+  nexus/services/media.py \
+  nexus/services/podcasts.py \
+  tests/test_podcasts.py \
+  tests/test_migrations.py
+
+# frontend targeted suites
+cd apps/web && npm test -- \
+  "src/app/api/podcasts/podcasts-routes.test.ts" \
+  "src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx" \
+  "src/app/(authenticated)/podcasts/podcasts-flows.test.tsx"
+```
+
+### risks
+- first-play speed inheritance currently depends on media payload hydration (`subscription_default_playback_speed`); any future alternate playback entrypoint that bypasses this payload can regress to 1.0x unless it is wired similarly.
+- settings writes are immediate and global to a subscription; users may forget a high speed setting and perceive abrupt playback changes on new episodes (mitigated by explicit summary + visible player speed).
+
+## s7 pr-13 queue parity follow-up addendum (2026-03-23)
+
+### summary
+- extended playback-queue response contract with `subscription_default_playback_speed` so queue-driven playback has the same first-play speed inheritance data as media-detail playback.
+- updated queue service query hydration to join active `podcast_subscriptions` for each queued episode and surface nullable speed overrides alongside per-episode listening state.
+- updated global player queue playback fallback so playback rate resolves in this order: episode listening-state speed, then subscription default speed, then implicit `1.0x`.
+- added backend integration coverage for queue payload inheritance field and frontend component coverage proving queue-next playback applies subscription speed when listening state is absent.
+- extracted subscription playback-speed option/label/summary formatting into a shared frontend utility to remove duplicate logic across subscriptions and podcast detail settings UIs.
+
+### decisions
+- **single inheritance rule across entrypoints**: first-play speed inheritance is now consistent whether playback starts from media page or directly from queue transport controls.
+- **episode-specific state remains highest priority**: if queue rows carry saved listening-state speed, it always overrides subscription default speed.
+- **no compatibility branch**: queue contract now directly includes `subscription_default_playback_speed`; frontend uses it without legacy fallback adapters.
+- **single-source formatting policy**: one shared formatter now owns speed-option labels and summary rendering to reduce cross-page drift.
+
+### how to test
+```bash
+# backend queue inheritance checks
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q \
+  tests/test_playback_queue.py::TestPlaybackQueueApi::test_queue_rows_expose_subscription_default_playback_speed \
+  tests/test_playback_queue.py::TestPlaybackQueueApi::test_post_items_supports_next_last_and_ignores_duplicates
+
+# frontend queue + pr-13 behavior slices
+cd apps/web && npm test -- \
+  "src/__tests__/components/GlobalPlayerQueue.test.tsx" \
+  "src/app/api/podcasts/podcasts-routes.test.ts" \
+  "src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx" \
+  "src/app/(authenticated)/podcasts/podcasts-flows.test.tsx"
+```
+
+### risks
+- queue inheritance now depends on the queue API field being returned for podcast-episode rows; non-episode media kinds intentionally return `null` and will continue at `1.0x` unless explicitly overridden by listening state.

@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import {
+  SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
+  formatPlaybackSpeedLabel,
+} from "@/lib/player/subscriptionPlaybackSpeed";
 import PageLayout from "@/components/ui/PageLayout";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
@@ -30,6 +34,8 @@ interface PodcastSubscriptionRow {
   podcast_id: string;
   status: "active" | "unsubscribed";
   unsubscribe_mode: 1 | 2 | 3;
+  default_playback_speed?: number | null;
+  auto_queue?: boolean;
   sync_status: "pending" | "running" | "partial" | "complete" | "source_limited" | "failed";
   sync_error_code: string | null;
   sync_error_message: string | null;
@@ -40,6 +46,13 @@ interface PodcastSubscriptionRow {
   updated_at: string;
   unplayed_count: number;
   podcast: PodcastListItem;
+}
+
+interface PodcastSubscriptionSettingsResponse {
+  podcast_id: string;
+  default_playback_speed: number | null;
+  auto_queue: boolean;
+  updated_at: string;
 }
 
 interface PodcastSubscriptionSyncRefreshResult {
@@ -96,6 +109,11 @@ export default function PodcastSubscriptionsPage() {
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<PodcastOpmlImportResult | null>(null);
+  const [settingsPodcastId, setSettingsPodcastId] = useState<string | null>(null);
+  const [settingsDefaultSpeed, setSettingsDefaultSpeed] = useState<string>("default");
+  const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   useSetPaneTitle("My podcasts");
 
   const loadSubscriptions = useCallback(async (offset = 0, append = false) => {
@@ -212,6 +230,69 @@ export default function PodcastSubscriptionsPage() {
     () => rows.filter((row) => row.status === "active").length,
     [rows]
   );
+  const settingsRow = useMemo(
+    () => rows.find((row) => row.podcast_id === settingsPodcastId) ?? null,
+    [rows, settingsPodcastId]
+  );
+
+  const openSettingsModal = useCallback((row: PodcastSubscriptionRow) => {
+    setSettingsPodcastId(row.podcast_id);
+    setSettingsDefaultSpeed(
+      row.default_playback_speed == null ? "default" : String(row.default_playback_speed)
+    );
+    setSettingsAutoQueue(Boolean(row.auto_queue));
+    setSettingsError(null);
+  }, []);
+
+  const closeSettingsModal = useCallback(() => {
+    setSettingsPodcastId(null);
+    setSettingsError(null);
+    setSettingsBusy(false);
+  }, []);
+
+  const handleSaveSettings = useCallback(async () => {
+    if (!settingsRow) {
+      return;
+    }
+    setSettingsBusy(true);
+    setSettingsError(null);
+    setError(null);
+    const nextDefaultPlaybackSpeed =
+      settingsDefaultSpeed === "default" ? null : Number.parseFloat(settingsDefaultSpeed);
+    try {
+      const response = await apiFetch<{ data: PodcastSubscriptionSettingsResponse }>(
+        `/api/podcasts/subscriptions/${settingsRow.podcast_id}/settings`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            default_playback_speed: nextDefaultPlaybackSpeed,
+            auto_queue: settingsAutoQueue,
+          }),
+        }
+      );
+      setRows((prev) =>
+        prev.map((row) =>
+          row.podcast_id === settingsRow.podcast_id
+            ? {
+                ...row,
+                default_playback_speed: response.data.default_playback_speed,
+                auto_queue: response.data.auto_queue,
+                updated_at: response.data.updated_at ?? row.updated_at,
+              }
+            : row
+        )
+      );
+      setSettingsPodcastId(null);
+    } catch (settingsUpdateError) {
+      if (isApiError(settingsUpdateError)) {
+        setSettingsError(settingsUpdateError.message);
+      } else {
+        setSettingsError("Failed to save subscription settings");
+      }
+    } finally {
+      setSettingsBusy(false);
+    }
+  }, [settingsAutoQueue, settingsDefaultSpeed, settingsRow]);
 
   const openImportModal = useCallback(() => {
     setImportError(null);
@@ -378,6 +459,14 @@ export default function PodcastSubscriptionsPage() {
                   <>
                     <button
                       type="button"
+                      className={styles.settingsButton}
+                      aria-label={`Open settings for ${row.podcast.title}`}
+                      onClick={() => openSettingsModal(row)}
+                    >
+                      Settings
+                    </button>
+                    <button
+                      type="button"
                       className={styles.syncButton}
                       disabled={refreshingPodcastIds.has(row.podcast_id)}
                       aria-label={`Refresh sync for ${row.podcast.title}`}
@@ -413,6 +502,73 @@ export default function PodcastSubscriptionsPage() {
           </button>
         )}
       </SectionCard>
+
+      {settingsRow && (
+        <div
+          className={styles.modalBackdrop}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Subscription settings for ${settingsRow.podcast.title}`}
+        >
+          <div className={styles.modalCard}>
+            <h3 className={styles.modalTitle}>Subscription settings</h3>
+            <p className={styles.modalDescription}>
+              Configure default playback behavior for <strong>{settingsRow.podcast.title}</strong>.
+            </p>
+            <label htmlFor="subscription-default-playback-speed" className={styles.settingsFieldLabel}>
+              Default playback speed
+            </label>
+            <select
+              id="subscription-default-playback-speed"
+              className={styles.settingsSelect}
+              value={settingsDefaultSpeed}
+              onChange={(event) => setSettingsDefaultSpeed(event.target.value)}
+              aria-label="Default playback speed"
+            >
+              <option value="default">Default (1.0x)</option>
+              {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((speed) => (
+                <option key={speed} value={String(speed)}>
+                  {formatPlaybackSpeedLabel(speed)}
+                </option>
+              ))}
+            </select>
+            <label className={styles.settingsToggleLabel}>
+              <input
+                type="checkbox"
+                checked={settingsAutoQueue}
+                onChange={(event) => setSettingsAutoQueue(event.target.checked)}
+                aria-label="Automatically add new episodes to my queue"
+              />
+              <span>Automatically add new episodes to my queue</span>
+            </label>
+            <p className={styles.modalDescription}>
+              New episodes from this podcast will be added to the end of your playback queue when
+              they&apos;re synced.
+            </p>
+            {settingsError && <StateMessage variant="error">{settingsError}</StateMessage>}
+            <div className={styles.modalActions}>
+              <button
+                type="button"
+                className={styles.primaryAction}
+                onClick={() => void handleSaveSettings()}
+                disabled={settingsBusy}
+                aria-label="Save subscription settings"
+              >
+                {settingsBusy ? "Saving..." : "Save"}
+              </button>
+              <button
+                type="button"
+                className={styles.secondaryAction}
+                onClick={closeSettingsModal}
+                disabled={settingsBusy}
+                aria-label="Close subscription settings"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isImportModalOpen && (
         <div className={styles.modalBackdrop} role="dialog" aria-modal="true" aria-label="Import OPML">

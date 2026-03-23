@@ -46,6 +46,7 @@ from nexus.schemas.podcast import (
     PodcastSubscribeOut,
     PodcastSubscribeRequest,
     PodcastSubscriptionListItemOut,
+    PodcastSubscriptionSettingsPatchRequest,
     PodcastSubscriptionStatusOut,
     PodcastSubscriptionSyncRefreshOut,
 )
@@ -596,6 +597,7 @@ def get_subscription_status(
                 podcast_id,
                 status,
                 unsubscribe_mode,
+                default_playback_speed,
                 auto_queue,
                 sync_status,
                 sync_error_code,
@@ -619,16 +621,62 @@ def get_subscription_status(
         podcast_id=row[1],
         status=row[2],
         unsubscribe_mode=row[3],
-        auto_queue=bool(row[4]),
-        sync_status=row[5],
-        sync_error_code=row[6],
-        sync_error_message=row[7],
-        sync_attempts=row[8],
-        sync_started_at=row[9],
-        sync_completed_at=row[10],
-        last_synced_at=row[11],
-        updated_at=row[12],
+        default_playback_speed=float(row[4]) if row[4] is not None else None,
+        auto_queue=bool(row[5]),
+        sync_status=row[6],
+        sync_error_code=row[7],
+        sync_error_message=row[8],
+        sync_attempts=row[9],
+        sync_started_at=row[10],
+        sync_completed_at=row[11],
+        last_synced_at=row[12],
+        updated_at=row[13],
     )
+
+
+def update_subscription_settings_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    podcast_id: UUID,
+    body: PodcastSubscriptionSettingsPatchRequest,
+) -> PodcastSubscriptionStatusOut:
+    assignments: list[str] = []
+    params: dict[str, Any] = {
+        "user_id": viewer_id,
+        "podcast_id": podcast_id,
+        "updated_at": datetime.now(UTC),
+    }
+    if "default_playback_speed" in body.model_fields_set:
+        assignments.append("default_playback_speed = :default_playback_speed")
+        params["default_playback_speed"] = body.default_playback_speed
+    if "auto_queue" in body.model_fields_set:
+        assignments.append("auto_queue = :auto_queue")
+        params["auto_queue"] = bool(body.auto_queue)
+    if not assignments:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "At least one subscription settings field must be provided",
+        )
+
+    assignment_sql = ", ".join([*assignments, "updated_at = :updated_at"])
+    with transaction(db):
+        updated = db.execute(
+            text(
+                f"""
+                UPDATE podcast_subscriptions
+                SET {assignment_sql}
+                WHERE user_id = :user_id
+                  AND podcast_id = :podcast_id
+                  AND status = 'active'
+                RETURNING 1
+                """
+            ),
+            params,
+        ).fetchone()
+        if updated is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
+
+    return get_subscription_status(db, viewer_id, podcast_id)
 
 
 def _podcast_list_item_from_row(row: Any) -> PodcastListItemOut:
@@ -720,6 +768,7 @@ def list_subscriptions(
                 ps.podcast_id,
                 ps.status,
                 ps.unsubscribe_mode,
+                ps.default_playback_speed,
                 ps.auto_queue,
                 ps.sync_status,
                 ps.sync_error_code,
@@ -756,22 +805,23 @@ def list_subscriptions(
     ).fetchall()
     out: list[PodcastSubscriptionListItemOut] = []
     for row in rows:
-        podcast = _podcast_list_item_from_row(row[12:23])
+        podcast = _podcast_list_item_from_row(row[13:24])
         out.append(
             PodcastSubscriptionListItemOut(
                 podcast_id=row[0],
                 status=row[1],
                 unsubscribe_mode=row[2],
-                auto_queue=bool(row[3]),
-                sync_status=row[4],
-                sync_error_code=row[5],
-                sync_error_message=row[6],
-                sync_attempts=row[7],
-                sync_started_at=row[8],
-                sync_completed_at=row[9],
-                last_synced_at=row[10],
-                updated_at=row[11],
-                unplayed_count=int(row[23] or 0),
+                default_playback_speed=float(row[3]) if row[3] is not None else None,
+                auto_queue=bool(row[4]),
+                sync_status=row[5],
+                sync_error_code=row[6],
+                sync_error_message=row[7],
+                sync_attempts=row[8],
+                sync_started_at=row[9],
+                sync_completed_at=row[10],
+                last_synced_at=row[11],
+                updated_at=row[12],
+                unplayed_count=int(row[24] or 0),
                 podcast=podcast,
             )
         )
@@ -791,6 +841,7 @@ def get_podcast_detail_for_viewer(
                 ps.podcast_id,
                 ps.status,
                 ps.unsubscribe_mode,
+                ps.default_playback_speed,
                 ps.auto_queue,
                 ps.sync_status,
                 ps.sync_error_code,
@@ -828,17 +879,18 @@ def get_podcast_detail_for_viewer(
         podcast_id=row[1],
         status=row[2],
         unsubscribe_mode=row[3],
-        auto_queue=bool(row[4]),
-        sync_status=row[5],
-        sync_error_code=row[6],
-        sync_error_message=row[7],
-        sync_attempts=row[8],
-        sync_started_at=row[9],
-        sync_completed_at=row[10],
-        last_synced_at=row[11],
-        updated_at=row[12],
+        default_playback_speed=float(row[4]) if row[4] is not None else None,
+        auto_queue=bool(row[5]),
+        sync_status=row[6],
+        sync_error_code=row[7],
+        sync_error_message=row[8],
+        sync_attempts=row[9],
+        sync_started_at=row[10],
+        sync_completed_at=row[11],
+        last_synced_at=row[12],
+        updated_at=row[13],
     )
-    podcast = _podcast_list_item_from_row(row[13:])
+    podcast = _podcast_list_item_from_row(row[14:])
     return PodcastDetailOut(podcast=podcast, subscription=subscription)
 
 

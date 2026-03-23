@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PodcastDiscoveryOut(BaseModel):
@@ -41,6 +41,24 @@ class PodcastSubscribeOut(BaseModel):
     window_size: int
 
 
+class PodcastSubscriptionSettingsPatchRequest(BaseModel):
+    default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
+    auto_queue: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_patch_semantics(self) -> "PodcastSubscriptionSettingsPatchRequest":
+        if (
+            "default_playback_speed" not in self.model_fields_set
+            and "auto_queue" not in self.model_fields_set
+        ):
+            raise ValueError("At least one settings field is required")
+        if "auto_queue" in self.model_fields_set and self.auto_queue is None:
+            raise ValueError("auto_queue must be a boolean")
+        return self
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class PodcastOpmlImportErrorOut(BaseModel):
     feed_url: str | None = None
     error: str
@@ -73,6 +91,7 @@ class PodcastSubscriptionStatusOut(BaseModel):
     podcast_id: UUID
     status: Literal["active", "unsubscribed"]
     unsubscribe_mode: Literal[1, 2, 3] = 1
+    default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
     auto_queue: bool = False
     sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
     sync_error_code: str | None = None
@@ -102,6 +121,7 @@ class PodcastSubscriptionListItemOut(BaseModel):
     podcast_id: UUID
     status: Literal["active", "unsubscribed"]
     unsubscribe_mode: Literal[1, 2, 3] = 1
+    default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
     auto_queue: bool = False
     sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
     sync_error_code: str | None = None

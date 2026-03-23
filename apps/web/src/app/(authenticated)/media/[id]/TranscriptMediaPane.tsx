@@ -87,6 +87,7 @@ interface TranscriptMediaPaneProps {
   descriptionHtml?: string | null;
   descriptionText?: string | null;
   listeningState: TranscriptListeningState | null;
+  subscriptionDefaultPlaybackSpeed?: number | null;
   onResumeFromSavedPosition?: (positionMs: number) => void;
   onRequestTranscript: () => void;
   fragments: TranscriptFragment[];
@@ -339,6 +340,7 @@ export default function TranscriptMediaPane({
   descriptionHtml,
   descriptionText,
   listeningState,
+  subscriptionDefaultPlaybackSpeed,
   onResumeFromSavedPosition,
   onRequestTranscript,
   fragments,
@@ -390,6 +392,8 @@ export default function TranscriptMediaPane({
     if (listeningState) {
       trackOptions.seek_seconds = Math.max(0, Math.floor(listeningState.position_ms / 1000));
       trackOptions.playback_rate = listeningState.playback_speed;
+    } else if (subscriptionDefaultPlaybackSpeed != null) {
+      trackOptions.playback_rate = subscriptionDefaultPlaybackSpeed;
     }
     setTrack(
       {
@@ -414,6 +418,7 @@ export default function TranscriptMediaPane({
     playbackSource?.kind,
     playbackSource?.source_url,
     playbackSource?.stream_url,
+    subscriptionDefaultPlaybackSpeed,
     setTrack,
   ]);
 

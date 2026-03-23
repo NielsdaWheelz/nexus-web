@@ -72,6 +72,16 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "pe.description_text AS podcast_description_text",
     "mts.transcript_state",
     "mts.transcript_coverage",
+    """(
+        SELECT ps.default_playback_speed
+        FROM podcast_episodes pe_sub
+        JOIN podcast_subscriptions ps
+          ON ps.podcast_id = pe_sub.podcast_id
+         AND ps.user_id = :viewer_id
+         AND ps.status = 'active'
+        WHERE pe_sub.media_id = m.id
+        LIMIT 1
+    ) AS subscription_default_playback_speed""",
 )
 _MEDIA_LISTENING_STATE_SELECT_COLUMNS: tuple[str, ...] = (
     "pls.position_ms AS listening_position_ms",
@@ -332,6 +342,11 @@ def _media_out_from_row(
         last_error_code=row["last_error_code"],
         playback_source=playback_source,
         listening_state=_media_listening_state_from_row(row),
+        subscription_default_playback_speed=(
+            float(row["subscription_default_playback_speed"])
+            if row.get("subscription_default_playback_speed") is not None
+            else None
+        ),
         chapters=chapters or [],
         capabilities=capabilities,
         authors=authors,

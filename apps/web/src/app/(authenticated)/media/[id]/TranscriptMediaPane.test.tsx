@@ -212,6 +212,7 @@ function renderStatefulPodcastPane(
     descriptionHtml?: string | null;
     descriptionText?: string | null;
     listeningState?: { position_ms: number; playback_speed: number } | null;
+    subscriptionDefaultPlaybackSpeed?: number | null;
     onResumeFromSavedPosition?: (positionMs: number) => void;
     onRequestTranscript?: () => void;
   } = {}
@@ -243,6 +244,7 @@ function renderStatefulPodcastPane(
         descriptionHtml={options.descriptionHtml ?? null}
         descriptionText={options.descriptionText ?? null}
         listeningState={options.listeningState ?? null}
+        subscriptionDefaultPlaybackSpeed={options.subscriptionDefaultPlaybackSpeed ?? null}
         onResumeFromSavedPosition={options.onResumeFromSavedPosition}
         onRequestTranscript={options.onRequestTranscript ?? vi.fn()}
         fragments={fragments}
@@ -350,6 +352,24 @@ describe("TranscriptMediaPane video playback", () => {
 });
 
 describe("TranscriptMediaPane podcast playback", () => {
+  it("uses subscription default speed when no per-episode listening state exists", () => {
+    renderStatefulPodcastPane({
+      listeningState: null,
+      subscriptionDefaultPlaybackSpeed: 1.75,
+    });
+
+    expect(mockSetTrack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        media_id: "media-podcast-1",
+        title: "Podcast Episode",
+      }),
+      {
+        autoplay: false,
+        playback_rate: 1.75,
+      }
+    );
+  });
+
   it("hydrates saved listening state into global player setup and resume notification", () => {
     const onResumeFromSavedPosition = vi.fn();
     renderStatefulPodcastPane({
@@ -357,6 +377,7 @@ describe("TranscriptMediaPane podcast playback", () => {
         position_ms: 12_000,
         playback_speed: 1.5,
       },
+      subscriptionDefaultPlaybackSpeed: 2.0,
       onResumeFromSavedPosition,
     });
 

@@ -141,6 +141,7 @@ interface Media {
     position_ms: number;
     playback_speed: number;
   } | null;
+  subscription_default_playback_speed?: number | null;
   failure_stage?: string | null;
   last_error_code?: string | null;
   description_html?: string | null;
@@ -2610,6 +2611,7 @@ export default function MediaViewPage() {
               descriptionHtml={media.description_html ?? null}
               descriptionText={media.description_text ?? null}
               listeningState={media.listening_state ?? null}
+              subscriptionDefaultPlaybackSpeed={media.subscription_default_playback_speed ?? null}
               onResumeFromSavedPosition={(positionMs) =>
                 toast({
                   variant: "info",

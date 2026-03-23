@@ -16,6 +16,7 @@ type QueueItem = {
   source: "manual" | "auto_subscription" | "auto_playlist";
   added_at: string;
   listening_state: { position_ms: number; playback_speed: number } | null;
+  subscription_default_playback_speed?: number | null;
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -41,8 +42,19 @@ function buildQueueItem(
   mediaId: string,
   title: string,
   position: number,
-  listeningPositionMs = 0
+  listeningPositionMs = 0,
+  options: {
+    listeningState?: { position_ms: number; playback_speed: number } | null;
+    subscriptionDefaultPlaybackSpeed?: number | null;
+  } = {}
 ): QueueItem {
+  const listeningState =
+    "listeningState" in options
+      ? options.listeningState ?? null
+      : ({
+          position_ms: listeningPositionMs,
+          playback_speed: 1,
+        } satisfies { position_ms: number; playback_speed: number });
   return {
     item_id: itemId,
     media_id: mediaId,
@@ -54,10 +66,8 @@ function buildQueueItem(
     position,
     source: "manual",
     added_at: "2026-03-22T00:00:00Z",
-    listening_state: {
-      position_ms: listeningPositionMs,
-      playback_speed: 1,
-    },
+    listening_state: listeningState,
+    subscription_default_playback_speed: options.subscriptionDefaultPlaybackSpeed ?? null,
   };
 }
 
@@ -206,6 +216,30 @@ describe("GlobalPlayer queue behavior", () => {
     fireEvent(audio, new Event("ended"));
     await waitFor(() => {
       expect(screen.getByText("Episode B")).toBeInTheDocument();
+    });
+  });
+
+  it("uses subscription default speed when queue item has no per-episode listening state", async () => {
+    const user = userEvent.setup();
+    installPlaybackFetchMock([
+      buildQueueItem("item-a", "media-a", "Episode A", 0),
+      buildQueueItem("item-b", "media-b", "Episode B", 1, 0, {
+        listeningState: null,
+        subscriptionDefaultPlaybackSpeed: 1.75,
+      }),
+    ]);
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Load A" }));
+    await user.click(screen.getByRole("button", { name: "Next in queue" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Episode B")).toBeInTheDocument();
+    });
+
+    const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
+    await waitFor(() => {
+      expect(audio.playbackRate).toBeCloseTo(1.75, 3);
     });
   });
 

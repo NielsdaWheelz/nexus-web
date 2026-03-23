@@ -28,6 +28,8 @@ function buildSubscriptionRow(index: number, overrides: Record<string, unknown> 
     podcast_id: `podcast-${index}`,
     status: "active",
     unsubscribe_mode: 1,
+    default_playback_speed: null,
+    auto_queue: false,
     sync_status: "complete",
     sync_error_code: null,
     sync_error_message: null,
@@ -64,6 +66,7 @@ function buildEpisode(index: number, overrides: Record<string, unknown> = {}) {
     transcript_state: "ready",
     transcript_coverage: "full",
     listening_state: null,
+    subscription_default_playback_speed: null,
     episode_state: "unplayed",
     failure_stage: null,
     last_error_code: null,
@@ -1391,6 +1394,197 @@ describe("podcasts product flows", () => {
           reason: "search",
         },
       ]);
+    });
+  });
+
+  it("opens row settings in subscriptions list and saves default speed plus auto-queue", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/podcasts/plan") {
+          return jsonResponse({
+            data: {
+              plan: {
+                plan_tier: "free",
+                daily_transcription_minutes: 60,
+                initial_episode_window: 3,
+              },
+              usage: {
+                usage_date: "2026-03-06",
+                used_minutes: 12,
+                reserved_minutes: 3,
+                total_minutes: 15,
+                remaining_minutes: 45,
+              },
+            },
+          });
+        }
+        if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
+          return jsonResponse({
+            data: [
+              buildSubscriptionRow(0, {
+                default_playback_speed: null,
+                auto_queue: false,
+              }),
+            ],
+          });
+        }
+        if (
+          url.pathname === "/api/podcasts/subscriptions/podcast-0/settings" &&
+          init?.method === "PATCH"
+        ) {
+          return jsonResponse({
+            data: {
+              ...buildSubscriptionRow(0),
+              default_playback_speed: 1.5,
+              auto_queue: true,
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch call in test: ${url.pathname}${url.search}`);
+      });
+
+    render(<PodcastSubscriptionsPage />);
+
+    expect(await screen.findByText("Systems Podcast 0")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open settings for Systems Podcast 0" }));
+    await user.selectOptions(screen.getByLabelText("Default playback speed"), "1.5");
+    await user.click(screen.getByLabelText("Automatically add new episodes to my queue"));
+    await user.click(screen.getByRole("button", { name: "Save subscription settings" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) => {
+          const parsed = new URL(String(url), "http://localhost");
+          if (
+            parsed.pathname !== "/api/podcasts/subscriptions/podcast-0/settings" ||
+            init?.method !== "PATCH"
+          ) {
+            return false;
+          }
+          const body = JSON.parse(String(init.body ?? "{}"));
+          return body.default_playback_speed === 1.5 && body.auto_queue === true;
+        })
+      ).toBe(true);
+    });
+  });
+
+  it("shows detail-page subscription summary and saves settings from header controls", async () => {
+    const user = userEvent.setup();
+    mockUsePaneParam.mockImplementation((paramName) =>
+      paramName === "podcastId" ? "podcast-1" : null
+    );
+
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/podcasts/podcast-1") {
+          return jsonResponse({
+            data: {
+              podcast: {
+                id: "podcast-1",
+                provider: "podcast_index",
+                provider_podcast_id: "provider-1",
+                title: "Systems Podcast",
+                author: "Systems Team",
+                feed_url: "https://feeds.example.com/systems.xml",
+                website_url: null,
+                image_url: null,
+                description: "Systems thinking show",
+                created_at: "2026-03-06T00:00:00Z",
+                updated_at: "2026-03-06T00:00:00Z",
+              },
+              subscription: {
+                user_id: "user-1",
+                podcast_id: "podcast-1",
+                status: "active",
+                unsubscribe_mode: 1,
+                default_playback_speed: 1.5,
+                auto_queue: true,
+                sync_status: "complete",
+                sync_error_code: null,
+                sync_error_message: null,
+                sync_attempts: 1,
+                sync_started_at: null,
+                sync_completed_at: null,
+                last_synced_at: null,
+                updated_at: "2026-03-06T00:00:00Z",
+              },
+            },
+          });
+        }
+        if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+          return jsonResponse({
+            data: [buildEpisode(0, { subscription_default_playback_speed: 1.5 })],
+          });
+        }
+        if (url.pathname === "/api/me") {
+          return jsonResponse({
+            data: {
+              user_id: "user-1",
+              default_library_id: null,
+            },
+          });
+        }
+        if (
+          url.pathname === "/api/podcasts/subscriptions/podcast-1/settings" &&
+          init?.method === "PATCH"
+        ) {
+          return jsonResponse({
+            data: {
+              user_id: "user-1",
+              podcast_id: "podcast-1",
+              status: "active",
+              unsubscribe_mode: 1,
+              default_playback_speed: 2.0,
+              auto_queue: false,
+              sync_status: "complete",
+              sync_error_code: null,
+              sync_error_message: null,
+              sync_attempts: 1,
+              sync_started_at: null,
+              sync_completed_at: null,
+              last_synced_at: null,
+              updated_at: "2026-03-06T00:00:00Z",
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch call in test: ${url.pathname}${url.search}`);
+      });
+
+    render(
+      <GlobalPlayerProvider>
+        <PodcastDetailPage />
+      </GlobalPlayerProvider>
+    );
+
+    expect(await screen.findByText("Episode 0")).toBeInTheDocument();
+    expect(screen.getByText("1.5x default speed · Auto-queue on")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open subscription settings" }));
+    await user.selectOptions(screen.getByLabelText("Default playback speed"), "2");
+    await user.click(screen.getByLabelText("Automatically add new episodes to my queue"));
+    await user.click(screen.getByRole("button", { name: "Save subscription settings" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) => {
+          const parsed = new URL(String(url), "http://localhost");
+          if (
+            parsed.pathname !== "/api/podcasts/subscriptions/podcast-1/settings" ||
+            init?.method !== "PATCH"
+          ) {
+            return false;
+          }
+          const body = JSON.parse(String(init.body ?? "{}"));
+          return body.default_playback_speed === 2 && body.auto_queue === false;
+        })
+      ).toBe(true);
+      expect(screen.getByText("2.0x default speed · Auto-queue off")).toBeInTheDocument();
     });
   });
 });
