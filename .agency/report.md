@@ -1,46 +1,65 @@
-# ingest fetch hardening review
+# auth cutover review + hardening pass
 
 ## summary
-- completed a full staff-level review/hardening pass for web-article ingest after the Playwright -> native fetch migration
-- hardened `node/ingest/ingest.mjs` with bounded response-size reads, charset-fallback robustness, URL/timeout input validation, and explicit no-JS-render limitation docs
-- aligned runtime/docs/ops surfaces (`README`, `CONTRIBUTING`, worker docs, setup script, CI, S2 spec) and fixed a real worker image build blocker in `docker/Dockerfile.worker` (missing `python/README.md` during `uv sync`)
-- added/updated targeted ingest tests and verified with hermetic backend test runs, lint, typecheck, frontend build, celery-contract verification, CLI smoke, and worker Docker build
+- completed a full review/remediation pass across OAuth login, callback handling,
+  signout behavior, linked identities UI, e2e auth bootstrap, and env/docs
+  wiring
+- removed unsafe public error echo in callback redirects and mapped user-visible
+  auth errors to an allowlisted set of safe messages
+- ensured callback-origin policy failures return a controlled 500 instead of an
+  uncaught exception path
+- updated e2e auth bootstrap so setup no longer depends on `/login` hash-token
+  processing (it now persists Supabase session cookies directly in Playwright)
+- fixed setup/ops/docs inconsistencies (`README` artifact removal, loopback URL
+  canonicalization, redirect-origin env documentation)
 
 ## decisions
-- **fetch-only ingestion remains the contract**: no browser rendering; JS-hydrated SPAs are explicitly documented as out-of-scope for this pipeline
-- **safety limit**: enforce `MAX_BODY_BYTES = 10 MiB` in Node ingest to prevent unbounded memory use on malicious/oversized responses
-- **charset strategy**: resolve charset from `Content-Type`, then `<meta>`, then UTF-8 fallback; unsupported charset labels degrade gracefully
-- **input validation**: reject non-HTTP(S) URLs and invalid/unsafe timeout values before network work begins
-- **ops consistency**: remove stale ingest-Playwright install steps from setup/CI and update worker docs/concurrency guidance to match fetch-based runtime
+- **safe auth error surface**: callback and login now display only known
+  allowlisted messages, not arbitrary provider/internal strings
+- **fail-closed callback posture retained**: missing
+  `AUTH_ALLOWED_REDIRECT_ORIGINS` on non-local callbacks still fails closed;
+  route now responds in a controlled way
+- **e2e setup decoupled from client hash import**: security hardening on login
+  does not regress test setup reliability
+- **signout semantics explicit**: `/auth/signout` intentionally uses local-scope
+  signout and this is documented inline
 
-## acceptance criteria check
-- [x] ingest runtime no longer requires Playwright/Chromium and still extracts readable content
-- [x] redirect, timeout, HTTP failure, and charset edge-paths covered by tests
-- [x] docs/setup/CI instructions no longer contradict runtime behavior
-- [x] worker container build succeeds with current Dockerfile
+## docs
+- updated root docs: `README.md`
+- updated app docs: `apps/web/README.md`
+- added auth hardening note: `docs/auth/oauth-cutover-hardening.md`
 
 ## how to test
 ```bash
-# targeted backend ingest tests (hermetic postgres + redis)
-./scripts/with_test_services.sh bash -lc "make migrate-test && cd python && NEXUS_ENV=test uv run pytest tests/test_node_ingest.py tests/test_ingest_web_article.py -q --tb=short"
+cd apps/web
+npx vitest run --project unit src/lib/auth/callback.test.ts src/lib/auth/messages.test.ts src/lib/auth/redirects.test.ts src/lib/auth/identities.test.ts src/app/auth/callback/route.test.ts src/app/auth/signout/route.test.ts src/lib/supabase/middleware.test.ts src/lib/panes/paneRouteRegistry.test.tsx
+npx vitest run --project browser src/__tests__/components/SettingsPage.test.tsx "src/app/(authenticated)/settings/identities/page.test.tsx" "src/app/login/LoginPageClient.test.tsx"
+npm run lint
+npm run typecheck
+npm run build
 
-# backend lint for touched ingest files
-cd python && uv run ruff check nexus/services/node_ingest.py nexus/tasks/ingest_web_article.py tests/test_node_ingest.py tests/test_ingest_web_article.py tests/test_web_article_highlight_e2e.py
-
-# frontend compile gates
-make typecheck && make build
-
-# celery contract preflight
-make verify-celery-contract
-
-# manual CLI smoke
-printf '{"url":"https://example.com","timeout_ms":15000}\n' | node node/ingest/ingest.mjs
-
-# worker image build
-docker build -f docker/Dockerfile.worker -t nexus-worker:pr-review .
+cd ../e2e
+CI=1 WEB_PORT=3001 API_PORT=8001 npx playwright test tests/auth.spec.ts --config=playwright.config.ts
 ```
 
+## manual verification
+```bash
+# from repo root, with temporary servers on ports 3001/8001
+curl -i "http://localhost:3001/login?next=%2Flibraries"
+curl -i "http://localhost:3001/auth/callback?next=%2Flibraries"
+curl -i -X POST "http://localhost:3001/auth/signout"
+```
+
+Observed behavior:
+- `/login` returns 200 with Google/GitHub provider entrypoints
+- `/auth/callback` without `code` returns 307 to `/login?...error_description=...`
+- `POST /auth/signout` returns 302 to `/login`
+
 ## risks
-- client-rendered SPA pages remain a known ingest gap (no JS execution by design)
-- 10 MiB response cap can reject extremely long articles; this is intentional safety trade-off
-- frontend build emits pre-existing test-file lint warnings unrelated to this PR; no new errors introduced
+- callback-origin strictness remains intentionally strict and will fail non-local
+  callback traffic when `AUTH_ALLOWED_REDIRECT_ORIGINS` is missing
+- e2e cookie bootstrap depends on current Supabase cookie payload encoding
+  (`base64-...` session format); upstream format changes will require harness
+  updates
+- optional live GitHub provider round-trip remains credential-gated and was
+  skipped in automated verification when credentials were not provided

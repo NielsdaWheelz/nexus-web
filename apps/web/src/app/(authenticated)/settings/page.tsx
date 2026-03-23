@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, BookOpen, KeyRound, ShieldCheck } from "lucide-react";
+import { ArrowRight, BookOpen, KeyRound, Link2, ShieldCheck } from "lucide-react";
 import PageLayout from "@/components/ui/PageLayout";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
@@ -37,6 +37,21 @@ export default function SettingsPage() {
             icon={<BookOpen size={18} />}
             title="Reader Settings"
             description="Theme, font, line height, column width, focus mode."
+            trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
+          />
+        </AppList>
+      </SectionCard>
+
+      <SectionCard
+        title="Authentication"
+        description="Manage linked OAuth identities for this account."
+      >
+        <AppList>
+          <AppListItem
+            href="/settings/identities"
+            icon={<Link2 size={18} />}
+            title="Linked Identities"
+            description="Connect or remove Google and GitHub sign-in methods."
             trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
           />
         </AppList>

@@ -9,6 +9,7 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyResolvedSupabaseEnv } from "./supabase-env.mjs";
 
 const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(E2E_DIR, "..");
@@ -66,6 +67,10 @@ export default function globalSetup() {
   // Mirror Makefile behavior so direct `npm test` runs work too.
   loadEnvFile(path.join(ROOT, ".env"));
   loadEnvFile(path.join(ROOT, ".dev-ports"));
+  applyResolvedSupabaseEnv(ROOT, process.env);
+
+  // Always ensure auth bootstrap user exists, even on SKIP_SEED reruns.
+  run("Seed E2E user", "npx tsx seed-e2e-user.ts", E2E_DIR);
 
   // Skip seeding if all artifacts exist and SKIP_SEED is set.
   // Useful for rapid local re-runs where the DB hasn't changed.
@@ -77,14 +82,11 @@ export default function globalSetup() {
     existsSync(YOUTUBE_SEED) &&
     existsSync(READER_RESUME_SEED)
   ) {
-    console.log("[global-setup] SKIP_SEED set and seed artifacts exist — skipping.");
+    console.log("[global-setup] SKIP_SEED set and fixture artifacts exist — skipping.");
     return;
   }
 
-  // Step 1: Ensure the E2E auth user exists in Supabase.
-  run("Seed E2E user", "npx tsx seed-e2e-user.ts", E2E_DIR);
-
-  // Step 2: Ensure schema is up-to-date for feature E2E coverage.
+  // Step 1: Ensure schema is up-to-date for feature E2E coverage.
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
     throw new Error(
@@ -101,18 +103,18 @@ export default function globalSetup() {
       NEXUS_ENV: process.env.NEXUS_ENV ?? "test",
     },
   );
-  // Step 3: Seed PDF, web, EPUB, and reader-resume fixtures.
+  // Step 2: Seed PDF, web, EPUB, and reader-resume fixtures.
   run(
     "Seed E2E data",
     "uv run python scripts/seed_e2e_data.py",
     path.join(ROOT, "python"),
     {
       DATABASE_URL: dbUrl,
-      NEXUS_ENV: process.env.NEXUS_ENV ?? "local",
+      NEXUS_ENV: process.env.NEXUS_ENV ?? "test",
     },
   );
 
-  // Step 4: Verify all seed artifacts were created.
+  // Step 3: Verify all seed artifacts were created.
   if (!existsSync(PDF_SEED)) {
     throw new Error(
       `[global-setup] Seed script succeeded but ${PDF_SEED} was not created.\n` +

@@ -62,14 +62,22 @@ Or create `apps/web/.env.local` manually with:
 FASTAPI_BASE_URL=http://localhost:8000
 
 # Required: Supabase local configuration (from supabase status)
-NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
+AUTH_ALLOWED_REDIRECT_ORIGINS=http://localhost:3000,http://localhost:3001
 
 # Optional: Environment (default: local)
 NEXUS_ENV=local
 
 # Required in staging/prod: Internal API secret
 # NEXUS_INTERNAL_SECRET=your-secret
+
+# Required for interactive Google/GitHub login in environments where the
+# corresponding providers are enabled in supabase/config.toml
+# SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=<google-client-id>
+# SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_SECRET=<google-client-secret>
+# SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID=<github-client-id>
+# SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_SECRET=<github-client-secret>
 ```
 
 To get your Supabase local credentials:
@@ -101,10 +109,16 @@ The app runs at http://localhost:3000 by default.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `FASTAPI_BASE_URL` | Yes | FastAPI server URL |
-| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL (local: `http://127.0.0.1:54321`) |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL (local: `http://localhost:54321`) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon key |
+| `AUTH_ALLOWED_REDIRECT_ORIGINS` | Required outside local/test | Comma-separated allowlist for callback redirect origins |
 | `NEXUS_ENV` | No | Environment (default: `local`) |
 | `NEXUS_INTERNAL_SECRET` | staging/prod | Internal API secret |
+
+Interactive login is Google/GitHub-only. Provider credentials live in the root
+environment for Supabase local/self-hosted configuration, and the app expects
+`http://localhost:3000/auth/callback` plus `http://localhost:3000/libraries`
+to be registered as allowed redirect URLs.
 
 ## Project Structure
 

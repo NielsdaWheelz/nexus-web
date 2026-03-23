@@ -9,6 +9,7 @@
 
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
+import { buildLoginRedirectUrl } from "@/lib/auth/redirects";
 
 interface CookieToSet {
   name: string;
@@ -84,9 +85,7 @@ export async function updateSession(request: NextRequest) {
 
   // Redirect to login if not authenticated
   if (!user) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
+    return NextResponse.redirect(buildLoginRedirectUrl(request.nextUrl));
   }
 
   return supabaseResponse;

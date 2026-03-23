@@ -1,91 +1,40 @@
-"use client";
+import { redirect } from "next/navigation";
+import {
+  DEFAULT_AUTH_REDIRECT,
+  getFirstSearchParamValue,
+  normalizeAuthRedirect,
+} from "@/lib/auth/redirects";
+import { toPublicAuthErrorMessage } from "@/lib/auth/messages";
+import { createClient } from "@/lib/supabase/server";
+import LoginPageClient from "./LoginPageClient";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import styles from "./page.module.css";
+interface LoginPageProps {
+  searchParams: Promise<{
+    error?: string | string[];
+    error_description?: string | string[];
+    next?: string | string[];
+  }>;
+}
 
-export default function LoginPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
-
-    try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        setError(error.message);
-        return;
-      }
-
-      router.push("/libraries");
-      router.refresh();
-    } catch {
-      setError("An unexpected error occurred");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className={styles.container}>
-      <div className={styles.card}>
-        <div className={styles.header}>
-          <h1 className={styles.logo}>Nexus</h1>
-          <p className={styles.subtitle}>Sign in to continue</p>
-        </div>
-
-        <form className={styles.form} onSubmit={handleSubmit}>
-          {error && <div className={styles.error}>{error}</div>}
-
-          <div className={styles.field}>
-            <label htmlFor="email" className={styles.label}>
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className={styles.input}
-              placeholder="you@example.com"
-              required
-              autoComplete="email"
-            />
-          </div>
-
-          <div className={styles.field}>
-            <label htmlFor="password" className={styles.label}>
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className={styles.input}
-              placeholder="••••••••"
-              required
-              autoComplete="current-password"
-            />
-          </div>
-
-          <button type="submit" className={styles.button} disabled={loading}>
-            {loading ? "Signing in..." : "Sign in"}
-          </button>
-        </form>
-      </div>
-    </div>
+export default async function LoginPage({ searchParams }: LoginPageProps) {
+  const params = await searchParams;
+  const nextPath = normalizeAuthRedirect(
+    getFirstSearchParamValue(params.next),
+    DEFAULT_AUTH_REDIRECT
   );
+  const initialError = toPublicAuthErrorMessage(
+    getFirstSearchParamValue(params.error_description) ??
+      getFirstSearchParamValue(params.error)
+  );
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (user) {
+    redirect(nextPath);
+  }
+
+  return <LoginPageClient initialError={initialError} nextPath={nextPath} />;
 }

@@ -1,4 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
+import path from "node:path";
+import { applyResolvedSupabaseEnv } from "./supabase-env.mjs";
+
+const ROOT_DIR = path.resolve(__dirname, "..");
+applyResolvedSupabaseEnv(ROOT_DIR, process.env);
 
 const WEB_PORT = process.env.WEB_PORT ?? "3000";
 const API_PORT = process.env.API_PORT ?? "8000";
