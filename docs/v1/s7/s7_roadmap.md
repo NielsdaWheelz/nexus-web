@@ -120,13 +120,78 @@ PRs 05–10 bring the podcast experience from "functional backend" to "usable po
 
 ---
 
+## Phase 3: Podcast Addict Parity
+
+PRs 11–15 close the remaining daily-use friction and power-user gaps against dedicated podcast clients.
+
+### PR-11: MediaSession API + Player Streaming Error Handling
+- **goal**: media key / spacebar / lock screen controls via MediaSession API; graceful error handling for audio streaming failures.
+- **builds on**: PR-06.
+- **acceptance**:
+  - spacebar toggles play/pause globally (with input-element guard).
+  - hardware media keys and lock screen controls work via MediaSession.
+  - audio 404/CORS/network errors show error message + retry button in footer.
+  - network recovery auto-retries playback.
+  - buffering shows loading indicator.
+- **non-goals**: no PiP; no service worker background audio.
+
+### PR-12: Episode Show Notes + Batch Transcript Request
+- **goal**: surface episode descriptions (sanitized HTML from RSS) and allow batch transcript requests.
+- **builds on**: PR-07.
+- **acceptance**:
+  - episode list shows 2-line description preview; media detail shows full sanitized HTML show notes.
+  - timestamps in show notes are clickable (seek player).
+  - batch transcript request (up to 20 episodes) with per-episode results.
+  - "Transcribe all" button with cost confirmation dialog.
+- **non-goals**: no show notes editing; no show notes search.
+
+### PR-13: Per-Subscription Settings (Default Speed, Auto-Queue)
+- **goal**: per-podcast default playback speed and auto-queue toggle with a subscription settings panel.
+- **builds on**: PR-06 + PR-07.
+- **acceptance**:
+  - user sets default speed per podcast; new episodes inherit it on first play.
+  - auto-queue toggle adds new episodes to queue on sync.
+  - settings panel accessible from subscription list and podcast detail.
+- **non-goals**: no global default speed; no per-subscription notifications.
+
+### PR-14: Subscription Categories (Podcast Folders)
+- **goal**: named, colored, reorderable categories for organizing subscriptions.
+- **builds on**: PR-07.
+- **acceptance**:
+  - create/rename/delete/reorder categories.
+  - assign subscriptions to categories.
+  - category tabs filter subscription list; each shows aggregate unplayed count.
+  - deleting a category uncategorizes subscriptions (no data loss).
+- **non-goals**: no nested categories; no auto-categorization.
+
+### PR-15: Playback Audio Effects (Silence Trimming, Volume Boost, Mono)
+- **goal**: real-time audio processing via Web Audio API — silence speed-through, gain boost with compressor, and mono mixdown.
+- **builds on**: PR-05.
+- **acceptance**:
+  - silence trimming speeds through quiet sections at 6x; "time saved" counter shown.
+  - volume boost (off/low/medium/high) with compressor to prevent clipping.
+  - mono mixdown combines stereo channels.
+  - effects persist in localStorage; active indicator on effects button.
+  - CORS fallback: bypass AudioContext if audio source lacks CORS headers.
+- **non-goals**: no equalizer; no noise reduction; no server-side processing.
+
+---
+
 ## Dependency Graph
 
 ```
+Phase 1 (foundation):
 PR-01 → PR-02 → PR-03 → PR-04 ─┬─→ PR-05 → PR-06 → PR-07
                                  ├─→ PR-08 (OPML, independent)
                                  ├─→ PR-10 (tests, independent)
                                  └─→ PR-09 (chapters, needs PR-05 for scrubber)
+
+Phase 2 (feature parity):       Phase 3 (Podcast Addict parity):
+PR-05 ─────────────────────────→ PR-15 (audio effects, needs AudioContext)
+PR-06 ─────────────────────────→ PR-11 (MediaSession, needs queue for next/prev)
+PR-06 + PR-07 ─────────────────→ PR-13 (subscription settings, needs queue + episodes)
+PR-07 ─────────────────────────→ PR-12 (show notes + batch transcript)
+PR-07 ─────────────────────────→ PR-14 (categories, needs subscription list)
 ```
 
-PR-08 and PR-10 can run in parallel with PR-05–07. PR-09 needs PR-05's scrubber for chapter tick marks.
+PR-11, PR-12, PR-14 can run in parallel. PR-13 needs both PR-06 and PR-07. PR-15 is independent (only needs PR-05).
