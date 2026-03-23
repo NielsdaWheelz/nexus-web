@@ -757,3 +757,110 @@ cd apps/web && npm test -- \
 
 ### risks
 - queue inheritance now depends on the queue API field being returned for podcast-episode rows; non-episode media kinds intentionally return `null` and will continue at `1.0x` unless explicitly overridden by listening state.
+
+## s7 pr-14 subscription categories cutover addendum (2026-03-23)
+
+### summary
+- added first-class backend category domain for podcast subscriptions: new migration `0035`, `podcast_subscription_categories` table, and nullable `podcast_subscriptions.category_id` foreign key with uncategorize-on-delete semantics.
+- implemented category API surface on backend: `GET/POST/PATCH/DELETE /podcasts/categories`, `PUT /podcasts/categories/order`, and subscription-list filtering via `category_id` (`UUID` or `null` token for uncategorized).
+- extended subscription contracts (`GET /podcasts/subscriptions`, `GET /podcasts/{id}`, `PATCH /podcasts/subscriptions/{id}/settings`) to expose and mutate `category` assignment as server-owned persisted state.
+- wired web bff passthrough routes for category APIs under `/api/podcasts/categories*`.
+- cut subscriptions UI over to category-aware behavior: tabs (`All`, category tabs with aggregate unplayed counts, `Uncategorized`), row-level category assignment dropdown, and inline category create/edit/delete/reorder controls.
+- cut podcast detail subscription header/settings over to category awareness with explicit `Category: ...` summary and settings-modal reassignment control.
+- added red/green coverage for backend category acceptance paths + migration contract and frontend bff/ui category flows.
+
+### decisions
+- **strict server ownership of category state**: category assignment persists only through backend contracts; no client-side fallback state or compatibility adapter.
+- **explicit uncategorized filter token**: list filtering uses `category_id=null` to target uncategorized subscriptions while omitting `category_id` remains “all”.
+- **service-layer category invariants**: duplicate-name rejection, reorder full-set validation, and delete-to-uncategorized behavior are enforced in podcast service methods (not page logic).
+- **reorder semantics over drag dependency**: category ordering is persisted by explicit ordered-id writes (`PUT /podcasts/categories/order`), allowing UI reorder controls without coupling to any single drag library.
+- **graceful empty-category UX**: category tabs render only when at least one category exists; category management entrypoint remains available for first-category creation.
+
+### how to test
+```bash
+# migrate test db to include 0035
+make migrate-test
+
+# backend PR-14 contracts
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_list_subscriptions_returns_podcast_metadata_and_sync_snapshot \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_patch_subscription_settings_updates_contract_and_episode_default_speed \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_subscription_categories_crud_assignment_filter_and_delete_uncategorizes \
+  tests/test_podcasts.py::TestPodcastApiSurface::test_subscription_category_name_must_be_unique_per_user
+
+# migration schema contract for categories
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations uv run pytest -q \
+  tests/test_migrations.py::TestPodcastSubscriptionCategoryMigration::test_head_contains_subscription_categories_and_subscription_fk_contract
+
+# backend lint on touched files
+cd python && uv run ruff check \
+  nexus/services/podcasts.py \
+  nexus/schemas/podcast.py \
+  nexus/db/models.py \
+  nexus/api/routes/podcasts.py \
+  tests/test_podcasts.py \
+  tests/test_migrations.py \
+  ../migrations/alembic/versions/0035_podcast_subscription_categories.py
+
+# frontend bff + subscriptions/detail category flows
+cd apps/web && npm test -- \
+  "src/app/api/podcasts/podcasts-routes.test.ts" \
+  "src/app/(authenticated)/podcasts/podcasts-flows.test.tsx"
+```
+
+### risks
+- category-name uniqueness is case-insensitive in service validation but case-sensitive at db unique-constraint level; race windows still rely on constraint + conflict mapping and may need stronger canonicalization if multilingual naming expands.
+- `Uncategorized` tab aggregate count currently derives from the loaded subscription page slice in the web UI; users with very large lists may need a dedicated backend aggregate for exact global count parity.
+- frontend `npm run typecheck` currently fails on two pre-existing unrelated files (`GlobalPlayerPersistence.test.tsx`, `transcriptPolling.test.tsx`); PR-14 changes do not introduce additional typecheck failures beyond those existing errors.
+
+## s7 pr-14 reorder ergonomics follow-up addendum (2026-03-23)
+
+### summary
+- replaced category management left/right reorder buttons with touch-first drag handles on the subscriptions page.
+- reused the shared `SortableList` dnd primitive so category reorder behavior is consistent with queue/library sortable surfaces.
+- wired drag reorder to the existing persisted backend order endpoint (`PUT /api/podcasts/categories/order`) with optimistic local ordering and rollback on API failure.
+- expanded podcast flow coverage to assert drag-handle controls are rendered for category reordering.
+
+### decisions
+- **touch-first over directional buttons**: primary reorder affordance is now direct manipulation (`touch-action: none` handle + large tap target), reducing friction on mobile/touch devices.
+- **single sortable abstraction**: category reorder now uses the same shared sortable component as other list-reorder surfaces to avoid divergent drag semantics.
+- **optimistic reorder with rollback**: UI updates immediately on drag end for responsiveness; failed writes restore prior order and surface explicit error state.
+
+### how to test
+```bash
+# frontend category drag ergonomics + proxy regression
+cd apps/web && npm test -- \
+  "src/app/api/podcasts/podcasts-routes.test.ts" \
+  "src/app/(authenticated)/podcasts/podcasts-flows.test.tsx"
+```
+
+### risks
+- touch-first drag improves ergonomics but does not yet include explicit inline “drop target” preview beyond sortable movement, which some users may still find subtle on very dense category sets.
+
+## s7 pr-14 drag feedback + e2e path addendum (2026-03-23)
+
+### summary
+- upgraded category reorder feedback with explicit drag visuals: active drag overlay ghost + inline source placeholder/drop-target highlighting on the subscriptions category list.
+- extended the shared `SortableList` primitive with active-item tracking, drag overlay rendering, and `data-over` metadata so reorder surfaces can render clearer drag state.
+- wired category reorder UI to expose richer drag accessibility state (`aria-grabbed`) while preserving the existing persisted reorder write path.
+- added dedicated playwright coverage in `e2e/tests/podcast-categories.spec.ts` for drag reorder persistence flow, with environment preflight gating to skip when podcast routes are intentionally disabled (`podcasts_enabled=false`).
+
+### decisions
+- **overlay is explicit, not implied by movement**: reorder now gives a concrete drag ghost and target affordance rather than relying only on list reflow.
+- **shared primitive stays generic**: overlay support was added to `SortableList` as an optional render callback, avoiding category-specific logic in the shared component.
+- **e2e contract is feature-flag aware**: when backend podcast routes are disabled in an environment, the test skips explicitly instead of timing out on 404-based waits.
+
+### how to test
+```bash
+# web regression slices for sortable + subscriptions behavior
+cd apps/web && npm test -- \
+  "src/app/(authenticated)/podcasts/podcasts-flows.test.tsx" \
+  "src/app/api/podcasts/podcasts-routes.test.ts" \
+  "src/__tests__/components/GlobalPlayerFooter.test.tsx"
+
+# dedicated categories drag e2e path
+cd e2e && SKIP_SEED=1 npm test -- tests/podcast-categories.spec.ts --project=chromium
+```
+
+### risks
+- in environments where podcasts routes are disabled server-side, the new e2e test intentionally skips; full drag-path execution still requires an environment with `podcasts_enabled=true`.

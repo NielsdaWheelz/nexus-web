@@ -44,12 +44,14 @@ class PodcastSubscribeOut(BaseModel):
 class PodcastSubscriptionSettingsPatchRequest(BaseModel):
     default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
     auto_queue: bool | None = None
+    category_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_patch_semantics(self) -> "PodcastSubscriptionSettingsPatchRequest":
         if (
             "default_playback_speed" not in self.model_fields_set
             and "auto_queue" not in self.model_fields_set
+            and "category_id" not in self.model_fields_set
         ):
             raise ValueError("At least one settings field is required")
         if "auto_queue" in self.model_fields_set and self.auto_queue is None:
@@ -62,6 +64,59 @@ class PodcastSubscriptionSettingsPatchRequest(BaseModel):
 class PodcastOpmlImportErrorOut(BaseModel):
     feed_url: str | None = None
     error: str
+
+
+class PodcastSubscriptionCategoryRefOut(BaseModel):
+    id: UUID
+    name: str
+    color: str | None = None
+
+
+class PodcastSubscriptionCategoryOut(BaseModel):
+    id: UUID
+    name: str
+    position: int = Field(ge=0)
+    color: str | None = None
+    created_at: datetime
+    subscription_count: int = Field(ge=0)
+    unplayed_count: int = Field(ge=0)
+
+
+class PodcastSubscriptionCategoryCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PodcastSubscriptionCategoryPatchRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    position: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_patch_semantics(self) -> "PodcastSubscriptionCategoryPatchRequest":
+        if (
+            "name" not in self.model_fields_set
+            and "color" not in self.model_fields_set
+            and "position" not in self.model_fields_set
+        ):
+            raise ValueError("At least one category field is required")
+        return self
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PodcastSubscriptionCategoryOrderRequest(BaseModel):
+    category_ids: list[UUID] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_order_ids(self) -> "PodcastSubscriptionCategoryOrderRequest":
+        if len(set(self.category_ids)) != len(self.category_ids):
+            raise ValueError("category_ids must not contain duplicates")
+        return self
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class PodcastOpmlImportOut(BaseModel):
@@ -93,6 +148,7 @@ class PodcastSubscriptionStatusOut(BaseModel):
     unsubscribe_mode: Literal[1, 2, 3] = 1
     default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
     auto_queue: bool = False
+    category: PodcastSubscriptionCategoryRefOut | None = None
     sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
     sync_error_code: str | None = None
     sync_error_message: str | None = None
@@ -123,6 +179,7 @@ class PodcastSubscriptionListItemOut(BaseModel):
     unsubscribe_mode: Literal[1, 2, 3] = 1
     default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
     auto_queue: bool = False
+    category: PodcastSubscriptionCategoryRefOut | None = None
     sync_status: Literal["pending", "running", "partial", "complete", "source_limited", "failed"]
     sync_error_code: str | None = None
     sync_error_message: str | None = None

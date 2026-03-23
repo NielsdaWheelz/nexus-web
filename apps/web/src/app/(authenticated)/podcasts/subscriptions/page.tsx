@@ -11,10 +11,28 @@ import PageLayout from "@/components/ui/PageLayout";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import { AppList, AppListItem } from "@/components/ui/AppList";
+import SortableList from "@/components/sortable/SortableList";
 import styles from "./page.module.css";
 
 const SUBSCRIPTIONS_PAGE_SIZE = 100;
 type SubscriptionSort = "recent_episode" | "unplayed_count" | "alpha";
+type CategoryFilter = "all" | "uncategorized" | string;
+
+interface PodcastSubscriptionCategoryRef {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
+interface PodcastSubscriptionCategory {
+  id: string;
+  name: string;
+  position: number;
+  color: string | null;
+  created_at: string;
+  subscription_count: number;
+  unplayed_count: number;
+}
 
 interface PodcastListItem {
   id: string;
@@ -36,6 +54,7 @@ interface PodcastSubscriptionRow {
   unsubscribe_mode: 1 | 2 | 3;
   default_playback_speed?: number | null;
   auto_queue?: boolean;
+  category?: PodcastSubscriptionCategoryRef | null;
   sync_status: "pending" | "running" | "partial" | "complete" | "source_limited" | "failed";
   sync_error_code: string | null;
   sync_error_message: string | null;
@@ -52,6 +71,7 @@ interface PodcastSubscriptionSettingsResponse {
   podcast_id: string;
   default_playback_speed: number | null;
   auto_queue: boolean;
+  category: PodcastSubscriptionCategoryRef | null;
   updated_at: string;
 }
 
@@ -101,6 +121,17 @@ export default function PodcastSubscriptionsPage() {
   const [busyPodcastIds, setBusyPodcastIds] = useState<Set<string>>(new Set());
   const [refreshingPodcastIds, setRefreshingPodcastIds] = useState<Set<string>>(new Set());
   const [subscriptionSort, setSubscriptionSort] = useState<SubscriptionSort>("recent_episode");
+  const [activeCategoryFilter, setActiveCategoryFilter] = useState<CategoryFilter>("all");
+  const [categories, setCategories] = useState<PodcastSubscriptionCategory[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [categoriesError, setCategoriesError] = useState<string | null>(null);
+  const [categoryMutationBusy, setCategoryMutationBusy] = useState(false);
+  const [categoryMutationError, setCategoryMutationError] = useState<string | null>(null);
+  const [categoryFormOpen, setCategoryFormOpen] = useState(false);
+  const [categoryFormMode, setCategoryFormMode] = useState<"create" | "edit">("create");
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [categoryNameInput, setCategoryNameInput] = useState("");
+  const [categoryColorInput, setCategoryColorInput] = useState("");
   const [unsubscribeMode, setUnsubscribeMode] = useState<1 | 2 | 3>(1);
   const [plan, setPlan] = useState<PodcastPlanSnapshot | null>(null);
   const [planLoading, setPlanLoading] = useState(true);
@@ -114,6 +145,7 @@ export default function PodcastSubscriptionsPage() {
   const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsCategoryId, setSettingsCategoryId] = useState<string>("");
   useSetPaneTitle("My podcasts");
 
   const loadSubscriptions = useCallback(async (offset = 0, append = false) => {
@@ -124,8 +156,18 @@ export default function PodcastSubscriptionsPage() {
     }
     setError(null);
     try {
+      const params = new URLSearchParams({
+        limit: String(SUBSCRIPTIONS_PAGE_SIZE),
+        offset: String(offset),
+        sort: subscriptionSort,
+      });
+      if (activeCategoryFilter === "uncategorized") {
+        params.set("category_id", "null");
+      } else if (activeCategoryFilter !== "all") {
+        params.set("category_id", activeCategoryFilter);
+      }
       const response = await apiFetch<{ data: PodcastSubscriptionRow[] }>(
-        `/api/podcasts/subscriptions?limit=${SUBSCRIPTIONS_PAGE_SIZE}&offset=${offset}&sort=${subscriptionSort}`
+        `/api/podcasts/subscriptions?${params.toString()}`
       );
       setRows((prev) => (append ? [...prev, ...response.data] : response.data));
       setHasMore(response.data.length === SUBSCRIPTIONS_PAGE_SIZE);
@@ -143,7 +185,7 @@ export default function PodcastSubscriptionsPage() {
         setLoading(false);
       }
     }
-  }, [subscriptionSort]);
+  }, [activeCategoryFilter, subscriptionSort]);
 
   const loadPlanSnapshot = useCallback(async () => {
     setPlanLoading(true);
@@ -162,10 +204,35 @@ export default function PodcastSubscriptionsPage() {
     }
   }, []);
 
+  const loadCategories = useCallback(async () => {
+    setCategoriesLoading(true);
+    setCategoriesError(null);
+    try {
+      const response = await apiFetch<{ data: PodcastSubscriptionCategory[] }>("/api/podcasts/categories");
+      setCategories(response.data);
+      if (
+        activeCategoryFilter !== "all" &&
+        activeCategoryFilter !== "uncategorized" &&
+        !response.data.some((category) => category.id === activeCategoryFilter)
+      ) {
+        setActiveCategoryFilter("all");
+      }
+    } catch (loadError) {
+      if (isApiError(loadError)) {
+        setCategoriesError(loadError.message);
+      } else {
+        setCategoriesError("Failed to load categories");
+      }
+    } finally {
+      setCategoriesLoading(false);
+    }
+  }, [activeCategoryFilter]);
+
   useEffect(() => {
     void loadSubscriptions();
     void loadPlanSnapshot();
-  }, [loadPlanSnapshot, loadSubscriptions]);
+    void loadCategories();
+  }, [loadCategories, loadPlanSnapshot, loadSubscriptions]);
 
   const handleUnsubscribe = useCallback(async (podcastId: string) => {
     setBusyPodcastIds((prev) => new Set(prev).add(podcastId));
@@ -234,6 +301,13 @@ export default function PodcastSubscriptionsPage() {
     () => rows.find((row) => row.podcast_id === settingsPodcastId) ?? null,
     [rows, settingsPodcastId]
   );
+  const uncategorizedUnplayedCount = useMemo(
+    () =>
+      rows
+        .filter((row) => !row.category)
+        .reduce((total, row) => total + Math.max(0, Number(row.unplayed_count || 0)), 0),
+    [rows]
+  );
 
   const openSettingsModal = useCallback((row: PodcastSubscriptionRow) => {
     setSettingsPodcastId(row.podcast_id);
@@ -241,6 +315,7 @@ export default function PodcastSubscriptionsPage() {
       row.default_playback_speed == null ? "default" : String(row.default_playback_speed)
     );
     setSettingsAutoQueue(Boolean(row.auto_queue));
+    setSettingsCategoryId(row.category?.id ?? "");
     setSettingsError(null);
   }, []);
 
@@ -259,6 +334,7 @@ export default function PodcastSubscriptionsPage() {
     setError(null);
     const nextDefaultPlaybackSpeed =
       settingsDefaultSpeed === "default" ? null : Number.parseFloat(settingsDefaultSpeed);
+    const nextCategoryId = settingsCategoryId.trim();
     try {
       const response = await apiFetch<{ data: PodcastSubscriptionSettingsResponse }>(
         `/api/podcasts/subscriptions/${settingsRow.podcast_id}/settings`,
@@ -267,6 +343,7 @@ export default function PodcastSubscriptionsPage() {
           body: JSON.stringify({
             default_playback_speed: nextDefaultPlaybackSpeed,
             auto_queue: settingsAutoQueue,
+            category_id: nextCategoryId.length > 0 ? nextCategoryId : null,
           }),
         }
       );
@@ -277,6 +354,7 @@ export default function PodcastSubscriptionsPage() {
                 ...row,
                 default_playback_speed: response.data.default_playback_speed,
                 auto_queue: response.data.auto_queue,
+                category: response.data.category,
                 updated_at: response.data.updated_at ?? row.updated_at,
               }
             : row
@@ -292,7 +370,196 @@ export default function PodcastSubscriptionsPage() {
     } finally {
       setSettingsBusy(false);
     }
-  }, [settingsAutoQueue, settingsDefaultSpeed, settingsRow]);
+  }, [settingsAutoQueue, settingsCategoryId, settingsDefaultSpeed, settingsRow]);
+
+  const handleAssignCategory = useCallback(
+    async (podcastId: string, categoryId: string) => {
+      setBusyPodcastIds((prev) => new Set(prev).add(podcastId));
+      setCategoryMutationError(null);
+      setError(null);
+      try {
+        const response = await apiFetch<{ data: PodcastSubscriptionSettingsResponse }>(
+          `/api/podcasts/subscriptions/${podcastId}/settings`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              category_id: categoryId.trim() ? categoryId : null,
+            }),
+          }
+        );
+        setRows((prev) =>
+          prev.map((row) =>
+            row.podcast_id === podcastId
+              ? {
+                  ...row,
+                  category: response.data.category,
+                  updated_at: response.data.updated_at ?? row.updated_at,
+                }
+              : row
+          )
+        );
+        if (activeCategoryFilter !== "all") {
+          await loadSubscriptions(0, false);
+        }
+        await loadCategories();
+      } catch (updateError) {
+        if (isApiError(updateError)) {
+          setCategoryMutationError(updateError.message);
+        } else {
+          setCategoryMutationError("Failed to assign category");
+        }
+      } finally {
+        setBusyPodcastIds((prev) => {
+          const next = new Set(prev);
+          next.delete(podcastId);
+          return next;
+        });
+      }
+    },
+    [activeCategoryFilter, loadCategories, loadSubscriptions]
+  );
+
+  const openCreateCategoryForm = useCallback(() => {
+    setCategoryFormMode("create");
+    setEditingCategoryId(null);
+    setCategoryNameInput("");
+    setCategoryColorInput("");
+    setCategoryMutationError(null);
+    setCategoryFormOpen(true);
+  }, []);
+
+  const openEditCategoryForm = useCallback((category: PodcastSubscriptionCategory) => {
+    setCategoryFormMode("edit");
+    setEditingCategoryId(category.id);
+    setCategoryNameInput(category.name);
+    setCategoryColorInput(category.color ?? "");
+    setCategoryMutationError(null);
+    setCategoryFormOpen(true);
+  }, []);
+
+  const closeCategoryForm = useCallback(() => {
+    setCategoryFormOpen(false);
+    setEditingCategoryId(null);
+    setCategoryMutationError(null);
+  }, []);
+
+  const handleSaveCategoryForm = useCallback(async () => {
+    const trimmedName = categoryNameInput.trim();
+    if (!trimmedName) {
+      setCategoryMutationError("Category name is required");
+      return;
+    }
+    const trimmedColor = categoryColorInput.trim();
+    const payload: { name: string; color?: string | null } = { name: trimmedName };
+    if (trimmedColor.length > 0) {
+      payload.color = trimmedColor;
+    } else if (categoryFormMode === "edit") {
+      payload.color = null;
+    }
+
+    setCategoryMutationBusy(true);
+    setCategoryMutationError(null);
+    try {
+      if (categoryFormMode === "create") {
+        await apiFetch<{ data: PodcastSubscriptionCategory }>("/api/podcasts/categories", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      } else if (editingCategoryId) {
+        await apiFetch<{ data: PodcastSubscriptionCategory }>(
+          `/api/podcasts/categories/${editingCategoryId}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          }
+        );
+      }
+      await loadCategories();
+      closeCategoryForm();
+    } catch (mutationError) {
+      if (isApiError(mutationError)) {
+        setCategoryMutationError(mutationError.message);
+      } else {
+        setCategoryMutationError("Failed to save category");
+      }
+    } finally {
+      setCategoryMutationBusy(false);
+    }
+  }, [
+    categoryColorInput,
+    categoryFormMode,
+    categoryNameInput,
+    closeCategoryForm,
+    editingCategoryId,
+    loadCategories,
+  ]);
+
+  const handleDeleteCategory = useCallback(
+    async (category: PodcastSubscriptionCategory) => {
+      if (
+        !window.confirm(
+          `Delete category "${category.name}"? Subscriptions in this category will become uncategorized.`
+        )
+      ) {
+        return;
+      }
+      setCategoryMutationBusy(true);
+      setCategoryMutationError(null);
+      try {
+        await apiFetch(`/api/podcasts/categories/${category.id}`, { method: "DELETE" });
+        if (activeCategoryFilter === category.id) {
+          setActiveCategoryFilter("all");
+        }
+        await Promise.all([loadCategories(), loadSubscriptions(0, false)]);
+      } catch (deleteError) {
+        if (isApiError(deleteError)) {
+          setCategoryMutationError(deleteError.message);
+        } else {
+          setCategoryMutationError("Failed to delete category");
+        }
+      } finally {
+        setCategoryMutationBusy(false);
+      }
+    },
+    [activeCategoryFilter, loadCategories, loadSubscriptions]
+  );
+
+  const handleReorderCategories = useCallback(
+    async (reordered: PodcastSubscriptionCategory[]) => {
+      const nextIds = reordered.map((category) => category.id);
+      const currentIds = categories.map((category) => category.id);
+      if (
+        nextIds.length === currentIds.length &&
+        nextIds.every((categoryId, idx) => categoryId === currentIds[idx])
+      ) {
+        return;
+      }
+      const previous = categories;
+      setCategories(reordered);
+      setCategoryMutationBusy(true);
+      setCategoryMutationError(null);
+      try {
+        const response = await apiFetch<{ data: PodcastSubscriptionCategory[] }>(
+          "/api/podcasts/categories/order",
+          {
+            method: "PUT",
+            body: JSON.stringify({ category_ids: nextIds }),
+          }
+        );
+        setCategories(response.data);
+      } catch (reorderError) {
+        setCategories(previous);
+        if (isApiError(reorderError)) {
+          setCategoryMutationError(reorderError.message);
+        } else {
+          setCategoryMutationError("Failed to reorder categories");
+        }
+      } finally {
+        setCategoryMutationBusy(false);
+      }
+    },
+    [categories]
+  );
 
   const openImportModal = useCallback(() => {
     setImportError(null);
@@ -376,6 +643,14 @@ export default function PodcastSubscriptionsPage() {
             <button
               type="button"
               className={styles.secondaryAction}
+              onClick={openCreateCategoryForm}
+              aria-label="New category"
+            >
+              New category
+            </button>
+            <button
+              type="button"
+              className={styles.secondaryAction}
               onClick={openImportModal}
               aria-label="Import OPML"
             >
@@ -425,6 +700,171 @@ export default function PodcastSubscriptionsPage() {
           </select>
         </div>
 
+        {categoriesLoading && <StateMessage variant="loading">Loading categories...</StateMessage>}
+        {categoriesError && <StateMessage variant="error">{categoriesError}</StateMessage>}
+        {categoryMutationError && <StateMessage variant="error">{categoryMutationError}</StateMessage>}
+
+        {categories.length > 0 && (
+          <>
+            <div className={styles.categoryTabs} role="tablist" aria-label="Subscription categories">
+              <button
+                type="button"
+                className={styles.categoryTab}
+                aria-pressed={activeCategoryFilter === "all"}
+                onClick={() => setActiveCategoryFilter("all")}
+              >
+                All
+              </button>
+              {categories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  className={styles.categoryTab}
+                  aria-pressed={activeCategoryFilter === category.id}
+                  onClick={() => setActiveCategoryFilter(category.id)}
+                >
+                  <span className={styles.categoryDot} style={{ color: category.color ?? "transparent" }}>
+                    •
+                  </span>
+                  {category.name} ({category.unplayed_count})
+                </button>
+              ))}
+              <button
+                type="button"
+                className={styles.categoryTab}
+                aria-pressed={activeCategoryFilter === "uncategorized"}
+                onClick={() => setActiveCategoryFilter("uncategorized")}
+              >
+                Uncategorized ({uncategorizedUnplayedCount})
+              </button>
+            </div>
+
+            <SortableList
+              className={styles.categoryManageList}
+              itemClassName={styles.categoryManageItem}
+              items={categories}
+              getItemId={(category) => category.id}
+              onReorder={(reorderedCategories) => {
+                void handleReorderCategories(reorderedCategories);
+              }}
+              renderDragOverlay={(category) => (
+                <div className={styles.categoryDragOverlay} aria-hidden="true">
+                  <span className={styles.categoryDragOverlayHandle}>⋮⋮</span>
+                  <span className={styles.categoryManageLabel}>
+                    <span className={styles.categoryDot} style={{ color: category.color ?? "transparent" }}>
+                      •
+                    </span>
+                    {category.name}
+                  </span>
+                </div>
+              )}
+              renderItem={({ item: category, handleProps, isDragging }) => {
+                const dragBindings = categoryMutationBusy
+                  ? handleProps.attributes
+                  : {
+                      ...handleProps.attributes,
+                      ...handleProps.listeners,
+                    };
+                return (
+                  <div className={styles.categoryManageRow}>
+                    <div className={styles.categoryManageLeft}>
+                      <button
+                        type="button"
+                        className={styles.categoryDragHandle}
+                        aria-label={`Reorder category ${category.name}`}
+                        aria-grabbed={isDragging ? "true" : "false"}
+                        disabled={categoryMutationBusy}
+                        {...dragBindings}
+                      >
+                        ⋮⋮
+                      </button>
+                      <span className={styles.categoryManageLabel}>
+                        <span
+                          className={styles.categoryDot}
+                          style={{ color: category.color ?? "transparent" }}
+                        >
+                          •
+                        </span>
+                        {category.name}
+                      </span>
+                    </div>
+                    <div className={styles.categoryManageActions}>
+                      <button
+                        type="button"
+                        className={styles.secondaryAction}
+                        onClick={() => openEditCategoryForm(category)}
+                        aria-label={`Edit category ${category.name}`}
+                        disabled={categoryMutationBusy}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.secondaryAction}
+                        onClick={() => void handleDeleteCategory(category)}
+                        aria-label={`Delete category ${category.name}`}
+                        disabled={categoryMutationBusy}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                );
+              }}
+            />
+          </>
+        )}
+
+        {categoryFormOpen && (
+          <div className={styles.categoryForm}>
+            <label htmlFor="category-name" className={styles.settingsFieldLabel}>
+              Category name
+            </label>
+            <input
+              id="category-name"
+              className={styles.settingsSelect}
+              value={categoryNameInput}
+              onChange={(event) => setCategoryNameInput(event.target.value)}
+              aria-label="Category name"
+            />
+            <label htmlFor="category-color" className={styles.settingsFieldLabel}>
+              Category color (optional)
+            </label>
+            <input
+              id="category-color"
+              className={styles.settingsSelect}
+              value={categoryColorInput}
+              onChange={(event) => setCategoryColorInput(event.target.value)}
+              placeholder="#3366FF"
+              aria-label="Category color"
+            />
+            <div className={styles.categoryFormActions}>
+              <button
+                type="button"
+                className={styles.primaryAction}
+                onClick={() => void handleSaveCategoryForm()}
+                disabled={categoryMutationBusy}
+                aria-label={categoryFormMode === "create" ? "Create category" : "Save category"}
+              >
+                {categoryMutationBusy
+                  ? "Saving..."
+                  : categoryFormMode === "create"
+                    ? "Create category"
+                    : "Save category"}
+              </button>
+              <button
+                type="button"
+                className={styles.secondaryAction}
+                onClick={closeCategoryForm}
+                disabled={categoryMutationBusy}
+                aria-label="Cancel category edit"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {loading && <StateMessage variant="loading">Loading subscriptions...</StateMessage>}
         {error && <StateMessage variant="error">{error}</StateMessage>}
 
@@ -452,16 +892,39 @@ export default function PodcastSubscriptionsPage() {
                     {row.unplayed_count > 0 && (
                       <span className={styles.unplayedBadge}>{row.unplayed_count} new</span>
                     )}
+                    <span className={styles.categoryBadge}>
+                      {row.category ? row.category.name : "Uncategorized"}
+                    </span>
                     <span className={styles.status}>{row.sync_status}</span>
                   </span>
                 }
                 actions={
                   <>
+                    <label className={styles.categorySelectLabel}>
+                      Category
+                      <select
+                        aria-label={`Category for ${row.podcast.title}`}
+                        className={styles.categorySelect}
+                        value={row.category?.id ?? ""}
+                        onChange={(event) =>
+                          void handleAssignCategory(row.podcast_id, event.target.value)
+                        }
+                        disabled={busyPodcastIds.has(row.podcast_id) || categoryMutationBusy}
+                      >
+                        <option value="">Uncategorized</option>
+                        {categories.map((category) => (
+                          <option key={category.id} value={category.id}>
+                            {category.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     <button
                       type="button"
                       className={styles.settingsButton}
                       aria-label={`Open settings for ${row.podcast.title}`}
                       onClick={() => openSettingsModal(row)}
+                      disabled={busyPodcastIds.has(row.podcast_id)}
                     >
                       Settings
                     </button>
@@ -529,6 +992,23 @@ export default function PodcastSubscriptionsPage() {
               {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((speed) => (
                 <option key={speed} value={String(speed)}>
                   {formatPlaybackSpeedLabel(speed)}
+                </option>
+              ))}
+            </select>
+            <label htmlFor="subscription-category" className={styles.settingsFieldLabel}>
+              Subscription category
+            </label>
+            <select
+              id="subscription-category"
+              className={styles.settingsSelect}
+              value={settingsCategoryId}
+              onChange={(event) => setSettingsCategoryId(event.target.value)}
+              aria-label="Subscription category"
+            >
+              <option value="">Uncategorized</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
                 </option>
               ))}
             </select>

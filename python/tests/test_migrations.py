@@ -3773,6 +3773,104 @@ class TestPlaybackQueueMigration:
         )
 
 
+class TestPodcastSubscriptionCategoryMigration:
+    """Schema assertions for PR-14 podcast subscription categories cutover."""
+
+    def test_head_contains_subscription_categories_and_subscription_fk_contract(
+        self, migrated_engine
+    ):
+        with Session(migrated_engine) as session:
+            category_columns = session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_subscription_categories'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
+            category_constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'podcast_subscription_categories'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            category_indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'podcast_subscription_categories'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+            subscription_category_column = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_subscriptions'
+                      AND column_name = 'category_id'
+                    """
+                )
+            ).fetchone()
+            subscription_fk_constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'podcast_subscriptions'::regclass
+                      AND contype = 'f'
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+
+        category_column_names = {row[0] for row in category_columns}
+        assert {
+            "id",
+            "user_id",
+            "name",
+            "position",
+            "color",
+            "created_at",
+        }.issubset(category_column_names), (
+            "podcast subscription category migration must create category contract columns; "
+            f"got {category_column_names}"
+        )
+
+        category_constraint_names = {row[0] for row in category_constraints}
+        assert "uq_podcast_subscription_categories_user_name" in category_constraint_names, (
+            "categories table must enforce per-user unique names"
+        )
+
+        category_index_names = {row[0] for row in category_indexes}
+        assert "ix_podcast_subscription_categories_user_position" in category_index_names, (
+            "categories table must support deterministic user-scoped ordering reads"
+        )
+
+        assert subscription_category_column is not None, (
+            "podcast_subscriptions.category_id must exist for subscription-category assignment"
+        )
+        assert subscription_category_column[1] == "uuid", (
+            f"category_id should be uuid type, got {subscription_category_column[1]}"
+        )
+        assert subscription_category_column[2] == "YES", (
+            "category_id must be nullable so uncategorized remains an explicit state"
+        )
+
+        fk_names = {row[0] for row in subscription_fk_constraints}
+        assert "fk_podcast_subscriptions_category_id" in fk_names, (
+            "podcast_subscriptions.category_id must enforce FK integrity to categories table"
+        )
+
+
 class TestLibraryMediaOrderingMigration:
     """Schema assertions for durable library media ordering."""
 

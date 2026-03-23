@@ -39,6 +39,7 @@ function buildSubscriptionRow(index: number, overrides: Record<string, unknown> 
     last_synced_at: null,
     updated_at: "2026-03-06T00:00:00Z",
     unplayed_count: 0,
+    category: null,
     podcast: {
       id: `podcast-${index}`,
       provider: "podcast_index",
@@ -241,6 +242,9 @@ describe("podcasts product flows", () => {
             },
           });
         }
+        if (url.pathname === "/api/podcasts/categories") {
+          return jsonResponse({ data: [] });
+        }
         if (url.pathname === "/api/podcasts/subscriptions") {
           const offset = Number(url.searchParams.get("offset") ?? "0");
           if (offset === 0) {
@@ -389,6 +393,9 @@ describe("podcasts product flows", () => {
             },
           },
         });
+      }
+      if (url.pathname === "/api/podcasts/categories") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/podcasts/subscriptions") {
         subscriptionsFetchCount += 1;
@@ -601,6 +608,9 @@ describe("podcasts product flows", () => {
               updated_at: "2026-03-06T00:00:00Z",
             },
           });
+        }
+        if (url.pathname === "/api/podcasts/categories") {
+          return jsonResponse({ data: [] });
         }
         if (url.pathname === "/api/me") {
           return jsonResponse({
@@ -862,6 +872,9 @@ describe("podcasts product flows", () => {
           ],
         });
       }
+      if (url.pathname === "/api/podcasts/categories") {
+        return jsonResponse({ data: [] });
+      }
       if (url.pathname === "/api/me") {
         return jsonResponse({
           data: {
@@ -1033,6 +1046,9 @@ describe("podcasts product flows", () => {
           ],
         });
       }
+      if (url.pathname === "/api/podcasts/categories") {
+        return jsonResponse({ data: [] });
+      }
       if (url.pathname === "/api/me") {
         return jsonResponse({
           data: {
@@ -1128,6 +1144,9 @@ describe("podcasts product flows", () => {
           },
         });
       }
+      if (url.pathname === "/api/podcasts/categories") {
+        return jsonResponse({ data: [] });
+      }
       if (url.pathname === "/api/podcasts/subscriptions") {
         subscriptionQueryCalls.push({ sort: url.searchParams.get("sort") ?? "" });
         return jsonResponse({
@@ -1152,6 +1171,159 @@ describe("podcasts product flows", () => {
     await waitFor(() => {
       expect(subscriptionQueryCalls.some((call) => call.sort === "recent_episode")).toBe(true);
       expect(subscriptionQueryCalls.some((call) => call.sort === "unplayed_count")).toBe(true);
+    });
+  });
+
+  it("shows category tabs, filters subscriptions, and patches row category assignment", async () => {
+    const user = userEvent.setup();
+    const categoryFilterQueryCalls: Array<string | null> = [];
+    const settingsPatchBodies: Array<{ podcast_id: string; category_id: string | null }> = [];
+    let categories = [
+      {
+        id: "cat-tech",
+        name: "Tech",
+        position: 0,
+        color: "#3366FF",
+        created_at: "2026-03-06T00:00:00Z",
+        subscription_count: 1,
+        unplayed_count: 12,
+      },
+      {
+        id: "cat-news",
+        name: "News",
+        position: 1,
+        color: "#AA3311",
+        created_at: "2026-03-06T00:00:00Z",
+        subscription_count: 0,
+        unplayed_count: 0,
+      },
+    ];
+    const categoryByPodcastId: Record<string, string | null> = {
+      "podcast-0": "cat-tech",
+      "podcast-1": null,
+    };
+
+    const categoryRefById = (categoryId: string | null) => {
+      if (!categoryId) {
+        return null;
+      }
+      const row = categories.find((category) => category.id === categoryId);
+      if (!row) {
+        return null;
+      }
+      return {
+        id: row.id,
+        name: row.name,
+        color: row.color,
+      };
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/plan") {
+        return jsonResponse({
+          data: {
+            plan: {
+              plan_tier: "free",
+              daily_transcription_minutes: 60,
+              initial_episode_window: 3,
+            },
+            usage: {
+              usage_date: "2026-03-06",
+              used_minutes: 12,
+              reserved_minutes: 3,
+              total_minutes: 15,
+              remaining_minutes: 45,
+            },
+          },
+        });
+      }
+      if (url.pathname === "/api/podcasts/categories" && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({ data: categories });
+      }
+      if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
+        const categoryFilter = url.searchParams.get("category_id");
+        categoryFilterQueryCalls.push(categoryFilter);
+
+        const rows = [
+          buildSubscriptionRow(0, {
+            unplayed_count: 12,
+            category: categoryRefById(categoryByPodcastId["podcast-0"]),
+          }),
+          buildSubscriptionRow(1, {
+            unplayed_count: 4,
+            category: categoryRefById(categoryByPodcastId["podcast-1"]),
+          }),
+        ];
+
+        if (categoryFilter === "null") {
+          return jsonResponse({ data: rows.filter((row) => row.category === null) });
+        }
+        if (categoryFilter) {
+          return jsonResponse({
+            data: rows.filter((row) => {
+              const category = row.category as { id: string } | null;
+              return category?.id === categoryFilter;
+            }),
+          });
+        }
+        return jsonResponse({ data: rows });
+      }
+      if (
+        url.pathname === "/api/podcasts/subscriptions/podcast-1/settings" &&
+        init?.method === "PATCH"
+      ) {
+        const body = JSON.parse(String(init.body ?? "{}"));
+        const nextCategoryId =
+          typeof body.category_id === "string" && body.category_id.length > 0
+            ? body.category_id
+            : null;
+        settingsPatchBodies.push({
+          podcast_id: "podcast-1",
+          category_id: nextCategoryId,
+        });
+        categoryByPodcastId["podcast-1"] = nextCategoryId;
+        return jsonResponse({
+          data: {
+            podcast_id: "podcast-1",
+            default_playback_speed: null,
+            auto_queue: false,
+            category: categoryRefById(nextCategoryId),
+            updated_at: "2026-03-06T00:00:00Z",
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call in test: ${url.pathname}${url.search}`);
+    });
+
+    render(<PodcastSubscriptionsPage />);
+
+    expect(await screen.findByText("Systems Podcast 0")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Tech \(12\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Uncategorized/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reorder category Tech" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Tech \(12\)/ }));
+    expect(await screen.findByText("Systems Podcast 0")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(categoryFilterQueryCalls).toContain("cat-tech");
+      expect(screen.queryByText("Systems Podcast 1")).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /Uncategorized/ }));
+    expect(await screen.findByText("Systems Podcast 1")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(categoryFilterQueryCalls).toContain("null");
+    });
+
+    await user.selectOptions(screen.getByLabelText("Category for Systems Podcast 1"), "cat-tech");
+
+    await waitFor(() => {
+      expect(settingsPatchBodies).toContainEqual({
+        podcast_id: "podcast-1",
+        category_id: "cat-tech",
+      });
     });
   });
 
@@ -1200,6 +1372,9 @@ describe("podcasts product flows", () => {
         }
         if (url.pathname === "/api/podcasts/podcast-1/episodes") {
           return jsonResponse({ data: [buildEpisode(0)] });
+        }
+        if (url.pathname === "/api/podcasts/categories") {
+          return jsonResponse({ data: [] });
         }
         if (url.pathname === "/api/me") {
           return jsonResponse({
@@ -1326,6 +1501,9 @@ describe("podcasts product flows", () => {
             ],
           });
         }
+        if (url.pathname === "/api/podcasts/categories") {
+          return jsonResponse({ data: [] });
+        }
         if (url.pathname === "/api/me") {
           return jsonResponse({
             data: {
@@ -1421,6 +1599,9 @@ describe("podcasts product flows", () => {
             },
           });
         }
+        if (url.pathname === "/api/podcasts/categories") {
+          return jsonResponse({ data: [] });
+        }
         if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
           return jsonResponse({
             data: [
@@ -1505,6 +1686,11 @@ describe("podcasts product flows", () => {
                 unsubscribe_mode: 1,
                 default_playback_speed: 1.5,
                 auto_queue: true,
+                category: {
+                  id: "cat-tech",
+                  name: "Tech",
+                  color: "#3366FF",
+                },
                 sync_status: "complete",
                 sync_error_code: null,
                 sync_error_message: null,
@@ -1530,6 +1716,30 @@ describe("podcasts product flows", () => {
             },
           });
         }
+        if (url.pathname === "/api/podcasts/categories") {
+          return jsonResponse({
+            data: [
+              {
+                id: "cat-tech",
+                name: "Tech",
+                position: 0,
+                color: "#3366FF",
+                created_at: "2026-03-06T00:00:00Z",
+                subscription_count: 1,
+                unplayed_count: 0,
+              },
+              {
+                id: "cat-news",
+                name: "News",
+                position: 1,
+                color: "#AA3311",
+                created_at: "2026-03-06T00:00:00Z",
+                subscription_count: 0,
+                unplayed_count: 0,
+              },
+            ],
+          });
+        }
         if (
           url.pathname === "/api/podcasts/subscriptions/podcast-1/settings" &&
           init?.method === "PATCH"
@@ -1542,6 +1752,11 @@ describe("podcasts product flows", () => {
               unsubscribe_mode: 1,
               default_playback_speed: 2.0,
               auto_queue: false,
+              category: {
+                id: "cat-news",
+                name: "News",
+                color: "#AA3311",
+              },
               sync_status: "complete",
               sync_error_code: null,
               sync_error_message: null,
@@ -1564,10 +1779,12 @@ describe("podcasts product flows", () => {
 
     expect(await screen.findByText("Episode 0")).toBeInTheDocument();
     expect(screen.getByText("1.5x default speed · Auto-queue on")).toBeInTheDocument();
+    expect(screen.getByText("Category: Tech")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Open subscription settings" }));
     await user.selectOptions(screen.getByLabelText("Default playback speed"), "2");
     await user.click(screen.getByLabelText("Automatically add new episodes to my queue"));
+    await user.selectOptions(screen.getByLabelText("Subscription category"), "cat-news");
     await user.click(screen.getByRole("button", { name: "Save subscription settings" }));
 
     await waitFor(() => {
@@ -1581,10 +1798,15 @@ describe("podcasts product flows", () => {
             return false;
           }
           const body = JSON.parse(String(init.body ?? "{}"));
-          return body.default_playback_speed === 2 && body.auto_queue === false;
+          return (
+            body.default_playback_speed === 2 &&
+            body.auto_queue === false &&
+            body.category_id === "cat-news"
+          );
         })
       ).toBe(true);
       expect(screen.getByText("2.0x default speed · Auto-queue off")).toBeInTheDocument();
+      expect(screen.getByText("Category: News")).toBeInTheDocument();
     });
   });
 });

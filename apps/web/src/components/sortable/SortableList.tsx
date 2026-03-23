@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, type CSSProperties, type ReactNode } from "react";
+import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   closestCenter,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -30,6 +32,7 @@ export interface SortableHandleProps {
 export interface SortableListRenderItemProps<T> {
   item: T;
   isDragging: boolean;
+  isOver: boolean;
   handleProps: SortableHandleProps;
 }
 
@@ -37,6 +40,7 @@ interface SortableListProps<T> {
   items: T[];
   getItemId: (item: T) => string;
   renderItem: (props: SortableListRenderItemProps<T>) => ReactNode;
+  renderDragOverlay?: (item: T) => ReactNode;
   onReorder: (nextItems: T[]) => void;
   className?: string;
   itemClassName?: string;
@@ -59,9 +63,10 @@ function SortableListItem<T>({
   renderItem,
   className,
 }: SortableListItemProps<T>) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id,
-  });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } =
+    useSortable({
+      id,
+    });
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -72,10 +77,12 @@ function SortableListItem<T>({
       style={style}
       className={joinClassNames(styles.item, className)}
       data-dragging={isDragging ? "true" : "false"}
+      data-over={isOver ? "true" : "false"}
     >
       {renderItem({
         item,
         isDragging,
+        isOver,
         handleProps: {
           attributes,
           listeners,
@@ -89,11 +96,19 @@ export default function SortableList<T>({
   items,
   getItemId,
   renderItem,
+  renderDragOverlay,
   onReorder,
   className,
   itemClassName,
 }: SortableListProps<T>) {
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const itemIds = useMemo(() => items.map(getItemId), [getItemId, items]);
+  const activeItem = useMemo(() => {
+    if (!activeItemId) {
+      return null;
+    }
+    return items.find((item) => getItemId(item) === activeItemId) ?? null;
+  }, [activeItemId, getItemId, items]);
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 8 },
@@ -103,8 +118,13 @@ export default function SortableList<T>({
     })
   );
 
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveItemId(String(event.active.id));
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
+    setActiveItemId(null);
     if (!over || active.id === over.id) {
       return;
     }
@@ -116,8 +136,18 @@ export default function SortableList<T>({
     onReorder(arrayMove(items, oldIndex, newIndex));
   };
 
+  const handleDragCancel = () => {
+    setActiveItemId(null);
+  };
+
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragCancel={handleDragCancel}
+      onDragEnd={handleDragEnd}
+    >
       <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
         <ul className={joinClassNames(styles.list, className)}>
           {items.map((item) => {
@@ -134,6 +164,7 @@ export default function SortableList<T>({
           })}
         </ul>
       </SortableContext>
+      {renderDragOverlay && activeItem ? <DragOverlay>{renderDragOverlay(activeItem)}</DragOverlay> : null}
     </DndContext>
   );
 }

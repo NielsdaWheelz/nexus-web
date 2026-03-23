@@ -37,6 +37,57 @@ describe("podcast BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/subscriptions");
   });
 
+  it("GET /api/podcasts/categories proxies to /podcasts/categories", async () => {
+    const { GET } = await import("./categories/route");
+    const req = new Request("http://localhost/api/podcasts/categories");
+    await GET(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/categories");
+  });
+
+  it("POST /api/podcasts/categories proxies to /podcasts/categories", async () => {
+    const { POST } = await import("./categories/route");
+    const req = new Request("http://localhost/api/podcasts/categories", {
+      method: "POST",
+      body: JSON.stringify({ name: "Tech", color: "#334455" }),
+    });
+    await POST(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/categories");
+  });
+
+  it("PATCH /api/podcasts/categories/[categoryId] proxies to /podcasts/categories/{categoryId}", async () => {
+    const { PATCH } = await import("./categories/[categoryId]/route");
+    const req = new Request("http://localhost/api/podcasts/categories/cat-123", {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Engineering" }),
+    });
+    await PATCH(req, { params: Promise.resolve({ categoryId: "cat-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/categories/cat-123");
+  });
+
+  it("DELETE /api/podcasts/categories/[categoryId] proxies to /podcasts/categories/{categoryId}", async () => {
+    const { DELETE } = await import("./categories/[categoryId]/route");
+    const req = new Request("http://localhost/api/podcasts/categories/cat-123", {
+      method: "DELETE",
+    });
+    await DELETE(req, { params: Promise.resolve({ categoryId: "cat-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/categories/cat-123");
+  });
+
+  it("PUT /api/podcasts/categories/order proxies to /podcasts/categories/order", async () => {
+    const { PUT } = await import("./categories/order/route");
+    const req = new Request("http://localhost/api/podcasts/categories/order", {
+      method: "PUT",
+      body: JSON.stringify({ category_ids: ["cat-1", "cat-2"] }),
+    });
+    await PUT(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/categories/order");
+  });
+
   it("GET /api/podcasts/subscriptions/[podcastId] proxies to /podcasts/subscriptions/{podcastId}", async () => {
     const { GET } = await import("./subscriptions/[podcastId]/route");
     const req = new Request("http://localhost/api/podcasts/subscriptions/pod-123");

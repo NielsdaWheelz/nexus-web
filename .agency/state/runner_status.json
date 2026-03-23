@@ -1,13 +1,12 @@
 {
   "schema_version": "1.0",
   "status": "ready_for_review",
-  "updated_at": "2026-03-23T04:04:02Z",
-  "summary": "Implemented S7 PR-13 hard cutover plus queue-path parity and shared frontend speed-formatting utility: per-subscription settings PATCH/UI/media inheritance and queue-driven first-play fallback now consistently honor subscription defaults when episode listening state is absent.",
+  "updated_at": "2026-03-23T04:44:30Z",
+  "summary": "Completed PR-14 reorder hardening: category drag now has explicit overlay/placeholder feedback and a dedicated e2e drag-reorder path with feature-flag-aware preflight skip behavior.",
   "questions": [],
   "blockers": [],
-  "how_to_test": "make migrate-test && cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q tests/test_podcasts.py::TestPodcastApiSurface::test_patch_subscription_settings_updates_contract_and_episode_default_speed tests/test_podcasts.py::TestPodcastApiSurface::test_patch_subscription_settings_rejects_out_of_range_default_speed tests/test_migrations.py::TestPlaybackQueueMigration::test_head_contains_playback_queue_table_and_auto_queue_flag tests/test_playback_queue.py::TestPlaybackQueueApi::test_queue_rows_expose_subscription_default_playback_speed tests/test_playback_queue.py::TestPlaybackQueueApi::test_post_items_supports_next_last_and_ignores_duplicates && cd ../apps/web && npm test -- \"src/__tests__/components/GlobalPlayerQueue.test.tsx\" \"src/app/api/podcasts/podcasts-routes.test.ts\" \"src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx\" \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\"",
+  "how_to_test": "cd apps/web && npm test -- \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\" \"src/app/api/podcasts/podcasts-routes.test.ts\" \"src/__tests__/components/GlobalPlayerFooter.test.tsx\"\ncd e2e && SKIP_SEED=1 npm test -- tests/podcast-categories.spec.ts --project=chromium",
   "risks": [
-    "First-play speed inheritance relies on subscription_default_playback_speed hydration in media/queue payload paths used by playback entrypoints.",
-    "Non-podcast queue items intentionally surface no subscription speed and will continue to start at 1.0x unless a per-episode listening-state speed exists."
+    "The new e2e drag test skips when podcast routes are disabled (`podcasts_enabled=false`), so full drag persistence verification still requires an environment with podcasts enabled."
   ]
 }

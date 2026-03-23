@@ -9,11 +9,14 @@ from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.errors import ApiErrorCode, ForbiddenError
+from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError
 from nexus.responses import success_response
 from nexus.schemas.podcast import (
     PodcastPlanUpdateRequest,
     PodcastSubscribeRequest,
+    PodcastSubscriptionCategoryCreateRequest,
+    PodcastSubscriptionCategoryOrderRequest,
+    PodcastSubscriptionCategoryPatchRequest,
     PodcastSubscriptionSettingsPatchRequest,
 )
 from nexus.services import podcasts as podcast_service
@@ -51,15 +54,92 @@ def list_subscriptions(
     limit: int = Query(default=100, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     sort: Literal["recent_episode", "unplayed_count", "alpha"] = Query(default="recent_episode"),
+    category_id: str | None = Query(default=None),
 ) -> dict:
     """List active podcast subscriptions for the viewer."""
+    category_filter_id: UUID | None = None
+    uncategorized_only = False
+    if category_id is not None:
+        normalized_category_id = category_id.strip()
+        if normalized_category_id == podcast_service.PODCAST_SUBSCRIPTION_UNCATEGORIZED_FILTER_TOKEN:
+            uncategorized_only = True
+        elif normalized_category_id:
+            try:
+                category_filter_id = UUID(normalized_category_id)
+            except ValueError as exc:
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST,
+                    "category_id must be a UUID or 'null'",
+                ) from exc
+        else:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "category_id must be a UUID or 'null'",
+            )
     rows = podcast_service.list_subscriptions(
         db,
         viewer.user_id,
         limit=limit,
         offset=offset,
         sort=sort,
+        category_id=category_filter_id,
+        uncategorized_only=uncategorized_only,
     )
+    return success_response([row.model_dump(mode="json") for row in rows])
+
+
+@router.get("/podcasts/categories")
+def list_subscription_categories(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    rows = podcast_service.list_subscription_categories(db, viewer.user_id)
+    return success_response([row.model_dump(mode="json") for row in rows])
+
+
+@router.post("/podcasts/categories")
+def create_subscription_category(
+    body: PodcastSubscriptionCategoryCreateRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    out = podcast_service.create_subscription_category(db, viewer.user_id, body)
+    return success_response(out.model_dump(mode="json"))
+
+
+@router.patch("/podcasts/categories/{category_id}")
+def patch_subscription_category(
+    category_id: UUID,
+    body: PodcastSubscriptionCategoryPatchRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    out = podcast_service.update_subscription_category(
+        db,
+        viewer.user_id,
+        category_id=category_id,
+        body=body,
+    )
+    return success_response(out.model_dump(mode="json"))
+
+
+@router.delete("/podcasts/categories/{category_id}")
+def delete_subscription_category(
+    category_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    podcast_service.delete_subscription_category(db, viewer.user_id, category_id)
+    return success_response({"category_id": str(category_id), "deleted": True})
+
+
+@router.put("/podcasts/categories/order")
+def reorder_subscription_categories(
+    body: PodcastSubscriptionCategoryOrderRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    rows = podcast_service.reorder_subscription_categories(db, viewer.user_id, body)
     return success_response([row.model_dump(mode="json") for row in rows])
 
 

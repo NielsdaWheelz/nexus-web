@@ -58,6 +58,22 @@ interface PodcastDetailItem {
   updated_at: string;
 }
 
+interface PodcastSubscriptionCategoryRef {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
+interface PodcastSubscriptionCategory {
+  id: string;
+  name: string;
+  position: number;
+  color: string | null;
+  created_at: string;
+  subscription_count: number;
+  unplayed_count: number;
+}
+
 interface PodcastSubscription {
   user_id: string;
   podcast_id: string;
@@ -65,6 +81,7 @@ interface PodcastSubscription {
   unsubscribe_mode: 1 | 2 | 3;
   default_playback_speed?: number | null;
   auto_queue?: boolean;
+  category?: PodcastSubscriptionCategoryRef | null;
   sync_status: "pending" | "running" | "partial" | "complete" | "source_limited" | "failed";
   sync_error_code: string | null;
   sync_error_message: string | null;
@@ -148,6 +165,7 @@ interface PodcastSubscriptionSettingsResponse {
   podcast_id: string;
   default_playback_speed: number | null;
   auto_queue: boolean;
+  category: PodcastSubscriptionCategoryRef | null;
   updated_at: string;
 }
 
@@ -408,6 +426,8 @@ export default function PodcastDetailPage() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsDefaultSpeed, setSettingsDefaultSpeed] = useState<string>("default");
   const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
+  const [settingsCategoryId, setSettingsCategoryId] = useState<string>("");
+  const [categories, setCategories] = useState<PodcastSubscriptionCategory[]>([]);
 
   useSetPaneTitle(detail?.podcast.title ?? "Podcast");
 
@@ -449,13 +469,15 @@ export default function PodcastDetailPage() {
         episodeParams.set("q", episodeSearchQuery.trim());
       }
 
-      const [detailResp, episodesResp, meResp] = await Promise.all([
+      const [detailResp, episodesResp, meResp, categoriesResp] = await Promise.all([
         apiFetch<{ data: PodcastDetailResponse }>(`/api/podcasts/${podcastId}`),
         apiFetch<{ data: PodcastEpisodeMedia[] }>(`/api/podcasts/${podcastId}/episodes?${episodeParams}`),
         apiFetch<{ data: MeResponse }>("/api/me"),
+        apiFetch<{ data: PodcastSubscriptionCategory[] }>("/api/podcasts/categories"),
       ]);
       setDetail(detailResp.data);
       setEpisodes(episodesResp.data);
+      setCategories(categoriesResp.data);
       setExpandedShowNotesMediaIds(new Set());
       setHasMoreEpisodes(episodesResp.data.length === EPISODES_PAGE_SIZE);
       forecastingTranscriptMediaIdsRef.current.clear();
@@ -468,6 +490,7 @@ export default function PodcastDetailPage() {
           : String(detailResp.data.subscription.default_playback_speed)
       );
       setSettingsAutoQueue(Boolean(detailResp.data.subscription.auto_queue));
+      setSettingsCategoryId(detailResp.data.subscription.category?.id ?? "");
       setSettingsModalOpen(false);
       setSettingsError(null);
 
@@ -697,6 +720,7 @@ export default function PodcastDetailPage() {
         : String(detail.subscription.default_playback_speed)
     );
     setSettingsAutoQueue(Boolean(detail.subscription.auto_queue));
+    setSettingsCategoryId(detail.subscription.category?.id ?? "");
     setSettingsError(null);
     setSettingsModalOpen(true);
   }, [detail]);
@@ -716,6 +740,7 @@ export default function PodcastDetailPage() {
     setError(null);
     const nextDefaultPlaybackSpeed =
       settingsDefaultSpeed === "default" ? null : Number.parseFloat(settingsDefaultSpeed);
+    const nextCategoryId = settingsCategoryId.trim();
     try {
       const response = await apiFetch<{ data: PodcastSubscriptionSettingsResponse }>(
         `/api/podcasts/subscriptions/${detail.subscription.podcast_id}/settings`,
@@ -724,6 +749,7 @@ export default function PodcastDetailPage() {
           body: JSON.stringify({
             default_playback_speed: nextDefaultPlaybackSpeed,
             auto_queue: settingsAutoQueue,
+            category_id: nextCategoryId.length > 0 ? nextCategoryId : null,
           }),
         }
       );
@@ -735,6 +761,7 @@ export default function PodcastDetailPage() {
                 ...prev.subscription,
                 default_playback_speed: response.data.default_playback_speed,
                 auto_queue: response.data.auto_queue,
+                category: response.data.category,
                 updated_at: response.data.updated_at ?? prev.subscription.updated_at,
               },
             }
@@ -756,7 +783,7 @@ export default function PodcastDetailPage() {
     } finally {
       setSettingsBusy(false);
     }
-  }, [detail, settingsAutoQueue, settingsDefaultSpeed]);
+  }, [detail, settingsAutoQueue, settingsCategoryId, settingsDefaultSpeed]);
 
   const refreshEpisodeStates = useCallback(async (mediaIds: string[]) => {
     if (mediaIds.length === 0) {
@@ -1323,6 +1350,9 @@ export default function PodcastDetailPage() {
                 detail.subscription.auto_queue
               )}
             </p>
+            <p className={styles.settingsSummary}>
+              Category: {detail.subscription.category?.name ?? "Uncategorized"}
+            </p>
             {detail.subscription.sync_error_code && (
               <p className={styles.syncError}>
                 <strong>{detail.subscription.sync_error_code}</strong>
@@ -1361,6 +1391,23 @@ export default function PodcastDetailPage() {
               {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((speed) => (
                 <option key={speed} value={String(speed)}>
                   {formatPlaybackSpeedLabel(speed)}
+                </option>
+              ))}
+            </select>
+            <label htmlFor="detail-subscription-category" className={styles.settingsFieldLabel}>
+              Subscription category
+            </label>
+            <select
+              id="detail-subscription-category"
+              className={styles.settingsSelect}
+              value={settingsCategoryId}
+              onChange={(event) => setSettingsCategoryId(event.target.value)}
+              aria-label="Subscription category"
+            >
+              <option value="">Uncategorized</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
                 </option>
               ))}
             </select>

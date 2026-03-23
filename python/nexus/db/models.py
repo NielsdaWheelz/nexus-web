@@ -626,6 +626,45 @@ class Podcast(Base):
     )
 
 
+class PodcastSubscriptionCategory(Base):
+    """Per-user subscription grouping category (folder-like)."""
+
+    __tablename__ = "podcast_subscription_categories"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    color: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "name",
+            name="uq_podcast_subscription_categories_user_name",
+        ),
+        Index("ix_podcast_subscription_categories_user_position", "user_id", "position"),
+    )
+
+    subscriptions: Mapped[list["PodcastSubscription"]] = relationship(
+        "PodcastSubscription",
+        back_populates="category",
+    )
+
+
 class PodcastSubscription(Base):
     """Per-user subscription to a global podcast."""
 
@@ -645,6 +684,11 @@ class PodcastSubscription(Base):
     unsubscribe_mode: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     auto_queue: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     default_playback_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
+    category_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcast_subscription_categories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     sync_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     sync_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -691,6 +735,10 @@ class PodcastSubscription(Base):
     )
 
     podcast: Mapped["Podcast"] = relationship("Podcast")
+    category: Mapped["PodcastSubscriptionCategory | None"] = relationship(
+        "PodcastSubscriptionCategory",
+        back_populates="subscriptions",
+    )
 
 
 class PodcastSubscriptionPollRun(Base):

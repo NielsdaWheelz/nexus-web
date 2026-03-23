@@ -4608,6 +4608,199 @@ class TestPodcastApiSurface:
         )
         assert empty_payload.json()["error"]["code"] == "E_INVALID_REQUEST"
 
+    def test_subscription_categories_crud_assignment_filter_and_delete_uncategorizes(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        provider_alpha = f"surface-categories-alpha-{uuid4()}"
+        provider_beta = f"surface-categories-beta-{uuid4()}"
+        alpha_podcast_id, _ = self._subscribe_and_sync_single_podcast(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            user_id=user_id,
+            provider_podcast_id=provider_alpha,
+            title="Categories Alpha",
+        )
+        beta_podcast_id, _ = self._subscribe_and_sync_single_podcast(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            user_id=user_id,
+            provider_podcast_id=provider_beta,
+            title="Categories Beta",
+        )
+        headers = auth_headers(user_id)
+
+        create_tech = auth_client.post(
+            "/podcasts/categories",
+            headers=headers,
+            json={"name": "Tech", "color": "#3366FF"},
+        )
+        assert create_tech.status_code == 200, (
+            "category create should accept name + optional color, "
+            f"got {create_tech.status_code}: {create_tech.text}"
+        )
+        tech_category = create_tech.json()["data"]
+
+        create_news = auth_client.post(
+            "/podcasts/categories",
+            headers=headers,
+            json={"name": "News"},
+        )
+        assert create_news.status_code == 200, (
+            "second category create should succeed for same user with unique name, "
+            f"got {create_news.status_code}: {create_news.text}"
+        )
+        news_category = create_news.json()["data"]
+
+        assign_alpha = auth_client.patch(
+            f"/podcasts/subscriptions/{alpha_podcast_id}/settings",
+            headers=headers,
+            json={"category_id": tech_category["id"]},
+        )
+        assert assign_alpha.status_code == 200, (
+            "subscription settings patch should accept category_id assignment, "
+            f"got {assign_alpha.status_code}: {assign_alpha.text}"
+        )
+        assert assign_alpha.json()["data"]["category"]["id"] == tech_category["id"]
+
+        all_rows_response = auth_client.get(
+            "/podcasts/subscriptions?sort=alpha&limit=20",
+            headers=headers,
+        )
+        assert all_rows_response.status_code == 200, (
+            "subscriptions list should still return all rows when category filter is absent, "
+            f"got {all_rows_response.status_code}: {all_rows_response.text}"
+        )
+        all_rows = all_rows_response.json()["data"]
+        row_by_podcast_id = {row["podcast_id"]: row for row in all_rows}
+        assert row_by_podcast_id[str(alpha_podcast_id)]["category"]["id"] == tech_category["id"]
+        assert row_by_podcast_id[str(beta_podcast_id)]["category"] is None
+
+        tech_only_response = auth_client.get(
+            f"/podcasts/subscriptions?category_id={tech_category['id']}&sort=alpha&limit=20",
+            headers=headers,
+        )
+        assert tech_only_response.status_code == 200, (
+            "subscriptions list category filter should return only rows in that category, "
+            f"got {tech_only_response.status_code}: {tech_only_response.text}"
+        )
+        tech_only_ids = [row["podcast_id"] for row in tech_only_response.json()["data"]]
+        assert tech_only_ids == [str(alpha_podcast_id)], (
+            f"category_id filter should isolate assigned subscription, got {tech_only_ids}"
+        )
+
+        uncategorized_response = auth_client.get(
+            "/podcasts/subscriptions?category_id=null&sort=alpha&limit=20",
+            headers=headers,
+        )
+        assert uncategorized_response.status_code == 200, (
+            "category_id=null filter should return uncategorized subscriptions, "
+            f"got {uncategorized_response.status_code}: {uncategorized_response.text}"
+        )
+        uncategorized_ids = [row["podcast_id"] for row in uncategorized_response.json()["data"]]
+        assert uncategorized_ids == [str(beta_podcast_id)], (
+            f"uncategorized filter should include only uncategorized rows, got {uncategorized_ids}"
+        )
+
+        categories_response = auth_client.get("/podcasts/categories", headers=headers)
+        assert categories_response.status_code == 200, (
+            "categories list should include aggregate counts per category, "
+            f"got {categories_response.status_code}: {categories_response.text}"
+        )
+        categories = categories_response.json()["data"]
+        category_by_name = {row["name"]: row for row in categories}
+        assert category_by_name["Tech"]["subscription_count"] == 1
+        assert category_by_name["Tech"]["unplayed_count"] == 2
+        assert category_by_name["News"]["subscription_count"] == 0
+        assert category_by_name["News"]["unplayed_count"] == 0
+
+        patch_tech = auth_client.patch(
+            f"/podcasts/categories/{tech_category['id']}",
+            headers=headers,
+            json={"name": "Engineering", "color": "#224466"},
+        )
+        assert patch_tech.status_code == 200, (
+            "category patch should allow rename + recolor updates, "
+            f"got {patch_tech.status_code}: {patch_tech.text}"
+        )
+        patched_tech = patch_tech.json()["data"]
+        assert patched_tech["name"] == "Engineering"
+        assert patched_tech["color"] == "#224466"
+
+        reorder_response = auth_client.put(
+            "/podcasts/categories/order",
+            headers=headers,
+            json={"category_ids": [news_category["id"], tech_category["id"]]},
+        )
+        assert reorder_response.status_code == 200, (
+            "categories order route should support deterministic reorder writes, "
+            f"got {reorder_response.status_code}: {reorder_response.text}"
+        )
+        reordered = reorder_response.json()["data"]
+        assert [row["id"] for row in reordered] == [news_category["id"], tech_category["id"]]
+
+        delete_response = auth_client.delete(
+            f"/podcasts/categories/{tech_category['id']}",
+            headers=headers,
+        )
+        assert delete_response.status_code == 200, (
+            "deleting a category should succeed and preserve subscriptions, "
+            f"got {delete_response.status_code}: {delete_response.text}"
+        )
+
+        alpha_detail = auth_client.get(f"/podcasts/{alpha_podcast_id}", headers=headers)
+        assert alpha_detail.status_code == 200, (
+            "podcast detail should still be readable after category deletion, "
+            f"got {alpha_detail.status_code}: {alpha_detail.text}"
+        )
+        assert alpha_detail.json()["data"]["subscription"]["category"] is None, (
+            "deleting category must null subscription category assignment instead of deleting subscription"
+        )
+
+        uncategorized_after_delete = auth_client.get(
+            "/podcasts/subscriptions?category_id=null&sort=alpha&limit=20",
+            headers=headers,
+        )
+        assert uncategorized_after_delete.status_code == 200
+        uncategorized_after_delete_ids = {
+            row["podcast_id"] for row in uncategorized_after_delete.json()["data"]
+        }
+        assert uncategorized_after_delete_ids == {
+            str(alpha_podcast_id),
+            str(beta_podcast_id),
+        }, (
+            "deleted-category subscriptions must move to uncategorized pool, "
+            f"got {uncategorized_after_delete_ids}"
+        )
+
+    def test_subscription_category_name_must_be_unique_per_user(self, auth_client):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        headers = auth_headers(user_id)
+
+        first_create = auth_client.post(
+            "/podcasts/categories",
+            headers=headers,
+            json={"name": "Tech"},
+        )
+        assert first_create.status_code == 200, (
+            "first category create should succeed, "
+            f"got {first_create.status_code}: {first_create.text}"
+        )
+
+        duplicate_create = auth_client.post(
+            "/podcasts/categories",
+            headers=headers,
+            json={"name": "Tech"},
+        )
+        assert duplicate_create.status_code == 400, (
+            "duplicate category names for same user must be rejected by uniqueness contract, "
+            f"got {duplicate_create.status_code}: {duplicate_create.text}"
+        )
+        assert duplicate_create.json()["error"]["code"] == "E_INVALID_REQUEST"
+
     def test_sync_extracts_podcasting20_chapters_and_exposes_episode_and_media_contract(
         self, auth_client, monkeypatch, direct_db
     ):
