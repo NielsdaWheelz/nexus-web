@@ -211,7 +211,7 @@ def refresh_subscription_sync(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> JSONResponse:
+) -> Response:
     """Queue a manual subscription sync refresh for the viewer."""
     out = podcast_service.refresh_subscription_sync_for_viewer(
         db,

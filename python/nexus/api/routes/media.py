@@ -369,7 +369,7 @@ def request_podcast_transcript(
     body: TranscriptRequestRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> JSONResponse:
+) -> Response:
     """Admit (or forecast) an explicit transcript request for a podcast episode."""
     result = podcast_service.request_podcast_transcript_for_viewer(
         db=db,

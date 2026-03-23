@@ -6686,7 +6686,7 @@ class TestPodcastShowNotesAndBatchCutover:
             json={"media_ids": too_many_media_ids, "reason": "search"},
             headers=auth_headers(user_id),
         )
-        assert response.status_code == 422, (
+        assert response.status_code == 400, (
             "batch transcript request must enforce max 20 ids per call to prevent abuse, "
             f"got {response.status_code}: {response.text}"
         )
