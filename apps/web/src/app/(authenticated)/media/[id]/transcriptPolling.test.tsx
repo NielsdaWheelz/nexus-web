@@ -63,12 +63,11 @@ describe("shouldPollTranscriptProvisioning", () => {
     ).toBe(false);
   });
 
-  it("does not rely on processing_status fallback after contract cutover", () => {
+  it("does not poll when transcriptState is null even for transcript media", () => {
     expect(
       shouldPollTranscriptProvisioning({
         isTranscriptMedia: true,
         transcriptState: null,
-        processingStatus: "extracting",
       })
     ).toBe(false);
   });

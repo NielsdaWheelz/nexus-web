@@ -61,7 +61,10 @@ def list_subscriptions(
     uncategorized_only = False
     if category_id is not None:
         normalized_category_id = category_id.strip()
-        if normalized_category_id == podcast_service.PODCAST_SUBSCRIPTION_UNCATEGORIZED_FILTER_TOKEN:
+        if (
+            normalized_category_id
+            == podcast_service.PODCAST_SUBSCRIPTION_UNCATEGORIZED_FILTER_TOKEN
+        ):
             uncategorized_only = True
         elif normalized_category_id:
             try:

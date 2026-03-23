@@ -4530,9 +4530,9 @@ class TestPodcastApiSurface:
         )
         episodes = episodes_response.json()["data"]
         assert len(episodes) == 2
-        assert all(
-            episode["subscription_default_playback_speed"] == 1.5 for episode in episodes
-        ), f"expected all episode rows to carry subscription default speed override: {episodes}"
+        assert all(episode["subscription_default_playback_speed"] == 1.5 for episode in episodes), (
+            f"expected all episode rows to carry subscription default speed override: {episodes}"
+        )
 
         clear_response = auth_client.patch(
             f"/podcasts/subscriptions/{podcast_id}/settings",
@@ -6441,12 +6441,10 @@ class TestPodcastShowNotesAndBatchCutover:
         description_html_bytes = int(row[1] or 0)
         description_text_bytes = int(row[2] or 0)
         assert description_html_bytes <= 100_000, (
-            "description_html must truncate to 100KB max, "
-            f"got {description_html_bytes} bytes"
+            f"description_html must truncate to 100KB max, got {description_html_bytes} bytes"
         )
         assert description_text_bytes <= 50_000, (
-            "description_text must truncate to 50KB max, "
-            f"got {description_text_bytes} bytes"
+            f"description_text must truncate to 50KB max, got {description_text_bytes} bytes"
         )
 
         episodes_response = auth_client.get(

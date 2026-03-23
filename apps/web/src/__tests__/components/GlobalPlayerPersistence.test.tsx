@@ -19,11 +19,14 @@ function setAudioMetrics(
 }
 
 function getListeningStateCalls(
-  fetchSpy: ReturnType<typeof vi.spyOn<typeof window, "fetch">>
-): Array<[input: RequestInfo | URL, init?: RequestInit]> {
-  return fetchSpy.mock.calls.filter(([input]) =>
-    String(input).includes("/api/media/") && String(input).includes("/listening-state")
-  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  fetchSpy: { mock: { calls: any[][] } }
+): Array<[input: string, init?: RequestInit]> {
+  return fetchSpy.mock.calls.filter(
+    (args) =>
+      String(args[0]).includes("/api/media/") &&
+      String(args[0]).includes("/listening-state")
+  ) as Array<[string, RequestInit?]>;
 }
 
 function Harness() {

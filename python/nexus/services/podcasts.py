@@ -919,7 +919,9 @@ def _list_subscription_categories_for_viewer(
     ]
 
 
-def list_subscription_categories(db: Session, viewer_id: UUID) -> list[PodcastSubscriptionCategoryOut]:
+def list_subscription_categories(
+    db: Session, viewer_id: UUID
+) -> list[PodcastSubscriptionCategoryOut]:
     return _list_subscription_categories_for_viewer(db, viewer_id)
 
 
@@ -5856,7 +5858,9 @@ def _extract_episode_show_notes_from_feed_item(
     *,
     base_url: str | None,
 ) -> tuple[str | None, str | None]:
-    raw_content_encoded = str(item.xpath(f"string(./{_PODCAST_CONTENT_ENCODED_XPATH})") or "").strip()
+    raw_content_encoded = str(
+        item.xpath(f"string(./{_PODCAST_CONTENT_ENCODED_XPATH})") or ""
+    ).strip()
     raw_description = str(item.xpath("string(./description)") or "").strip()
     raw_show_notes = raw_content_encoded or raw_description
     if not raw_show_notes:
@@ -5876,7 +5880,9 @@ def _extract_episode_show_notes_from_feed_item(
         )
 
     description_text_source = normalized_html or raw_show_notes
-    normalized_text = _normalize_optional_text(_extract_plain_text_from_html_fragment(description_text_source))
+    normalized_text = _normalize_optional_text(
+        _extract_plain_text_from_html_fragment(description_text_source)
+    )
     if normalized_text is not None:
         normalized_text = _truncate_utf8_bytes(
             normalized_text,

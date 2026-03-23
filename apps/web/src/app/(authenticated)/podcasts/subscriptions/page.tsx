@@ -656,8 +656,10 @@ export default function PodcastSubscriptionsPage() {
             >
               Import OPML
             </button>
+            { }
             <a
               href="/api/podcasts/export/opml"
+              download="nexus-podcasts.opml"
               className={styles.secondaryAction}
               aria-label="Export OPML"
             >

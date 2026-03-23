@@ -67,7 +67,7 @@ def clear_playback_queue(
 def get_playback_queue_next(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    current_media_id: UUID = Query(...),
+    current_media_id: Annotated[UUID, Query(description="Currently-playing media ID")],
 ) -> dict:
     row = playback_queue_service.get_next_queue_item_for_viewer(
         db, viewer.user_id, current_media_id

@@ -1106,18 +1106,23 @@ describe("podcasts product flows", () => {
 
     await waitFor(() => {
       expect(confirmMock).toHaveBeenCalled();
-      expect(confirmMock.mock.calls[0]?.[0]).toContain("Eligible episodes: 2");
-      expect(confirmMock.mock.calls[0]?.[0]).toContain("Estimated minutes: 2");
-      expect(confirmMock.mock.calls[0]?.[0]).toContain("Remaining quota: 3");
-      expect(batchBodies).toEqual([
-        {
-          media_ids: ["media-0", "media-1"],
-          reason: "search",
-        },
-      ]);
-      expect(screen.getByText("Batch transcript result: 1 queued, 1 already ready, 1 rejected (quota).")).toBeInTheDocument();
-      expect(episodesFetchCount).toBeGreaterThan(1);
     });
+
+    expect(confirmMock.mock.calls[0]?.[0]).toContain("Eligible episodes: 2");
+    expect(confirmMock.mock.calls[0]?.[0]).toContain("Estimated minutes: 2");
+    expect(confirmMock.mock.calls[0]?.[0]).toContain("Remaining quota: 3");
+    expect(batchBodies).toEqual([
+      {
+        media_ids: ["media-0", "media-1"],
+        reason: "search",
+      },
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByText("Batch transcript result: 1 queued, 1 already ready, 1 rejected (quota).")).toBeInTheDocument();
+    });
+
+    expect(episodesFetchCount).toBeGreaterThan(1);
   });
 
   it("shows subscription unplayed badges and supports subscription sorting", async () => {
@@ -1178,7 +1183,7 @@ describe("podcasts product flows", () => {
     const user = userEvent.setup();
     const categoryFilterQueryCalls: Array<string | null> = [];
     const settingsPatchBodies: Array<{ podcast_id: string; category_id: string | null }> = [];
-    let categories = [
+    const categories = [
       {
         id: "cat-tech",
         name: "Tech",
