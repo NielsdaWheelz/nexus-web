@@ -112,6 +112,8 @@ interface Media {
   id: string;
   kind: string;
   title: string;
+  podcast_title?: string | null;
+  podcast_image_url?: string | null;
   canonical_source_url: string | null;
   processing_status: string;
   transcript_state?:
@@ -141,6 +143,8 @@ interface Media {
   } | null;
   failure_stage?: string | null;
   last_error_code?: string | null;
+  description_html?: string | null;
+  description_text?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2590,6 +2594,8 @@ export default function MediaViewPage() {
             <TranscriptMediaPane
               mediaId={media.id}
               mediaTitle={media.title}
+              mediaPodcastTitle={media.podcast_title ?? null}
+              mediaPodcastImageUrl={media.podcast_image_url ?? null}
               mediaKind={media.kind === "video" ? "video" : "podcast_episode"}
               playbackSource={playbackSource}
               canonicalSourceUrl={media.canonical_source_url}
@@ -2601,6 +2607,8 @@ export default function MediaViewPage() {
               transcriptRequestInFlight={transcriptRequestInFlight}
               transcriptRequestForecast={transcriptRequestForecast}
               chapters={media.chapters ?? []}
+              descriptionHtml={media.description_html ?? null}
+              descriptionText={media.description_text ?? null}
               listeningState={media.listening_state ?? null}
               onResumeFromSavedPosition={(positionMs) =>
                 toast({

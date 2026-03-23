@@ -13,6 +13,7 @@ export interface PlaybackQueueItem {
   media_id: string;
   title: string;
   podcast_title: string | null;
+  image_url?: string | null;
   duration_seconds: number | null;
   stream_url: string;
   source_url: string;

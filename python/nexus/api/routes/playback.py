@@ -69,6 +69,8 @@ def get_playback_queue_next(
     db: Annotated[Session, Depends(get_db)],
     current_media_id: UUID = Query(...),
 ) -> dict:
-    row = playback_queue_service.get_next_queue_item_for_viewer(db, viewer.user_id, current_media_id)
+    row = playback_queue_service.get_next_queue_item_for_viewer(
+        db, viewer.user_id, current_media_id
+    )
     payload = row.model_dump(mode="json") if row is not None else None
     return success_response(payload)

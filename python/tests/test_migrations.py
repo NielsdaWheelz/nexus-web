@@ -3863,3 +3863,41 @@ class TestPodcastEpisodeChapterMigration:
 
         index_names = {row[0] for row in indexes}
         assert "ix_podcast_episode_chapters_media_t_start_ms" in index_names
+
+
+class TestPodcastEpisodeShowNotesMigration:
+    """Schema assertions for PR-12 show notes persistence columns."""
+
+    def test_head_contains_podcast_episode_show_notes_columns(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_episodes'
+                      AND column_name IN ('description_html', 'description_text')
+                    ORDER BY column_name
+                    """
+                )
+            ).fetchall()
+
+        column_contract = {row[0]: (row[1], row[2]) for row in rows}
+        assert "description_html" in column_contract, (
+            "podcast_episodes.description_html must exist for sanitized show notes html persistence"
+        )
+        assert "description_text" in column_contract, (
+            "podcast_episodes.description_text must exist for plain-text preview/search contexts"
+        )
+        assert column_contract["description_html"][0] in {"text", "character varying"}, (
+            f"description_html should be text-like, got {column_contract['description_html'][0]}"
+        )
+        assert column_contract["description_text"][0] in {"text", "character varying"}, (
+            f"description_text should be text-like, got {column_contract['description_text'][0]}"
+        )
+        assert column_contract["description_html"][1] == "YES", (
+            "description_html should be nullable for episodes with no show notes"
+        )
+        assert column_contract["description_text"][1] == "YES", (
+            "description_text should be nullable for episodes with no show notes"
+        )

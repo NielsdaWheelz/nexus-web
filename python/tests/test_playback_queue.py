@@ -164,10 +164,7 @@ class TestPlaybackQueueApi:
             str(media_a),
             str(media_c),
             str(media_b),
-        ], (
-            "Duplicate add should be idempotent with no extra row; "
-            f"got {duplicate_attempt['data']}"
-        )
+        ], f"Duplicate add should be idempotent with no extra row; got {duplicate_attempt['data']}"
 
         put_state = auth_client.put(
             f"/media/{media_a}/listening-state",
@@ -218,9 +215,7 @@ class TestPlaybackQueueApi:
         with_extra = auth_client.put(
             "/playback/queue/order",
             headers=auth_headers(user_id),
-            json={
-                "item_ids": [str(item_ids[0]), str(item_ids[1]), str(item_ids[2]), str(uuid4())]
-            },
+            json={"item_ids": [str(item_ids[0]), str(item_ids[1]), str(item_ids[2]), str(uuid4())]},
         )
         assert with_extra.status_code == 400, (
             "Queue reorder must reject extra IDs to avoid cross-queue corruption."

@@ -23,6 +23,8 @@ from nexus.schemas.media import (
     ListeningStateBatchUpsertRequest,
     ListeningStateUpsertRequest,
     TranscriptForecastBatchRequest,
+    TranscriptRequestBatchRequest,
+    TranscriptRequestBatchResponse,
     TranscriptRequestRequest,
     TranscriptRequestResponse,
     UploadInitRequest,
@@ -342,6 +344,23 @@ def retry_ingest(
         request_id=request_id,
     )
     return success_response(result)
+
+
+@router.post("/media/transcript/request/batch")
+def request_podcast_transcript_batch(
+    body: TranscriptRequestBatchRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Admit transcript requests for multiple podcast episodes sequentially."""
+    result = podcast_service.request_podcast_transcripts_batch_for_viewer(
+        db=db,
+        viewer_id=viewer.user_id,
+        media_ids=body.media_ids,
+        reason=body.reason,
+    )
+    payload = TranscriptRequestBatchResponse.model_validate(result).model_dump(mode="json")
+    return success_response(payload)
 
 
 @router.post("/media/{media_id}/transcript/request")

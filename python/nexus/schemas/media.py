@@ -99,6 +99,8 @@ class MediaOut(BaseModel):
     publisher: str | None = None
     language: str | None = None
     description: str | None = None
+    description_html: str | None = None
+    description_text: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -186,6 +188,15 @@ class TranscriptRequestRequest(BaseModel):
     dry_run: bool = False
 
 
+class TranscriptRequestBatchRequest(BaseModel):
+    """Request schema for POST /media/transcript/request/batch."""
+
+    media_ids: list[UUID] = Field(min_length=1, max_length=20)
+    reason: TranscriptRequestReason = "episode_open"
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ListeningStateUpsertRequest(BaseModel):
     """Body for PUT /media/{id}/listening-state."""
 
@@ -244,6 +255,28 @@ class TranscriptRequestResponse(BaseModel):
     remaining_minutes: int | None = None
     fits_budget: bool
     request_enqueued: bool
+
+
+class TranscriptRequestBatchItemResponse(BaseModel):
+    """Per-media result for batch transcript admission."""
+
+    media_id: str
+    status: Literal[
+        "queued",
+        "already_ready",
+        "already_queued",
+        "rejected_quota",
+        "rejected_invalid",
+    ]
+    required_minutes: int | None = None
+    remaining_minutes: int | None = None
+    error: str | None = None
+
+
+class TranscriptRequestBatchResponse(BaseModel):
+    """Response payload for POST /media/transcript/request/batch."""
+
+    results: list[TranscriptRequestBatchItemResponse]
 
 
 class FileDownloadResponse(BaseModel):

@@ -85,6 +85,8 @@ function buildEpisode(index: number, overrides: Record<string, unknown> = {}) {
     publisher: null,
     language: null,
     description: null,
+    description_html: null,
+    description_text: null,
     created_at: "2026-03-06T00:00:00Z",
     updated_at: "2026-03-06T00:00:00Z",
     ...overrides,
@@ -896,6 +898,206 @@ describe("podcasts product flows", () => {
             call.state === "unplayed" && call.sort === "duration_desc" && call.q === "interview"
         )
       ).toBe(true);
+    });
+  });
+
+  it("shows show-notes preview expansion and batch transcript request summary", async () => {
+    const user = userEvent.setup();
+    mockUsePaneParam.mockImplementation((paramName) =>
+      paramName === "podcastId" ? "podcast-1" : null
+    );
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let episodesFetchCount = 0;
+    const batchBodies: Array<{ media_ids: string[]; reason: string }> = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/podcast-1") {
+        return jsonResponse({
+          data: {
+            podcast: {
+              id: "podcast-1",
+              provider: "podcast_index",
+              provider_podcast_id: "provider-1",
+              title: "Show Notes Podcast",
+              author: "Systems Team",
+              feed_url: "https://feeds.example.com/show-notes.xml",
+              website_url: null,
+              image_url: null,
+              description: "Show notes contract",
+              created_at: "2026-03-06T00:00:00Z",
+              updated_at: "2026-03-06T00:00:00Z",
+            },
+            subscription: {
+              user_id: "user-1",
+              podcast_id: "podcast-1",
+              status: "active",
+              unsubscribe_mode: 1,
+              sync_status: "complete",
+              sync_error_code: null,
+              sync_error_message: null,
+              sync_attempts: 1,
+              sync_started_at: null,
+              sync_completed_at: null,
+              last_synced_at: null,
+              updated_at: "2026-03-06T00:00:00Z",
+            },
+          },
+        });
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+        episodesFetchCount += 1;
+        if (episodesFetchCount === 1) {
+          return jsonResponse({
+            data: [
+              buildEpisode(0, {
+                title: "Batch Episode 0",
+                transcript_state: "not_requested",
+                transcript_coverage: "none",
+                episode_state: "unplayed",
+                listening_state: null,
+                description_text:
+                  "Episode zero show notes. " +
+                  "This line is intentionally long so preview truncation and show-more behavior are testable. "
+                    .repeat(6),
+              }),
+              buildEpisode(1, {
+                title: "Batch Episode 1",
+                transcript_state: "not_requested",
+                transcript_coverage: "none",
+                episode_state: "in_progress",
+                listening_state: {
+                  position_ms: 10_000,
+                  duration_ms: 60_000,
+                  playback_speed: 1,
+                  is_completed: false,
+                },
+                description_text: "Episode one notes",
+              }),
+              buildEpisode(2, {
+                title: "Played Episode",
+                transcript_state: "ready",
+                transcript_coverage: "full",
+                episode_state: "played",
+                listening_state: {
+                  position_ms: 60_000,
+                  duration_ms: 60_000,
+                  playback_speed: 1,
+                  is_completed: true,
+                },
+                description_text: "Episode two notes",
+              }),
+            ],
+          });
+        }
+        return jsonResponse({
+          data: [
+            buildEpisode(0, {
+              title: "Batch Episode 0",
+              transcript_state: "queued",
+              transcript_coverage: "none",
+              processing_status: "extracting",
+              description_text: "Episode zero show notes refreshed",
+            }),
+            buildEpisode(1, {
+              title: "Batch Episode 1",
+              transcript_state: "ready",
+              transcript_coverage: "full",
+              processing_status: "ready_for_reading",
+              listening_state: {
+                position_ms: 10_000,
+                duration_ms: 60_000,
+                playback_speed: 1,
+                is_completed: false,
+              },
+              episode_state: "in_progress",
+              description_text: "Episode one notes refreshed",
+            }),
+            buildEpisode(2, {
+              title: "Played Episode",
+              transcript_state: "ready",
+              transcript_coverage: "full",
+              processing_status: "ready_for_reading",
+              listening_state: {
+                position_ms: 60_000,
+                duration_ms: 60_000,
+                playback_speed: 1,
+                is_completed: true,
+              },
+              episode_state: "played",
+              description_text: "Episode two notes refreshed",
+            }),
+          ],
+        });
+      }
+      if (url.pathname === "/api/me") {
+        return jsonResponse({
+          data: {
+            user_id: "user-1",
+            default_library_id: null,
+          },
+        });
+      }
+      if (url.pathname === "/api/media/transcript/forecasts" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}"));
+        return jsonResponse({
+          data: (Array.isArray(body.requests) ? body.requests : []).map(
+            (request: { media_id: string }) => ({
+              media_id: request.media_id,
+              processing_status: "pending",
+              transcript_state: "not_requested",
+              transcript_coverage: "none",
+              required_minutes: 1,
+              remaining_minutes: 3,
+              fits_budget: true,
+              request_enqueued: false,
+            })
+          ),
+        });
+      }
+      if (url.pathname === "/api/media/transcript/request/batch" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}"));
+        batchBodies.push(body);
+        return jsonResponse({
+          data: {
+            results: [
+              { media_id: "media-0", status: "queued" },
+              { media_id: "media-1", status: "already_ready" },
+              { media_id: "media-9", status: "rejected_quota" },
+            ],
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call in test: ${url.pathname}${url.search}`);
+    });
+
+    render(
+      <GlobalPlayerProvider>
+        <PodcastDetailPage />
+      </GlobalPlayerProvider>
+    );
+
+    expect(await screen.findByText("Batch Episode 0")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show more for Batch Episode 0" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Show more for Batch Episode 0" }));
+    expect(screen.getByRole("button", { name: "Show less for Batch Episode 0" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Transcribe unplayed episodes" }));
+
+    await waitFor(() => {
+      expect(confirmMock).toHaveBeenCalled();
+      expect(confirmMock.mock.calls[0]?.[0]).toContain("Eligible episodes: 2");
+      expect(confirmMock.mock.calls[0]?.[0]).toContain("Estimated minutes: 2");
+      expect(confirmMock.mock.calls[0]?.[0]).toContain("Remaining quota: 3");
+      expect(batchBodies).toEqual([
+        {
+          media_ids: ["media-0", "media-1"],
+          reason: "search",
+        },
+      ]);
+      expect(screen.getByText("Batch transcript result: 1 queued, 1 already ready, 1 rejected (quota).")).toBeInTheDocument();
+      expect(episodesFetchCount).toBeGreaterThan(1);
     });
   });
 

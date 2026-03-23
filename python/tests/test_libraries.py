@@ -656,7 +656,9 @@ class TestListLibraryMedia:
 class TestReorderLibraryMedia:
     """Tests for PUT /libraries/{id}/media/order endpoint."""
 
-    def test_reorder_library_media_replaces_order(self, auth_client, direct_db: DirectSessionManager):
+    def test_reorder_library_media_replaces_order(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
         user_id = create_test_user_id()
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]

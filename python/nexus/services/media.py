@@ -68,6 +68,8 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "m.publisher",
     "m.language",
     "m.description",
+    "pe.description_html AS podcast_description_html",
+    "pe.description_text AS podcast_description_text",
     "mts.transcript_state",
     "mts.transcript_coverage",
 )
@@ -152,9 +154,10 @@ def list_media_for_viewer_by_ids(
         seen_media_ids.add(normalized_media_id)
         ordered_media_ids.append(normalized_media_id)
 
-    media_rows = db.execute(
-        text(
-            f"""
+    media_rows = (
+        db.execute(
+            text(
+                f"""
             WITH visible_media AS (
                 {visible_media_ids_cte_sql()}
             )
@@ -165,12 +168,17 @@ def list_media_for_viewer_by_ids(
               ON vm.media_id = m.id
             LEFT JOIN media_transcript_states mts
               ON mts.media_id = m.id
+            LEFT JOIN podcast_episodes pe
+              ON pe.media_id = m.id
             {_media_listening_state_join_sql(include_listening_state=True)}
             WHERE m.id = ANY(:media_ids)
             """
-        ),
-        {"viewer_id": viewer_id, "media_ids": ordered_media_ids},
-    ).mappings().all()
+            ),
+            {"viewer_id": viewer_id, "media_ids": ordered_media_ids},
+        )
+        .mappings()
+        .all()
+    )
 
     if not media_rows:
         return []
@@ -331,6 +339,8 @@ def _media_out_from_row(
         publisher=row["publisher"],
         language=row["language"],
         description=row["description"],
+        description_html=row["podcast_description_html"],
+        description_text=row["podcast_description_text"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -402,7 +412,9 @@ def upsert_listening_state_for_viewer(
     current_playback_speed = (
         float(existing_state.playback_speed) if existing_state is not None else 1.0
     )
-    current_is_completed = bool(existing_state.is_completed) if existing_state is not None else False
+    current_is_completed = (
+        bool(existing_state.is_completed) if existing_state is not None else False
+    )
 
     next_position_ms = (
         int(body.position_ms) if body.position_ms is not None else current_position_ms
@@ -411,9 +423,7 @@ def upsert_listening_state_for_viewer(
         int(body.duration_ms) if body.duration_ms is not None else current_duration_ms
     )
     next_playback_speed = (
-        float(body.playback_speed)
-        if body.playback_speed is not None
-        else current_playback_speed
+        float(body.playback_speed) if body.playback_speed is not None else current_playback_speed
     )
 
     if body.is_completed is not None:
@@ -639,6 +649,7 @@ def list_visible_media(
         FROM media m
         JOIN visible_media vm ON vm.media_id = m.id
         LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+        LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
         WHERE {" AND ".join(where_clauses)}
         ORDER BY m.updated_at DESC, m.id DESC
         LIMIT :limit
@@ -648,7 +659,9 @@ def list_visible_media(
     has_more = len(rows) > limit
     page_rows = rows[:limit]
 
-    pdf_media_ids = [UUID(str(row["id"])) for row in page_rows if row["kind"] == MediaKind.pdf.value]
+    pdf_media_ids = [
+        UUID(str(row["id"])) for row in page_rows if row["kind"] == MediaKind.pdf.value
+    ]
     pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
 
     page_media_ids = [UUID(str(row["id"])) for row in page_rows]

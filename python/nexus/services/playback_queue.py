@@ -278,7 +278,9 @@ def _row_to_queue_item(row: dict[str, object]) -> PlaybackQueueItemOut | None:
         media_id=row["media_id"],
         title=str(row["title"]),
         podcast_title=str(row["podcast_title"]) if row["podcast_title"] is not None else None,
-        duration_seconds=int(row["duration_seconds"]) if row["duration_seconds"] is not None else None,
+        duration_seconds=int(row["duration_seconds"])
+        if row["duration_seconds"] is not None
+        else None,
         stream_url=playback_source.stream_url,
         source_url=playback_source.source_url,
         position=int(row["position"]),
@@ -304,16 +306,20 @@ def _assert_media_ids_queueable(db: Session, viewer_id: UUID, media_ids: list[UU
     for media_id in media_ids:
         if not _can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        row = db.execute(
-            text(
-                """
+        row = (
+            db.execute(
+                text(
+                    """
                 SELECT kind, external_playback_url, canonical_source_url, provider, provider_id
                 FROM media
                 WHERE id = :media_id
                 """
-            ),
-            {"media_id": media_id},
-        ).mappings().one_or_none()
+                ),
+                {"media_id": media_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         playback_source = derive_playback_source(

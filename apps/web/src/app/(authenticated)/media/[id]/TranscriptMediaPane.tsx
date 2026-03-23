@@ -19,6 +19,7 @@ const YOUTUBE_EMBED_HOST_ALLOWLIST = new Set([
   "www.youtube.com",
   "www.youtube-nocookie.com",
 ]);
+const SHOW_NOTES_TIMESTAMP_REGEX = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
 
 export interface TranscriptPlaybackSource {
   kind: "external_audio" | "external_video";
@@ -61,6 +62,8 @@ export interface TranscriptListeningState {
 interface TranscriptMediaPaneProps {
   mediaId: string;
   mediaTitle: string;
+  mediaPodcastTitle?: string | null;
+  mediaPodcastImageUrl?: string | null;
   mediaKind: "podcast_episode" | "video";
   playbackSource: TranscriptPlaybackSource | null;
   canonicalSourceUrl: string | null;
@@ -81,6 +84,8 @@ interface TranscriptMediaPaneProps {
   transcriptRequestInFlight: boolean;
   transcriptRequestForecast: TranscriptRequestForecast | null;
   chapters: TranscriptChapter[];
+  descriptionHtml?: string | null;
+  descriptionText?: string | null;
   listeningState: TranscriptListeningState | null;
   onResumeFromSavedPosition?: (positionMs: number) => void;
   onRequestTranscript: () => void;
@@ -212,9 +217,114 @@ export function buildYoutubeEmbedSrc(
   return url.toString();
 }
 
+function parseShowNotesTimestampTokenToMs(token: string): number | null {
+  const pieces = token.split(":").map((piece) => Number.parseInt(piece, 10));
+  if (pieces.some((value) => !Number.isFinite(value) || value < 0)) {
+    return null;
+  }
+  if (pieces.length === 2) {
+    const [minutes, seconds] = pieces;
+    if (seconds >= 60) {
+      return null;
+    }
+    return (minutes * 60 + seconds) * 1000;
+  }
+  if (pieces.length === 3) {
+    const [hours, minutes, seconds] = pieces;
+    if (minutes >= 60 || seconds >= 60) {
+      return null;
+    }
+    return (hours * 3600 + minutes * 60 + seconds) * 1000;
+  }
+  return null;
+}
+
+function escapeShowNotesText(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function enhanceShowNotesHtmlWithTimestampButtons(
+  html: string,
+  buttonClassName: string
+): string {
+  if (
+    !html.trim() ||
+    typeof DOMParser === "undefined" ||
+    typeof NodeFilter === "undefined"
+  ) {
+    return html;
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div>${html}</div>`, "text/html");
+  const root = doc.body.firstElementChild;
+  if (!root) {
+    return html;
+  }
+
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const parentElement = node.parentElement;
+    if (!parentElement) {
+      continue;
+    }
+    const parentTag = parentElement.tagName.toLowerCase();
+    if (parentTag === "a" || parentTag === "button" || parentTag === "script" || parentTag === "style") {
+      continue;
+    }
+    if (!SHOW_NOTES_TIMESTAMP_REGEX.test(node.textContent ?? "")) {
+      continue;
+    }
+    textNodes.push(node);
+    SHOW_NOTES_TIMESTAMP_REGEX.lastIndex = 0;
+  }
+
+  for (const textNode of textNodes) {
+    const textValue = textNode.textContent ?? "";
+    let lastIndex = 0;
+    const fragment = doc.createDocumentFragment();
+    for (const match of textValue.matchAll(SHOW_NOTES_TIMESTAMP_REGEX)) {
+      const token = match[0];
+      const matchIndex = match.index ?? 0;
+      if (matchIndex > lastIndex) {
+        fragment.append(doc.createTextNode(textValue.slice(lastIndex, matchIndex)));
+      }
+      const seekMs = parseShowNotesTimestampTokenToMs(token);
+      if (seekMs == null) {
+        fragment.append(doc.createTextNode(token));
+      } else {
+        const button = doc.createElement("button");
+        button.setAttribute("type", "button");
+        button.setAttribute("class", buttonClassName);
+        button.setAttribute("data-show-notes-seek-ms", String(seekMs));
+        button.setAttribute("aria-label", `Seek to ${token}`);
+        button.textContent = token;
+        fragment.append(button);
+      }
+      lastIndex = matchIndex + token.length;
+    }
+    if (lastIndex < textValue.length) {
+      fragment.append(doc.createTextNode(textValue.slice(lastIndex)));
+    }
+    textNode.parentNode?.replaceChild(fragment, textNode);
+    SHOW_NOTES_TIMESTAMP_REGEX.lastIndex = 0;
+  }
+
+  return root.innerHTML;
+}
+
 export default function TranscriptMediaPane({
   mediaId,
   mediaTitle,
+  mediaPodcastTitle,
+  mediaPodcastImageUrl,
   mediaKind,
   playbackSource,
   canonicalSourceUrl,
@@ -226,6 +336,8 @@ export default function TranscriptMediaPane({
   transcriptRequestInFlight,
   transcriptRequestForecast,
   chapters,
+  descriptionHtml,
+  descriptionText,
   listeningState,
   onResumeFromSavedPosition,
   onRequestTranscript,
@@ -285,6 +397,8 @@ export default function TranscriptMediaPane({
         title: mediaTitle,
         stream_url: playbackSource.stream_url,
         source_url: playbackSource.source_url,
+        podcast_title: mediaPodcastTitle ?? undefined,
+        image_url: mediaPodcastImageUrl ?? undefined,
         chapters: normalizedChapters,
       },
       trackOptions
@@ -294,6 +408,8 @@ export default function TranscriptMediaPane({
     listeningState,
     mediaId,
     mediaKind,
+    mediaPodcastImageUrl,
+    mediaPodcastTitle,
     mediaTitle,
     playbackSource?.kind,
     playbackSource?.source_url,
@@ -328,6 +444,33 @@ export default function TranscriptMediaPane({
   const isReadablePartialTranscript =
     canRead && (transcriptState === "partial" || transcriptCoverage === "partial");
   const isInQueue = queueItems.some((item) => item.media_id === mediaId);
+  const showNotesHtml = useMemo(() => {
+    if (mediaKind !== "podcast_episode") {
+      return null;
+    }
+    const normalizedHtml = descriptionHtml?.trim();
+    if (normalizedHtml) {
+      return enhanceShowNotesHtmlWithTimestampButtons(
+        normalizedHtml,
+        styles.showNotesTimestampButton
+      );
+    }
+
+    const normalizedText = descriptionText?.trim();
+    if (!normalizedText) {
+      return null;
+    }
+    const escapedTextLines = normalizedText
+      .split(/\r?\n+/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => `<p>${escapeShowNotesText(line)}</p>`)
+      .join("");
+    return enhanceShowNotesHtmlWithTimestampButtons(
+      escapedTextLines || `<p>${escapeShowNotesText(normalizedText)}</p>`,
+      styles.showNotesTimestampButton
+    );
+  }, [descriptionHtml, descriptionText, mediaKind]);
 
   const handleSegmentClick = (fragment: TranscriptFragment) => {
     onSegmentSelect(fragment);
@@ -350,6 +493,25 @@ export default function TranscriptMediaPane({
       seekToMs(chapter.t_start_ms);
       play();
     }
+  };
+
+  const handleShowNotesClick = (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const seekMsAttr = target.getAttribute("data-show-notes-seek-ms");
+    if (!seekMsAttr) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const seekMs = Number.parseInt(seekMsAttr, 10);
+    if (!Number.isFinite(seekMs) || seekMs < 0) {
+      return;
+    }
+    seekToMs(seekMs);
+    play();
   };
 
   const transcriptTimeline = useMemo(() => {
@@ -507,6 +669,15 @@ export default function TranscriptMediaPane({
               );
             })}
           </ol>
+        </section>
+      )}
+
+      {mediaKind === "podcast_episode" && showNotesHtml && (
+        <section className={styles.showNotesPanel}>
+          <h3 className={styles.showNotesHeading}>Show Notes</h3>
+          <div className={styles.showNotesBody} onClick={handleShowNotesClick}>
+            <HtmlRenderer htmlSanitized={showNotesHtml} className={styles.showNotesContent} />
+          </div>
         </section>
       )}
 

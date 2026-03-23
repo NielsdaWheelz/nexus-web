@@ -209,6 +209,8 @@ function renderStatefulPodcastPane(
       fitsBudget: boolean;
     } | null;
     chapters?: TranscriptChapter[];
+    descriptionHtml?: string | null;
+    descriptionText?: string | null;
     listeningState?: { position_ms: number; playback_speed: number } | null;
     onResumeFromSavedPosition?: (positionMs: number) => void;
     onRequestTranscript?: () => void;
@@ -238,6 +240,8 @@ function renderStatefulPodcastPane(
         transcriptRequestInFlight={options.transcriptRequestInFlight ?? false}
         transcriptRequestForecast={options.transcriptRequestForecast ?? null}
         chapters={options.chapters ?? []}
+        descriptionHtml={options.descriptionHtml ?? null}
+        descriptionText={options.descriptionText ?? null}
         listeningState={options.listeningState ?? null}
         onResumeFromSavedPosition={options.onResumeFromSavedPosition}
         onRequestTranscript={options.onRequestTranscript ?? vi.fn()}
@@ -512,6 +516,46 @@ describe("TranscriptMediaPane podcast playback", () => {
     ).toHaveAttribute("aria-current", "true");
     expect(screen.getByText("Chapter 1: Intro")).toBeVisible();
     expect(screen.getByText("Chapter 2: Deep Dive")).toBeVisible();
+  });
+
+  it("renders show notes html and timestamp links seek active podcast playback", async () => {
+    const user = userEvent.setup();
+    renderStatefulPodcastPane({
+      canRead: true,
+      fragments: FRAGMENTS,
+      chapters: PODCAST_CHAPTERS,
+      descriptionHtml:
+        "<p>Intro starts at 00:30 and guest interview at 12:30.</p><a href=\"https://example.com/notes\" target=\"_blank\" rel=\"noopener noreferrer\">Episode Notes</a><img src=\"https://cdn.example.com/show-notes.jpg\" alt=\"cover\" />",
+      descriptionText: "unused fallback",
+    });
+
+    expect(screen.getByRole("heading", { name: "Show Notes" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Episode Notes" })).toHaveAttribute(
+      "href",
+      "https://example.com/notes"
+    );
+    expect(screen.getByRole("img", { name: "cover" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Seek to 00:30" }));
+    expect(mockSeekToMs).toHaveBeenCalledWith(30_000);
+    expect(mockPlay).toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Seek to 12:30" }));
+    expect(mockSeekToMs).toHaveBeenCalledWith(750_000);
+  });
+
+  it("falls back to plain text show notes when html is absent", () => {
+    renderStatefulPodcastPane({
+      canRead: true,
+      fragments: FRAGMENTS,
+      chapters: [],
+      descriptionHtml: null,
+      descriptionText: "line one\nline two",
+    });
+
+    expect(screen.getByRole("heading", { name: "Show Notes" })).toBeVisible();
+    expect(screen.getByText("line one")).toBeVisible();
+    expect(screen.getByText("line two")).toBeVisible();
   });
 
   it("omits chapter UI when episode has no chapters", () => {

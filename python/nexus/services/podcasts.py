@@ -50,6 +50,7 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionSyncRefreshOut,
 )
 from nexus.services import playback_queue as playback_queue_service
+from nexus.services.sanitize_html import sanitize_html
 from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services.semantic_chunks import (
     chunk_transcript_segments,
@@ -101,6 +102,9 @@ PODCAST_OPML_MAX_OUTLINES = 200
 PODCAST_OPML_MAX_TITLE_LENGTH = 512
 PODCAST_OPML_MAX_URL_LENGTH = 2048
 PODCAST_OPML_MAX_ERROR_LENGTH = 300
+PODCAST_EPISODE_SHOW_NOTES_HTML_MAX_BYTES = 100_000
+PODCAST_EPISODE_SHOW_NOTES_TEXT_MAX_BYTES = 50_000
+PODCAST_EPISODE_SHOW_NOTES_LIST_PREVIEW_MAX_CHARS = 300
 PODCAST_CHAPTER_SOURCE_PODCASTING20 = "rss_podcasting20"
 PODCAST_CHAPTER_SOURCE_PODLOVE = "rss_podlove"
 _PODCAST_CHAPTERS_20_CONTENT_TYPES = {
@@ -111,6 +115,7 @@ _PODCAST_CHAPTERS_20_CONTENT_TYPES = {
 _CHAPTER_TIMESTAMP_PATTERN = re.compile(
     r"^(?:(?P<hours>\d+):)?(?P<minutes>[0-5]?\d):(?P<seconds>[0-5]?\d(?:\.\d+)?)$"
 )
+_PODCAST_CONTENT_ENCODED_XPATH = "*[local-name()='encoded']"
 
 
 class PodcastIndexClient:
@@ -673,9 +678,7 @@ def list_subscriptions(
         )
     else:
         order_by_sql = (
-            "sa.latest_published_at DESC NULLS LAST, "
-            "ps.updated_at DESC, "
-            "ps.podcast_id DESC"
+            "sa.latest_published_at DESC NULLS LAST, ps.updated_at DESC, ps.podcast_id DESC"
         )
 
     rows = db.execute(
@@ -861,7 +864,9 @@ def list_podcast_episodes_for_viewer(
     if state not in PODCAST_EPISODE_STATES:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid podcast episode state")
     if sort not in PODCAST_EPISODE_SORT_OPTIONS:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid podcast episode sort option")
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Invalid podcast episode sort option"
+        )
 
     limit = min(limit, 200)
     detail = get_podcast_detail_for_viewer(db, viewer_id, podcast_id)
@@ -875,9 +880,13 @@ def list_podcast_episodes_for_viewer(
     if sort == "oldest":
         order_by_sql = "published_at ASC NULLS LAST, media_id ASC"
     elif sort == "duration_asc":
-        order_by_sql = "duration_seconds ASC NULLS LAST, published_at DESC NULLS LAST, media_id DESC"
+        order_by_sql = (
+            "duration_seconds ASC NULLS LAST, published_at DESC NULLS LAST, media_id DESC"
+        )
     elif sort == "duration_desc":
-        order_by_sql = "duration_seconds DESC NULLS LAST, published_at DESC NULLS LAST, media_id DESC"
+        order_by_sql = (
+            "duration_seconds DESC NULLS LAST, published_at DESC NULLS LAST, media_id DESC"
+        )
     else:
         order_by_sql = "published_at DESC NULLS LAST, media_id DESC"
 
@@ -893,9 +902,10 @@ def list_podcast_episodes_for_viewer(
         where_clauses.append(r"m.title ILIKE :query_pattern ESCAPE '\'")
         params["query_pattern"] = f"%{_escape_ilike_pattern(normalized_query)}%"
 
-    episode_rows = db.execute(
-        text(
-            f"""
+    episode_rows = (
+        db.execute(
+            text(
+                f"""
             WITH visible_media AS (
                 {visible_media_ids_cte_sql()}
             ),
@@ -926,9 +936,12 @@ def list_podcast_episodes_for_viewer(
             LIMIT :limit
             OFFSET :offset
             """
-        ),
-        params,
-    ).mappings().fetchall()
+            ),
+            params,
+        )
+        .mappings()
+        .fetchall()
+    )
 
     ordered_media_ids: list[UUID] = []
     episode_state_by_media_id: dict[UUID, str] = {}
@@ -950,6 +963,10 @@ def list_podcast_episodes_for_viewer(
         episode_state = episode_state_by_media_id.get(episode.id)
         if episode_state is not None:
             episode.episode_state = episode_state
+        if episode.description_text:
+            episode.description_text = episode.description_text[
+                :PODCAST_EPISODE_SHOW_NOTES_LIST_PREVIEW_MAX_CHARS
+            ]
     return episodes
 
 
@@ -1417,6 +1434,129 @@ def request_podcast_transcript_for_viewer(
         "fits_budget": True,
         "request_enqueued": True,
     }
+
+
+def request_podcast_transcripts_batch_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    media_ids: list[UUID],
+    reason: str,
+) -> dict[str, Any]:
+    normalized_media_ids: list[UUID] = []
+    seen_media_ids: set[UUID] = set()
+    for media_id in media_ids:
+        normalized_media_id = UUID(str(media_id))
+        if normalized_media_id in seen_media_ids:
+            continue
+        seen_media_ids.add(normalized_media_id)
+        normalized_media_ids.append(normalized_media_id)
+
+    results: list[dict[str, Any]] = []
+    quota_exhausted = False
+    quota_remaining_after_exhaustion: int | None = 0
+
+    for media_id in normalized_media_ids:
+        media_id_str = str(media_id)
+        if quota_exhausted:
+            results.append(
+                {
+                    "media_id": media_id_str,
+                    "status": "rejected_quota",
+                    "required_minutes": None,
+                    "remaining_minutes": quota_remaining_after_exhaustion,
+                    "error": "Daily podcast transcription quota exceeded",
+                }
+            )
+            continue
+
+        try:
+            admission = request_podcast_transcript_for_viewer(
+                db,
+                viewer_id=viewer_id,
+                media_id=media_id,
+                reason=reason,
+                dry_run=False,
+            )
+        except ApiError as exc:
+            if exc.code == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED:
+                quota_exhausted = True
+                quota_remaining_after_exhaustion = 0
+                results.append(
+                    {
+                        "media_id": media_id_str,
+                        "status": "rejected_quota",
+                        "required_minutes": None,
+                        "remaining_minutes": 0,
+                        "error": exc.message,
+                    }
+                )
+                continue
+            if exc.code in {
+                ApiErrorCode.E_MEDIA_NOT_FOUND,
+                ApiErrorCode.E_INVALID_KIND,
+                ApiErrorCode.E_FORBIDDEN,
+            }:
+                results.append(
+                    {
+                        "media_id": media_id_str,
+                        "status": "rejected_invalid",
+                        "required_minutes": None,
+                        "remaining_minutes": None,
+                        "error": exc.message,
+                    }
+                )
+                continue
+            raise
+        except (InvalidRequestError, NotFoundError, ForbiddenError) as exc:
+            results.append(
+                {
+                    "media_id": media_id_str,
+                    "status": "rejected_invalid",
+                    "required_minutes": None,
+                    "remaining_minutes": None,
+                    "error": exc.message,
+                }
+            )
+            continue
+
+        status = _batch_transcript_status_from_admission(admission)
+        required_minutes = _coerce_non_negative_int(admission.get("required_minutes"))
+        remaining_minutes = (
+            _coerce_non_negative_int(admission.get("remaining_minutes"))
+            if admission.get("remaining_minutes") is not None
+            else None
+        )
+        error_message = None
+        if status == "rejected_invalid":
+            error_message = "Transcript request admission failed"
+
+        results.append(
+            {
+                "media_id": media_id_str,
+                "status": status,
+                "required_minutes": required_minutes,
+                "remaining_minutes": remaining_minutes,
+                "error": error_message,
+            }
+        )
+
+        if status == "queued" and remaining_minutes == 0:
+            quota_exhausted = True
+            quota_remaining_after_exhaustion = 0
+
+    return {"results": results}
+
+
+def _batch_transcript_status_from_admission(admission: dict[str, Any]) -> str:
+    if bool(admission.get("request_enqueued")):
+        return "queued"
+    transcript_state = str(admission.get("transcript_state") or "").strip().lower()
+    if transcript_state in {"ready", "partial"}:
+        return "already_ready"
+    if transcript_state in {"queued", "running"}:
+        return "already_queued"
+    return "rejected_invalid"
 
 
 def forecast_podcast_transcripts_for_viewer(
@@ -2321,6 +2461,10 @@ def _sync_subscription_ingest(
     for episode in selected_episodes:
         guid = _normalize_guid(episode.get("guid"))
         fallback_identity = _compute_fallback_identity(podcast_id, episode)
+        description_html = _normalize_optional_text(episode.get("description_html"))
+        description_text = _normalize_optional_text(episode.get("description_text"))
+        published_at = _parse_iso_datetime(episode.get("published_at"))
+        duration_seconds = _coerce_positive_int(episode.get("duration_seconds"))
         existing_media_id = _find_existing_episode_media_id(
             db,
             podcast_id=podcast_id,
@@ -2331,6 +2475,26 @@ def _sync_subscription_ingest(
         if existing_media_id is not None:
             media_id = existing_media_id
             _ensure_in_default_library(db, viewer_id, media_id)
+            db.execute(
+                text(
+                    """
+                    UPDATE podcast_episodes
+                    SET
+                        description_html = :description_html,
+                        description_text = :description_text,
+                        published_at = :published_at,
+                        duration_seconds = :duration_seconds
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "description_html": description_html,
+                    "description_text": description_text,
+                    "published_at": published_at,
+                    "duration_seconds": duration_seconds,
+                },
+            )
             reused_episode_count += 1
         else:
             media_id = uuid4()
@@ -2402,6 +2566,8 @@ def _sync_subscription_ingest(
                         fallback_identity,
                         published_at,
                         duration_seconds,
+                        description_html,
+                        description_text,
                         created_at
                     )
                     VALUES (
@@ -2412,6 +2578,8 @@ def _sync_subscription_ingest(
                         :fallback_identity,
                         :published_at,
                         :duration_seconds,
+                        :description_html,
+                        :description_text,
                         :created_at
                     )
                     """
@@ -2422,8 +2590,10 @@ def _sync_subscription_ingest(
                     "provider_episode_id": str(episode.get("provider_episode_id") or ""),
                     "guid": guid,
                     "fallback_identity": fallback_identity,
-                    "published_at": _parse_iso_datetime(episode.get("published_at")),
-                    "duration_seconds": _coerce_positive_int(episode.get("duration_seconds")),
+                    "published_at": published_at,
+                    "duration_seconds": duration_seconds,
+                    "description_html": description_html,
+                    "description_text": description_text,
                     "created_at": now,
                 },
             )
@@ -2568,7 +2738,9 @@ def _normalize_chapter_rows_for_persistence(
                 "t_start_ms": t_start_ms,
                 "t_end_ms": t_end_ms,
                 "url": _normalize_podcast_chapter_link(chapter.get("url"), base_url=None),
-                "image_url": _normalize_podcast_chapter_link(chapter.get("image_url"), base_url=None),
+                "image_url": _normalize_podcast_chapter_link(
+                    chapter.get("image_url"), base_url=None
+                ),
                 "source": source,
             }
         )
@@ -3889,9 +4061,7 @@ def _parse_opml_rss_outlines(payload: bytes) -> list[dict[str, str]]:
 def _sanitize_opml_string(value: Any, *, max_length: int) -> str | None:
     if value is None:
         return None
-    cleaned = "".join(
-        ch for ch in str(value) if ch in {"\n", "\r", "\t"} or ord(ch) >= 32
-    ).strip()
+    cleaned = "".join(ch for ch in str(value) if ch in {"\n", "\r", "\t"} or ord(ch) >= 32).strip()
     if not cleaned:
         return None
     return cleaned[:max_length]
@@ -4849,12 +5019,13 @@ def _augment_provider_episodes_with_feed_pagination(
         dedupe_key = _episode_dedupe_key(episode)
         if dedupe_key in seen:
             existing = episode_by_dedupe_key.get(dedupe_key)
-            if (
-                existing is not None
-                and existing.get("rss_chapters") is None
-                and episode.get("rss_chapters") is not None
-            ):
-                existing["rss_chapters"] = episode.get("rss_chapters")
+            if existing is not None:
+                if existing.get("rss_chapters") is None and episode.get("rss_chapters") is not None:
+                    existing["rss_chapters"] = episode.get("rss_chapters")
+                if not existing.get("description_html") and episode.get("description_html"):
+                    existing["description_html"] = episode.get("description_html")
+                if not existing.get("description_text") and episode.get("description_text"):
+                    existing["description_text"] = episode.get("description_text")
             continue
         seen.add(dedupe_key)
         combined.append(episode)
@@ -4883,6 +5054,8 @@ def _hydrate_selected_episode_chapters_from_feed(
 
     for episode in selected_episodes:
         episode.setdefault("rss_chapters", None)
+        episode.setdefault("description_html", None)
+        episode.setdefault("description_text", None)
 
     normalized_feed_url = str(feed_url or "").strip()
     if not normalized_feed_url:
@@ -4899,13 +5072,22 @@ def _hydrate_selected_episode_chapters_from_feed(
             feed_episode_by_match_key.setdefault(match_key, feed_episode)
 
     for episode in selected_episodes:
-        if episode.get("rss_chapters") is not None:
+        if (
+            episode.get("rss_chapters") is not None
+            and episode.get("description_html")
+            and episode.get("description_text")
+        ):
             continue
         for match_key in _episode_match_keys(episode):
             feed_episode = feed_episode_by_match_key.get(match_key)
             if feed_episode is None:
                 continue
-            episode["rss_chapters"] = feed_episode.get("rss_chapters")
+            if episode.get("rss_chapters") is None:
+                episode["rss_chapters"] = feed_episode.get("rss_chapters")
+            if not episode.get("description_html"):
+                episode["description_html"] = feed_episode.get("description_html")
+            if not episode.get("description_text"):
+                episode["description_text"] = feed_episode.get("description_text")
             break
 
     return selected_episodes
@@ -5040,9 +5222,7 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
     return episodes, next_page_url
 
 
-def _episode_from_feed_item(
-    item: Any, *, base_url: str | None = None
-) -> dict[str, Any] | None:
+def _episode_from_feed_item(item: Any, *, base_url: str | None = None) -> dict[str, Any] | None:
     title = str(item.xpath("string(./title)")).strip() or "Untitled Episode"
     guid = _normalize_guid(item.xpath("string(./guid)") or item.xpath("string(./id)"))
 
@@ -5065,6 +5245,10 @@ def _episode_from_feed_item(
         "string(./duration)"
     )
     duration_seconds = _parse_feed_duration_seconds(duration_raw)
+    description_html, description_text = _extract_episode_show_notes_from_feed_item(
+        item,
+        base_url=base_url,
+    )
 
     provider_episode_id = guid or audio_url
     if not provider_episode_id:
@@ -5080,9 +5264,68 @@ def _episode_from_feed_item(
         "audio_url": audio_url,
         "published_at": published_at,
         "duration_seconds": duration_seconds,
+        "description_html": description_html,
+        "description_text": description_text,
         "transcript_segments": None,
         "rss_chapters": chapter_rows,
     }
+
+
+def _extract_episode_show_notes_from_feed_item(
+    item: Any,
+    *,
+    base_url: str | None,
+) -> tuple[str | None, str | None]:
+    raw_content_encoded = str(item.xpath(f"string(./{_PODCAST_CONTENT_ENCODED_XPATH})") or "").strip()
+    raw_description = str(item.xpath("string(./description)") or "").strip()
+    raw_show_notes = raw_content_encoded or raw_description
+    if not raw_show_notes:
+        return None, None
+
+    sanitize_base_url = str(base_url or "https://example.invalid/")
+    try:
+        sanitized_html = sanitize_html(raw_show_notes, sanitize_base_url)
+    except ValueError:
+        sanitized_html = ""
+
+    normalized_html = _normalize_optional_text(sanitized_html)
+    if normalized_html is not None:
+        normalized_html = _truncate_utf8_bytes(
+            normalized_html,
+            PODCAST_EPISODE_SHOW_NOTES_HTML_MAX_BYTES,
+        )
+
+    description_text_source = normalized_html or raw_show_notes
+    normalized_text = _normalize_optional_text(_extract_plain_text_from_html_fragment(description_text_source))
+    if normalized_text is not None:
+        normalized_text = _truncate_utf8_bytes(
+            normalized_text,
+            PODCAST_EPISODE_SHOW_NOTES_TEXT_MAX_BYTES,
+        )
+
+    return normalized_html, normalized_text
+
+
+def _extract_plain_text_from_html_fragment(raw_value: str) -> str:
+    if not raw_value:
+        return ""
+    try:
+        parser = etree.HTMLParser(no_network=True, recover=True)
+        root = etree.fromstring(f"<div>{raw_value}</div>".encode(), parser=parser)
+        if root is None:
+            return ""
+        text_tokens = [str(token).strip() for token in root.xpath("//text()")]
+        return re.sub(r"\s+", " ", " ".join(token for token in text_tokens if token)).strip()
+    except Exception:
+        stripped = re.sub(r"<[^>]+>", " ", raw_value)
+        return re.sub(r"\s+", " ", stripped).strip()
+
+
+def _truncate_utf8_bytes(value: str, max_bytes: int) -> str:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
 
 def _extract_rss_chapters_from_feed_item(
@@ -5367,6 +5610,13 @@ def _episode_match_keys(episode: dict[str, Any]) -> list[str]:
 
 
 def _normalize_guid(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _normalize_optional_text(value: Any) -> str | None:
     if value is None:
         return None
     normalized = str(value).strip()

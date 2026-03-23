@@ -326,6 +326,62 @@
   text-decoration: underline;
 }
 
+.showNotesPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+.showNotesHeading {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.showNotesBody {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-bg-panel);
+  padding: var(--space-3);
+}
+
+.showNotesContent {
+  line-height: 1.5;
+}
+
+.showNotesContent :global(p) {
+  margin: 0 0 var(--space-2);
+}
+
+.showNotesContent :global(p:last-child) {
+  margin-bottom: 0;
+}
+
+.showNotesContent :global(a) {
+  color: var(--color-accent);
+}
+
+.showNotesContent :global(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-subtle);
+}
+
+.showNotesTimestampButton {
+  border: none;
+  background: none;
+  color: var(--color-accent);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
 .transcriptSegments {
   display: flex;
   flex-direction: column;

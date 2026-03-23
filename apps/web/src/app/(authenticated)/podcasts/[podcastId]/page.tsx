@@ -21,6 +21,7 @@ const LIBRARY_MEDIA_PAGE_SIZE = 200;
 const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
 const TRANSCRIPT_FORECAST_BATCH_SIZE = 100;
 const EPISODE_SEARCH_DEBOUNCE_MS = 300;
+const SHOW_NOTES_PREVIEW_MAX_CHARS = 280;
 
 type TranscriptRequestReason = "search" | "highlight" | "quote";
 type EpisodeState = "unplayed" | "in_progress" | "played";
@@ -111,6 +112,8 @@ interface PodcastEpisodeMedia {
   publisher: string | null;
   language: string | null;
   description: string | null;
+  description_html: string | null;
+  description_text: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -153,6 +156,32 @@ interface TranscriptForecastBatchRequest {
 
 interface TranscriptForecastBatchResponse {
   data: TranscriptRequestResult[];
+}
+
+type TranscriptBatchStatus =
+  | "queued"
+  | "already_ready"
+  | "already_queued"
+  | "rejected_quota"
+  | "rejected_invalid";
+
+interface TranscriptBatchResult {
+  media_id: string;
+  status: TranscriptBatchStatus;
+  required_minutes?: number | null;
+  remaining_minutes?: number | null;
+  error?: string | null;
+}
+
+interface TranscriptBatchRequest {
+  media_ids: string[];
+  reason: TranscriptRequestReason;
+}
+
+interface TranscriptBatchResponse {
+  data: {
+    results: TranscriptBatchResult[];
+  };
 }
 
 interface TranscriptRequestForecastState {
@@ -261,6 +290,52 @@ function toTranscriptForecastState(
   };
 }
 
+function summarizeBatchTranscriptResults(results: TranscriptBatchResult[]): string | null {
+  if (results.length === 0) {
+    return null;
+  }
+
+  let queued = 0;
+  let alreadyReady = 0;
+  let alreadyQueued = 0;
+  let rejectedQuota = 0;
+  let rejectedInvalid = 0;
+  for (const result of results) {
+    if (result.status === "queued") {
+      queued += 1;
+    } else if (result.status === "already_ready") {
+      alreadyReady += 1;
+    } else if (result.status === "already_queued") {
+      alreadyQueued += 1;
+    } else if (result.status === "rejected_quota") {
+      rejectedQuota += 1;
+    } else if (result.status === "rejected_invalid") {
+      rejectedInvalid += 1;
+    }
+  }
+
+  const parts: string[] = [];
+  if (queued > 0) {
+    parts.push(`${queued} queued`);
+  }
+  if (alreadyReady > 0) {
+    parts.push(`${alreadyReady} already ready`);
+  }
+  if (alreadyQueued > 0) {
+    parts.push(`${alreadyQueued} already queued`);
+  }
+  if (rejectedQuota > 0) {
+    parts.push(`${rejectedQuota} rejected (quota)`);
+  }
+  if (rejectedInvalid > 0) {
+    parts.push(`${rejectedInvalid} rejected (invalid)`);
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  return `Batch transcript result: ${parts.join(", ")}.`;
+}
+
 export default function PodcastDetailPage() {
   const podcastId = usePaneParam("podcastId");
   const paneRouter = usePaneRouter();
@@ -295,6 +370,9 @@ export default function PodcastDetailPage() {
   const [busyMediaIds, setBusyMediaIds] = useState<Set<string>>(new Set());
   const [markingEpisodeIds, setMarkingEpisodeIds] = useState<Set<string>>(new Set());
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
+  const [batchTranscriptBusy, setBatchTranscriptBusy] = useState(false);
+  const [batchTranscriptSummary, setBatchTranscriptSummary] = useState<string | null>(null);
+  const [expandedShowNotesMediaIds, setExpandedShowNotesMediaIds] = useState<Set<string>>(new Set());
   const [requestingTranscriptMediaIds, setRequestingTranscriptMediaIds] = useState<Set<string>>(
     new Set()
   );
@@ -358,6 +436,7 @@ export default function PodcastDetailPage() {
       ]);
       setDetail(detailResp.data);
       setEpisodes(episodesResp.data);
+      setExpandedShowNotesMediaIds(new Set());
       setHasMoreEpisodes(episodesResp.data.length === EPISODES_PAGE_SIZE);
       forecastingTranscriptMediaIdsRef.current.clear();
       setTranscriptRequestForecastByMediaId({});
@@ -704,6 +783,30 @@ export default function PodcastDetailPage() {
     [episodes]
   );
 
+  const batchTranscriptCandidateEpisodes = useMemo(
+    () =>
+      episodes.filter((episode) => {
+        const episodeState = deriveEpisodeState(episode);
+        return (
+          (episodeState === "unplayed" || episodeState === "in_progress") &&
+          canRequestTranscriptForEpisode(episode)
+        );
+      }),
+    [episodes]
+  );
+
+  const toggleEpisodeShowNotesExpansion = useCallback((mediaId: string) => {
+    setExpandedShowNotesMediaIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(mediaId)) {
+        next.delete(mediaId);
+      } else {
+        next.add(mediaId);
+      }
+      return next;
+    });
+  }, []);
+
   const handleMarkAllVisibleUnplayedAsPlayed = useCallback(async () => {
     if (visibleUnplayedEpisodeIds.length === 0) {
       return;
@@ -755,6 +858,60 @@ export default function PodcastDetailPage() {
     episodes,
     visibleUnplayedEpisodeIds,
   ]);
+
+  const handleBatchTranscriptRequest = useCallback(async () => {
+    if (batchTranscriptCandidateEpisodes.length === 0) {
+      return;
+    }
+
+    const requiredMinutes = batchTranscriptCandidateEpisodes.reduce((total, episode) => {
+      const forecast = transcriptRequestForecastByMediaId[episode.id];
+      return total + (forecast?.required_minutes ?? 1);
+    }, 0);
+    const remainingQuotaValues = batchTranscriptCandidateEpisodes
+      .map((episode) => transcriptRequestForecastByMediaId[episode.id]?.remaining_minutes)
+      .filter((value): value is number => typeof value === "number");
+    const remainingQuota =
+      remainingQuotaValues.length > 0 ? Math.min(...remainingQuotaValues) : null;
+    const fitsBudget = remainingQuota == null || requiredMinutes <= remainingQuota;
+    const confirmationMessage = [
+      `Eligible episodes: ${batchTranscriptCandidateEpisodes.length}`,
+      `Estimated minutes: ${requiredMinutes}`,
+      `Remaining quota: ${remainingQuota == null ? "unlimited" : remainingQuota}`,
+      `Fits budget: ${fitsBudget ? "yes" : "no"}`,
+      "",
+      "Submit batch transcript request?",
+    ].join("\n");
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    setBatchTranscriptBusy(true);
+    setError(null);
+    try {
+      const payload: TranscriptBatchRequest = {
+        media_ids: batchTranscriptCandidateEpisodes.map((episode) => episode.id),
+        reason: "search",
+      };
+      const response = await apiFetch<TranscriptBatchResponse>(
+        "/api/media/transcript/request/batch",
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }
+      );
+      setBatchTranscriptSummary(summarizeBatchTranscriptResults(response.data.results));
+      await load();
+    } catch (requestError) {
+      if (isApiError(requestError)) {
+        setError(requestError.message);
+      } else {
+        setError("Failed to request batch transcripts");
+      }
+    } finally {
+      setBatchTranscriptBusy(false);
+    }
+  }, [batchTranscriptCandidateEpisodes, load, transcriptRequestForecastByMediaId]);
 
   const applyTranscriptForecasts = useCallback(
     (
@@ -1072,6 +1229,15 @@ export default function PodcastDetailPage() {
             <span>{activeEpisodeCount} episodes</span>
             <button
               type="button"
+              className={styles.batchTranscribeButton}
+              onClick={() => void handleBatchTranscriptRequest()}
+              disabled={batchTranscriptBusy || batchTranscriptCandidateEpisodes.length === 0}
+              aria-label="Transcribe unplayed episodes"
+            >
+              {batchTranscriptBusy ? "Transcribing..." : "Transcribe unplayed"}
+            </button>
+            <button
+              type="button"
               className={styles.markAllButton}
               onClick={() => void handleMarkAllVisibleUnplayedAsPlayed()}
               disabled={markAllAsPlayedBusy || visibleUnplayedEpisodeIds.length === 0}
@@ -1131,6 +1297,10 @@ export default function PodcastDetailPage() {
           </label>
         </div>
 
+        {batchTranscriptSummary && (
+          <p className={styles.batchTranscriptSummary}>{batchTranscriptSummary}</p>
+        )}
+
         {episodes.length > 0 && (
           <AppList>
             {episodes.map((episode) => {
@@ -1154,6 +1324,9 @@ export default function PodcastDetailPage() {
                 ? `Remove ${episode.title} from library`
                 : `Add ${episode.title} to library`;
               const inQueue = queueMediaIds.has(episode.id);
+              const showNotesText = episode.description_text?.trim() ?? "";
+              const showNotesExpanded = expandedShowNotesMediaIds.has(episode.id);
+              const canToggleShowNotes = showNotesText.length > SHOW_NOTES_PREVIEW_MAX_CHARS;
               return (
                 <AppListItem
                   key={episode.id}
@@ -1187,6 +1360,32 @@ export default function PodcastDetailPage() {
                             className={styles.inProgressBarFill}
                             style={{ width: `${episodeProgressPercent}%` }}
                           />
+                        </span>
+                      )}
+                      {showNotesText && (
+                        <span className={styles.episodeShowNotes}>
+                          <span
+                            className={styles.episodeShowNotesPreview}
+                            data-expanded={showNotesExpanded ? "true" : "false"}
+                          >
+                            {showNotesText}
+                          </span>
+                          {canToggleShowNotes && (
+                            <button
+                              type="button"
+                              className={styles.showNotesToggleButton}
+                              aria-label={`${
+                                showNotesExpanded ? "Show less" : "Show more"
+                              } for ${episode.title}`}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                toggleEpisodeShowNotesExpansion(episode.id);
+                              }}
+                            >
+                              {showNotesExpanded ? "Show less" : "Show more"}
+                            </button>
+                          )}
                         </span>
                       )}
                     </span>
