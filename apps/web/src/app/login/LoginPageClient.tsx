@@ -1,6 +1,7 @@
 "use client";
 
 import { Github } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { buildAuthCallbackUrl } from "@/lib/auth/redirects";
 import { createClient } from "@/lib/supabase/client";
@@ -114,6 +115,18 @@ export default function LoginPageClient({
                   : "Continue with GitHub"}
               </span>
             </button>
+
+            <p className={styles.legalCopy}>
+              By continuing, you agree to the{" "}
+              <Link className={styles.legalLink} href="/terms">
+                Terms of Service
+              </Link>{" "}
+              and acknowledge the{" "}
+              <Link className={styles.legalLink} href="/privacy">
+                Privacy Policy
+              </Link>
+              .
+            </p>
           </div>
         </div>
       </div>

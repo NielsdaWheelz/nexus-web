@@ -116,6 +116,23 @@
   flex: 0 0 auto;
 }
 
+.legalCopy {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.legalLink {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.legalLink:hover {
+  text-decoration: underline;
+}
+
 @media (max-width: 640px) {
   .shell {
     align-items: stretch;

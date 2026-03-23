@@ -48,4 +48,16 @@ describe("LoginPageClient", () => {
       },
     });
   });
+
+  it("shows public links for privacy policy and terms of service", () => {
+    render(<LoginPageClient nextPath="/libraries" />);
+
+    expect(screen.getByRole("link", { name: /privacy policy/i })).toHaveAttribute(
+      "href",
+      "/privacy"
+    );
+    expect(
+      screen.getByRole("link", { name: /terms of service/i })
+    ).toHaveAttribute("href", "/terms");
+  });
 });
