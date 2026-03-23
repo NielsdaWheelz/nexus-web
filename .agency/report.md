@@ -864,3 +864,44 @@ cd e2e && SKIP_SEED=1 npm test -- tests/podcast-categories.spec.ts --project=chr
 
 ### risks
 - in environments where podcasts routes are disabled server-side, the new e2e test intentionally skips; full drag-path execution still requires an environment with `podcasts_enabled=true`.
+
+## s7 pr-15 playback audio effects cutover addendum (2026-03-23)
+
+### summary
+- added a first-class frontend audio-effects domain (`audioEffects` state + persistence helpers) with strict localStorage contracts: `podcast_effects_silence_trim`, `podcast_effects_volume_boost`, `podcast_effects_mono`.
+- cut `GlobalPlayerProvider` over to a Web Audio processing graph created lazily on first play gesture: `MediaElementSource -> Analyser -> Gain -> Compressor -> (optional mono mix) -> destination`.
+- implemented silence-trim runtime behavior with RMS detection (`-45dB`, `>=400ms`) that temporarily sets effective playback to `6x`, restores user speed on speech resume, and tracks per-episode time saved.
+- implemented volume boost levels (`off/low/medium/high`) via `GainNode` plus conservative compressor settings (`threshold=-6`, `knee=12`, `ratio=4`, `attack=0.003`, `release=0.25`) to prevent clipping.
+- implemented mono mixdown routing (splitter + dual 0.5 gains + merger) and live reconfiguration without pausing/interruption.
+- added footer audio-effects UI: dedicated effects button, active indicator dot, accessible effects panel, trimming-status badge, and time-saved counter.
+- added CORS/graph-failure fallback behavior: when source-node creation fails, playback continues via plain `<audio>` path and effects controls are disabled with explicit user messaging.
+- delivered strict red/green component coverage in new `GlobalPlayerAudioEffects.test.tsx` for lazy AudioContext creation, persistence restore, silence-trim behavior, mono routing continuity, compressor/gain setup, and fallback-disable semantics.
+
+### decisions
+- **strict frontend cutover, no compatibility shim**: effects are now first-class player state and UI contract; no legacy/no-op compatibility path was retained.
+- **user speed is canonical**: listening-state persistence and MediaSession position updates always use the user-selected speed, never transient silence-trim speed.
+- **single context, reusable nodes**: one `AudioContext` and node graph per player lifecycle, with dynamic reconnect/reconfigure for mono/boost toggles.
+- **fail-safe playback over partial effects**: any source-node/CORS setup failure disables effects for that track context but never blocks transport playback.
+- **per-episode savings scope**: silence-trim savings counter resets on track switch by design (no cross-episode aggregation in this cutover).
+
+### how to test
+```bash
+# targeted pr-15 acceptance coverage
+cd apps/web && npm test -- "src/__tests__/components/GlobalPlayerAudioEffects.test.tsx"
+
+# global player regression slice
+cd apps/web && npm test -- \
+  "src/__tests__/components/GlobalPlayerFooter.test.tsx" \
+  "src/__tests__/components/GlobalPlayerMediaSession.test.tsx" \
+  "src/__tests__/components/GlobalPlayerPersistence.test.tsx" \
+  "src/__tests__/components/GlobalPlayerQueue.test.tsx" \
+  "src/__tests__/components/GlobalPlayerAudioEffects.test.tsx"
+
+# static type check (currently reports pre-existing unrelated failures)
+cd apps/web && npm run typecheck
+```
+
+### risks
+- silence detection uses a fixed threshold/window (`-45dB`, `400ms`); podcasts with persistent background noise may trim less aggressively than user expectations.
+- when `MediaElementAudioSourceNode` creation fails for a source (CORS/security), effects are intentionally disabled for safety and playback falls back to plain audio; users may perceive this as inconsistent capability across feeds.
+- typecheck remains red due pre-existing unrelated issues in `GlobalPlayerPersistence.test.tsx` and `transcriptPolling.test.tsx`; this PR did not introduce additional typecheck failures.

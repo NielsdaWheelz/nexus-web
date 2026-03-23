@@ -1,12 +1,13 @@
 {
   "schema_version": "1.0",
   "status": "ready_for_review",
-  "updated_at": "2026-03-23T04:44:30Z",
-  "summary": "Completed PR-14 reorder hardening: category drag now has explicit overlay/placeholder feedback and a dedicated e2e drag-reorder path with feature-flag-aware preflight skip behavior.",
+  "updated_at": "2026-03-23T05:00:27Z",
+  "summary": "Completed S7 PR-15 hard cutover: global player now supports persisted audio effects (silence trim, volume boost + compressor, mono mix) through a lazy Web Audio graph with CORS-safe fallback and full component acceptance coverage.",
   "questions": [],
   "blockers": [],
-  "how_to_test": "cd apps/web && npm test -- \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\" \"src/app/api/podcasts/podcasts-routes.test.ts\" \"src/__tests__/components/GlobalPlayerFooter.test.tsx\"\ncd e2e && SKIP_SEED=1 npm test -- tests/podcast-categories.spec.ts --project=chromium",
+  "how_to_test": "cd apps/web && npm test -- \"src/__tests__/components/GlobalPlayerAudioEffects.test.tsx\"\ncd apps/web && npm test -- \"src/__tests__/components/GlobalPlayerFooter.test.tsx\" \"src/__tests__/components/GlobalPlayerMediaSession.test.tsx\" \"src/__tests__/components/GlobalPlayerPersistence.test.tsx\" \"src/__tests__/components/GlobalPlayerQueue.test.tsx\" \"src/__tests__/components/GlobalPlayerAudioEffects.test.tsx\"\ncd apps/web && npm run typecheck  # currently fails on pre-existing unrelated errors",
   "risks": [
-    "The new e2e drag test skips when podcast routes are disabled (`podcasts_enabled=false`), so full drag persistence verification still requires an environment with podcasts enabled."
+    "Silence-trim uses fixed defaults (-45dB threshold, 400ms window), which may under-trim noisy podcasts.",
+    "When media source CORS blocks MediaElementAudioSourceNode creation, effects are intentionally disabled and playback falls back to plain <audio>."
   ]
 }

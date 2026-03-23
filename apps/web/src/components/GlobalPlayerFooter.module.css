@@ -48,7 +48,7 @@
 
 .controlsRow {
   display: grid;
-  grid-template-columns: auto auto auto auto auto minmax(180px, 1fr) auto auto auto auto;
+  grid-template-columns: auto auto auto auto auto minmax(180px, 1fr) auto auto auto auto auto;
   align-items: center;
   gap: var(--space-2);
   outline: none;
@@ -234,6 +234,71 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.effectsButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.effectsIndicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.effectsButton[data-active="true"] .effectsIndicator {
+  background: var(--color-accent, #4f7cff);
+}
+
+.effectsPanel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-bg-panel) 88%, transparent);
+  padding: var(--space-2);
+}
+
+.effectsToggle,
+.effectsSelectControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+}
+
+.effectsMeta {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.trimmingBadge {
+  border: 1px solid color-mix(in srgb, var(--color-accent, #4f7cff) 50%, var(--color-border));
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--color-accent, #4f7cff) 75%, var(--color-text));
+  background: color-mix(in srgb, var(--color-accent, #4f7cff) 12%, transparent);
+}
+
+.effectsUnavailable {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .select {
@@ -443,7 +508,7 @@
   }
 
   .controlsRow {
-    grid-template-columns: auto auto auto auto auto minmax(120px, 1fr) auto auto auto;
+    grid-template-columns: auto auto auto auto auto minmax(120px, 1fr) auto auto auto auto;
     gap: 6px;
   }
 

@@ -4,6 +4,10 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
+  areAudioEffectsActive,
+  type AudioEffectsVolumeBoost,
+} from "@/lib/player/audioEffects";
+import {
   countUpcomingQueueItems,
   type PlaybackQueueItem,
 } from "@/lib/player/playbackQueueClient";
@@ -13,6 +17,12 @@ import styles from "./GlobalPlayerFooter.module.css";
 const SKIP_BACK_SECONDS = 15;
 const SKIP_FORWARD_SECONDS = 30;
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3] as const;
+const VOLUME_BOOST_OPTIONS: Array<{ value: AudioEffectsVolumeBoost; label: string }> = [
+  { value: "off", label: "Off" },
+  { value: "low", label: "Low (+3dB)" },
+  { value: "medium", label: "Medium (+6dB)" },
+  { value: "high", label: "High (+9dB)" },
+];
 
 function formatClock(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) {
@@ -49,9 +59,17 @@ function resolveCurrentChapter(
   return activeChapter;
 }
 
+function formatTimeSavedSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "0.0";
+  }
+  return seconds.toFixed(1);
+}
+
 export default function GlobalPlayerFooter() {
   const isMobile = useIsMobileViewport();
   const [queueOpen, setQueueOpen] = useState(false);
+  const [effectsOpen, setEffectsOpen] = useState(false);
   const {
     track,
     setTrack,
@@ -67,6 +85,11 @@ export default function GlobalPlayerFooter() {
     bufferedSeconds,
     playbackRate,
     volume,
+    audioEffects,
+    setAudioEffects,
+    audioEffectsAvailable,
+    isSilenceTrimming,
+    silenceTimeSavedSeconds,
     seekToMs,
     skipBySeconds,
     setPlaybackRate,
@@ -129,6 +152,7 @@ export default function GlobalPlayerFooter() {
     ? playbackRate
     : 1;
   const upcomingCount = countUpcomingQueueItems(queueItems, track.media_id);
+  const hasActiveAudioEffects = areAudioEffectsActive(audioEffects);
 
   const handleQueueItemPlay = (item: PlaybackQueueItem) => {
     setTrack(
@@ -303,6 +327,18 @@ export default function GlobalPlayerFooter() {
           </select>
         </label>
 
+        <button
+          type="button"
+          className={styles.effectsButton}
+          aria-label="Audio effects"
+          aria-expanded={effectsOpen}
+          data-active={hasActiveAudioEffects ? "true" : "false"}
+          onClick={() => setEffectsOpen((previous) => !previous)}
+        >
+          Effects
+          <span className={styles.effectsIndicator} aria-hidden="true" />
+        </button>
+
         {!isMobile && (
           <label className={styles.volumeControl}>
             <span className={styles.controlLabel}>Volume</span>
@@ -330,6 +366,64 @@ export default function GlobalPlayerFooter() {
           <span className={styles.queueBadge}>{upcomingCount}</span>
         </button>
       </div>
+
+      {effectsOpen && (
+        <section className={styles.effectsPanel} aria-label="Audio effects panel">
+          {!audioEffectsAvailable && (
+            <p className={styles.effectsUnavailable}>Audio effects unavailable for this source.</p>
+          )}
+
+          <label className={styles.effectsToggle}>
+            <input
+              type="checkbox"
+              aria-label="Silence trimming"
+              checked={audioEffects.silenceTrim}
+              disabled={!audioEffectsAvailable}
+              onChange={(event) => {
+                setAudioEffects({ silenceTrim: event.currentTarget.checked });
+              }}
+            />
+            <span>Silence trimming</span>
+          </label>
+
+          <label className={styles.effectsSelectControl}>
+            <span className={styles.controlLabel}>Volume boost</span>
+            <select
+              aria-label="Volume boost"
+              value={audioEffects.volumeBoost}
+              disabled={!audioEffectsAvailable}
+              onChange={(event) => {
+                setAudioEffects({
+                  volumeBoost: event.currentTarget.value as AudioEffectsVolumeBoost,
+                });
+              }}
+              className={styles.select}
+            >
+              {VOLUME_BOOST_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={styles.effectsToggle}>
+            <input
+              type="checkbox"
+              aria-label="Mono audio"
+              checked={audioEffects.mono}
+              disabled={!audioEffectsAvailable}
+              onChange={(event) => {
+                setAudioEffects({ mono: event.currentTarget.checked });
+              }}
+            />
+            <span>Mono audio</span>
+          </label>
+
+          <p className={styles.effectsMeta}>Time saved: {formatTimeSavedSeconds(silenceTimeSavedSeconds)}s</p>
+          {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
+        </section>
+      )}
 
       <audio
         ref={bindAudioElement}
