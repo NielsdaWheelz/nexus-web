@@ -988,7 +988,6 @@ export default function MediaViewPage() {
   const transcriptProvisioningPollEnabled = shouldPollTranscriptProvisioning({
     isTranscriptMedia,
     transcriptState,
-    processingStatus: media?.processing_status ?? null,
   });
 
   useTranscriptProvisioningPoll({

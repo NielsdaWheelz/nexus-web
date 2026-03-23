@@ -65,8 +65,7 @@ export default function SearchPage() {
           `/api/search?${params.toString()}`
         );
 
-        // Layer 1: normalize results at the API boundary (handles both
-        // nested and flat response shapes)
+        // Layer 1: normalize results at the API boundary (strict canonical shape)
         const valid = response.results
           .map((r) => {
             const normalized = normalizeSearchResult(r);

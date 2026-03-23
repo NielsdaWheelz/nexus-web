@@ -196,6 +196,36 @@ async function selectChapterByLabel(
   await chapterSelect.selectOption({ label });
 }
 
+async function clickToolbarAction(
+  page: Parameters<typeof test>[0]["page"],
+  name: string | RegExp,
+): Promise<void> {
+  const inlineButton = page.getByRole("button", { name }).first();
+  if (
+    (await inlineButton.count()) > 0 &&
+    (await inlineButton.isVisible().catch(() => false))
+  ) {
+    await expect(inlineButton).toBeEnabled();
+    await inlineButton.click();
+    return;
+  }
+
+  const overflowToggle = page.getByRole("button", { name: "More actions" }).first();
+  if (
+    (await overflowToggle.count()) > 0 &&
+    (await overflowToggle.isVisible().catch(() => false))
+  ) {
+    await overflowToggle.click();
+    const menuItem = page.getByRole("menuitem", { name }).first();
+    await expect(menuItem).toBeVisible();
+    await expect(menuItem).toBeEnabled();
+    await menuItem.click();
+    return;
+  }
+
+  throw new Error(`Toolbar action not found for ${String(name)}`);
+}
+
 test.describe("epub", () => {
   test.beforeEach(async ({ page }) => {
     const seed = readSeededEpubMedia();
@@ -230,10 +260,7 @@ test.describe("epub", () => {
     ).toBeVisible({ timeout: 15_000 });
 
     // Click "Next chapter" to go to chapter 2
-    const nextBtn = page.getByLabel("Next chapter");
-    await expect(nextBtn).toBeVisible();
-    await expect(nextBtn).toBeEnabled();
-    await nextBtn.click();
+    await clickToolbarAction(page, "Next chapter");
 
     const chapterSelect = page.getByLabel("Select chapter");
     await expect(chapterSelect).toBeVisible();
@@ -266,11 +293,14 @@ test.describe("epub", () => {
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
-    const tocToggle = page.getByLabel(/expand table of contents/i);
-    await expect(tocToggle).toBeVisible();
-    await tocToggle.click();
-
     const anchorLeaf = page.getByRole("button", { name: seed.toc_anchor_label });
+    if (
+      (await anchorLeaf.count()) === 0 ||
+      !(await anchorLeaf.first().isVisible().catch(() => false))
+    ) {
+      await clickToolbarAction(page, /show toc|expand table of contents/i);
+    }
+
     await expect(anchorLeaf).toBeVisible();
     await anchorLeaf.click();
 

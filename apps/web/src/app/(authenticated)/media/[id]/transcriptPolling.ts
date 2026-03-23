@@ -3,21 +3,16 @@ import { useEffect } from "react";
 export interface ShouldPollTranscriptProvisioningInput {
   isTranscriptMedia: boolean;
   transcriptState: "queued" | "running" | string | null | undefined;
-  processingStatus?: string | null;
 }
 
 export function shouldPollTranscriptProvisioning({
   isTranscriptMedia,
   transcriptState,
-  processingStatus,
 }: ShouldPollTranscriptProvisioningInput): boolean {
   if (!isTranscriptMedia) {
     return false;
   }
-  if (transcriptState === "queued" || transcriptState === "running") {
-    return true;
-  }
-  return processingStatus === "extracting";
+  return transcriptState === "queued" || transcriptState === "running";
 }
 
 interface UseTranscriptProvisioningPollInput {
@@ -32,32 +27,30 @@ export function useTranscriptProvisioningPoll({
   pollIntervalMs,
 }: UseTranscriptProvisioningPollInput): void {
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || pollIntervalMs <= 0) {
       return;
     }
 
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const scheduleNext = () => {
-      if (cancelled) {
+    let inFlight = false;
+    const runPoll = () => {
+      if (cancelled || inFlight) {
         return;
       }
-      timer = setTimeout(async () => {
-        try {
-          await onPoll();
-        } finally {
-          scheduleNext();
-        }
-      }, pollIntervalMs);
+      inFlight = true;
+      void Promise.resolve(onPoll())
+        .catch(() => {
+          // Poll failures are non-fatal; retry on the next interval tick.
+        })
+        .finally(() => {
+          inFlight = false;
+        });
     };
 
-    scheduleNext();
+    const timer = setInterval(runPoll, pollIntervalMs);
     return () => {
       cancelled = true;
-      if (timer !== null) {
-        clearTimeout(timer);
-      }
+      clearInterval(timer);
     };
   }, [enabled, onPoll, pollIntervalMs]);
 }
