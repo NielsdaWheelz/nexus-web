@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
@@ -81,16 +81,27 @@ function RouteHarness() {
       <button type="button" onClick={() => setRoute("b")}>
         Navigate away
       </button>
+      <input type="text" aria-label="Episode notes" />
       {route === "a" ? <RouteA /> : <p>Route B content</p>}
       <GlobalPlayerFooter />
     </GlobalPlayerProvider>
   );
 }
 
+function mockAudioTransport(audio: HTMLAudioElement) {
+  const playSpy = vi.spyOn(audio, "play").mockResolvedValue(undefined);
+  const pauseSpy = vi.spyOn(audio, "pause").mockImplementation(() => {});
+  return { playSpy, pauseSpy };
+}
+
 describe("GlobalPlayerFooter", () => {
   beforeEach(() => {
     setViewportWidth(1280);
     window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("persists selected track across route changes on desktop", async () => {
@@ -165,26 +176,44 @@ describe("GlobalPlayerFooter", () => {
     expect(window.localStorage.getItem("nexus.globalPlayer.volume")).toBe("0.3");
   });
 
-  it("supports arrow-key skip shortcuts when player controls are focused", async () => {
+  it("supports global space/arrow shortcuts with input guard", async () => {
     const user = userEvent.setup();
     render(<RouteHarness />);
+
+    await user.keyboard(" ");
+    expect(screen.queryByRole("contentinfo", { name: "Global player footer" })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Load episode" }));
 
     const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
+    const { playSpy, pauseSpy } = mockAudioTransport(audio);
     setAudioMetrics(audio, { duration: 120, currentTime: 30, bufferedEnd: 60 });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
     fireEvent(audio, new Event("progress"));
 
-    const controls = screen.getByRole("group", { name: /global player controls/i });
-    controls.focus();
+    await user.keyboard(" ");
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    fireEvent(audio, new Event("play"));
 
-    await user.keyboard("{ArrowLeft}");
+    await user.keyboard(" ");
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    fireEvent(audio, new Event("pause"));
+
+    fireEvent.keyDown(document, { key: "ArrowLeft" });
     expect(Math.floor(audio.currentTime)).toBe(15);
 
-    await user.keyboard("{ArrowRight}");
+    fireEvent.keyDown(document, { key: "ArrowRight" });
     expect(Math.floor(audio.currentTime)).toBe(45);
+
+    const notesInput = screen.getByRole("textbox", { name: "Episode notes" });
+    notesInput.focus();
+    fireEvent.keyDown(notesInput, { key: "ArrowLeft" });
+    fireEvent.keyDown(notesInput, { key: "ArrowRight" });
+    fireEvent.keyDown(notesInput, { key: " " });
+    expect(Math.floor(audio.currentTime)).toBe(45);
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
   });
 
   it("shows current chapter label and scrubber chapter tick markers", async () => {
@@ -202,5 +231,72 @@ describe("GlobalPlayerFooter", () => {
     expect(screen.getByText("Chapter 2: Deep Dive")).toBeVisible();
     expect(screen.getByTitle("Intro")).toBeVisible();
     expect(screen.getByTitle("Deep Dive")).toBeVisible();
+  });
+
+  it("renders playback error UI with retry and source fallback", async () => {
+    const user = userEvent.setup();
+    render(<RouteHarness />);
+
+    await user.click(screen.getByRole("button", { name: "Load episode" }));
+
+    const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
+    Object.defineProperty(audio, "error", {
+      configurable: true,
+      value: { code: 4 },
+    });
+    const loadSpy = vi.spyOn(audio, "load").mockImplementation(() => {});
+    const playSpy = vi.spyOn(audio, "play").mockResolvedValue(undefined);
+
+    fireEvent(audio, new Event("error"));
+    expect(await screen.findByText("Audio URL unavailable.")).toBeInTheDocument();
+
+    const retryButton = screen.getByRole("button", { name: "Retry playback" });
+    expect(retryButton).toBeVisible();
+
+    const sourceLink = screen.getByRole("link", { name: "Open source audio" });
+    expect(sourceLink).toHaveAttribute("href", "https://example.com/episode-alpha");
+
+    await user.click(retryButton);
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+    expect(playSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto-retries network playback errors when browser comes online", async () => {
+    const user = userEvent.setup();
+    render(<RouteHarness />);
+
+    await user.click(screen.getByRole("button", { name: "Load episode" }));
+
+    const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
+    const playSpy = vi.spyOn(audio, "play").mockResolvedValue(undefined);
+    vi.spyOn(audio, "load").mockImplementation(() => {});
+
+    Object.defineProperty(audio, "error", {
+      configurable: true,
+      value: { code: 2 },
+    });
+    fireEvent(audio, new Event("error"));
+    expect(await screen.findByText("Network error. Check your connection.")).toBeInTheDocument();
+
+    window.dispatchEvent(new Event("online"));
+    await waitFor(() => {
+      expect(playSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("shows and clears a buffering indicator around waiting/playing events", async () => {
+    const user = userEvent.setup();
+    render(<RouteHarness />);
+
+    await user.click(screen.getByRole("button", { name: "Load episode" }));
+    const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
+
+    fireEvent(audio, new Event("waiting"));
+    expect(await screen.findByText("Buffering...")).toBeVisible();
+
+    fireEvent(audio, new Event("playing"));
+    await waitFor(() => {
+      expect(screen.queryByText("Buffering...")).toBeNull();
+    });
   });
 });

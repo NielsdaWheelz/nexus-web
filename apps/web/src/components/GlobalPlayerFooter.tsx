@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
@@ -57,8 +57,11 @@ export default function GlobalPlayerFooter() {
     setTrack,
     bindAudioElement,
     isPlaying,
+    isBuffering,
+    playbackError,
     play,
     pause,
+    retryPlayback,
     currentTimeSeconds,
     durationSeconds,
     bufferedSeconds,
@@ -122,16 +125,6 @@ export default function GlobalPlayerFooter() {
     seekToMs(Math.floor(clampedSeconds * 1000));
   };
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      skipBySeconds(-SKIP_BACK_SECONDS);
-    } else if (event.key === "ArrowRight") {
-      event.preventDefault();
-      skipBySeconds(SKIP_FORWARD_SECONDS);
-    }
-  };
-
   const speedValue = SPEED_OPTIONS.includes(playbackRate as (typeof SPEED_OPTIONS)[number])
     ? playbackRate
     : 1;
@@ -144,6 +137,8 @@ export default function GlobalPlayerFooter() {
         title: item.title,
         stream_url: item.stream_url,
         source_url: item.source_url,
+        podcast_title: item.podcast_title ?? undefined,
+        image_url: item.image_url ?? undefined,
       },
       {
         autoplay: true,
@@ -184,8 +179,6 @@ export default function GlobalPlayerFooter() {
         className={styles.controlsRow}
         role="group"
         aria-label="Global player controls"
-        tabIndex={0}
-        onKeyDown={handleKeyDown}
       >
         <button
           type="button"
@@ -261,9 +254,38 @@ export default function GlobalPlayerFooter() {
           />
         </div>
 
-        <span className={styles.timecode}>
-          {formatClock(currentSafe)} / {formatClock(durationSafe)}
-        </span>
+        {playbackError ? (
+          <div className={styles.playbackErrorArea} role="status" aria-live="polite">
+            <span className={styles.playbackErrorMessage}>{playbackError.message}</span>
+            <button
+              type="button"
+              className={styles.playbackErrorAction}
+              onClick={retryPlayback}
+              aria-label="Retry playback"
+            >
+              Retry
+            </button>
+            <a
+              href={track.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.playbackErrorLink}
+              aria-label="Open source audio"
+            >
+              Open source
+            </a>
+          </div>
+        ) : (
+          <span className={styles.timecode}>
+            {isBuffering && (
+              <span className={styles.bufferingIndicator} role="status" aria-live="polite">
+                <span className={styles.bufferingDot} aria-hidden="true" />
+                Buffering...
+              </span>
+            )}
+            {formatClock(currentSafe)} / {formatClock(durationSafe)}
+          </span>
+        )}
 
         <label className={styles.speedControl}>
           <span className={styles.controlLabel}>Speed</span>

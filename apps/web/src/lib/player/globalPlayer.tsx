@@ -25,17 +25,36 @@ import {
 
 const LISTENING_STATE_SYNC_INTERVAL_MS = 15_000;
 const PREVIOUS_RESTART_THRESHOLD_SECONDS = 3;
+const SKIP_BACK_SECONDS = 15;
+const SKIP_FORWARD_SECONDS = 30;
 const DEFAULT_PLAYBACK_RATE = 1.0;
 const DEFAULT_VOLUME = 1.0;
 const VOLUME_STORAGE_KEY = "nexus.globalPlayer.volume";
 const SPEED_MIN = 0.25;
 const SPEED_MAX = 3.0;
+const MEDIA_SESSION_POSITION_UPDATE_INTERVAL_MS = 1_000;
+const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
+  "play",
+  "pause",
+  "seekbackward",
+  "seekforward",
+  "previoustrack",
+  "nexttrack",
+  "seekto",
+];
+
+export interface GlobalPlayerPlaybackError {
+  code: number;
+  message: string;
+}
 
 export interface GlobalPlayerTrack {
   media_id: string;
   title: string;
   stream_url: string;
   source_url: string;
+  podcast_title?: string;
+  image_url?: string;
   chapters?: GlobalPlayerChapter[];
 }
 
@@ -64,7 +83,10 @@ interface GlobalPlayerContextValue {
   setVolume: (volume: number) => void;
   play: () => void;
   pause: () => void;
+  retryPlayback: () => void;
   isPlaying: boolean;
+  isBuffering: boolean;
+  playbackError: GlobalPlayerPlaybackError | null;
   currentTimeSeconds: number;
   durationSeconds: number;
   bufferedSeconds: number;
@@ -95,7 +117,10 @@ const FALLBACK_CONTEXT: GlobalPlayerContextValue = {
   setVolume: noop as GlobalPlayerContextValue["setVolume"],
   play: noop,
   pause: noop,
+  retryPlayback: noop,
   isPlaying: false,
+  isBuffering: false,
+  playbackError: null,
   currentTimeSeconds: 0,
   durationSeconds: 0,
   bufferedSeconds: 0,
@@ -139,6 +164,74 @@ function normalizeVolume(value: number | null | undefined): number {
     return DEFAULT_VOLUME;
   }
   return Math.min(1, Math.max(0, value));
+}
+
+function normalizeTrackText(value: string | null | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function getMediaSession(): MediaSession | null {
+  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
+    return null;
+  }
+  return navigator.mediaSession ?? null;
+}
+
+function setMediaSessionActionHandler(
+  mediaSession: MediaSession,
+  action: MediaSessionAction,
+  handler: MediaSessionActionHandler | null
+): void {
+  try {
+    mediaSession.setActionHandler(action, handler);
+  } catch {
+    // Some browsers only support a subset of actions.
+  }
+}
+
+function setMediaSessionPlaybackState(
+  mediaSession: MediaSession,
+  state: MediaSessionPlaybackState
+): void {
+  try {
+    mediaSession.playbackState = state;
+  } catch {
+    // Ignore browsers that reject playbackState updates.
+  }
+}
+
+function mapPlaybackErrorMessage(code: number): string {
+  if (code === 1) {
+    return "Playback was interrupted.";
+  }
+  if (code === 2) {
+    return "Network error. Check your connection.";
+  }
+  if (code === 3) {
+    return "Audio format error.";
+  }
+  if (code === 4) {
+    return "Audio URL unavailable.";
+  }
+  return "Playback failed. Please retry.";
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  const tagName = target.tagName.toLowerCase();
+  if (tagName === "input" || tagName === "textarea" || tagName === "select") {
+    return true;
+  }
+  if (target instanceof HTMLElement && target.isContentEditable) {
+    return true;
+  }
+  return Boolean(target.closest("[contenteditable]:not([contenteditable='false'])"));
 }
 
 function normalizeTrackChapters(
@@ -201,6 +294,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const [track, setTrackState] = useState<GlobalPlayerTrack | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [playbackError, setPlaybackError] = useState<GlobalPlayerPlaybackError | null>(null);
   const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [bufferedSeconds, setBufferedSeconds] = useState(0);
@@ -211,6 +306,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const pendingTrackOptionsRef = useRef<SetTrackOptions>({});
   const wasPlayingRef = useRef(false);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const lastMediaSessionPositionUpdateAtRef = useRef(0);
 
   const persistListeningState = useCallback(
     async (mediaId: string, keepalive = false) => {
@@ -257,6 +353,43 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     [persistListeningState]
   );
 
+  const updateMediaSessionPositionState = useCallback(
+    (force = false) => {
+      const mediaSession = getMediaSession();
+      const snapshotAudio = audioElementRef.current;
+      if (!mediaSession || !snapshotAudio || !track || !("setPositionState" in mediaSession)) {
+        return;
+      }
+      const now = Date.now();
+      if (
+        !force &&
+        now - lastMediaSessionPositionUpdateAtRef.current < MEDIA_SESSION_POSITION_UPDATE_INTERVAL_MS
+      ) {
+        return;
+      }
+      const duration = Number.isFinite(snapshotAudio.duration) ? snapshotAudio.duration : null;
+      const position = Number.isFinite(snapshotAudio.currentTime) ? snapshotAudio.currentTime : null;
+      const playbackRate =
+        Number.isFinite(snapshotAudio.playbackRate) && snapshotAudio.playbackRate > 0
+          ? snapshotAudio.playbackRate
+          : 1;
+      if (duration == null || duration <= 0 || position == null || position < 0) {
+        return;
+      }
+      try {
+        mediaSession.setPositionState({
+          duration,
+          playbackRate,
+          position: Math.min(position, duration),
+        });
+        lastMediaSessionPositionUpdateAtRef.current = now;
+      } catch {
+        // Some browsers throw when duration/position are temporarily unavailable.
+      }
+    },
+    [track]
+  );
+
   const bindAudioElement = useCallback(
     (node: HTMLAudioElement | null) => {
       audioElementRef.current = node;
@@ -272,12 +405,17 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     (nextTrack: GlobalPlayerTrack, options: SetTrackOptions = {}) => {
       const normalizedNextTrack: GlobalPlayerTrack = {
         ...nextTrack,
+        podcast_title: normalizeTrackText(nextTrack.podcast_title),
+        image_url: normalizeTrackText(nextTrack.image_url),
         chapters: normalizeTrackChapters(nextTrack.chapters),
       };
       if (track && track.media_id !== nextTrack.media_id) {
         flushCurrentTrackState(track.media_id);
       }
       pendingTrackOptionsRef.current = options;
+      setPlaybackError(null);
+      setIsBuffering(false);
+      lastMediaSessionPositionUpdateAtRef.current = 0;
       setTrackState((prev) => {
         if (
           prev &&
@@ -285,6 +423,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
           prev.stream_url === normalizedNextTrack.stream_url &&
           prev.title === normalizedNextTrack.title &&
           prev.source_url === normalizedNextTrack.source_url &&
+          prev.podcast_title === normalizedNextTrack.podcast_title &&
+          prev.image_url === normalizedNextTrack.image_url &&
           areTrackChaptersEqual(prev.chapters, normalizedNextTrack.chapters)
         ) {
           return prev;
@@ -305,20 +445,38 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     }
     setTrackState(null);
     setIsPlaying(false);
+    setIsBuffering(false);
+    setPlaybackError(null);
     setCurrentTimeSeconds(0);
     setDurationSeconds(0);
     setBufferedSeconds(0);
+    lastMediaSessionPositionUpdateAtRef.current = 0;
   }, [audioElement, flushCurrentTrackState, track]);
 
   const play = useCallback(() => {
     if (!audioElement) {
       return;
     }
+    setPlaybackError(null);
     void audioElement.play().catch(() => {});
   }, [audioElement]);
 
   const pause = useCallback(() => {
     audioElement?.pause();
+  }, [audioElement]);
+
+  const retryPlayback = useCallback(() => {
+    if (!audioElement) {
+      return;
+    }
+    setPlaybackError(null);
+    setIsBuffering(true);
+    try {
+      audioElement.load();
+    } catch {
+      // Ignore transient load failures and still attempt play.
+    }
+    void audioElement.play().catch(() => {});
   }, [audioElement]);
 
   const seekToMs = useCallback(
@@ -469,6 +627,8 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
           title: queueItem.title,
           stream_url: queueItem.stream_url,
           source_url: queueItem.source_url,
+          podcast_title: queueItem.podcast_title ?? undefined,
+          image_url: queueItem.image_url ?? undefined,
         },
         {
           autoplay: true,
@@ -559,12 +719,24 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
 
     const handlePlay = () => setIsPlaying(true);
     const handlePause = () => setIsPlaying(false);
+    const handlePlaying = () => {
+      setIsBuffering(false);
+      setPlaybackError(null);
+      updateMediaSessionPositionState(true);
+    };
     const handleEnded = () => {
       setIsPlaying(false);
+      setIsBuffering(false);
       void playNextInQueue();
     };
-    const handleTimeUpdate = () => setCurrentTimeSeconds(audioElement.currentTime || 0);
-    const handleDurationChange = () => setDurationSeconds(audioElement.duration || 0);
+    const handleTimeUpdate = () => {
+      setCurrentTimeSeconds(audioElement.currentTime || 0);
+      updateMediaSessionPositionState();
+    };
+    const handleDurationChange = () => {
+      setDurationSeconds(audioElement.duration || 0);
+      updateMediaSessionPositionState(true);
+    };
     const handleProgress = () => {
       if (!audioElement.buffered || audioElement.buffered.length === 0) {
         setBufferedSeconds(0);
@@ -586,21 +758,41 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         // Ignore storage failures.
       }
     };
+    const handleWaiting = () => {
+      setIsBuffering(true);
+    };
+    const handleStalled = () => {
+      setIsBuffering(true);
+    };
+    const handleError = () => {
+      const errorCode = audioElement.error?.code ?? 0;
+      setPlaybackError({
+        code: errorCode,
+        message: mapPlaybackErrorMessage(errorCode),
+      });
+      setIsPlaying(false);
+      setIsBuffering(false);
+    };
     const handleEmptied = () => {
       setCurrentTimeSeconds(0);
       setDurationSeconds(0);
       setBufferedSeconds(0);
       setIsPlaying(false);
+      setIsBuffering(false);
     };
 
     audioElement.addEventListener("play", handlePlay);
     audioElement.addEventListener("pause", handlePause);
+    audioElement.addEventListener("playing", handlePlaying);
     audioElement.addEventListener("timeupdate", handleTimeUpdate);
     audioElement.addEventListener("durationchange", handleDurationChange);
     audioElement.addEventListener("loadedmetadata", handleDurationChange);
     audioElement.addEventListener("progress", handleProgress);
     audioElement.addEventListener("ratechange", handleRateChange);
     audioElement.addEventListener("volumechange", handleVolumeChange);
+    audioElement.addEventListener("waiting", handleWaiting);
+    audioElement.addEventListener("stalled", handleStalled);
+    audioElement.addEventListener("error", handleError);
     audioElement.addEventListener("emptied", handleEmptied);
     audioElement.addEventListener("ended", handleEnded);
 
@@ -613,16 +805,20 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     return () => {
       audioElement.removeEventListener("play", handlePlay);
       audioElement.removeEventListener("pause", handlePause);
+      audioElement.removeEventListener("playing", handlePlaying);
       audioElement.removeEventListener("timeupdate", handleTimeUpdate);
       audioElement.removeEventListener("durationchange", handleDurationChange);
       audioElement.removeEventListener("loadedmetadata", handleDurationChange);
       audioElement.removeEventListener("progress", handleProgress);
       audioElement.removeEventListener("ratechange", handleRateChange);
       audioElement.removeEventListener("volumechange", handleVolumeChange);
+      audioElement.removeEventListener("waiting", handleWaiting);
+      audioElement.removeEventListener("stalled", handleStalled);
+      audioElement.removeEventListener("error", handleError);
       audioElement.removeEventListener("emptied", handleEmptied);
       audioElement.removeEventListener("ended", handleEnded);
     };
-  }, [audioElement, playNextInQueue]);
+  }, [audioElement, playNextInQueue, updateMediaSessionPositionState]);
 
   useEffect(() => {
     if (!audioElement || !track) {
@@ -695,6 +891,140 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     };
   }, [refreshQueue]);
 
+  useEffect(() => {
+    const handleOnline = () => {
+      if (playbackError?.code === 2) {
+        retryPlayback();
+      }
+    };
+    window.addEventListener("online", handleOnline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [playbackError?.code, retryPlayback]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+      if (!track) {
+        return;
+      }
+      const key = event.key;
+      const isSpaceKey = key === " " || key === "Spacebar" || event.code === "Space";
+      if (isSpaceKey) {
+        event.preventDefault();
+        if (isPlaying) {
+          pause();
+        } else {
+          play();
+        }
+        return;
+      }
+      if (key === "ArrowLeft") {
+        event.preventDefault();
+        skipBySeconds(-SKIP_BACK_SECONDS);
+        return;
+      }
+      if (key === "ArrowRight") {
+        event.preventDefault();
+        skipBySeconds(SKIP_FORWARD_SECONDS);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isPlaying, pause, play, skipBySeconds, track]);
+
+  useEffect(() => {
+    const mediaSession = getMediaSession();
+    if (!mediaSession) {
+      return;
+    }
+    if (!track) {
+      try {
+        mediaSession.metadata = null;
+      } catch {
+        // Ignore metadata assignment failures on unsupported clients.
+      }
+      return;
+    }
+    const artist = normalizeTrackText(track?.podcast_title);
+    const artwork = normalizeTrackText(track?.image_url);
+    const metadataInit: MediaMetadataInit = {
+      title: track.title,
+      artist,
+      album: artist,
+      artwork: artwork ? [{ src: artwork }] : [],
+    };
+    try {
+      if (typeof window.MediaMetadata === "function") {
+        mediaSession.metadata = new window.MediaMetadata(metadataInit);
+      } else {
+        mediaSession.metadata = metadataInit as unknown as MediaMetadata;
+      }
+    } catch {
+      // Ignore metadata assignment failures on unsupported clients.
+    }
+  }, [track]);
+
+  useEffect(() => {
+    const mediaSession = getMediaSession();
+    if (!mediaSession) {
+      return;
+    }
+    const playbackState: MediaSessionPlaybackState = !track
+      ? "none"
+      : isPlaying
+        ? "playing"
+        : "paused";
+    setMediaSessionPlaybackState(mediaSession, playbackState);
+  }, [isPlaying, track]);
+
+  useEffect(() => {
+    const mediaSession = getMediaSession();
+    if (!mediaSession) {
+      return;
+    }
+    if (!track) {
+      for (const action of MEDIA_SESSION_ACTIONS) {
+        setMediaSessionActionHandler(mediaSession, action, null);
+      }
+      return;
+    }
+    setMediaSessionActionHandler(mediaSession, "play", () => {
+      play();
+    });
+    setMediaSessionActionHandler(mediaSession, "pause", () => {
+      pause();
+    });
+    setMediaSessionActionHandler(mediaSession, "seekbackward", () => {
+      skipBySeconds(-SKIP_BACK_SECONDS);
+    });
+    setMediaSessionActionHandler(mediaSession, "seekforward", () => {
+      skipBySeconds(SKIP_FORWARD_SECONDS);
+    });
+    setMediaSessionActionHandler(mediaSession, "previoustrack", () => {
+      void playPreviousInQueue();
+    });
+    setMediaSessionActionHandler(mediaSession, "nexttrack", () => {
+      void playNextInQueue();
+    });
+    setMediaSessionActionHandler(mediaSession, "seekto", (details) => {
+      if (typeof details?.seekTime !== "number" || !Number.isFinite(details.seekTime)) {
+        return;
+      }
+      seekToMs(details.seekTime * 1000);
+    });
+    return () => {
+      for (const action of MEDIA_SESSION_ACTIONS) {
+        setMediaSessionActionHandler(mediaSession, action, null);
+      }
+    };
+  }, [pause, play, playNextInQueue, playPreviousInQueue, seekToMs, skipBySeconds, track]);
+
   const value = useMemo<GlobalPlayerContextValue>(
     () => ({
       track,
@@ -706,7 +1036,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       setVolume,
       play,
       pause,
+      retryPlayback,
       isPlaying,
+      isBuffering,
+      playbackError,
       currentTimeSeconds,
       durationSeconds,
       bufferedSeconds,
@@ -734,7 +1067,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       setVolume,
       play,
       pause,
+      retryPlayback,
       isPlaying,
+      isBuffering,
+      playbackError,
       currentTimeSeconds,
       durationSeconds,
       bufferedSeconds,

@@ -596,3 +596,77 @@ cd e2e && API_PORT=8001 WEB_PORT=3001 npx playwright test \
 ### risks
 - the quote-to-chat PDF flow remains one of the highest-variance e2e paths (full upload + reload + pane-runtime routing); retries reduce flakes but do not prove zero nondeterminism under all host load conditions.
 - repeated webpack/autoprefixer warnings in e2e runs are noisy but non-fatal; they can obscure real failures in raw logs if not filtered.
+
+## s7 pr-11 mediasession + streaming error cutover addendum (2026-03-23)
+
+### summary
+- wired `GlobalPlayerProvider` to the Web MediaSession API with hard-cutover behavior: track metadata publishing, media action handlers, playback-state syncing, and throttled lock-screen position updates.
+- moved transport keyboard shortcuts from footer-focus scope to global document scope: Space toggles play/pause and ArrowLeft/ArrowRight skip globally, with strict input/contenteditable guardrails.
+- added explicit streaming failure handling for the hidden audio element: mapped MediaError codes to user-facing messages, retry control, source fallback link, and network auto-retry on `online`.
+- added buffering lifecycle state (`waiting`/`stalled` -> loading indicator, `playing` -> clear) and exposed both buffering/error state through player context for consistent footer rendering.
+- extended player track metadata contract with optional `podcast_title` and `image_url`, and propagated those fields from transcript media + queue row call sites into global track state.
+- delivered red/green browser coverage in new and updated component suites for MediaSession wiring, global shortcuts, error/retry/recovery behavior, buffering state, and cleanup semantics.
+
+### decisions
+- **provider owns transport orchestration:** MediaSession handlers, keyboard shortcuts, retry logic, and playback-status state live in `GlobalPlayerProvider` so UI components stay presentation-centric.
+- **no backward-compat focus shortcuts:** removed footer focus-only keydown behavior; transport shortcuts are globally available and guarded only by editable-target detection.
+- **explicit error-state contract:** playback failures map to deterministic user copy by MediaError code and clear only on track switch or successful playback lifecycle (`playing`).
+- **throttled lock-screen position sync:** MediaSession `setPositionState` updates are time-throttled to 1s to avoid excessive lock-screen update churn.
+- **feature-detected MediaSession path:** all MediaSession calls are no-op when unsupported; supported browsers get full metadata/action wiring without compatibility shims.
+
+### how to test
+```bash
+# frontend behavior suites for PR-11 cutover
+cd apps/web && npm test -- \
+  "src/__tests__/components/GlobalPlayerFooter.test.tsx" \
+  "src/__tests__/components/GlobalPlayerMediaSession.test.tsx" \
+  "src/__tests__/components/GlobalPlayerPersistence.test.tsx" \
+  "src/__tests__/components/GlobalPlayerQueue.test.tsx" \
+  "src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx"
+
+# optional static check (currently shows unrelated pre-existing errors outside PR-11 scope)
+cd apps/web && npm run typecheck
+```
+
+### risks
+- MediaSession platform behavior remains browser/OS-dependent (especially iOS Safari action coverage); component tests validate wiring, not full device-level dispatch behavior.
+- `podcast_image_url` metadata is now consumed when present, but upstream media payload coverage for that field may still vary by ingestion/source path.
+- global Space shortcut intentionally prevents default scrolling when a track is loaded and focus is non-editable; any future page-level Space shortcuts must coordinate with this contract.
+
+## s7 pr-12 show-notes + batch transcript cutover addendum (2026-03-23)
+
+### summary
+- added persistent episode show-notes storage on `podcast_episodes` via migration `0033` (`description_html`, `description_text`) and ORM model updates.
+- implemented feed-side show-notes extraction during podcast sync with strict source precedence (`content:encoded` over `description`), html sanitization, plain-text derivation, and byte truncation caps (100kb html / 50kb text).
+- extended media contracts so `GET /media/{id}` and podcast episodes list rows now expose `description_html` + `description_text`; list rows intentionally truncate `description_text` to a 300-char preview while media detail returns full stored text.
+- added backend batch transcript admission endpoint `POST /media/transcript/request/batch` with max-20 validation, sequential per-item admission, per-item outcomes (`queued`, `already_ready`, `already_queued`, `rejected_quota`, `rejected_invalid`), and quota-exhaustion short-circuit semantics.
+- added web bff proxy for `/api/media/transcript/request/batch`, podcast detail ui show-notes preview expand/collapse, and “transcribe unplayed” batch action with quota estimate confirmation + deterministic result summary text.
+- added transcript media pane show-notes rendering for podcast episodes: sanitized html rendering, plain-text fallback rendering, external links/images preserved, and timestamp tokens (`mm:ss` / `hh:mm:ss`) converted into seek buttons.
+
+### decisions
+- **hard cutover only:** no compatibility shim for legacy show-notes fields; contracts now use explicit `description_html` and `description_text`.
+- **source-of-truth hierarchy:** rss `content:encoded` wins when present; `description` is fallback only.
+- **storage safety first:** enforce byte caps at ingest time (100kb/50kb) and presentation cap at list time (300 chars) to bound payload + ui density.
+- **batch admission semantics are sequential and fail-soft:** process IDs in order, preserve per-item outcomes, and stop invoking per-item admission once quota is exhausted.
+- **timestamp interaction is a show-notes responsibility:** show-notes surface owns parsing/rendering seek affordances; transcript fragment selection behavior remains unchanged.
+
+### how to test
+```bash
+# frontend targeted suites for pr-12 behavior
+cd apps/web && npm test -- \
+  "src/app/api/media/media-routes.test.ts" \
+  "src/app/(authenticated)/podcasts/podcasts-flows.test.tsx" \
+  "src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx"
+
+# backend pr-12 suites (requires db env)
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q \
+  tests/test_podcasts.py::TestPodcastShowNotesAndBatchCutover
+
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations uv run pytest -q \
+  tests/test_migrations.py::TestPodcastEpisodeShowNotesMigration::test_head_contains_podcast_episode_show_notes_columns
+```
+
+### risks
+- batch transcript endpoint currently commits per-item through existing single-admission service calls; this is intentional for quota correctness but can leave partially-applied outcomes when later items fail.
+- show-notes timestamp parsing is regex-based and may interpret non-timestamp numeric tokens that match `mm:ss`/`hh:mm:ss` shape as seek actions.
+- backend verification for pr-12 could not be executed in this environment without `DATABASE_URL`; only syntax/lint + frontend behavior were validated locally.

@@ -1,14 +1,13 @@
 {
   "schema_version": "1.0",
   "status": "ready_for_review",
-  "updated_at": "2026-03-23T01:26:00Z",
-  "summary": "Completed full Playwright E2E sweep with selector hardening for responsive toolbar contracts; final run is green (46/46 passed).",
+  "updated_at": "2026-03-23T03:36:55Z",
+  "summary": "Completed S7 PR-12 hard cutover: persisted/sanitized podcast show notes, list+detail API exposure, batch transcript admission endpoint, BFF proxy, podcast page batch UX, and transcript-pane show-notes timestamp seek links.",
   "questions": [],
   "blockers": [],
-  "how_to_test": "make test-e2e && cd e2e && API_PORT=8001 WEB_PORT=3001 npx playwright test tests/pdf-reader.spec.ts --grep \"upload -> viewer -> persistent highlight -> send to chat\" --repeat-each=2",
+  "how_to_test": "cd apps/web && npm test -- \"src/app/api/media/media-routes.test.ts\" \"src/app/(authenticated)/podcasts/podcasts-flows.test.tsx\" \"src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx\"; cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q tests/test_podcasts.py::TestPodcastShowNotesAndBatchCutover; cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations uv run pytest -q tests/test_migrations.py::TestPodcastEpisodeShowNotesMigration::test_head_contains_podcast_episode_show_notes_columns",
   "risks": [
-    "Search UI now fails closed on legacy flat payloads; backend response contract drift will surface immediately as dropped rows.",
-    "Transcript polling is strictly transcript_state-driven; backend state inconsistency (extracting without queued/running state) can suppress client polling until fixed server-side.",
-    "PDF quote-to-chat E2E remains one of the most timing-sensitive paths (upload + reload + pane routing); selector hardening reduced flakes, but nondeterminism risk under host load is not zero."
+    "Backend PR-12 integration tests could not be executed in this environment because DATABASE_URL was not configured.",
+    "Batch transcript processing is intentionally sequential and commit-per-item through existing single-admission logic; partial success is possible when later items fail."
   ]
 }

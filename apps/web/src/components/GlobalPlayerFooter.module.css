@@ -167,7 +167,60 @@
 .timecode {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   white-space: nowrap;
+}
+
+.bufferingIndicator {
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bufferingDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-accent, #4f7cff);
+  animation: buffering-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes buffering-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.playbackErrorArea {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.playbackErrorMessage {
+  color: var(--color-danger, #b42318);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.playbackErrorAction,
+.playbackErrorLink {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  text-decoration: none;
 }
 
 .controlLabel {
