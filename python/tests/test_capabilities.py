@@ -215,6 +215,22 @@ class TestVideoCapabilities:
 class TestPodcastEpisodeCapabilities:
     """Tests for podcast episode media capabilities."""
 
+    def test_podcast_episode_pending_is_playable_but_not_readable(self):
+        """Metadata-only podcast episodes should allow playback before transcript request."""
+        caps = derive_capabilities(
+            kind="podcast_episode",
+            processing_status="pending",
+            last_error_code=None,
+            media_file_exists=False,
+            external_playback_url_exists=True,
+        )
+
+        assert caps.can_play is True
+        assert caps.can_read is False
+        assert caps.can_highlight is False
+        assert caps.can_quote is False
+        assert caps.can_search is False
+
     def test_podcast_episode_ready(self):
         """Podcast episode ready can read and play."""
         caps = derive_capabilities(
@@ -243,6 +259,44 @@ class TestPodcastEpisodeCapabilities:
         assert caps.can_play is True
         assert caps.can_read is False
         assert caps.can_highlight is False
+        assert caps.can_quote is False
+        assert caps.can_search is False
+
+    def test_podcast_capabilities_use_transcript_state_not_processing_bridge(self):
+        """Transcript state drives transcript capabilities even when processing_status is stale."""
+        caps = derive_capabilities(
+            kind="podcast_episode",
+            processing_status="ready_for_reading",
+            last_error_code=None,
+            media_file_exists=False,
+            external_playback_url_exists=True,
+            transcript_state="not_requested",
+            transcript_coverage="none",
+        )
+
+        assert caps.can_play is True
+        assert caps.can_read is False
+        assert caps.can_highlight is False
+        assert caps.can_quote is False
+        assert caps.can_search is False
+
+    def test_podcast_capabilities_allow_ready_transcript_despite_pending_processing_bridge(self):
+        """Dedicated transcript state can mark transcript-ready before legacy bridge status catches up."""
+        caps = derive_capabilities(
+            kind="podcast_episode",
+            processing_status="pending",
+            last_error_code=None,
+            media_file_exists=False,
+            external_playback_url_exists=True,
+            transcript_state="ready",
+            transcript_coverage="full",
+        )
+
+        assert caps.can_play is True
+        assert caps.can_read is True
+        assert caps.can_highlight is True
+        assert caps.can_quote is True
+        assert caps.can_search is True
 
 
 class TestDownloadCapability:

@@ -16,7 +16,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 # Valid search result types
-SEARCH_RESULT_TYPES = Literal["media", "fragment", "annotation", "message"]
+SEARCH_RESULT_TYPES = Literal["media", "fragment", "annotation", "message", "transcript_chunk"]
 
 # Valid search scopes
 SEARCH_SCOPE_PREFIXES = ("all", "media:", "library:", "conversation:")
@@ -104,11 +104,26 @@ class SearchResultMessageOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SearchResultTranscriptChunkOut(BaseModel):
+    """Typed search result for semantic transcript chunk hits."""
+
+    type: Literal["transcript_chunk"]
+    id: UUID
+    score: float
+    snippet: str
+    t_start_ms: int
+    t_end_ms: int
+    source: SearchResultSourceOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
 SearchResultOut = Annotated[
     SearchResultMediaOut
     | SearchResultFragmentOut
     | SearchResultAnnotationOut
-    | SearchResultMessageOut,
+    | SearchResultMessageOut
+    | SearchResultTranscriptChunkOut,
     Field(discriminator="type"),
 ]
 

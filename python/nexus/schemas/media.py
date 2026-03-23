@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CapabilitiesOut(BaseModel):
@@ -38,6 +38,35 @@ class PlaybackSourceOut(BaseModel):
     embed_url: str | None = None
 
 
+class ListeningStateOut(BaseModel):
+    """Per-media listening state for the authenticated viewer."""
+
+    position_ms: int = Field(ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)
+    playback_speed: float = Field(gt=0)
+    is_completed: bool = False
+
+
+class MediaListeningStateOut(BaseModel):
+    """Condensed listening state embedded into media detail responses."""
+
+    position_ms: int = Field(ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)
+    playback_speed: float = Field(gt=0)
+    is_completed: bool = False
+
+
+class PodcastEpisodeChapterOut(BaseModel):
+    """Podcast episode chapter marker payload."""
+
+    chapter_idx: int = Field(ge=0)
+    title: str
+    t_start_ms: int = Field(ge=0)
+    t_end_ms: int | None = Field(default=None, ge=0)
+    url: str | None = None
+    image_url: str | None = None
+
+
 class MediaAuthorOut(BaseModel):
     """Response schema for a media author."""
 
@@ -56,15 +85,23 @@ class MediaOut(BaseModel):
     title: str
     canonical_source_url: str | None
     processing_status: str  # "pending", "extracting", "ready_for_reading", etc.
+    transcript_state: str | None = None
+    transcript_coverage: str | None = None
     failure_stage: str | None = None
     last_error_code: str | None = None
     playback_source: PlaybackSourceOut | None = None
+    listening_state: MediaListeningStateOut | None = None
+    subscription_default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
+    episode_state: Literal["unplayed", "in_progress", "played"] | None = None
+    chapters: list[PodcastEpisodeChapterOut] = []
     capabilities: CapabilitiesOut
     authors: list[MediaAuthorOut] = []
     published_date: str | None = None
     publisher: str | None = None
     language: str | None = None
     description: str | None = None
+    description_html: str | None = None
+    description_text: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -133,6 +170,114 @@ class RetryResponse(BaseModel):
     media_id: str
     processing_status: str
     retry_enqueued: bool
+
+
+TranscriptRequestReason = Literal[
+    "episode_open",
+    "search",
+    "highlight",
+    "quote",
+    "background_warming",
+    "operator_requeue",
+]
+
+
+class TranscriptRequestRequest(BaseModel):
+    """Request schema for POST /media/{id}/transcript/request."""
+
+    reason: TranscriptRequestReason = "episode_open"
+    dry_run: bool = False
+
+
+class TranscriptRequestBatchRequest(BaseModel):
+    """Request schema for POST /media/transcript/request/batch."""
+
+    media_ids: list[UUID] = Field(min_length=1, max_length=20)
+    reason: TranscriptRequestReason = "episode_open"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ListeningStateUpsertRequest(BaseModel):
+    """Body for PUT /media/{id}/listening-state."""
+
+    position_ms: int | None = Field(default=None, ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)
+    playback_speed: float | None = Field(default=None, gt=0)
+    is_completed: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_has_mutation_field(self) -> "ListeningStateUpsertRequest":
+        if (
+            self.position_ms is None
+            and self.duration_ms is None
+            and self.playback_speed is None
+            and self.is_completed is None
+        ):
+            raise ValueError(
+                "At least one of position_ms, duration_ms, playback_speed, or is_completed is required"
+            )
+        return self
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ListeningStateBatchUpsertRequest(BaseModel):
+    """Body for POST /media/listening-state/batch."""
+
+    media_ids: list[UUID] = Field(min_length=1, max_length=1000)
+    is_completed: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TranscriptForecastBatchItemRequest(BaseModel):
+    """One media forecast request for POST /media/transcript/forecasts."""
+
+    media_id: UUID
+    reason: TranscriptRequestReason = "episode_open"
+
+
+class TranscriptForecastBatchRequest(BaseModel):
+    """Batch forecast request for transcript admission without enqueueing work."""
+
+    requests: list[TranscriptForecastBatchItemRequest] = Field(min_length=1, max_length=100)
+
+
+class TranscriptRequestResponse(BaseModel):
+    """Response schema for transcript admission endpoint."""
+
+    media_id: str
+    processing_status: str
+    transcript_state: str
+    transcript_coverage: str
+    request_reason: TranscriptRequestReason
+    required_minutes: int
+    remaining_minutes: int | None = None
+    fits_budget: bool
+    request_enqueued: bool
+
+
+class TranscriptRequestBatchItemResponse(BaseModel):
+    """Per-media result for batch transcript admission."""
+
+    media_id: str
+    status: Literal[
+        "queued",
+        "already_ready",
+        "already_queued",
+        "rejected_quota",
+        "rejected_invalid",
+    ]
+    required_minutes: int | None = None
+    remaining_minutes: int | None = None
+    error: str | None = None
+
+
+class TranscriptRequestBatchResponse(BaseModel):
+    """Response payload for POST /media/transcript/request/batch."""
+
+    results: list[TranscriptRequestBatchItemResponse]
 
 
 class FileDownloadResponse(BaseModel):

@@ -8,7 +8,7 @@ dropped/discarded or never finished. Recovery is bounded:
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from nexus.celery import celery_app
 from nexus.celery_contract import INGEST_QUEUE
@@ -25,6 +25,34 @@ _MAX_ERROR_MSG_LEN = 1000
 _BATCH_LIMIT = 100
 
 
+def _mark_stale_media_failed(
+    db,
+    media: Media,
+    *,
+    now: datetime,
+    error_code: str,
+    error_message: str,
+) -> None:
+    if media.kind == "podcast_episode":
+        from nexus.services.podcasts import mark_podcast_transcription_failure_for_recovery
+
+        mark_podcast_transcription_failure_for_recovery(
+            db,
+            media_id=media.id,
+            error_code=error_code,
+            error_message=error_message,
+            now=now,
+        )
+        return
+
+    _mark_failed(
+        media,
+        now=now,
+        error_code=error_code,
+        error_message=error_message,
+    )
+
+
 @celery_app.task(bind=True, max_retries=0, name="reconcile_stale_ingest_media_job")
 def reconcile_stale_ingest_media_job(
     self,
@@ -36,6 +64,11 @@ def reconcile_stale_ingest_media_job(
     - processing_status = extracting
     - kind in {pdf, epub, podcast_episode}
     - processing_started_at older than INGEST_STALE_EXTRACTING_SECONDS
+
+    Also repairs semantic transcript backlog:
+    - media_transcript_states.semantic_status in {pending, failed}
+    - transcript_state in {ready, partial}
+    - active transcript version exists
     """
     settings = get_settings()
     stale_before = datetime.now(UTC) - timedelta(seconds=settings.ingest_stale_extracting_seconds)
@@ -59,9 +92,6 @@ def reconcile_stale_ingest_media_job(
             .all()
         )
 
-        if not stale_rows:
-            return {"scanned": 0, "requeued": 0, "failed": 0}
-
         now = datetime.now(UTC)
         requeued = 0
         failed = 0
@@ -83,7 +113,8 @@ def reconcile_stale_ingest_media_job(
                         request_id=request_id,
                     )
                 except Exception as exc:
-                    _mark_failed(
+                    _mark_stale_media_failed(
+                        db,
                         media,
                         now=now,
                         error_code=ApiErrorCode.E_INGEST_FAILED.value,
@@ -99,7 +130,8 @@ def reconcile_stale_ingest_media_job(
                         request_id=request_id,
                     )
             else:
-                _mark_failed(
+                _mark_stale_media_failed(
+                    db,
                     media,
                     now=now,
                     error_code=ApiErrorCode.E_INGEST_TIMEOUT.value,
@@ -118,15 +150,108 @@ def reconcile_stale_ingest_media_job(
                     request_id=request_id,
                 )
 
+        semantic_scanned = 0
+        semantic_repaired = 0
+        semantic_failed = 0
+        semantic_skipped = 0
+        retry_failed_before = now - timedelta(seconds=settings.ingest_semantic_failed_retry_seconds)
+        from nexus.services.semantic_chunks import current_transcript_embedding_model
+
+        active_embedding_model = current_transcript_embedding_model()
+        semantic_candidates = db.execute(
+            text(
+                """
+                SELECT mts.media_id
+                FROM media_transcript_states mts
+                JOIN media m ON m.id = mts.media_id
+                WHERE m.kind = 'podcast_episode'
+                  AND mts.active_transcript_version_id IS NOT NULL
+                  AND mts.transcript_state IN ('ready', 'partial')
+                  AND mts.transcript_coverage IN ('partial', 'full')
+                  AND (
+                      mts.semantic_status = 'pending'
+                      OR (
+                          mts.semantic_status = 'failed'
+                          AND mts.updated_at < :retry_failed_before
+                      )
+                      OR (
+                          mts.semantic_status = 'ready'
+                          AND (
+                              NOT EXISTS (
+                                  SELECT 1
+                                  FROM podcast_transcript_chunks tc
+                                  WHERE tc.transcript_version_id = mts.active_transcript_version_id
+                              )
+                              OR EXISTS (
+                                  SELECT 1
+                                  FROM podcast_transcript_chunks tc
+                                  WHERE tc.transcript_version_id = mts.active_transcript_version_id
+                                    AND (
+                                        tc.embedding_vector IS NULL
+                                        OR tc.embedding_model IS NULL
+                                        OR tc.embedding_model <> :active_embedding_model
+                                    )
+                              )
+                          )
+                      )
+                  )
+                ORDER BY mts.updated_at ASC, mts.media_id ASC
+                LIMIT :semantic_limit
+                """
+            ),
+            {
+                "retry_failed_before": retry_failed_before,
+                "semantic_limit": int(settings.ingest_semantic_repair_batch_limit),
+                "active_embedding_model": active_embedding_model,
+            },
+        ).fetchall()
+        semantic_scanned = len(semantic_candidates)
+        if semantic_candidates:
+            from nexus.services.podcasts import repair_podcast_transcript_semantic_index_now
+
+            for row in semantic_candidates:
+                media_id = row[0]
+                result = repair_podcast_transcript_semantic_index_now(
+                    db,
+                    media_id=media_id,
+                    request_reason="operator_requeue",
+                    request_id=request_id,
+                )
+                status = str(result.get("status") or "")
+                if status == "completed":
+                    semantic_repaired += 1
+                elif status == "failed":
+                    semantic_failed += 1
+                    logger.warning(
+                        "stale_ingest_semantic_repair_failed",
+                        media_id=str(media_id),
+                        error_code=result.get("error_code"),
+                        request_id=request_id,
+                    )
+                else:
+                    semantic_skipped += 1
+
         db.commit()
         logger.info(
             "stale_ingest_reconcile_complete",
             scanned=len(stale_rows),
             requeued=requeued,
             failed=failed,
+            semantic_scanned=semantic_scanned,
+            semantic_repaired=semantic_repaired,
+            semantic_failed=semantic_failed,
+            semantic_skipped=semantic_skipped,
             request_id=request_id,
         )
-        return {"scanned": len(stale_rows), "requeued": requeued, "failed": failed}
+        return {
+            "scanned": len(stale_rows),
+            "requeued": requeued,
+            "failed": failed,
+            "semantic_scanned": semantic_scanned,
+            "semantic_repaired": semantic_repaired,
+            "semantic_failed": semantic_failed,
+            "semantic_skipped": semantic_skipped,
+        }
     except Exception:
         db.rollback()
         logger.exception("stale_ingest_reconcile_unexpected_error", request_id=request_id)

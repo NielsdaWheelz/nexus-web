@@ -50,7 +50,9 @@ nexus/
 │   │       ├── 0019_media_metadata_and_authors.py             # Media metadata + authors
 │   │       ├── 0020_conversation_titles.py                    # Conversation title column
 │   │       ├── 0021_podcast_transcription_job_lifecycle.py    # S7: podcast transcription job lifecycle
-│   │       └── 0022_user_email_display_name.py                # User email + display_name columns
+│   │       ├── 0022_user_email_display_name.py                # User email + display_name columns
+│   │       ├── 0023_podcast_transcription_request_reason.py   # Podcast transcript request reason contract
+│   │       └── 0024_podcast_transcript_state_versioning_semantic.py  # Transcript state bridge, versioned artifacts, semantic chunk search tables
 │   └── alembic.ini
 │
 ├── supabase/                    # Supabase local configuration
@@ -101,7 +103,7 @@ nexus/
 - **PDF Reader Alignment Hardening**: `PdfReader` enforces PDF.js `content-box` CSS invariants, defers initial scale/page application until viewer pages are ready (avoids invalid page warnings), and degrades to area-based bounds when text-layer/canvas geometry drifts beyond tolerance.
 - **PDF Linked-Items Adapters + Scope**: Linked-items now use explicit renderer adapters (`HtmlAnchorProvider` / `PdfAnchorProvider`) and typed coordinate transforms (`page` -> `viewer-scroll` -> `pane`) to avoid implicit cross-component `getBoundingClientRect` math; PDF exposes explicit scope controls (`This page` aligned mode, `Entire document` index/list mode) backed by stable ordering keyset semantics (`page_number`, `sort_top`, `sort_left`, `created_at`, `id`).
 - **Shared Surface Chrome**: Pane/page headers now use a single `SurfaceHeader` primitive (title, back, previous/next nav, actions, and options menu), with reader controls externalized from `PdfReader` so media/library/chat surfaces share non-scroll-coupled navigation chrome and a consistent options interaction model. Mobile headers hide meta/subtitle for compactness via a JS-driven `.mobile` class aligned with `MOBILE_MAX_WIDTH_PX`. Media toolbars use `ResponsiveToolbar` with priority-based items: primary actions show as icon-only buttons on mobile, secondary actions collapse into an overflow menu.
-- **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` remains control-plane only (subscribe + enqueue). `DELETE /podcasts/subscriptions/{podcast_id}` applies explicit unsubscribe retention modes (`mode=1|2|3`). Episode ingest runs in worker data-plane jobs with explicit sync lifecycle states (`pending`, `running`, `complete`, `source_limited`, `failed`).
+- **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` remains control-plane only (subscribe + enqueue). `DELETE /podcasts/subscriptions/{podcast_id}` applies explicit unsubscribe retention modes (`mode=1|2|3`). Episode ingest is metadata-first (`processing_status='pending'`) with explicit transcript admission via `POST /media/{id}/transcript/request` (dry-run forecast + quota-aware enqueue).
 - **Podcast Transcription Pipeline** (S7 PR-03): transcript segments are sourced from transcription-provider output (Deepgram), not feed payload transcript fields. Diarized transcription falls back to non-diarized output, transcript text is canonicalized (NFC + whitespace normalization), and persisted segment timing is strictly validated (`t_start_ms < t_end_ms`).
 - **Podcast Active Polling Orchestration** (S7 PR-04): Celery Beat schedules periodic active-subscription polling. Runs are singleton-safe via durable lease rows, stale `running` subscription sync claims are reclaimable, and each run persists deterministic operator telemetry (`processed_count`, `failed_count`, `skipped_count`, `scanned_count`, failure-code breakdown).
 - **User Identity**: Email is synced from Supabase JWT on every authenticated request via bootstrap upsert. Users can set a display name via `PATCH /me`. Library member/invite lists are enriched with email and display_name. User search (`GET /users/search`) matches by email prefix or display_name substring for invite-by-email flows.
@@ -760,7 +762,7 @@ When running locally:
 |----------|-----------|
 | Libraries | `GET/POST /libraries`, `PATCH/DELETE /libraries/{id}`, members, transfer-ownership (S4 PR-03) |
 | Invitations | `POST/GET /libraries/{id}/invites`, `GET /libraries/invites`, accept/decline/revoke (S4 PR-04) |
-| Media | `GET /media` (kind/search/cursor pagination), `GET /media/{id}`, `POST /media/from_url`, `POST /media/upload/init` |
+| Media | `GET /media` (kind/search/cursor pagination), `GET /media/{id}`, `POST /media/from_url`, `POST /media/upload/init`, `POST /media/{id}/transcript/request` |
 | EPUB Assets | `GET /media/{id}/assets/{asset_key}` (S5 PR-02: EPUB internal asset safe fetch) |
 | EPUB Chapters | `GET /media/{id}/chapters`, `GET /media/{id}/chapters/{idx}` (S5 PR-04: chapter manifest + navigation) |
 | EPUB Navigation | `GET /media/{id}/navigation` (canonical section targets + TOC linkage for reader UI) |

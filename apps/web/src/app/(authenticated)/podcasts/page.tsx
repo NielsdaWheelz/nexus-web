@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import MediaCatalogPage from "@/components/MediaCatalogPage";
 import { apiFetch, isApiError } from "@/lib/api/client";
@@ -8,6 +8,8 @@ import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
+
+const SUBSCRIPTION_PAGE_SIZE = 100;
 
 interface PodcastDiscoveryItem {
   provider_podcast_id: string;
@@ -36,6 +38,14 @@ interface SubscriptionSnapshot {
   sync_status: PodcastSubscribeResult["sync_status"];
 }
 
+interface PodcastSubscriptionListRow {
+  podcast_id: string;
+  sync_status: PodcastSubscribeResult["sync_status"];
+  podcast: {
+    provider_podcast_id: string;
+  };
+}
+
 export default function PodcastsPage() {
   const [query, setQuery] = useState("");
   const [discovering, setDiscovering] = useState(false);
@@ -45,7 +55,45 @@ export default function PodcastsPage() {
   const [subscriptionByProviderId, setSubscriptionByProviderId] = useState<
     Record<string, SubscriptionSnapshot>
   >({});
+  const [subscriptionsHydrated, setSubscriptionsHydrated] = useState(false);
   const [subscribingProviderIds, setSubscribingProviderIds] = useState<Set<string>>(new Set());
+
+  const hydrateSubscriptions = useCallback(async () => {
+    if (subscriptionsHydrated) {
+      return;
+    }
+    const next: Record<string, SubscriptionSnapshot> = {};
+    let offset = 0;
+
+    while (true) {
+      const response = await apiFetch<{ data: PodcastSubscriptionListRow[] }>(
+        `/api/podcasts/subscriptions?limit=${SUBSCRIPTION_PAGE_SIZE}&offset=${offset}`
+      );
+      for (const row of response.data) {
+        next[row.podcast.provider_podcast_id] = {
+          podcast_id: row.podcast_id,
+          sync_status: row.sync_status,
+        };
+      }
+      if (response.data.length < SUBSCRIPTION_PAGE_SIZE) {
+        break;
+      }
+      offset += SUBSCRIPTION_PAGE_SIZE;
+    }
+
+    setSubscriptionByProviderId(next);
+    setSubscriptionsHydrated(true);
+  }, [subscriptionsHydrated]);
+
+  useEffect(() => {
+    void hydrateSubscriptions().catch((error: unknown) => {
+      if (isApiError(error)) {
+        setDiscoverError(error.message);
+      } else {
+        setDiscoverError("Failed to load existing subscriptions");
+      }
+    });
+  }, [hydrateSubscriptions]);
 
   const handleDiscover = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -59,6 +107,7 @@ export default function PodcastsPage() {
     setHasSearched(true);
 
     try {
+      await hydrateSubscriptions();
       const params = new URLSearchParams({ q: trimmed, limit: "10" });
       const response = await apiFetch<{ data: PodcastDiscoveryItem[] }>(
         `/api/podcasts/discover?${params.toString()}`

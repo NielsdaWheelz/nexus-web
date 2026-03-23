@@ -15,6 +15,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -24,7 +25,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -81,6 +82,36 @@ class MediaKind(str, PyEnum):
     pdf = "pdf"
     video = "video"
     podcast_episode = "podcast_episode"
+
+
+class TranscriptState(str, PyEnum):
+    """Lifecycle state for transcript availability."""
+
+    not_requested = "not_requested"
+    queued = "queued"
+    running = "running"
+    ready = "ready"
+    partial = "partial"
+    unavailable = "unavailable"
+    failed_quota = "failed_quota"
+    failed_provider = "failed_provider"
+
+
+class TranscriptCoverage(str, PyEnum):
+    """Coverage quality for transcript artifacts."""
+
+    none = "none"
+    partial = "partial"
+    full = "full"
+
+
+class SemanticStatus(str, PyEnum):
+    """Semantic index readiness state for transcript chunks."""
+
+    none = "none"
+    pending = "pending"
+    ready = "ready"
+    failed = "failed"
 
 
 class MembershipRole(str, PyEnum):
@@ -150,6 +181,9 @@ class User(Base):
     )
     memberships: Mapped[list["Membership"]] = relationship(
         "Membership", back_populates="user", cascade="all, delete-orphan"
+    )
+    playback_queue_items: Mapped[list["PlaybackQueueItem"]] = relationship(
+        "PlaybackQueueItem", back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -356,11 +390,43 @@ class Media(Base):
     podcast_episode: Mapped["PodcastEpisode | None"] = relationship(
         "PodcastEpisode", back_populates="media", cascade="all, delete-orphan", uselist=False
     )
+    podcast_episode_chapters: Mapped[list["PodcastEpisodeChapter"]] = relationship(
+        "PodcastEpisodeChapter",
+        back_populates="media",
+        cascade="all, delete-orphan",
+        order_by=lambda: PodcastEpisodeChapter.chapter_idx,
+    )
+    podcast_listening_states: Mapped[list["PodcastListeningState"]] = relationship(
+        "PodcastListeningState",
+        back_populates="media",
+        cascade="all, delete-orphan",
+    )
+    playback_queue_items: Mapped[list["PlaybackQueueItem"]] = relationship(
+        "PlaybackQueueItem",
+        back_populates="media",
+        cascade="all, delete-orphan",
+    )
     podcast_transcription_job: Mapped["PodcastTranscriptionJob | None"] = relationship(
         "PodcastTranscriptionJob",
         back_populates="media",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+    transcript_state: Mapped["MediaTranscriptState | None"] = relationship(
+        "MediaTranscriptState",
+        back_populates="media",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    transcript_versions: Mapped[list["PodcastTranscriptVersion"]] = relationship(
+        "PodcastTranscriptVersion",
+        back_populates="media",
+        cascade="all, delete-orphan",
+    )
+    transcript_request_audits: Mapped[list["PodcastTranscriptRequestAudit"]] = relationship(
+        "PodcastTranscriptRequestAudit",
+        back_populates="media",
+        cascade="all, delete-orphan",
     )
     authors: Mapped[list["MediaAuthor"]] = relationship(
         "MediaAuthor",
@@ -437,6 +503,11 @@ class Fragment(Base):
         ForeignKey("media.id", ondelete="CASCADE"),
         nullable=False,
     )
+    transcript_version_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcast_transcript_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     idx: Mapped[int] = mapped_column(Integer, nullable=False)
     canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
     html_sanitized: Mapped[str] = mapped_column(Text, nullable=False)
@@ -466,6 +537,10 @@ class Fragment(Base):
 
     # Relationships
     media: Mapped["Media"] = relationship("Media", back_populates="fragments", lazy="joined")
+    transcript_version: Mapped["PodcastTranscriptVersion | None"] = relationship(
+        "PodcastTranscriptVersion",
+        back_populates="fragments",
+    )
     highlights: Mapped[list["Highlight"]] = relationship(
         "Highlight", back_populates="fragment", cascade="all, delete-orphan"
     )
@@ -490,6 +565,12 @@ class LibraryMedia(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+    __table_args__ = (
+        CheckConstraint("position >= 0", name="ck_library_media_position_non_negative"),
+        Index("ix_library_media_library_position", "library_id", "position"),
     )
 
     # Relationships
@@ -545,6 +626,45 @@ class Podcast(Base):
     )
 
 
+class PodcastSubscriptionCategory(Base):
+    """Per-user subscription grouping category (folder-like)."""
+
+    __tablename__ = "podcast_subscription_categories"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    color: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "name",
+            name="uq_podcast_subscription_categories_user_name",
+        ),
+        Index("ix_podcast_subscription_categories_user_position", "user_id", "position"),
+    )
+
+    subscriptions: Mapped[list["PodcastSubscription"]] = relationship(
+        "PodcastSubscription",
+        back_populates="category",
+    )
+
+
 class PodcastSubscription(Base):
     """Per-user subscription to a global podcast."""
 
@@ -562,6 +682,13 @@ class PodcastSubscription(Base):
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
     unsubscribe_mode: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    auto_queue: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    default_playback_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
+    category_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcast_subscription_categories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     sync_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     sync_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -601,9 +728,17 @@ class PodcastSubscription(Base):
             "sync_attempts >= 0",
             name="ck_podcast_subscriptions_sync_attempts_non_negative",
         ),
+        CheckConstraint(
+            "default_playback_speed IS NULL OR (default_playback_speed >= 0.5 AND default_playback_speed <= 3.0)",
+            name="ck_podcast_subscriptions_default_playback_speed_range",
+        ),
     )
 
     podcast: Mapped["Podcast"] = relationship("Podcast")
+    category: Mapped["PodcastSubscriptionCategory | None"] = relationship(
+        "PodcastSubscriptionCategory",
+        back_populates="subscriptions",
+    )
 
 
 class PodcastSubscriptionPollRun(Base):
@@ -714,6 +849,8 @@ class PodcastEpisode(Base):
     fallback_identity: Mapped[str] = mapped_column(Text, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    description_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -748,6 +885,156 @@ class PodcastEpisode(Base):
     podcast: Mapped["Podcast"] = relationship("Podcast", back_populates="episodes")
 
 
+class PodcastEpisodeChapter(Base):
+    """Episode-level chapter markers extracted from RSS metadata."""
+
+    __tablename__ = "podcast_episode_chapters"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    chapter_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    t_start_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    t_end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "media_id",
+            "chapter_idx",
+            name="uq_podcast_episode_chapters_media_idx",
+        ),
+        CheckConstraint(
+            "chapter_idx >= 0",
+            name="ck_podcast_episode_chapters_idx_non_negative",
+        ),
+        CheckConstraint(
+            "t_start_ms >= 0",
+            name="ck_podcast_episode_chapters_start_non_negative",
+        ),
+        CheckConstraint(
+            "t_end_ms IS NULL OR t_end_ms >= t_start_ms",
+            name="ck_podcast_episode_chapters_end_not_before_start",
+        ),
+        CheckConstraint(
+            "source IN ('rss_podcasting20', 'rss_podlove', 'embedded_mp4', 'embedded_id3')",
+            name="ck_podcast_episode_chapters_source",
+        ),
+        Index(
+            "ix_podcast_episode_chapters_media_t_start_ms",
+            "media_id",
+            "t_start_ms",
+        ),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="podcast_episode_chapters")
+
+
+class PodcastListeningState(Base):
+    """Per-user playback state for podcast/audio media resume."""
+
+    __tablename__ = "podcast_listening_states"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    playback_speed: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
+    is_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "position_ms >= 0",
+            name="ck_podcast_listening_states_position_ms_non_negative",
+        ),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms >= 0",
+            name="ck_podcast_listening_states_duration_ms_non_negative",
+        ),
+        CheckConstraint(
+            "playback_speed > 0",
+            name="ck_podcast_listening_states_playback_speed_positive",
+        ),
+        Index("ix_podcast_listening_states_media_id", "media_id"),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="podcast_listening_states")
+    user: Mapped["User"] = relationship("User")
+
+
+class PlaybackQueueItem(Base):
+    """Per-user ordered playback queue item."""
+
+    __tablename__ = "playback_queue_items"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    added_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "media_id", name="uq_playback_queue_items_user_media"),
+        CheckConstraint(
+            "position >= 0",
+            name="ck_playback_queue_items_position_non_negative",
+        ),
+        CheckConstraint(
+            "source IN ('manual', 'auto_subscription', 'auto_playlist')",
+            name="ck_playback_queue_items_source",
+        ),
+        Index("ix_playback_queue_items_user_position", "user_id", "position"),
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="playback_queue_items")
+    media: Mapped["Media"] = relationship("Media", back_populates="playback_queue_items")
+
+
 class PodcastTranscriptionJob(Base):
     """One transcription-work record per globally ingested podcast episode."""
 
@@ -763,6 +1050,9 @@ class PodcastTranscriptionJob(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    request_reason: Mapped[str] = mapped_column(Text, nullable=False, server_default="episode_open")
+    reserved_minutes: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    reservation_usage_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
@@ -787,6 +1077,16 @@ class PodcastTranscriptionJob(Base):
         CheckConstraint(
             "attempts >= 0",
             name="ck_podcast_transcription_jobs_attempts_non_negative",
+        ),
+        CheckConstraint(
+            "reserved_minutes >= 0",
+            name="ck_podcast_transcription_jobs_reserved_minutes_non_negative",
+        ),
+        CheckConstraint(
+            "request_reason IN ("
+            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue'"
+            ")",
+            name="ck_podcast_transcription_jobs_request_reason",
         ),
     )
 
@@ -840,6 +1140,7 @@ class PodcastTranscriptionUsageDaily(Base):
     )
     usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
     minutes_used: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    minutes_reserved: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -848,10 +1149,344 @@ class PodcastTranscriptionUsageDaily(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "minutes_used >= 0",
-            name="ck_podcast_transcription_usage_daily_minutes_non_negative",
+            "minutes_used >= 0 AND minutes_reserved >= 0",
+            name="ck_podcast_transcription_usage_daily_non_negative",
         ),
     )
+
+
+class PodcastTranscriptVersion(Base):
+    """Immutable transcript artifact version for a media item."""
+
+    __tablename__ = "podcast_transcript_versions"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    transcript_coverage: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=TranscriptCoverage.full.value,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    request_reason: Mapped[str] = mapped_column(Text, nullable=False, server_default="episode_open")
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("media_id", "version_no", name="uq_podcast_transcript_versions_media_no"),
+        CheckConstraint(
+            "version_no >= 1",
+            name="ck_podcast_transcript_versions_version_no_positive",
+        ),
+        CheckConstraint(
+            "transcript_coverage IN ('none', 'partial', 'full')",
+            name="ck_podcast_transcript_versions_coverage",
+        ),
+        CheckConstraint(
+            "request_reason IN ("
+            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue'"
+            ")",
+            name="ck_podcast_transcript_versions_request_reason",
+        ),
+        Index(
+            "uix_podcast_transcript_versions_media_active",
+            "media_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="transcript_versions")
+    segments: Mapped[list["PodcastTranscriptSegment"]] = relationship(
+        "PodcastTranscriptSegment",
+        back_populates="transcript_version",
+        cascade="all, delete-orphan",
+    )
+    chunks: Mapped[list["PodcastTranscriptChunk"]] = relationship(
+        "PodcastTranscriptChunk",
+        back_populates="transcript_version",
+        cascade="all, delete-orphan",
+    )
+    fragments: Mapped[list["Fragment"]] = relationship(
+        "Fragment",
+        back_populates="transcript_version",
+    )
+
+
+class PodcastTranscriptSegment(Base):
+    """Segment artifact persisted per transcript version."""
+
+    __tablename__ = "podcast_transcript_segments"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    transcript_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcast_transcript_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    segment_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
+    t_start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    t_end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    speaker_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "transcript_version_id",
+            "segment_idx",
+            name="uq_podcast_transcript_segments_version_idx",
+        ),
+        CheckConstraint(
+            "segment_idx >= 0",
+            name="ck_podcast_transcript_segments_segment_idx_non_negative",
+        ),
+        CheckConstraint(
+            "t_start_ms >= 0 AND t_end_ms > t_start_ms",
+            name="ck_podcast_transcript_segments_time_offsets_valid",
+        ),
+        Index(
+            "ix_podcast_transcript_segments_media_start",
+            "media_id",
+            "t_start_ms",
+            "segment_idx",
+        ),
+    )
+
+    transcript_version: Mapped["PodcastTranscriptVersion"] = relationship(
+        "PodcastTranscriptVersion", back_populates="segments"
+    )
+    media: Mapped["Media"] = relationship("Media")
+
+
+class PodcastTranscriptChunk(Base):
+    """Chunk + embedding artifact persisted per transcript version."""
+
+    __tablename__ = "podcast_transcript_chunks"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    transcript_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcast_transcript_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    chunk_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    t_start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    t_end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(JSONB, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False, server_default="hash_v1")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "transcript_version_id",
+            "chunk_idx",
+            name="uq_podcast_transcript_chunks_version_idx",
+        ),
+        CheckConstraint(
+            "chunk_idx >= 0",
+            name="ck_podcast_transcript_chunks_chunk_idx_non_negative",
+        ),
+        CheckConstraint(
+            "t_start_ms >= 0 AND t_end_ms > t_start_ms",
+            name="ck_podcast_transcript_chunks_time_offsets_valid",
+        ),
+        Index(
+            "ix_podcast_transcript_chunks_media_start",
+            "media_id",
+            "t_start_ms",
+            "chunk_idx",
+        ),
+    )
+
+    transcript_version: Mapped["PodcastTranscriptVersion"] = relationship(
+        "PodcastTranscriptVersion", back_populates="chunks"
+    )
+    media: Mapped["Media"] = relationship("Media")
+
+
+class MediaTranscriptState(Base):
+    """Dedicated transcript-state bridge for media capabilities/search readiness."""
+
+    __tablename__ = "media_transcript_states"
+
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    transcript_state: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=TranscriptState.not_requested.value,
+    )
+    transcript_coverage: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=TranscriptCoverage.none.value,
+    )
+    semantic_status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=SemanticStatus.none.value,
+    )
+    active_transcript_version_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcast_transcript_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    last_request_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "transcript_state IN ("
+            "'not_requested', 'queued', 'running', 'ready', 'partial', "
+            "'unavailable', 'failed_quota', 'failed_provider'"
+            ")",
+            name="ck_media_transcript_states_state",
+        ),
+        CheckConstraint(
+            "transcript_coverage IN ('none', 'partial', 'full')",
+            name="ck_media_transcript_states_coverage",
+        ),
+        CheckConstraint(
+            "semantic_status IN ('none', 'pending', 'ready', 'failed')",
+            name="ck_media_transcript_states_semantic_status",
+        ),
+        CheckConstraint(
+            "last_request_reason IS NULL OR last_request_reason IN ("
+            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue'"
+            ")",
+            name="ck_media_transcript_states_last_request_reason",
+        ),
+        Index("ix_media_transcript_states_semantic_status", "semantic_status"),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="transcript_state")
+    active_transcript_version: Mapped["PodcastTranscriptVersion | None"] = relationship(
+        "PodcastTranscriptVersion"
+    )
+
+
+class PodcastTranscriptRequestAudit(Base):
+    """Immutable audit log for each transcript request attempt."""
+
+    __tablename__ = "podcast_transcript_request_audits"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requested_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    request_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    required_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    remaining_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fits_budget: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "request_reason IN ("
+            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue'"
+            ")",
+            name="ck_podcast_transcript_request_audits_reason",
+        ),
+        CheckConstraint(
+            "outcome IN ('forecast', 'queued', 'idempotent', 'rejected_quota', 'enqueue_failed')",
+            name="ck_podcast_transcript_request_audits_outcome",
+        ),
+        CheckConstraint(
+            "required_minutes IS NULL OR required_minutes >= 0",
+            name="ck_podcast_transcript_request_audits_required_non_negative",
+        ),
+        CheckConstraint(
+            "remaining_minutes IS NULL OR remaining_minutes >= 0",
+            name="ck_podcast_transcript_request_audits_remaining_non_negative",
+        ),
+        Index(
+            "ix_podcast_transcript_request_audits_media_created",
+            "media_id",
+            "created_at",
+        ),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="transcript_request_audits")
 
 
 # =============================================================================
@@ -968,6 +1603,13 @@ class Highlight(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    transcript_anchor: Mapped["HighlightTranscriptAnchor | None"] = relationship(
+        "HighlightTranscriptAnchor",
+        back_populates="highlight",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     pdf_anchor: Mapped["HighlightPdfAnchor | None"] = relationship(
         "HighlightPdfAnchor",
         back_populates="highlight",
@@ -1064,6 +1706,57 @@ class HighlightFragmentAnchor(Base):
 
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="fragment_anchor")
     fragment: Mapped["Fragment"] = relationship("Fragment")
+
+
+class HighlightTranscriptAnchor(Base):
+    """Transcript-version aware anchor subtype for transcript highlights."""
+
+    __tablename__ = "highlight_transcript_anchors"
+
+    highlight_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("highlights.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    transcript_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcast_transcript_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    transcript_segment_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcast_transcript_segments.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    t_start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    t_end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "t_start_ms >= 0 AND t_end_ms > t_start_ms",
+            name="ck_highlight_transcript_anchors_time_offsets_valid",
+        ),
+        CheckConstraint(
+            "start_offset >= 0 AND end_offset > start_offset",
+            name="ck_highlight_transcript_anchors_text_offsets_valid",
+        ),
+        Index("ix_highlight_transcript_anchors_version", "transcript_version_id"),
+    )
+
+    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="transcript_anchor")
+    transcript_version: Mapped["PodcastTranscriptVersion"] = relationship(
+        "PodcastTranscriptVersion"
+    )
+    transcript_segment: Mapped["PodcastTranscriptSegment | None"] = relationship(
+        "PodcastTranscriptSegment"
+    )
 
 
 class HighlightPdfAnchor(Base):

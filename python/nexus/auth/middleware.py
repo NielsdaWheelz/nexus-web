@@ -9,6 +9,7 @@ import hmac
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from fastapi import Depends, Request
@@ -43,6 +44,39 @@ class Viewer:
     user_id: UUID
     default_library_id: UUID
     email: str | None = None
+    roles: frozenset[str] = frozenset()
+
+
+def _normalize_role_values(raw_roles: Any) -> set[str]:
+    """Normalize role claim shapes (string/list/comma-string) into lowercased names."""
+    if raw_roles is None:
+        return set()
+
+    if isinstance(raw_roles, str):
+        return {role.strip().lower() for role in raw_roles.split(",") if role.strip()}
+
+    if isinstance(raw_roles, (list, tuple, set, frozenset)):
+        normalized: set[str] = set()
+        for item in raw_roles:
+            normalized.update(_normalize_role_values(item))
+        return normalized
+
+    return set()
+
+
+def _extract_viewer_roles(payload: dict[str, Any]) -> frozenset[str]:
+    """Extract normalized viewer roles from token claims."""
+    roles: set[str] = set()
+    roles.update(_normalize_role_values(payload.get("nexus_roles")))
+    roles.update(_normalize_role_values(payload.get("roles")))
+    roles.update(_normalize_role_values(payload.get("role")))
+
+    app_metadata = payload.get("app_metadata")
+    if isinstance(app_metadata, dict):
+        roles.update(_normalize_role_values(app_metadata.get("roles")))
+        roles.update(_normalize_role_values(app_metadata.get("role")))
+
+    return frozenset(roles)
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -119,6 +153,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Step 4: Parse user_id and email from claims
         user_id = UUID(payload["sub"])
         email = payload.get("email")
+        roles = _extract_viewer_roles(payload)
 
         # Step 5: Bootstrap user/library if callback provided
         if self.bootstrap_callback:
@@ -140,6 +175,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             user_id=user_id,
             default_library_id=default_library_id,
             email=email,
+            roles=roles,
         )
 
         return await call_next(request)

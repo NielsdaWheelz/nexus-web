@@ -1,7 +1,7 @@
 # Docker Compose for isolated test services (Postgres + Redis)
 services:
   postgres:
-    image: postgres:15.8
+    image: pgvector/pgvector:pg15
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

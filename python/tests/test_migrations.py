@@ -3412,3 +3412,610 @@ class TestS6PR01Migration0009:
                 {"hid": h_id, "mid": mid},
             )
             session.commit()
+
+
+class TestMigration0026SemanticChunkBackfill:
+    """Regression tests for semantic chunk backfill over legacy transcripts."""
+
+    @pytest.fixture(autouse=True)
+    def isolate_migration(self):
+        run_alembic_command("downgrade base")
+        yield
+        run_alembic_command("downgrade base")
+        run_alembic_command("upgrade head")
+
+    @pytest.fixture
+    def migration_engine(self):
+        database_url = get_test_database_url()
+        engine = create_engine(database_url)
+        yield engine
+        engine.dispose()
+
+    def test_upgrade_backfills_semantic_chunks_for_pre_0024_transcripts(self, migration_engine):
+        result = run_alembic_command("upgrade 0023")
+        assert result.returncode == 0, f"upgrade 0023 failed: {result.stderr}"
+
+        user_id = uuid4()
+        media_id = uuid4()
+        fragment_1 = uuid4()
+        fragment_2 = uuid4()
+
+        with Session(migration_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:media_id, 'podcast_episode', 'legacy transcript', 'ready_for_reading', :user_id)
+                    """
+                ),
+                {"media_id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (
+                        id,
+                        media_id,
+                        idx,
+                        html_sanitized,
+                        canonical_text,
+                        t_start_ms,
+                        t_end_ms,
+                        speaker_label
+                    )
+                    VALUES (
+                        :id,
+                        :media_id,
+                        :idx,
+                        :html_sanitized,
+                        :canonical_text,
+                        :t_start_ms,
+                        :t_end_ms,
+                        :speaker_label
+                    )
+                    """
+                ),
+                {
+                    "id": fragment_1,
+                    "media_id": media_id,
+                    "idx": 0,
+                    "html_sanitized": "<p>first legacy segment</p>",
+                    "canonical_text": "first legacy segment",
+                    "t_start_ms": 0,
+                    "t_end_ms": 1000,
+                    "speaker_label": "Host",
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (
+                        id,
+                        media_id,
+                        idx,
+                        html_sanitized,
+                        canonical_text,
+                        t_start_ms,
+                        t_end_ms,
+                        speaker_label
+                    )
+                    VALUES (
+                        :id,
+                        :media_id,
+                        :idx,
+                        :html_sanitized,
+                        :canonical_text,
+                        :t_start_ms,
+                        :t_end_ms,
+                        :speaker_label
+                    )
+                    """
+                ),
+                {
+                    "id": fragment_2,
+                    "media_id": media_id,
+                    "idx": 1,
+                    "html_sanitized": "<p>second legacy segment</p>",
+                    "canonical_text": "second legacy segment",
+                    "t_start_ms": 1200,
+                    "t_end_ms": 2200,
+                    "speaker_label": "Guest",
+                },
+            )
+            session.commit()
+
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+        with Session(migration_engine) as session:
+            state_row = session.execute(
+                text(
+                    """
+                    SELECT transcript_state, transcript_coverage, semantic_status, active_transcript_version_id
+                    FROM media_transcript_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            version_row = session.execute(
+                text(
+                    """
+                    SELECT id, version_no, is_active
+                    FROM podcast_transcript_versions
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            segment_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            chunk_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_transcript_chunks WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            chunk_models = session.execute(
+                text(
+                    """
+                    SELECT DISTINCT embedding_model
+                    FROM podcast_transcript_chunks
+                    WHERE media_id = :media_id
+                    ORDER BY embedding_model
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchall()
+
+        assert state_row is not None
+        assert state_row[0] == "ready"
+        assert state_row[1] == "full"
+        assert state_row[2] == "pending", (
+            "legacy transcript rows backfilled before pgvector cutover must be marked pending "
+            "until re-indexed with production semantic embeddings"
+        )
+        assert state_row[3] is not None
+        assert version_row is not None
+        assert version_row[1] == 1
+        assert version_row[2] is True
+        assert segment_count == 2
+        assert chunk_count == 2, "legacy transcript segments must be backfilled into chunks"
+        assert chunk_models == [("hash_v1_frozen_0026",)], (
+            "migration 0026 must use a frozen in-migration embedding implementation "
+            "so fresh installs stay time-stable even if runtime embedding code changes"
+        )
+
+
+class TestPodcastListeningStateMigration:
+    """Schema assertions for podcast listening-state persistence table."""
+
+    def test_head_contains_podcast_listening_state_table_contract(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            columns = session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_listening_states'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
+            pk_columns = session.execute(
+                text(
+                    """
+                    SELECT a.attname
+                    FROM pg_index i
+                    JOIN pg_class c ON c.oid = i.indrelid
+                    JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
+                    WHERE c.relname = 'podcast_listening_states'
+                      AND i.indisprimary
+                    ORDER BY a.attname
+                    """
+                )
+            ).fetchall()
+            constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'podcast_listening_states'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'podcast_listening_states'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+            is_completed_column = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_listening_states'
+                      AND column_name = 'is_completed'
+                    """
+                )
+            ).fetchone()
+
+        column_names = {row[0] for row in columns}
+        assert {
+            "user_id",
+            "media_id",
+            "position_ms",
+            "duration_ms",
+            "playback_speed",
+            "is_completed",
+            "updated_at",
+        }.issubset(column_names), f"Unexpected podcast_listening_states columns: {column_names}"
+
+        assert [row[0] for row in pk_columns] == ["media_id", "user_id"], (
+            f"Expected composite PK over (user_id, media_id), got {[row[0] for row in pk_columns]}"
+        )
+
+        constraint_names = {row[0] for row in constraints}
+        assert "ck_podcast_listening_states_position_ms_non_negative" in constraint_names
+        assert "ck_podcast_listening_states_playback_speed_positive" in constraint_names
+
+        index_names = {row[0] for row in indexes}
+        assert "ix_podcast_listening_states_media_id" in index_names
+
+        assert is_completed_column is not None, (
+            "podcast_listening_states.is_completed must exist for played/unplayed state derivation"
+        )
+        assert is_completed_column[1] == "boolean", (
+            f"Expected is_completed boolean type, got {is_completed_column[1]}"
+        )
+        assert is_completed_column[2] == "NO", "is_completed must be non-null"
+
+
+class TestPlaybackQueueMigration:
+    """Schema assertions for playback queue table and subscription auto-queue toggle."""
+
+    def test_head_contains_playback_queue_table_and_auto_queue_flag(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            queue_columns = session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'playback_queue_items'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
+            queue_constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'playback_queue_items'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            queue_indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'playback_queue_items'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+            auto_queue_column = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_subscriptions'
+                      AND column_name = 'auto_queue'
+                    """
+                )
+            ).fetchone()
+            default_playback_speed_column = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_subscriptions'
+                      AND column_name = 'default_playback_speed'
+                    """
+                )
+            ).fetchone()
+
+        queue_column_names = {row[0] for row in queue_columns}
+        assert {
+            "id",
+            "user_id",
+            "media_id",
+            "position",
+            "added_at",
+            "source",
+        }.issubset(queue_column_names), (
+            "playback queue migration must provide durable ordered queue schema; "
+            f"got columns {queue_column_names}"
+        )
+
+        queue_constraint_names = {row[0] for row in queue_constraints}
+        assert "uq_playback_queue_items_user_media" in queue_constraint_names
+        assert "ck_playback_queue_items_position_non_negative" in queue_constraint_names
+        assert "ck_playback_queue_items_source" in queue_constraint_names
+
+        queue_index_names = {row[0] for row in queue_indexes}
+        assert "ix_playback_queue_items_user_position" in queue_index_names
+
+        assert auto_queue_column is not None, (
+            "podcast_subscriptions.auto_queue must exist for sync-driven queue opt-in"
+        )
+        assert auto_queue_column[1] == "boolean", (
+            f"Expected auto_queue boolean column, got {auto_queue_column[1]}"
+        )
+        assert default_playback_speed_column is not None, (
+            "podcast_subscriptions.default_playback_speed must exist for per-subscription speed inheritance"
+        )
+        assert default_playback_speed_column[1] == "double precision", (
+            "default_playback_speed should be FLOAT for player-speed precision parity, "
+            f"got {default_playback_speed_column[1]}"
+        )
+        assert default_playback_speed_column[2] == "YES", (
+            "default_playback_speed must be nullable so null means inherit global default 1.0x"
+        )
+
+
+class TestPodcastSubscriptionCategoryMigration:
+    """Schema assertions for PR-14 podcast subscription categories cutover."""
+
+    def test_head_contains_subscription_categories_and_subscription_fk_contract(
+        self, migrated_engine
+    ):
+        with Session(migrated_engine) as session:
+            category_columns = session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_subscription_categories'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
+            category_constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'podcast_subscription_categories'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            category_indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'podcast_subscription_categories'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+            subscription_category_column = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_subscriptions'
+                      AND column_name = 'category_id'
+                    """
+                )
+            ).fetchone()
+            subscription_fk_constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'podcast_subscriptions'::regclass
+                      AND contype = 'f'
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+
+        category_column_names = {row[0] for row in category_columns}
+        assert {
+            "id",
+            "user_id",
+            "name",
+            "position",
+            "color",
+            "created_at",
+        }.issubset(category_column_names), (
+            "podcast subscription category migration must create category contract columns; "
+            f"got {category_column_names}"
+        )
+
+        category_constraint_names = {row[0] for row in category_constraints}
+        assert "uq_podcast_subscription_categories_user_name" in category_constraint_names, (
+            "categories table must enforce per-user unique names"
+        )
+
+        category_index_names = {row[0] for row in category_indexes}
+        assert "ix_podcast_subscription_categories_user_position" in category_index_names, (
+            "categories table must support deterministic user-scoped ordering reads"
+        )
+
+        assert subscription_category_column is not None, (
+            "podcast_subscriptions.category_id must exist for subscription-category assignment"
+        )
+        assert subscription_category_column[1] == "uuid", (
+            f"category_id should be uuid type, got {subscription_category_column[1]}"
+        )
+        assert subscription_category_column[2] == "YES", (
+            "category_id must be nullable so uncategorized remains an explicit state"
+        )
+
+        fk_names = {row[0] for row in subscription_fk_constraints}
+        assert "fk_podcast_subscriptions_category_id" in fk_names, (
+            "podcast_subscriptions.category_id must enforce FK integrity to categories table"
+        )
+
+
+class TestLibraryMediaOrderingMigration:
+    """Schema assertions for durable library media ordering."""
+
+    def test_head_contains_library_media_position_contract(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            position_column = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_name = 'library_media'
+                      AND column_name = 'position'
+                    """
+                )
+            ).fetchone()
+            constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'library_media'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'library_media'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+
+        assert position_column is not None, (
+            "library_media.position must exist to support persisted drag-reorder semantics"
+        )
+        assert position_column[1] in {"integer", "bigint"}, (
+            f"Expected library_media.position integer-like type, got {position_column[1]}"
+        )
+        assert position_column[2] == "NO", "library_media.position must be non-null"
+
+        constraint_names = {row[0] for row in constraints}
+        assert "ck_library_media_position_non_negative" in constraint_names
+
+        index_names = {row[0] for row in indexes}
+        assert "ix_library_media_library_position" in index_names
+
+
+class TestPodcastEpisodeChapterMigration:
+    """Schema assertions for podcast episode chapter persistence contract."""
+
+    def test_head_contains_podcast_episode_chapters_table_contract(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            columns = session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_episode_chapters'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
+            constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'podcast_episode_chapters'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'podcast_episode_chapters'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+
+        column_names = {row[0] for row in columns}
+        assert {
+            "id",
+            "media_id",
+            "chapter_idx",
+            "title",
+            "t_start_ms",
+            "t_end_ms",
+            "url",
+            "image_url",
+            "source",
+            "created_at",
+        }.issubset(column_names), (
+            "podcast chapter migration must persist canonical chapter contract fields; "
+            f"got columns {column_names}"
+        )
+
+        constraint_names = {row[0] for row in constraints}
+        assert "uq_podcast_episode_chapters_media_idx" in constraint_names
+        assert "ck_podcast_episode_chapters_source" in constraint_names
+
+        index_names = {row[0] for row in indexes}
+        assert "ix_podcast_episode_chapters_media_t_start_ms" in index_names
+
+
+class TestPodcastEpisodeShowNotesMigration:
+    """Schema assertions for PR-12 show notes persistence columns."""
+
+    def test_head_contains_podcast_episode_show_notes_columns(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_episodes'
+                      AND column_name IN ('description_html', 'description_text')
+                    ORDER BY column_name
+                    """
+                )
+            ).fetchall()
+
+        column_contract = {row[0]: (row[1], row[2]) for row in rows}
+        assert "description_html" in column_contract, (
+            "podcast_episodes.description_html must exist for sanitized show notes html persistence"
+        )
+        assert "description_text" in column_contract, (
+            "podcast_episodes.description_text must exist for plain-text preview/search contexts"
+        )
+        assert column_contract["description_html"][0] in {"text", "character varying"}, (
+            f"description_html should be text-like, got {column_contract['description_html'][0]}"
+        )
+        assert column_contract["description_text"][0] in {"text", "character varying"}, (
+            f"description_text should be text-like, got {column_contract['description_text'][0]}"
+        )
+        assert column_contract["description_html"][1] == "YES", (
+            "description_html should be nullable for episodes with no show notes"
+        )
+        assert column_contract["description_text"][1] == "YES", (
+            "description_text should be nullable for episodes with no show notes"
+        )

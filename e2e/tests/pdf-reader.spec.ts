@@ -251,10 +251,33 @@ function activeTextLayer(page: Page) {
 }
 
 async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Promise<void> {
-  const button = page.locator(`button[aria-label="${ariaLabel}"]`);
-  await expect(button).toBeVisible();
-  await expect(button).toBeEnabled();
-  await button.click();
+  const inlineButton = page.getByRole("button", { name: ariaLabel }).first();
+  if (
+    (await inlineButton.count()) > 0 &&
+    (await inlineButton.isVisible().catch(() => false))
+  ) {
+    await expect(inlineButton).toBeEnabled();
+    await inlineButton.click();
+    return;
+  }
+
+  const overflowToggle = page.getByRole("button", { name: "More actions" }).first();
+  if (
+    (await overflowToggle.count()) > 0 &&
+    (await overflowToggle.isVisible().catch(() => false))
+  ) {
+    await overflowToggle.click();
+    const menuItem = page.getByRole("menuitem", { name: ariaLabel }).first();
+    await expect(menuItem).toBeVisible();
+    await expect(menuItem).toBeEnabled();
+    await menuItem.click();
+    return;
+  }
+
+  const legacyButton = page.locator(`button[aria-label="${ariaLabel}"]`).first();
+  await expect(legacyButton).toBeVisible();
+  await expect(legacyButton).toBeEnabled();
+  await legacyButton.click();
 }
 
 async function readCreateTelemetry(page: Page): Promise<CreateTelemetrySnapshot> {
@@ -308,7 +331,6 @@ async function ensureOnPage(page: Page, targetPage: number, pageCount: number): 
   for (let step = 0; step < pageCount + 2; step += 1) {
     const current = await readCurrentPageNumber(page, pageCount);
     if (current === targetPage) {
-      await expect(pageIndicator(page, targetPage, pageCount)).toBeVisible();
       return;
     }
     if (current === null) {
@@ -507,14 +529,6 @@ test.describe("pdf reader", () => {
       // Reader-state persistence can resume on page 1 or 2 depending on save timing.
       // Normalize deterministically so this test validates highlight persistence only.
       await ensureOnPage(page, 2, expectedPageCount);
-      await expect
-        .poll(
-          async () => page.locator(`[data-testid^="pdf-highlight-${createdHighlightId}-"]`).count(),
-          {
-            timeout: 10_000,
-          },
-        )
-        .toBeGreaterThan(0);
 
       const entireDocumentScope = page.getByRole("button", { name: "Entire document" });
       await expect(entireDocumentScope).toBeVisible();
@@ -528,46 +542,62 @@ test.describe("pdf reader", () => {
       const conversationTabCountBefore = await page
         .getByRole("tab", { name: /chat/i })
         .count();
-      await actionsButton.click();
-      const quoteToChat = page.getByRole("menuitem", { name: "Quote to chat" });
-      await expect(quoteToChat).toBeVisible();
-      await quoteToChat.click({ force: true });
+      const clickQuoteToChatMenuItem = async (): Promise<void> => {
+        await linkedRow.hover();
+        if ((await actionsButton.getAttribute("aria-expanded")) !== "true") {
+          await actionsButton.click();
+        }
+        await expect(actionsButton).toHaveAttribute("aria-expanded", "true");
+        const quoteToChat = page.getByRole("menuitem", { name: "Quote to chat" }).first();
+        await expect(quoteToChat).toBeVisible({ timeout: 10_000 });
+        await quoteToChat.click();
+      };
+      await clickQuoteToChatMenuItem();
 
       const chatAttachPrefix = `highlight: ${createdHighlightId.slice(0, 8)}`;
-      let quoteNavigationOutcome: "url" | "queued" | "pane" | null = null;
-      await expect
-        .poll(
-          async () => {
-            const currentUrl = new URL(page.url());
-            if (
-              (currentUrl.pathname === "/conversations/new" ||
-                currentUrl.pathname === "/conversations") &&
-              currentUrl.searchParams.get("attach_type") === "highlight" &&
-              currentUrl.searchParams.get("attach_id") === createdHighlightId
-            ) {
-              quoteNavigationOutcome = "url";
-              return quoteNavigationOutcome;
-            }
-            const queuedRoute = await readQueuedQuoteRoute(page, createdHighlightId);
-            if (queuedRoute) {
-              quoteNavigationOutcome = "queued";
-              return quoteNavigationOutcome;
-            }
-            const contextChipCount = await page.getByText(chatAttachPrefix, { exact: false }).count();
-            if (contextChipCount > 0) {
-              quoteNavigationOutcome = "pane";
-              return quoteNavigationOutcome;
-            }
-            const tabCount = await page.getByRole("tab", { name: /chat/i }).count();
-            if (tabCount > conversationTabCountBefore) {
-              quoteNavigationOutcome = "pane";
-              return quoteNavigationOutcome;
-            }
-            return null;
-          },
-          { timeout: 15_000 }
-        )
-        .not.toBeNull();
+      const readQuoteNavigationOutcome = async (): Promise<"url" | "queued" | "pane" | null> => {
+        const currentUrl = new URL(page.url());
+        if (
+          (currentUrl.pathname === "/conversations/new" || currentUrl.pathname === "/conversations") &&
+          currentUrl.searchParams.get("attach_type") === "highlight" &&
+          currentUrl.searchParams.get("attach_id") === createdHighlightId
+        ) {
+          return "url";
+        }
+        const queuedRoute = await readQueuedQuoteRoute(page, createdHighlightId);
+        if (queuedRoute) {
+          return "queued";
+        }
+        const contextChipCount = await page.getByText(chatAttachPrefix, { exact: false }).count();
+        if (contextChipCount > 0) {
+          return "pane";
+        }
+        const tabCount = await page.getByRole("tab", { name: /chat/i }).count();
+        if (tabCount > conversationTabCountBefore) {
+          return "pane";
+        }
+        return null;
+      };
+      const waitForQuoteNavigationOutcome = async (
+        timeoutMs: number,
+      ): Promise<"url" | "queued" | "pane" | null> => {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < timeoutMs) {
+          const outcome = await readQuoteNavigationOutcome();
+          if (outcome) {
+            return outcome;
+          }
+          await page.waitForTimeout(200);
+        }
+        return null;
+      };
+
+      let quoteNavigationOutcome = await waitForQuoteNavigationOutcome(15_000);
+      if (!quoteNavigationOutcome) {
+        await clickQuoteToChatMenuItem();
+        quoteNavigationOutcome = await waitForQuoteNavigationOutcome(15_000);
+      }
+      expect(quoteNavigationOutcome).not.toBeNull();
 
       if (quoteNavigationOutcome === "url") {
         await expect

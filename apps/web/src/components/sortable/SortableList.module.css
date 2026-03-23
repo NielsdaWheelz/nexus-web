@@ -1,0 +1,13 @@
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item {
+  touch-action: manipulation;
+}
+
+.item[data-dragging="true"] {
+  z-index: 2;
+}

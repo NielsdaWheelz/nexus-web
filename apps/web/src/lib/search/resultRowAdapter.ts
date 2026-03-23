@@ -3,6 +3,7 @@ export const ALL_SEARCH_TYPES = [
   "fragment",
   "annotation",
   "message",
+  "transcript_chunk",
 ] as const;
 
 export type SearchType = (typeof ALL_SEARCH_TYPES)[number];
@@ -54,17 +55,26 @@ export interface SearchMessageResult extends SearchBaseResult {
   seq: number;
 }
 
+export interface SearchTranscriptChunkResult extends SearchBaseResult {
+  type: "transcript_chunk";
+  t_start_ms: number;
+  t_end_ms: number;
+  source: SearchSourceMetadata;
+}
+
 export type SearchApiResult =
   | SearchMediaResult
   | SearchFragmentResult
   | SearchAnnotationResult
-  | SearchMessageResult;
+  | SearchMessageResult
+  | SearchTranscriptChunkResult;
 
 /** Result types that carry source metadata. */
 export type SearchResultWithSource =
   | SearchMediaResult
   | SearchFragmentResult
-  | SearchAnnotationResult;
+  | SearchAnnotationResult
+  | SearchTranscriptChunkResult;
 
 export interface SearchResponseShape {
   results: SearchApiResult[];
@@ -99,12 +109,8 @@ export interface SearchResultRowViewModel {
 // ---------------------------------------------------------------------------
 // Runtime validation & normalization – Layer 1
 //
-// The API may return results in two shapes:
-//   1. Nested (intended): { source: { media_id, media_kind, ... }, fragment_idx }
-//   2. Flat (current):    { media_id, title, idx, highlight_id, conversation_id, ... }
-//
-// normalizeSearchResult accepts EITHER shape and produces the canonical
-// SearchApiResult union type. Returns null for truly unrecoverable results.
+// Contract is strict: result rows must use canonical nested source metadata.
+// Legacy flat shapes are intentionally rejected after cutover.
 // ---------------------------------------------------------------------------
 
 /** Runtime check that a source object has the required shape. */
@@ -120,25 +126,13 @@ function isValidSource(value: unknown): value is SearchSourceMetadata {
 }
 
 /**
- * Resolve source metadata from either a nested `source` object or flat
- * top-level fields. Returns null if neither format provides a media_id.
+ * Resolve nested source metadata from canonical `source` field.
  */
 function resolveSource(r: Record<string, unknown>): SearchSourceMetadata | null {
   if (isValidSource(r.source)) {
     return r.source as SearchSourceMetadata;
   }
-  // Fall back to flat top-level fields
-  const media_id =
-    typeof r.media_id === "string" ? r.media_id : null;
-  if (!media_id) return null;
-  return {
-    media_id,
-    media_kind: typeof r.media_kind === "string" ? r.media_kind : "",
-    title: typeof r.title === "string" ? r.title : "",
-    authors: Array.isArray(r.authors) ? (r.authors as string[]) : [],
-    published_date:
-      typeof r.published_date === "string" ? r.published_date : null,
-  };
+  return null;
 }
 
 /** Runtime check that a highlight object has the required shape. */
@@ -153,20 +147,9 @@ function isValidHighlight(value: unknown): value is SearchHighlightContext {
 }
 
 /**
- * Resolve a fragment index from either `fragment_idx` or the legacy `idx` field.
- */
-function resolveFragmentIdx(r: Record<string, unknown>): number | null {
-  if (typeof r.fragment_idx === "number") return r.fragment_idx;
-  if (typeof r.idx === "number") return r.idx;
-  return null;
-}
-
-/**
  * Normalize a raw API result object into the canonical SearchApiResult type.
  *
- * Handles both the intended nested shape (with `source` object) and the
- * flat shape currently returned by the API. Returns null for results that
- * cannot be recovered into a valid type.
+ * Returns null for any result that violates the canonical nested contract.
  */
 export function normalizeSearchResult(
   result: unknown,
@@ -190,15 +173,15 @@ export function normalizeSearchResult(
     case "fragment": {
       const source = resolveSource(r);
       if (!source) return null;
-      const fragment_idx = resolveFragmentIdx(r);
-      if (fragment_idx === null) return null;
+      if (typeof r.fragment_idx !== "number") return null;
+      const fragment_idx = r.fragment_idx;
       return { ...base, type: "fragment", fragment_idx, source };
     }
     case "annotation": {
       const source = resolveSource(r);
       if (!source) return null;
-      const fragment_idx = resolveFragmentIdx(r);
-      if (fragment_idx === null) return null;
+      if (typeof r.fragment_idx !== "number") return null;
+      const fragment_idx = r.fragment_idx;
       if (
         typeof r.highlight_id !== "string" ||
         typeof r.fragment_id !== "string" ||
@@ -230,6 +213,23 @@ export function normalizeSearchResult(
         seq: r.seq,
       };
     }
+    case "transcript_chunk": {
+      const source = resolveSource(r);
+      if (!source) return null;
+      if (
+        typeof r.t_start_ms !== "number" ||
+        typeof r.t_end_ms !== "number"
+      ) {
+        return null;
+      }
+      return {
+        ...base,
+        type: "transcript_chunk",
+        t_start_ms: r.t_start_ms,
+        t_end_ms: r.t_end_ms,
+        source,
+      };
+    }
     default:
       return null;
   }
@@ -238,8 +238,7 @@ export function normalizeSearchResult(
 /**
  * Runtime validation for a single search result.
  *
- * Returns true if the result can be normalized into a valid SearchApiResult
- * (accepts both nested and flat API shapes). Delegates to normalizeSearchResult.
+ * Returns true if the result matches the canonical nested SearchApiResult shape.
  */
 export function isValidSearchResult(
   result: unknown,
@@ -348,6 +347,11 @@ function buildResultHref(result: SearchApiResult): string {
     }
     case "message":
       return `/conversations/${result.conversation_id}`;
+    case "transcript_chunk": {
+      const params = new URLSearchParams();
+      params.set("t_start_ms", String(result.t_start_ms));
+      return `/media/${result.source.media_id}?${params.toString()}`;
+    }
   }
 }
 
@@ -362,6 +366,10 @@ function buildPrimaryText(result: SearchApiResult): string {
     return sanitizeSnippet(result.snippet) || `Message #${result.seq}`;
   }
   return sanitizeSnippet(result.snippet);
+}
+
+function formatTypeLabel(type: SearchType): string {
+  return type === "transcript_chunk" ? "transcript chunk" : type;
 }
 
 export function buildSearchQueryParams({
@@ -379,8 +387,11 @@ export function buildSearchQueryParams({
   if (orderedSelected.length === 0) {
     // Explicitly differentiate from omitted types (which means "all").
     params.set("types", "");
-  } else if (orderedSelected.length < ALL_SEARCH_TYPES.length) {
+  } else {
     params.set("types", orderedSelected.join(","));
+  }
+  if (orderedSelected.includes("transcript_chunk")) {
+    params.set("semantic", "true");
   }
 
   if (cursor) {
@@ -404,7 +415,7 @@ export function adaptSearchResultRow(result: SearchApiResult): SearchResultRowVi
     key: `${result.type}-${result.id}`,
     href: buildResultHref(result),
     type: result.type,
-    typeLabel: result.type,
+    typeLabel: formatTypeLabel(result.type),
     primaryText: buildPrimaryText(result),
     snippetSegments: parseSnippetSegments(result.snippet),
     sourceMeta: buildSourceMeta(result),

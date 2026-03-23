@@ -71,6 +71,7 @@ def insert_transcript_fragments(
     transcript_segments: list[dict[str, Any]],
     *,
     now: datetime,
+    transcript_version_id: UUID | None = None,
 ) -> None:
     """Persist transcript segments as ordered fragments."""
     for idx, segment in enumerate(transcript_segments):
@@ -81,6 +82,7 @@ def insert_transcript_fragments(
                 """
                 INSERT INTO fragments (
                     media_id,
+                    transcript_version_id,
                     idx,
                     canonical_text,
                     html_sanitized,
@@ -91,6 +93,7 @@ def insert_transcript_fragments(
                 )
                 VALUES (
                     :media_id,
+                    :transcript_version_id,
                     :idx,
                     :canonical_text,
                     :html_sanitized,
@@ -103,6 +106,7 @@ def insert_transcript_fragments(
             ),
             {
                 "media_id": media_id,
+                "transcript_version_id": transcript_version_id,
                 "idx": idx,
                 "canonical_text": canonical_text,
                 "html_sanitized": html_sanitized,

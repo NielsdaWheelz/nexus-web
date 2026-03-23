@@ -12,16 +12,27 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
-from nexus.schemas.media import FromUrlRequest, UploadInitRequest
+from nexus.schemas.media import (
+    FromUrlRequest,
+    ListeningStateBatchUpsertRequest,
+    ListeningStateUpsertRequest,
+    TranscriptForecastBatchRequest,
+    TranscriptRequestBatchRequest,
+    TranscriptRequestBatchResponse,
+    TranscriptRequestRequest,
+    TranscriptRequestResponse,
+    UploadInitRequest,
+)
 from nexus.schemas.reader import ReaderMediaStatePatch
 from nexus.services import epub_lifecycle, epub_read, image_proxy
 from nexus.services import media as media_service
+from nexus.services import podcasts as podcast_service
 from nexus.services import reader as reader_service
 from nexus.services import upload as upload_service
 
@@ -207,6 +218,40 @@ def patch_reader_state(
     return success_response(result.model_dump(mode="json"))
 
 
+@router.get("/media/{media_id}/listening-state")
+def get_listening_state(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Get per-media listening state for the authenticated viewer."""
+    result = media_service.get_listening_state_for_viewer(db, viewer.user_id, media_id)
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.put("/media/{media_id}/listening-state", status_code=204)
+def put_listening_state(
+    media_id: UUID,
+    body: ListeningStateUpsertRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Upsert per-media listening state for the authenticated viewer."""
+    media_service.upsert_listening_state_for_viewer(db, viewer.user_id, media_id, body)
+    return Response(status_code=204)
+
+
+@router.post("/media/listening-state/batch", status_code=204)
+def post_listening_state_batch(
+    body: ListeningStateBatchUpsertRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Batch mark many visible podcast episodes played/unplayed."""
+    media_service.batch_mark_listening_state_for_viewer(db, viewer.user_id, body)
+    return Response(status_code=204)
+
+
 # =============================================================================
 # Upload / Ingest Endpoints
 # =============================================================================
@@ -299,6 +344,61 @@ def retry_ingest(
         request_id=request_id,
     )
     return success_response(result)
+
+
+@router.post("/media/transcript/request/batch")
+def request_podcast_transcript_batch(
+    body: TranscriptRequestBatchRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Admit transcript requests for multiple podcast episodes sequentially."""
+    result = podcast_service.request_podcast_transcripts_batch_for_viewer(
+        db=db,
+        viewer_id=viewer.user_id,
+        media_ids=body.media_ids,
+        reason=body.reason,
+    )
+    payload = TranscriptRequestBatchResponse.model_validate(result).model_dump(mode="json")
+    return success_response(payload)
+
+
+@router.post("/media/{media_id}/transcript/request")
+def request_podcast_transcript(
+    media_id: UUID,
+    body: TranscriptRequestRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Admit (or forecast) an explicit transcript request for a podcast episode."""
+    result = podcast_service.request_podcast_transcript_for_viewer(
+        db=db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        reason=body.reason,
+        dry_run=body.dry_run,
+    )
+    payload = TranscriptRequestResponse.model_validate(result).model_dump(mode="json")
+    status_code = 202 if result["request_enqueued"] else 200
+    return JSONResponse(status_code=status_code, content=success_response(payload))
+
+
+@router.post("/media/transcript/forecasts")
+def forecast_podcast_transcripts(
+    body: TranscriptForecastBatchRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Return dry-run transcript forecasts for many visible podcast episodes."""
+    result = podcast_service.forecast_podcast_transcripts_for_viewer(
+        db=db,
+        viewer_id=viewer.user_id,
+        requests=[(item.media_id, item.reason) for item in body.requests],
+    )
+    payload = [
+        TranscriptRequestResponse.model_validate(row).model_dump(mode="json") for row in result
+    ]
+    return success_response(payload)
 
 
 @router.get("/media/{media_id}/assets/{asset_key:path}")

@@ -92,9 +92,14 @@ import {
 } from "@/lib/media/epubReader";
 import { resolveLinkedItemsLayoutMode } from "@/lib/media/linkedItemsLayoutMode";
 import TranscriptMediaPane, {
+  type TranscriptChapter,
   type TranscriptPlaybackSource,
   type TranscriptFragment,
 } from "./TranscriptMediaPane";
+import {
+  shouldPollTranscriptProvisioning,
+  useTranscriptProvisioningPoll,
+} from "./transcriptPolling";
 import ResponsiveToolbar, { type ToolbarItem } from "@/components/ui/ResponsiveToolbar";
 import styles from "./page.module.css";
 import paneStyles from "@/components/Pane.module.css";
@@ -107,8 +112,21 @@ interface Media {
   id: string;
   kind: string;
   title: string;
+  podcast_title?: string | null;
+  podcast_image_url?: string | null;
   canonical_source_url: string | null;
   processing_status: string;
+  transcript_state?:
+    | "not_requested"
+    | "queued"
+    | "running"
+    | "failed_provider"
+    | "failed_quota"
+    | "unavailable"
+    | "ready"
+    | "partial"
+    | null;
+  transcript_coverage?: "none" | "partial" | "full" | null;
   capabilities?: {
     can_read: boolean;
     can_highlight: boolean;
@@ -118,8 +136,16 @@ interface Media {
     can_download_file: boolean;
   };
   playback_source?: TranscriptPlaybackSource | null;
+  chapters?: TranscriptChapter[];
+  listening_state?: {
+    position_ms: number;
+    playback_speed: number;
+  } | null;
+  subscription_default_playback_speed?: number | null;
   failure_stage?: string | null;
   last_error_code?: string | null;
+  description_html?: string | null;
+  description_text?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -134,6 +160,12 @@ interface Fragment {
   t_end_ms?: number | null;
   speaker_label?: string | null;
   created_at: string;
+}
+
+interface TranscriptRequestForecast {
+  requiredMinutes: number;
+  remainingMinutes: number | null;
+  fitsBudget: boolean;
 }
 
 
@@ -190,6 +222,18 @@ function getPaneScrollContainer(
 }
 
 const TEXT_ANCHOR_TOP_PADDING_PX = 56;
+const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
+
+function formatResumeTime(positionMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(positionMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  }
+  return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
 
 function findFirstVisibleCanonicalOffset(
   container: HTMLElement,
@@ -493,6 +537,12 @@ export default function MediaViewPage() {
   const searchParams = usePaneSearchParams();
   const requestedFragmentId = searchParams.get("fragment");
   const requestedHighlightId = searchParams.get("highlight");
+  const requestedStartMs = (() => {
+    const raw = searchParams.get("t_start_ms");
+    if (!raw) return null;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  })();
   const { toast } = useToast();
   const isMobileViewport = useIsMobileViewport();
   const { profile: readerProfile } = useReaderContext();
@@ -518,6 +568,9 @@ export default function MediaViewPage() {
   const [activeTranscriptFragmentId, setActiveTranscriptFragmentId] = useState<string | null>(
     null
   );
+  const [transcriptRequestInFlight, setTranscriptRequestInFlight] = useState(false);
+  const [transcriptRequestForecast, setTranscriptRequestForecast] =
+    useState<TranscriptRequestForecast | null>(null);
 
   // ---- EPUB state ----
   const [epubSections, setEpubSections] = useState<EpubNavigationSection[] | null>(null);
@@ -587,6 +640,16 @@ export default function MediaViewPage() {
   const isPdf = media?.kind === "pdf";
   const isTranscriptMedia =
     media?.kind === "podcast_episode" || media?.kind === "video";
+  const transcriptState = media?.transcript_state ?? null;
+  const transcriptCoverage = media?.transcript_coverage ?? null;
+  const canRequestTranscript =
+    isTranscriptMedia &&
+    transcriptState !== null &&
+    transcriptState !== "queued" &&
+    transcriptState !== "running" &&
+    transcriptState !== "ready" &&
+    transcriptState !== "partial" &&
+    transcriptState !== "unavailable";
   const canRead = media
     ? isTranscriptMedia
       ? (media.capabilities?.can_read ?? isReadableStatus(media.processing_status))
@@ -638,6 +701,27 @@ export default function MediaViewPage() {
       setActiveTranscriptFragmentId(target.id);
     }
   }, [isTranscriptMedia, requestedFragmentId, fragments, activeTranscriptFragmentId]);
+
+  useEffect(() => {
+    if (!isTranscriptMedia || requestedStartMs == null || fragments.length === 0) {
+      return;
+    }
+
+    const containing = fragments.find((fragment) => {
+      if (fragment.t_start_ms == null || fragment.t_end_ms == null) return false;
+      return requestedStartMs >= fragment.t_start_ms && requestedStartMs <= fragment.t_end_ms;
+    });
+    const nearest =
+      containing ??
+      [...fragments].sort((lhs, rhs) => {
+        const lhsStart = lhs.t_start_ms ?? Number.MAX_SAFE_INTEGER;
+        const rhsStart = rhs.t_start_ms ?? Number.MAX_SAFE_INTEGER;
+        return Math.abs(lhsStart - requestedStartMs) - Math.abs(rhsStart - requestedStartMs);
+      })[0];
+    if (nearest && activeTranscriptFragmentId !== nearest.id) {
+      setActiveTranscriptFragmentId(nearest.id);
+    }
+  }, [isTranscriptMedia, requestedStartMs, fragments, activeTranscriptFragmentId]);
 
   useEffect(() => {
     focusedHighlightIdRef.current = focusState.focusedId;
@@ -873,6 +957,107 @@ export default function MediaViewPage() {
     fetchData();
     return () => { cancelled = true; };
   }, [id]);
+
+  const refreshTranscriptProvisioningState = useCallback(async () => {
+    if (!media?.id || !isTranscriptMedia) {
+      return;
+    }
+
+    const mediaResp = await apiFetch<{ data: Media }>(`/api/media/${media.id}`);
+    const nextMedia = mediaResp.data;
+    setMedia(nextMedia);
+
+    const nextCanRead =
+      nextMedia.capabilities?.can_read ?? isReadableStatus(nextMedia.processing_status);
+    if (!nextCanRead) {
+      return;
+    }
+
+    const fragmentsResp = await apiFetch<{ data: Fragment[] }>(`/api/media/${media.id}/fragments`);
+    setFragments(fragmentsResp.data);
+    setActiveTranscriptFragmentId((prev) =>
+      fragmentsResp.data.some((fragment) => fragment.id === prev)
+        ? prev
+        : fragmentsResp.data[0]?.id ?? null
+    );
+  }, [isTranscriptMedia, media?.id]);
+
+  const pollTranscriptProvisioning = useCallback(async () => {
+    try {
+      await refreshTranscriptProvisioningState();
+    } catch {
+      // Keep the pane responsive even if one poll attempt fails.
+    }
+  }, [refreshTranscriptProvisioningState]);
+
+  const transcriptProvisioningPollEnabled = shouldPollTranscriptProvisioning({
+    isTranscriptMedia,
+    transcriptState,
+  });
+
+  useTranscriptProvisioningPoll({
+    enabled: Boolean(media?.id) && transcriptProvisioningPollEnabled,
+    onPoll: pollTranscriptProvisioning,
+    pollIntervalMs: TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
+  });
+
+  useEffect(() => {
+    if (!media || !isTranscriptMedia || !canRequestTranscript) {
+      setTranscriptRequestForecast(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadForecast = async () => {
+      try {
+        const forecastResponse = await apiFetch<{
+          data: {
+            processing_status: string;
+            transcript_state: Media["transcript_state"];
+            transcript_coverage: Media["transcript_coverage"];
+            required_minutes: number;
+            remaining_minutes: number | null;
+            fits_budget: boolean;
+          };
+        }>(`/api/media/${media.id}/transcript/request`, {
+          method: "POST",
+          body: JSON.stringify({
+            reason: "episode_open",
+            dry_run: true,
+          }),
+        });
+        if (cancelled) return;
+        const payload = forecastResponse.data;
+        setTranscriptRequestForecast({
+          requiredMinutes: payload.required_minutes,
+          remainingMinutes: payload.remaining_minutes,
+          fitsBudget: payload.fits_budget,
+        });
+        setMedia((prev) =>
+          prev && prev.id === media.id
+            ? prev.processing_status === payload.processing_status &&
+              prev.transcript_state === payload.transcript_state &&
+              prev.transcript_coverage === payload.transcript_coverage
+              ? prev
+              : {
+                  ...prev,
+                  processing_status: payload.processing_status,
+                  transcript_state: payload.transcript_state,
+                  transcript_coverage: payload.transcript_coverage,
+                }
+            : prev
+        );
+      } catch {
+        if (!cancelled) {
+          setTranscriptRequestForecast(null);
+        }
+      }
+    };
+    loadForecast();
+    return () => {
+      cancelled = true;
+    };
+  }, [media?.id, isTranscriptMedia, canRequestTranscript]);
 
   // ==========================================================================
   // EPUB orchestration — manifest + TOC + initial chapter
@@ -1710,6 +1895,62 @@ export default function MediaViewPage() {
     setSelection(null);
   }, []);
 
+  const handleRequestTranscript = useCallback(async () => {
+    if (!media || transcriptRequestInFlight) return;
+
+    setTranscriptRequestInFlight(true);
+    try {
+      const response = await apiFetch<{
+        data: {
+          processing_status: string;
+          transcript_state: Media["transcript_state"];
+          transcript_coverage: Media["transcript_coverage"];
+          required_minutes: number;
+          remaining_minutes: number | null;
+          fits_budget: boolean;
+          request_enqueued: boolean;
+        };
+      }>(`/api/media/${media.id}/transcript/request`, {
+        method: "POST",
+        body: JSON.stringify({
+          reason: "episode_open",
+          dry_run: false,
+        }),
+      });
+      const payload = response.data;
+      setMedia((prev) =>
+        prev && prev.id === media.id
+          ? {
+              ...prev,
+              processing_status: payload.processing_status,
+              transcript_state: payload.transcript_state,
+              transcript_coverage: payload.transcript_coverage,
+              last_error_code: null,
+            }
+          : prev
+      );
+      setTranscriptRequestForecast({
+        requiredMinutes: payload.required_minutes,
+        remainingMinutes: payload.remaining_minutes,
+        fitsBudget: payload.fits_budget,
+      });
+      toast({
+        variant: payload.request_enqueued ? "success" : "info",
+        message: payload.request_enqueued
+          ? "Transcript request queued."
+          : "Transcript request acknowledged.",
+      });
+    } catch (err) {
+      if (isApiError(err)) {
+        toast({ variant: "error", message: err.message });
+      } else {
+        toast({ variant: "error", message: "Failed to request transcript." });
+      }
+    } finally {
+      setTranscriptRequestInFlight(false);
+    }
+  }, [media, transcriptRequestInFlight, toast]);
+
   const handleTranscriptSegmentSelect = useCallback(
     (fragment: TranscriptFragment) => {
       setActiveTranscriptFragmentId(fragment.id);
@@ -2354,12 +2595,30 @@ export default function MediaViewPage() {
             <TranscriptMediaPane
               mediaId={media.id}
               mediaTitle={media.title}
+              mediaPodcastTitle={media.podcast_title ?? null}
+              mediaPodcastImageUrl={media.podcast_image_url ?? null}
               mediaKind={media.kind === "video" ? "video" : "podcast_episode"}
               playbackSource={playbackSource}
               canonicalSourceUrl={media.canonical_source_url}
               isPlaybackOnlyTranscript={isPlaybackOnlyTranscript}
               canRead={canRead}
               processingStatus={media.processing_status}
+              transcriptState={transcriptState}
+              transcriptCoverage={transcriptCoverage}
+              transcriptRequestInFlight={transcriptRequestInFlight}
+              transcriptRequestForecast={transcriptRequestForecast}
+              chapters={media.chapters ?? []}
+              descriptionHtml={media.description_html ?? null}
+              descriptionText={media.description_text ?? null}
+              listeningState={media.listening_state ?? null}
+              subscriptionDefaultPlaybackSpeed={media.subscription_default_playback_speed ?? null}
+              onResumeFromSavedPosition={(positionMs) =>
+                toast({
+                  variant: "info",
+                  message: `Resuming from ${formatResumeTime(positionMs)}`,
+                })
+              }
+              onRequestTranscript={handleRequestTranscript}
               fragments={fragments}
               activeFragment={activeTranscriptFragment}
               renderedHtml={renderedHtml}

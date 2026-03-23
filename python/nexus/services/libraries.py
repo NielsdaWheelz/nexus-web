@@ -26,6 +26,7 @@ from nexus.schemas.library import (
     InviteAcceptMembershipOut,
     LibraryInvitationOut,
     LibraryInvitationStatusValue,
+    LibraryMediaOrderRequest,
     LibraryMediaOut,
     LibraryMemberOut,
     LibraryOut,
@@ -359,16 +360,21 @@ def add_media_to_library(
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
         is_default_library = membership[1]
+        next_position = _next_library_media_position(db, library_id)
 
         # Step 3: Insert into target library
         result = db.execute(
             text("""
-                INSERT INTO library_media (library_id, media_id)
-                VALUES (:library_id, :media_id)
+                INSERT INTO library_media (library_id, media_id, position)
+                VALUES (:library_id, :media_id, :position)
                 ON CONFLICT (library_id, media_id) DO NOTHING
-                RETURNING library_id, media_id, created_at
+                RETURNING library_id, media_id, created_at, position
             """),
-            {"library_id": library_id, "media_id": media_id},
+            {
+                "library_id": library_id,
+                "media_id": media_id,
+                "position": next_position,
+            },
         )
         row = result.fetchone()
 
@@ -382,7 +388,7 @@ def add_media_to_library(
         if row is None:
             result = db.execute(
                 text("""
-                    SELECT library_id, media_id, created_at
+                    SELECT library_id, media_id, created_at, position
                     FROM library_media
                     WHERE library_id = :library_id AND media_id = :media_id
                 """),
@@ -484,6 +490,7 @@ def remove_media_from_library(
                 {"library_id": library_id, "media_id": media_id},
             )
             remove_media_from_non_default_closure(db, library_id, media_id)
+        _normalize_library_media_positions(db, library_id)
 
 
 def list_library_media(
@@ -491,6 +498,7 @@ def list_library_media(
     viewer_id: UUID,
     library_id: UUID,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[MediaOut]:
     """List media in a library.
 
@@ -501,7 +509,7 @@ def list_library_media(
         limit: Maximum number of media to return (default 100, max 200).
 
     Returns:
-        List of media ordered by library_media.created_at DESC, media.id DESC.
+        List of media ordered by library_media.position ASC, then recency.
 
     Raises:
         NotFoundError: If library not found or viewer is not a member.
@@ -509,6 +517,8 @@ def list_library_media(
     """
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    if offset < 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Offset must be non-negative")
 
     # Clamp limit to max 200
     limit = min(limit, 200)
@@ -537,10 +547,11 @@ def list_library_media(
             FROM media m
             JOIN library_media lm ON lm.media_id = m.id
             WHERE lm.library_id = :library_id
-            ORDER BY lm.created_at DESC, m.id DESC
+            ORDER BY lm.position ASC, lm.created_at DESC, m.id DESC
             LIMIT :limit
+            OFFSET :offset
         """),
-        {"library_id": library_id, "limit": limit},
+        {"library_id": library_id, "limit": limit, "offset": offset},
     )
 
     rows = result.fetchall()
@@ -602,6 +613,110 @@ def list_library_media(
             )
         )
     return media_list
+
+
+def reorder_library_media(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    body: LibraryMediaOrderRequest,
+) -> list[MediaOut]:
+    """Replace full library media order for admin viewers."""
+    requested_media_ids = [UUID(str(media_id)) for media_id in body.media_ids]
+    if len(set(requested_media_ids)) != len(requested_media_ids):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Library media order contains duplicates",
+        )
+
+    with transaction(db):
+        _, _, _, _, _, _, role = _fetch_library_with_membership(
+            db,
+            viewer_id,
+            library_id,
+            lock=True,
+        )
+        _require_admin(role)
+        existing_media_ids = [
+            row[0]
+            for row in db.execute(
+                text("""
+                    SELECT media_id
+                    FROM library_media
+                    WHERE library_id = :library_id
+                    ORDER BY position ASC, created_at DESC, media_id DESC
+                """),
+                {"library_id": library_id},
+            ).fetchall()
+        ]
+        if len(existing_media_ids) != len(requested_media_ids) or set(existing_media_ids) != set(
+            requested_media_ids
+        ):
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Library reorder requires an exact full set of media IDs",
+            )
+        for position, media_id in enumerate(requested_media_ids):
+            db.execute(
+                text("""
+                    UPDATE library_media
+                    SET position = :position
+                    WHERE library_id = :library_id
+                      AND media_id = :media_id
+                """),
+                {
+                    "position": position,
+                    "library_id": library_id,
+                    "media_id": media_id,
+                },
+            )
+        _normalize_library_media_positions(db, library_id)
+
+    return list_library_media(
+        db,
+        viewer_id=viewer_id,
+        library_id=library_id,
+        limit=min(max(len(requested_media_ids), 1), 200),
+        offset=0,
+    )
+
+
+def _next_library_media_position(db: Session, library_id: UUID) -> int:
+    next_position = db.execute(
+        text("""
+            SELECT COALESCE(MAX(position), -1) + 1
+            FROM library_media
+            WHERE library_id = :library_id
+        """),
+        {"library_id": library_id},
+    ).scalar()
+    if next_position is None:
+        return 0
+    return int(next_position)
+
+
+def _normalize_library_media_positions(db: Session, library_id: UUID) -> None:
+    db.execute(
+        text("""
+            WITH ordered AS (
+                SELECT
+                    library_id,
+                    media_id,
+                    ROW_NUMBER() OVER (
+                        ORDER BY position ASC, created_at DESC, media_id DESC
+                    ) - 1 AS new_position
+                FROM library_media
+                WHERE library_id = :library_id
+            )
+            UPDATE library_media lm
+            SET position = ordered.new_position
+            FROM ordered
+            WHERE lm.library_id = ordered.library_id
+              AND lm.media_id = ordered.media_id
+              AND lm.position <> ordered.new_position
+        """),
+        {"library_id": library_id},
+    )
 
 
 # =============================================================================

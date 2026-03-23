@@ -613,7 +613,7 @@ class TestListLibraryMedia:
         assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
 
     def test_list_media_ordering(self, auth_client, direct_db: DirectSessionManager):
-        """Media is ordered by library_media.created_at DESC, media.id DESC."""
+        """Media is ordered by persistent library_media.position ascending."""
         user_id = create_test_user_id()
 
         # Create multiple media items
@@ -644,14 +644,133 @@ class TestListLibraryMedia:
                 headers=auth_headers(user_id),
             )
 
-        # List media (should be reverse order - DESC)
+        # List media (should preserve append order: first added first)
         response = auth_client.get(f"/libraries/{library_id}/media", headers=auth_headers(user_id))
 
         assert response.status_code == 200
         data = response.json()["data"]
         assert len(data) == 3
-        # Last added should be first
-        assert data[0]["id"] == str(media_ids[2])
+        assert [item["id"] for item in data] == [str(media_id) for media_id in media_ids]
+
+
+class TestReorderLibraryMedia:
+    """Tests for PUT /libraries/{id}/media/order endpoint."""
+
+    def test_reorder_library_media_replaces_order(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+
+        media_ids: list[UUID] = []
+        with direct_db.session() as session:
+            for index in range(3):
+                media_id = create_test_media(session, title=f"Reorder {index}")
+                media_ids.append(media_id)
+                direct_db.register_cleanup("library_media", "media_id", media_id)
+                direct_db.register_cleanup("media", "id", media_id)
+            session.commit()
+
+        for media_id in media_ids:
+            add_resp = auth_client.post(
+                f"/libraries/{library_id}/media",
+                json={"media_id": str(media_id)},
+                headers=auth_headers(user_id),
+            )
+            assert add_resp.status_code in (200, 201)
+
+        reordered_media_ids = [media_ids[2], media_ids[0], media_ids[1]]
+        reorder_resp = auth_client.put(
+            f"/libraries/{library_id}/media/order",
+            json={"media_ids": [str(media_id) for media_id in reordered_media_ids]},
+            headers=auth_headers(user_id),
+        )
+        assert reorder_resp.status_code == 200, (
+            f"Expected 200 reorder response, got {reorder_resp.status_code}: {reorder_resp.text}"
+        )
+
+        list_resp = auth_client.get(f"/libraries/{library_id}/media", headers=auth_headers(user_id))
+        assert list_resp.status_code == 200
+        assert [row["id"] for row in list_resp.json()["data"]] == [
+            str(media_id) for media_id in reordered_media_ids
+        ]
+
+    def test_reorder_library_media_requires_exact_media_set(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+
+        with direct_db.session() as session:
+            media_a = create_test_media(session, title="Order A")
+            media_b = create_test_media(session, title="Order B")
+            session.commit()
+        for media_id in (media_a, media_b):
+            direct_db.register_cleanup("library_media", "media_id", media_id)
+            direct_db.register_cleanup("media", "id", media_id)
+            auth_client.post(
+                f"/libraries/{library_id}/media",
+                json={"media_id": str(media_id)},
+                headers=auth_headers(user_id),
+            )
+
+        missing_id_resp = auth_client.put(
+            f"/libraries/{library_id}/media/order",
+            json={"media_ids": [str(media_a)]},
+            headers=auth_headers(user_id),
+        )
+        assert missing_id_resp.status_code == 400
+        assert missing_id_resp.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_reorder_library_media_forbids_non_admin(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        owner_id = create_test_user_id()
+        member_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(member_id))
+
+        create_resp = auth_client.post(
+            "/libraries",
+            json={"name": "Shared order library"},
+            headers=auth_headers(owner_id),
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        with direct_db.session() as session:
+            media_a = create_test_media(session, title="Shared A")
+            media_b = create_test_media(session, title="Shared B")
+            session.commit()
+        for media_id in (media_a, media_b):
+            direct_db.register_cleanup("library_media", "media_id", media_id)
+            direct_db.register_cleanup("media", "id", media_id)
+            auth_client.post(
+                f"/libraries/{library_id}/media",
+                json={"media_id": str(media_id)},
+                headers=auth_headers(owner_id),
+            )
+
+        invite_resp = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee_user_id": str(member_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+        assert invite_resp.status_code == 201
+        invite_id = invite_resp.json()["data"]["id"]
+        accept_resp = auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(member_id),
+        )
+        assert accept_resp.status_code == 200
+
+        reorder_resp = auth_client.put(
+            f"/libraries/{library_id}/media/order",
+            json={"media_ids": [str(media_b), str(media_a)]},
+            headers=auth_headers(member_id),
+        )
+        assert reorder_resp.status_code == 403
+        assert reorder_resp.json()["error"]["code"] == "E_FORBIDDEN"
 
 
 # =============================================================================

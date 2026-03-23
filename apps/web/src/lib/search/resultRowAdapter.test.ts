@@ -26,7 +26,7 @@ describe("buildSearchQueryParams", () => {
     expect(params.get("types")).toBe("");
   });
 
-  it("omits type filters when all types are selected", () => {
+  it("serializes all type filters when all types are selected", () => {
     const params = buildSearchQueryParams({
       query: "needle",
       selectedTypes: setOf(...ALL_SEARCH_TYPES),
@@ -34,7 +34,32 @@ describe("buildSearchQueryParams", () => {
       limit: 20,
     });
 
-    expect(params.has("types")).toBe(false);
+    expect(params.get("types")).toBe(ALL_SEARCH_TYPES.join(","));
+    expect(params.get("semantic")).toBe("true");
+  });
+
+  it("enables semantic mode when transcript-chunk search is selected", () => {
+    const params = buildSearchQueryParams({
+      query: "transformer attention",
+      selectedTypes: setOf("transcript_chunk"),
+      cursor: null,
+      limit: 20,
+    });
+
+    expect(params.get("types")).toBe("transcript_chunk");
+    expect(params.get("semantic")).toBe("true");
+  });
+
+  it("does not set semantic mode for non-transcript searches", () => {
+    const params = buildSearchQueryParams({
+      query: "needle",
+      selectedTypes: setOf("media", "annotation"),
+      cursor: null,
+      limit: 20,
+    });
+
+    expect(params.get("types")).toBe("media,annotation");
+    expect(params.has("semantic")).toBe(false);
   });
 });
 
@@ -113,6 +138,28 @@ describe("adaptSearchResultRow", () => {
     expect(row.href).toBe("/conversations/conv-1");
     expect(row.sourceMeta).toBe("message #12");
     expect(row.primaryText).toBe("Message #12");
+  });
+
+  it("builds timestamp navigation hrefs for transcript chunk rows", () => {
+    const result = {
+      type: "transcript_chunk",
+      id: "chunk-1",
+      score: 0.88,
+      snippet: "transformer attention residual stream",
+      t_start_ms: 42000,
+      t_end_ms: 47000,
+      source: {
+        media_id: "media-podcast-1",
+        media_kind: "podcast_episode",
+        title: "Episode 42",
+        authors: ["Host"],
+        published_date: "2026-03-10",
+      },
+    } as SearchApiResult;
+
+    const row = adaptSearchResultRow(result);
+    expect(row.href).toBe("/media/media-podcast-1?t_start_ms=42000");
+    expect(row.typeLabel).toBe("transcript chunk");
   });
 });
 
@@ -251,7 +298,7 @@ describe("isValidSearchResult", () => {
 });
 
 // ---------------------------------------------------------------------------
-// normalizeSearchResult – flat (legacy) API shape
+// normalizeSearchResult – strict canonical API shape
 // ---------------------------------------------------------------------------
 
 describe("normalizeSearchResult", () => {
@@ -277,8 +324,8 @@ describe("normalizeSearchResult", () => {
     expect((result as Extract<SearchApiResult, { type: "fragment" }>).source.media_id).toBe("m-1");
   });
 
-  it("normalizes a flat fragment result (idx + flat media_id)", () => {
-    const flat = {
+  it("rejects legacy flat fragment rows after contract cutover", () => {
+    const legacyFlat = {
       type: "fragment",
       id: "d2ee603f-db09-4e78-8eae-9fe12fe2178e",
       score: 1,
@@ -290,18 +337,11 @@ describe("normalizeSearchResult", () => {
       conversation_id: null,
       seq: null,
     };
-    const result = normalizeSearchResult(flat);
-    expect(result).not.toBeNull();
-    expect(result!.type).toBe("fragment");
-    const frag = result as Extract<SearchApiResult, { type: "fragment" }>;
-    expect(frag.fragment_idx).toBe(0);
-    expect(frag.source.media_id).toBe("7a8ccae8-9465-4c9c-858f-0a1c4d80ff9a");
-    expect(frag.source.title).toBe("");
-    expect(frag.source.media_kind).toBe("");
+    expect(normalizeSearchResult(legacyFlat)).toBeNull();
   });
 
-  it("normalizes a flat media result", () => {
-    const flat = {
+  it("rejects legacy flat media rows after contract cutover", () => {
+    const legacyFlat = {
       type: "media",
       id: "m-1",
       score: 0.9,
@@ -310,10 +350,7 @@ describe("normalizeSearchResult", () => {
       title: null,
       idx: null,
     };
-    const result = normalizeSearchResult(flat);
-    expect(result).not.toBeNull();
-    expect(result!.type).toBe("media");
-    expect((result as Extract<SearchApiResult, { type: "media" }>).source.media_id).toBe("m-1");
+    expect(normalizeSearchResult(legacyFlat)).toBeNull();
   });
 
   it("normalizes a flat message result", () => {
@@ -333,6 +370,31 @@ describe("normalizeSearchResult", () => {
     const msg = result as Extract<SearchApiResult, { type: "message" }>;
     expect(msg.conversation_id).toBe("c-1");
     expect(msg.seq).toBe(5);
+  });
+
+  it("normalizes transcript chunk results", () => {
+    const nested = {
+      type: "transcript_chunk",
+      id: "chunk-1",
+      score: 0.61,
+      snippet: "transformer attention",
+      t_start_ms: 1200,
+      t_end_ms: 3400,
+      source: {
+        media_id: "m-1",
+        media_kind: "podcast_episode",
+        title: "Episode One",
+        authors: ["Host"],
+        published_date: null,
+      },
+    };
+    const result = normalizeSearchResult(nested);
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe("transcript_chunk");
+    const chunk = result as Extract<SearchApiResult, { type: "transcript_chunk" }>;
+    expect(chunk.t_start_ms).toBe(1200);
+    expect(chunk.t_end_ms).toBe(3400);
+    expect(chunk.source.media_id).toBe("m-1");
   });
 
   it("returns null for results missing id", () => {
@@ -356,8 +418,8 @@ describe("normalizeSearchResult", () => {
     ).toBeNull();
   });
 
-  it("normalizes a flat annotation result", () => {
-    const flat = {
+  it("rejects legacy flat annotation rows after contract cutover", () => {
+    const legacyFlat = {
       type: "annotation",
       id: "a-1",
       score: 0.9,
@@ -372,16 +434,7 @@ describe("normalizeSearchResult", () => {
       conversation_id: null,
       seq: null,
     };
-    const result = normalizeSearchResult(flat);
-    expect(result).not.toBeNull();
-    expect(result!.type).toBe("annotation");
-    const ann = result as Extract<SearchApiResult, { type: "annotation" }>;
-    expect(ann.fragment_idx).toBe(5);
-    expect(ann.highlight_id).toBe("h-1");
-    expect(ann.annotation_body).toBe("note body");
-    expect(ann.source.media_id).toBe("m-1");
-    expect(ann.source.title).toBe("Source Title");
-    expect(ann.highlight.exact).toBe("q");
+    expect(normalizeSearchResult(legacyFlat)).toBeNull();
   });
 
   it("rejects annotation with invalid highlight shape", () => {
@@ -407,20 +460,22 @@ describe("normalizeSearchResult", () => {
     ).toBeNull();
   });
 
-  it("produces results that adaptSearchResultRow can consume", () => {
-    const flat = {
+  it("produces canonical nested results that adaptSearchResultRow can consume", () => {
+    const nested = {
       type: "fragment",
       id: "f-99",
       score: 0.75,
       snippet: "some <b>highlighted</b> text",
-      media_id: "m-42",
-      idx: 3,
-      title: null,
-      highlight_id: null,
-      conversation_id: null,
-      seq: null,
+      fragment_idx: 3,
+      source: {
+        media_id: "m-42",
+        media_kind: "web_article",
+        title: "Nested Source",
+        authors: [],
+        published_date: null,
+      },
     };
-    const normalized = normalizeSearchResult(flat);
+    const normalized = normalizeSearchResult(nested);
     expect(normalized).not.toBeNull();
     const row = adaptSearchResultRow(normalized!);
     expect(row.key).toBe("fragment-f-99");

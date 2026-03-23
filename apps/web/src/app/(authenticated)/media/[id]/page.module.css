@@ -135,6 +135,19 @@
   gap: var(--space-4);
 }
 
+.partialCoverageWarning {
+  padding: var(--space-3);
+  border: 1px solid var(--color-warning, #ffb86c);
+  background: rgba(255, 184, 108, 0.1);
+  border-radius: 8px;
+  color: var(--color-warning, #ffb86c);
+  font-size: var(--font-size-sm);
+}
+
+.partialCoverageWarning p {
+  margin: 0;
+}
+
 .playerPanel {
   display: flex;
   flex-direction: column;
@@ -181,6 +194,25 @@
   cursor: pointer;
 }
 
+.podcastPlaybackActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.queueBadge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: var(--font-size-xs);
+}
+
 .playbackFallback {
   display: flex;
   align-items: center;
@@ -197,6 +229,157 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.chapterPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+.chapterHeading {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.chapterList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.chapterItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chapterThumbnail {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+}
+
+.chapterBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.chapterSeekButton {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  padding: var(--space-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chapterSeekButton:hover {
+  border-color: var(--color-border);
+}
+
+.chapterSeekButtonActive {
+  border-color: var(--color-accent);
+}
+
+.chapterTimestamp {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.chapterTitle {
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapterExternalLink {
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.chapterExternalLink:hover {
+  text-decoration: underline;
+}
+
+.showNotesPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+.showNotesHeading {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.showNotesBody {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-bg-panel);
+  padding: var(--space-3);
+}
+
+.showNotesContent {
+  line-height: 1.5;
+}
+
+.showNotesContent :global(p) {
+  margin: 0 0 var(--space-2);
+}
+
+.showNotesContent :global(p:last-child) {
+  margin-bottom: 0;
+}
+
+.showNotesContent :global(a) {
+  color: var(--color-accent);
+}
+
+.showNotesContent :global(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-subtle);
+}
+
+.showNotesTimestampButton {
+  border: none;
+  background: none;
+  color: var(--color-accent);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
 }
 
 .transcriptSegments {
@@ -239,6 +422,26 @@
 .segmentText {
   font-size: var(--font-size-sm);
   line-height: 1.45;
+}
+
+.inlineChapterDivider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-1);
+  border-top: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text-muted);
+}
+
+.inlineChapterTitle {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.inlineChapterTimestamp {
+  font-size: var(--font-size-xs);
 }
 
 .transcriptActiveFragment {

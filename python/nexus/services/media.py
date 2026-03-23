@@ -10,6 +10,7 @@ import base64
 import json
 import posixpath
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -19,23 +20,100 @@ if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
 
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
 from nexus.config import Environment, get_settings
-from nexus.db.models import Media, MediaKind, ProcessingStatus
+from nexus.db.models import Media, MediaKind, PodcastListeningState, ProcessingStatus
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
-from nexus.schemas.media import FragmentOut, FromUrlResponse, MediaAuthorOut, MediaOut
+from nexus.schemas.media import (
+    FragmentOut,
+    FromUrlResponse,
+    ListeningStateBatchUpsertRequest,
+    ListeningStateOut,
+    ListeningStateUpsertRequest,
+    MediaAuthorOut,
+    MediaListeningStateOut,
+    MediaOut,
+    PodcastEpisodeChapterOut,
+)
 from nexus.services.capabilities import derive_capabilities
-from nexus.services.pdf_readiness import batch_pdf_quote_text_ready, is_pdf_quote_text_ready
+from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
 
 logger = get_logger(__name__)
+
+_MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
+    "m.id",
+    "m.kind",
+    "m.title",
+    "m.canonical_source_url",
+    "m.processing_status",
+    "m.failure_stage",
+    "m.last_error_code",
+    "m.external_playback_url",
+    "m.provider",
+    "m.provider_id",
+    "m.created_at",
+    "m.updated_at",
+    "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
+    "EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) AS has_fragments",
+    "m.published_date",
+    "m.publisher",
+    "m.language",
+    "m.description",
+    "pe.description_html AS podcast_description_html",
+    "pe.description_text AS podcast_description_text",
+    "mts.transcript_state",
+    "mts.transcript_coverage",
+    """(
+        SELECT ps.default_playback_speed
+        FROM podcast_episodes pe_sub
+        JOIN podcast_subscriptions ps
+          ON ps.podcast_id = pe_sub.podcast_id
+         AND ps.user_id = :viewer_id
+         AND ps.status = 'active'
+        WHERE pe_sub.media_id = m.id
+        LIMIT 1
+    ) AS subscription_default_playback_speed""",
+)
+_MEDIA_LISTENING_STATE_SELECT_COLUMNS: tuple[str, ...] = (
+    "pls.position_ms AS listening_position_ms",
+    "pls.duration_ms AS listening_duration_ms",
+    "pls.playback_speed AS listening_playback_speed",
+    "pls.is_completed AS listening_is_completed",
+)
+_MEDIA_LISTENING_STATE_NULL_SELECT_COLUMNS: tuple[str, ...] = (
+    "NULL::bigint AS listening_position_ms",
+    "NULL::bigint AS listening_duration_ms",
+    "NULL::double precision AS listening_playback_speed",
+    "NULL::boolean AS listening_is_completed",
+)
+
+
+def _media_select_projection_sql(*, include_listening_state: bool) -> str:
+    columns = list(_MEDIA_BASE_SELECT_COLUMNS)
+    if include_listening_state:
+        columns.extend(_MEDIA_LISTENING_STATE_SELECT_COLUMNS)
+    else:
+        columns.extend(_MEDIA_LISTENING_STATE_NULL_SELECT_COLUMNS)
+    return ",\n                ".join(columns)
+
+
+def _media_listening_state_join_sql(*, include_listening_state: bool) -> str:
+    if not include_listening_state:
+        return ""
+    return """
+            LEFT JOIN podcast_listening_states pls
+              ON pls.media_id = m.id
+             AND pls.user_id = :viewer_id
+    """
 
 
 def get_media_for_viewer(
@@ -59,81 +137,420 @@ def get_media_for_viewer(
     Raises:
         NotFoundError: If media does not exist or viewer cannot read it.
     """
-    # First check if viewer can read the media using the canonical predicate
     if not _can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    # Fetch the media data with additional fields needed for capabilities
-    result = db.execute(
-        text("""
-            SELECT m.id, m.kind, m.title, m.canonical_source_url,
-                   m.processing_status, m.failure_stage, m.last_error_code,
-                   m.external_playback_url, m.provider, m.provider_id,
-                   m.created_at, m.updated_at,
-                   (SELECT EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id)) as has_file,
-                   (SELECT EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id)) as has_fragments,
-                   m.published_date, m.publisher, m.language, m.description
-            FROM media m
-            WHERE m.id = :media_id
-        """),
-        {"media_id": media_id},
-    )
-    row = result.fetchone()
-
-    if row is None:
-        # This should not happen if can_read_media returned True,
-        # but handle defensively
+    rows = list_media_for_viewer_by_ids(db, viewer_id, [media_id])
+    if not rows:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    return rows[0]
 
-    _pdf_ready = False
-    if row[1] == MediaKind.pdf.value:
-        _pdf_ready = is_pdf_quote_text_ready(db, media_id)
 
-    capabilities = derive_capabilities(
-        kind=row[1],
-        processing_status=row[4],
-        last_error_code=row[6],
-        media_file_exists=row[12],
-        external_playback_url_exists=row[7] is not None,
-        has_fragments=row[13],
-        pdf_quote_text_ready=_pdf_ready,
+def list_media_for_viewer_by_ids(
+    db: Session,
+    viewer_id: UUID,
+    media_ids: list[UUID],
+) -> list[MediaOut]:
+    """Batch-hydrate viewer-visible media rows by ID, preserving input order."""
+    if not media_ids:
+        return []
+
+    ordered_media_ids: list[UUID] = []
+    seen_media_ids: set[UUID] = set()
+    for media_id in media_ids:
+        normalized_media_id = UUID(str(media_id))
+        if normalized_media_id in seen_media_ids:
+            continue
+        seen_media_ids.add(normalized_media_id)
+        ordered_media_ids.append(normalized_media_id)
+
+    media_rows = (
+        db.execute(
+            text(
+                f"""
+            WITH visible_media AS (
+                {visible_media_ids_cte_sql()}
+            )
+            SELECT
+                {_media_select_projection_sql(include_listening_state=True)}
+            FROM media m
+            JOIN visible_media vm
+              ON vm.media_id = m.id
+            LEFT JOIN media_transcript_states mts
+              ON mts.media_id = m.id
+            LEFT JOIN podcast_episodes pe
+              ON pe.media_id = m.id
+            {_media_listening_state_join_sql(include_listening_state=True)}
+            WHERE m.id = ANY(:media_ids)
+            """
+            ),
+            {"viewer_id": viewer_id, "media_ids": ordered_media_ids},
+        )
+        .mappings()
+        .all()
     )
-    playback_source = derive_playback_source(
-        kind=row[1],
-        external_playback_url=row[7],
-        canonical_source_url=row[3],
-        provider=row[8],
-        provider_id=row[9],
-    )
 
-    # Fetch authors for this media
+    if not media_rows:
+        return []
+
+    row_by_media_id: dict[UUID, Mapping[str, object]] = {}
+    pdf_media_ids: list[UUID] = []
+    for row in media_rows:
+        media_id = UUID(str(row["id"]))
+        row_by_media_id[media_id] = row
+        if row["kind"] == MediaKind.pdf.value:
+            pdf_media_ids.append(media_id)
+
+    pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
+    authors_by_media = _load_media_authors_by_ids(db, list(row_by_media_id.keys()))
+    chapters_by_media = _load_podcast_episode_chapters_by_ids(db, list(row_by_media_id.keys()))
+
+    media_list: list[MediaOut] = []
+    for media_id in ordered_media_ids:
+        row = row_by_media_id.get(media_id)
+        if row is None:
+            continue
+        media_list.append(
+            _media_out_from_row(
+                row=row,
+                authors=authors_by_media.get(media_id, []),
+                chapters=chapters_by_media.get(media_id, []),
+                pdf_quote_ready=pdf_readiness.get(media_id, False),
+            )
+        )
+    return media_list
+
+
+def _load_media_authors_by_ids(
+    db: Session,
+    media_ids: list[UUID],
+) -> dict[UUID, list[MediaAuthorOut]]:
+    authors_by_media: dict[UUID, list[MediaAuthorOut]] = {media_id: [] for media_id in media_ids}
+    if not media_ids:
+        return authors_by_media
+
     author_rows = db.execute(
         text(
-            "SELECT id, name, role FROM media_authors "
-            "WHERE media_id = :media_id ORDER BY sort_order"
+            "SELECT id, media_id, name, role FROM media_authors "
+            "WHERE media_id = ANY(:ids) ORDER BY sort_order"
         ),
-        {"media_id": media_id},
+        {"ids": media_ids},
     ).fetchall()
-    authors = [MediaAuthorOut(id=ar[0], name=ar[1], role=ar[2]) for ar in author_rows]
+    for author_row in author_rows:
+        author_media_id = UUID(str(author_row[1]))
+        authors_by_media.setdefault(author_media_id, []).append(
+            MediaAuthorOut(id=author_row[0], name=author_row[2], role=author_row[3])
+        )
+    return authors_by_media
 
+
+def _load_podcast_episode_chapters_by_ids(
+    db: Session,
+    media_ids: list[UUID],
+) -> dict[UUID, list[PodcastEpisodeChapterOut]]:
+    chapters_by_media: dict[UUID, list[PodcastEpisodeChapterOut]] = {
+        media_id: [] for media_id in media_ids
+    }
+    if not media_ids:
+        return chapters_by_media
+
+    chapter_rows = db.execute(
+        text(
+            """
+            SELECT
+                media_id,
+                chapter_idx,
+                title,
+                t_start_ms,
+                t_end_ms,
+                url,
+                image_url
+            FROM podcast_episode_chapters
+            WHERE media_id = ANY(:ids)
+            ORDER BY media_id ASC, chapter_idx ASC
+            """
+        ),
+        {"ids": media_ids},
+    ).fetchall()
+    for chapter_row in chapter_rows:
+        chapter_media_id = UUID(str(chapter_row[0]))
+        chapters_by_media.setdefault(chapter_media_id, []).append(
+            PodcastEpisodeChapterOut(
+                chapter_idx=int(chapter_row[1]),
+                title=str(chapter_row[2]),
+                t_start_ms=int(chapter_row[3]),
+                t_end_ms=int(chapter_row[4]) if chapter_row[4] is not None else None,
+                url=str(chapter_row[5]) if chapter_row[5] is not None else None,
+                image_url=str(chapter_row[6]) if chapter_row[6] is not None else None,
+            )
+        )
+    return chapters_by_media
+
+
+def _media_listening_state_from_row(
+    row: Mapping[str, object],
+) -> MediaListeningStateOut | None:
+    position_ms = row.get("listening_position_ms")
+    playback_speed = row.get("listening_playback_speed")
+    if position_ms is None or playback_speed is None:
+        return None
+
+    duration_ms = row.get("listening_duration_ms")
+    return MediaListeningStateOut(
+        position_ms=int(position_ms),
+        duration_ms=int(duration_ms) if duration_ms is not None else None,
+        playback_speed=float(playback_speed),
+        is_completed=bool(row.get("listening_is_completed")),
+    )
+
+
+def _media_out_from_row(
+    *,
+    row: Mapping[str, object],
+    authors: list[MediaAuthorOut],
+    chapters: list[PodcastEpisodeChapterOut] | None = None,
+    pdf_quote_ready: bool = False,
+) -> MediaOut:
+    processing_status = _status_to_str(row["processing_status"])
+    capabilities = derive_capabilities(
+        kind=row["kind"],
+        processing_status=processing_status,
+        last_error_code=row["last_error_code"],
+        media_file_exists=bool(row["has_file"]),
+        external_playback_url_exists=row["external_playback_url"] is not None,
+        has_fragments=bool(row["has_fragments"]),
+        pdf_quote_text_ready=pdf_quote_ready,
+        transcript_state=row["transcript_state"],
+        transcript_coverage=row["transcript_coverage"],
+    )
+    playback_source = derive_playback_source(
+        kind=row["kind"],
+        external_playback_url=row["external_playback_url"],
+        canonical_source_url=row["canonical_source_url"],
+        provider=row["provider"],
+        provider_id=row["provider_id"],
+    )
     return MediaOut(
-        id=row[0],
-        kind=row[1],
-        title=row[2],
-        canonical_source_url=row[3],
-        processing_status=row[4],
-        failure_stage=row[5],
-        last_error_code=row[6],
+        id=row["id"],
+        kind=row["kind"],
+        title=row["title"],
+        canonical_source_url=row["canonical_source_url"],
+        processing_status=processing_status,
+        transcript_state=row["transcript_state"],
+        transcript_coverage=row["transcript_coverage"],
+        failure_stage=row["failure_stage"],
+        last_error_code=row["last_error_code"],
         playback_source=playback_source,
+        listening_state=_media_listening_state_from_row(row),
+        subscription_default_playback_speed=(
+            float(row["subscription_default_playback_speed"])
+            if row.get("subscription_default_playback_speed") is not None
+            else None
+        ),
+        chapters=chapters or [],
         capabilities=capabilities,
         authors=authors,
-        published_date=row[14],
-        publisher=row[15],
-        language=row[16],
-        description=row[17],
-        created_at=row[10],
-        updated_at=row[11],
+        published_date=row["published_date"],
+        publisher=row["publisher"],
+        language=row["language"],
+        description=row["description"],
+        description_html=row["podcast_description_html"],
+        description_text=row["podcast_description_text"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
+
+
+def get_listening_state_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+) -> ListeningStateOut:
+    """Get listener state for one media item scoped to the viewer."""
+    if not _can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    state = (
+        db.query(PodcastListeningState)
+        .filter(
+            PodcastListeningState.user_id == viewer_id,
+            PodcastListeningState.media_id == media_id,
+        )
+        .one_or_none()
+    )
+    if state is None:
+        return ListeningStateOut(
+            position_ms=0,
+            duration_ms=None,
+            playback_speed=1.0,
+            is_completed=False,
+        )
+
+    return ListeningStateOut(
+        position_ms=int(state.position_ms),
+        duration_ms=int(state.duration_ms) if state.duration_ms is not None else None,
+        playback_speed=float(state.playback_speed),
+        is_completed=bool(state.is_completed),
+    )
+
+
+def _position_meets_completion_threshold(position_ms: int, duration_ms: int | None) -> bool:
+    if duration_ms is None or duration_ms <= 0:
+        return False
+    return position_ms >= int(float(duration_ms) * 0.95)
+
+
+def upsert_listening_state_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    body: ListeningStateUpsertRequest,
+) -> None:
+    """Upsert listener state for one media item scoped to the viewer."""
+    if not _can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    existing_state = (
+        db.query(PodcastListeningState)
+        .filter(
+            PodcastListeningState.user_id == viewer_id,
+            PodcastListeningState.media_id == media_id,
+        )
+        .one_or_none()
+    )
+    current_position_ms = int(existing_state.position_ms) if existing_state is not None else 0
+    current_duration_ms = (
+        int(existing_state.duration_ms)
+        if existing_state is not None and existing_state.duration_ms is not None
+        else None
+    )
+    current_playback_speed = (
+        float(existing_state.playback_speed) if existing_state is not None else 1.0
+    )
+    current_is_completed = (
+        bool(existing_state.is_completed) if existing_state is not None else False
+    )
+
+    next_position_ms = (
+        int(body.position_ms) if body.position_ms is not None else current_position_ms
+    )
+    next_duration_ms = (
+        int(body.duration_ms) if body.duration_ms is not None else current_duration_ms
+    )
+    next_playback_speed = (
+        float(body.playback_speed) if body.playback_speed is not None else current_playback_speed
+    )
+
+    if body.is_completed is not None:
+        next_is_completed = bool(body.is_completed)
+    elif body.position_ms is not None:
+        next_is_completed = current_is_completed or _position_meets_completion_threshold(
+            next_position_ms, next_duration_ms
+        )
+    else:
+        next_is_completed = current_is_completed
+
+    insert_values = {
+        "user_id": viewer_id,
+        "media_id": media_id,
+        "position_ms": next_position_ms,
+        "duration_ms": next_duration_ms,
+        "playback_speed": next_playback_speed,
+        "is_completed": next_is_completed,
+    }
+    update_values = {
+        "position_ms": next_position_ms,
+        "duration_ms": next_duration_ms,
+        "playback_speed": next_playback_speed,
+        "is_completed": next_is_completed,
+        "updated_at": datetime.now(UTC),
+    }
+
+    db.execute(
+        pg_insert(PodcastListeningState)
+        .values(**insert_values)
+        .on_conflict_do_update(
+            index_elements=[
+                PodcastListeningState.user_id,
+                PodcastListeningState.media_id,
+            ],
+            set_=update_values,
+        )
+    )
+    db.commit()
+
+
+def batch_mark_listening_state_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    body: ListeningStateBatchUpsertRequest,
+) -> None:
+    """Batch mark many visible podcast episodes as played/unplayed."""
+    deduped_media_ids: list[UUID] = []
+    seen_media_ids: set[UUID] = set()
+    for media_id in body.media_ids:
+        normalized_media_id = UUID(str(media_id))
+        if normalized_media_id in seen_media_ids:
+            continue
+        seen_media_ids.add(normalized_media_id)
+        deduped_media_ids.append(normalized_media_id)
+
+    visible_rows = db.execute(
+        text(
+            f"""
+            WITH visible_media AS (
+                {visible_media_ids_cte_sql()}
+            )
+            SELECT m.id, m.kind
+            FROM media m
+            JOIN visible_media vm ON vm.media_id = m.id
+            WHERE m.id = ANY(:media_ids)
+            """
+        ),
+        {"viewer_id": viewer_id, "media_ids": deduped_media_ids},
+    ).fetchall()
+    if len(visible_rows) != len(deduped_media_ids):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    invalid_kind_media_ids = [
+        row[0] for row in visible_rows if row[1] != MediaKind.podcast_episode.value
+    ]
+    if invalid_kind_media_ids:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            "Batch listening-state updates are only supported for podcast episodes",
+        )
+
+    now = datetime.now(UTC)
+    for media_id in deduped_media_ids:
+        insert_values = {
+            "user_id": viewer_id,
+            "media_id": media_id,
+            "position_ms": 0,
+            "duration_ms": None,
+            "playback_speed": 1.0,
+            "is_completed": bool(body.is_completed),
+        }
+        update_values: dict[str, object] = {
+            "is_completed": bool(body.is_completed),
+            "updated_at": now,
+        }
+        if not body.is_completed:
+            update_values["position_ms"] = 0
+
+        db.execute(
+            pg_insert(PodcastListeningState)
+            .values(**insert_values)
+            .on_conflict_do_update(
+                index_elements=[
+                    PodcastListeningState.user_id,
+                    PodcastListeningState.media_id,
+                ],
+                set_=update_values,
+            )
+        )
+
+    db.commit()
 
 
 def _encode_media_cursor(updated_at: datetime, media_id: UUID) -> str:
@@ -243,94 +660,38 @@ def list_visible_media(
             {visible_media_ids_cte_sql()}
         )
         SELECT
-            m.id,
-            m.kind,
-            m.title,
-            m.canonical_source_url,
-            m.processing_status,
-            m.failure_stage,
-            m.last_error_code,
-            m.external_playback_url,
-            m.provider,
-            m.provider_id,
-            m.created_at,
-            m.updated_at,
-            EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file,
-            EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) AS has_fragments,
-            m.published_date,
-            m.publisher,
-            m.language,
-            m.description
+            {_media_select_projection_sql(include_listening_state=False)}
         FROM media m
         JOIN visible_media vm ON vm.media_id = m.id
+        LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+        LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
         WHERE {" AND ".join(where_clauses)}
         ORDER BY m.updated_at DESC, m.id DESC
         LIMIT :limit
     """)
-    rows = db.execute(query, params).fetchall()
+    rows = db.execute(query, params).mappings().all()
 
     has_more = len(rows) > limit
     page_rows = rows[:limit]
 
-    pdf_media_ids = [row[0] for row in page_rows if row[1] == MediaKind.pdf.value]
+    pdf_media_ids = [
+        UUID(str(row["id"])) for row in page_rows if row["kind"] == MediaKind.pdf.value
+    ]
     pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
 
-    # Batch-fetch authors for all returned media IDs to avoid N+1
-    page_media_ids = [row[0] for row in page_rows]
-    authors_by_media: dict[UUID, list[MediaAuthorOut]] = {mid: [] for mid in page_media_ids}
-    if page_media_ids:
-        author_rows = db.execute(
-            text(
-                "SELECT id, media_id, name, role FROM media_authors "
-                "WHERE media_id = ANY(:ids) ORDER BY sort_order"
-            ),
-            {"ids": page_media_ids},
-        ).fetchall()
-        for ar in author_rows:
-            authors_by_media.setdefault(ar[1], []).append(
-                MediaAuthorOut(id=ar[0], name=ar[2], role=ar[3])
-            )
+    page_media_ids = [UUID(str(row["id"])) for row in page_rows]
+    authors_by_media = _load_media_authors_by_ids(db, page_media_ids)
+    chapters_by_media = _load_podcast_episode_chapters_by_ids(db, page_media_ids)
 
     media_list: list[MediaOut] = []
     for row in page_rows:
-        processing_status = _status_to_str(row[4])
-        pdf_quote_ready = (
-            pdf_readiness.get(row[0], False) if row[1] == MediaKind.pdf.value else False
-        )
-        capabilities = derive_capabilities(
-            kind=row[1],
-            processing_status=processing_status,
-            last_error_code=row[6],
-            media_file_exists=row[12],
-            external_playback_url_exists=row[7] is not None,
-            has_fragments=row[13],
-            pdf_quote_text_ready=pdf_quote_ready,
-        )
-        playback_source = derive_playback_source(
-            kind=row[1],
-            external_playback_url=row[7],
-            canonical_source_url=row[3],
-            provider=row[8],
-            provider_id=row[9],
-        )
+        media_id = UUID(str(row["id"]))
         media_list.append(
-            MediaOut(
-                id=row[0],
-                kind=row[1],
-                title=row[2],
-                canonical_source_url=row[3],
-                processing_status=processing_status,
-                failure_stage=row[5],
-                last_error_code=row[6],
-                playback_source=playback_source,
-                capabilities=capabilities,
-                authors=authors_by_media.get(row[0], []),
-                published_date=row[14],
-                publisher=row[15],
-                language=row[16],
-                description=row[17],
-                created_at=row[10],
-                updated_at=row[11],
+            _media_out_from_row(
+                row=row,
+                authors=authors_by_media.get(media_id, []),
+                chapters=chapters_by_media.get(media_id, []),
+                pdf_quote_ready=pdf_readiness.get(media_id, False),
             )
         )
 
@@ -762,7 +1123,14 @@ def list_fragments_for_viewer(
                 f.speaker_label,
                 f.created_at
             FROM fragments f
+            LEFT JOIN media_transcript_states mts
+              ON mts.media_id = f.media_id
             WHERE f.media_id = :media_id
+              AND (
+                  f.transcript_version_id IS NULL
+                  OR mts.active_transcript_version_id IS NULL
+                  OR f.transcript_version_id = mts.active_transcript_version_id
+              )
             ORDER BY f.t_start_ms ASC NULLS LAST, f.idx ASC
         """),
         {"media_id": media_id},

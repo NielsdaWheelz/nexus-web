@@ -48,8 +48,13 @@ def ensure_default_intrinsic(
     """
     db.execute(
         text("""
-            INSERT INTO library_media (library_id, media_id)
-            VALUES (:lib, :media)
+            INSERT INTO library_media (library_id, media_id, position)
+            SELECT
+                :lib,
+                :media,
+                COALESCE(MAX(position), -1) + 1
+            FROM library_media
+            WHERE library_id = :lib
             ON CONFLICT (library_id, media_id) DO NOTHING
         """),
         {"lib": default_library_id, "media": media_id},
@@ -117,12 +122,28 @@ def add_media_to_non_default_closure(
     # Materialise default library_media rows from those edges
     db.execute(
         text("""
-            INSERT INTO library_media (library_id, media_id)
-            SELECT dl.id, :media
-            FROM memberships m
-            JOIN libraries dl
-                ON dl.owner_user_id = m.user_id AND dl.is_default = true
-            WHERE m.library_id = :source
+            WITH target_defaults AS (
+                SELECT dl.id AS library_id
+                FROM memberships m
+                JOIN libraries dl
+                  ON dl.owner_user_id = m.user_id
+                 AND dl.is_default = true
+                WHERE m.library_id = :source
+            ),
+            next_positions AS (
+                SELECT
+                    td.library_id,
+                    :media AS media_id,
+                    COALESCE((
+                        SELECT MAX(lm.position) + 1
+                        FROM library_media lm
+                        WHERE lm.library_id = td.library_id
+                    ), 0) AS position
+                FROM target_defaults td
+            )
+            INSERT INTO library_media (library_id, media_id, position)
+            SELECT library_id, media_id, position
+            FROM next_positions
             ON CONFLICT (library_id, media_id) DO NOTHING
         """),
         {"media": media_id, "source": source_library_id},
@@ -524,10 +545,24 @@ def materialize_closure_for_source(
 
     db.execute(
         text("""
-            INSERT INTO library_media (library_id, media_id)
-            SELECT :dl, lm.media_id
-            FROM library_media lm
-            WHERE lm.library_id = :source
+            WITH source_media AS (
+                SELECT
+                    lm.media_id,
+                    ROW_NUMBER() OVER (
+                        ORDER BY lm.position ASC, lm.created_at DESC, lm.media_id DESC
+                    ) - 1 AS sort_offset
+                FROM library_media lm
+                WHERE lm.library_id = :source
+            ),
+            base_position AS (
+                SELECT COALESCE(MAX(position), -1) + 1 AS value
+                FROM library_media
+                WHERE library_id = :dl
+            )
+            INSERT INTO library_media (library_id, media_id, position)
+            SELECT :dl, sm.media_id, bp.value + sm.sort_offset
+            FROM source_media sm
+            CROSS JOIN base_position bp
             ON CONFLICT (library_id, media_id) DO NOTHING
         """),
         {"dl": default_library_id, "source": source_library_id},
