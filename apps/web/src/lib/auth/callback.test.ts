@@ -125,6 +125,7 @@ describe("handleAuthCallback", () => {
   });
 
   it("falls back to the default app route when next is unsafe", async () => {
+    delete process.env[AUTH_ALLOWED_REDIRECT_ORIGINS];
     const exchangeCodeForSession = vi.fn().mockResolvedValue({ error: null });
     const request = new Request(
       "https://app.example.com/auth/callback?code=test-code&next=https%3A%2F%2Fevil.example.com"
