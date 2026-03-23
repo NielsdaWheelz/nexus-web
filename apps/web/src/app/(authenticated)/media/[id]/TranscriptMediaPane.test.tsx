@@ -525,3 +525,76 @@ describe("TranscriptMediaPane podcast playback", () => {
     expect(screen.queryByText("Chapter 1: Intro")).not.toBeInTheDocument();
   });
 });
+
+describe("TranscriptMediaPane transcript states", () => {
+  it("renders queued provisioning state", () => {
+    renderStatefulPodcastPane({
+      canRead: false,
+      transcriptState: "queued",
+      transcriptCoverage: "none",
+      processingStatus: "extracting",
+      fragments: [],
+    });
+
+    expect(screen.getByText("Transcript request queued.")).toBeVisible();
+    expect(screen.getByText("Status: extracting")).toBeVisible();
+  });
+
+  it("renders running provisioning state", () => {
+    renderStatefulPodcastPane({
+      canRead: false,
+      transcriptState: "running",
+      transcriptCoverage: "none",
+      processingStatus: "extracting",
+      fragments: [],
+    });
+
+    expect(screen.getByText("Transcript transcription is currently running.")).toBeVisible();
+    expect(screen.getByText("Status: extracting")).toBeVisible();
+  });
+
+  it("renders failed_provider state with retry CTA", () => {
+    renderStatefulPodcastPane({
+      canRead: false,
+      transcriptState: "failed_provider",
+      transcriptCoverage: "none",
+      processingStatus: "failed",
+      fragments: [],
+    });
+
+    expect(screen.getByText("Previous transcription failed. You can retry on demand.")).toBeVisible();
+    expect(screen.getByRole("button", { name: /transcribe this episode/i })).toBeEnabled();
+  });
+
+  it("renders failed_quota state with disabled CTA when forecast exceeds quota", () => {
+    renderStatefulPodcastPane({
+      canRead: false,
+      transcriptState: "failed_quota",
+      transcriptCoverage: "none",
+      processingStatus: "failed",
+      fragments: [],
+      transcriptRequestForecast: {
+        requiredMinutes: 4,
+        remainingMinutes: 1,
+        fitsBudget: false,
+      },
+    });
+
+    expect(screen.getByText("Daily transcript quota was exceeded for this episode.")).toBeVisible();
+    expect(screen.getByText("Not enough daily quota for this request.")).toBeVisible();
+    expect(screen.getByRole("button", { name: /transcribe this episode/i })).toBeDisabled();
+  });
+
+  it("renders unavailable state", () => {
+    renderStatefulPodcastPane({
+      canRead: false,
+      transcriptState: "unavailable",
+      transcriptCoverage: "none",
+      processingStatus: "failed",
+      fragments: [],
+    });
+
+    expect(screen.getByText("Transcript unavailable for this episode.")).toBeVisible();
+    expect(screen.getByText("Error: E_TRANSCRIPT_UNAVAILABLE")).toBeVisible();
+  });
+});

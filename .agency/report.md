@@ -514,3 +514,85 @@ cd apps/web && npm run test -- \
 - chapter URL fetch for Podcasting 2.0 JSON is synchronous per selected episode during sync; large subscriptions with many chapter manifests may increase sync latency.
 - chapter image/link payloads are normalized but treated as external content; downstream clients still need conservative rendering/sandbox posture for untrusted feeds.
 - active chapter highlighting in the transcript pane depends on current player time updates; very low-frequency time updates can make highlight transitions appear slightly delayed.
+
+## s7 pr-10 test hardening + strict contract cutover addendum (2026-03-22)
+
+### summary
+- removed frontend backward-compat parsing for legacy flat search rows; search result normalization now accepts only canonical nested source contracts.
+- hardened transcript provisioning polling semantics: polling is now enabled only for `queued`/`running` transcript states, and poll errors are explicitly swallowed/retried without unhandled promise rejection leakage.
+- expanded transcript-pane coverage with explicit tests for `queued`, `running`, `failed_provider`, `failed_quota`, and `unavailable` rendering paths (in addition to existing `not_requested`/`ready`/`partial` coverage).
+- added a dedicated backend provider test module (`python/tests/test_podcast_index_provider.py`) covering PodcastIndex success, 429 + Retry-After retry behavior, 5xx retry exhaustion, timeout retry exhaustion, malformed JSON handling, and empty result handling.
+- updated global-player persistence assertions to measure only listening-state writes (`/api/media/*/listening-state`) so queue hydration fetches do not produce false negatives.
+
+### decisions
+- **hard cutover, no shim:** legacy flat search payloads are intentionally rejected post-cutover rather than normalized client-side.
+- **state-driven polling only:** transcript polling no longer depends on `processing_status="extracting"` fallback; transcript-state drives lifecycle.
+- **error-tolerant polling loop:** polling hook catches/retries transient poll failures and avoids unhandled rejection side effects.
+- **provider reliability tests are explicit:** PodcastIndex retry/error behavior now has direct unit coverage instead of relying on indirect integration paths.
+- **test intent isolation:** global-player persistence tests now assert only the listening-state boundary they claim to verify.
+
+### how to test
+```bash
+# frontend strict-cutover + transcript-state suites
+cd apps/web && npm run test -- \
+  "src/lib/search/resultRowAdapter.test.ts" \
+  "src/app/(authenticated)/media/[id]/transcriptPolling.test.tsx" \
+  "src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx"
+
+# frontend broader podcast/player/search regression slices
+cd apps/web && npm run test -- \
+  "src/app/(authenticated)/search/page.test.tsx" \
+  "src/app/(authenticated)/podcasts/podcasts-flows.test.tsx" \
+  "src/__tests__/components/GlobalPlayerFooter.test.tsx" \
+  "src/__tests__/components/GlobalPlayerPersistence.test.tsx" \
+  "src/__tests__/components/GlobalPlayerQueue.test.tsx"
+
+# backend provider retry/error hardening + key podcast admission/sync slices
+cd python && DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test uv run pytest -q \
+  tests/test_podcast_index_provider.py \
+  tests/test_podcasts.py::TestPodcastTranscriptRequestAdmission::test_transcript_request_dry_run_reports_budget_fit_without_spending_or_enqueue \
+  tests/test_podcasts.py::TestPodcastTranscriptRequestAdmission::test_transcript_request_admits_with_quota_and_enqueues_job \
+  tests/test_podcasts.py::TestPodcastTranscriptRequestAdmission::test_transcript_request_is_idempotent_when_already_queued \
+  tests/test_podcasts.py::TestPodcastTranscriptPersistence::test_transcript_segments_persist_with_deterministic_order_and_diarization_fallback \
+  tests/test_podcasts.py::TestPodcastSubscriptionSyncLifecycle::test_sync_job_ingests_window_and_marks_subscription_complete
+```
+
+### risks
+- strict search-shape cutover means any backend contract regression to flat payloads now fails closed (rows dropped) instead of silently adapting; this is desired but sharp.
+- polling now keys strictly off transcript state; if backend emits stale/null transcript state while still extracting, client auto-polling will not run until state consistency is restored.
+
+## s7 pr-10 e2e sweep + selector hardening addendum (2026-03-23)
+
+### summary
+- ran the full playwright suite and fixed initial failures caused by stale e2e selectors against the responsive toolbar cutover.
+- updated `e2e/tests/epub.spec.ts` to drive toolbar actions via role-based selectors with mobile overflow fallback (`More actions`) and current TOC label semantics (`Show TOC`).
+- updated `e2e/tests/pdf-reader.spec.ts` to click toolbar actions through either inline buttons or overflow menu items, eliminating desktop/mobile selector drift.
+- hardened the PDF quote-to-chat e2e flow by treating action-menu open state explicitly (`aria-expanded`) and retrying quote dispatch once before surfacing failure.
+- final full e2e sweep completed green: `46 passed`.
+
+### decisions
+- **contract-first selectors:** e2e now targets accessibility role/name contracts and explicit overflow menu behavior rather than brittle raw `aria-label` CSS selectors.
+- **stateful action-menu handling:** menu-trigger interactions now assert/open `aria-expanded=true` before selecting menu items to avoid toggle races.
+- **de-brittled persistence path:** quote-to-chat flow no longer blocks on transient overlay-marker timing; it validates persistence through API + linked-row behavior.
+
+### how to test
+```bash
+# full e2e sweep
+make test-e2e
+
+# targeted regression slices that were previously failing/flaky
+cd e2e && API_PORT=8001 WEB_PORT=3001 npx playwright test \
+  tests/epub.spec.ts \
+  tests/pdf-reader.spec.ts \
+  --grep "navigate chapters|toc leaf with anchor lands at exact in-fragment target|upload -> viewer -> persistent highlight -> send to chat"
+
+# repeated stability check for pdf quote-to-chat flow
+cd e2e && API_PORT=8001 WEB_PORT=3001 npx playwright test \
+  tests/pdf-reader.spec.ts \
+  --grep "upload -> viewer -> persistent highlight -> send to chat" \
+  --repeat-each=2
+```
+
+### risks
+- the quote-to-chat PDF flow remains one of the highest-variance e2e paths (full upload + reload + pane-runtime routing); retries reduce flakes but do not prove zero nondeterminism under all host load conditions.
+- repeated webpack/autoprefixer warnings in e2e runs are noisy but non-fatal; they can obscure real failures in raw logs if not filtered.

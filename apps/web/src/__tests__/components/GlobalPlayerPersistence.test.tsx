@@ -18,6 +18,14 @@ function setAudioMetrics(
   }
 }
 
+function getListeningStateCalls(
+  fetchSpy: ReturnType<typeof vi.spyOn<typeof window, "fetch">>
+): Array<[input: RequestInfo | URL, init?: RequestInit]> {
+  return fetchSpy.mock.calls.filter(([input]) =>
+    String(input).includes("/api/media/") && String(input).includes("/listening-state")
+  );
+}
+
 function Harness() {
   const { setTrack } = useGlobalPlayer();
   return (
@@ -98,7 +106,7 @@ describe("GlobalPlayer listening-state persistence", () => {
     fireEvent(audio, new Event("play"));
 
     await waitFor(() => expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 15_000));
-    expect(fetchSpy).toHaveBeenCalledTimes(0);
+    expect(getListeningStateCalls(fetchSpy)).toHaveLength(0);
     let invoked = false;
     for (const [handler, delay] of setIntervalSpy.mock.calls) {
       if (delay === 15_000 && typeof handler === "function") {
@@ -107,15 +115,15 @@ describe("GlobalPlayer listening-state persistence", () => {
       }
     }
     expect(invoked).toBe(true);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(getListeningStateCalls(fetchSpy)).toHaveLength(1);
 
-    const firstCall = fetchSpy.mock.calls[0];
+    const firstCall = getListeningStateCalls(fetchSpy)[0];
     expect(String(firstCall?.[0])).toContain("/api/media/media-123/listening-state");
 
     audio.currentTime = 42;
     fireEvent(audio, new Event("timeupdate"));
     fireEvent(audio, new Event("pause"));
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(getListeningStateCalls(fetchSpy)).toHaveLength(2);
   });
 
   it("flushes on track switch and page unload", async () => {
@@ -133,16 +141,20 @@ describe("GlobalPlayer listening-state persistence", () => {
     fireEvent(audio, new Event("timeupdate"));
 
     await user.click(screen.getByRole("button", { name: "Load episode B" }));
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(String(fetchSpy.mock.calls[0]?.[0])).toContain("/api/media/media-123/listening-state");
+    expect(getListeningStateCalls(fetchSpy)).toHaveLength(1);
+    expect(String(getListeningStateCalls(fetchSpy)[0]?.[0])).toContain(
+      "/api/media/media-123/listening-state"
+    );
 
     setAudioMetrics(audio, { duration: 180, currentTime: 20, playbackRate: 1.25 });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
 
     window.dispatchEvent(new Event("beforeunload"));
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(String(fetchSpy.mock.calls[1]?.[0])).toContain("/api/media/media-456/listening-state");
+    expect(getListeningStateCalls(fetchSpy)).toHaveLength(2);
+    expect(String(getListeningStateCalls(fetchSpy)[1]?.[0])).toContain(
+      "/api/media/media-456/listening-state"
+    );
   });
 
   it("applies resume seek and speed options when setting a track", async () => {
