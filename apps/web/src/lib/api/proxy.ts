@@ -69,7 +69,6 @@ const BLOCKED_REQUEST_HEADERS = new Set([
 const ALLOWED_RESPONSE_HEADERS = new Set([
   "x-request-id",
   "content-type",
-  "content-length",
   "cache-control",
   "etag",
   "vary",

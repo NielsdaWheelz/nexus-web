@@ -92,9 +92,9 @@ describe("proxy helper functions", () => {
       expect(_shouldForwardResponseHeader("Content-Type")).toBe(true);
     });
 
-    it("allows content-length", () => {
-      expect(_shouldForwardResponseHeader("content-length")).toBe(true);
-      expect(_shouldForwardResponseHeader("Content-Length")).toBe(true);
+    it("strips content-length (runtime recalculates after potential re-encoding)", () => {
+      expect(_shouldForwardResponseHeader("content-length")).toBe(false);
+      expect(_shouldForwardResponseHeader("Content-Length")).toBe(false);
     });
 
     it("allows cache-control", () => {
