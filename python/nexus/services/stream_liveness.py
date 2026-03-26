@@ -1,17 +1,13 @@
-"""Stream liveness marker — Redis keys to track active streams.
+"""Stream liveness markers stored in Postgres."""
 
-Per PR-08 spec §6:
-- Set BEFORE first byte is yielded (after phase 1, before streaming loop)
-- Refreshed on every delta yield and every keepalive ping (sliding TTL)
-- Cleared in finalize's finally: block — even on cancellation/exception
-- Used by replay logic (§4.3) and sweeper (§7) to distinguish running vs orphaned
+from __future__ import annotations
 
-Redis key: stream_active:{assistant_message_id}
-TTL: 600 seconds (10 minutes, refreshed on each event)
-"""
-
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from sqlalchemy import text
+
+from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 
 logger = get_logger(__name__)
@@ -19,67 +15,135 @@ logger = get_logger(__name__)
 LIVENESS_TTL_SECONDS = 600
 
 
-async def set_liveness_marker(redis_client, assistant_message_id: UUID) -> None:
+async def set_liveness_marker(assistant_message_id: UUID) -> None:
     """Set the liveness marker before first byte is yielded."""
-    if redis_client is None:
-        return
+    expires_at = datetime.now(UTC) + timedelta(seconds=LIVENESS_TTL_SECONDS)
+    db = get_session_factory()()
     try:
-        key = f"stream_active:{assistant_message_id}"
-        redis_client.setex(key, LIVENESS_TTL_SECONDS, "1")
-    except Exception as e:
+        db.execute(
+            text(
+                """
+                INSERT INTO stream_liveness_markers (
+                    assistant_message_id,
+                    expires_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (:assistant_message_id, :expires_at, now(), now())
+                ON CONFLICT (assistant_message_id)
+                DO UPDATE SET
+                    expires_at = EXCLUDED.expires_at,
+                    updated_at = now()
+                """
+            ),
+            {
+                "assistant_message_id": assistant_message_id,
+                "expires_at": expires_at,
+            },
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
         logger.warning(
             "liveness_set_failed",
             assistant_message_id=str(assistant_message_id),
-            error=str(e),
+            error=str(exc),
         )
+    finally:
+        db.close()
 
 
-async def refresh_liveness_marker(redis_client, assistant_message_id: UUID) -> None:
+async def refresh_liveness_marker(assistant_message_id: UUID) -> None:
     """Refresh the liveness marker TTL (sliding window)."""
-    if redis_client is None:
-        return
+    expires_at = datetime.now(UTC) + timedelta(seconds=LIVENESS_TTL_SECONDS)
+    db = get_session_factory()()
     try:
-        key = f"stream_active:{assistant_message_id}"
-        redis_client.expire(key, LIVENESS_TTL_SECONDS)
-    except Exception as e:
-        # Non-critical — log but don't fail the stream
+        db.execute(
+            text(
+                """
+                UPDATE stream_liveness_markers
+                SET expires_at = :expires_at,
+                    updated_at = now()
+                WHERE assistant_message_id = :assistant_message_id
+                """
+            ),
+            {
+                "assistant_message_id": assistant_message_id,
+                "expires_at": expires_at,
+            },
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
         logger.debug(
             "liveness_refresh_failed",
             assistant_message_id=str(assistant_message_id),
-            error=str(e),
+            error=str(exc),
         )
+    finally:
+        db.close()
 
 
-async def clear_liveness_marker(redis_client, assistant_message_id: UUID) -> None:
+async def clear_liveness_marker(assistant_message_id: UUID | None) -> None:
     """Clear the liveness marker at finalize."""
-    if redis_client is None:
+    if assistant_message_id is None:
         return
+    db = get_session_factory()()
     try:
-        key = f"stream_active:{assistant_message_id}"
-        redis_client.delete(key)
-    except Exception as e:
+        db.execute(
+            text(
+                """
+                DELETE FROM stream_liveness_markers
+                WHERE assistant_message_id = :assistant_message_id
+                """
+            ),
+            {"assistant_message_id": assistant_message_id},
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
         logger.warning(
             "liveness_clear_failed",
             assistant_message_id=str(assistant_message_id),
-            error=str(e),
+            error=str(exc),
         )
+    finally:
+        db.close()
 
 
-def check_liveness_marker(redis_client, assistant_message_id: UUID) -> bool:
+def check_liveness_marker(assistant_message_id: UUID | None) -> bool:
     """Check if a stream is currently active (has liveness marker).
 
     Returns:
-        True if stream_active key exists, False otherwise.
+        True when an unexpired marker exists, else False.
     """
-    if redis_client is None:
+    if assistant_message_id is None:
         return False
+    db = get_session_factory()()
     try:
-        key = f"stream_active:{assistant_message_id}"
-        return bool(redis_client.exists(key))
-    except Exception as e:
+        db.execute(text("DELETE FROM stream_liveness_markers WHERE expires_at <= now()"))
+        exists = db.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM stream_liveness_markers
+                    WHERE assistant_message_id = :assistant_message_id
+                      AND expires_at > now()
+                )
+                """
+            ),
+            {"assistant_message_id": assistant_message_id},
+        ).scalar_one()
+        db.commit()
+        return bool(exists)
+    except Exception as exc:
+        db.rollback()
         logger.warning(
             "liveness_check_failed",
             assistant_message_id=str(assistant_message_id),
-            error=str(e),
+            error=str(exc),
         )
         return False
+    finally:
+        db.close()

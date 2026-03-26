@@ -1,4 +1,4 @@
-"""Celery task for PDF extraction (S6 PR-03).
+"""Worker job handler for PDF extraction (S6 PR-03).
 
 Owns async completion-state transitions for PDF extraction:
 extracting -> ready_for_reading (success) or extracting -> failed (error).
@@ -12,9 +12,9 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from nexus.celery import celery_app
 from nexus.db.models import FailureStage, Media, MediaAuthor, ProcessingStatus
 from nexus.db.session import get_session_factory
+from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.pdf_ingest import (
     PdfExtractionError,
@@ -28,9 +28,7 @@ logger = get_logger(__name__)
 _MAX_ERROR_MSG_LEN = 1000
 
 
-@celery_app.task(bind=True, max_retries=0, name="ingest_pdf")
 def ingest_pdf(
-    self,
     media_id: str,
     request_id: str | None = None,
     embedding_only: bool = False,
@@ -251,14 +249,21 @@ def _try_embedding_handoff(db, media_uuid: UUID, request_id: str | None) -> None
 
 def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
     """Best-effort dispatch of metadata enrichment task."""
+    session_factory = get_session_factory()
+    db = session_factory()
     try:
-        from nexus.tasks.enrich_metadata import enrich_metadata
-
-        enrich_metadata.apply_async(
-            args=[media_id], kwargs={"request_id": request_id}, queue="ingest"
+        enqueue_job(
+            db,
+            kind="enrich_metadata",
+            payload={"media_id": media_id, "request_id": request_id},
+            max_attempts=1,
         )
+        db.commit()
     except Exception:
+        db.rollback()
         logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
+    finally:
+        db.close()
 
 
 def run_pdf_ingest_sync(

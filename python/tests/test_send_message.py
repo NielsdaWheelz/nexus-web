@@ -23,6 +23,7 @@ import respx
 from sqlalchemy import text
 
 from nexus.config import clear_settings_cache
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.crypto import MASTER_KEY_SIZE, clear_master_key_cache, encrypt_api_key
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 from tests.factories import (
@@ -60,10 +61,10 @@ class NoOpRateLimiter(RateLimiter):
     def check_token_budget(self, user_id: UUID) -> None:
         pass  # No-op
 
-    def increment_inflight(self, user_id: UUID) -> None:
+    def acquire_inflight_slot(self, user_id: UUID) -> None:
         pass  # No-op
 
-    def decrement_inflight(self, user_id: UUID) -> None:
+    def release_inflight_slot(self, user_id: UUID) -> None:
         pass  # No-op
 
     def charge_token_budget(self, user_id: UUID, message_id: UUID, tokens: int) -> None:
@@ -77,17 +78,17 @@ def reset_rate_limiter():
     This ensures test isolation - rate limit mocks from one test
     don't affect subsequent tests.
     """
-    limiter = NoOpRateLimiter(redis_client=None)
+    limiter = NoOpRateLimiter()
     set_rate_limiter(limiter)
     yield
     # Reset again after test
-    set_rate_limiter(NoOpRateLimiter(redis_client=None))
+    set_rate_limiter(NoOpRateLimiter())
 
 
 @pytest.fixture
 def mock_rate_limiter():
     """Create a no-op rate limiter for tests."""
-    limiter = NoOpRateLimiter(redis_client=None)
+    limiter = NoOpRateLimiter()
     set_rate_limiter(limiter)
     return limiter
 
@@ -488,21 +489,14 @@ class TestSendMessageRateLimits:
 
         # Model from migration seed - don't cleanup
 
-        # Create a mock Redis that always exceeds limit
-        mock_redis = MagicMock()
-        mock_redis.ping.return_value = True
-        # Pipeline is used directly (not as context manager)
-        mock_redis.pipeline.return_value = MagicMock(
-            zremrangebyscore=MagicMock(),
-            zadd=MagicMock(),
-            zcount=MagicMock(),
-            expire=MagicMock(),
-            execute=MagicMock(return_value=[0, 1, 25, True]),  # 25 > 20 limit
-        )
+        class _RpmBlockingLimiter(NoOpRateLimiter):
+            def check_rpm_limit(self, user_id: UUID) -> None:
+                raise ApiError(
+                    ApiErrorCode.E_RATE_LIMITED,
+                    "Rate limit exceeded in test limiter",
+                )
 
-        # Configure limiter with mock Redis
-        limiter = RateLimiter(redis_client=mock_redis)
-        set_rate_limiter(limiter)
+        set_rate_limiter(_RpmBlockingLimiter())
 
         response = auth_client.post(
             "/conversations/messages",
@@ -531,18 +525,14 @@ class TestSendMessageRateLimits:
 
         # Model from migration seed - don't cleanup
 
-        # Create a mock Redis that shows max concurrent reached
-        mock_redis = MagicMock()
-        mock_redis.ping.return_value = True
-        # RPM check passes
-        pipe_mock = MagicMock()
-        pipe_mock.execute.return_value = [0, 1, 1, True]  # RPM count = 1 (ok)
-        mock_redis.pipeline.return_value = pipe_mock
-        # Concurrent check fails
-        mock_redis.get.return_value = b"3"  # 3 = max concurrent
+        class _ConcurrentBlockingLimiter(NoOpRateLimiter):
+            def check_concurrent_limit(self, user_id: UUID) -> None:
+                raise ApiError(
+                    ApiErrorCode.E_RATE_LIMITED,
+                    "Concurrent limit exceeded in test limiter",
+                )
 
-        limiter = RateLimiter(redis_client=mock_redis, concurrent_limit=3)
-        set_rate_limiter(limiter)
+        set_rate_limiter(_ConcurrentBlockingLimiter())
 
         response = auth_client.post(
             "/conversations/messages",
@@ -571,19 +561,14 @@ class TestSendMessageRateLimits:
 
         # Model from migration seed - don't cleanup
 
-        # Create a mock Redis where budget is exhausted
-        mock_redis = MagicMock()
-        mock_redis.ping.return_value = True
-        # RPM and concurrent checks pass
-        pipe_mock = MagicMock()
-        pipe_mock.execute.return_value = [0, 1, 1, True]
-        mock_redis.pipeline.return_value = pipe_mock
-        mock_redis.get.side_effect = lambda key: (
-            b"0" if "inflight" in str(key) else b"100001"  # Budget exhausted
-        )
+        class _BudgetBlockingLimiter(NoOpRateLimiter):
+            def check_token_budget(self, user_id: UUID) -> None:
+                raise ApiError(
+                    ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
+                    "Budget exhausted in test limiter",
+                )
 
-        limiter = RateLimiter(redis_client=mock_redis, token_budget=100_000)
-        set_rate_limiter(limiter)
+        set_rate_limiter(_BudgetBlockingLimiter())
 
         response = auth_client.post(
             "/conversations/messages",

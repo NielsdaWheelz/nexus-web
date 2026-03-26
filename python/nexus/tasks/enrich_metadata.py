@@ -1,4 +1,4 @@
-"""Celery task for LLM-based metadata enrichment.
+"""Worker job handler for LLM-based metadata enrichment.
 
 Best-effort background task that runs after ingest completes.
 Never fails the media — if the LLM call fails, logs a warning and returns.
@@ -9,7 +9,6 @@ from uuid import UUID
 
 import httpx
 
-from nexus.celery import celery_app
 from nexus.config import get_settings
 from nexus.db.models import Media, ProcessingStatus
 from nexus.db.session import get_session_factory
@@ -37,9 +36,7 @@ _READY_STATES = frozenset(
 )
 
 
-@celery_app.task(bind=True, max_retries=0, name="enrich_metadata")
 def enrich_metadata(
-    self,
     media_id: str,
     request_id: str | None = None,
 ) -> dict:
@@ -118,8 +115,8 @@ def enrich_metadata(
                         provider, req, api_key, timeout_s=30, key_mode="platform"
                     )
 
-            # Use new_event_loop() instead of asyncio.run() to avoid
-            # RuntimeError in gevent/eventlet Celery pools.
+            # Use an explicit event loop so the handler stays self-contained in
+            # the long-lived worker process.
             loop = asyncio.new_event_loop()
             try:
                 response = loop.run_until_complete(_call())

@@ -5,9 +5,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from nexus.celery_contract import INGEST_QUEUE
 from nexus.config import get_settings
 from nexus.db.models import Media, ProcessingStatus
+from nexus.db.session import get_session_factory
+from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 
 logger = get_logger(__name__)
@@ -54,18 +55,23 @@ def get_stale_ingest_backlog_health(
 
 def enqueue_stale_ingest_reconcile(*, request_id: str | None = None) -> bool:
     """Best-effort enqueue of stale-ingest reconciler task."""
+    session_factory = get_session_factory()
+    db = session_factory()
     try:
-        from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
-
-        reconcile_stale_ingest_media_job.apply_async(
-            kwargs={"request_id": request_id},
-            queue=INGEST_QUEUE,
+        enqueue_job(
+            db,
+            kind="reconcile_stale_ingest_media_job",
+            payload={"request_id": request_id},
         )
+        db.commit()
         return True
     except Exception as exc:
+        db.rollback()
         logger.error(
             "stale_ingest_reconcile_enqueue_failed",
             error=str(exc),
             request_id=request_id,
         )
         return False
+    finally:
+        db.close()

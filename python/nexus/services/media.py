@@ -25,9 +25,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
-from nexus.config import Environment, get_settings
 from nexus.db.models import Media, MediaKind, PodcastListeningState, ProcessingStatus
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.media import (
     FragmentOut,
@@ -823,12 +823,14 @@ def create_provisional_web_article(
     # Attach to viewer's default library
     _ensure_in_default_library(db, viewer_id, media.id)
 
-    db.commit()
-
-    # Enqueue task if requested
     ingest_enqueued = False
-    if enqueue_task:
-        ingest_enqueued = _enqueue_ingest_task(media.id, viewer_id, request_id)
+    try:
+        if enqueue_task:
+            ingest_enqueued = _enqueue_ingest_task(db, media.id, viewer_id, request_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     return FromUrlResponse(
         media_id=media.id,
@@ -949,11 +951,15 @@ def create_or_reuse_youtube_video(
         media.updated_at = now
 
     _ensure_in_default_library(db, viewer_id, media.id)
-    db.commit()
 
     ingest_enqueued = False
-    if created and enqueue_task:
-        ingest_enqueued = _enqueue_youtube_ingest_task(media.id, viewer_id, request_id)
+    try:
+        if created and enqueue_task:
+            ingest_enqueued = _enqueue_youtube_ingest_task(db, media.id, viewer_id, request_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     processing_status = (
         media.processing_status.value
@@ -996,31 +1002,21 @@ def enqueue_web_article_from_url(
 
 
 def _enqueue_ingest_task(
+    db: Session,
     media_id: UUID,
     actor_user_id: UUID,
     request_id: str | None,
 ) -> bool:
-    """Enqueue the ingest_web_article Celery task.
-
-    In test/dev mode, runs synchronously if Celery is not available.
-
-    Returns:
-        True if task was enqueued/executed, False otherwise.
-    """
-    settings = get_settings()
-
-    # In test environment, don't enqueue - let tests call task directly
-    if settings.nexus_env == Environment.TEST:
-        logger.debug("skipping_task_enqueue", reason="test_environment")
-        return False
-
+    """Enqueue ingest_web_article in the Postgres queue service."""
     try:
-        from nexus.tasks import ingest_web_article
-
-        ingest_web_article.apply_async(
-            args=[str(media_id), str(actor_user_id)],
-            kwargs={"request_id": request_id},
-            queue="ingest",
+        enqueue_job(
+            db,
+            kind="ingest_web_article",
+            payload={
+                "media_id": str(media_id),
+                "actor_user_id": str(actor_user_id),
+                "request_id": request_id,
+            },
         )
         logger.info(
             "ingest_task_enqueued",
@@ -1029,34 +1025,36 @@ def _enqueue_ingest_task(
             request_id=request_id,
         )
         return True
-    except Exception as e:
-        # Log but don't fail - task can be retried manually
-        logger.warning(
+    except Exception as exc:
+        logger.error(
             "ingest_task_enqueue_failed",
             media_id=str(media_id),
-            error=str(e),
+            actor_user_id=str(actor_user_id),
+            request_id=request_id,
+            error=str(exc),
         )
-        return False
+        raise ApiError(
+            ApiErrorCode.E_INTERNAL,
+            "Failed to enqueue ingest_web_article job.",
+        ) from exc
 
 
 def _enqueue_youtube_ingest_task(
+    db: Session,
     media_id: UUID,
     actor_user_id: UUID,
     request_id: str | None,
 ) -> bool:
-    """Enqueue the ingest_youtube_video Celery task."""
-    settings = get_settings()
-    if settings.nexus_env == Environment.TEST:
-        logger.debug("skipping_task_enqueue", reason="test_environment", media_kind="video")
-        return False
-
+    """Enqueue ingest_youtube_video in the Postgres queue service."""
     try:
-        from nexus.tasks.ingest_youtube_video import ingest_youtube_video
-
-        ingest_youtube_video.apply_async(
-            args=[str(media_id), str(actor_user_id)],
-            kwargs={"request_id": request_id},
-            queue="ingest",
+        enqueue_job(
+            db,
+            kind="ingest_youtube_video",
+            payload={
+                "media_id": str(media_id),
+                "actor_user_id": str(actor_user_id),
+                "request_id": request_id,
+            },
         )
         logger.info(
             "ingest_video_task_enqueued",
@@ -1065,13 +1063,18 @@ def _enqueue_youtube_ingest_task(
             request_id=request_id,
         )
         return True
-    except Exception as e:
-        logger.warning(
+    except Exception as exc:
+        logger.error(
             "ingest_video_task_enqueue_failed",
             media_id=str(media_id),
-            error=str(e),
+            actor_user_id=str(actor_user_id),
+            request_id=request_id,
+            error=str(exc),
         )
-        return False
+        raise ApiError(
+            ApiErrorCode.E_INTERNAL,
+            "Failed to enqueue ingest_youtube_video job.",
+        ) from exc
 
 
 def _is_media_canonical_url_conflict(exc: IntegrityError) -> bool:

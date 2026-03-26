@@ -1,12 +1,50 @@
 import { test, expect } from "@playwright/test";
 
+async function ensureAppContext(page: Parameters<typeof test>[0]["page"]) {
+  if (page.url() === "about:blank") {
+    await page.goto("/libraries");
+  }
+}
+
 async function createConversationViaApi(page: Parameters<typeof test>[0]["page"]) {
-  const createResponse = await page.request.post("/api/conversations");
-  expect(createResponse.ok()).toBeTruthy();
-  const payload = (await createResponse.json()) as {
-    data: { id: string };
-  };
+  await ensureAppContext(page);
+  const createResponse = await page.request.post("/api/conversations", {
+    maxRedirects: 0,
+  });
+  const status = createResponse.status();
+  const body = await createResponse.text();
+  expect(
+    status < 300 || status >= 400,
+    `POST /api/conversations redirected unexpectedly: status=${status}; location=${createResponse.headers()["location"] ?? "<none>"}; body=${body.slice(0, 400)}`
+  ).toBeTruthy();
+  expect(
+    createResponse.ok(),
+    `POST /api/conversations failed: status=${status}; contentType=${createResponse.headers()["content-type"] ?? "<none>"}; body=${body.slice(0, 400)}`
+  ).toBeTruthy();
+
+  let payload: { data: { id: string } };
+  try {
+    payload = JSON.parse(body) as { data: { id: string } };
+  } catch (error) {
+    throw new Error(
+      `POST /api/conversations returned non-JSON response: contentType=${createResponse.headers()["content-type"] ?? "<none>"}; body=${body.slice(0, 400)}; parseError=${String(error)}`
+    );
+  }
   return payload.data.id;
+}
+
+async function deleteConversationViaApi(
+  page: Parameters<typeof test>[0]["page"],
+  conversationId: string
+) {
+  await ensureAppContext(page);
+  const response = await page.request.delete(`/api/conversations/${conversationId}`);
+  if (!response.ok() && response.status() !== 404) {
+    const body = await response.text();
+    throw new Error(
+      `Failed to delete conversation ${conversationId}: status=${response.status()}; body=${body.slice(0, 300)}`
+    );
+  }
 }
 
 function readConversationIdFromUrl(url: string): string | null {
@@ -38,7 +76,7 @@ test.describe("conversations", () => {
       );
     } finally {
       if (conversationId) {
-        await page.request.delete(`/api/conversations/${conversationId}`);
+        await deleteConversationViaApi(page, conversationId);
       }
     }
   });
@@ -107,7 +145,7 @@ test.describe("conversations", () => {
         await expect(optimisticUserMessage).toBeVisible();
       }
     } finally {
-      await page.request.delete(`/api/conversations/${conversationId}`);
+      await deleteConversationViaApi(page, conversationId);
     }
   });
 });

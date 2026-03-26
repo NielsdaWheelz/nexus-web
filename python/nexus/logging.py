@@ -8,7 +8,7 @@ Provides JSON-formatted logs with consistent context including:
 - route_template: FastAPI route template (when available after routing)
 - flow_id: Correlation ID for multi-phase send-message flows
 - stream_jti: JWT ID from stream token (streaming only)
-- task_name / task_id: Celery task context
+- task_name / task_id: background job context
 - timestamp: ISO8601 formatted timestamp
 
 Usage:
@@ -21,14 +21,13 @@ Usage:
     logger = get_logger(__name__)
     logger.info("something_happened", extra_field="value")
 
-Celery Task Logging:
+Background Job Logging:
     from nexus.logging import configure_task_logging, get_logger
 
-    @celery.task
-    def my_task(arg, request_id: str | None = None):
-        configure_task_logging(request_id=request_id, task_name="my_task", task_id=self.request.id)
+    def my_job(job_id: str, request_id: str | None = None):
+        configure_task_logging(request_id=request_id, task_name="my_job", task_id=job_id)
         logger = get_logger(__name__)
-        logger.info("task_started")
+        logger.info("job_started")
 """
 
 import logging
@@ -232,25 +231,24 @@ def configure_task_logging(
     task_name: str | None = None,
     task_id: str | None = None,
 ) -> None:
-    """Configure logging context for a Celery task.
+    """Configure logging context for one background job execution.
 
-    Call this at the start of each Celery task to set up proper logging context.
-    All subsequent log entries in the task will include these fields.
+    Call this at the start of each job handler invocation. All subsequent log
+    entries in that execution context include these fields.
 
     Args:
-        request_id: The request correlation ID (passed from FastAPI when task was enqueued).
-        task_name: The name of the Celery task.
-        task_id: The Celery task ID (from self.request.id).
+        request_id: Request correlation ID propagated from enqueue time.
+        task_name: Job kind or handler name.
+        task_id: Claimed background job ID.
 
     Example:
-        @celery.task(bind=True)
-        def my_task(self, arg, request_id: str | None = None):
+        def my_job(job_id: str, request_id: str | None = None):
             configure_task_logging(
                 request_id=request_id,
-                task_name="my_task",
-                task_id=self.request.id
+                task_name="my_job",
+                task_id=job_id
             )
-            logger.info("task_started")
+            logger.info("job_started")
     """
     request_id_var.set(request_id)
     task_name_var.set(task_name)

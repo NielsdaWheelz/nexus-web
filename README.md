@@ -9,7 +9,7 @@ nexus/
 ├── apps/                        # Application entrypoints
 │   ├── api/                     # FastAPI server (thin launcher)
 │   ├── web/                     # Next.js BFF + frontend
-│   └── worker/                  # Celery worker
+│   └── worker/                  # Postgres queue worker
 │
 ├── python/                      # Shared Python package
 │   ├── nexus/                   # THE package: models, services, auth, etc.
@@ -62,7 +62,7 @@ nexus/
 │   └── ingest/                  # Web article ingestion (fetch + Readability)
 │
 ├── docker/                      # Docker configs
-│   ├── docker-compose.yml       # Local dev services (redis only)
+│   ├── docker-compose.yml       # Local dev compose placeholder
 │   ├── docker-compose.worker.yml # Worker service config
 │   ├── Dockerfile.api
 │   └── Dockerfile.worker        # Worker image (Python + Node.js)
@@ -105,7 +105,7 @@ nexus/
 - **Shared Surface Chrome**: Pane/page headers now use a single `SurfaceHeader` primitive (title, back, previous/next nav, actions, and options menu), with reader controls externalized from `PdfReader` so media/library/chat surfaces share non-scroll-coupled navigation chrome and a consistent options interaction model. Mobile headers hide meta/subtitle for compactness via a JS-driven `.mobile` class aligned with `MOBILE_MAX_WIDTH_PX`. Media toolbars use `ResponsiveToolbar` with priority-based items: primary actions show as icon-only buttons on mobile, secondary actions collapse into an overflow menu.
 - **Podcast Sync Architecture** (S7): `POST /podcasts/subscriptions` remains control-plane only (subscribe + enqueue). `DELETE /podcasts/subscriptions/{podcast_id}` applies explicit unsubscribe retention modes (`mode=1|2|3`). Episode ingest is metadata-first (`processing_status='pending'`) with explicit transcript admission via `POST /media/{id}/transcript/request` (dry-run forecast + quota-aware enqueue).
 - **Podcast Transcription Pipeline** (S7 PR-03): transcript segments are sourced from transcription-provider output (Deepgram), not feed payload transcript fields. Diarized transcription falls back to non-diarized output, transcript text is canonicalized (NFC + whitespace normalization), and persisted segment timing is strictly validated (`t_start_ms < t_end_ms`).
-- **Podcast Active Polling Orchestration** (S7 PR-04): Celery Beat schedules periodic active-subscription polling. Runs are singleton-safe via durable lease rows, stale `running` subscription sync claims are reclaimable, and each run persists deterministic operator telemetry (`processed_count`, `failed_count`, `skipped_count`, `scanned_count`, failure-code breakdown).
+- **Podcast Active Polling Orchestration** (S7 PR-04): Worker scheduler loop enqueues periodic active-subscription polling. Runs are singleton-safe via durable lease rows, stale `running` subscription sync claims are reclaimable, and each run persists deterministic operator telemetry (`processed_count`, `failed_count`, `skipped_count`, `scanned_count`, failure-code breakdown).
 - **User Identity**: Email is synced from Supabase JWT on every authenticated request via bootstrap upsert. Users can set a display name via `PATCH /me`. Library member/invite lists are enriched with email and display_name. User search (`GET /users/search`) matches by email prefix or display_name substring for invite-by-email flows.
 - **Reader Implementation Notes**: See `docs/reader-implementation.md` for the current reader-settings/resume architecture and regression coverage contract.
 
@@ -136,7 +136,7 @@ This will:
 ### Development
 
 ```bash
-# Start infrastructure services (supabase + redis)
+# Start infrastructure services (supabase local)
 make dev
 
 # In terminal 1: Start API server (http://localhost:8000)
@@ -145,11 +145,8 @@ make api
 # In terminal 2: Start web frontend (http://localhost:3000)
 make web
 
-# In terminal 3 (optional): Start Celery worker
+# In terminal 3 (optional): Start background worker
 make worker
-
-# In terminal 4 (optional but required for scheduled polling): Start Celery beat
-make beat
 
 # Run all tests
 make test
@@ -228,19 +225,18 @@ npm run test:csp -- tests/youtube-transcript.csp.spec.ts --project=chromium-csp
 3. Start API: `make api` (terminal 1)
 4. Start web: `make web` (terminal 2)
 5. Start worker: `make worker` (terminal 3, optional)
-6. Start beat scheduler: `make beat` (terminal 4, required for scheduled polling)
-7. Open http://localhost:3000
+6. Open http://localhost:3000
 
 ### Infrastructure Commands
 
 ```bash
-# Start infrastructure (supabase + redis)
+# Start infrastructure (supabase local)
 make dev
 
 # Stop infrastructure
 make down
 
-# View docker logs (redis only)
+# View supabase logs
 make logs
 
 # Run a migration rollback
@@ -255,7 +251,6 @@ Running `make setup` creates a `.env` file with your local configuration:
 
 ```bash
 # Infrastructure ports
-REDIS_PORT=6379
 API_PORT=8000
 WEB_PORT=3000
 
@@ -264,7 +259,6 @@ NEXUS_ENV=local
 DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/postgres
 DATABASE_URL_TEST=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test
 DATABASE_URL_TEST_MIGRATIONS=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test_migrations
-REDIS_URL=redis://localhost:6379/0
 
 # Podcast discovery/subscription provider config (S7 PR-01 / PR-02)
 # make setup writes PODCASTS_ENABLED=false by default so local API boot works
@@ -319,13 +313,14 @@ This file is:
 | `SUPABASE_AUDIENCES` | Yes | Comma-separated list of allowed audiences |
 | `NEXUS_INTERNAL_SECRET` | staging/prod | BFF authentication secret |
 
-#### Celery Worker
+#### Background Worker
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `REDIS_URL` | For worker | Redis connection string (e.g., `redis://localhost:6379/0`) |
-| `CELERY_BROKER_URL` | No | Celery broker URL (defaults to `REDIS_URL`) |
-| `CELERY_RESULT_BACKEND` | No | Celery result backend URL (defaults to `REDIS_URL`) |
+| `WORKER_POLL_INTERVAL_SECONDS` | No | Idle poll sleep in seconds (default: `2`) |
+| `WORKER_SCHEDULER_INTERVAL_SECONDS` | No | Scheduler loop cadence in seconds (default: `30`) |
+| `WORKER_HEARTBEAT_INTERVAL_SECONDS` | No | Lease heartbeat cadence in seconds (default: `60`) |
+| `WORKER_LEASE_SECONDS` | No | Default claim lease in seconds (default: `300`) |
 
 #### Podcast Discovery + Subscription (S7 PR-01 / PR-02)
 
@@ -348,7 +343,7 @@ This file is:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS` | No | Celery Beat interval in seconds for scheduled active-subscription polling (default: `300`) |
+| `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS` | No | Worker scheduler interval for active-subscription polling (default: `300`) |
 | `PODCAST_ACTIVE_POLL_LIMIT` | No | Per-run max active subscriptions scanned (default: `100`, runtime-clamped to service max) |
 | `PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS` | No | Singleton poll-run lease duration in seconds (default: `900`) |
 | `PODCAST_SYNC_RUNNING_LEASE_SECONDS` | No | Stale `sync_status='running'` reclaim threshold in seconds (default: `1800`) |
@@ -489,7 +484,7 @@ All backend logging uses `structlog` with JSON output and automatic context inje
 Every request receives an `X-Request-ID` header for correlation and debugging:
 
 - **Generation**: If client doesn't provide one, a UUID v4 is generated
-- **Propagation**: Browser → Next.js → FastAPI → Celery tasks
+- **Propagation**: Browser → Next.js → FastAPI → Postgres queue jobs
 - **Logging**: All structured logs (JSON format) include `request_id`
 - **Error responses**: Include `request_id` in the body for easy bug reporting
 
@@ -591,11 +586,8 @@ For YouTube media, `GET /media/{id}` includes a typed playback contract with pro
 ### Running the Worker
 
 ```bash
-# Terminal 3: Start Celery worker for ingestion
+# Terminal 3: Start worker for ingestion + periodic scheduling
 make worker
-
-# Terminal 4: Start Celery beat for scheduled poll/recovery jobs
-make beat
 ```
 
 The worker requires Node.js 20+. On first run:
@@ -608,11 +600,10 @@ npm ci
 
 The ingest pipeline includes explicit anti-drift and recovery controls:
 
-- **Task contract source of truth**: `python/nexus/celery_contract.py` defines required worker task names, queue routes, and beat wiring.
-- **Startup fail-fast**: worker startup aborts if any required task registration is missing.
-- **Deployment preflight**: `make verify-celery-contract` asserts worker registrations/routes/beat schedule match the canonical contract.
+- **Task contract source of truth**: `python/nexus/jobs/registry.py` defines required job kinds, retry policy, lease policy, and periodic schedule metadata.
+- **Startup fail-fast**: worker loads the canonical registry at startup and logs the contract fingerprint.
 - **Health fingerprint**: `GET /health` includes `task_contract_version` so deploy systems can compare API and worker contract versions.
-- **Auto-recovery**: beat enqueues `reconcile_stale_ingest_media_job`, which requeues stale `pdf`/`epub` rows in `extracting` and fail-closes after bounded attempts.
+- **Auto-recovery**: worker scheduler enqueues `reconcile_stale_ingest_media_job`, which requeues stale `pdf`/`epub` rows in `extracting` and fail-closes after bounded attempts.
 - **Operator controls**:
   - `POST /internal/ingest/reconcile` — manually enqueue stale-ingest reconciliation.
   - `GET /internal/ingest/reconcile/health` — inspect stale backlog count/age.
@@ -627,7 +618,7 @@ Runtime knobs:
 
 ```bash
 # Build and run worker with docker-compose
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d worker beat
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d worker
 ```
 
 ## Chat / Send Message
@@ -701,7 +692,7 @@ POST /internal/stream-tokens                # Mint stream token (BFF-only)
 - Keepalive pings every ~15s during idle (SSE comment `: keepalive`)
 - Disconnect detection → finalize assistant as error within 5s
 - Token budget pre-reservation for platform keys (prevents concurrent overspend)
-- Liveness markers in Redis for orphan detection
+- Postgres-backed liveness markers for orphan detection
 - Sweeper task cleans stale pending messages (>5min, no liveness marker)
 - CORS on `/stream/*` only (explicit origin allowlist, no cookies)
 - Conditional finalize (exactly-once via `WHERE status='pending'`)
@@ -789,9 +780,8 @@ make test-back         # Backend tests (excludes migrations)
 make test-migrations   # Migration tests (separate DB)
 make test-supabase     # Supabase auth/storage integration tests (opt-in)
 make test-front        # Frontend tests
-make verify-fast       # Fast verification (static checks + unit tests + celery contract)
+make verify-fast       # Fast verification (static checks + unit tests)
 make verify            # Full verification (lint + format + all tests)
-make verify-celery-contract  # Celery API/worker contract preflight
 make e2e               # Playwright E2E (auto-selects free API/WEB ports)
 ```
 
@@ -802,10 +792,10 @@ cd e2e
 npm install
 ```
 
-Backend tests are hermetic: they start their own Postgres + Redis on free ports,
+Backend tests are hermetic: they start their own Postgres on free ports,
 run migrations, and tear everything down. If you want to reuse existing services
 instead, use `make test-back-no-services` or `make test-migrations-no-services`.
-To override the hermetic ports, set `TEST_POSTGRES_PORT` and/or `TEST_REDIS_PORT`.
+To override the hermetic test database port, set `TEST_POSTGRES_PORT`.
 Hermetic test env variables are centralized in `scripts/test_env.sh`.
 
 Supabase integration tests start and stop Supabase local by default. Set

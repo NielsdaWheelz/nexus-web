@@ -19,13 +19,7 @@ test_env_resolve_ports() {
         POSTGRES_PORT="$("$TEST_ENV_SCRIPT_DIR/find_port.sh" 5432 postgres)"
     fi
 
-    if [ -n "${TEST_REDIS_PORT:-}" ]; then
-        REDIS_PORT="$TEST_REDIS_PORT"
-    else
-        REDIS_PORT="$("$TEST_ENV_SCRIPT_DIR/find_port.sh" 6379 redis)"
-    fi
-
-    export POSTGRES_PORT REDIS_PORT
+    export POSTGRES_PORT
 }
 
 test_env_export_db_urls() {
@@ -37,9 +31,6 @@ test_env_export_db_urls() {
     export DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:${POSTGRES_PORT}/nexus_test"
     export DATABASE_URL_TEST="$DATABASE_URL"
     export DATABASE_URL_TEST_MIGRATIONS="postgresql+psycopg://postgres:postgres@localhost:${POSTGRES_PORT}/nexus_test_migrations"
-    export REDIS_URL="redis://localhost:${REDIS_PORT}/0"
-    export CELERY_BROKER_URL="$REDIS_URL"
-    export CELERY_RESULT_BACKEND="$REDIS_URL"
     export NEXUS_ENV="test"
 }
 

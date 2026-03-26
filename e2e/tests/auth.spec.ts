@@ -4,6 +4,7 @@ import {
   gitHubProviderRoundTripSkipReason,
   runGitHubProviderRoundTrip,
 } from "./provider-roundtrip";
+import { bootstrapMagicLinkSession } from "./auth-bootstrap";
 
 test.describe("authentication", () => {
   test("authenticated user lands in the app", async ({ page }) => {
@@ -26,25 +27,34 @@ test.describe("authentication", () => {
     await expect(page.getByRole("link", { name: /libraries/i })).toBeVisible();
   });
 
-  test("logout returns the browser to the OAuth login screen", async ({ page }) => {
-    await page.goto("/libraries");
-    const signOutBtn = page.getByRole("button", { name: /sign out|log out/i });
-    await expect(signOutBtn).toBeVisible();
-    const signOutResponsePromise = page.waitForResponse(
-      (response) =>
-        response.url().includes("/auth/signout") &&
-        response.request().method() === "POST"
-    );
-    await signOutBtn.click();
-    const signOutResponse = await signOutResponsePromise;
-    expect(signOutResponse.status()).toBe(302);
-    await expect(page).toHaveURL(/\/login/);
-    await expect(
-      page.getByRole("button", { name: /continue with google/i })
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /continue with github/i })
-    ).toBeVisible();
+  test("logout returns the browser to the OAuth login screen", async ({ browser }) => {
+    const context = await browser.newContext({
+      storageState: { cookies: [], origins: [] },
+    });
+    const page = await context.newPage();
+    try {
+      await bootstrapMagicLinkSession(page, context.request);
+      await page.goto("/libraries");
+      const signOutBtn = page.getByRole("button", { name: /sign out|log out/i });
+      await expect(signOutBtn).toBeVisible();
+      const signOutResponsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/auth/signout") &&
+          response.request().method() === "POST"
+      );
+      await signOutBtn.click();
+      const signOutResponse = await signOutResponsePromise;
+      expect(signOutResponse.status()).toBe(302);
+      await expect(page).toHaveURL(/\/login/);
+      await expect(
+        page.getByRole("button", { name: /continue with google/i })
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: /continue with github/i })
+      ).toBeVisible();
+    } finally {
+      await context.close();
+    }
   });
 
   test("unauthenticated users are redirected to login with OAuth buttons and a preserved return path", async ({

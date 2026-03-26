@@ -1,7 +1,6 @@
 """Integration tests for internal ingest recovery operations."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -13,13 +12,26 @@ from tests.utils.db import DirectSessionManager
 pytestmark = pytest.mark.integration
 
 
-def test_internal_reconcile_endpoint_enqueues_recovery_job(auth_client):
+def test_internal_reconcile_endpoint_enqueues_recovery_job(
+    auth_client,
+    direct_db: DirectSessionManager,
+):
     actor = create_test_user_id()
+    with direct_db.session() as db:
+        before_ids = {
+            row[0]
+            for row in db.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM background_jobs
+                    WHERE kind = 'reconcile_stale_ingest_media_job'
+                    """
+                )
+            ).fetchall()
+        }
 
-    with patch(
-        "nexus.tasks.reconcile_stale_ingest_media.reconcile_stale_ingest_media_job.apply_async"
-    ) as mock_dispatch:
-        response = auth_client.post("/internal/ingest/reconcile", headers=auth_headers(actor))
+    response = auth_client.post("/internal/ingest/reconcile", headers=auth_headers(actor))
 
     assert response.status_code == 200, (
         f"Expected 200 from reconcile enqueue endpoint, got {response.status_code}: {response.text}"
@@ -29,10 +41,27 @@ def test_internal_reconcile_endpoint_enqueues_recovery_job(auth_client):
         f"Expected reconciler task name in payload, got: {data}"
     )
     assert data["enqueued"] is True, f"Expected enqueue confirmation, got: {data}"
-    mock_dispatch.assert_called_once()
-    assert mock_dispatch.call_args.kwargs.get("queue") == "ingest", (
-        f"Expected reconciler dispatch to ingest queue, got: {mock_dispatch.call_args}"
+
+    with direct_db.session() as db:
+        after_ids = {
+            row[0]
+            for row in db.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM background_jobs
+                    WHERE kind = 'reconcile_stale_ingest_media_job'
+                    """
+                )
+            ).fetchall()
+        }
+
+    new_ids = sorted(after_ids - before_ids)
+    assert len(new_ids) == 1, (
+        "Expected exactly one new reconcile job row after enqueue endpoint call. "
+        f"before={len(before_ids)}, after={len(after_ids)}, new_ids={new_ids}"
     )
+    direct_db.register_cleanup("background_jobs", "id", new_ids[0])
 
 
 def test_internal_reconcile_health_reports_stale_backlog(

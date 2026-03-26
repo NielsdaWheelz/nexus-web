@@ -1,89 +1,81 @@
-"""Celery worker entrypoint.
+"""Postgres queue worker entrypoint."""
 
-Run with: celery -A apps.worker.main:celery_app worker -Q ingest --concurrency=2 --loglevel=info
+from __future__ import annotations
 
-This module imports the Celery app and explicitly registers all tasks.
-Task definitions are in nexus.tasks package - no autodiscovery.
+import os
+import signal
+import socket
+import threading
+from collections.abc import Callable
 
-Logging Convention:
-- All task log entries include request_id, task_name, task_id when available
-- Tasks accept `request_id: str | None = None` parameter for correlation
-- Use configure_task_logging() at the start of each task to set up context
-
-Queue Configuration:
-- ingest: Web article ingestion tasks (fetch + Readability)
-- default: General background tasks
-
-Concurrency Notes:
-- Default is --concurrency=2 for ingest queue
-- Tune based on CPU/network budget and workload profile
-"""
-
-from celery.signals import worker_process_init
-
-from nexus.celery import celery_app
-from nexus.celery_contract import REQUIRED_WORKER_TASK_NAMES, TASK_CONTRACT_VERSION
+from nexus.db.session import get_session_factory
+from nexus.jobs.registry import get_task_contract_version
+from nexus.jobs.worker import JobWorker
 from nexus.logging import configure_logging, get_logger
 
-# =============================================================================
-# Task Registration (explicit imports - no autodiscovery)
-# =============================================================================
-# Import tasks to register them with Celery
-# Each import registers the task with the celery_app
-from nexus.tasks import (
-    backfill_default_library_closure_job,  # noqa: F401
-    ingest_epub,  # noqa: F401
-    ingest_pdf,  # noqa: F401
-    ingest_web_article,  # noqa: F401
-    ingest_youtube_video,  # noqa: F401
-    podcast_active_subscription_poll_job,  # noqa: F401
-    podcast_reindex_semantic_job,  # noqa: F401
-    podcast_sync_subscription_job,  # noqa: F401
-    reconcile_stale_ingest_media_job,  # noqa: F401
-)
-
-REQUIRED_TASK_NAMES = set(REQUIRED_WORKER_TASK_NAMES)
+logger = get_logger(__name__)
 
 
-def _assert_required_task_registration() -> None:
-    registered = set(celery_app.tasks.keys())
-    missing = sorted(REQUIRED_TASK_NAMES - registered)
-    if missing:
-        raise RuntimeError(
-            "Celery worker startup aborted: missing task registrations "
-            f"{', '.join(missing)}. Ensure nexus.tasks imports are complete."
+def _worker_id() -> str:
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
+def _register_signal_handlers(stop_event: threading.Event) -> None:
+    def _handle_signal(signum: int, _frame: object) -> None:
+        logger.info("postgres_worker_shutdown_signal", signal=signum)
+        stop_event.set()
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("postgres_worker_invalid_env_float", name=name, raw=raw, default=default)
+        return default
+    if value <= 0:
+        logger.warning(
+            "postgres_worker_non_positive_env_float",
+            name=name,
+            raw=raw,
+            default=default,
         )
+        return default
+    return value
 
 
-_assert_required_task_registration()
-
-# =============================================================================
-# Worker Lifecycle
-# =============================================================================
-
-
-@worker_process_init.connect
-def setup_worker_logging(**kwargs):
-    """Configure structlog when worker process starts.
-
-    This ensures all Celery worker logs use the same JSON structured format
-    as the FastAPI application, with consistent fields:
-    - timestamp
-    - level
-    - message
-    - request_id (when available)
-    - task_name (when available)
-    - task_id (when available)
-    """
-    configure_logging()
-    logger = get_logger(__name__)
-    logger.info(
-        "celery_worker_started",
-        queue="ingest",
-        task_contract_version=TASK_CONTRACT_VERSION,
+def create_worker() -> JobWorker:
+    session_factory: Callable = get_session_factory()
+    return JobWorker(
+        session_factory=session_factory,
+        worker_id=_worker_id(),
+        poll_interval_seconds=_float_env("WORKER_POLL_INTERVAL_SECONDS", 2.0),
+        scheduler_interval_seconds=_float_env("WORKER_SCHEDULER_INTERVAL_SECONDS", 30.0),
+        heartbeat_interval_seconds=_float_env("WORKER_HEARTBEAT_INTERVAL_SECONDS", 60.0),
+        default_lease_seconds=int(_float_env("WORKER_LEASE_SECONDS", 300.0)),
     )
 
 
-# Export celery_app for Celery to find
-# Command: celery -A apps.worker.main:celery_app worker ...
-__all__ = ["celery_app"]
+def main() -> None:
+    configure_logging()
+    stop_event = threading.Event()
+    _register_signal_handlers(stop_event)
+
+    worker = create_worker()
+    logger.info(
+        "postgres_worker_started",
+        worker_id=worker.worker_id,
+        task_contract_version=get_task_contract_version(),
+    )
+    worker.run_forever(stop_event=stop_event)
+    logger.info("postgres_worker_stopped", worker_id=worker.worker_id)
+
+
+if __name__ == "__main__":
+    main()
+

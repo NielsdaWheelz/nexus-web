@@ -15,7 +15,7 @@
 
 3. Start development:
    ```bash
-   make dev           # Start postgres + redis
+   make dev           # Start local Supabase/Postgres
    make api           # Start API (terminal 1)
    make web           # Start frontend (terminal 2)
    ```
@@ -65,9 +65,9 @@ make verify            # Full verification
 - `NEXUS_ENV=test` enables test-only endpoints
 - Tests use `MockJwtVerifier` with local RSA keypair
 - Database uses savepoint isolation (auto-rollback)
-- Backend tests are hermetic by default: they start their own Postgres + Redis
+- Backend tests are hermetic by default: they start their own Postgres
 - `make test-supabase` starts and stops Supabase local (set `SUPABASE_KEEP_RUNNING=1` to keep it up)
-- Override hermetic ports with `TEST_POSTGRES_PORT` / `TEST_REDIS_PORT`
+- Override the hermetic database port with `TEST_POSTGRES_PORT`
 - Hermetic test env variables are centralized in `scripts/test_env.sh`
 
 ### Web Article Ingestion Tests
@@ -82,7 +82,7 @@ result = run_ingest_sync(db_session, media_id, viewer_id)
 
 **Sync vs Async Ingestion:**
 - `run_ingest_sync(db, media_id, user_id)` - for tests and dev mode
-- `ingest_web_article.delay(media_id, user_id)` - Celery task for production
+- `enqueue_job(db, kind="ingest_web_article", payload=...)` - Postgres job enqueue for production
 
 Both use the same core logic; only the execution wrapper differs.
 

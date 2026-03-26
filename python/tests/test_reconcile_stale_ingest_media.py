@@ -428,7 +428,6 @@ def test_reconciler_requeues_stale_pdf_when_attempts_below_limit(db_session: Ses
             "nexus.tasks.reconcile_stale_ingest_media.get_session_factory",
             return_value=task_session_factory(db_session),
         ),
-        patch("nexus.tasks.ingest_pdf.ingest_pdf.apply_async") as mock_dispatch,
     ):
         from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
 
@@ -436,7 +435,21 @@ def test_reconciler_requeues_stale_pdf_when_attempts_below_limit(db_session: Ses
 
     assert result["scanned"] >= 1, f"Expected at least one stale row scanned, got: {result}"
     assert result["requeued"] >= 1, f"Expected at least one stale row requeued, got: {result}"
-    mock_dispatch.assert_called()
+    queued_count = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM background_jobs
+            WHERE kind = 'ingest_pdf'
+              AND payload->>'media_id' = :media_id
+            """
+        ),
+        {"media_id": str(media_id)},
+    ).scalar_one()
+    assert queued_count >= 1, (
+        "expected stale pdf requeue to persist an ingest_pdf queue row "
+        f"for media_id={media_id}, got {queued_count}"
+    )
 
     db_session.expire_all()
     refreshed = db_session.get(Media, media_id)
@@ -463,9 +476,6 @@ def test_reconciler_requeues_stale_podcast_episode_when_attempts_below_limit(
             "nexus.tasks.reconcile_stale_ingest_media.get_session_factory",
             return_value=task_session_factory(db_session),
         ),
-        patch(
-            "nexus.tasks.podcast_transcribe_episode.podcast_transcribe_episode_job.apply_async"
-        ) as mock_dispatch,
     ):
         from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
 
@@ -473,13 +483,20 @@ def test_reconciler_requeues_stale_podcast_episode_when_attempts_below_limit(
 
     assert result["scanned"] >= 1, f"Expected at least one stale row scanned, got: {result}"
     assert result["requeued"] >= 1, f"Expected at least one stale row requeued, got: {result}"
-    dispatched_media_ids = {
-        UUID(str(call.kwargs.get("args", [None])[0]))
-        for call in mock_dispatch.call_args_list
-        if call.kwargs.get("args")
-    }
-    assert media_id in dispatched_media_ids, (
-        "expected stale podcast requeue to dispatch a transcription job for the seeded media row"
+    queued_count = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM background_jobs
+            WHERE kind = 'podcast_transcribe_episode_job'
+              AND payload->>'media_id' = :media_id
+            """
+        ),
+        {"media_id": str(media_id)},
+    ).scalar_one()
+    assert queued_count >= 1, (
+        "expected stale podcast requeue to persist one transcription queue row "
+        f"for media_id={media_id}, got {queued_count}"
     )
 
     db_session.expire_all()

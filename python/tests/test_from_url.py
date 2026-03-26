@@ -17,7 +17,7 @@ Per s2_pr04.md spec:
 - canonical_source_url is normalized
 """
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
@@ -26,6 +26,60 @@ from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+def _install_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
+    """Force background_jobs inserts to fail until teardown is called."""
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION nexus_test_fail_background_job_insert()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    RAISE EXCEPTION 'queue unavailable';
+                END;
+                $$;
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                DROP TRIGGER IF EXISTS nexus_test_fail_background_job_insert
+                ON background_jobs
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                CREATE TRIGGER nexus_test_fail_background_job_insert
+                BEFORE INSERT ON background_jobs
+                FOR EACH ROW
+                EXECUTE FUNCTION nexus_test_fail_background_job_insert()
+                """
+            )
+        )
+        session.commit()
+
+
+def _remove_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                DROP TRIGGER IF EXISTS nexus_test_fail_background_job_insert
+                ON background_jobs
+                """
+            )
+        )
+        session.execute(
+            text("DROP FUNCTION IF EXISTS nexus_test_fail_background_job_insert()")
+        )
+        session.commit()
 
 # =============================================================================
 # Fixtures
@@ -291,8 +345,9 @@ class TestFromUrlSuccess:
                     WHERE kind = 'video'
                       AND provider = 'youtube'
                       AND provider_id = :provider_id
+                      AND created_by_user_id = :user_id
                 """),
-                {"provider_id": "dQw4w9WgXcQ"},
+                {"provider_id": "dQw4w9WgXcQ", "user_id": user_id},
             ).scalar()
 
         assert row is not None
@@ -352,6 +407,164 @@ class TestFromUrlSuccess:
         attached_library_ids = {row[0] for row in attachments}
         assert default_library_a in attached_library_ids
         assert default_library_b in attached_library_ids
+
+    def test_web_article_creation_enqueues_background_job(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Creating a web article also persists one queue row."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://example.com/queue-check"},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 202, (
+            f"expected 202 for web from_url, got {response.status_code}: {response.text}"
+        )
+
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        assert data["ingest_enqueued"] is True, (
+            "Expected ingest_enqueued=True when queue row is persisted."
+        )
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT id, kind, payload->>'media_id'
+                    FROM background_jobs
+                    WHERE kind = 'ingest_web_article'
+                      AND payload->>'media_id' = :media_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": str(media_id)},
+            ).fetchone()
+
+        assert row is not None, (
+            "Expected one ingest_web_article background job row for created media. "
+            f"media_id={media_id}"
+        )
+        direct_db.register_cleanup("background_jobs", "id", row[0])
+        assert row[1] == "ingest_web_article"
+
+    def test_web_article_creation_rolls_back_when_enqueue_fails(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Queue enqueue failure must abort media creation transaction."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        url = f"https://example.com/queue-failure-{uuid4().hex}"
+
+        _install_background_job_insert_failure(direct_db)
+        try:
+            response = auth_client.post(
+                "/media/from_url",
+                json={"url": url},
+                headers=auth_headers(user_id),
+            )
+        finally:
+            _remove_background_job_insert_failure(direct_db)
+
+        assert response.status_code == 500, (
+            "Expected hard failure when enqueue fails; no orphaned pending media should commit. "
+            f"status={response.status_code}, body={response.text}"
+        )
+
+        with direct_db.session() as session:
+            media_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM media
+                    WHERE requested_url = :url
+                      AND created_by_user_id = :user_id
+                    """
+                ),
+                {"url": url, "user_id": user_id},
+            ).scalar_one()
+            job_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM background_jobs
+                    WHERE kind = 'ingest_web_article'
+                      AND payload->>'request_id' IS NULL
+                      AND payload->>'actor_user_id' = :user_id
+                    """
+                ),
+                {"user_id": str(user_id)},
+            ).scalar_one()
+
+        assert media_count == 0, (
+            "Expected web media insert to roll back when enqueue fails, "
+            f"but found {media_count} committed rows."
+        )
+        assert job_count == 0, (
+            "Expected no ingest_web_article job rows for failed request, "
+            f"but found {job_count}."
+        )
+
+    def test_youtube_creation_rolls_back_when_enqueue_fails(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """First-time YouTube creation must roll back if enqueue fails."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        video_id = uuid4().hex[:11]
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+
+        _install_background_job_insert_failure(direct_db)
+        try:
+            response = auth_client.post(
+                "/media/from_url",
+                json={"url": url},
+                headers=auth_headers(user_id),
+            )
+        finally:
+            _remove_background_job_insert_failure(direct_db)
+
+        assert response.status_code == 500, (
+            "Expected hard failure when YouTube enqueue fails; no orphaned pending media should commit. "
+            f"status={response.status_code}, body={response.text}"
+        )
+
+        with direct_db.session() as session:
+            media_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM media
+                    WHERE kind = 'video'
+                      AND canonical_url = :canonical_url
+                    """
+                ),
+                {"canonical_url": canonical_url},
+            ).scalar_one()
+            job_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM background_jobs
+                    WHERE kind = 'ingest_youtube_video'
+                      AND payload->>'actor_user_id' = :user_id
+                    """
+                ),
+                {"user_id": str(user_id)},
+            ).scalar_one()
+
+        assert media_count == 0, (
+            "Expected YouTube media insert to roll back when enqueue fails, "
+            f"but found {media_count} committed rows."
+        )
+        assert job_count == 0, (
+            "Expected no ingest_youtube_video job rows for failed request, "
+            f"but found {job_count}."
+        )
 
 
 # =============================================================================

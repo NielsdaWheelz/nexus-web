@@ -1191,29 +1191,16 @@ class TestS2HighlightsAnnotationsConstraints:
             session.commit()
 
 
-class TestCeleryAndRedis:
-    """Tests for Celery app and Redis connectivity."""
+class TestWorkerRuntime:
+    """Tests for worker runtime import and initialization."""
 
-    def test_celery_app_initializes(self):
-        """Worker app can be imported without error."""
-        from apps.worker.main import celery_app
+    def test_worker_app_initializes(self):
+        """Worker app can be imported and constructed without error."""
+        from apps.worker.main import create_worker
 
-        assert celery_app is not None
-        # Just check the broker URL is configured (may be None in test env without REDIS_URL)
-        # The app should still initialize
-
-    def test_redis_connectivity(self):
-        """Redis is reachable if REDIS_URL is set."""
-        import os
-
-        redis_url = os.environ.get("REDIS_URL")
-        if not redis_url:
-            pytest.skip("REDIS_URL not set, skipping Redis connectivity test")
-
-        from redis import Redis
-
-        r = Redis.from_url(redis_url)
-        assert r.ping()
+        worker = create_worker()
+        assert worker is not None
+        assert len(worker.registry) > 0
 
 
 class TestS4Migration0007:

@@ -87,7 +87,6 @@ def _finalize_stream_conditional(
     latency_ms: int,
     usage: LLMUsage | None,
     viewer_id: UUID,
-    redis_client=None,
     provider_request_id: str | None = None,
     quote_context_error: bool = False,
 ) -> bool:
@@ -221,7 +220,6 @@ async def stream_send_message_async(
     key_mode: str = "auto",
     contexts: list[dict] | None = None,
     idempotency_key: str | None = None,
-    redis_client=None,
     llm_router: LLMRouter | None = None,
 ) -> AsyncIterator[str]:
     """Async generator for streaming message send via SSE.
@@ -238,7 +236,6 @@ async def stream_send_message_async(
         key_mode: Key resolution mode.
         contexts: Context items.
         idempotency_key: Optional idempotency key.
-        redis_client: Redis client for liveness + budget.
         llm_router: Shared LLMRouter from app.state.
 
     Yields:
@@ -267,7 +264,7 @@ async def stream_send_message_async(
         # PR-08 §4.3: eliminate done{status:"pending"}
         if assistant_message.status == "pending":
             # Check liveness marker
-            is_active = check_liveness_marker(redis_client, assistant_message.id)
+            is_active = check_liveness_marker(assistant_message.id)
             if is_active:
                 # Stream still running — emit meta then done with E_STREAM_IN_PROGRESS
                 yield format_sse_event(
@@ -305,7 +302,6 @@ async def stream_send_message_async(
                         0,
                         None,
                         viewer_id,
-                        redis_client,
                     )
                 yield format_sse_event(
                     "meta",
@@ -409,8 +405,8 @@ async def stream_send_message_async(
         db.close()
         return
 
-    # Increment in-flight counter
-    rate_limiter.increment_inflight(viewer_id)
+    # Acquire one in-flight slot for this stream.
+    rate_limiter.acquire_inflight_slot(viewer_id)
 
     error: Exception | None = None
     full_content = ""
@@ -452,7 +448,7 @@ async def stream_send_message_async(
         )
 
         # Set liveness marker BEFORE first byte
-        await set_liveness_marker(redis_client, assistant_message_id)
+        await set_liveness_marker(assistant_message_id)
 
         # Budget pre-reservation (platform key only) — PR-08 §8
         if resolved_key.mode == "platform":
@@ -498,7 +494,6 @@ async def stream_send_message_async(
                     0,
                     None,
                     viewer_id,
-                    redis_client,
                 )
                 return
 
@@ -578,7 +573,7 @@ async def stream_send_message_async(
                 full_content += chunk.delta_text
                 chunks_count += 1
                 yield format_sse_event("delta", {"delta": chunk.delta_text})
-                await refresh_liveness_marker(redis_client, assistant_message_id)
+                await refresh_liveness_marker(assistant_message_id)
 
                 # PR-09: Emit stream.first_delta exactly once
                 if not first_delta_emitted:
@@ -603,7 +598,7 @@ async def stream_send_message_async(
             now = time.monotonic()
             if now - last_keepalive > KEEPALIVE_INTERVAL_SECONDS:
                 yield ": keepalive\n\n"
-                await refresh_liveness_marker(redis_client, assistant_message_id)
+                await refresh_liveness_marker(assistant_message_id)
                 last_keepalive = now
 
     except QuoteContextBlockingError as e:
@@ -644,7 +639,6 @@ async def stream_send_message_async(
                     latency_ms,
                     usage,
                     viewer_id,
-                    redis_client,
                     provider_request_id,
                     isinstance(error, QuoteContextBlockingError),
                 )
@@ -662,7 +656,6 @@ async def stream_send_message_async(
                     latency_ms,
                     usage,
                     viewer_id,
-                    redis_client,
                     provider_request_id,
                     False,
                 )
@@ -672,8 +665,8 @@ async def stream_send_message_async(
                 rate_limiter.release_token_budget(viewer_id, assistant_message_id)
 
         finalize_ms = int((time.monotonic() - finalize_start) * 1000)
-        await clear_liveness_marker(redis_client, assistant_message_id)
-        rate_limiter.decrement_inflight(viewer_id)
+        await clear_liveness_marker(assistant_message_id)
+        rate_limiter.release_inflight_slot(viewer_id)
         db.close()
 
         # PR-09: Emit terminal stream event + phase timing

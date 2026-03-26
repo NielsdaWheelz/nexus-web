@@ -1,11 +1,4 @@
-"""Stream token auth — mint and verify short-lived JWTs for /stream/* endpoints.
-
-Per PR-08 spec §2:
-- HS256 signed with STREAM_TOKEN_SIGNING_KEY (stays in fastapi env only)
-- Claims: iss=nexus-stream, aud=nexus-api, sub=user_id, exp=now+60s, jti=uuid, scope=stream
-- jti replay protection via Redis SETNX with TTL
-- iss/aud prevent accidental acceptance of supabase tokens on stream routes
-"""
+"""Stream token auth — mint and verify short-lived JWTs for /stream/* endpoints."""
 
 import base64
 import time
@@ -13,8 +6,10 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import jwt
+from sqlalchemy import text
 
 from nexus.config import get_settings
+from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.redact import safe_kv
@@ -77,15 +72,14 @@ def mint_stream_token(user_id: UUID) -> dict:
     }
 
 
-def verify_stream_token(token: str, redis_client=None) -> tuple[UUID, str | None]:
+def verify_stream_token(token: str) -> tuple[UUID, str]:
     """Verify a stream token and return the user_id and jti.
 
     Args:
         token: The JWT string from Authorization header.
-        redis_client: Redis client for jti replay check. If None, skip replay check.
 
     Returns:
-        Tuple of (user_id UUID, jti string or None).
+        Tuple of (user_id UUID, jti string).
 
     Raises:
         ApiError: On any verification failure.
@@ -120,29 +114,48 @@ def verify_stream_token(token: str, redis_client=None) -> tuple[UUID, str | None
             "Invalid stream token scope",
         )
 
-    # jti replay check via Redis SETNX
     jti = payload["jti"]
-    if redis_client is not None:
-        try:
-            exp = payload["exp"]
-            ttl = max(1, exp - int(time.time()))
-            # SETNX returns True if key was set (new), False if already exists (replay)
-            was_set = redis_client.set(f"jti:{jti}", "1", nx=True, ex=ttl)
-            if not was_set:
-                # PR-09: Emit stream.jti_replay_blocked event
-                logger.warning(
-                    "stream.jti_replay_blocked",
-                    **safe_kv(jti=jti),
-                )
-                raise ApiError(
-                    ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
-                    "Stream token has already been used",
-                )
-        except ApiError:
-            raise
-        except Exception as e:
-            # Redis failure — fail open for jti check (token is still valid by signature)
-            logger.warning("stream_token_jti_check_failed", error=str(e))
-
     user_id = UUID(payload["sub"])
+    _claim_jti_once(jti=jti, user_id=user_id, exp_epoch=int(payload["exp"]))
     return user_id, jti
+
+
+def _claim_jti_once(*, jti: str, user_id: UUID, exp_epoch: int) -> None:
+    expires_at = datetime.fromtimestamp(exp_epoch, tz=UTC)
+    session_factory = get_session_factory()
+    db = session_factory()
+    try:
+        db.execute(text("DELETE FROM stream_token_jti_claims WHERE expires_at <= now()"))
+        inserted = db.execute(
+            text(
+                """
+                INSERT INTO stream_token_jti_claims (jti, user_id, expires_at, created_at)
+                VALUES (:jti, :user_id, :expires_at, now())
+                ON CONFLICT (jti) DO NOTHING
+                """
+            ),
+            {
+                "jti": jti,
+                "user_id": user_id,
+                "expires_at": expires_at,
+            },
+        )
+        if inserted.rowcount == 0:
+            logger.warning("stream.jti_replay_blocked", **safe_kv(jti=jti))
+            db.rollback()
+            raise ApiError(
+                ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
+                "Stream token has already been used",
+            )
+        db.commit()
+    except ApiError:
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.warning("stream_token_jti_claim_failed", error=str(exc))
+        raise ApiError(
+            ApiErrorCode.E_STREAM_TOKEN_INVALID,
+            "Unable to verify stream token",
+        ) from exc
+    finally:
+        db.close()

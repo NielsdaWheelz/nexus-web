@@ -9,9 +9,6 @@ set -euo pipefail
 #   - Supabase CLI installed (brew install supabase/tap/supabase)
 #   - Ports 54321-54324 free for Supabase
 #
-# Environment variables:
-#   REDIS_PORT - Host port for redis (default: auto-detect available)
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
@@ -23,43 +20,16 @@ export COMPOSE_PROJECT_NAME="$PROJECT_NAME"
 SUPABASE_API_PORT=54321
 SUPABASE_DB_PORT=54322
 
-# Find an available port starting from a given port
-find_available_port() {
-    local start_port=$1
-    local port=$start_port
-    local max_port=$((start_port + 100))
-
-    while [ $port -lt $max_port ]; do
-        # Check if port is in use (works on macOS and Linux)
-        if ! lsof -i ":$port" >/dev/null 2>&1; then
-            echo $port
-            return 0
-        fi
-        port=$((port + 1))
-    done
-
-    echo "Error: Could not find available port starting from $start_port" >&2
-    return 1
-}
-
 canonicalize_loopback_url() {
     local url=$1
     echo "$url" | sed 's#://127\.0\.0\.1:#://localhost:#'
 }
-
-# Use provided redis port or find available one
-if [ -n "${REDIS_PORT:-}" ]; then
-    export REDIS_PORT
-else
-    export REDIS_PORT=$(find_available_port 6379)
-fi
 
 echo "=== Nexus Project Setup ==="
 echo ""
 echo "Project: $PROJECT_NAME"
 echo "Supabase API port: $SUPABASE_API_PORT"
 echo "Supabase DB port: $SUPABASE_DB_PORT"
-echo "Redis port: $REDIS_PORT"
 echo ""
 
 # Check for required tools
@@ -78,9 +48,6 @@ check_tool npm
 check_tool supabase
 echo "Required tools found"
 echo ""
-
-# Container names (derived from compose project name)
-REDIS_CONTAINER="${PROJECT_NAME}-redis-1"
 
 # Start Supabase local
 echo "Starting Supabase local..."
@@ -123,34 +90,6 @@ docker exec "$DB_CONTAINER" createdb -U postgres nexus_test_migrations 2>/dev/nu
 echo "Test databases ready (nexus_test, nexus_test_migrations)"
 echo ""
 
-# Start Redis
-echo "Starting Redis..."
-cd "$PROJECT_ROOT/docker"
-
-# Check if Redis container is already running
-if docker ps --format '{{.Names}}' | grep -q "^${REDIS_CONTAINER}$"; then
-    echo "Redis container already running (reusing)"
-else
-    docker compose up -d
-fi
-echo "Redis started"
-echo ""
-
-# Wait for Redis to be ready
-echo "Waiting for Redis to be ready..."
-for i in {1..30}; do
-    if docker exec "$REDIS_CONTAINER" redis-cli ping &> /dev/null; then
-        echo "Redis is ready"
-        break
-    fi
-    if [ $i -eq 30 ]; then
-        echo "Error: Redis did not become ready in time"
-        exit 1
-    fi
-    sleep 1
-done
-echo ""
-
 # Install python dependencies
 echo "Installing python dependencies..."
 cd "$PROJECT_ROOT/python"
@@ -176,7 +115,6 @@ echo ""
 DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:${SUPABASE_DB_PORT}/postgres"
 DATABASE_URL_TEST="postgresql+psycopg://postgres:postgres@localhost:${SUPABASE_DB_PORT}/nexus_test"
 DATABASE_URL_TEST_MIGRATIONS="postgresql+psycopg://postgres:postgres@localhost:${SUPABASE_DB_PORT}/nexus_test_migrations"
-REDIS_URL="redis://localhost:${REDIS_PORT}/0"
 
 # Derived Supabase auth settings
 SUPABASE_ISSUER="${SUPABASE_URL}/auth/v1"
@@ -211,15 +149,11 @@ cat > "$PROJECT_ROOT/.env" << EOF
 # Created by: make setup
 # Do not commit this file (it's in .gitignore)
 
-# Infrastructure ports
-REDIS_PORT=${REDIS_PORT}
-
 # Application config
 NEXUS_ENV=local
 DATABASE_URL=${DATABASE_URL}
 DATABASE_URL_TEST=${DATABASE_URL_TEST}
 DATABASE_URL_TEST_MIGRATIONS=${DATABASE_URL_TEST_MIGRATIONS}
-REDIS_URL=${REDIS_URL}
 
 # Podcast features are disabled by default for local setup because
 # Podcast Index credentials are not provisioned automatically by `make setup`.

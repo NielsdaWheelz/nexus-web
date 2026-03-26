@@ -14,7 +14,7 @@ fi
 test_env_resolve_ports
 
 COMPOSE_PROJECT_NAME="nexus-test-$(date +%s)-$$"
-export COMPOSE_PROJECT_NAME POSTGRES_PORT REDIS_PORT
+export COMPOSE_PROJECT_NAME POSTGRES_PORT
 
 cleanup() {
     set +e
@@ -25,7 +25,6 @@ trap cleanup EXIT
 docker compose -f "$COMPOSE_FILE" up -d
 
 postgres_container="$(docker compose -f "$COMPOSE_FILE" ps -q postgres)"
-redis_container="$(docker compose -f "$COMPOSE_FILE" ps -q redis)"
 
 for i in {1..30}; do
     if docker exec "$postgres_container" pg_isready -U postgres >/dev/null 2>&1; then
@@ -33,17 +32,6 @@ for i in {1..30}; do
     fi
     if [ "$i" -eq 30 ]; then
         echo "Error: Postgres did not become ready in time" >&2
-        exit 1
-    fi
-    sleep 1
-done
-
-for i in {1..30}; do
-    if docker exec "$redis_container" redis-cli ping >/dev/null 2>&1; then
-        break
-    fi
-    if [ "$i" -eq 30 ]; then
-        echo "Error: Redis did not become ready in time" >&2
         exit 1
     fi
     sleep 1

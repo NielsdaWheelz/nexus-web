@@ -1,4 +1,4 @@
-"""Celery task for YouTube video transcript ingestion."""
+"""Worker job handler for YouTube video transcript ingestion."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.celery import celery_app
 from nexus.db.models import FailureStage, Media, MediaKind, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
@@ -24,9 +23,7 @@ from nexus.services.youtube_transcripts import fetch_youtube_transcript
 logger = get_logger(__name__)
 
 
-@celery_app.task(bind=True, max_retries=0, name="ingest_youtube_video")
 def ingest_youtube_video(
-    self,
     media_id: str,
     actor_user_id: str,
     request_id: str | None = None,

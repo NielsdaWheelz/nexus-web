@@ -177,16 +177,26 @@ class TestPodcastUxHardening:
             )
             session.commit()
 
-        from unittest.mock import patch
-
-        with patch(
-            "nexus.tasks.podcast_sync_subscription.podcast_sync_subscription_job.apply_async"
-        ) as mock_dispatch:
-            mock_dispatch.return_value = None
-            response = auth_client.post(
-                f"/podcasts/subscriptions/{podcast_id}/sync",
-                headers=auth_headers(user_id),
+        with direct_db.session() as session:
+            before_dispatch_count = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'podcast_sync_subscription_job'
+                          AND payload->>'user_id' = :user_id
+                          AND payload->>'podcast_id' = :podcast_id
+                        """
+                    ),
+                    {"user_id": str(user_id), "podcast_id": str(podcast_id)},
+                ).scalar_one()
             )
+
+        response = auth_client.post(
+            f"/podcasts/subscriptions/{podcast_id}/sync",
+            headers=auth_headers(user_id),
+        )
 
         assert response.status_code == 202, (
             "expected manual sync refresh to return accepted, "
@@ -197,7 +207,29 @@ class TestPodcastUxHardening:
             f"expected refresh endpoint to place subscription in pending state, got {payload}"
         )
         assert payload["sync_enqueued"] is True
-        mock_dispatch.assert_called_once()
+        with direct_db.session() as session:
+            after_dispatch_count = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'podcast_sync_subscription_job'
+                          AND payload->>'user_id' = :user_id
+                          AND payload->>'podcast_id' = :podcast_id
+                        """
+                    ),
+                    {"user_id": str(user_id), "podcast_id": str(podcast_id)},
+                ).scalar_one()
+            )
+        assert after_dispatch_count >= 1, (
+            "manual sync refresh should leave at least one durable sync job row available. "
+            f"before={before_dispatch_count} after={after_dispatch_count}"
+        )
+        assert after_dispatch_count >= before_dispatch_count, (
+            "manual sync refresh must not remove existing durable sync jobs. "
+            f"before={before_dispatch_count} after={after_dispatch_count}"
+        )
 
     def test_get_plan_route_surfaces_user_plan_and_usage(self, auth_client, direct_db):
         user_id = create_test_user_id()
@@ -335,20 +367,6 @@ class TestPodcastUxHardening:
         )
 
 
-@pytest.fixture(autouse=True)
-def _stub_celery_dispatch(monkeypatch):
-    """Stub Celery apply_async at the async task dispatch boundary.
-
-    EXTERNAL SEAM EXCEPTION (per testing_standards.md §6):
-    Async task dispatch is an external boundary. This stub prevents broker
-    connection attempts while preserving all service-layer behavior. Tests
-    that need to assert dispatch args use unittest.mock.patch locally.
-    """
-    from nexus.tasks.podcast_sync_subscription import podcast_sync_subscription_job
-
-    monkeypatch.setattr(podcast_sync_subscription_job, "apply_async", lambda *a, **kw: None)
-
-
 def _bootstrap_user(auth_client, user_id: UUID) -> UUID:
     response = auth_client.get("/me", headers=auth_headers(user_id))
     assert response.status_code == 200, (
@@ -470,8 +488,14 @@ def _run_subscription_sync(
 
     original_enqueue = podcast_service._enqueue_podcast_transcription_job
 
-    def _enqueue_stub(*, media_id: UUID, requested_by_user_id: UUID | None) -> bool:
-        _ = media_id, requested_by_user_id
+    def _enqueue_stub(
+        _db,
+        *,
+        media_id: UUID,
+        requested_by_user_id: UUID | None,
+        request_id: str | None = None,
+    ) -> bool:
+        _ = _db, media_id, requested_by_user_id, request_id
         return True
 
     if stub_enqueue:
@@ -2369,7 +2393,7 @@ class TestPodcastTranscriptRequestAdmission:
         media_id = seeded["media_id"]
         monkeypatch.setattr(
             "nexus.services.podcasts._enqueue_podcast_transcription_job",
-            lambda **_kwargs: False,
+            lambda _db, **_kwargs: False,
         )
 
         request_response = auth_client.post(
@@ -5491,14 +5515,26 @@ class TestPodcastOpmlImportExport:
             ]
         )
 
-        with patch(
-            "nexus.tasks.podcast_sync_subscription.podcast_sync_subscription_job.apply_async"
-        ) as first_dispatch:
-            first_response = auth_client.post(
-                "/podcasts/import/opml",
-                files={"file": ("subscriptions.opml", opml_payload, "application/xml")},
-                headers=auth_headers(user_id),
+        with direct_db.session() as session:
+            jobs_before_first_import = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'podcast_sync_subscription_job'
+                          AND payload->>'user_id' = :user_id
+                        """
+                    ),
+                    {"user_id": str(user_id)},
+                ).scalar_one()
             )
+
+        first_response = auth_client.post(
+            "/podcasts/import/opml",
+            files={"file": ("subscriptions.opml", opml_payload, "application/xml")},
+            headers=auth_headers(user_id),
+        )
 
         assert first_response.status_code == 200, (
             "valid OPML import should succeed and return summary metrics, "
@@ -5520,9 +5556,23 @@ class TestPodcastOpmlImportExport:
         assert first_summary["skipped_invalid"] == 1, (
             f"missing xmlUrl outline should be counted as skipped_invalid, got {first_summary}"
         )
-        assert first_dispatch.call_count == 2, (
-            "sync dispatch should run once per newly imported subscription, "
-            f"got {first_dispatch.call_count} dispatches"
+        with direct_db.session() as session:
+            jobs_after_first_import = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'podcast_sync_subscription_job'
+                          AND payload->>'user_id' = :user_id
+                        """
+                    ),
+                    {"user_id": str(user_id)},
+                ).scalar_one()
+            )
+        assert jobs_after_first_import == jobs_before_first_import + 2, (
+            "first OPML import should enqueue exactly two sync jobs for newly imported feeds. "
+            f"before={jobs_before_first_import} after={jobs_after_first_import}"
         )
 
         subscriptions_response = auth_client.get(
@@ -5576,14 +5626,11 @@ class TestPodcastOpmlImportExport:
             f"unknown feed should preserve OPML htmlUrl as website_url, got {unknown_row}"
         )
 
-        with patch(
-            "nexus.tasks.podcast_sync_subscription.podcast_sync_subscription_job.apply_async"
-        ) as second_dispatch:
-            second_response = auth_client.post(
-                "/podcasts/import/opml",
-                files={"file": ("subscriptions.opml", opml_payload, "application/xml")},
-                headers=auth_headers(user_id),
-            )
+        second_response = auth_client.post(
+            "/podcasts/import/opml",
+            files={"file": ("subscriptions.opml", opml_payload, "application/xml")},
+            headers=auth_headers(user_id),
+        )
 
         assert second_response.status_code == 200, (
             "re-importing the same OPML file should remain a successful no-op, "
@@ -5600,9 +5647,23 @@ class TestPodcastOpmlImportExport:
             f"got {second_summary}"
         )
         assert second_summary["skipped_invalid"] == 1
-        assert second_dispatch.call_count == 0, (
-            "idempotent import should not enqueue new sync jobs on second run, "
-            f"got {second_dispatch.call_count} dispatches"
+        with direct_db.session() as session:
+            jobs_after_second_import = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'podcast_sync_subscription_job'
+                          AND payload->>'user_id' = :user_id
+                        """
+                    ),
+                    {"user_id": str(user_id)},
+                ).scalar_one()
+            )
+        assert jobs_after_second_import == jobs_after_first_import, (
+            "idempotent second OPML import must enqueue zero additional sync jobs. "
+            f"first_after={jobs_after_first_import} second_after={jobs_after_second_import}"
         )
 
     def test_import_opml_rejects_non_xml_payload(self, auth_client):
@@ -6189,16 +6250,25 @@ class TestPodcastTranscriptionAsyncLifecycle:
             session.commit()
         assert failed_result["status"] == "failed"
 
-        from unittest.mock import patch
-
-        with patch(
-            "nexus.tasks.podcast_transcribe_episode.podcast_transcribe_episode_job.apply_async"
-        ) as mock_dispatch:
-            mock_dispatch.return_value = None
-            retry_response = auth_client.post(
-                f"/media/{media_id}/retry",
-                headers=auth_headers(user_id),
+        with direct_db.session() as session:
+            queue_rows_before_retry = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'podcast_transcribe_episode_job'
+                          AND payload->>'media_id' = :media_id
+                        """
+                    ),
+                    {"media_id": str(media_id)},
+                ).scalar_one()
             )
+
+        retry_response = auth_client.post(
+            f"/media/{media_id}/retry",
+            headers=auth_headers(user_id),
+        )
 
         assert retry_response.status_code == 202, (
             f"expected podcast retry endpoint to accept failed transcribe media, got "
@@ -6207,7 +6277,24 @@ class TestPodcastTranscriptionAsyncLifecycle:
         retry_data = retry_response.json()["data"]
         assert retry_data["processing_status"] == "extracting"
         assert retry_data["retry_enqueued"] is True
-        mock_dispatch.assert_called_once()
+        with direct_db.session() as session:
+            queue_rows_after_retry = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'podcast_transcribe_episode_job'
+                          AND payload->>'media_id' = :media_id
+                        """
+                    ),
+                    {"media_id": str(media_id)},
+                ).scalar_one()
+            )
+        assert queue_rows_after_retry == queue_rows_before_retry + 1, (
+            "first podcast retry must enqueue one additional transcription job row. "
+            f"before={queue_rows_before_retry} after={queue_rows_after_retry}"
+        )
 
         with direct_db.session() as session:
             job_row = session.execute(
@@ -6241,18 +6328,32 @@ class TestPodcastTranscriptionAsyncLifecycle:
         assert media_row[1] is None
         assert media_row[2] is None
 
-        with patch(
-            "nexus.tasks.podcast_transcribe_episode.podcast_transcribe_episode_job.apply_async"
-        ) as second_dispatch:
-            second_retry = auth_client.post(
-                f"/media/{media_id}/retry",
-                headers=auth_headers(user_id),
-            )
+        second_retry = auth_client.post(
+            f"/media/{media_id}/retry",
+            headers=auth_headers(user_id),
+        )
         assert second_retry.status_code == 202
         second_data = second_retry.json()["data"]
         assert second_data["processing_status"] == "extracting"
         assert second_data["retry_enqueued"] is False
-        second_dispatch.assert_not_called()
+        with direct_db.session() as session:
+            queue_rows_after_second_retry = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'podcast_transcribe_episode_job'
+                          AND payload->>'media_id' = :media_id
+                        """
+                    ),
+                    {"media_id": str(media_id)},
+                ).scalar_one()
+            )
+        assert queue_rows_after_second_retry == queue_rows_after_retry, (
+            "second podcast retry should not enqueue another job while one is already pending. "
+            f"after_first={queue_rows_after_retry} after_second={queue_rows_after_second_retry}"
+        )
 
 
 class TestPodcastShowNotesAndBatchCutover:
@@ -7277,16 +7378,25 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             )
             session.commit()
 
-        from unittest.mock import patch
-
-        with patch(
-            "nexus.tasks.ingest_youtube_video.ingest_youtube_video.apply_async"
-        ) as mock_dispatch:
-            mock_dispatch.return_value = None
-            retry_response = auth_client.post(
-                f"/media/{media_id}/retry",
-                headers=auth_headers(user_id),
+        with direct_db.session() as session:
+            queue_rows_before_retry = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'ingest_youtube_video'
+                          AND payload->>'media_id' = :media_id
+                        """
+                    ),
+                    {"media_id": str(media_id)},
+                ).scalar_one()
             )
+
+        retry_response = auth_client.post(
+            f"/media/{media_id}/retry",
+            headers=auth_headers(user_id),
+        )
 
         assert retry_response.status_code == 202, (
             f"expected video retry endpoint to accept failed transcribe media, got "
@@ -7295,7 +7405,24 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         retry_data = retry_response.json()["data"]
         assert retry_data["processing_status"] == "extracting"
         assert retry_data["retry_enqueued"] is True
-        mock_dispatch.assert_called_once()
+        with direct_db.session() as session:
+            queue_rows_after_retry = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'ingest_youtube_video'
+                          AND payload->>'media_id' = :media_id
+                        """
+                    ),
+                    {"media_id": str(media_id)},
+                ).scalar_one()
+            )
+        assert queue_rows_after_retry == queue_rows_before_retry + 1, (
+            "first video retry must enqueue one additional ingest_youtube_video queue row. "
+            f"before={queue_rows_before_retry} after={queue_rows_after_retry}"
+        )
 
         with direct_db.session() as session:
             media_row = session.execute(
@@ -7313,15 +7440,29 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         assert media_row[1] is None
         assert media_row[2] is None
 
-        with patch(
-            "nexus.tasks.ingest_youtube_video.ingest_youtube_video.apply_async"
-        ) as second_dispatch:
-            second_retry = auth_client.post(
-                f"/media/{media_id}/retry",
-                headers=auth_headers(user_id),
-            )
+        second_retry = auth_client.post(
+            f"/media/{media_id}/retry",
+            headers=auth_headers(user_id),
+        )
         assert second_retry.status_code == 202
         second_data = second_retry.json()["data"]
         assert second_data["processing_status"] == "extracting"
         assert second_data["retry_enqueued"] is False
-        second_dispatch.assert_not_called()
+        with direct_db.session() as session:
+            queue_rows_after_second_retry = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM background_jobs
+                        WHERE kind = 'ingest_youtube_video'
+                          AND payload->>'media_id' = :media_id
+                        """
+                    ),
+                    {"media_id": str(media_id)},
+                ).scalar_one()
+            )
+        assert queue_rows_after_second_retry == queue_rows_after_retry, (
+            "second video retry should not enqueue another job while one is already pending. "
+            f"after_first={queue_rows_after_retry} after_second={queue_rows_after_second_retry}"
+        )

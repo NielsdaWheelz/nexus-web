@@ -16,7 +16,7 @@ def test_podcast_transcribe_episode_task_rejects_invalid_media_id(monkeypatch):
         fail_if_called,
     )
 
-    result = podcast_transcribe_episode_job.run(media_id="not-a-uuid")
+    result = podcast_transcribe_episode_job(media_id="not-a-uuid")
 
     assert result == {"status": "failed", "error_code": "E_INVALID_REQUEST"}
     assert called["value"] is False
@@ -46,7 +46,7 @@ def test_podcast_transcribe_episode_task_ignores_invalid_requested_by_user_id(mo
         fake_run,
     )
 
-    result = podcast_transcribe_episode_job.run(
+    result = podcast_transcribe_episode_job(
         media_id=str(uuid4()),
         requested_by_user_id="invalid-user-id",
     )

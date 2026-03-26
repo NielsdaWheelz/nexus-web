@@ -12,13 +12,15 @@ Rules:
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.config import Environment, get_settings
+from nexus.db.session import get_session_factory
+from nexus.jobs.queue import enqueue_job
 
 logger = logging.getLogger(__name__)
 
@@ -583,7 +585,7 @@ def enqueue_backfill_task(
     request_id: str | None = None,
     countdown: int | None = None,
 ) -> bool:
-    """Best-effort enqueue of backfill worker task.
+    """Best-effort enqueue of backfill worker job.
 
     Never raises. Returns True if dispatch succeeded, False otherwise.
     In test env, skips dispatch and returns False.
@@ -598,21 +600,26 @@ def enqueue_backfill_task(
         )
         return False
 
+    session_factory = get_session_factory()
+    db = session_factory()
     try:
-        from nexus.tasks.backfill_default_library_closure import (
-            backfill_default_library_closure_job,
-        )
-
-        kwargs = {"request_id": request_id} if request_id else {}
-        apply_kwargs: dict = {
-            "args": [str(default_library_id), str(source_library_id), str(user_id)],
-            "kwargs": kwargs,
-            "queue": "ingest",
-        }
+        available_at = None
         if countdown is not None:
-            apply_kwargs["countdown"] = countdown
+            available_at = datetime.now(UTC) + timedelta(seconds=max(int(countdown), 0))
 
-        backfill_default_library_closure_job.apply_async(**apply_kwargs)
+        enqueue_job(
+            db,
+            kind="backfill_default_library_closure_job",
+            payload={
+                "default_library_id": str(default_library_id),
+                "source_library_id": str(source_library_id),
+                "user_id": str(user_id),
+                "request_id": request_id,
+            },
+            available_at=available_at,
+            max_attempts=BACKFILL_MAX_ATTEMPTS,
+        )
+        db.commit()
         logger.info(
             "backfill_enqueue_ok: dl=%s src=%s user=%s countdown=%s",
             default_library_id,
@@ -622,6 +629,7 @@ def enqueue_backfill_task(
         )
         return True
     except Exception:
+        db.rollback()
         logger.exception(
             "backfill_enqueue_failed: dl=%s src=%s user=%s",
             default_library_id,
@@ -629,6 +637,8 @@ def enqueue_backfill_task(
             user_id,
         )
         return False
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

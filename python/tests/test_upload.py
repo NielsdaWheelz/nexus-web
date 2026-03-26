@@ -42,6 +42,74 @@ EPUB_SHA256 = hashlib.sha256(EPUB_CONTENT).hexdigest()
 INVALID_CONTENT = b"not a valid file"
 
 
+def _count_jobs_for_media(direct_db: DirectSessionManager, *, kind: str, media_id: str) -> int:
+    with direct_db.session() as session:
+        return int(
+            session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM background_jobs
+                    WHERE kind = :kind
+                      AND payload->>'media_id' = :media_id
+                    """
+                ),
+                {"kind": kind, "media_id": media_id},
+            ).scalar_one()
+        )
+
+
+def _install_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION nexus_test_fail_background_job_insert()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    RAISE EXCEPTION 'queue unavailable';
+                END;
+                $$;
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                DROP TRIGGER IF EXISTS nexus_test_fail_background_job_insert
+                ON background_jobs
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                CREATE TRIGGER nexus_test_fail_background_job_insert
+                BEFORE INSERT ON background_jobs
+                FOR EACH ROW
+                EXECUTE FUNCTION nexus_test_fail_background_job_insert()
+                """
+            )
+        )
+        session.commit()
+
+
+def _remove_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                DROP TRIGGER IF EXISTS nexus_test_fail_background_job_insert
+                ON background_jobs
+                """
+            )
+        )
+        session.execute(text("DROP FUNCTION IF EXISTS nexus_test_fail_background_job_insert()"))
+        session.commit()
+
+
 @pytest.fixture
 def fake_storage():
     """Provide a FakeStorageClient for testing."""
@@ -876,10 +944,6 @@ class TestEpubIngestLifecycle:
         direct_db,
         monkeypatch,
     ):
-        from unittest.mock import MagicMock
-
-        from nexus.tasks.ingest_epub import ingest_epub as epub_task
-
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
@@ -887,8 +951,6 @@ class TestEpubIngestLifecycle:
             "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
         )
         monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
-        mock_dispatch = MagicMock()
-        monkeypatch.setattr(epub_task, "apply_async", mock_dispatch)
 
         mid, _ = self._init_and_store_epub(
             upload_client, fake_storage, direct_db, user_id, EPUB_CONTENT
@@ -910,10 +972,6 @@ class TestEpubIngestLifecycle:
         direct_db,
         monkeypatch,
     ):
-        from unittest.mock import MagicMock
-
-        from nexus.tasks.ingest_epub import ingest_epub as epub_task
-
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
@@ -921,7 +979,6 @@ class TestEpubIngestLifecycle:
             "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
         )
         monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
-        monkeypatch.setattr(epub_task, "apply_async", MagicMock())
 
         mid1, _ = self._init_and_store_epub(
             upload_client, fake_storage, direct_db, user_id, EPUB_CONTENT
@@ -946,18 +1003,12 @@ class TestEpubIngestLifecycle:
         direct_db,
         monkeypatch,
     ):
-        from unittest.mock import MagicMock
-
-        from nexus.tasks.ingest_epub import ingest_epub as epub_task
-
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
         monkeypatch.setattr(
             "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
         )
-        mock_dispatch = MagicMock()
-        monkeypatch.setattr(epub_task, "apply_async", mock_dispatch)
 
         from nexus.services.epub_ingest import EpubExtractionError
 
@@ -976,8 +1027,7 @@ class TestEpubIngestLifecycle:
         resp = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "E_ARCHIVE_UNSAFE"
-
-        mock_dispatch.assert_not_called()
+        assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=str(mid)) == 0
 
         with direct_db.session() as session:
             row = session.execute(
@@ -1015,10 +1065,6 @@ class TestEpubIngestLifecycle:
         direct_db,
         monkeypatch,
     ):
-        from unittest.mock import MagicMock
-
-        from nexus.tasks.ingest_epub import ingest_epub as epub_task
-
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
@@ -1026,8 +1072,6 @@ class TestEpubIngestLifecycle:
             "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
         )
         monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
-        mock_dispatch = MagicMock()
-        monkeypatch.setattr(epub_task, "apply_async", mock_dispatch)
 
         mid, _ = self._init_and_store_epub(
             upload_client, fake_storage, direct_db, user_id, EPUB_CONTENT
@@ -1035,7 +1079,7 @@ class TestEpubIngestLifecycle:
 
         resp1 = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
         assert resp1.status_code == 200
-        assert mock_dispatch.call_count == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=str(mid)) == 1
 
         with direct_db.session() as session:
             attempts_after_first = session.execute(
@@ -1048,7 +1092,7 @@ class TestEpubIngestLifecycle:
         data2 = resp2.json()["data"]
         assert data2["ingest_enqueued"] is False
 
-        assert mock_dispatch.call_count == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=str(mid)) == 1
 
         with direct_db.session() as session:
             attempts_after_second = session.execute(
@@ -1081,8 +1125,6 @@ class TestEpubIngestLifecycle:
         direct_db,
         monkeypatch,
     ):
-        from nexus.tasks.ingest_epub import ingest_epub as epub_task
-
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
@@ -1091,16 +1133,14 @@ class TestEpubIngestLifecycle:
         )
         monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
 
-        def _boom(*a, **kw):
-            raise RuntimeError("broker down")
-
-        monkeypatch.setattr(epub_task, "apply_async", _boom)
-
         mid, _ = self._init_and_store_epub(
             upload_client, fake_storage, direct_db, user_id, EPUB_CONTENT
         )
-
-        resp = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
+        _install_background_job_insert_failure(direct_db)
+        try:
+            resp = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
+        finally:
+            _remove_background_job_insert_failure(direct_db)
         assert resp.status_code == 500
 
         with direct_db.session() as session:
@@ -1119,17 +1159,12 @@ class TestIngestResponseBackwardCompatibility:
         self, upload_client, fake_storage, direct_db, monkeypatch
     ):
         """Legacy clients reading only media_id and duplicate remain valid."""
-        from unittest.mock import MagicMock
-
-        from nexus.tasks.ingest_epub import ingest_epub as epub_task
-
         user_id = create_test_user_id()
 
         monkeypatch.setattr(
             "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
         )
         monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
-        monkeypatch.setattr(epub_task, "apply_async", MagicMock())
 
         resp = upload_client.post(
             "/media/upload/init",
@@ -1195,14 +1230,10 @@ class TestPdfIngestLifecycle:
         direct_db,
         monkeypatch,
     ):
-        from unittest.mock import MagicMock
-
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
         monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
-        mock_dispatch = MagicMock()
-        monkeypatch.setattr("nexus.tasks.ingest_pdf.ingest_pdf.apply_async", mock_dispatch)
 
         mid, _ = self._init_and_store_pdf(
             upload_client, fake_storage, direct_db, user_id, PDF_CONTENT
@@ -1214,7 +1245,7 @@ class TestPdfIngestLifecycle:
 
         assert data["processing_status"] == "extracting"
         assert data["ingest_enqueued"] is True
-        mock_dispatch.assert_called_once()
+        assert _count_jobs_for_media(direct_db, kind="ingest_pdf", media_id=str(mid)) == 1
 
     def test_pr03_ingest_pdf_confirm_preserves_compat_response_fields(
         self,
@@ -1223,13 +1254,10 @@ class TestPdfIngestLifecycle:
         direct_db,
         monkeypatch,
     ):
-        from unittest.mock import MagicMock
-
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
         monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
-        monkeypatch.setattr("nexus.tasks.ingest_pdf.ingest_pdf.apply_async", MagicMock())
 
         mid, _ = self._init_and_store_pdf(
             upload_client, fake_storage, direct_db, user_id, PDF_CONTENT
@@ -1251,15 +1279,12 @@ class TestPdfIngestLifecycle:
         direct_db,
         monkeypatch,
     ):
-        from unittest.mock import MagicMock
-
         user_a = create_test_user_id()
         user_b = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_a))
         upload_client.get("/me", headers=auth_headers(user_b))
 
         monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
-        monkeypatch.setattr("nexus.tasks.ingest_pdf.ingest_pdf.apply_async", MagicMock())
 
         mid, _ = self._init_and_store_pdf(
             upload_client, fake_storage, direct_db, user_a, PDF_CONTENT
@@ -1275,14 +1300,10 @@ class TestPdfIngestLifecycle:
         direct_db,
         monkeypatch,
     ):
-        from unittest.mock import MagicMock
-
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
         monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
-        mock_dispatch = MagicMock()
-        monkeypatch.setattr("nexus.tasks.ingest_pdf.ingest_pdf.apply_async", mock_dispatch)
 
         mid, _ = self._init_and_store_pdf(
             upload_client, fake_storage, direct_db, user_id, PDF_CONTENT
@@ -1291,10 +1312,10 @@ class TestPdfIngestLifecycle:
         resp1 = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
         assert resp1.status_code == 200
         assert resp1.json()["data"]["ingest_enqueued"] is True
-        assert mock_dispatch.call_count == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_pdf", media_id=str(mid)) == 1
 
         resp2 = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
         assert resp2.status_code == 200
         data2 = resp2.json()["data"]
         assert data2["ingest_enqueued"] is False
-        assert mock_dispatch.call_count == 1
+        assert _count_jobs_for_media(direct_db, kind="ingest_pdf", media_id=str(mid)) == 1

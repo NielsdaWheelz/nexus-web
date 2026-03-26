@@ -1,4 +1,4 @@
-"""Celery task for EPUB extraction.
+"""Worker job handler for EPUB extraction.
 
 Owns async completion-state transitions for EPUB extraction:
 extracting -> ready_for_reading (success) or extracting -> failed (error).
@@ -10,9 +10,9 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from nexus.celery import celery_app
 from nexus.db.models import FailureStage, Media, MediaAuthor, ProcessingStatus
 from nexus.db.session import get_session_factory
+from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.epub_ingest import (
     EpubExtractionError,
@@ -26,9 +26,7 @@ logger = get_logger(__name__)
 _MAX_ERROR_MSG_LEN = 1000
 
 
-@celery_app.task(bind=True, max_retries=0, name="ingest_epub")
 def ingest_epub(
-    self,
     media_id: str,
     request_id: str | None = None,
 ) -> dict:
@@ -147,14 +145,21 @@ def ingest_epub(
 
 def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
     """Best-effort dispatch of metadata enrichment task."""
+    session_factory = get_session_factory()
+    db = session_factory()
     try:
-        from nexus.tasks.enrich_metadata import enrich_metadata
-
-        enrich_metadata.apply_async(
-            args=[media_id], kwargs={"request_id": request_id}, queue="ingest"
+        enqueue_job(
+            db,
+            kind="enrich_metadata",
+            payload={"media_id": media_id, "request_id": request_id},
+            max_attempts=1,
         )
+        db.commit()
     except Exception:
+        db.rollback()
         logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
+    finally:
+        db.close()
 
 
 def _persist_epub_metadata(db: Session, media: Media, result: EpubExtractionResult) -> None:

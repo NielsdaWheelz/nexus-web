@@ -59,7 +59,7 @@ nexus/
 │   ├── search.py        # Keyword search with visibility filtering (S3, PR-06)
 │   ├── send_message.py  # Core send-message three-phase flow (S3 PR-05)
 │   ├── send_message_stream.py  # SSE streaming send-message (S3 PR-05)
-│   ├── rate_limit.py    # Redis-based rate limiting and token budgets (S3 PR-05)
+│   ├── rate_limit.py    # Postgres-backed rate limiting and token budgets (S3 PR-05)
 │   ├── context_rendering.py  # Context rendering for prompts (S3 PR-05)
 │   ├── api_key_resolver.py   # API key resolution for LLM calls (S3 PR-05)
 │   ├── podcasts.py      # Podcast discovery + async subscription sync (S7)
@@ -161,7 +161,7 @@ Podcast subscription ingest is split into control-plane and data-plane paths:
 - `POST /podcasts/subscriptions` writes/updates per-user subscription state and enqueues a worker job.
 - `DELETE /podcasts/subscriptions/{podcast_id}` marks the subscription unsubscribed and records `unsubscribe_mode` (`1`, `2`, or `3`) for deterministic retention behavior.
 - Worker task `podcast_sync_subscription_job` runs episode selection + idempotent ingest, then updates sync status.
-- Celery Beat task `podcast_active_subscription_poll_job` runs bounded active-subscription polling on a schedule.
+- Worker scheduler enqueues `podcast_active_subscription_poll_job` on a bounded schedule.
 - Transcript persistence (S7 PR-03) is provider-driven:
   - new episodes with external audio URLs run transcription work via Deepgram
   - diarized attempt falls back to non-diarized attempt when diarization fails
@@ -184,12 +184,11 @@ Podcast subscription ingest is split into control-plane and data-plane paths:
 
 ### Ingest Worker Contract and Stale Recovery
 
-PDF/EPUB ingest reliability is guarded by a canonical Celery contract and bounded recovery:
+PDF/EPUB ingest reliability is guarded by the Postgres job registry and bounded recovery:
 
-- `nexus.celery_contract` is the source of truth for required worker tasks, task routes, and beat jobs.
-- Worker startup hard-fails if any required task is missing from runtime registration.
-- `scripts/verify_celery_contract.py` enforces contract parity for deploy preflight checks.
-- Beat job `reconcile_stale_ingest_media_job` scans stale `extracting` rows (`pdf`, `epub`, `podcast_episode`) and:
+- `nexus.jobs.registry` is the source of truth for required job kinds, retry policy, lease policy, and periodic schedule metadata.
+- Worker startup logs a deterministic `task_contract_version` fingerprint from the registry for deploy checks.
+- Scheduler-enqueued `reconcile_stale_ingest_media_job` scans stale `extracting` rows (`pdf`, `epub`, `podcast_episode`) and:
   - re-dispatches up to `INGEST_STALE_REQUEUE_MAX_ATTEMPTS`
   - fail-closes with deterministic timeout metadata after max attempts
 - Operator endpoints:
@@ -210,7 +209,7 @@ Every request gets a unique `X-Request-ID` for tracing:
 - Preserved and normalized if valid (UUID lowercase, alphanumeric preserved)
 - Included in all response headers
 - Included in error response bodies for easy debugging
-- Propagated through BFF → FastAPI → Celery logs
+- Propagated through BFF → FastAPI → worker logs
 
 Example error response:
 ```json
@@ -410,7 +409,7 @@ Phase 3: Finalize (single transaction)
   └── Charge token budget (platform keys)
 ```
 
-Rate limiting uses Redis:
+Rate limiting uses Postgres runtime tables:
 - RPM: 20/min per user (sliding window)
 - Concurrent: 3 in-flight per user
 - Budget: 100k tokens/day for platform keys
@@ -537,7 +536,7 @@ GET /search?q=test&limit=10&cursor=BASE64_CURSOR
 
 This package is imported by:
 - `apps/api/` - FastAPI server
-- `apps/worker/` - Celery worker (future)
+- `apps/worker/` - Postgres queue worker
 
 ## Development
 
@@ -549,12 +548,11 @@ make test-migrations   # Run migration tests (separate database)
 make test-supabase     # Supabase auth/storage integration tests (opt-in)
 make lint-back         # Run linter
 make fmt-back          # Format code
-make verify-fast       # Fast verification (static + unit tests + celery contract)
+make verify-fast       # Fast verification (static + unit tests)
 make verify            # Full verification
-make verify-celery-contract  # Celery task contract preflight
 ```
 
-`make test-back` and `make test-migrations` are hermetic: they start Postgres + Redis
+`make test-back` and `make test-migrations` are hermetic: they start Postgres
 on free ports, run migrations, and shut everything down automatically.
 `make test-supabase` starts Supabase local for JWKS/storage integration tests.
 Hermetic test env variables are centralized in `scripts/test_env.sh`.

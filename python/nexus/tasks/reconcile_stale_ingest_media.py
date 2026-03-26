@@ -1,6 +1,6 @@
 """Periodic reconciler for stale ingest jobs.
 
-Recovers media rows stuck in `extracting` when the original Celery task was
+Recovers media rows stuck in `extracting` when the original worker job was
 dropped/discarded or never finished. Recovery is bounded:
 - re-dispatch up to N attempts
 - then fail closed with deterministic timeout metadata
@@ -9,13 +9,13 @@ dropped/discarded or never finished. Recovery is bounded:
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, text
+from sqlalchemy.orm import Session
 
-from nexus.celery import celery_app
-from nexus.celery_contract import INGEST_QUEUE
 from nexus.config import get_settings
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
+from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 
 logger = get_logger(__name__)
@@ -53,9 +53,7 @@ def _mark_stale_media_failed(
     )
 
 
-@celery_app.task(bind=True, max_retries=0, name="reconcile_stale_ingest_media_job")
 def reconcile_stale_ingest_media_job(
-    self,
     request_id: str | None = None,
 ) -> dict[str, int]:
     """Requeue or fail stale `extracting` media rows.
@@ -100,7 +98,7 @@ def reconcile_stale_ingest_media_job(
             attempts = int(media.processing_attempts or 0)
             if attempts < settings.ingest_stale_requeue_max_attempts:
                 try:
-                    _dispatch_recovery_task(media, request_id)
+                    _dispatch_recovery_task(db, media, request_id)
                     media.processing_attempts = attempts + 1
                     media.processing_started_at = now
                     media.updated_at = now
@@ -260,35 +258,39 @@ def reconcile_stale_ingest_media_job(
         db.close()
 
 
-def _dispatch_recovery_task(media: Media, request_id: str | None) -> None:
+def _dispatch_recovery_task(db: Session, media: Media, request_id: str | None) -> None:
     media_id = str(media.id)
     if media.kind == "pdf":
-        from nexus.tasks.ingest_pdf import ingest_pdf
-
-        ingest_pdf.apply_async(
-            args=[media_id],
-            kwargs={"request_id": request_id},
-            queue=INGEST_QUEUE,
+        enqueue_job(
+            db,
+            kind="ingest_pdf",
+            payload={
+                "media_id": media_id,
+                "request_id": request_id,
+                "embedding_only": False,
+            },
         )
         return
 
     if media.kind == "epub":
-        from nexus.tasks.ingest_epub import ingest_epub
-
-        ingest_epub.apply_async(
-            args=[media_id],
-            kwargs={"request_id": request_id},
-            queue=INGEST_QUEUE,
+        enqueue_job(
+            db,
+            kind="ingest_epub",
+            payload={
+                "media_id": media_id,
+                "request_id": request_id,
+            },
         )
         return
 
     if media.kind == "podcast_episode":
-        from nexus.tasks.podcast_transcribe_episode import podcast_transcribe_episode_job
-
-        podcast_transcribe_episode_job.apply_async(
-            args=[media_id],
-            kwargs={"request_id": request_id},
-            queue=INGEST_QUEUE,
+        enqueue_job(
+            db,
+            kind="podcast_transcribe_episode_job",
+            payload={
+                "media_id": media_id,
+                "request_id": request_id,
+            },
         )
         return
 

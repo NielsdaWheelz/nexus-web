@@ -52,10 +52,7 @@ def get_stream_viewer(request: Request) -> UUID:
             "Empty bearer token",
         )
 
-    # Get redis client from app state (may be None in tests)
-    redis_client = getattr(request.app.state, "redis_client", None)
-
-    user_id, jti = verify_stream_token(token, redis_client=redis_client)
+    user_id, jti = verify_stream_token(token)
 
     # PR-09: Set stream_jti in logging context
     if jti:
@@ -82,7 +79,6 @@ async def stream_send_existing(
 
     contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
     db_factory = get_session_factory()
-    redis_client = getattr(request.app.state, "redis_client", None)
     llm_router = getattr(request.app.state, "llm_router", None)
 
     return StreamingResponse(
@@ -95,7 +91,6 @@ async def stream_send_existing(
             key_mode=body.key_mode,
             contexts=contexts,
             idempotency_key=idempotency_key,
-            redis_client=redis_client,
             llm_router=llm_router,
         ),
         media_type="text/event-stream; charset=utf-8",
@@ -123,7 +118,6 @@ async def stream_send_new(
 
     contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
     db_factory = get_session_factory()
-    redis_client = getattr(request.app.state, "redis_client", None)
     llm_router = getattr(request.app.state, "llm_router", None)
 
     return StreamingResponse(
@@ -136,7 +130,6 @@ async def stream_send_new(
             key_mode=body.key_mode,
             contexts=contexts,
             idempotency_key=idempotency_key,
-            redis_client=redis_client,
             llm_router=llm_router,
         ),
         media_type="text/event-stream; charset=utf-8",

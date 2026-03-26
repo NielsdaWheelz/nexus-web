@@ -23,7 +23,7 @@ Definitions used throughout this document:
 - `implementation`: internal helper calls, module wiring, service composition, ORM query shape, React child composition details, or framework internals.
 - `internal boundary`: code owned by this repo (for example `nexus.services.*`, `apps/web/src/lib/*`, Next.js BFF proxy code in this app).
 - `external boundary`: third-party systems or APIs outside this repo (for example LLM providers, external object storage, external auth verification providers).
-- `real stack`: real running app services and dependencies used in local/CI (Next.js, FastAPI, PostgreSQL, Redis, Supabase local), not mocked equivalents.
+- `real stack`: real running app services and dependencies used in local/CI (Next.js, FastAPI, PostgreSQL, Supabase local), not mocked equivalents.
 
 ## 3. Testing Trophy (Adapted for SSR / Next.js)
 
@@ -120,7 +120,7 @@ What belongs here:
 
 Rules:
 
-- Use real PostgreSQL (test DB) and real Redis where the codepath needs it
+- Use a real PostgreSQL test database
 - Assert through API responses (status + payload), not raw SQL table inspection, except documented schema-level exceptions
 - Mock only external boundaries (Section 6)
 - Use ORM-backed factories and fixtures, not raw SQL inserts in factories
@@ -139,7 +139,7 @@ What belongs here:
 
 Rules:
 
-- Run against real services (Next.js, FastAPI, PostgreSQL, Redis, Supabase local)
+- Run against real services (Next.js, FastAPI, PostgreSQL, Supabase local)
 - No MSW, no mock API servers, no `vi.mock(fetch)` style shortcuts
 - Use Playwright `storageState` for login reuse (authenticate once per worker where possible)
 - Seed data through app APIs or dedicated seed scripts, not ad hoc SQL from browser tests
@@ -225,7 +225,7 @@ Guidelines:
 |---|---|---|
 | External LLM APIs (OpenAI, Anthropic, Gemini) | `respx` (HTTP-level) | Third-party cost, nondeterminism, rate limits |
 | External auth verification boundary | test verifier / fake verifier at boundary | Third-party dependency boundary |
-| Async task dispatch boundary | mock task enqueue (`apply_async`) | Verifies dispatch intent without running worker inline |
+| Async job dispatch boundary | mock queue enqueue helper | Verifies dispatch intent without running the worker inline |
 | External object storage | mock storage client | Third-party service dependency |
 
 ### Disallowed Mocks (Internal Boundaries)
@@ -234,7 +234,6 @@ Guidelines:
 |---|---|
 | `patch("nexus.services.*")` | Couples tests to implementation; refactors break tests without behavior regressions |
 | Database sessions/queries | The DB is part of the behavior contract for integration tests |
-| Redis (for codepaths that use it) | Real Redis is fast and catches serialization/state bugs |
 | Global `next/navigation` mock | Hides routing behavior and contaminates unrelated tests |
 | `vi.mock` for internal API helpers / proxy modules | Bypasses the codepath under test |
 | Internal React components | Stops testing real composition and behavior |

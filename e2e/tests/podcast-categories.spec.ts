@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page, type Response } from "@playwright/test";
 
 interface PodcastCategoryPayload {
   id: string;
@@ -22,8 +22,71 @@ async function createCategoryViaUi(
   const response = await responsePromise;
   expect(response.ok()).toBeTruthy();
   const payload = (await response.json()) as { data: PodcastCategoryPayload };
-  await expect(page.getByText(name, { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: `Reorder category ${name}` })).toBeVisible({
+    timeout: 15_000,
+  });
   return payload.data;
+}
+
+async function dragHandleBelowTarget(
+  page: Page,
+  sourceHandle: Locator,
+  targetHandle: Locator
+): Promise<void> {
+  await sourceHandle.scrollIntoViewIfNeeded();
+  await targetHandle.scrollIntoViewIfNeeded();
+  const sourceBox = await sourceHandle.boundingBox();
+  const targetBox = await targetHandle.boundingBox();
+  if (!sourceBox || !targetBox) {
+    throw new Error("Unable to compute drag handle bounds for reorder action");
+  }
+
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    targetBox.x + targetBox.width / 2,
+    targetBox.y + targetBox.height + Math.max(targetBox.height / 2, 8),
+    { steps: 18 }
+  );
+  await page.mouse.up();
+}
+
+async function reorderCategoriesViaUi(
+  page: Page,
+  sourceHandle: Locator,
+  targetHandle: Locator
+): Promise<Response> {
+  const waitForReorderResponse = () =>
+    page
+      .waitForResponse(
+        (response) => {
+          const url = new URL(response.url());
+          return (
+            url.pathname === "/api/podcasts/categories/order" &&
+            response.request().method() === "PUT"
+          );
+        },
+        { timeout: 7_000 }
+      )
+      .catch(() => null);
+
+  const manualResponsePromise = waitForReorderResponse();
+  await dragHandleBelowTarget(page, sourceHandle, targetHandle);
+  const manualResponse = await manualResponsePromise;
+  if (manualResponse) {
+    return manualResponse;
+  }
+
+  const fallbackResponsePromise = waitForReorderResponse();
+  await sourceHandle.dragTo(targetHandle, {
+    targetPosition: { x: 12, y: 12 },
+  });
+  const fallbackResponse = await fallbackResponsePromise;
+  if (fallbackResponse) {
+    return fallbackResponse;
+  }
+
+  throw new Error("Reorder request was not observed after drag attempts");
 }
 
 test.describe("podcast categories", () => {
@@ -56,13 +119,7 @@ test.describe("podcast categories", () => {
       await firstHandle.scrollIntoViewIfNeeded();
       await secondHandle.scrollIntoViewIfNeeded();
 
-      const reorderResponsePromise = page.waitForResponse((response) => {
-        const url = new URL(response.url());
-        return url.pathname === "/api/podcasts/categories/order" && response.request().method() === "PUT";
-      });
-
-      await firstHandle.dragTo(secondHandle);
-      const reorderResponse = await reorderResponsePromise;
+      const reorderResponse = await reorderCategoriesViaUi(page, firstHandle, secondHandle);
       expect(reorderResponse.ok()).toBeTruthy();
 
       const reorderBody = reorderResponse.request().postDataJSON() as { category_ids: string[] };

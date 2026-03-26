@@ -15,6 +15,7 @@ Tests scenarios from s0_spec.md:
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -73,6 +74,74 @@ def add_media_to_default_library(auth_client, user_id: str, media_id: UUID) -> s
         headers=auth_headers(user_id),
     )
     return library_id
+
+
+def _count_jobs_for_media(direct_db: DirectSessionManager, *, kind: str, media_id: UUID) -> int:
+    with direct_db.session() as session:
+        return int(
+            session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM background_jobs
+                    WHERE kind = :kind
+                      AND payload->>'media_id' = :media_id
+                    """
+                ),
+                {"kind": kind, "media_id": str(media_id)},
+            ).scalar_one()
+        )
+
+
+def _install_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION nexus_test_fail_background_job_insert()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    RAISE EXCEPTION 'queue unavailable';
+                END;
+                $$;
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                DROP TRIGGER IF EXISTS nexus_test_fail_background_job_insert
+                ON background_jobs
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                CREATE TRIGGER nexus_test_fail_background_job_insert
+                BEFORE INSERT ON background_jobs
+                FOR EACH ROW
+                EXECUTE FUNCTION nexus_test_fail_background_job_insert()
+                """
+            )
+        )
+        session.commit()
+
+
+def _remove_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                DROP TRIGGER IF EXISTS nexus_test_fail_background_job_insert
+                ON background_jobs
+                """
+            )
+        )
+        session.execute(text("DROP FUNCTION IF EXISTS nexus_test_fail_background_job_insert()"))
+        session.commit()
 
 
 # =============================================================================
@@ -1235,16 +1304,13 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
             headers=auth_headers(user_id),
         )
 
-        from unittest.mock import MagicMock, patch
-
-        mock_dispatch = MagicMock()
+        from unittest.mock import patch
 
         with (
             patch(
                 "nexus.services.epub_lifecycle.get_storage_client",
                 return_value=fake_storage,
             ),
-            patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", mock_dispatch),
         ):
             resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
 
@@ -1252,7 +1318,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         data = resp.json()["data"]
         assert data["processing_status"] == "extracting"
         assert data["retry_enqueued"] is True
-        mock_dispatch.assert_called_once()
+        assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=media_id) == 1
 
         # Artifacts must be gone after retry reset
         with direct_db.session() as session:
@@ -1526,19 +1592,14 @@ class TestRetryEpubEndpoint:
             headers=auth_headers(user_id),
         )
 
-        from unittest.mock import MagicMock, patch
-
-        mock_dispatch = MagicMock()
+        from unittest.mock import patch
 
         # STORAGE SEAM EXCEPTION: External storage boundary mock.
         # Supabase Storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        # DISPATCH SEAM EXCEPTION: Async task dispatch boundary mock.
-        # Prevents real Celery dispatch per testing standards Section 6 (Allowed Mocks).
         with (
             patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
-            patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", mock_dispatch),
         ):
             resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
 
@@ -1547,7 +1608,7 @@ class TestRetryEpubEndpoint:
         assert data["processing_status"] == "extracting"
         assert data["retry_enqueued"] is True
 
-        mock_dispatch.assert_called_once()
+        assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=media_id) == 1
 
         with direct_db.session() as session:
             media_row = session.get(Media, media_id)
@@ -1818,17 +1879,14 @@ class TestRetryEpubEndpoint:
             headers=auth_headers(user_id),
         )
 
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         # STORAGE SEAM EXCEPTION: External storage boundary mock.
         # Supabase Storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        # DISPATCH SEAM EXCEPTION: Async task dispatch boundary mock.
-        # Prevents real Celery dispatch per testing standards Section 6 (Allowed Mocks).
         with (
             patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
-            patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", MagicMock()),
         ):
             resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
 
@@ -1882,20 +1940,16 @@ class TestRetryEpubEndpoint:
 
         from unittest.mock import patch
 
-        def boom(*a, **kw):
-            raise RuntimeError("broker down")
-
         # STORAGE SEAM EXCEPTION: External storage boundary mock.
         # Supabase Storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        # DISPATCH SEAM EXCEPTION: Async task dispatch boundary mock.
-        # Prevents real Celery dispatch per testing standards Section 6 (Allowed Mocks).
-        with (
-            patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage),
-            patch("nexus.tasks.ingest_epub.ingest_epub.apply_async", side_effect=boom),
-        ):
-            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+        with patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage):
+            _install_background_job_insert_failure(direct_db)
+            try:
+                resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+            finally:
+                _remove_background_job_insert_failure(direct_db)
 
         assert resp.status_code == 500
 
@@ -2894,15 +2948,33 @@ class TestPdfRetry:
 
         with patch("nexus.services.pdf_lifecycle.get_storage_client") as mock_storage:
             mock_storage.return_value.head_object.return_value = True
-
-            with patch("nexus.tasks.ingest_pdf.ingest_pdf") as mock_task:
-                mock_task.apply_async = lambda **kwargs: None
-                resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
 
         assert resp.status_code == 202
         data = resp.json()["data"]
         assert data["processing_status"] == "extracting"
         assert data["retry_enqueued"] is True
+
+        from sqlalchemy import text
+
+        with direct_db.session() as session:
+            job_row = session.execute(
+                text(
+                    """
+                    SELECT id, kind, payload->>'embedding_only'
+                    FROM background_jobs
+                    WHERE kind = 'ingest_pdf'
+                      AND payload->>'media_id' = :media_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": str(media_id)},
+            ).fetchone()
+            assert job_row is not None
+            direct_db.register_cleanup("background_jobs", "id", job_row[0])
+            assert job_row[1] == "ingest_pdf"
+            assert job_row[2] == "false"
 
     def test_pr03_retry_pdf_route_preserves_compat_response_shape_without_mode_parameter(
         self, auth_client, direct_db: DirectSessionManager
@@ -2925,12 +2997,8 @@ class TestPdfRetry:
 
         from unittest.mock import patch
 
-        with (
-            patch("nexus.services.pdf_lifecycle.get_storage_client") as mock_storage,
-            patch("nexus.tasks.ingest_pdf.ingest_pdf") as mock_task,
-        ):
+        with patch("nexus.services.pdf_lifecycle.get_storage_client") as mock_storage:
             mock_storage.return_value.head_object.return_value = True
-            mock_task.apply_async = lambda **kwargs: None
             resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
 
         assert resp.status_code == 202
@@ -2961,15 +3029,32 @@ class TestPdfRetry:
 
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        from unittest.mock import patch
-
-        with patch("nexus.tasks.ingest_pdf.ingest_pdf") as mock_task:
-            mock_task.apply_async = lambda **kwargs: None
-            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+        resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
 
         assert resp.status_code == 202
         data = resp.json()["data"]
         assert data["retry_enqueued"] is True
+
+        from sqlalchemy import text
+
+        with direct_db.session() as session:
+            job_row = session.execute(
+                text(
+                    """
+                    SELECT id, kind, payload->>'embedding_only'
+                    FROM background_jobs
+                    WHERE kind = 'ingest_pdf'
+                      AND payload->>'media_id' = :media_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": str(media_id)},
+            ).fetchone()
+            assert job_row is not None
+            direct_db.register_cleanup("background_jobs", "id", job_row[0])
+            assert job_row[1] == "ingest_pdf"
+            assert job_row[2] == "true"
 
         with direct_db.session() as session:
             from sqlalchemy import text
@@ -3024,11 +3109,7 @@ class TestPdfRetry:
 
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        from unittest.mock import patch
-
-        with patch("nexus.tasks.ingest_pdf.ingest_pdf") as mock_task:
-            mock_task.apply_async = lambda **kwargs: None
-            auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+        auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
             from sqlalchemy import text

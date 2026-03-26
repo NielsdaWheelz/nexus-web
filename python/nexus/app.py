@@ -134,28 +134,11 @@ async def lifespan(app: FastAPI):
         enable_gemini=settings.enable_gemini,
     )
 
-    # PR-08: Initialize Redis client for stream token jti, liveness, budget
-    redis_client = None
-    if settings.redis_url:
-        try:
-            import redis
-
-            redis_client = redis.Redis.from_url(
-                settings.redis_url, decode_responses=True, socket_timeout=5
-            )
-            redis_client.ping()
-            logger.info("redis_client_initialized", redis_url=settings.redis_url[:30] + "...")
-        except Exception as e:
-            logger.warning("redis_client_init_failed", error=str(e))
-            redis_client = None
-
-    app.state.redis_client = redis_client
-
-    # Initialize rate limiter with redis client
+    # Initialize Postgres-backed rate limiter runtime state.
     from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 
     rate_limiter = RateLimiter(
-        redis_client=redis_client,
+        session_factory=get_session_factory(),
         rpm_limit=settings.rate_limit_rpm,
         concurrent_limit=settings.rate_limit_concurrent,
         token_budget=settings.token_budget_daily,
@@ -164,13 +147,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown: close HTTP client and Redis
+    # Shutdown: close shared HTTP client.
     await app.state.httpx_client.aclose()
-    if redis_client:
-        try:
-            redis_client.close()
-        except Exception:
-            pass
     logger.info("httpx_client_closed")
 
 

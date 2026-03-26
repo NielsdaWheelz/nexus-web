@@ -31,6 +31,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
+from nexus.jobs.queue import enqueue_job
 from nexus.services.epub_ingest import check_archive_safety
 from nexus.services.upload import (
     confirm_ingest as _base_confirm_ingest,
@@ -184,12 +185,13 @@ def _confirm_epub_ingest(
     db.flush()
 
     try:
-        from nexus.tasks.ingest_epub import ingest_epub
-
-        ingest_epub.apply_async(
-            args=[str(media.id)],
-            kwargs={"request_id": request_id},
-            queue="ingest",
+        enqueue_job(
+            db,
+            kind="ingest_epub",
+            payload={
+                "media_id": str(media.id),
+                "request_id": request_id,
+            },
         )
     except Exception as exc:
         db.rollback()
@@ -284,12 +286,13 @@ def retry_epub_ingest_for_viewer(
     db.flush()
 
     try:
-        from nexus.tasks.ingest_epub import ingest_epub
-
-        ingest_epub.apply_async(
-            args=[str(media.id)],
-            kwargs={"request_id": request_id},
-            queue="ingest",
+        enqueue_job(
+            db,
+            kind="ingest_epub",
+            payload={
+                "media_id": str(media.id),
+                "request_id": request_id,
+            },
         )
     except Exception as exc:
         db.rollback()

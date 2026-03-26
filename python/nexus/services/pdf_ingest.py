@@ -4,7 +4,7 @@ Owns deterministic PDF artifact production: page_count, normalized plain_text,
 and pdf_page_text_spans. Parser-specific behavior (PyMuPDF) is isolated here
 behind parser-agnostic typed outcomes.
 
-Does NOT own lifecycle transitions or Celery dispatch.
+Does NOT own lifecycle transitions or background-job dispatch.
 """
 
 import re

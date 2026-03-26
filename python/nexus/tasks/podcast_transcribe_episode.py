@@ -1,8 +1,7 @@
-"""Celery task for podcast episode transcription jobs."""
+"""Worker job handler for podcast episode transcription jobs."""
 
 from uuid import UUID
 
-from nexus.celery import celery_app
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services import podcasts as podcast_service
@@ -10,13 +9,13 @@ from nexus.services import podcasts as podcast_service
 logger = get_logger(__name__)
 
 
-@celery_app.task(bind=True, max_retries=0, name="podcast_transcribe_episode_job")
 def podcast_transcribe_episode_job(
-    self,
     media_id: str,
     requested_by_user_id: str | None = None,
     request_id: str | None = None,
+    task_id: str | None = None,
 ) -> dict:
+    resolved_task_id = task_id or f"direct:{media_id}"
     try:
         media_uuid = UUID(media_id)
     except (TypeError, ValueError):
@@ -25,7 +24,7 @@ def podcast_transcribe_episode_job(
             media_id=media_id,
             requested_by_user_id=requested_by_user_id,
             request_id=request_id,
-            task_id=self.request.id,
+            task_id=resolved_task_id,
         )
         return {"status": "failed", "error_code": "E_INVALID_REQUEST"}
 
@@ -37,7 +36,7 @@ def podcast_transcribe_episode_job(
             media_id=media_id,
             requested_by_user_id=requested_by_user_id,
             request_id=request_id,
-            task_id=self.request.id,
+            task_id=resolved_task_id,
         )
         requested_by_uuid = None
 
@@ -46,7 +45,7 @@ def podcast_transcribe_episode_job(
         media_id=media_id,
         requested_by_user_id=requested_by_user_id,
         request_id=request_id,
-        task_id=self.request.id,
+        task_id=resolved_task_id,
     )
 
     session_factory = get_session_factory()
@@ -64,7 +63,7 @@ def podcast_transcribe_episode_job(
             requested_by_user_id=requested_by_user_id,
             request_id=request_id,
             result=result,
-            task_id=self.request.id,
+            task_id=resolved_task_id,
         )
         return result
     finally:

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from nexus.celery_contract import TASK_CONTRACT_VERSION
+from nexus.jobs.registry import get_task_contract_version
 from nexus.responses import success_response
 
 router = APIRouter()
@@ -18,6 +18,6 @@ async def health_check() -> dict:
     return success_response(
         {
             "status": "ok",
-            "task_contract_version": TASK_CONTRACT_VERSION,
+            "task_contract_version": get_task_contract_version(),
         }
     )

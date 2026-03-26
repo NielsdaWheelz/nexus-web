@@ -30,6 +30,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
+from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.media import MediaOut
 from nexus.schemas.podcast import (
@@ -480,7 +481,11 @@ def import_subscriptions_from_opml(
                     now=now,
                     auto_queue=False,
                 )
-                _enqueue_podcast_subscription_sync(user_id=viewer_id, podcast_id=podcast_id)
+                _enqueue_podcast_subscription_sync(
+                    db,
+                    user_id=viewer_id,
+                    podcast_id=podcast_id,
+                )
                 summary.imported += 1
         except ApiError as exc:
             summary.errors.append(
@@ -572,7 +577,11 @@ def subscribe_to_podcast(
             now=now,
             auto_queue=body.auto_queue,
         )
-        sync_enqueued = _enqueue_podcast_subscription_sync(user_id=viewer_id, podcast_id=podcast_id)
+        sync_enqueued = _enqueue_podcast_subscription_sync(
+            db,
+            user_id=viewer_id,
+            podcast_id=podcast_id,
+        )
         snapshot = _get_subscription_sync_snapshot(db, viewer_id, podcast_id)
         if snapshot is None:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Failed to read podcast subscription state.")
@@ -1599,6 +1608,7 @@ def request_podcast_transcript_for_viewer(
     *,
     reason: str,
     dry_run: bool = False,
+    request_id: str | None = None,
     _auto_commit: bool = True,
 ) -> dict[str, Any]:
     from nexus.auth.permissions import can_read_media
@@ -1765,9 +1775,11 @@ def request_podcast_transcript_for_viewer(
 
     if semantic_needs_repair:
         semantic_repair_enqueued = _enqueue_podcast_semantic_repair_job(
+            db,
             media_id=media_id,
             requested_by_user_id=viewer_id,
             request_reason=normalized_reason,
+            request_id=request_id,
         )
         if semantic_repair_enqueued:
             _set_media_transcript_state(
@@ -1956,8 +1968,10 @@ def request_podcast_transcript_for_viewer(
     )
 
     enqueued = _enqueue_podcast_transcription_job(
+        db,
         media_id=media_id,
         requested_by_user_id=viewer_id,
+        request_id=request_id,
     )
     if not enqueued:
         _mark_podcast_transcription_failure(
@@ -2270,6 +2284,7 @@ def retry_transcript_media_for_viewer(
     )
 
     enqueued = _enqueue_video_transcription_retry(
+        db,
         media_id=media_id,
         requested_by_user_id=viewer_id,
         request_id=request_id,
@@ -3493,7 +3508,11 @@ def refresh_subscription_sync_for_viewer(
 
     sync_enqueued = False
     if should_enqueue:
-        sync_enqueued = _enqueue_podcast_subscription_sync(user_id=viewer_id, podcast_id=podcast_id)
+        sync_enqueued = _enqueue_podcast_subscription_sync(
+            db,
+            user_id=viewer_id,
+            podcast_id=podcast_id,
+        )
 
     snapshot = _get_subscription_sync_snapshot(db, viewer_id, podcast_id)
     if snapshot is None:
@@ -3509,14 +3528,22 @@ def refresh_subscription_sync_for_viewer(
     )
 
 
-def _enqueue_podcast_subscription_sync(*, user_id: UUID, podcast_id: UUID) -> bool:
+def _enqueue_podcast_subscription_sync(
+    db: Session,
+    *,
+    user_id: UUID,
+    podcast_id: UUID,
+    request_id: str | None = None,
+) -> bool:
     try:
-        from nexus.tasks.podcast_sync_subscription import podcast_sync_subscription_job
-
-        podcast_sync_subscription_job.apply_async(
-            args=[str(user_id), str(podcast_id)],
-            kwargs={},
-            queue="ingest",
+        enqueue_job(
+            db,
+            kind="podcast_sync_subscription_job",
+            payload={
+                "user_id": str(user_id),
+                "podcast_id": str(podcast_id),
+                "request_id": request_id,
+            },
         )
         return True
     except Exception as exc:
@@ -3530,15 +3557,23 @@ def _enqueue_podcast_subscription_sync(*, user_id: UUID, podcast_id: UUID) -> bo
 
 
 def _enqueue_podcast_transcription_job(
-    *, media_id: UUID, requested_by_user_id: UUID | None
+    db: Session,
+    *,
+    media_id: UUID,
+    requested_by_user_id: UUID | None,
+    request_id: str | None = None,
 ) -> bool:
     try:
-        from nexus.tasks.podcast_transcribe_episode import podcast_transcribe_episode_job
-
-        podcast_transcribe_episode_job.apply_async(
-            args=[str(media_id), str(requested_by_user_id) if requested_by_user_id else None],
-            kwargs={},
-            queue="ingest",
+        enqueue_job(
+            db,
+            kind="podcast_transcribe_episode_job",
+            payload={
+                "media_id": str(media_id),
+                "requested_by_user_id": (
+                    str(requested_by_user_id) if requested_by_user_id is not None else None
+                ),
+                "request_id": request_id,
+            },
         )
         return True
     except Exception as exc:
@@ -3560,18 +3595,25 @@ def _enqueue_podcast_transcription_job(
 
 
 def _enqueue_podcast_semantic_repair_job(
+    db: Session,
     *,
     media_id: UUID,
     requested_by_user_id: UUID | None,
     request_reason: str,
+    request_id: str | None = None,
 ) -> bool:
     try:
-        from nexus.tasks.podcast_reindex_semantic import podcast_reindex_semantic_job
-
-        podcast_reindex_semantic_job.apply_async(
-            args=[str(media_id), str(requested_by_user_id) if requested_by_user_id else None],
-            kwargs={"request_reason": request_reason},
-            queue="ingest",
+        enqueue_job(
+            db,
+            kind="podcast_reindex_semantic_job",
+            payload={
+                "media_id": str(media_id),
+                "requested_by_user_id": (
+                    str(requested_by_user_id) if requested_by_user_id is not None else None
+                ),
+                "request_reason": request_reason,
+                "request_id": request_id,
+            },
         )
         return True
     except Exception as exc:
@@ -3595,18 +3637,21 @@ def _enqueue_podcast_semantic_repair_job(
 
 
 def _enqueue_video_transcription_retry(
+    db: Session,
     *,
     media_id: UUID,
     requested_by_user_id: UUID,
     request_id: str | None,
 ) -> bool:
     try:
-        from nexus.tasks.ingest_youtube_video import ingest_youtube_video
-
-        ingest_youtube_video.apply_async(
-            args=[str(media_id), str(requested_by_user_id)],
-            kwargs={"request_id": request_id},
-            queue="ingest",
+        enqueue_job(
+            db,
+            kind="ingest_youtube_video",
+            payload={
+                "media_id": str(media_id),
+                "actor_user_id": str(requested_by_user_id),
+                "request_id": request_id,
+            },
         )
         return True
     except Exception as exc:

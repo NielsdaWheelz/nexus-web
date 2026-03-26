@@ -1,4 +1,4 @@
-"""Celery task for web article ingestion.
+"""Worker job handler for web article ingestion.
 
 This task:
 1. Fetches page via Node subprocess (fetch + jsdom + Readability)
@@ -22,10 +22,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.celery import celery_app
 from nexus.db.models import FailureStage, Fragment, Media, MediaAuthor, MediaKind, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
+from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
@@ -36,9 +36,7 @@ from nexus.services.url_normalize import normalize_url_for_display
 logger = get_logger(__name__)
 
 
-@celery_app.task(bind=True, max_retries=0, name="ingest_web_article")
 def ingest_web_article(
-    self,
     media_id: str,
     actor_user_id: str,
     request_id: str | None = None,
@@ -231,14 +229,21 @@ def _do_ingest(
 
 def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
     """Best-effort dispatch of metadata enrichment task."""
+    session_factory = get_session_factory()
+    db = session_factory()
     try:
-        from nexus.tasks.enrich_metadata import enrich_metadata
-
-        enrich_metadata.apply_async(
-            args=[media_id], kwargs={"request_id": request_id}, queue="ingest"
+        enqueue_job(
+            db,
+            kind="enrich_metadata",
+            payload={"media_id": media_id, "request_id": request_id},
+            max_attempts=1,
         )
+        db.commit()
     except Exception:
+        db.rollback()
         logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
+    finally:
+        db.close()
 
 
 def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult) -> None:
@@ -414,7 +419,7 @@ def run_ingest_sync(
 ) -> dict:
     """Run ingestion synchronously (for tests and dev mode).
 
-    Same logic as the Celery task but uses the provided session.
+    Same logic as the worker job handler but uses the provided session.
 
     Args:
         db: Database session to use.

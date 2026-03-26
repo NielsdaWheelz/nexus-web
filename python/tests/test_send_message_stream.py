@@ -70,19 +70,54 @@ def test_user_id():
     return uuid4()
 
 
-@pytest.fixture
-def mock_redis():
-    """Mock Redis client for tests."""
-    redis = MagicMock()
-    redis.ping.return_value = True
-    redis.set.return_value = True  # SETNX success
-    redis.setex.return_value = True
-    redis.get.return_value = None
-    redis.exists.return_value = False
-    redis.delete.return_value = 1
-    redis.expire.return_value = True
-    redis.pipeline.return_value = MagicMock(execute=MagicMock(return_value=[None, None]))
-    return redis
+class NoOpRateLimiter(RateLimiter):
+    def check_rpm_limit(self, user_id: UUID) -> None:
+        pass
+
+    def check_concurrent_limit(self, user_id: UUID) -> None:
+        pass
+
+    def acquire_inflight_slot(self, user_id: UUID) -> None:
+        pass
+
+    def release_inflight_slot(self, user_id: UUID) -> None:
+        pass
+
+    def check_token_budget(self, user_id: UUID) -> None:
+        pass
+
+    def reserve_token_budget(
+        self, user_id: UUID, reservation_id: UUID, est_tokens: int, ttl: int = 300
+    ) -> None:
+        pass
+
+    def commit_token_budget(self, user_id: UUID, reservation_id: UUID, actual_tokens: int) -> None:
+        pass
+
+    def release_token_budget(self, user_id: UUID, reservation_id: UUID) -> None:
+        pass
+
+
+def _create_assistant_message_for_liveness(direct_db) -> tuple[UUID, UUID]:
+    user_id = uuid4()
+    with direct_db.session() as session:
+        ensure_user_and_default_library(session, user_id)
+        model_id = create_test_model(session)
+        conversation_id = create_test_conversation(session, user_id)
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id=conversation_id,
+            seq=1,
+            role="assistant",
+            content="",
+            status="pending",
+            model_id=model_id,
+        )
+        session.commit()
+
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    return assistant_message_id, conversation_id
 
 
 # =============================================================================
@@ -131,9 +166,12 @@ class TestStreamTokenMint:
 class TestStreamTokenVerify:
     """Test stream token verification."""
 
-    def test_valid_token(self, test_user_id, mock_redis):
+    def test_valid_token(self, test_user_id, direct_db):
+        with direct_db.session() as session:
+            ensure_user_and_default_library(session, test_user_id)
+            session.commit()
         result = mint_stream_token(test_user_id)
-        uid, jti = verify_stream_token(result["token"], redis_client=mock_redis)
+        uid, jti = verify_stream_token(result["token"])
         assert uid == test_user_id
         assert isinstance(jti, str) and len(jti) > 0
 
@@ -185,19 +223,17 @@ class TestStreamTokenVerify:
             verify_stream_token(token)
         assert exc.value.code == ApiErrorCode.E_STREAM_TOKEN_INVALID
 
-    def test_replayed_jti_rejected(self, test_user_id, mock_redis):
-        # First use: SETNX returns True (key was set)
-        mock_redis.set.return_value = True
+    def test_replayed_jti_rejected(self, test_user_id, direct_db):
+        with direct_db.session() as session:
+            ensure_user_and_default_library(session, test_user_id)
+            session.commit()
         result = mint_stream_token(test_user_id)
-        uid, jti = verify_stream_token(result["token"], redis_client=mock_redis)
+        uid, jti = verify_stream_token(result["token"])
         assert uid == test_user_id
         assert isinstance(jti, str) and len(jti) > 0
 
-        # Second use: SETNX returns False (key already exists)
-        mock_redis.set.return_value = False
-        result2 = mint_stream_token(test_user_id)
         with pytest.raises(ApiError) as exc:
-            verify_stream_token(result2["token"], redis_client=mock_redis)
+            verify_stream_token(result["token"])
         assert exc.value.code == ApiErrorCode.E_STREAM_TOKEN_REPLAYED
 
     def test_supabase_token_rejected(self):
@@ -253,27 +289,27 @@ class TestStreamLiveness:
     """Test liveness marker operations."""
 
     @pytest.mark.asyncio
-    async def test_set_and_check(self, mock_redis):
-        msg_id = uuid4()
-        await set_liveness_marker(mock_redis, msg_id)
-        mock_redis.setex.assert_called_once()
+    async def test_set_and_check(self, direct_db):
+        msg_id, _conversation_id = _create_assistant_message_for_liveness(direct_db)
+        await set_liveness_marker(msg_id)
+        assert check_liveness_marker(msg_id) is True
+        await clear_liveness_marker(msg_id)
+        direct_db.register_cleanup("stream_liveness_markers", "assistant_message_id", msg_id)
 
     @pytest.mark.asyncio
-    async def test_clear(self, mock_redis):
-        msg_id = uuid4()
-        await clear_liveness_marker(mock_redis, msg_id)
-        mock_redis.delete.assert_called_once()
+    async def test_clear(self, direct_db):
+        msg_id, _conversation_id = _create_assistant_message_for_liveness(direct_db)
+        await set_liveness_marker(msg_id)
+        assert check_liveness_marker(msg_id) is True
+        await clear_liveness_marker(msg_id)
+        assert check_liveness_marker(msg_id) is False
+        direct_db.register_cleanup("stream_liveness_markers", "assistant_message_id", msg_id)
 
-    def test_check_returns_false_when_missing(self, mock_redis):
-        mock_redis.exists.return_value = False
-        assert check_liveness_marker(mock_redis, uuid4()) is False
+    def test_check_returns_false_when_missing(self):
+        assert check_liveness_marker(uuid4()) is False
 
-    def test_check_returns_true_when_present(self, mock_redis):
-        mock_redis.exists.return_value = True
-        assert check_liveness_marker(mock_redis, uuid4()) is True
-
-    def test_check_returns_false_without_redis(self):
-        assert check_liveness_marker(None, uuid4()) is False
+    def test_check_returns_false_for_invalid_input(self):
+        assert check_liveness_marker(None) is False
 
 
 # =============================================================================
@@ -284,38 +320,19 @@ class TestStreamLiveness:
 class TestBudgetReservation:
     """Test token budget pre-reservation."""
 
-    def test_reserve_succeeds_under_budget(self, mock_redis):
-        mock_redis.pipeline.return_value.execute.return_value = [0, 0]
-        limiter = RateLimiter(redis_client=mock_redis, token_budget=100_000)
-        # Should not raise
-        limiter.reserve_token_budget(uuid4(), uuid4(), 5000)
-
-    def test_reserve_fails_over_budget(self, mock_redis):
-        # spent=90000, reserved=15000 → 90000+15000+5000 > 100000
-        mock_redis.pipeline.return_value.execute.return_value = [90000, 15000]
-        limiter = RateLimiter(redis_client=mock_redis, token_budget=100_000)
-        with pytest.raises(ApiError) as exc:
-            limiter.reserve_token_budget(uuid4(), uuid4(), 5000)
-        assert exc.value.code == ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED
-
-    def test_commit_decrements_reserved_increments_spent(self, mock_redis):
-        mock_redis.get.return_value = "5000"  # Original reservation
-        limiter = RateLimiter(redis_client=mock_redis, token_budget=100_000)
-        limiter.commit_token_budget(uuid4(), uuid4(), 3000)
-        # Should have called pipeline operations
-        assert mock_redis.pipeline.called
-
-    def test_release_decrements_reserved(self, mock_redis):
-        mock_redis.get.return_value = "5000"
-        limiter = RateLimiter(redis_client=mock_redis, token_budget=100_000)
-        limiter.release_token_budget(uuid4(), uuid4())
-        assert mock_redis.pipeline.called
-
-    def test_reserve_fails_closed_without_redis(self):
-        limiter = RateLimiter(redis_client=None, token_budget=100_000)
+    def test_reserve_fails_closed_without_runtime_state_backend(self):
+        limiter = RateLimiter(session_factory=None, token_budget=100_000)
         with pytest.raises(ApiError) as exc:
             limiter.reserve_token_budget(uuid4(), uuid4(), 5000)
         assert exc.value.code == ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE
+
+    def test_commit_is_noop_without_runtime_state_backend(self):
+        limiter = RateLimiter(session_factory=None, token_budget=100_000)
+        limiter.commit_token_budget(uuid4(), uuid4(), 3000)
+
+    def test_release_is_noop_without_runtime_state_backend(self):
+        limiter = RateLimiter(session_factory=None, token_budget=100_000)
+        limiter.release_token_budget(uuid4(), uuid4())
 
 
 # =============================================================================
@@ -348,13 +365,12 @@ class TestPdfQuoteBlockingStream:
         self,
         engine,
         direct_db,
-        mock_redis,
         monkeypatch,
     ):
         """Meta may emit first, but quote-blocking errors must emit done(error) before delta."""
         monkeypatch.setenv("OPENAI_API_KEY", "test-platform-key")
         clear_settings_cache()
-        set_rate_limiter(RateLimiter(redis_client=mock_redis))
+        set_rate_limiter(NoOpRateLimiter())
 
         user_id = uuid4()
         with direct_db.session() as session:
@@ -438,7 +454,6 @@ class TestPdfQuoteBlockingStream:
             model_id=model_id,
             key_mode="auto",
             contexts=[{"type": "highlight", "id": highlight_id}],
-            redis_client=mock_redis,
             llm_router=router,
         ):
             events.append(event)
@@ -518,7 +533,6 @@ class TestStreamFinalizeErrorMessages:
                 latency_ms=5,
                 usage=None,
                 viewer_id=user_id,
-                redis_client=None,
                 quote_context_error=False,
             )
             assert finalized is True
@@ -572,7 +586,6 @@ class TestStreamFinalizeErrorMessages:
                 latency_ms=5,
                 usage=None,
                 viewer_id=user_id,
-                redis_client=None,
                 quote_context_error=True,
             )
             assert finalized is True
@@ -684,18 +697,19 @@ class TestSweeper:
             mock_db.execute.return_value.fetchall.return_value = []
             mock_factory.return_value = lambda: mock_db
 
-            count = sweep_pending_messages(redis_client=None)
+            count = sweep_pending_messages()
             assert count == 0
 
     def test_sweeper_skips_active_streams(self):
         """Sweeper skips messages with active liveness markers."""
         msg_id = uuid4()
-        mock_redis = MagicMock()
-        mock_redis.exists.return_value = True  # Liveness marker active
 
         # TASK INFRASTRUCTURE: Session factory redirect for test DB isolation.
         # Sweeper task creates its own session; this redirects to the test DB.
-        with patch("nexus.tasks.sweep_pending.get_session_factory") as mock_factory:
+        with (
+            patch("nexus.tasks.sweep_pending.get_session_factory") as mock_factory,
+            patch("nexus.tasks.sweep_pending.check_liveness_marker", return_value=True),
+        ):
             mock_db = MagicMock()
             stale_time = datetime.now(UTC) - timedelta(minutes=10)
             mock_db.execute.return_value.fetchall.return_value = [
@@ -703,7 +717,7 @@ class TestSweeper:
             ]
             mock_factory.return_value = lambda: mock_db
 
-            count = sweep_pending_messages(redis_client=mock_redis)
+            count = sweep_pending_messages()
             assert count == 0  # Skipped because liveness marker is active
 
 

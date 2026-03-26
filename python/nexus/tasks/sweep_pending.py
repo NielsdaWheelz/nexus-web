@@ -1,13 +1,4 @@
-"""Pending assistant message sweeper task.
-
-Per PR-08 spec §7:
-- Celery beat job: sweep_pending_messages
-- Query: role='assistant' AND status='pending' AND created_at < now()-5min
-- If stream_active:{message_id} exists in Redis → skip (stream still running)
-- Finalize via conditional update: set error_code='E_ORPHANED_PENDING'
-- Insert message_llm row if none exists (ON CONFLICT DO NOTHING)
-- Log count + oldest age
-"""
+"""Pending assistant message sweeper task."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -23,11 +14,8 @@ logger = get_logger(__name__)
 STALE_THRESHOLD_MINUTES = 5
 
 
-def sweep_pending_messages(redis_client=None) -> int:
+def sweep_pending_messages() -> int:
     """Sweep stale pending assistant messages.
-
-    Args:
-        redis_client: Redis client for liveness checks. If None, skip liveness check.
 
     Returns:
         Number of messages finalized.
@@ -65,8 +53,8 @@ def sweep_pending_messages(redis_client=None) -> int:
             if oldest_age_seconds is None or age_seconds > oldest_age_seconds:
                 oldest_age_seconds = age_seconds
 
-            # Check liveness marker — skip if stream is still active
-            if check_liveness_marker(redis_client, message_id):
+            # Skip while an active stream marker is still present.
+            if check_liveness_marker(message_id):
                 logger.debug(
                     "sweeper_skip_active",
                     message_id=str(message_id),

@@ -1,25 +1,7 @@
-# Docker Compose for local development (Redis only)
-# Postgres is now provided by Supabase local (supabase start)
+# Docker Compose placeholder for local development.
+# Runtime now uses Supabase local + Postgres-backed worker state only.
 #
-# Usage: docker compose up -d
-#
-# Environment variables:
-#   REDIS_PORT - Host port for redis (default: 6379)
-#
-# For worktree isolation, set COMPOSE_PROJECT_NAME to a unique value.
+# Usage:
+#   supabase start
 
-services:
-  redis:
-    image: redis:7.2-alpine
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  redis_data:
+services: {}

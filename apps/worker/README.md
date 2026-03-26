@@ -1,154 +1,52 @@
 # Nexus Worker
 
-Celery worker for asynchronous task processing.
+Postgres-backed worker loop for durable background jobs.
 
 ## Overview
 
-The worker processes background tasks including:
-- **Web article ingestion**: Fetch URLs via HTTP, extract with Mozilla Readability, sanitize HTML, generate canonical text
-- **Podcast subscription sync**: Data-plane ingest/transcription for subscribed podcasts
-- **Scheduled podcast active polling**: Periodic active-subscription polling via Celery Beat
-- **Stale ingest reconciliation**: Periodic recovery of PDF/EPUB media stuck in `extracting`
-- Future: Additional media extraction/embedding jobs
+The worker runs two small loops:
+- **job loop**: claims one due row from `background_jobs`, executes a plain Python handler, writes explicit state transitions.
+- **scheduler loop**: enqueues periodic jobs with deterministic dedupe keys for each schedule slot.
 
-## Prerequisites
-
-For web article ingestion, the worker requires:
-- Node.js 20+ (for the ingest script)
+There is no Celery broker, no beat process, and no `apply_async` runtime path.
 
 ## Usage
 
-### Local Development
+### Local development
 
 ```bash
-# From repo root
+# from repo root
 make worker
-make beat
 
-# Or manually:
+# manual
 cd python
 PYTHONPATH=$PWD:$PWD/.. \
   DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/postgres \
-  REDIS_URL=redis://localhost:6379/0 \
-  uv run celery -A apps.worker.main:celery_app worker -Q ingest --concurrency=2 --loglevel=info
-
-PYTHONPATH=$PWD:$PWD/.. \
-  DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/postgres \
-  REDIS_URL=redis://localhost:6379/0 \
-  uv run celery -A apps.worker.main:celery_app beat --loglevel=info --schedule /tmp/nexus-celerybeat-schedule
+  uv run python -m apps.worker.main
 ```
 
 ### Docker
 
 ```bash
-# Build worker image (from repo root)
+# build image
 docker build -f docker/Dockerfile.worker -t nexus-worker .
 
-# Run with docker-compose
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d worker beat
-
-# Or run standalone
-docker run \
-  -e DATABASE_URL=... \
-  -e REDIS_URL=... \
-  -e SUPABASE_JWKS_URL=... \
-  -e SUPABASE_ISSUER=... \
-  -e SUPABASE_AUDIENCES=... \
-  nexus-worker
+# run worker service
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d worker
 ```
-
-## Architecture
-
-### Task Registration
-
-Tasks are explicitly imported in `main.py` - no autodiscovery:
-
-```python
-from nexus.tasks import ingest_web_article  # noqa: F401
-```
-
-All task logic lives in `python/nexus/tasks/`. This directory contains only the thin Celery launcher.
-
-### Queue Configuration
-
-| Queue | Purpose | Concurrency |
-|-------|---------|-------------|
-| `ingest` | Web article ingestion (fetch + Readability) | 2 |
-| `default` | General tasks (future) | N |
-
-### Web Article Ingestion Flow
-
-1. API creates provisional media row (`POST /media/from_url`)
-2. API enqueues `ingest_web_article` task to `ingest` queue
-3. Worker task:
-   - Runs Node.js subprocess (fetch + jsdom + Readability)
-   - Resolves redirects, computes canonical URL
-   - Handles deduplication atomically
-   - Sanitizes HTML (XSS protection, image proxy rewriting)
-   - Generates canonical text for highlighting
-   - Persists fragment and updates media to `ready_for_reading`
-
-### Node.js Subprocess
-
-The worker spawns `node/ingest/ingest.mjs` as a subprocess:
-
-```
-Python worker → subprocess → node/ingest/ingest.mjs
-                                  ├── fetch() (HTTP with encoding detection)
-                                  ├── jsdom (DOM parsing)
-                                  └── @mozilla/readability (extraction)
-```
-
-Subprocess protocol:
-- **Input**: JSON via stdin `{"url": "...", "timeout_ms": 30000}`
-- **Output**: JSON via stdout `{"final_url": "...", "title": "...", "content_html": "..."}`
-- **Exit codes**: 0=success, 10=timeout, 11=fetch failed, 12=readability failed
-- **Timeout**: 40s hard wall-clock limit
-
-### Memory Considerations
-
-Without Chromium, the worker is lightweight (~50-100MB per task). Higher concurrency
-is safe — the default is `--concurrency=2` but can be increased further on larger instances.
 
 ## Configuration
 
 | Variable | Required | Description |
-|----------|----------|-------------|
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `REDIS_URL` | Yes | Redis URL for Celery broker |
-| `CELERY_BROKER_URL` | No | Override broker URL (defaults to REDIS_URL) |
-| `CELERY_RESULT_BACKEND` | No | Override result backend (defaults to REDIS_URL) |
-| `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS` | No | Beat interval for active-subscription polling (default: 300) |
-| `PODCAST_ACTIVE_POLL_LIMIT` | No | Max active subscriptions scanned per scheduled run (default: 100) |
-| `PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS` | No | Singleton poll-run lease duration in seconds (default: 900) |
-| `PODCAST_SYNC_RUNNING_LEASE_SECONDS` | No | Stale running-sync reclaim threshold in seconds (default: 1800) |
-| `INGEST_RECONCILE_SCHEDULE_SECONDS` | No | Interval for stale-ingest reconciler beat job (default: 300) |
-| `INGEST_STALE_EXTRACTING_SECONDS` | No | Age threshold for `extracting` media before recovery kicks in (default: 1800) |
-| `INGEST_STALE_REQUEUE_MAX_ATTEMPTS` | No | Max stale auto-requeue attempts before fail-closed (default: 3) |
-| `SUPABASE_JWKS_URL` | Yes | Supabase JWKS endpoint |
-| `SUPABASE_ISSUER` | Yes | JWT issuer |
-| `SUPABASE_AUDIENCES` | Yes | JWT audiences |
+|---|---|---|
+| `DATABASE_URL` | yes | Postgres connection string |
+| `WORKER_POLL_INTERVAL_SECONDS` | no | idle poll sleep in seconds (default: `2`) |
+| `WORKER_SCHEDULER_INTERVAL_SECONDS` | no | scheduler loop cadence in seconds (default: `30`) |
+| `WORKER_HEARTBEAT_INTERVAL_SECONDS` | no | lease heartbeat interval in seconds (default: `60`) |
+| `WORKER_LEASE_SECONDS` | no | default lease during claim before kind-specific policy applies (default: `300`) |
 
-## Troubleshooting
+## Notes
 
-### Node.js Not Found
-
-Ensure Node.js 20+ is installed and in PATH:
-```bash
-node --version  # Should be v20.x.x or later
-```
-
-### Node Dependencies Missing
-
-Install ingest dependencies:
-```bash
-cd node/ingest
-npm ci
-```
-
-### Task Not Processing
-
-Check that:
-1. Redis is running and accessible
-2. Worker is connected to the correct queue (`-Q ingest`)
-3. Task was enqueued successfully (check Celery logs)
+- Web/article/EPUB/PDF handlers still run Node/Python extraction code under `python/nexus/tasks`.
+- Periodic jobs use dedupe keys shaped like `periodic:<kind>:<slot_start_iso8601>`.
+- Retry/lease/schedule policy is centralized in `python/nexus/jobs/registry.py`.

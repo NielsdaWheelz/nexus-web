@@ -1,8 +1,7 @@
-"""Celery task for podcast subscription sync data-plane ingestion."""
+"""Worker job handler for podcast subscription sync data-plane ingestion."""
 
 from uuid import UUID
 
-from nexus.celery import celery_app
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services.podcasts import (
@@ -12,22 +11,22 @@ from nexus.services.podcasts import (
 logger = get_logger(__name__)
 
 
-@celery_app.task(bind=True, max_retries=0, name="podcast_sync_subscription_job")
 def podcast_sync_subscription_job(
-    self,
     user_id: str,
     podcast_id: str,
     request_id: str | None = None,
+    task_id: str | None = None,
 ) -> dict:
     user_uuid = UUID(user_id)
     podcast_uuid = UUID(podcast_id)
+    resolved_task_id = task_id or f"direct:{podcast_id}"
 
     logger.info(
         "podcast_sync_task_started",
         user_id=user_id,
         podcast_id=podcast_id,
         request_id=request_id,
-        task_id=self.request.id,
+        task_id=resolved_task_id,
     )
 
     session_factory = get_session_factory()
@@ -45,7 +44,7 @@ def podcast_sync_subscription_job(
             podcast_id=podcast_id,
             request_id=request_id,
             result=result,
-            task_id=self.request.id,
+            task_id=resolved_task_id,
         )
         return result
     finally:

@@ -871,8 +871,8 @@ def send_message(
             db, viewer_id, conversation_id, content, model_id, key_mode, contexts, use_platform_key
         )
 
-        # Increment in-flight counter
-        rate_limiter.increment_inflight(viewer_id)
+        # Acquire one in-flight slot for this request.
+        rate_limiter.acquire_inflight_slot(viewer_id)
 
         try:
             # Phase 1: Prepare
@@ -985,8 +985,8 @@ def send_message(
             )
 
         finally:
-            # Decrement in-flight counter
-            rate_limiter.decrement_inflight(viewer_id)
+            # Release the in-flight slot for this request.
+            rate_limiter.release_inflight_slot(viewer_id)
 
     finally:
         # PR-09: Clear flow_id

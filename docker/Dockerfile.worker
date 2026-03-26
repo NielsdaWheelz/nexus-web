@@ -79,6 +79,5 @@ ENV NODE_ENV="production"
 RUN useradd -m -u 1000 worker
 USER worker
 
-# Default command: run Celery worker on ingest queue
-# Higher concurrency now possible without Chromium memory overhead
-CMD ["celery", "-A", "apps.worker.main:celery_app", "worker", "-Q", "ingest", "--concurrency=2", "--loglevel=info"]
+# Default command: run the Postgres queue worker loop
+CMD ["python", "-m", "apps.worker.main"]

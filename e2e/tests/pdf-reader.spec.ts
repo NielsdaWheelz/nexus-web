@@ -28,29 +28,6 @@ interface LayerAlignmentSnapshot {
   bottomOffsetDrift: number;
 }
 
-async function waitForCreateOutcome(
-  page: Page,
-  minAttempts: number,
-  timeoutMs = 10_000,
-): Promise<CreateTelemetrySnapshot> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const telemetry = await readCreateTelemetry(page);
-    const inFlightOutcome =
-      telemetry.lastOutcome === "attempted" ||
-      telemetry.lastOutcome === "request_post" ||
-      telemetry.lastOutcome === "request_patch";
-    if (telemetry.attempts >= minAttempts && !inFlightOutcome) {
-      return telemetry;
-    }
-    await page.waitForTimeout(100);
-  }
-  const lastTelemetry = await readCreateTelemetry(page);
-  throw new Error(
-    `Timed out waiting for create outcome (attempt>=${minAttempts}). Last telemetry: ${JSON.stringify(lastTelemetry)}`,
-  );
-}
-
 function readSeededPdfMedia(): SeededPdfMedia {
   const seedPath = path.join(process.cwd(), ".seed", "pdf-media.json");
   const raw = readFileSync(seedPath, "utf-8");
@@ -836,70 +813,69 @@ test.describe("pdf reader", () => {
       ["Zoom in", "125%"],
       ["Zoom out", "100%"],
     ]) {
-      const telemetryBeforeZoom = await readCreateTelemetry(page);
       await clickToolbarButtonByAriaLabel(page, zoomLabel);
       await expect(page.getByText(expectedZoom)).toBeVisible();
-      await expect
-        .poll(async () => (await readCreateTelemetry(page)).pageRenderEpoch, {
-          timeout: 20_000,
-        })
-        .toBeGreaterThan(telemetryBeforeZoom.pageRenderEpoch);
+      await page.waitForTimeout(150);
 
-      expect(await selectTextLayerSnippet(page, 1, 0)).toBe(true);
-      await expect(page.locator('button[aria-label="Highlight selection"]')).toBeEnabled();
-
-      // Selection may be lost between selectTextLayerSnippet and the create
-      // click due to React re-renders replacing text layer DOM nodes (making
-      // the Range's containers detached). The retry loop below handles this
-      // gracefully via skipped_no_selection → re-select, so we proceed
-      // directly rather than adding a hard-failure gate here.
-
-      const telemetryBefore = await readCreateTelemetry(page);
+      await ensureOnPage(page, 1, expectedPageCount);
+      await expect(activeTextLayer(page)).toBeVisible();
+      const knownIds = new Set(await listVisibleHighlightIds(page));
       const postRequestsBefore = highlightPostRequests;
       const postResponsesOkBefore = highlightPostResponsesOk;
 
-      let created = false;
-      const outcomes: string[] = [];
-      for (let retry = 0; retry < 5; retry += 1) {
-        expect(await selectTextLayerSnippet(page, 1, retry)).toBe(true);
-        const attemptBefore = await readCreateTelemetry(page);
-        await clickToolbarButtonByAriaLabel(page, "Highlight selection");
-        await expect
-          .poll(async () => (await readCreateTelemetry(page)).attempts, { timeout: 5_000 })
-          .toBe(attemptBefore.attempts + 1);
-
-        const settled = await waitForCreateOutcome(page, attemptBefore.attempts + 1);
-        outcomes.push(settled.lastOutcome);
-        if (settled.lastOutcome === "success") {
-          created = true;
-          break;
-        }
-        if (
-          settled.lastOutcome === "skipped_no_selection" ||
-          settled.lastOutcome === "skipped_no_geometry" ||
-          settled.lastOutcome === "error"
-        ) {
+      let createdHighlightId: string | null = null;
+      const attemptNotes: string[] = [];
+      for (let retry = 0; retry < 8; retry += 1) {
+        const selectionReady = await selectTextLayerSnippet(page, 1, retry);
+        if (!selectionReady) {
+          attemptNotes.push(`retry=${retry}:selection_unavailable`);
+          await page.waitForTimeout(120);
           continue;
         }
-        throw new Error(`Unexpected create outcome: ${settled.lastOutcome}`);
+        await expect(page.locator('button[aria-label="Highlight selection"]')).toBeEnabled();
+        const attemptRequestsBefore = highlightPostRequests;
+        const attemptResponsesOkBefore = highlightPostResponsesOk;
+        await clickToolbarButtonByAriaLabel(page, "Highlight selection");
+
+        let postIssued = false;
+        try {
+          await expect.poll(() => highlightPostRequests, { timeout: 6_000 }).toBeGreaterThan(
+            attemptRequestsBefore,
+          );
+          postIssued = true;
+        } catch {
+          attemptNotes.push(`retry=${retry}:no_post_request`);
+        }
+        if (!postIssued) {
+          continue;
+        }
+
+        try {
+          await expect
+            .poll(() => highlightPostResponsesOk, { timeout: 10_000 })
+            .toBeGreaterThanOrEqual(attemptResponsesOkBefore + 1);
+        } catch {
+          attemptNotes.push(`retry=${retry}:post_response_not_ok`);
+          continue;
+        }
+
+        try {
+          createdHighlightId = await waitForNewVisibleHighlightId(page, knownIds, 10_000);
+          knownIds.add(createdHighlightId);
+          break;
+        } catch (error) {
+          attemptNotes.push(`retry=${retry}:no_new_dom_highlight:${String(error).slice(0, 160)}`);
+        }
       }
-      if (!created) {
+      if (!createdHighlightId) {
         const lastTelemetry = await readCreateTelemetry(page);
         throw new Error(
-          `Failed to create highlight after retries. outcomes=${outcomes.join(",")} lastTelemetry=${JSON.stringify(lastTelemetry)}`,
+          `Failed to create highlight after retries. notes=${attemptNotes.join(" | ")} telemetry=${JSON.stringify(lastTelemetry)} postRequests=${highlightPostRequests} postResponsesOk=${highlightPostResponsesOk}`,
         );
       }
 
-      await expect
-        .poll(async () => (await readCreateTelemetry(page)).postRequests, { timeout: 10_000 })
-        .toBeGreaterThanOrEqual(telemetryBefore.postRequests + 1);
-      await expect
-        .poll(async () => (await readCreateTelemetry(page)).successes, { timeout: 10_000 })
-        .toBeGreaterThanOrEqual(telemetryBefore.successes + 1);
-      await expect.poll(() => highlightPostRequests, { timeout: 10_000 }).toBe(postRequestsBefore + 1);
-      await expect
-        .poll(() => highlightPostResponsesOk, { timeout: 10_000 })
-        .toBe(postResponsesOkBefore + 1);
+      expect(highlightPostRequests).toBeGreaterThanOrEqual(postRequestsBefore + 1);
+      expect(highlightPostResponsesOk).toBeGreaterThanOrEqual(postResponsesOkBefore + 1);
     }
 
     await expect

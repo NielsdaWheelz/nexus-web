@@ -1,4 +1,4 @@
-"""Celery task for default-library closure backfill materialization.
+"""Worker job handler for default-library closure backfill materialization.
 
 Worker behaviour (per s4 spec section 7.4):
 1. Claim pending durable row atomically (pending -> running).
@@ -12,7 +12,6 @@ Worker behaviour (per s4 spec section 7.4):
 
 from uuid import UUID
 
-from nexus.celery import celery_app
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services.default_library_closure import (
@@ -31,17 +30,12 @@ from nexus.services.default_library_closure import (
 logger = get_logger(__name__)
 
 
-@celery_app.task(
-    bind=True,
-    max_retries=0,
-    name="backfill_default_library_closure_job",
-)
 def backfill_default_library_closure_job(
-    self,
     default_library_id: str,
     source_library_id: str,
     user_id: str,
     request_id: str | None = None,
+    task_id: str | None = None,
 ) -> dict:
     """Backfill closure edges for a user's default library from a source library.
 
@@ -58,9 +52,10 @@ def backfill_default_library_closure_job(
     src_uuid = UUID(source_library_id)
     uid_uuid = UUID(user_id)
 
+    resolved_task_id = task_id or f"direct:{default_library_id}:{source_library_id}:{user_id}"
     log_ctx = {
         "task_name": "backfill_default_library_closure_job",
-        "task_id": self.request.id,
+        "task_id": resolved_task_id,
         "request_id": request_id,
         "default_library_id": default_library_id,
         "source_library_id": source_library_id,

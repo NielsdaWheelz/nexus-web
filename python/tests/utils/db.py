@@ -13,10 +13,11 @@ from sqlalchemy.orm import Session
 
 
 def task_session_factory(fixture_session: Session) -> Callable[[], Session]:
-    """Create a session factory for Celery task tests.
+    """Create a session factory for worker job tests.
 
-    Celery tasks call session_factory() to get a session, then db.close() in a
-    finally block.  This factory creates sessions that share the test fixture's
+    Worker job handlers call session_factory() to get a session, then
+    `db.close()` in a finally block. This factory creates sessions that share
+    the test fixture's
     DB connection (so they see test data and their writes are rolled back with
     the test) but can be safely closed without affecting the fixture session.
 

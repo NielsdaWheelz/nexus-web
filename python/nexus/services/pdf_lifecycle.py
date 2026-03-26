@@ -26,6 +26,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
+from nexus.jobs.queue import enqueue_job
 from nexus.services.pdf_ingest import (
     delete_pdf_text_artifacts,
     invalidate_pdf_quote_match_metadata,
@@ -129,12 +130,14 @@ def confirm_pdf_ingest(
     db.flush()
 
     try:
-        from nexus.tasks.ingest_pdf import ingest_pdf
-
-        ingest_pdf.apply_async(
-            args=[str(media.id)],
-            kwargs={"request_id": request_id},
-            queue="ingest",
+        enqueue_job(
+            db,
+            kind="ingest_pdf",
+            payload={
+                "media_id": str(media.id),
+                "request_id": request_id,
+                "embedding_only": False,
+            },
         )
     except Exception as exc:
         db.rollback()
@@ -245,12 +248,14 @@ def _retry_pdf_embedding_only(
     db.flush()
 
     try:
-        from nexus.tasks.ingest_pdf import ingest_pdf
-
-        ingest_pdf.apply_async(
-            args=[str(media.id)],
-            kwargs={"request_id": request_id, "embedding_only": True},
-            queue="ingest",
+        enqueue_job(
+            db,
+            kind="ingest_pdf",
+            payload={
+                "media_id": str(media.id),
+                "request_id": request_id,
+                "embedding_only": True,
+            },
         )
     except Exception as exc:
         db.rollback()
@@ -306,12 +311,14 @@ def _retry_pdf_text_rebuild(
     db.flush()
 
     try:
-        from nexus.tasks.ingest_pdf import ingest_pdf
-
-        ingest_pdf.apply_async(
-            args=[str(media.id)],
-            kwargs={"request_id": request_id},
-            queue="ingest",
+        enqueue_job(
+            db,
+            kind="ingest_pdf",
+            payload={
+                "media_id": str(media.id),
+                "request_id": request_id,
+                "embedding_only": False,
+            },
         )
     except Exception as exc:
         db.rollback()
