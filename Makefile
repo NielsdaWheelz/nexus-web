@@ -1,7 +1,7 @@
 # Nexus Development Makefile
 # Run `make help` for available commands
 
-.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations ensure-services ensure-node-ingest ensure-e2e-deps lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker migrate migrate-test migrate-down seed verify verify-fast test-back-unit test-front-unit test-front-browser test-e2e test-e2e-ui _verify-fast-static _verify-fast-tests _verify-tests logs
+.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations test-back-network test-back-network-no-services test-back-real test-back-real-no-services ensure-services ensure-node-ingest ensure-e2e-deps lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker migrate migrate-test migrate-down seed verify verify-fast test-back-unit test-front-unit test-front-browser test-e2e test-e2e-ui _verify-fast-static _verify-fast-tests _verify-tests logs
 
 # Load .env file if it exists (created by setup)
 -include .env
@@ -37,6 +37,8 @@ help:
 	@echo "Test:"
 	@echo "  make test           - Run all tests (backend + frontend)"
 	@echo "  make test-back      - Run backend tests (excludes migrations)"
+	@echo "  make test-back-network - Run backend tests requiring internet"
+	@echo "  make test-back-real - Run real-content backend extraction tests"
 	@echo "  make test-front     - Run frontend tests"
 	@echo "  make test-migrations - Run migration tests (separate database)"
 	@echo "  make test-supabase  - Run Supabase auth/storage integration tests"
@@ -135,6 +137,22 @@ test-back-no-services:
 	$(MAKE) migrate-test
 	$(MAKE) ensure-node-ingest
 	cd python && NEXUS_ENV=test uv run pytest -v --ignore=tests/test_migrations.py
+
+test-back-network:
+	./scripts/with_test_services.sh $(MAKE) test-back-network-no-services
+
+test-back-network-no-services:
+	$(MAKE) migrate-test
+	$(MAKE) ensure-node-ingest
+	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m network -o addopts=""
+
+test-back-real:
+	./scripts/with_test_services.sh $(MAKE) test-back-real-no-services
+
+test-back-real-no-services:
+	$(MAKE) migrate-test
+	$(MAKE) ensure-node-ingest
+	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m slow -o addopts=""
 
 test-front:
 	cd apps/web && npm test -- --passWithNoTests

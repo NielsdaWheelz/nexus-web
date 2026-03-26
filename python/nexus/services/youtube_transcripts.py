@@ -29,7 +29,7 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
         )
 
     try:
-        raw_segments = YouTubeTranscriptApi.get_transcript(video_id)
+        raw_segments = list(YouTubeTranscriptApi().fetch(video_id))
     except Exception as exc:
         class_name = exc.__class__.__name__
         if class_name in {
@@ -37,6 +37,11 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
             "NoTranscriptFound",
             "VideoUnavailable",
             "CouldNotRetrieveTranscript",
+            "RequestBlocked",
+            "IpBlocked",
+            "PoTokenRequired",
+            "InvalidVideoId",
+            "VideoUnplayable",
         }:
             return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
         if "Timeout" in class_name or "TimedOut" in class_name:
@@ -49,16 +54,11 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
         )
         return _failure(ApiErrorCode.E_TRANSCRIPTION_FAILED.value, "Transcription failed")
 
-    if not isinstance(raw_segments, list):
-        return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
-
     segments: list[dict[str, Any]] = []
     for row in raw_segments:
-        if not isinstance(row, dict):
-            continue
-        start_seconds = row.get("start")
-        duration_seconds = row.get("duration")
-        text_value = row.get("text")
+        start_seconds = getattr(row, "start", None)
+        duration_seconds = getattr(row, "duration", None)
+        text_value = getattr(row, "text", None)
         if start_seconds is None or duration_seconds is None:
             continue
         try:
@@ -80,6 +80,7 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
 
     if not segments:
         return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
+    segments.sort(key=lambda segment: int(segment["t_start_ms"]))
 
     return {
         "status": "completed",

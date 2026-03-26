@@ -80,7 +80,7 @@ def engine() -> Generator[Engine, None, None]:
     engine.dispose()
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def verify_schema_exists(engine: Engine) -> Generator[None, None, None]:
     """Verify database schema exists before running tests.
 
@@ -110,7 +110,7 @@ def verify_schema_exists(engine: Engine) -> Generator[None, None, None]:
 
 
 @pytest.fixture
-def db_session(engine: Engine) -> Generator[Session, None, None]:
+def db_session(engine: Engine, verify_schema_exists: None) -> Generator[Session, None, None]:
     """Provide a database session with savepoint isolation.
 
     Each test gets a fresh session that is rolled back after the test,
@@ -124,7 +124,9 @@ def db_session(engine: Engine) -> Generator[Session, None, None]:
 
 
 @pytest.fixture
-def direct_db(engine: Engine) -> Generator[DirectSessionManager, None, None]:
+def direct_db(
+    engine: Engine, verify_schema_exists: None
+) -> Generator[DirectSessionManager, None, None]:
     """Provide direct database access without savepoint isolation.
 
     Use for tests that require multiple independent connections that must
@@ -168,7 +170,7 @@ def test_verifier() -> MockJwtVerifier:
 
 
 @pytest.fixture
-def authenticated_app(engine: Engine):
+def authenticated_app(engine: Engine, verify_schema_exists: None):
     """Provide a FastAPI app with auth + request-id middleware using test verifier.
 
     Uses the test database engine for bootstrap operations.
@@ -263,7 +265,7 @@ def random_uuid() -> str:
 
 
 @pytest.fixture
-def auth_client(engine: Engine) -> Generator[TestClient, None, None]:
+def auth_client(engine: Engine, verify_schema_exists: None) -> Generator[TestClient, None, None]:
     """Provide a FastAPI test client with auth + request-id middleware.
 
     No savepoint isolation — tests using this fixture must register manual cleanup
