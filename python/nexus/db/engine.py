@@ -33,6 +33,11 @@ def create_db_engine(database_url: str | None = None) -> Engine:
         database_url,
         pool_pre_ping=True,
         echo=False,
+        # Disable psycopg3 server-side prepared statements — they are
+        # per-connection state and break under transaction-pooling proxies
+        # (Supavisor / PgBouncer) which may route successive transactions
+        # to different backend connections.
+        connect_args={"prepare_threshold": None},
     )
 
 
