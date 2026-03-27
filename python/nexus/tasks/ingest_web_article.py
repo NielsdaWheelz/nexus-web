@@ -145,6 +145,12 @@ def _do_ingest(
     ingest_result = run_node_ingest(url)
 
     if isinstance(ingest_result, IngestError):
+        logger.warning(
+            "node_ingest_failed",
+            media_id=str(media_id),
+            error_code=ingest_result.error_code.value,
+            detail=ingest_result.message,
+        )
         _mark_failed(db, media_id, ingest_result.error_code, ingest_result.message)
         return {"status": "failed", "reason": str(ingest_result.error_code.value)}
 

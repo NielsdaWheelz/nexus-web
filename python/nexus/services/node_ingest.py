@@ -25,10 +25,10 @@ from pathlib import Path
 
 from nexus.errors import ApiErrorCode
 
-# Find the node ingest script relative to this file
-# Goes up from python/nexus/services/ to repo root, then to node/ingest/
-_REPO_ROOT = Path(__file__).parent.parent.parent.parent
-NODE_INGEST_SCRIPT = _REPO_ROOT / "node" / "ingest" / "ingest.mjs"
+# In production, set NODE_INGEST_SCRIPT env var to the absolute path.
+# Dev fallback: walk up from python/nexus/services/ to repo root.
+_DEV_FALLBACK = Path(__file__).parent.parent.parent.parent / "node" / "ingest" / "ingest.mjs"
+NODE_INGEST_SCRIPT = Path(os.environ.get("NODE_INGEST_SCRIPT", _DEV_FALLBACK))
 
 # Exit codes from node script
 EXIT_SUCCESS = 0

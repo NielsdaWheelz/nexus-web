@@ -74,6 +74,7 @@ COPY node/ingest/ingest.mjs ./node/ingest/
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV NODE_ENV="production"
+ENV NODE_INGEST_SCRIPT="/app/node/ingest/ingest.mjs"
 
 # Create non-root user for security
 RUN useradd -m -u 1000 worker
