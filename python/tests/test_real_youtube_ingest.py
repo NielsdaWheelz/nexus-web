@@ -91,8 +91,7 @@ class TestRealYouTubeTranscriptExtraction:
 
         for index, segment in enumerate(segments):
             assert segment["t_start_ms"] >= 0, (
-                f"{video['label']}: segment {index} had negative start time "
-                f"{segment['t_start_ms']}"
+                f"{video['label']}: segment {index} had negative start time {segment['t_start_ms']}"
             )
             assert segment["t_end_ms"] > segment["t_start_ms"], (
                 f"{video['label']}: segment {index} had non-positive duration "

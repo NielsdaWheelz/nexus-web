@@ -76,10 +76,9 @@ def _remove_background_job_insert_failure(direct_db: DirectSessionManager) -> No
                 """
             )
         )
-        session.execute(
-            text("DROP FUNCTION IF EXISTS nexus_test_fail_background_job_insert()")
-        )
+        session.execute(text("DROP FUNCTION IF EXISTS nexus_test_fail_background_job_insert()"))
         session.commit()
+
 
 # =============================================================================
 # Fixtures
@@ -506,8 +505,7 @@ class TestFromUrlSuccess:
             f"but found {media_count} committed rows."
         )
         assert job_count == 0, (
-            "Expected no ingest_web_article job rows for failed request, "
-            f"but found {job_count}."
+            f"Expected no ingest_web_article job rows for failed request, but found {job_count}."
         )
 
     def test_youtube_creation_rolls_back_when_enqueue_fails(
@@ -562,8 +560,7 @@ class TestFromUrlSuccess:
             f"but found {media_count} committed rows."
         )
         assert job_count == 0, (
-            "Expected no ingest_youtube_video job rows for failed request, "
-            f"but found {job_count}."
+            f"Expected no ingest_youtube_video job rows for failed request, but found {job_count}."
         )
 
 

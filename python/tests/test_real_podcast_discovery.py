@@ -55,7 +55,9 @@ def podcast_client() -> PodcastIndexClient:
 
 class TestRealPodcastDiscovery:
     @pytest.mark.parametrize("podcast", PODCASTS, ids=[item["label"] for item in PODCASTS])
-    def test_search_returns_expected_podcasts(self, podcast_client: PodcastIndexClient, podcast: dict):
+    def test_search_returns_expected_podcasts(
+        self, podcast_client: PodcastIndexClient, podcast: dict
+    ):
         results = podcast_client.search_podcasts(podcast["query"], limit=10)
 
         assert len(results) > 0, (
@@ -73,7 +75,9 @@ class TestRealPodcastDiscovery:
             assert result.get("provider_podcast_id"), (
                 f"{podcast['label']}: result {index} missing provider_podcast_id: {result}"
             )
-            assert result.get("title"), f"{podcast['label']}: result {index} missing title: {result}"
+            assert result.get("title"), (
+                f"{podcast['label']}: result {index} missing title: {result}"
+            )
             assert result.get("feed_url"), (
                 f"{podcast['label']}: result {index} missing feed_url: {result}"
             )

@@ -458,9 +458,7 @@ class RateLimiter:
                     .first()
                 )
                 usage_date = (
-                    reservation["usage_date"]
-                    if reservation is not None
-                    else self._today_utc()
+                    reservation["usage_date"] if reservation is not None else self._today_utc()
                 )
                 self._load_budget_totals_for_update(
                     db=db,

@@ -237,8 +237,7 @@ def test_complete_job_rejects_stale_worker_after_reclaim(db_session: Session):
     reclaimed = claim_next_job(db_session, worker_id="worker-b", lease_seconds=60)
     assert reclaimed is not None, "Expected stale running row to be reclaimed, got None."
     assert reclaimed.claimed_by == "worker-b", (
-        "Expected reclaimed ownership to transfer to worker-b. "
-        f"claimed_by={reclaimed.claimed_by}"
+        f"Expected reclaimed ownership to transfer to worker-b. claimed_by={reclaimed.claimed_by}"
     )
 
     stale_complete = complete_job(
@@ -294,8 +293,7 @@ def test_fail_job_rejects_stale_worker_after_reclaim(db_session: Session):
     reclaimed = claim_next_job(db_session, worker_id="worker-b", lease_seconds=60)
     assert reclaimed is not None, "Expected stale running row to be reclaimed, got None."
     assert reclaimed.claimed_by == "worker-b", (
-        "Expected reclaimed ownership to transfer to worker-b. "
-        f"claimed_by={reclaimed.claimed_by}"
+        f"Expected reclaimed ownership to transfer to worker-b. claimed_by={reclaimed.claimed_by}"
     )
 
     stale_fail = fail_job(
@@ -323,9 +321,7 @@ def test_fail_job_rejects_stale_worker_after_reclaim(db_session: Session):
         retry_delays_seconds=(0,),
     )
     db_session.commit()
-    assert owner_fail == "failed", (
-        "Expected active owner fail transition to park row for retry."
-    )
+    assert owner_fail == "failed", "Expected active owner fail transition to park row for retry."
     assert _job_status(db_session, job.id) == "failed", (
         "Expected active owner to move running row to failed."
     )

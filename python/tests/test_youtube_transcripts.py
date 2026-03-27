@@ -35,7 +35,9 @@ class TestYoutubeTranscriptBoundary:
     def test_empty_video_id_returns_transcript_unavailable(self):
         result = fetch_youtube_transcript("")
 
-        assert result["status"] == "failed", f"expected failed status for empty video id, got {result}"
+        assert result["status"] == "failed", (
+            f"expected failed status for empty video id, got {result}"
+        )
         assert result["error_code"] == "E_TRANSCRIPT_UNAVAILABLE", (
             f"expected E_TRANSCRIPT_UNAVAILABLE for empty video id, got {result}"
         )

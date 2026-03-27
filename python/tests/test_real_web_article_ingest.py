@@ -43,7 +43,9 @@ ARTICLES = [
 @pytest.fixture(autouse=True)
 def _require_node_runtime():
     if not shutil.which("node"):
-        pytest.skip("Node.js is not installed; install Node.js to run web extraction network tests.")
+        pytest.skip(
+            "Node.js is not installed; install Node.js to run web extraction network tests."
+        )
     if not NODE_INGEST_SCRIPT.exists():
         pytest.skip(
             f"Node ingest script not found at {NODE_INGEST_SCRIPT}; run from repo root checkout."
