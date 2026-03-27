@@ -1,7 +1,9 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  shouldPollDocumentProcessing,
   shouldPollTranscriptProvisioning,
+  useIntervalPoll,
   useTranscriptProvisioningPoll,
 } from "./transcriptPolling";
 
@@ -73,7 +75,54 @@ describe("shouldPollTranscriptProvisioning", () => {
   });
 });
 
-describe("useTranscriptProvisioningPoll", () => {
+describe("shouldPollDocumentProcessing", () => {
+  it("polls only unreadable PDF and EPUB media that are still processing", () => {
+    expect(
+      shouldPollDocumentProcessing({
+        mediaKind: "epub",
+        processingStatus: "extracting",
+        canRead: false,
+      })
+    ).toBe(true);
+    expect(
+      shouldPollDocumentProcessing({
+        mediaKind: "pdf",
+        processingStatus: "pending",
+        canRead: false,
+      })
+    ).toBe(true);
+    expect(
+      shouldPollDocumentProcessing({
+        mediaKind: "epub",
+        processingStatus: "ready_for_reading",
+        canRead: true,
+      })
+    ).toBe(false);
+    expect(
+      shouldPollDocumentProcessing({
+        mediaKind: "pdf",
+        processingStatus: "failed",
+        canRead: false,
+      })
+    ).toBe(false);
+    expect(
+      shouldPollDocumentProcessing({
+        mediaKind: "web_article",
+        processingStatus: "extracting",
+        canRead: false,
+      })
+    ).toBe(false);
+    expect(
+      shouldPollDocumentProcessing({
+        mediaKind: null,
+        processingStatus: null,
+        canRead: false,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("useIntervalPoll", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -84,7 +133,7 @@ describe("useTranscriptProvisioningPoll", () => {
 
     const { rerender } = renderHook(
       ({ enabled }: { enabled: boolean }) =>
-        useTranscriptProvisioningPoll({
+        useIntervalPoll({
           enabled,
           onPoll,
           pollIntervalMs: 1000,
@@ -125,7 +174,7 @@ describe("useTranscriptProvisioningPoll", () => {
       .mockResolvedValueOnce();
 
     renderHook(() =>
-      useTranscriptProvisioningPoll({
+      useIntervalPoll({
         enabled: true,
         onPoll,
         pollIntervalMs: 1000,
@@ -143,5 +192,30 @@ describe("useTranscriptProvisioningPoll", () => {
       await Promise.resolve();
     });
     expect(onPoll).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("useTranscriptProvisioningPoll", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("delegates to the shared interval poll hook", async () => {
+    vi.useFakeTimers();
+    const onPoll = vi.fn(async () => undefined);
+
+    renderHook(() =>
+      useTranscriptProvisioningPoll({
+        enabled: true,
+        onPoll,
+        pollIntervalMs: 1000,
+      })
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    expect(onPoll).toHaveBeenCalledTimes(1);
   });
 });

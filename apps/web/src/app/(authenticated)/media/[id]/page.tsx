@@ -97,8 +97,9 @@ import TranscriptMediaPane, {
   type TranscriptFragment,
 } from "./TranscriptMediaPane";
 import {
+  shouldPollDocumentProcessing,
   shouldPollTranscriptProvisioning,
-  useTranscriptProvisioningPoll,
+  useIntervalPoll,
 } from "./transcriptPolling";
 import ResponsiveToolbar, { type ToolbarItem } from "@/components/ui/ResponsiveToolbar";
 import styles from "./page.module.css";
@@ -223,6 +224,7 @@ function getPaneScrollContainer(
 
 const TEXT_ANCHOR_TOP_PADDING_PX = 56;
 const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
+const DOCUMENT_PROCESSING_POLL_INTERVAL_MS = 3000;
 
 function formatResumeTime(positionMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(positionMs / 1000));
@@ -990,15 +992,44 @@ export default function MediaViewPage() {
     }
   }, [refreshTranscriptProvisioningState]);
 
+  const refreshDocumentProcessingState = useCallback(async () => {
+    if (!media?.id || (media.kind !== "epub" && media.kind !== "pdf")) {
+      return;
+    }
+
+    const mediaResp = await apiFetch<{ data: Media }>(`/api/media/${media.id}`);
+    setMedia(mediaResp.data);
+  }, [media?.id, media?.kind]);
+
+  const pollDocumentProcessing = useCallback(async () => {
+    try {
+      await refreshDocumentProcessingState();
+    } catch {
+      // Keep the pane responsive even if one poll attempt fails.
+    }
+  }, [refreshDocumentProcessingState]);
+
   const transcriptProvisioningPollEnabled = shouldPollTranscriptProvisioning({
     isTranscriptMedia,
     transcriptState,
   });
 
-  useTranscriptProvisioningPoll({
+  const documentProcessingPollEnabled = shouldPollDocumentProcessing({
+    mediaKind: media?.kind,
+    processingStatus: media?.processing_status,
+    canRead,
+  });
+
+  useIntervalPoll({
     enabled: Boolean(media?.id) && transcriptProvisioningPollEnabled,
     onPoll: pollTranscriptProvisioning,
     pollIntervalMs: TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
+  });
+
+  useIntervalPoll({
+    enabled: Boolean(media?.id) && documentProcessingPollEnabled,
+    onPoll: pollDocumentProcessing,
+    pollIntervalMs: DOCUMENT_PROCESSING_POLL_INTERVAL_MS,
   });
 
   useEffect(() => {
@@ -1067,6 +1098,7 @@ export default function MediaViewPage() {
     if (!media || media.kind !== "epub" || !isReadableStatus(media.processing_status)) return;
 
     let cancelled = false;
+    setEpubError(null);
 
     const loadEpub = async () => {
       try {
@@ -2527,7 +2559,7 @@ export default function MediaViewPage() {
   }
 
   // Processing gate for EPUB-specific not-ready
-  if (isEpub && epubError === "processing") {
+  if (isEpub && epubError === "processing" && !canRead && media.processing_status !== "failed") {
     return (
       <PaneContainer>
         <Pane
@@ -2628,12 +2660,12 @@ export default function MediaViewPage() {
             />
           ) : !canRead ? (
             <div className={styles.notReady}>
-              {isPdf && media.processing_status === "failed" ? (
+              {media.processing_status === "failed" ? (
                 <>
-                  {media.last_error_code === "E_PDF_PASSWORD_REQUIRED" ? (
+                  {isPdf && media.last_error_code === "E_PDF_PASSWORD_REQUIRED" ? (
                     <p>This PDF is password-protected and cannot be opened in v1.</p>
                   ) : (
-                    <p>This PDF cannot be opened right now.</p>
+                    <p>This media cannot be opened right now.</p>
                   )}
                   {media.last_error_code && <p>Error: {media.last_error_code}</p>}
                 </>
