@@ -4825,6 +4825,404 @@ class TestPodcastApiSurface:
         )
         assert duplicate_create.json()["error"]["code"] == "E_INVALID_REQUEST"
 
+    def test_episode_from_feed_item_extracts_rss_transcript_refs_with_relative_url_resolution(self):
+        from nexus.services import podcasts as podcast_service
+
+        item_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<item xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <guid>rss-transcript-guid-1</guid>
+  <title>RSS Transcript Episode</title>
+  <pubDate>Fri, 06 Mar 2026 10:00:00 GMT</pubDate>
+  <enclosure url="https://cdn.example.com/audio/episode.mp3" />
+  <podcast:transcript
+    url="transcripts/episode.vtt"
+    type="text/vtt"
+    language="es"
+  />
+  <podcast:transcript
+    url="https://cdn.example.com/transcripts/episode.srt"
+    type="application/x-subrip"
+    language="en"
+  />
+  <podcast:transcript url="javascript:alert(1)" type="text/vtt" />
+</item>
+"""
+
+        item = etree.fromstring(item_xml.encode("utf-8"))
+        episode = podcast_service._episode_from_feed_item(
+            item,
+            base_url="https://feeds.example.com/show/feed.xml",
+        )
+
+        assert episode is not None
+        assert episode["rss_transcript_refs"] == [
+            {
+                "url": "https://feeds.example.com/show/transcripts/episode.vtt",
+                "type": "text/vtt",
+                "language": "es",
+            },
+            {
+                "url": "https://cdn.example.com/transcripts/episode.srt",
+                "type": "application/x-subrip",
+                "language": "en",
+            },
+        ], f"expected namespace-agnostic podcast:transcript extraction, got {episode}"
+
+        no_transcript_item = etree.fromstring(
+            """
+            <item>
+              <guid>rss-transcript-guid-2</guid>
+              <title>No Transcript Episode</title>
+              <enclosure url="https://cdn.example.com/audio/episode-2.mp3" />
+            </item>
+            """
+        )
+        no_transcript_episode = podcast_service._episode_from_feed_item(
+            no_transcript_item,
+            base_url="https://feeds.example.com/show/feed.xml",
+        )
+        assert no_transcript_episode is not None
+        assert no_transcript_episode["rss_transcript_refs"] is None
+
+    def test_sync_persists_rss_vtt_transcript_without_jobs_or_quota_spend(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="free",
+            daily_transcription_minutes=1,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"rss-vtt-sync-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "RSS Transcript Sync Podcast")
+        episode_audio_url = "https://cdn.example.com/rss-sync-episode.mp3"
+        episodes_by_podcast = {
+            provider_podcast_id: [
+                {
+                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "guid": f"{provider_podcast_id}-guid-1",
+                    "title": "RSS VTT Episode",
+                    "audio_url": episode_audio_url,
+                    "published_at": "2026-03-06T10:00:00Z",
+                    "duration_seconds": 180,
+                    "transcript_segments": None,
+                }
+            ]
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+
+        transcript_url = "https://cdn.example.com/transcripts/rss-sync-episode.vtt"
+        feed_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>RSS Transcript Sync Podcast</title>
+    <item>
+      <guid>{provider_podcast_id}-guid-1</guid>
+      <title>RSS VTT Episode</title>
+      <pubDate>Fri, 06 Mar 2026 10:00:00 GMT</pubDate>
+      <enclosure url="{episode_audio_url}" />
+      <podcast:transcript url="{transcript_url}" type="text/vtt" language="en" />
+    </item>
+  </channel>
+</rss>
+"""
+        transcript_vtt = """WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+<v Host>hello rss
+"""
+
+        def fake_http_get(url: str, **kwargs):  # noqa: ANN003
+            _ = kwargs
+            if url == payload["feed_url"]:
+                return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
+            if url == transcript_url:
+                return httpx.Response(
+                    200,
+                    text=transcript_vtt,
+                    headers={"Content-Type": "text/vtt"},
+                    request=httpx.Request("GET", url),
+                )
+            raise AssertionError(f"unexpected RSS transcript test fetch URL: {url}")
+
+        monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.rss_transcript_fetch.httpx.get", fake_http_get)
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
+
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text(
+                    """
+                    SELECT media_id
+                    FROM podcast_episodes
+                    WHERE podcast_id = :podcast_id
+                    """
+                ),
+                {"podcast_id": podcast_id},
+            ).scalar()
+            assert media_id is not None
+
+            media_status = session.execute(
+                text("SELECT processing_status FROM media WHERE id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            transcript_state = session.execute(
+                text(
+                    """
+                    SELECT transcript_state, transcript_coverage
+                    FROM media_transcript_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            version_row = session.execute(
+                text(
+                    """
+                    SELECT request_reason, transcript_coverage
+                    FROM podcast_transcript_versions
+                    WHERE media_id = :media_id
+                    ORDER BY version_no DESC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            fragment_count = session.execute(
+                text("SELECT COUNT(*) FROM fragments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            segment_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            chunk_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_transcript_chunks WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            job_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_transcription_jobs WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            usage_row = session.execute(
+                text(
+                    """
+                    SELECT minutes_used, minutes_reserved
+                    FROM podcast_transcription_usage_daily
+                    WHERE user_id = :user_id AND usage_date = :usage_date
+                    """
+                ),
+                {"user_id": user_id, "usage_date": datetime.now(UTC).date()},
+            ).fetchone()
+
+        assert media_status == "ready_for_reading"
+        assert transcript_state == ("ready", "full"), (
+            f"expected RSS VTT transcript to make episode readable with full coverage, got {transcript_state}"
+        )
+        assert version_row == ("rss_feed", "full"), (
+            "expected RSS transcript persistence to version with request_reason='rss_feed'"
+        )
+        assert fragment_count == 1
+        assert segment_count == 1
+        assert chunk_count == 1
+        assert job_count == 0, "RSS transcript sync should not enqueue transcription jobs"
+        assert usage_row in {None, (0, 0)}, (
+            "RSS transcript sync should not spend or reserve quota usage"
+        )
+
+    def test_resync_upgrades_not_requested_episode_when_rss_transcript_appears(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="free",
+            daily_transcription_minutes=1,
+            initial_episode_window=1,
+        )
+
+        provider_podcast_id = f"rss-upgrade-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "RSS Transcript Upgrade Podcast")
+        episode_audio_url = "https://cdn.example.com/rss-upgrade-episode.mp3"
+        episodes_by_podcast = {
+            provider_podcast_id: [
+                {
+                    "provider_episode_id": f"{provider_podcast_id}-ep-1",
+                    "guid": f"{provider_podcast_id}-guid-1",
+                    "title": "RSS Upgrade Episode",
+                    "audio_url": episode_audio_url,
+                    "published_at": "2026-03-06T10:00:00Z",
+                    "duration_seconds": 180,
+                    "transcript_segments": None,
+                }
+            ]
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+
+        transcript_url = "https://cdn.example.com/transcripts/rss-upgrade-episode.vtt"
+        feed_without_transcript = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>RSS Transcript Upgrade Podcast</title>
+    <item>
+      <guid>{provider_podcast_id}-guid-1</guid>
+      <title>RSS Upgrade Episode</title>
+      <pubDate>Fri, 06 Mar 2026 10:00:00 GMT</pubDate>
+      <enclosure url="{episode_audio_url}" />
+    </item>
+  </channel>
+</rss>
+"""
+        feed_with_transcript = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>RSS Transcript Upgrade Podcast</title>
+    <item>
+      <guid>{provider_podcast_id}-guid-1</guid>
+      <title>RSS Upgrade Episode</title>
+      <pubDate>Fri, 06 Mar 2026 10:00:00 GMT</pubDate>
+      <enclosure url="{episode_audio_url}" />
+      <podcast:transcript url="{transcript_url}" type="text/vtt" language="en" />
+    </item>
+  </channel>
+</rss>
+"""
+        transcript_vtt = """WEBVTT
+
+00:00:00.000 --> 00:00:01.000
+upgrade now
+"""
+        state = {"rss_enabled": False}
+
+        def fake_http_get(url: str, **kwargs):  # noqa: ANN003
+            _ = kwargs
+            if url == payload["feed_url"]:
+                return httpx.Response(
+                    200,
+                    text=(feed_with_transcript if state["rss_enabled"] else feed_without_transcript),
+                    request=httpx.Request("GET", url),
+                )
+            if url == transcript_url:
+                return httpx.Response(
+                    200,
+                    text=transcript_vtt,
+                    headers={"Content-Type": "text/vtt"},
+                    request=httpx.Request("GET", url),
+                )
+            raise AssertionError(f"unexpected RSS transcript upgrade fetch URL: {url}")
+
+        monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.rss_transcript_fetch.httpx.get", fake_http_get)
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text("SELECT media_id FROM podcast_episodes WHERE podcast_id = :podcast_id"),
+                {"podcast_id": podcast_id},
+            ).scalar()
+            assert media_id is not None
+            first_state = session.execute(
+                text(
+                    """
+                    SELECT transcript_state, transcript_coverage
+                    FROM media_transcript_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            first_version_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_transcript_versions WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+
+        assert first_state == ("not_requested", "none")
+        assert first_version_count == 0
+
+        state["rss_enabled"] = True
+        refresh_response = auth_client.post(
+            f"/podcasts/subscriptions/{podcast_id}/sync",
+            headers=auth_headers(user_id),
+        )
+        assert refresh_response.status_code == 202
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
+
+        with direct_db.session() as session:
+            upgraded_state = session.execute(
+                text(
+                    """
+                    SELECT transcript_state, transcript_coverage
+                    FROM media_transcript_states
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            media_status = session.execute(
+                text("SELECT processing_status FROM media WHERE id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            version_row = session.execute(
+                text(
+                    """
+                    SELECT request_reason
+                    FROM podcast_transcript_versions
+                    WHERE media_id = :media_id
+                    ORDER BY version_no DESC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            job_count = session.execute(
+                text("SELECT COUNT(*) FROM podcast_transcription_jobs WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+
+        assert upgraded_state == ("ready", "full"), (
+            f"expected re-sync to upgrade not_requested episode when RSS transcript appears, got {upgraded_state}"
+        )
+        assert media_status == "ready_for_reading"
+        assert version_row == ("rss_feed",)
+        assert job_count == 0
+
     def test_sync_extracts_podcasting20_chapters_and_exposes_episode_and_media_contract(
         self, auth_client, monkeypatch, direct_db
     ):
@@ -5457,8 +5855,6 @@ class TestPodcastOpmlImportExport:
     def test_import_opml_handles_nested_groups_feed_identity_and_idempotency(
         self, auth_client, monkeypatch, direct_db
     ):
-        from unittest.mock import patch
-
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
 

@@ -57,6 +57,7 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionSyncRefreshOut,
 )
 from nexus.services import playback_queue as playback_queue_service
+from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.sanitize_html import sanitize_html
 from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services.semantic_chunks import (
@@ -100,6 +101,7 @@ PODCAST_TRANSCRIPT_REQUEST_REASONS = {
     "quote",
     "background_warming",
     "operator_requeue",
+    "rss_feed",
 }
 PODCAST_EPISODE_STATES = {"all", "unplayed", "in_progress", "played"}
 PODCAST_EPISODE_SORT_OPTIONS = {"newest", "oldest", "duration_asc", "duration_desc"}
@@ -353,6 +355,9 @@ class PodcastIndexClient:
                     # External providers usually do not supply transcript segments.
                     # Tests patch this field through the same boundary seam.
                     "transcript_segments": item.get("transcript_segments"),
+                    "rss_transcript_refs": None,
+                    "language": None,
+                    "feed_language": None,
                 }
             )
         return episodes
@@ -3054,6 +3059,7 @@ def _sync_subscription_ingest(
     reused_episode_count = 0
     ingested_media_ids: list[UUID] = []
     chapter_sync_rows: list[tuple[UUID, list[dict[str, Any]] | None]] = []
+    transcript_sync_rows: list[dict[str, Any]] = []
 
     for episode in selected_episodes:
         guid = _normalize_guid(episode.get("guid"))
@@ -3062,6 +3068,17 @@ def _sync_subscription_ingest(
         description_text = _normalize_optional_text(episode.get("description_text"))
         published_at = _parse_iso_datetime(episode.get("published_at"))
         duration_seconds = _coerce_positive_int(episode.get("duration_seconds"))
+        rss_transcript_refs = episode.get("rss_transcript_refs")
+        rss_transcript_url = None
+        if isinstance(rss_transcript_refs, list):
+            for ref in rss_transcript_refs:
+                if not isinstance(ref, dict):
+                    continue
+                candidate_url = str(ref.get("url") or "").strip()
+                if not candidate_url:
+                    continue
+                rss_transcript_url = candidate_url
+                break
         existing_media_id = _find_existing_episode_media_id(
             db,
             podcast_id=podcast_id,
@@ -3080,7 +3097,8 @@ def _sync_subscription_ingest(
                         description_html = :description_html,
                         description_text = :description_text,
                         published_at = :published_at,
-                        duration_seconds = :duration_seconds
+                        duration_seconds = :duration_seconds,
+                        rss_transcript_url = :rss_transcript_url
                     WHERE media_id = :media_id
                     """
                 ),
@@ -3090,6 +3108,7 @@ def _sync_subscription_ingest(
                     "description_text": description_text,
                     "published_at": published_at,
                     "duration_seconds": duration_seconds,
+                    "rss_transcript_url": rss_transcript_url,
                 },
             )
             reused_episode_count += 1
@@ -3165,6 +3184,7 @@ def _sync_subscription_ingest(
                         duration_seconds,
                         description_html,
                         description_text,
+                        rss_transcript_url,
                         created_at
                     )
                     VALUES (
@@ -3177,6 +3197,7 @@ def _sync_subscription_ingest(
                         :duration_seconds,
                         :description_html,
                         :description_text,
+                        :rss_transcript_url,
                         :created_at
                     )
                     """
@@ -3191,6 +3212,7 @@ def _sync_subscription_ingest(
                     "duration_seconds": duration_seconds,
                     "description_html": description_html,
                     "description_text": description_text,
+                    "rss_transcript_url": rss_transcript_url,
                     "created_at": now,
                 },
             )
@@ -3199,6 +3221,15 @@ def _sync_subscription_ingest(
             ingested_media_ids.append(media_id)
 
         chapter_sync_rows.append((media_id, episode.get("rss_chapters")))
+        transcript_sync_rows.append(
+            {
+                "media_id": media_id,
+                "refs": rss_transcript_refs,
+                "duration_seconds": duration_seconds,
+                "episode_language": _normalize_language_tag(episode.get("language")),
+                "feed_language": _normalize_language_tag(episode.get("feed_language")),
+            }
+        )
 
     for media_id, chapter_rows in chapter_sync_rows:
         _upsert_podcast_episode_chapters(
@@ -3206,6 +3237,171 @@ def _sync_subscription_ingest(
             media_id=media_id,
             chapter_rows=chapter_rows,
             now=now,
+        )
+
+    for transcript_row in transcript_sync_rows:
+        media_id = transcript_row["media_id"]
+        refs = transcript_row["refs"]
+        if not isinstance(refs, list) or not refs:
+            continue
+
+        state_row = db.execute(
+            text(
+                """
+                SELECT transcript_state
+                FROM media_transcript_states
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": media_id},
+        ).fetchone()
+        current_transcript_state = (
+            str(state_row[0] or "not_requested") if state_row is not None else "not_requested"
+        )
+        if current_transcript_state in {"ready", "partial"}:
+            continue
+        if current_transcript_state not in {
+            "not_requested",
+            "failed_quota",
+            "failed_provider",
+            "unavailable",
+        }:
+            continue
+
+        duration_seconds = transcript_row.get("duration_seconds")
+        episode_duration_ms = (
+            int(duration_seconds) * 1000 if isinstance(duration_seconds, int) else None
+        )
+        fetch_result = fetch_rss_transcript(
+            refs,
+            episode_duration_ms=episode_duration_ms,
+            episode_language=transcript_row.get("episode_language"),
+            feed_language=transcript_row.get("feed_language"),
+        )
+        if fetch_result.get("status") != "completed":
+            continue
+
+        fetched_segments = fetch_result.get("segments")
+        if not isinstance(fetched_segments, list) or not fetched_segments:
+            continue
+        source_type = str(fetch_result.get("source_type") or "")
+
+        if source_type == "text" and episode_duration_ms is None:
+            for segment in fetched_segments:
+                if not isinstance(segment, dict):
+                    continue
+                t_start_ms = _coerce_non_negative_int(segment.get("t_start_ms"))
+                t_end_ms = _coerce_non_negative_int(segment.get("t_end_ms"))
+                if t_start_ms is None:
+                    continue
+                if t_end_ms is None or t_end_ms <= t_start_ms:
+                    segment["t_end_ms"] = t_start_ms + 1
+
+        transcript_segments = _normalize_transcript_segments(fetched_segments)
+        if not transcript_segments:
+            continue
+
+        transcript_coverage = "partial" if source_type == "text" else "full"
+        transcript_state = "partial" if transcript_coverage == "partial" else "ready"
+
+        transcript_version_id = _create_next_transcript_version(
+            db,
+            media_id=media_id,
+            created_by_user_id=viewer_id,
+            request_reason="rss_feed",
+            transcript_coverage=transcript_coverage,
+            now=now,
+        )
+        db.execute(
+            text(
+                """
+                UPDATE fragments
+                SET idx = idx + 1000000
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": media_id},
+        )
+        _insert_transcript_fragments(
+            db,
+            media_id,
+            transcript_segments,
+            now=now,
+            transcript_version_id=transcript_version_id,
+        )
+        _insert_transcript_segments_for_version(
+            db,
+            media_id=media_id,
+            transcript_version_id=transcript_version_id,
+            transcript_segments=transcript_segments,
+            now=now,
+        )
+
+        semantic_status = "ready"
+        semantic_error_code: str | None = None
+        try:
+            _insert_transcript_chunks_for_version(
+                db,
+                media_id=media_id,
+                transcript_version_id=transcript_version_id,
+                transcript_segments=transcript_segments,
+                now=now,
+            )
+        except Exception as exc:
+            semantic_status = "failed"
+            semantic_error_code = ApiErrorCode.E_INTERNAL.value
+            logger.exception(
+                "podcast_transcript_semantic_index_failed",
+                media_id=str(media_id),
+                transcript_version_id=str(transcript_version_id),
+                error=str(exc),
+            )
+            db.execute(
+                text(
+                    """
+                    DELETE FROM podcast_transcript_chunks
+                    WHERE transcript_version_id = :transcript_version_id
+                    """
+                ),
+                {"transcript_version_id": transcript_version_id},
+            )
+
+        db.execute(
+            text(
+                """
+                UPDATE media
+                SET
+                    processing_status = 'ready_for_reading',
+                    failure_stage = NULL,
+                    last_error_code = NULL,
+                    last_error_message = NULL,
+                    processing_completed_at = :now,
+                    failed_at = NULL,
+                    updated_at = :now
+                WHERE id = :media_id
+                """
+            ),
+            {"media_id": media_id, "now": now},
+        )
+        _set_media_transcript_state(
+            db,
+            media_id=media_id,
+            transcript_state=transcript_state,
+            transcript_coverage=transcript_coverage,
+            semantic_status=semantic_status,
+            active_transcript_version_id=transcript_version_id,
+            last_request_reason=None,
+            last_error_code=semantic_error_code,
+            now=now,
+        )
+        logger.info(
+            "rss_transcript_persisted",
+            media_id=str(media_id),
+            transcript_version_id=str(transcript_version_id),
+            transcript_state=transcript_state,
+            transcript_coverage=transcript_coverage,
+            source_type=source_type,
+            segment_count=len(transcript_segments),
         )
 
     playback_queue_service.append_subscription_media_if_enabled(
@@ -5127,6 +5323,7 @@ def _create_next_transcript_version(
     media_id: UUID,
     created_by_user_id: UUID | None,
     request_reason: str,
+    transcript_coverage: str = "full",
     now: datetime,
 ) -> UUID:
     # Serialize version allocation per media to avoid MAX(version_no)+1 races.
@@ -5170,7 +5367,7 @@ def _create_next_transcript_version(
             VALUES (
                 :media_id,
                 :version_no,
-                'full',
+                :transcript_coverage,
                 true,
                 :request_reason,
                 :created_by_user_id,
@@ -5183,6 +5380,7 @@ def _create_next_transcript_version(
         {
             "media_id": media_id,
             "version_no": int(next_version_no or 1),
+            "transcript_coverage": transcript_coverage,
             "request_reason": request_reason,
             "created_by_user_id": created_by_user_id,
             "created_at": now,
@@ -5649,10 +5847,19 @@ def _augment_provider_episodes_with_feed_pagination(
             if existing is not None:
                 if existing.get("rss_chapters") is None and episode.get("rss_chapters") is not None:
                     existing["rss_chapters"] = episode.get("rss_chapters")
+                if (
+                    existing.get("rss_transcript_refs") is None
+                    and episode.get("rss_transcript_refs") is not None
+                ):
+                    existing["rss_transcript_refs"] = episode.get("rss_transcript_refs")
                 if not existing.get("description_html") and episode.get("description_html"):
                     existing["description_html"] = episode.get("description_html")
                 if not existing.get("description_text") and episode.get("description_text"):
                     existing["description_text"] = episode.get("description_text")
+                if not existing.get("language") and episode.get("language"):
+                    existing["language"] = episode.get("language")
+                if not existing.get("feed_language") and episode.get("feed_language"):
+                    existing["feed_language"] = episode.get("feed_language")
             continue
         seen.add(dedupe_key)
         combined.append(episode)
@@ -5681,8 +5888,11 @@ def _hydrate_selected_episode_chapters_from_feed(
 
     for episode in selected_episodes:
         episode.setdefault("rss_chapters", None)
+        episode.setdefault("rss_transcript_refs", None)
         episode.setdefault("description_html", None)
         episode.setdefault("description_text", None)
+        episode.setdefault("language", None)
+        episode.setdefault("feed_language", None)
 
     normalized_feed_url = str(feed_url or "").strip()
     if not normalized_feed_url:
@@ -5701,6 +5911,7 @@ def _hydrate_selected_episode_chapters_from_feed(
     for episode in selected_episodes:
         if (
             episode.get("rss_chapters") is not None
+            and episode.get("rss_transcript_refs") is not None
             and episode.get("description_html")
             and episode.get("description_text")
         ):
@@ -5711,10 +5922,16 @@ def _hydrate_selected_episode_chapters_from_feed(
                 continue
             if episode.get("rss_chapters") is None:
                 episode["rss_chapters"] = feed_episode.get("rss_chapters")
+            if episode.get("rss_transcript_refs") is None:
+                episode["rss_transcript_refs"] = feed_episode.get("rss_transcript_refs")
             if not episode.get("description_html"):
                 episode["description_html"] = feed_episode.get("description_html")
             if not episode.get("description_text"):
                 episode["description_text"] = feed_episode.get("description_text")
+            if not episode.get("language"):
+                episode["language"] = feed_episode.get("language")
+            if not episode.get("feed_language"):
+                episode["feed_language"] = feed_episode.get("feed_language")
             break
 
     return selected_episodes
@@ -5839,9 +6056,15 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
     if not item_nodes:
         item_nodes = root.xpath(".//atom:entry", namespaces=_ATOM_NAMESPACE)
 
+    feed_language = _normalize_language_tag(root.xpath("string(./channel/language)"))
+
     episodes: list[dict[str, Any]] = []
     for item in item_nodes:
-        episode = _episode_from_feed_item(item, base_url=str(response.url))
+        episode = _episode_from_feed_item(
+            item,
+            base_url=str(response.url),
+            feed_language=feed_language,
+        )
         if episode is not None:
             episodes.append(episode)
 
@@ -5849,7 +6072,12 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
     return episodes, next_page_url
 
 
-def _episode_from_feed_item(item: Any, *, base_url: str | None = None) -> dict[str, Any] | None:
+def _episode_from_feed_item(
+    item: Any,
+    *,
+    base_url: str | None = None,
+    feed_language: str | None = None,
+) -> dict[str, Any] | None:
     title = str(item.xpath("string(./title)")).strip() or "Untitled Episode"
     guid = _normalize_guid(item.xpath("string(./guid)") or item.xpath("string(./id)"))
 
@@ -5883,6 +6111,8 @@ def _episode_from_feed_item(item: Any, *, base_url: str | None = None) -> dict[s
         provider_episode_id = f"feed-{hashlib.sha1(seed.encode()).hexdigest()}"
 
     chapter_rows = _extract_rss_chapters_from_feed_item(item, base_url=base_url)
+    transcript_refs = _extract_rss_transcript_refs_from_feed_item(item, base_url=base_url)
+    episode_language = _normalize_language_tag(item.xpath("string(./language)")) or feed_language
 
     return {
         "provider_episode_id": provider_episode_id,
@@ -5895,6 +6125,9 @@ def _episode_from_feed_item(item: Any, *, base_url: str | None = None) -> dict[s
         "description_text": description_text,
         "transcript_segments": None,
         "rss_chapters": chapter_rows,
+        "rss_transcript_refs": transcript_refs,
+        "language": episode_language,
+        "feed_language": feed_language,
     }
 
 
@@ -5968,6 +6201,46 @@ def _extract_rss_chapters_from_feed_item(
     if podcasting20_url is not None:
         return _fetch_podcasting20_chapters(podcasting20_url)
     return _parse_podlove_chapters(item, base_url=base_url)
+
+
+def _extract_rss_transcript_refs_from_feed_item(
+    item: Any,
+    *,
+    base_url: str | None,
+) -> list[dict[str, Any]] | None:
+    transcript_nodes = item.xpath("./*[local-name()='transcript' and @url]")
+    if not transcript_nodes:
+        return None
+
+    refs: list[dict[str, Any]] = []
+    for transcript_node in transcript_nodes:
+        resolved_url = _normalize_podcast_chapter_link(
+            transcript_node.attrib.get("url"),
+            base_url=base_url,
+        )
+        if resolved_url is None:
+            continue
+        if not _is_safe_feed_page_url(resolved_url):
+            continue
+        transcript_type = str(transcript_node.attrib.get("type") or "").strip().lower() or None
+        transcript_language = _normalize_language_tag(transcript_node.attrib.get("language"))
+        refs.append(
+            {
+                "url": resolved_url,
+                "type": transcript_type,
+                "language": transcript_language,
+            }
+        )
+
+    if not refs:
+        return None
+
+    logger.info(
+        "rss_transcript_extracted",
+        transcript_ref_count=len(refs),
+        base_url=base_url,
+    )
+    return refs
 
 
 def _extract_podcasting20_chapter_url(item: Any, *, base_url: str | None) -> str | None:
@@ -6252,6 +6525,13 @@ def _normalize_optional_text(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _normalize_language_tag(value: Any) -> str | None:
+    normalized = _normalize_optional_text(value)
+    if normalized is None:
+        return None
+    return normalized.lower().replace("_", "-")
 
 
 def _normalize_provider_published_at(raw_value: Any) -> str | None:

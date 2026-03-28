@@ -1,0 +1,14 @@
+{
+  "segments": [
+    {
+      "text": "json one",
+      "startTime": 0.5,
+      "endTime": 1.5
+    },
+    {
+      "text": "json two",
+      "startTime": "00:00:02.000",
+      "endTime": "00:00:03.250"
+    }
+  ]
+}

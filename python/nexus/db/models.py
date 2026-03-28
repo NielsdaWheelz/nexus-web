@@ -851,6 +851,7 @@ class PodcastEpisode(Base):
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     description_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rss_transcript_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1084,7 +1085,7 @@ class PodcastTranscriptionJob(Base):
         ),
         CheckConstraint(
             "request_reason IN ("
-            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue'"
+            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue', 'rss_feed'"
             ")",
             name="ck_podcast_transcription_jobs_request_reason",
         ),
@@ -1206,7 +1207,7 @@ class PodcastTranscriptVersion(Base):
         ),
         CheckConstraint(
             "request_reason IN ("
-            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue'"
+            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue', 'rss_feed'"
             ")",
             name="ck_podcast_transcript_versions_request_reason",
         ),
