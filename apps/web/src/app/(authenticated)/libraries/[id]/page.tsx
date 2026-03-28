@@ -6,6 +6,7 @@ import Pane from "@/components/Pane";
 import PaneContainer from "@/components/PaneContainer";
 import MediaKindIcon from "@/components/MediaKindIcon";
 import StateMessage from "@/components/ui/StateMessage";
+import ActionMenu from "@/components/ui/ActionMenu";
 import SortableList from "@/components/sortable/SortableList";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import type {
@@ -373,15 +374,19 @@ export default function LibraryDetailPage() {
                       </a>
                     </div>
                     {library.role === "admin" && (
-                      <button
-                        type="button"
-                        className={styles.removeButton}
-                        onClick={() => {
-                          void handleRemoveMedia(item.id);
-                        }}
-                      >
-                        Remove
-                      </button>
+                      <ActionMenu
+                        options={[
+                          {
+                            id: "remove-from-library",
+                            label: "Remove from library",
+                            tone: "danger",
+                            onSelect: () => {
+                              void handleRemoveMedia(item.id);
+                            },
+                          },
+                        ]}
+                        className={styles.rowActionMenu}
+                      />
                     )}
                   </div>
                 );

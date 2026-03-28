@@ -102,6 +102,7 @@ import {
   useIntervalPoll,
 } from "./transcriptPolling";
 import ResponsiveToolbar, { type ToolbarItem } from "@/components/ui/ResponsiveToolbar";
+import { buildMediaHeaderOptions } from "./mediaActionMenuOptions";
 import styles from "./page.module.css";
 import paneStyles from "@/components/Pane.module.css";
 
@@ -169,6 +170,15 @@ interface TranscriptRequestForecast {
   fitsBudget: boolean;
 }
 
+interface MeResponse {
+  user_id: string;
+  default_library_id: string | null;
+}
+
+interface LibraryMediaSummary {
+  id: string;
+}
+
 
 interface SelectionState {
   range: Range;
@@ -225,6 +235,7 @@ function getPaneScrollContainer(
 const TEXT_ANCHOR_TOP_PADDING_PX = 56;
 const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
 const DOCUMENT_PROCESSING_POLL_INTERVAL_MS = 3000;
+const LIBRARY_MEDIA_PAGE_SIZE = 200;
 
 function formatResumeTime(positionMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(positionMs / 1000));
@@ -563,6 +574,9 @@ export default function MediaViewPage() {
   const [media, setMedia] = useState<Media | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [defaultLibraryId, setDefaultLibraryId] = useState<string | null>(null);
+  const [mediaInDefaultLibrary, setMediaInDefaultLibrary] = useState(false);
+  const [libraryMembershipBusy, setLibraryMembershipBusy] = useState(false);
   useSetPaneTitle(media?.title ?? "Media");
 
   // ---- Non-EPUB fragment state ----
@@ -959,6 +973,109 @@ export default function MediaViewPage() {
     fetchData();
     return () => { cancelled = true; };
   }, [id]);
+
+  useEffect(() => {
+    if (!media?.id) {
+      setDefaultLibraryId(null);
+      setMediaInDefaultLibrary(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadDefaultLibraryMembership = async () => {
+      try {
+        const meResponse = await apiFetch<{ data: MeResponse }>("/api/me");
+        if (cancelled) {
+          return;
+        }
+        const libraryId = meResponse.data.default_library_id;
+        setDefaultLibraryId(libraryId);
+        if (!libraryId) {
+          setMediaInDefaultLibrary(false);
+          return;
+        }
+
+        let offset = 0;
+        let found = false;
+        while (true) {
+          const page = await apiFetch<{ data: LibraryMediaSummary[] }>(
+            `/api/libraries/${libraryId}/media?limit=${LIBRARY_MEDIA_PAGE_SIZE}&offset=${offset}`
+          );
+          if (cancelled) {
+            return;
+          }
+          for (const item of page.data) {
+            if (item.id === media.id) {
+              found = true;
+              break;
+            }
+          }
+          if (found || page.data.length < LIBRARY_MEDIA_PAGE_SIZE) {
+            break;
+          }
+          offset += LIBRARY_MEDIA_PAGE_SIZE;
+        }
+        if (!cancelled) {
+          setMediaInDefaultLibrary(found);
+        }
+      } catch {
+        if (!cancelled) {
+          setDefaultLibraryId(null);
+          setMediaInDefaultLibrary(false);
+        }
+      }
+    };
+
+    void loadDefaultLibraryMembership();
+    return () => {
+      cancelled = true;
+    };
+  }, [media?.id]);
+
+  const handleAddToDefaultLibrary = useCallback(async () => {
+    if (!media?.id || !defaultLibraryId || libraryMembershipBusy) {
+      return;
+    }
+    setLibraryMembershipBusy(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/libraries/${defaultLibraryId}/media`, {
+        method: "POST",
+        body: JSON.stringify({ media_id: media.id }),
+      });
+      setMediaInDefaultLibrary(true);
+    } catch (err) {
+      if (isApiError(err)) {
+        setError(err.message);
+      } else {
+        setError("Failed to add media to default library");
+      }
+    } finally {
+      setLibraryMembershipBusy(false);
+    }
+  }, [defaultLibraryId, libraryMembershipBusy, media?.id]);
+
+  const handleRemoveFromDefaultLibrary = useCallback(async () => {
+    if (!media?.id || !defaultLibraryId || libraryMembershipBusy) {
+      return;
+    }
+    setLibraryMembershipBusy(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/libraries/${defaultLibraryId}/media/${media.id}`, {
+        method: "DELETE",
+      });
+      setMediaInDefaultLibrary(false);
+    } catch (err) {
+      if (isApiError(err)) {
+        setError(err.message);
+      } else {
+        setError("Failed to remove media from default library");
+      }
+    } finally {
+      setLibraryMembershipBusy(false);
+    }
+  }, [defaultLibraryId, libraryMembershipBusy, media?.id]);
 
   const refreshTranscriptProvisioningState = useCallback(async () => {
     if (!media?.id || !isTranscriptMedia) {
@@ -2588,26 +2705,22 @@ export default function MediaViewPage() {
         title={media.title}
         headerMeta={mediaHeaderMeta}
         toolbar={mediaToolbar}
-        options={[
-          ...(media.canonical_source_url
-            ? [
-                {
-                  id: "open-source",
-                  label: "Open source",
-                  href: media.canonical_source_url,
-                },
-              ]
-            : []),
-          ...(isEpub && (hasEpubToc || tocWarning)
-            ? [
-                {
-                  id: "toggle-toc",
-                  label: epubTocExpanded ? "Hide table of contents" : "Show table of contents",
-                  onSelect: () => setEpubTocExpanded((value) => !value),
-                },
-              ]
-            : []),
-        ]}
+        options={buildMediaHeaderOptions({
+          canonicalSourceUrl: media.canonical_source_url,
+          defaultLibraryId,
+          inDefaultLibrary: mediaInDefaultLibrary,
+          libraryBusy: libraryMembershipBusy,
+          isEpub,
+          hasEpubToc: hasEpubToc || tocWarning,
+          epubTocExpanded,
+          onAddToLibrary: () => {
+            void handleAddToDefaultLibrary();
+          },
+          onRemoveFromLibrary: () => {
+            void handleRemoveFromDefaultLibrary();
+          },
+          onToggleEpubToc: () => setEpubTocExpanded((value) => !value),
+        })}
       >
         <div className={styles.content}>
           {!isPdf && isMismatchDisabled && (

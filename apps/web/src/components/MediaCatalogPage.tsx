@@ -22,8 +22,6 @@ interface MediaCatalogPageProps {
   allowedKinds: MediaKind[];
   emptyMessage: string;
   headerSlot?: React.ReactNode;
-  /** Called when user requests deletion of a media item. */
-  onDeleteItem?: (itemId: string) => void;
 }
 
 interface MediaItemResponse {
@@ -43,6 +41,15 @@ interface MediaListResponse {
   };
 }
 
+interface MeResponse {
+  user_id: string;
+  default_library_id: string | null;
+}
+
+interface LibraryMediaSummary {
+  id: string;
+}
+
 interface CatalogItem {
   id: string;
   kind: MediaKind;
@@ -60,6 +67,8 @@ const KIND_LABEL: Record<MediaKind, string> = {
   podcast_episode: "Podcast Episode",
   video: "Video",
 };
+
+const LIBRARY_MEDIA_PAGE_SIZE = 200;
 
 function isMediaKind(kind: string): kind is MediaKind {
   return (
@@ -109,7 +118,6 @@ export default function MediaCatalogPage({
   allowedKinds,
   emptyMessage,
   headerSlot,
-  onDeleteItem,
 }: MediaCatalogPageProps) {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -117,6 +125,9 @@ export default function MediaCatalogPage({
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [defaultLibraryId, setDefaultLibraryId] = useState<string | null>(null);
+  const [libraryMediaIds, setLibraryMediaIds] = useState<Set<string>>(new Set());
+  const [busyMediaIds, setBusyMediaIds] = useState<Set<string>>(new Set());
   const allowedKindsKey = useMemo(
     () => [...allowedKinds].sort().join(","),
     [allowedKinds]
@@ -135,6 +146,33 @@ export default function MediaCatalogPage({
           kind: allowedKindsKey,
         });
         const response = await apiFetch<MediaListResponse>(`/api/media?${params.toString()}`);
+        let nextDefaultLibraryId: string | null = null;
+        let nextLibraryMediaIds = new Set<string>();
+
+        try {
+          const meResponse = await apiFetch<{ data: MeResponse }>("/api/me");
+          nextDefaultLibraryId = meResponse.data.default_library_id;
+
+          if (nextDefaultLibraryId) {
+            let offset = 0;
+            while (true) {
+              const page = await apiFetch<{ data: LibraryMediaSummary[] }>(
+                `/api/libraries/${nextDefaultLibraryId}/media?limit=${LIBRARY_MEDIA_PAGE_SIZE}&offset=${offset}`
+              );
+              for (const media of page.data) {
+                nextLibraryMediaIds.add(media.id);
+              }
+              if (page.data.length < LIBRARY_MEDIA_PAGE_SIZE) {
+                break;
+              }
+              offset += LIBRARY_MEDIA_PAGE_SIZE;
+            }
+          }
+        } catch {
+          nextDefaultLibraryId = null;
+          nextLibraryMediaIds = new Set<string>();
+        }
+
         const nextItems = response.data
           .filter((item) => isMediaKind(item.kind))
           .map((item) => ({
@@ -150,6 +188,9 @@ export default function MediaCatalogPage({
         if (!cancelled) {
           setItems(nextItems);
           setNextCursor(response.page.next_cursor);
+          setDefaultLibraryId(nextDefaultLibraryId);
+          setLibraryMediaIds(nextLibraryMediaIds);
+          setBusyMediaIds(new Set());
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -224,6 +265,69 @@ export default function MediaCatalogPage({
     });
   }, [items, query]);
 
+  const handleAddToLibrary = useCallback(
+    async (mediaId: string) => {
+      if (!defaultLibraryId) {
+        return;
+      }
+      setBusyMediaIds((prev) => new Set(prev).add(mediaId));
+      setError(null);
+      try {
+        await apiFetch(`/api/libraries/${defaultLibraryId}/media`, {
+          method: "POST",
+          body: JSON.stringify({ media_id: mediaId }),
+        });
+        setLibraryMediaIds((prev) => new Set(prev).add(mediaId));
+      } catch (mutationError) {
+        if (isApiError(mutationError)) {
+          setError(mutationError.message);
+        } else {
+          setError(`Failed to add item to ${title.toLowerCase()} library`);
+        }
+      } finally {
+        setBusyMediaIds((prev) => {
+          const next = new Set(prev);
+          next.delete(mediaId);
+          return next;
+        });
+      }
+    },
+    [defaultLibraryId, title]
+  );
+
+  const handleRemoveFromLibrary = useCallback(
+    async (mediaId: string) => {
+      if (!defaultLibraryId) {
+        return;
+      }
+      setBusyMediaIds((prev) => new Set(prev).add(mediaId));
+      setError(null);
+      try {
+        await apiFetch(`/api/libraries/${defaultLibraryId}/media/${mediaId}`, {
+          method: "DELETE",
+        });
+        setLibraryMediaIds((prev) => {
+          const next = new Set(prev);
+          next.delete(mediaId);
+          return next;
+        });
+      } catch (mutationError) {
+        if (isApiError(mutationError)) {
+          setError(mutationError.message);
+        } else {
+          setError(`Failed to remove item from ${title.toLowerCase()} library`);
+        }
+      } finally {
+        setBusyMediaIds((prev) => {
+          const next = new Set(prev);
+          next.delete(mediaId);
+          return next;
+        });
+      }
+    },
+    [defaultLibraryId, title]
+  );
+
   return (
     <PageLayout title={title} description={description}>
       {headerSlot}
@@ -257,28 +361,47 @@ export default function MediaCatalogPage({
           </StateMessage>
         ) : (
           <AppList>
-            {filteredItems.map((item) => (
-              <AppListItem
-                key={item.id}
-                href={`/media/${item.id}`}
-                icon={<MediaKindIcon kind={item.kind} />}
-                title={item.title}
-                status={statusVariant(item.processing_status)}
-                meta={[KIND_LABEL[item.kind], `Updated ${formatDate(item.updated_at)}`].join(" · ")}
-                options={
-                  onDeleteItem
-                    ? [
-                        {
-                          id: "delete",
-                          label: "Delete",
-                          tone: "danger",
-                          onSelect: () => onDeleteItem(item.id),
+            {filteredItems.map((item) => {
+              const inDefaultLibrary = libraryMediaIds.has(item.id);
+              const isMutating = busyMediaIds.has(item.id);
+              const options = [
+                ...(defaultLibraryId
+                  ? [
+                      {
+                        id: inDefaultLibrary ? "remove-from-library" : "add-to-library",
+                        label: inDefaultLibrary ? "Remove from library" : "Add to library",
+                        disabled: isMutating,
+                        onSelect: () => {
+                          void (inDefaultLibrary
+                            ? handleRemoveFromLibrary(item.id)
+                            : handleAddToLibrary(item.id));
                         },
-                      ]
-                    : undefined
-                }
-              />
-            ))}
+                      },
+                    ]
+                  : []),
+                ...(item.canonical_source_url
+                  ? [
+                      {
+                        id: "open-source",
+                        label: "Open source",
+                        href: item.canonical_source_url,
+                      },
+                    ]
+                  : []),
+              ];
+
+              return (
+                <AppListItem
+                  key={item.id}
+                  href={`/media/${item.id}`}
+                  icon={<MediaKindIcon kind={item.kind} />}
+                  title={item.title}
+                  status={statusVariant(item.processing_status)}
+                  meta={[KIND_LABEL[item.kind], `Updated ${formatDate(item.updated_at)}`].join(" · ")}
+                  options={options.length > 0 ? options : undefined}
+                />
+              );
+            })}
           </AppList>
         )}
 

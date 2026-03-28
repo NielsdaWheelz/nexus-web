@@ -220,9 +220,7 @@ export default function PodcastsPage() {
                     trailing={
                       subscription ? (
                         <span className={styles.subscriptionState}>{subscription.sync_status}</span>
-                      ) : (
-                        <span className={styles.externalLink}>Open source</span>
-                      )
+                      ) : undefined
                     }
                     actions={
                       subscription ? (
@@ -240,6 +238,26 @@ export default function PodcastsPage() {
                         </button>
                       )
                     }
+                    options={[
+                      ...(result.website_url
+                        ? [
+                            {
+                              id: "open-website",
+                              label: "Open website",
+                              href: result.website_url,
+                            },
+                          ]
+                        : []),
+                      ...(result.feed_url
+                        ? [
+                            {
+                              id: "open-feed",
+                              label: "Open feed",
+                              href: result.feed_url,
+                            },
+                          ]
+                        : []),
+                    ]}
                   />
                 );
               })}

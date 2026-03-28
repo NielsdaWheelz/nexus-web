@@ -1274,6 +1274,38 @@ export default function PodcastDetailPage() {
     <PageLayout
       title={detail?.podcast.title ?? "Podcast"}
       description={detail?.podcast.author || detail?.podcast.description || "Podcast detail"}
+      options={
+        detail
+          ? [
+              {
+                id: "refresh-sync",
+                label: refreshSyncBusy ? "Refreshing..." : "Refresh sync",
+                disabled: refreshSyncBusy,
+                onSelect: () => {
+                  void handleRefreshSync();
+                },
+              },
+              {
+                id: "settings",
+                label: "Settings",
+                onSelect: openSettingsModal,
+              },
+              ...(detail.subscription.status === "active"
+                ? [
+                    {
+                      id: "unsubscribe",
+                      label: unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe",
+                      tone: "danger" as const,
+                      disabled: unsubscribeBusy,
+                      onSelect: () => {
+                        void handleUnsubscribe();
+                      },
+                    },
+                  ]
+                : []),
+            ]
+          : []
+      }
       actions={
         <Link href="/podcasts/subscriptions" className={styles.navLink}>
           My podcasts
@@ -1283,64 +1315,28 @@ export default function PodcastDetailPage() {
       <SectionCard
         title="Subscription"
         description={detail?.podcast.feed_url || "Podcast subscription state"}
-        actions={
-          detail ? (
-            <div className={styles.subscriptionActions}>
-              <button
-                type="button"
-                className={styles.syncButton}
-                onClick={() => void handleRefreshSync()}
-                disabled={refreshSyncBusy}
-                aria-label={`Refresh sync for ${detail.podcast.title}`}
-              >
-                {refreshSyncBusy ? "Refreshing..." : "Refresh sync"}
-              </button>
-              <button
-                type="button"
-                className={styles.settingsButton}
-                onClick={openSettingsModal}
-                aria-label="Open subscription settings"
-              >
-                Settings
-              </button>
-              {detail.subscription.status === "active" ? (
-                <>
-                  <label className={styles.unsubscribeModeLabel}>
-                    Unsubscribe behavior
-                    <select
-                      value={String(unsubscribeMode)}
-                      onChange={(event) =>
-                        setUnsubscribeMode(Number(event.target.value) as 1 | 2 | 3)
-                      }
-                      className={styles.unsubscribeModeSelect}
-                      aria-label="Unsubscribe behavior"
-                    >
-                      <option value="1">Keep episodes in libraries</option>
-                      <option value="2">Remove from default library</option>
-                      <option value="3">Remove from default and single-member libraries</option>
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className={styles.unsubscribeButton}
-                    onClick={() => void handleUnsubscribe()}
-                    disabled={unsubscribeBusy}
-                    aria-label={`Unsubscribe from ${detail.podcast.title}`}
-                  >
-                    {unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe"}
-                  </button>
-                </>
-              ) : (
-                <span className={styles.unsubscribedLabel}>Unsubscribed</span>
-              )}
-            </div>
-          ) : null
-        }
       >
         {loading && <StateMessage variant="loading">Loading podcast detail...</StateMessage>}
         {error && <StateMessage variant="error">{error}</StateMessage>}
         {!loading && detail && (
           <>
+            {detail.subscription.status === "active" ? (
+              <label className={styles.unsubscribeModeLabel}>
+                Unsubscribe behavior
+                <select
+                  value={String(unsubscribeMode)}
+                  onChange={(event) => setUnsubscribeMode(Number(event.target.value) as 1 | 2 | 3)}
+                  className={styles.unsubscribeModeSelect}
+                  aria-label="Unsubscribe behavior"
+                >
+                  <option value="1">Keep episodes in libraries</option>
+                  <option value="2">Remove from default library</option>
+                  <option value="3">Remove from default and single-member libraries</option>
+                </select>
+              </label>
+            ) : (
+              <span className={styles.unsubscribedLabel}>Unsubscribed</span>
+            )}
             <p className={styles.syncState}>
               sync status: <strong>{detail.subscription.sync_status}</strong>
             </p>
@@ -1547,13 +1543,34 @@ export default function PodcastDetailPage() {
               const transcriptRequestDisabled =
                 requestingTranscriptMediaIds.has(episode.id) ||
                 (forecastForSelectedReason ? !forecastForSelectedReason.fits_budget : false);
-              const actionLabel = inLibrary
-                ? `Remove ${episode.title} from library`
-                : `Add ${episode.title} to library`;
               const inQueue = queueMediaIds.has(episode.id);
               const showNotesText = episode.description_text?.trim() ?? "";
               const showNotesExpanded = expandedShowNotesMediaIds.has(episode.id);
               const canToggleShowNotes = showNotesText.length > SHOW_NOTES_PREVIEW_MAX_CHARS;
+              const rowOptions = [
+                {
+                  id: "toggle-played",
+                  label: episodeState === "played" ? "Mark as unplayed" : "Mark as played",
+                  disabled: markingEpisodeIds.has(episode.id),
+                  onSelect: () => {
+                    void handleMarkEpisodeCompletion(episode, episodeState !== "played");
+                  },
+                },
+                ...(defaultLibraryId
+                  ? [
+                      {
+                        id: inLibrary ? "remove-from-library" : "add-to-library",
+                        label: inLibrary ? "Remove from library" : "Add to library",
+                        disabled: busy,
+                        onSelect: () => {
+                          void (inLibrary
+                            ? handleRemoveFromLibrary(episode.id)
+                            : handleAddToLibrary(episode.id));
+                        },
+                      },
+                    ]
+                  : []),
+              ];
               return (
                 <AppListItem
                   key={episode.id}
@@ -1640,25 +1657,6 @@ export default function PodcastDetailPage() {
                       >
                         Add to queue
                       </button>
-                      <button
-                        type="button"
-                        className={styles.markStateButton}
-                        aria-label={
-                          episodeState === "played"
-                            ? `Mark as unplayed for ${episode.title}`
-                            : `Mark as played for ${episode.title}`
-                        }
-                        disabled={markingEpisodeIds.has(episode.id)}
-                        onClick={() =>
-                          void handleMarkEpisodeCompletion(episode, episodeState !== "played")
-                        }
-                      >
-                        {markingEpisodeIds.has(episode.id)
-                          ? "Saving..."
-                          : episodeState === "played"
-                            ? "Mark as unplayed"
-                            : "Mark as played"}
-                      </button>
                       {inQueue && <span className={styles.queueBadge}>In Queue</span>}
                       {canRequestTranscript ? (
                         <>
@@ -1705,19 +1703,6 @@ export default function PodcastDetailPage() {
                                   : "Transcript state unavailable"}
                         </span>
                       )}
-                      <button
-                        type="button"
-                        className={styles.libraryButton}
-                        aria-label={actionLabel}
-                        disabled={busy || !defaultLibraryId}
-                        onClick={() =>
-                          void (inLibrary
-                            ? handleRemoveFromLibrary(episode.id)
-                            : handleAddToLibrary(episode.id))
-                        }
-                      >
-                        {busy ? "Saving..." : inLibrary ? "Remove from library" : "Add to library"}
-                      </button>
                       {canRequestTranscript && forecastForSelectedReason && (
                         <span className={styles.transcriptRequestHint}>
                           {forecastForSelectedReason.source === "request"
@@ -1740,6 +1725,7 @@ export default function PodcastDetailPage() {
                         )}
                     </div>
                   }
+                  options={rowOptions}
                 />
               );
             })}

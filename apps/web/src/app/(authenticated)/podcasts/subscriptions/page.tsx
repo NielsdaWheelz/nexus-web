@@ -878,30 +878,32 @@ export default function PodcastSubscriptionsPage() {
 
         {rows.length > 0 && (
           <AppList>
-            {rows.map((row) => (
-              <AppListItem
-                key={row.podcast_id}
-                href={`/podcasts/${row.podcast_id}`}
-                title={row.podcast.title}
-                description={row.podcast.author || "Unknown author"}
-                meta={
-                  row.sync_error_code
-                    ? `${row.sync_status} sync - ${row.sync_error_code}: ${row.sync_error_message || "unknown error"}`
-                    : `${row.sync_status} sync`
-                }
-                trailing={
-                  <span className={styles.trailing}>
-                    {row.unplayed_count > 0 && (
-                      <span className={styles.unplayedBadge}>{row.unplayed_count} new</span>
-                    )}
-                    <span className={styles.categoryBadge}>
-                      {row.category ? row.category.name : "Uncategorized"}
+            {rows.map((row) => {
+              const rowBusy = busyPodcastIds.has(row.podcast_id);
+              const rowRefreshing = refreshingPodcastIds.has(row.podcast_id);
+              return (
+                <AppListItem
+                  key={row.podcast_id}
+                  href={`/podcasts/${row.podcast_id}`}
+                  title={row.podcast.title}
+                  description={row.podcast.author || "Unknown author"}
+                  meta={
+                    row.sync_error_code
+                      ? `${row.sync_status} sync - ${row.sync_error_code}: ${row.sync_error_message || "unknown error"}`
+                      : `${row.sync_status} sync`
+                  }
+                  trailing={
+                    <span className={styles.trailing}>
+                      {row.unplayed_count > 0 && (
+                        <span className={styles.unplayedBadge}>{row.unplayed_count} new</span>
+                      )}
+                      <span className={styles.categoryBadge}>
+                        {row.category ? row.category.name : "Uncategorized"}
+                      </span>
+                      <span className={styles.status}>{row.sync_status}</span>
                     </span>
-                    <span className={styles.status}>{row.sync_status}</span>
-                  </span>
-                }
-                actions={
-                  <>
+                  }
+                  actions={
                     <label className={styles.categorySelectLabel}>
                       Category
                       <select
@@ -911,7 +913,7 @@ export default function PodcastSubscriptionsPage() {
                         onChange={(event) =>
                           void handleAssignCategory(row.podcast_id, event.target.value)
                         }
-                        disabled={busyPodcastIds.has(row.podcast_id) || categoryMutationBusy}
+                        disabled={rowBusy || categoryMutationBusy}
                       >
                         <option value="">Uncategorized</option>
                         {categories.map((category) => (
@@ -921,37 +923,35 @@ export default function PodcastSubscriptionsPage() {
                         ))}
                       </select>
                     </label>
-                    <button
-                      type="button"
-                      className={styles.settingsButton}
-                      aria-label={`Open settings for ${row.podcast.title}`}
-                      onClick={() => openSettingsModal(row)}
-                      disabled={busyPodcastIds.has(row.podcast_id)}
-                    >
-                      Settings
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.syncButton}
-                      disabled={refreshingPodcastIds.has(row.podcast_id)}
-                      aria-label={`Refresh sync for ${row.podcast.title}`}
-                      onClick={() => void handleRefreshSync(row.podcast_id)}
-                    >
-                      {refreshingPodcastIds.has(row.podcast_id) ? "Refreshing..." : "Refresh sync"}
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.unsubscribeButton}
-                      disabled={busyPodcastIds.has(row.podcast_id)}
-                      aria-label={`Unsubscribe from ${row.podcast.title}`}
-                      onClick={() => void handleUnsubscribe(row.podcast_id)}
-                    >
-                      {busyPodcastIds.has(row.podcast_id) ? "Unsubscribing..." : "Unsubscribe"}
-                    </button>
-                  </>
-                }
-              />
-            ))}
+                  }
+                  options={[
+                    {
+                      id: "settings",
+                      label: "Settings",
+                      disabled: rowBusy,
+                      onSelect: () => openSettingsModal(row),
+                    },
+                    {
+                      id: "refresh-sync",
+                      label: rowRefreshing ? "Refreshing..." : "Refresh sync",
+                      disabled: rowRefreshing,
+                      onSelect: () => {
+                        void handleRefreshSync(row.podcast_id);
+                      },
+                    },
+                    {
+                      id: "unsubscribe",
+                      label: rowBusy ? "Unsubscribing..." : "Unsubscribe",
+                      tone: "danger",
+                      disabled: rowBusy,
+                      onSelect: () => {
+                        void handleUnsubscribe(row.podcast_id);
+                      },
+                    },
+                  ]}
+                />
+              );
+            })}
           </AppList>
         )}
 

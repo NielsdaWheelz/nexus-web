@@ -86,12 +86,6 @@
   color: var(--color-text-muted);
 }
 
-.removeButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
+.rowActionMenu {
+  flex-shrink: 0;
 }
