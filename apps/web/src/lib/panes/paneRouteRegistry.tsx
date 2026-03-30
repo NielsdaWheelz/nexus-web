@@ -1,7 +1,6 @@
 "use client";
 
 import type { ReactNode } from "react";
-import LibrariesPage from "@/app/(authenticated)/libraries/page";
 import LibraryDetailPage from "@/app/(authenticated)/libraries/[id]/page";
 import MediaViewPage from "@/app/(authenticated)/media/[id]/page";
 import ConversationPage from "@/app/(authenticated)/conversations/[id]/page";
@@ -11,6 +10,7 @@ import PodcastsPage from "@/app/(authenticated)/podcasts/page";
 import PodcastSubscriptionsPage from "@/app/(authenticated)/podcasts/subscriptions/page";
 import PodcastDetailPage from "@/app/(authenticated)/podcasts/[podcastId]/page";
 import VideosPage from "@/app/(authenticated)/videos/page";
+import LibrariesPaneBody from "@/components/panes/routes/LibrariesPaneBody";
 import ConversationsPaneBody from "@/components/panes/routes/ConversationsPaneBody";
 import DiscoverPaneBody from "@/components/panes/routes/DiscoverPaneBody";
 import SearchPaneBody from "@/components/panes/routes/SearchPaneBody";
@@ -82,14 +82,23 @@ export interface ResolvedPaneRoute {
 const MIN_STANDARD_PANE_WIDTH_PX = 320;
 const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 const DEFAULT_STANDARD_PANE_WIDTH_PX = 480;
-const DEFAULT_CHAT_LIST_PANE_WIDTH_PX = 560;
+const DEFAULT_DENSE_LIST_PANE_WIDTH_PX = 560;
 
 const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
   {
     id: "libraries",
     pattern: ["libraries"],
     staticTitle: "Libraries",
-    render: () => <LibrariesPage />,
+    render: () => <LibrariesPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Libraries",
+      subtitle: "Create, open, and manage your libraries.",
+    }),
+    renderBody: () => <LibrariesPaneBody />,
   },
   {
     id: "library",
@@ -117,7 +126,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     staticTitle: "Chats",
     render: () => <ConversationsPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_CHAT_LIST_PANE_WIDTH_PX,
+    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({

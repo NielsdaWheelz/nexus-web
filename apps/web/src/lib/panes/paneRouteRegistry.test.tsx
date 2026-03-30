@@ -46,6 +46,7 @@ describe("pane route registry", () => {
   });
 
   it("resolves expanded authenticated static routes", () => {
+    expect(resolvePaneRoute("/libraries").id).toBe("libraries");
     expect(resolvePaneRoute("/discover").id).toBe("discover");
     expect(resolvePaneRoute("/documents").id).toBe("documents");
     expect(resolvePaneRoute("/podcasts").id).toBe("podcasts");

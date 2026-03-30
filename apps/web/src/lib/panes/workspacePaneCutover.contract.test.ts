@@ -13,6 +13,7 @@ const SETTINGS_HREFS = [
 const SEARCH_HREFS = ["/search"] as const;
 const DISCOVER_HREFS = ["/discover"] as const;
 const CONVERSATIONS_HREFS = ["/conversations"] as const;
+const LIBRARIES_HREFS = ["/libraries"] as const;
 
 const SETTINGS_ROUTE_FILES = [
   "src/app/(authenticated)/settings/page.tsx",
@@ -24,6 +25,7 @@ const SETTINGS_ROUTE_FILES = [
 const SEARCH_ROUTE_FILES = ["src/app/(authenticated)/search/page.tsx"] as const;
 const DISCOVER_ROUTE_FILES = ["src/app/(authenticated)/discover/page.tsx"] as const;
 const CONVERSATIONS_ROUTE_FILES = ["src/app/(authenticated)/conversations/page.tsx"] as const;
+const LIBRARIES_ROUTE_FILES = ["src/app/(authenticated)/libraries/page.tsx"] as const;
 
 function resolveFromWebRoot(relativePath: string): string {
   return path.resolve(process.cwd(), relativePath);
@@ -165,5 +167,44 @@ describe("workspace pane cutover contract (conversations slice)", () => {
   it("routes /conversations through the shared route pane workspace host", () => {
     const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
     expect(layoutSource.includes('pathname === "/conversations"')).toBe(true);
+  });
+});
+
+describe("workspace pane cutover contract (libraries slice)", () => {
+  it("declares /libraries with pane metadata for chrome/body/width ownership", () => {
+    for (const href of LIBRARIES_HREFS) {
+      const route = resolvePaneRoute(href);
+      expect(route.id).toBe("libraries");
+      expect(route.definition).toBeTruthy();
+      expect(route.definition?.bodyMode).toBe("standard");
+      expect(route.definition?.defaultWidthPx).toBe(560);
+      expect(route.definition?.minWidthPx).toBeTypeOf("number");
+      expect(route.definition?.maxWidthPx).toBeTypeOf("number");
+      expect(route.definition?.getChrome).toBeTypeOf("function");
+      expect(route.definition?.renderBody).toBeTypeOf("function");
+    }
+  });
+
+  it("keeps /libraries route entrypoint free of legacy pane wrappers", () => {
+    for (const relativeFilePath of LIBRARIES_ROUTE_FILES) {
+      const source = readFileSync(resolveFromWebRoot(relativeFilePath), "utf-8");
+      expect(source.includes("PageLayout")).toBe(false);
+      expect(source.includes('from "@/components/PaneContainer"')).toBe(false);
+      expect(source.includes('from "@/components/Pane"')).toBe(false);
+      expect(source.includes("SplitSurface")).toBe(false);
+    }
+  });
+
+  it("keeps libraries pane registry wiring off route page modules", () => {
+    const registrySource = readFileSync(
+      resolveFromWebRoot("src/lib/panes/paneRouteRegistry.tsx"),
+      "utf-8"
+    );
+    expect(registrySource.includes('"/libraries/page"')).toBe(false);
+  });
+
+  it("routes /libraries through the shared route pane workspace host", () => {
+    const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
+    expect(layoutSource.includes('pathname === "/libraries"')).toBe(true);
   });
 });

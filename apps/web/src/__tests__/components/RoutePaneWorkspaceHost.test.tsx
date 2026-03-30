@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import RoutePaneWorkspaceHost from "@/components/workspace/RoutePaneWorkspaceHost";
 
 const mockPathname = vi.hoisted(() => ({ value: "/settings" }));
@@ -216,5 +216,49 @@ describe("RoutePaneWorkspaceHost", () => {
     const paneStripWidth = screen.getByTestId("pane-strip").getBoundingClientRect().width;
     expect(Math.abs(paneWrapWidth - paneStripWidth)).toBeLessThanOrEqual(0.5);
     expect(screen.getByTestId("conversations-pane-body")).toHaveStyle({ minHeight: "100%" });
+  });
+
+  it("renders libraries in pane shell with fixed chrome and scrolling body", () => {
+    mockPathname.value = "/libraries";
+
+    render(<RoutePaneWorkspaceHost />);
+
+    const chrome = screen.getByTestId("pane-shell-chrome");
+    expect(within(chrome).getByRole("heading", { name: "Libraries" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("New library name...")).toBeInTheDocument();
+
+    const body = screen.getByTestId("pane-shell-body");
+    expect(body.contains(chrome)).toBe(false);
+    expect(body).toHaveStyle({ overflowY: "auto", overflowX: "hidden" });
+  });
+
+  it("uses explicit desktop pane width for libraries", () => {
+    mockPathname.value = "/libraries";
+
+    render(<RoutePaneWorkspaceHost />);
+
+    const paneShell = screen
+      .getByTestId("pane-shell-body")
+      .closest('[data-pane-shell="true"]');
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("width: 560px"));
+    expect(paneShell).not.toHaveAttribute(
+      "style",
+      expect.stringContaining("width: 100%")
+    );
+  });
+
+  it("shows one full-width active libraries pane on mobile", () => {
+    mockPathname.value = "/libraries";
+    mockIsMobile.value = true;
+
+    render(<RoutePaneWorkspaceHost />);
+
+    expect(screen.getByPlaceholderText("New library name...")).toBeInTheDocument();
+    const paneShell = screen
+      .getByTestId("pane-shell-body")
+      .closest('[data-pane-shell="true"]');
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("width: 100%"));
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("min-width: 100%"));
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("max-width: 100%"));
   });
 });

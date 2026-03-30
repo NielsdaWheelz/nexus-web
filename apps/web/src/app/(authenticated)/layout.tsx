@@ -20,8 +20,13 @@ export default function AuthenticatedLayout() {
   const searchRouteActive = pathname === "/search";
   const discoverRouteActive = pathname === "/discover";
   const conversationsRouteActive = pathname === "/conversations";
+  const librariesRouteActive = pathname === "/libraries";
   const paneWorkspaceRouteActive =
-    settingsRouteActive || searchRouteActive || discoverRouteActive || conversationsRouteActive;
+    settingsRouteActive ||
+    searchRouteActive ||
+    discoverRouteActive ||
+    conversationsRouteActive ||
+    librariesRouteActive;
 
   return (
     <ToastProvider>
