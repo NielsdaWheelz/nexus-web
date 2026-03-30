@@ -164,4 +164,57 @@ describe("RoutePaneWorkspaceHost", () => {
     expect(paneShell).toHaveAttribute("style", expect.stringContaining("min-width: 100%"));
     expect(paneShell).toHaveAttribute("style", expect.stringContaining("max-width: 100%"));
   });
+
+  it("renders conversations in pane shell with fixed chrome and scrolling body", async () => {
+    mockPathname.value = "/conversations";
+
+    render(<RoutePaneWorkspaceHost />);
+
+    expect(screen.getByRole("heading", { name: "Chats" })).toBeInTheDocument();
+    expect(
+      screen.queryByText("This route is not available in the pane workspace yet.")
+    ).not.toBeInTheDocument();
+
+    const chrome = screen.getByTestId("pane-shell-chrome");
+    const body = screen.getByTestId("pane-shell-body");
+    expect(body.contains(chrome)).toBe(false);
+    expect(body).toHaveStyle({ overflowY: "auto", overflowX: "hidden" });
+  });
+
+  it("uses explicit desktop pane width for conversations", () => {
+    mockPathname.value = "/conversations";
+
+    render(<RoutePaneWorkspaceHost />);
+
+    const paneShell = screen
+      .getByTestId("pane-shell-body")
+      .closest('[data-pane-shell="true"]');
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("width: 560px"));
+    expect(paneShell).not.toHaveAttribute(
+      "style",
+      expect.stringContaining("width: 100%")
+    );
+  });
+
+  it("shows one full-width active conversations pane on mobile", () => {
+    mockPathname.value = "/conversations";
+    mockIsMobile.value = true;
+
+    render(<RoutePaneWorkspaceHost />);
+
+    const paneShell = screen
+      .getByTestId("pane-shell-body")
+      .closest('[data-pane-shell="true"]');
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("width: 100%"));
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("min-width: 100%"));
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("max-width: 100%"));
+    const paneWrap = paneShell?.parentElement as HTMLElement | null;
+    expect(paneWrap).toBeTruthy();
+    const paneShellWidth = paneShell?.getBoundingClientRect().width ?? 0;
+    const paneWrapWidth = paneWrap?.getBoundingClientRect().width ?? 0;
+    expect(paneShellWidth).toBeLessThanOrEqual(paneWrapWidth + 0.5);
+    const paneStripWidth = screen.getByTestId("pane-strip").getBoundingClientRect().width;
+    expect(Math.abs(paneWrapWidth - paneStripWidth)).toBeLessThanOrEqual(0.5);
+    expect(screen.getByTestId("conversations-pane-body")).toHaveStyle({ minHeight: "100%" });
+  });
 });

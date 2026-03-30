@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import LibrariesPage from "@/app/(authenticated)/libraries/page";
 import LibraryDetailPage from "@/app/(authenticated)/libraries/[id]/page";
 import MediaViewPage from "@/app/(authenticated)/media/[id]/page";
-import ConversationsPage from "@/app/(authenticated)/conversations/page";
 import ConversationPage from "@/app/(authenticated)/conversations/[id]/page";
 import NewConversationPage from "@/app/(authenticated)/conversations/new/page";
 import DocumentsPage from "@/app/(authenticated)/documents/page";
@@ -12,6 +11,7 @@ import PodcastsPage from "@/app/(authenticated)/podcasts/page";
 import PodcastSubscriptionsPage from "@/app/(authenticated)/podcasts/subscriptions/page";
 import PodcastDetailPage from "@/app/(authenticated)/podcasts/[podcastId]/page";
 import VideosPage from "@/app/(authenticated)/videos/page";
+import ConversationsPaneBody from "@/components/panes/routes/ConversationsPaneBody";
 import DiscoverPaneBody from "@/components/panes/routes/DiscoverPaneBody";
 import SearchPaneBody from "@/components/panes/routes/SearchPaneBody";
 import SettingsPaneBody from "@/components/panes/routes/SettingsPaneBody";
@@ -82,6 +82,7 @@ export interface ResolvedPaneRoute {
 const MIN_STANDARD_PANE_WIDTH_PX = 320;
 const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 const DEFAULT_STANDARD_PANE_WIDTH_PX = 480;
+const DEFAULT_CHAT_LIST_PANE_WIDTH_PX = 560;
 
 const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
   {
@@ -114,7 +115,16 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "conversations",
     pattern: ["conversations"],
     staticTitle: "Chats",
-    render: () => <ConversationsPage />,
+    render: () => <ConversationsPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_CHAT_LIST_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Chats",
+      subtitle: "Recent conversations with quick-open and delete actions.",
+    }),
+    renderBody: () => <ConversationsPaneBody />,
   },
   {
     id: "conversationNew",

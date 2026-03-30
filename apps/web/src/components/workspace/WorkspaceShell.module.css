@@ -13,4 +13,11 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
+  flex: 0 0 auto;
+}
+
+.paneWrap[data-mobile="true"] {
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
 }

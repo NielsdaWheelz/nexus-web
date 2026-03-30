@@ -19,8 +19,9 @@ export default function AuthenticatedLayout() {
   const settingsRouteActive = pathname === "/settings" || pathname.startsWith("/settings/");
   const searchRouteActive = pathname === "/search";
   const discoverRouteActive = pathname === "/discover";
+  const conversationsRouteActive = pathname === "/conversations";
   const paneWorkspaceRouteActive =
-    settingsRouteActive || searchRouteActive || discoverRouteActive;
+    settingsRouteActive || searchRouteActive || discoverRouteActive || conversationsRouteActive;
 
   return (
     <ToastProvider>

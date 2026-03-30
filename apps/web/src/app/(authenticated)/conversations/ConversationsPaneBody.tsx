@@ -1,18 +1,10 @@
-/**
- * Conversations list page.
- *
- * Shows a list of conversations only.
- * Selecting a conversation navigates to `/conversations/[id]`.
- */
-
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import StateMessage from "@/components/ui/StateMessage";
 import { AppList, AppListItem } from "@/components/ui/AppList";
-import SectionCard from "@/components/ui/SectionCard";
-import styles from "./page.module.css";
+import styles from "./ConversationsPaneBody.module.css";
 
 // ============================================================================
 // Types
@@ -94,49 +86,47 @@ export default function ConversationsPaneBody() {
   );
 
   return (
-    <SectionCard title="Chats">
-        <div className={styles.conversationList}>
-          {loading && <StateMessage variant="loading">Loading...</StateMessage>}
-          {error && <StateMessage variant="error">{error}</StateMessage>}
+    <div className={styles.body} data-testid="conversations-pane-body">
+      {loading && <StateMessage variant="loading">Loading...</StateMessage>}
+      {error && <StateMessage variant="error">{error}</StateMessage>}
 
-          {!loading && !error && conversations.length === 0 && (
-            <StateMessage variant="empty">No conversations yet.</StateMessage>
-          )}
+      {!loading && !error && conversations.length === 0 && (
+        <StateMessage variant="empty">No conversations yet.</StateMessage>
+      )}
 
-          {conversations.length > 0 && (
-            <AppList>
-              {conversations.map((conv) => (
-                <AppListItem
-                  key={conv.id}
-                  href={`/conversations/${conv.id}`}
-                  title={conv.title}
-                  paneTitleHint={conv.title}
-                  paneResourceRef={`conversation:${conv.id}`}
-                  description={`${conv.message_count} messages`}
-                  meta={new Date(conv.updated_at).toLocaleDateString()}
-                  options={[
-                    {
-                      id: "delete",
-                      label: "Delete",
-                      tone: "danger",
-                      onSelect: () => void handleDelete(conv.id),
-                    },
-                  ]}
-                />
-              ))}
-            </AppList>
-          )}
+      {conversations.length > 0 && (
+        <AppList>
+          {conversations.map((conv) => (
+            <AppListItem
+              key={conv.id}
+              href={`/conversations/${conv.id}`}
+              title={conv.title}
+              paneTitleHint={conv.title}
+              paneResourceRef={`conversation:${conv.id}`}
+              description={`${conv.message_count} messages`}
+              meta={new Date(conv.updated_at).toLocaleDateString()}
+              options={[
+                {
+                  id: "delete",
+                  label: "Delete",
+                  tone: "danger",
+                  onSelect: () => void handleDelete(conv.id),
+                },
+              ]}
+            />
+          ))}
+        </AppList>
+      )}
 
-          {nextCursor && (
-            <button
-              className={styles.loadMore}
-              aria-label="Load more conversations"
-              onClick={() => fetchConversations(nextCursor)}
-            >
-              Load more
-            </button>
-          )}
-        </div>
-    </SectionCard>
+      {nextCursor && (
+        <button
+          className={styles.loadMore}
+          aria-label="Load more conversations"
+          onClick={() => fetchConversations(nextCursor)}
+        >
+          Load more
+        </button>
+      )}
+    </div>
   );
 }

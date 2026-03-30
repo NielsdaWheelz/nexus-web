@@ -12,6 +12,7 @@ const SETTINGS_HREFS = [
 
 const SEARCH_HREFS = ["/search"] as const;
 const DISCOVER_HREFS = ["/discover"] as const;
+const CONVERSATIONS_HREFS = ["/conversations"] as const;
 
 const SETTINGS_ROUTE_FILES = [
   "src/app/(authenticated)/settings/page.tsx",
@@ -22,6 +23,7 @@ const SETTINGS_ROUTE_FILES = [
 
 const SEARCH_ROUTE_FILES = ["src/app/(authenticated)/search/page.tsx"] as const;
 const DISCOVER_ROUTE_FILES = ["src/app/(authenticated)/discover/page.tsx"] as const;
+const CONVERSATIONS_ROUTE_FILES = ["src/app/(authenticated)/conversations/page.tsx"] as const;
 
 function resolveFromWebRoot(relativePath: string): string {
   return path.resolve(process.cwd(), relativePath);
@@ -125,5 +127,43 @@ describe("workspace pane cutover contract (discover slice)", () => {
   it("routes /discover through the shared route pane workspace host", () => {
     const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
     expect(layoutSource.includes('pathname === "/discover"')).toBe(true);
+  });
+});
+
+describe("workspace pane cutover contract (conversations slice)", () => {
+  it("declares /conversations with pane metadata for chrome/body/width ownership", () => {
+    for (const href of CONVERSATIONS_HREFS) {
+      const route = resolvePaneRoute(href);
+      expect(route.id).toBe("conversations");
+      expect(route.definition).toBeTruthy();
+      expect(route.definition?.bodyMode).toBe("standard");
+      expect(route.definition?.defaultWidthPx).toBe(560);
+      expect(route.definition?.minWidthPx).toBeTypeOf("number");
+      expect(route.definition?.maxWidthPx).toBeTypeOf("number");
+      expect(route.definition?.getChrome).toBeTypeOf("function");
+      expect(route.definition?.renderBody).toBeTypeOf("function");
+    }
+  });
+
+  it("keeps /conversations route entrypoint free of legacy pane wrappers", () => {
+    for (const relativeFilePath of CONVERSATIONS_ROUTE_FILES) {
+      const source = readFileSync(resolveFromWebRoot(relativeFilePath), "utf-8");
+      expect(source.includes('from "@/components/PaneContainer"')).toBe(false);
+      expect(source.includes('from "@/components/Pane"')).toBe(false);
+      expect(source.includes("SplitSurface")).toBe(false);
+    }
+  });
+
+  it("keeps conversations pane registry wiring off route page modules", () => {
+    const registrySource = readFileSync(
+      resolveFromWebRoot("src/lib/panes/paneRouteRegistry.tsx"),
+      "utf-8"
+    );
+    expect(registrySource.includes('"/conversations/page"')).toBe(false);
+  });
+
+  it("routes /conversations through the shared route pane workspace host", () => {
+    const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
+    expect(layoutSource.includes('pathname === "/conversations"')).toBe(true);
   });
 });

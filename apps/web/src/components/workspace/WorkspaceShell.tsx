@@ -125,6 +125,7 @@ export default function WorkspaceShell({
             id={`workspace-panel-${pane.paneId}`}
             aria-labelledby={`workspace-tab-${pane.paneId}`}
             data-active={pane.isActive ? "true" : "false"}
+            data-mobile={isMobile ? "true" : "false"}
             ref={(element) => {
               if (element) {
                 paneWrapRefById.current.set(pane.paneId, element);
