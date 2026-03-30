@@ -56,27 +56,17 @@ interface Conversation {
 }
 
 // ============================================================================
-// Component
+// ConversationPaneBody — routes between context pane and chat view
 // ============================================================================
 
 export default function ConversationPaneBody() {
   const id = usePaneParam("id");
-  if (!id) {
-    throw new Error("conversation route requires an id");
-  }
+  if (!id) throw new Error("conversation route requires an id");
+
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
-  const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [olderCursor, setOlderCursor] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  useSetPaneTitle(conversation?.title ?? "Chat");
 
-  const messageListRef = useRef<HTMLDivElement>(null);
-  const shouldScrollRef = useRef(true);
-
+  // Attached context state — shared by both branches
   const initialAttach = useMemo(
     () => parseAttachContext(searchParams),
     [searchParams],
@@ -116,8 +106,8 @@ export default function ConversationPaneBody() {
     router.replace(qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`);
   }, [router, searchParams, id]);
 
-  const paneMode = searchParams.get("pane");
-  if (paneMode === "context") {
+  // --- Branch ---
+  if (searchParams.get("pane") === "context") {
     return (
       <ConversationContextPane
         contexts={attachedContexts}
@@ -125,6 +115,43 @@ export default function ConversationPaneBody() {
       />
     );
   }
+
+  return (
+    <ChatView
+      id={id}
+      attachedContexts={attachedContexts}
+      onRemoveContext={handleRemoveContext}
+      onMessageSent={clearAttachState}
+    />
+  );
+}
+
+// ============================================================================
+// ChatView — conversation thread + composer
+// ============================================================================
+
+function ChatView({
+  id,
+  attachedContexts,
+  onRemoveContext,
+  onMessageSent,
+}: {
+  id: string;
+  attachedContexts: ContextItem[];
+  onRemoveContext: (index: number) => void;
+  onMessageSent: () => void;
+}) {
+  const router = usePaneRouter();
+  const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [olderCursor, setOlderCursor] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  useSetPaneTitle(conversation?.title ?? "Chat");
+
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const shouldScrollRef = useRef(true);
 
   // --------------------------------------------------------------------------
   // Data fetching
@@ -162,7 +189,7 @@ export default function ConversationPaneBody() {
   }, [messages]);
 
   // --------------------------------------------------------------------------
-  // Load older messages
+  // Actions
   // --------------------------------------------------------------------------
 
   const loadOlder = useCallback(async () => {
@@ -189,10 +216,7 @@ export default function ConversationPaneBody() {
   }, [id, olderCursor]);
 
   const handleDeleteConversation = useCallback(async () => {
-    if (!confirm("Delete this conversation? This cannot be undone.")) {
-      return;
-    }
-
+    if (!confirm("Delete this conversation? This cannot be undone.")) return;
     setDeleting(true);
     try {
       await apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
@@ -212,10 +236,6 @@ export default function ConversationPaneBody() {
   // Streaming message handlers
   // --------------------------------------------------------------------------
 
-  /**
-   * Called by ChatComposer when optimistic messages should be added.
-   * The composer manages the streaming lifecycle; we just update state.
-   */
   const handleOptimisticMessages = useCallback(
     (userMsg: Message, assistantMsg: Message) => {
       shouldScrollRef.current = true;
@@ -224,9 +244,6 @@ export default function ConversationPaneBody() {
     []
   );
 
-  /**
-   * Called when meta event arrives with real IDs.
-   */
   const handleMetaReceived = useCallback(
     (tempUserId: string, realUserId: string, tempAsstId: string, realAsstId: string) => {
       setMessages((prev) =>
@@ -240,9 +257,6 @@ export default function ConversationPaneBody() {
     []
   );
 
-  /**
-   * Called on each delta chunk to append content to assistant message.
-   */
   const handleDelta = useCallback((assistantId: string, delta: string) => {
     setMessages((prev) =>
       prev.map((m) =>
@@ -251,9 +265,6 @@ export default function ConversationPaneBody() {
     );
   }, []);
 
-  /**
-   * Called when stream completes (done event).
-   */
   const handleDone = useCallback(
     (assistantId: string, status: "complete" | "error", errorCode: string | null) => {
       setMessages((prev) =>
@@ -267,9 +278,6 @@ export default function ConversationPaneBody() {
     []
   );
 
-  /**
-   * Called by non-streaming fallback path.
-   */
   const handleNonStreamMessages = useCallback(
     (userMsg: Message, assistantMsg: Message) => {
       shouldScrollRef.current = true;
@@ -324,17 +332,16 @@ export default function ConversationPaneBody() {
           ))}
         </div>
 
-        {/* Composer */}
         <ChatComposer
           conversationId={id}
           attachedContexts={attachedContexts}
-          onRemoveContext={handleRemoveContext}
+          onRemoveContext={onRemoveContext}
           onOptimisticMessages={handleOptimisticMessages}
           onMetaReceived={handleMetaReceived}
           onDelta={handleDelta}
           onDone={handleDone}
           onNonStreamMessages={handleNonStreamMessages}
-          onMessageSent={clearAttachState}
+          onMessageSent={onMessageSent}
         />
       </div>
     </div>
