@@ -5123,7 +5123,9 @@ upgrade now
             if url == payload["feed_url"]:
                 return httpx.Response(
                     200,
-                    text=(feed_with_transcript if state["rss_enabled"] else feed_without_transcript),
+                    text=(
+                        feed_with_transcript if state["rss_enabled"] else feed_without_transcript
+                    ),
                     request=httpx.Request("GET", url),
                 )
             if url == transcript_url:

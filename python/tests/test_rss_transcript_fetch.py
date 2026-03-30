@@ -72,12 +72,15 @@ valid cue
         ]
 
     def test_parse_srt_handles_multiline_text_strips_html_and_skips_malformed_entries(self):
-        srt_content = _fixture_text("sample_transcript.srt") + """
+        srt_content = (
+            _fixture_text("sample_transcript.srt")
+            + """
 
 3
 broken timing
 this entry must be ignored
 """
+        )
 
         segments = _parse_srt_transcript(srt_content)
 
