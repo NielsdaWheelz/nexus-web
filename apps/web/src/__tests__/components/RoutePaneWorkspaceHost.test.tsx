@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import SettingsWorkspaceHost from "@/components/workspace/SettingsWorkspaceHost";
+import RoutePaneWorkspaceHost from "@/components/workspace/RoutePaneWorkspaceHost";
 
 const mockPathname = vi.hoisted(() => ({ value: "/settings" }));
 const mockSearch = vi.hoisted(() => ({ value: "" }));
@@ -31,7 +31,7 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => mockIsMobile.value,
 }));
 
-describe("SettingsWorkspaceHost", () => {
+describe("RoutePaneWorkspaceHost", () => {
   beforeEach(() => {
     mockPathname.value = "/settings";
     mockSearch.value = "";
@@ -39,7 +39,7 @@ describe("SettingsWorkspaceHost", () => {
   });
 
   it("renders settings in pane shell with fixed chrome and scrolling body", () => {
-    render(<SettingsWorkspaceHost />);
+    render(<RoutePaneWorkspaceHost />);
 
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByText("Integrations")).toBeInTheDocument();
@@ -51,7 +51,7 @@ describe("SettingsWorkspaceHost", () => {
   });
 
   it("uses explicit desktop pane width instead of full-width flex sizing", () => {
-    render(<SettingsWorkspaceHost />);
+    render(<RoutePaneWorkspaceHost />);
 
     const paneShell = screen
       .getByTestId("pane-shell-body")
@@ -66,9 +66,53 @@ describe("SettingsWorkspaceHost", () => {
   it("shows one full-width active pane on mobile", () => {
     mockIsMobile.value = true;
 
-    render(<SettingsWorkspaceHost />);
+    render(<RoutePaneWorkspaceHost />);
 
     expect(screen.getByText("Integrations")).toBeInTheDocument();
+    const paneShell = screen
+      .getByTestId("pane-shell-body")
+      .closest('[data-pane-shell="true"]');
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("width: 100%"));
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("min-width: 100%"));
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("max-width: 100%"));
+  });
+
+  it("renders search in pane shell with fixed chrome and scrolling body", () => {
+    mockPathname.value = "/search";
+
+    render(<RoutePaneWorkspaceHost />);
+
+    expect(screen.getByRole("heading", { name: "Search" })).toBeInTheDocument();
+    expect(screen.getByText("Query")).toBeInTheDocument();
+
+    const chrome = screen.getByTestId("pane-shell-chrome");
+    const body = screen.getByTestId("pane-shell-body");
+    expect(body.contains(chrome)).toBe(false);
+    expect(body).toHaveStyle({ overflowY: "auto", overflowX: "hidden" });
+  });
+
+  it("uses explicit desktop pane width for search", () => {
+    mockPathname.value = "/search";
+
+    render(<RoutePaneWorkspaceHost />);
+
+    const paneShell = screen
+      .getByTestId("pane-shell-body")
+      .closest('[data-pane-shell="true"]');
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("width: 480px"));
+    expect(paneShell).not.toHaveAttribute(
+      "style",
+      expect.stringContaining("width: 100%")
+    );
+  });
+
+  it("shows one full-width active search pane on mobile", () => {
+    mockPathname.value = "/search";
+    mockIsMobile.value = true;
+
+    render(<RoutePaneWorkspaceHost />);
+
+    expect(screen.getByText("Query")).toBeInTheDocument();
     const paneShell = screen
       .getByTestId("pane-shell-body")
       .closest('[data-pane-shell="true"]');

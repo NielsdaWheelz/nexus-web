@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import WorkspaceShell, { type WorkspaceShellPane } from "@/components/workspace/WorkspaceShell";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
-import styles from "./SettingsWorkspaceHost.module.css";
+import styles from "./RoutePaneWorkspaceHost.module.css";
 
-const SETTINGS_PANE_ID = "settings-pane";
+const ROUTE_PANE_ID = "route-pane";
 const DEFAULT_WIDTH_PX = 480;
 const MIN_WIDTH_PX = 320;
 const MAX_WIDTH_PX = 1400;
@@ -18,7 +18,7 @@ function buildHref(pathname: string, search: string): string {
   return `${pathname}?${search}`;
 }
 
-export default function SettingsWorkspaceHost() {
+export default function RoutePaneWorkspaceHost() {
   const pathname = usePathname() ?? "/settings";
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -41,7 +41,7 @@ export default function SettingsWorkspaceHost() {
 
   const pane = useMemo<WorkspaceShellPane>(
     () => ({
-      paneId: SETTINGS_PANE_ID,
+      paneId: ROUTE_PANE_ID,
       title: chrome.title,
       subtitle: chrome.subtitle,
       toolbar: chrome.toolbar,
@@ -55,7 +55,7 @@ export default function SettingsWorkspaceHost() {
         <div className={styles.bodyContent}>
           {definition?.renderBody?.({ href, params: route.params }) ?? (
             <p className={styles.unsupported}>
-              This settings route is not available in the pane workspace yet.
+              This route is not available in the pane workspace yet.
             </p>
           )}
         </div>
@@ -65,10 +65,10 @@ export default function SettingsWorkspaceHost() {
   );
 
   return (
-    <section className={styles.host} data-settings-workspace-host="true">
+    <section className={styles.host} data-pane-route-workspace-host="true">
       <WorkspaceShell
         panes={[pane]}
-        activePaneId={SETTINGS_PANE_ID}
+        activePaneId={ROUTE_PANE_ID}
         onActivatePane={() => {}}
         onClosePane={() => router.push("/libraries")}
         onResizePane={(_paneId, nextWidthPx) => setWidthPx(nextWidthPx)}

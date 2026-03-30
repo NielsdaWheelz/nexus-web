@@ -10,12 +10,16 @@ const SETTINGS_HREFS = [
   "/settings/identities",
 ] as const;
 
+const SEARCH_HREFS = ["/search"] as const;
+
 const SETTINGS_ROUTE_FILES = [
   "src/app/(authenticated)/settings/page.tsx",
   "src/app/(authenticated)/settings/reader/page.tsx",
   "src/app/(authenticated)/settings/keys/page.tsx",
   "src/app/(authenticated)/settings/identities/page.tsx",
 ] as const;
+
+const SEARCH_ROUTE_FILES = ["src/app/(authenticated)/search/page.tsx"] as const;
 
 function resolveFromWebRoot(relativePath: string): string {
   return path.resolve(process.cwd(), relativePath);
@@ -52,5 +56,36 @@ describe("workspace pane cutover contract (settings slice)", () => {
     expect(registrySource.includes('"/settings/reader/page"')).toBe(false);
     expect(registrySource.includes('"/settings/keys/page"')).toBe(false);
     expect(registrySource.includes('"/settings/identities/page"')).toBe(false);
+  });
+});
+
+describe("workspace pane cutover contract (search slice)", () => {
+  it("declares search routes with pane metadata for chrome/body/width ownership", () => {
+    for (const href of SEARCH_HREFS) {
+      const route = resolvePaneRoute(href);
+      expect(route.id).not.toBe("unsupported");
+      expect(route.definition).toBeTruthy();
+      expect(route.definition?.bodyMode).toBe("standard");
+      expect(route.definition?.defaultWidthPx).toBeTypeOf("number");
+      expect(route.definition?.minWidthPx).toBeTypeOf("number");
+      expect(route.definition?.maxWidthPx).toBeTypeOf("number");
+      expect(route.definition?.getChrome).toBeTypeOf("function");
+      expect(route.definition?.renderBody).toBeTypeOf("function");
+    }
+  });
+
+  it("keeps search route entrypoints free of PageLayout", () => {
+    for (const relativeFilePath of SEARCH_ROUTE_FILES) {
+      const source = readFileSync(resolveFromWebRoot(relativeFilePath), "utf-8");
+      expect(source.includes("PageLayout")).toBe(false);
+    }
+  });
+
+  it("keeps search pane registry wiring off route page modules", () => {
+    const registrySource = readFileSync(
+      resolveFromWebRoot("src/lib/panes/paneRouteRegistry.tsx"),
+      "utf-8"
+    );
+    expect(registrySource.includes('"/search/page"')).toBe(false);
   });
 });

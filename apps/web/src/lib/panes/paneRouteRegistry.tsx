@@ -13,7 +13,7 @@ import PodcastsPage from "@/app/(authenticated)/podcasts/page";
 import PodcastSubscriptionsPage from "@/app/(authenticated)/podcasts/subscriptions/page";
 import PodcastDetailPage from "@/app/(authenticated)/podcasts/[podcastId]/page";
 import VideosPage from "@/app/(authenticated)/videos/page";
-import SearchPage from "@/app/(authenticated)/search/page";
+import SearchPaneBody from "@/components/panes/routes/SearchPaneBody";
 import SettingsPaneBody from "@/components/panes/routes/SettingsPaneBody";
 import SettingsReaderPaneBody from "@/components/panes/routes/SettingsReaderPaneBody";
 import SettingsKeysPaneBody from "@/components/panes/routes/SettingsKeysPaneBody";
@@ -81,7 +81,7 @@ export interface ResolvedPaneRoute {
 
 const MIN_STANDARD_PANE_WIDTH_PX = 320;
 const MAX_STANDARD_PANE_WIDTH_PX = 1400;
-const DEFAULT_SETTINGS_PANE_WIDTH_PX = 480;
+const DEFAULT_STANDARD_PANE_WIDTH_PX = 480;
 
 const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
   {
@@ -176,7 +176,16 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "search",
     pattern: ["search"],
     staticTitle: "Search",
-    render: () => <SearchPage />,
+    render: () => <SearchPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Search",
+      subtitle: "Search across media, fragments, annotations, chat, and transcript chunks.",
+    }),
+    renderBody: () => <SearchPaneBody />,
   },
   {
     id: "settings",
@@ -184,7 +193,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     staticTitle: "Settings",
     render: () => <SettingsPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_SETTINGS_PANE_WIDTH_PX,
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
@@ -199,7 +208,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     staticTitle: "Reader settings",
     render: () => <SettingsReaderPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_SETTINGS_PANE_WIDTH_PX,
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
@@ -214,7 +223,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     staticTitle: "API keys",
     render: () => <SettingsKeysPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_SETTINGS_PANE_WIDTH_PX,
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
@@ -229,7 +238,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     staticTitle: "Linked identities",
     render: () => <SettingsIdentitiesPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_SETTINGS_PANE_WIDTH_PX,
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
