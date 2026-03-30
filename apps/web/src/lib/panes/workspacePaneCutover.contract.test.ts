@@ -1,0 +1,56 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
+
+const SETTINGS_HREFS = [
+  "/settings",
+  "/settings/reader",
+  "/settings/keys",
+  "/settings/identities",
+] as const;
+
+const SETTINGS_ROUTE_FILES = [
+  "src/app/(authenticated)/settings/page.tsx",
+  "src/app/(authenticated)/settings/reader/page.tsx",
+  "src/app/(authenticated)/settings/keys/page.tsx",
+  "src/app/(authenticated)/settings/identities/page.tsx",
+] as const;
+
+function resolveFromWebRoot(relativePath: string): string {
+  return path.resolve(process.cwd(), relativePath);
+}
+
+describe("workspace pane cutover contract (settings slice)", () => {
+  it("declares settings routes with pane metadata for chrome/body/width ownership", () => {
+    for (const href of SETTINGS_HREFS) {
+      const route = resolvePaneRoute(href);
+      expect(route.id).not.toBe("unsupported");
+      expect(route.definition).toBeTruthy();
+      expect(route.definition?.bodyMode).toBe("standard");
+      expect(route.definition?.defaultWidthPx).toBeTypeOf("number");
+      expect(route.definition?.minWidthPx).toBeTypeOf("number");
+      expect(route.definition?.maxWidthPx).toBeTypeOf("number");
+      expect(route.definition?.getChrome).toBeTypeOf("function");
+      expect(route.definition?.renderBody).toBeTypeOf("function");
+    }
+  });
+
+  it("keeps settings route entrypoints free of PageLayout", () => {
+    for (const relativeFilePath of SETTINGS_ROUTE_FILES) {
+      const source = readFileSync(resolveFromWebRoot(relativeFilePath), "utf-8");
+      expect(source.includes("PageLayout")).toBe(false);
+    }
+  });
+
+  it("keeps settings pane registry wiring off route page modules", () => {
+    const registrySource = readFileSync(
+      resolveFromWebRoot("src/lib/panes/paneRouteRegistry.tsx"),
+      "utf-8"
+    );
+    expect(registrySource.includes('"/settings/page"')).toBe(false);
+    expect(registrySource.includes('"/settings/reader/page"')).toBe(false);
+    expect(registrySource.includes('"/settings/keys/page"')).toBe(false);
+    expect(registrySource.includes('"/settings/identities/page"')).toBe(false);
+  });
+});

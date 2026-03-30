@@ -14,14 +14,27 @@ import PodcastSubscriptionsPage from "@/app/(authenticated)/podcasts/subscriptio
 import PodcastDetailPage from "@/app/(authenticated)/podcasts/[podcastId]/page";
 import VideosPage from "@/app/(authenticated)/videos/page";
 import SearchPage from "@/app/(authenticated)/search/page";
-import SettingsPage from "@/app/(authenticated)/settings/page";
-import SettingsReaderPage from "@/app/(authenticated)/settings/reader/page";
-import SettingsKeysPage from "@/app/(authenticated)/settings/keys/page";
-import SettingsIdentitiesPage from "@/app/(authenticated)/settings/identities/page";
+import SettingsPaneBody from "@/components/panes/routes/SettingsPaneBody";
+import SettingsReaderPaneBody from "@/components/panes/routes/SettingsReaderPaneBody";
+import SettingsKeysPaneBody from "@/components/panes/routes/SettingsKeysPaneBody";
+import SettingsIdentitiesPaneBody from "@/components/panes/routes/SettingsIdentitiesPaneBody";
 
 type RouteParamValue = string;
 type RouteParams = Record<string, RouteParamValue>;
 type RoutePattern = readonly string[];
+export type PaneBodyMode = "standard" | "document";
+
+interface PaneRouteContext {
+  href: string;
+  params: RouteParams;
+}
+
+export interface PaneChromeDescriptor {
+  title: string;
+  subtitle?: ReactNode;
+  toolbar?: ReactNode;
+  actions?: ReactNode;
+}
 
 export type PaneRouteId =
   | "libraries"
@@ -48,6 +61,12 @@ interface PaneRouteDefinition {
   staticTitle: string;
   resourceRef?: (params: RouteParams) => string | null;
   render: () => ReactNode;
+  bodyMode?: PaneBodyMode;
+  defaultWidthPx?: number;
+  minWidthPx?: number;
+  maxWidthPx?: number;
+  getChrome?: (ctx: PaneRouteContext) => PaneChromeDescriptor;
+  renderBody?: (ctx: PaneRouteContext) => ReactNode;
 }
 
 export interface ResolvedPaneRoute {
@@ -57,7 +76,12 @@ export interface ResolvedPaneRoute {
   staticTitle: string;
   resourceRef: string | null;
   render: (() => ReactNode) | null;
+  definition: PaneRouteDefinition | null;
 }
+
+const MIN_STANDARD_PANE_WIDTH_PX = 320;
+const MAX_STANDARD_PANE_WIDTH_PX = 1400;
+const DEFAULT_SETTINGS_PANE_WIDTH_PX = 480;
 
 const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
   {
@@ -158,25 +182,61 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settings",
     pattern: ["settings"],
     staticTitle: "Settings",
-    render: () => <SettingsPage />,
+    render: () => <SettingsPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_SETTINGS_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Settings",
+      subtitle: "Account-level controls and integration configuration.",
+    }),
+    renderBody: () => <SettingsPaneBody />,
   },
   {
     id: "settingsReader",
     pattern: ["settings", "reader"],
     staticTitle: "Reader settings",
-    render: () => <SettingsReaderPage />,
+    render: () => <SettingsReaderPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_SETTINGS_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Reader",
+      subtitle: "Typography, layout, and display preferences for reading.",
+    }),
+    renderBody: () => <SettingsReaderPaneBody />,
   },
   {
     id: "settingsKeys",
     pattern: ["settings", "keys"],
     staticTitle: "API keys",
-    render: () => <SettingsKeysPage />,
+    render: () => <SettingsKeysPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_SETTINGS_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "API Keys",
+      subtitle: "BYOK credentials for model providers. keys never leave server-side flows.",
+    }),
+    renderBody: () => <SettingsKeysPaneBody />,
   },
   {
     id: "settingsIdentities",
     pattern: ["settings", "identities"],
     staticTitle: "Linked identities",
-    render: () => <SettingsIdentitiesPage />,
+    render: () => <SettingsIdentitiesPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_SETTINGS_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Linked Identities",
+      subtitle: "Manage Google and GitHub identities linked to this account.",
+    }),
+    renderBody: () => <SettingsIdentitiesPaneBody />,
   },
 ];
 
@@ -239,6 +299,7 @@ export function resolvePaneRoute(href: string): ResolvedPaneRoute {
       staticTitle: definition.staticTitle,
       resourceRef: definition.resourceRef?.(params) ?? null,
       render: definition.render,
+      definition,
     };
   }
   return {
@@ -248,6 +309,7 @@ export function resolvePaneRoute(href: string): ResolvedPaneRoute {
     staticTitle: "Tab",
     resourceRef: null,
     render: null,
+    definition: null,
   };
 }
 

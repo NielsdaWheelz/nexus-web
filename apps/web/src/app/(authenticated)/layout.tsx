@@ -1,8 +1,10 @@
 "use client";
 
 import { Suspense, useState } from "react";
+import { usePathname } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import AuthenticatedWorkspaceHost from "@/components/AuthenticatedWorkspaceHost";
+import SettingsWorkspaceHost from "@/components/workspace/SettingsWorkspaceHost";
 import { ToastProvider } from "@/components/Toast";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
@@ -13,6 +15,8 @@ import styles from "./layout.module.css";
 
 export default function AuthenticatedLayout() {
   const [navbarCollapsed, setNavbarCollapsed] = useState(false);
+  const pathname = usePathname() ?? "";
+  const settingsRouteActive = pathname === "/settings" || pathname.startsWith("/settings/");
 
   return (
     <ToastProvider>
@@ -26,7 +30,11 @@ export default function AuthenticatedLayout() {
                 <Navbar onToggle={setNavbarCollapsed} />
                 <main className={styles.main}>
                   <GlobalPlayerProvider>
-                    <AuthenticatedWorkspaceHost />
+                    {settingsRouteActive ? (
+                      <SettingsWorkspaceHost />
+                    ) : (
+                      <AuthenticatedWorkspaceHost />
+                    )}
                     <GlobalPlayerFooter />
                   </GlobalPlayerProvider>
                 </main>

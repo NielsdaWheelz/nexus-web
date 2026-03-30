@@ -1,0 +1,50 @@
+.paneShell {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  border-right: 1px solid var(--color-border-subtle);
+  background: var(--color-bg);
+  flex: 0 0 auto;
+}
+
+.paneShell[data-active="true"] {
+  box-shadow: inset 0 0 0 1px rgb(122 162 247 / 35%);
+}
+
+.chrome {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.body {
+  min-width: 0;
+  min-height: 0;
+}
+
+.resizeHandle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.paneShell[data-mobile="true"] .resizeHandle {
+  display: none;
+}
