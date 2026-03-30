@@ -120,4 +120,48 @@ describe("RoutePaneWorkspaceHost", () => {
     expect(paneShell).toHaveAttribute("style", expect.stringContaining("min-width: 100%"));
     expect(paneShell).toHaveAttribute("style", expect.stringContaining("max-width: 100%"));
   });
+
+  it("renders discover in pane shell with fixed chrome and scrolling body", () => {
+    mockPathname.value = "/discover";
+
+    render(<RoutePaneWorkspaceHost />);
+
+    expect(screen.getByRole("heading", { name: "Discover" })).toBeInTheDocument();
+    expect(screen.getByText("Content Lanes")).toBeInTheDocument();
+
+    const chrome = screen.getByTestId("pane-shell-chrome");
+    const body = screen.getByTestId("pane-shell-body");
+    expect(body.contains(chrome)).toBe(false);
+    expect(body).toHaveStyle({ overflowY: "auto", overflowX: "hidden" });
+  });
+
+  it("uses explicit desktop pane width for discover", () => {
+    mockPathname.value = "/discover";
+
+    render(<RoutePaneWorkspaceHost />);
+
+    const paneShell = screen
+      .getByTestId("pane-shell-body")
+      .closest('[data-pane-shell="true"]');
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("width: 480px"));
+    expect(paneShell).not.toHaveAttribute(
+      "style",
+      expect.stringContaining("width: 100%")
+    );
+  });
+
+  it("shows one full-width active discover pane on mobile", () => {
+    mockPathname.value = "/discover";
+    mockIsMobile.value = true;
+
+    render(<RoutePaneWorkspaceHost />);
+
+    expect(screen.getByText("Content Lanes")).toBeInTheDocument();
+    const paneShell = screen
+      .getByTestId("pane-shell-body")
+      .closest('[data-pane-shell="true"]');
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("width: 100%"));
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("min-width: 100%"));
+    expect(paneShell).toHaveAttribute("style", expect.stringContaining("max-width: 100%"));
+  });
 });

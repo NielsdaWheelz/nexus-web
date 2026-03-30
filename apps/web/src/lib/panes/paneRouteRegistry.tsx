@@ -7,12 +7,12 @@ import MediaViewPage from "@/app/(authenticated)/media/[id]/page";
 import ConversationsPage from "@/app/(authenticated)/conversations/page";
 import ConversationPage from "@/app/(authenticated)/conversations/[id]/page";
 import NewConversationPage from "@/app/(authenticated)/conversations/new/page";
-import DiscoverPage from "@/app/(authenticated)/discover/page";
 import DocumentsPage from "@/app/(authenticated)/documents/page";
 import PodcastsPage from "@/app/(authenticated)/podcasts/page";
 import PodcastSubscriptionsPage from "@/app/(authenticated)/podcasts/subscriptions/page";
 import PodcastDetailPage from "@/app/(authenticated)/podcasts/[podcastId]/page";
 import VideosPage from "@/app/(authenticated)/videos/page";
+import DiscoverPaneBody from "@/components/panes/routes/DiscoverPaneBody";
 import SearchPaneBody from "@/components/panes/routes/SearchPaneBody";
 import SettingsPaneBody from "@/components/panes/routes/SettingsPaneBody";
 import SettingsReaderPaneBody from "@/components/panes/routes/SettingsReaderPaneBody";
@@ -136,7 +136,16 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "discover",
     pattern: ["discover"],
     staticTitle: "Discover",
-    render: () => <DiscoverPage />,
+    render: () => <DiscoverPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Discover",
+      subtitle: "Workflow-first navigation: choose a lane by intent, then drill into items.",
+    }),
+    renderBody: () => <DiscoverPaneBody />,
   },
   {
     id: "documents",

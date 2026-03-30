@@ -11,6 +11,7 @@ const SETTINGS_HREFS = [
 ] as const;
 
 const SEARCH_HREFS = ["/search"] as const;
+const DISCOVER_HREFS = ["/discover"] as const;
 
 const SETTINGS_ROUTE_FILES = [
   "src/app/(authenticated)/settings/page.tsx",
@@ -20,6 +21,7 @@ const SETTINGS_ROUTE_FILES = [
 ] as const;
 
 const SEARCH_ROUTE_FILES = ["src/app/(authenticated)/search/page.tsx"] as const;
+const DISCOVER_ROUTE_FILES = ["src/app/(authenticated)/discover/page.tsx"] as const;
 
 function resolveFromWebRoot(relativePath: string): string {
   return path.resolve(process.cwd(), relativePath);
@@ -87,5 +89,41 @@ describe("workspace pane cutover contract (search slice)", () => {
       "utf-8"
     );
     expect(registrySource.includes('"/search/page"')).toBe(false);
+  });
+});
+
+describe("workspace pane cutover contract (discover slice)", () => {
+  it("declares discover route with pane metadata for chrome/body/width ownership", () => {
+    for (const href of DISCOVER_HREFS) {
+      const route = resolvePaneRoute(href);
+      expect(route.id).not.toBe("unsupported");
+      expect(route.definition).toBeTruthy();
+      expect(route.definition?.bodyMode).toBe("standard");
+      expect(route.definition?.defaultWidthPx).toBeTypeOf("number");
+      expect(route.definition?.minWidthPx).toBeTypeOf("number");
+      expect(route.definition?.maxWidthPx).toBeTypeOf("number");
+      expect(route.definition?.getChrome).toBeTypeOf("function");
+      expect(route.definition?.renderBody).toBeTypeOf("function");
+    }
+  });
+
+  it("keeps discover route entrypoint free of PageLayout", () => {
+    for (const relativeFilePath of DISCOVER_ROUTE_FILES) {
+      const source = readFileSync(resolveFromWebRoot(relativeFilePath), "utf-8");
+      expect(source.includes("PageLayout")).toBe(false);
+    }
+  });
+
+  it("keeps discover pane registry wiring off route page modules", () => {
+    const registrySource = readFileSync(
+      resolveFromWebRoot("src/lib/panes/paneRouteRegistry.tsx"),
+      "utf-8"
+    );
+    expect(registrySource.includes('"/discover/page"')).toBe(false);
+  });
+
+  it("routes /discover through the shared route pane workspace host", () => {
+    const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
+    expect(layoutSource.includes('pathname === "/discover"')).toBe(true);
   });
 });
