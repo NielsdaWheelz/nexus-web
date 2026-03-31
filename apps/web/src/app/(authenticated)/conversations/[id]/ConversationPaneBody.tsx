@@ -16,7 +16,9 @@ import {
 } from "@/lib/conversations/attachedContext";
 import { hydrateContextItems } from "@/lib/conversations/hydrateContextItems";
 import ChatComposer from "@/components/ChatComposer";
-import ConversationContextPane from "@/components/ConversationContextPane";
+import ContextRow from "@/components/ui/ContextRow";
+import ActionMenu from "@/components/ui/ActionMenu";
+import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import StateMessage from "@/components/ui/StateMessage";
 import {
   usePaneParam,
@@ -109,7 +111,7 @@ export default function ConversationPaneBody() {
   // --- Branch ---
   if (searchParams.get("pane") === "context") {
     return (
-      <ConversationContextPane
+      <ConversationLinkedItemsPaneBody
         contexts={attachedContexts}
         onRemoveContext={handleRemoveContext}
       />
@@ -316,7 +318,11 @@ function ChatView({
         </div>
 
         {/* Message thread */}
-        <div ref={messageListRef} className={styles.messageList}>
+        <div
+          ref={messageListRef}
+          className={styles.messageList}
+          data-testid="chat-transcript"
+        >
           {olderCursor && (
             <button
               className={styles.loadOlder}
@@ -373,6 +379,95 @@ function MessageBubble({ message }: { message: Message }) {
       {message.status === "error" && message.error_code && (
         <div className={styles.retryBtn}>
           Error: {message.error_code}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+function formatContextTitle(item: ContextItem): string {
+  if (item.preview) return item.preview;
+  if (item.type === "highlight") return "Highlight";
+  if (item.type === "annotation") return "Annotation";
+  return "Media";
+}
+
+function formatSurroundingContext(item: ContextItem): string | undefined {
+  const parts: string[] = [];
+  if (item.prefix) parts.push(`...${truncate(item.prefix, 40)}`);
+  if (item.suffix) parts.push(`${truncate(item.suffix, 40)}...`);
+  return parts.length > 0 ? parts.join(" [selection] ") : undefined;
+}
+
+function formatMeta(item: ContextItem): string | undefined {
+  const parts: string[] = [];
+  if (item.mediaTitle) parts.push(item.mediaTitle);
+  if (item.mediaKind) parts.push(item.mediaKind);
+  return parts.length > 0 ? parts.join(" - ") : undefined;
+}
+
+function ConversationLinkedItemsPaneBody({
+  contexts,
+  onRemoveContext,
+}: {
+  contexts: ContextItem[];
+  onRemoveContext: (index: number) => void;
+}) {
+  return (
+    <div className={styles.linkedItemsBody} data-testid="conversation-linked-items">
+      {contexts.length === 0 ? (
+        <StateMessage variant="empty">No linked context yet.</StateMessage>
+      ) : (
+        <div className={styles.linkedItemsList}>
+          {contexts.map((contextItem, index) => {
+            const menuOptions: ActionMenuOption[] = [
+              {
+                id: "remove",
+                label: "Remove",
+                tone: "danger",
+                onSelect: () => onRemoveContext(index),
+              },
+            ];
+            if (contextItem.mediaId) {
+              menuOptions.push({
+                id: "open-source",
+                label: "Open source",
+                href: `/media/${contextItem.mediaId}`,
+              });
+            }
+
+            return (
+              <ContextRow
+                key={`${contextItem.type}-${contextItem.id}-${index}`}
+                leading={
+                  contextItem.color ? (
+                    <span
+                      className={`${styles.linkedItemsColorSwatch} ${styles[`swatch-${contextItem.color}`]}`}
+                      aria-hidden="true"
+                    />
+                  ) : undefined
+                }
+                title={formatContextTitle(contextItem)}
+                titleClassName={styles.linkedItemsTitle}
+                description={formatSurroundingContext(contextItem)}
+                descriptionClassName={styles.linkedItemsDescription}
+                meta={formatMeta(contextItem)}
+                metaClassName={styles.linkedItemsMeta}
+                actions={<ActionMenu options={menuOptions} />}
+                expandedContent={
+                  contextItem.annotationBody ? (
+                    <div className={styles.linkedItemsAnnotation}>
+                      {contextItem.annotationBody}
+                    </div>
+                  ) : undefined
+                }
+              />
+            );
+          })}
         </div>
       )}
     </div>

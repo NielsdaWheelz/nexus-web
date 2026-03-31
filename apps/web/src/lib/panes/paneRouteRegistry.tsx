@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import LibraryDetailPage from "@/app/(authenticated)/libraries/[id]/page";
 import MediaViewPage from "@/app/(authenticated)/media/[id]/page";
-import ConversationPage from "@/app/(authenticated)/conversations/[id]/page";
+import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
 import NewConversationPage from "@/app/(authenticated)/conversations/new/page";
 import DocumentsPage from "@/app/(authenticated)/documents/page";
 import PodcastsPage from "@/app/(authenticated)/podcasts/page";
@@ -24,7 +24,7 @@ type RouteParams = Record<string, RouteParamValue>;
 type RoutePattern = readonly string[];
 export type PaneBodyMode = "standard" | "document";
 
-interface PaneRouteContext {
+export interface PaneRouteContext {
   href: string;
   params: RouteParams;
 }
@@ -67,6 +67,18 @@ interface PaneRouteDefinition {
   maxWidthPx?: number;
   getChrome?: (ctx: PaneRouteContext) => PaneChromeDescriptor;
   renderBody?: (ctx: PaneRouteContext) => ReactNode;
+  buildCompanionPanes?: (ctx: PaneRouteContext) => PaneCompanionPaneDraft[];
+}
+
+export interface PaneCompanionPaneDraft {
+  href: string;
+  staticTitle: string;
+  bodyMode?: PaneBodyMode;
+  defaultWidthPx: number;
+  minWidthPx?: number;
+  maxWidthPx?: number;
+  getChrome?: (ctx: PaneRouteContext) => PaneChromeDescriptor;
+  renderBody?: (ctx: PaneRouteContext) => ReactNode;
 }
 
 export interface ResolvedPaneRoute {
@@ -83,6 +95,7 @@ const MIN_STANDARD_PANE_WIDTH_PX = 320;
 const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 const DEFAULT_STANDARD_PANE_WIDTH_PX = 480;
 const DEFAULT_DENSE_LIST_PANE_WIDTH_PX = 560;
+const DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX = 360;
 
 const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
   {
@@ -149,7 +162,43 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       const id = params.id;
       return id ? `conversation:${id}` : null;
     },
-    render: () => <ConversationPage />,
+    render: () => <ConversationPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Chat",
+      subtitle: "Conversation transcript and composer.",
+    }),
+    renderBody: () => <ConversationPaneBody />,
+    buildCompanionPanes: ({ href, params }) => {
+      const id = params.id;
+      if (!id) {
+        return [];
+      }
+      const parsed = new URL(href, "http://localhost");
+      if (parsed.searchParams.get("pane") === "context") {
+        return [];
+      }
+      const nextSearch = new URLSearchParams(parsed.searchParams.toString());
+      nextSearch.set("pane", "context");
+      const query = nextSearch.toString();
+      return [
+        {
+          href: `/conversations/${encodeURIComponent(id)}${query ? `?${query}` : ""}`,
+          staticTitle: "Linked items",
+          bodyMode: "standard",
+          defaultWidthPx: DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX,
+          minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+          maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+          getChrome: () => ({
+            title: "Linked items",
+            subtitle: "Context attached to this conversation.",
+          }),
+        },
+      ];
+    },
   },
   {
     id: "discover",

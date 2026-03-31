@@ -20,12 +20,16 @@ export default function AuthenticatedLayout() {
   const searchRouteActive = pathname === "/search";
   const discoverRouteActive = pathname === "/discover";
   const conversationsRouteActive = pathname === "/conversations";
+  const conversationDetailRouteActive =
+    pathname.startsWith("/conversations/") &&
+    pathname !== "/conversations/new";
   const librariesRouteActive = pathname === "/libraries";
   const paneWorkspaceRouteActive =
     settingsRouteActive ||
     searchRouteActive ||
     discoverRouteActive ||
     conversationsRouteActive ||
+    conversationDetailRouteActive ||
     librariesRouteActive;
 
   return (

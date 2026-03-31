@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import RoutePaneWorkspaceHost from "@/components/workspace/RoutePaneWorkspaceHost";
 
 const mockPathname = vi.hoisted(() => ({ value: "/settings" }));
@@ -216,6 +217,52 @@ describe("RoutePaneWorkspaceHost", () => {
     const paneStripWidth = screen.getByTestId("pane-strip").getBoundingClientRect().width;
     expect(Math.abs(paneWrapWidth - paneStripWidth)).toBeLessThanOrEqual(0.5);
     expect(screen.getByTestId("conversations-pane-body")).toHaveStyle({ minHeight: "100%" });
+  });
+
+  it("renders /conversations/[id] as adjacent chat and linked-items panes on desktop", () => {
+    mockPathname.value = "/conversations/conv-123";
+    mockSearch.value =
+      "attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line";
+
+    render(<RoutePaneWorkspaceHost />);
+
+    expect(screen.queryByText("This route is not available in the pane workspace yet.")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Chat" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Linked items" })).toBeInTheDocument();
+
+    const paneBodies = screen.getAllByTestId("pane-shell-body");
+    expect(paneBodies).toHaveLength(2);
+    const paneChromes = screen.getAllByTestId("pane-shell-chrome");
+    expect(paneBodies[0]?.contains(paneChromes[0] ?? null)).toBe(false);
+    expect(paneBodies[1]?.contains(paneChromes[1] ?? null)).toBe(false);
+    expect(paneBodies[1]).toHaveStyle({ overflowY: "auto", overflowX: "hidden" });
+
+    const mainPaneShell = paneBodies[0]?.closest('[data-pane-shell="true"]');
+    const linkedPaneShell = paneBodies[1]?.closest('[data-pane-shell="true"]');
+    expect(mainPaneShell).toHaveAttribute("style", expect.stringContaining("width: 560px"));
+    expect(linkedPaneShell).toHaveAttribute("style", expect.stringContaining("width: 360px"));
+    expect(screen.getByText("quoted line")).toBeInTheDocument();
+  });
+
+  it("uses global mobile tab switching between chat and linked items for /conversations/[id]", async () => {
+    mockPathname.value = "/conversations/conv-123";
+    mockSearch.value =
+      "attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line";
+    mockIsMobile.value = true;
+    const user = userEvent.setup();
+
+    render(<RoutePaneWorkspaceHost />);
+
+    expect(screen.getByRole("heading", { name: "Chat" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Linked items" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Context" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open panes" }));
+    await user.click(screen.getByRole("button", { name: "Linked items" }));
+
+    expect(screen.getByRole("heading", { name: "Linked items" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Chat" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
   });
 
   it("renders libraries in pane shell with fixed chrome and scrolling body", () => {
