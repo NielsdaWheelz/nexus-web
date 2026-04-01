@@ -8,9 +8,10 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import type { ContextItem } from "@/lib/api/sse";
 import {
+  getAttachContextSignature,
   parseAttachContext,
   stripAttachParams,
 } from "@/lib/conversations/attachedContext";
@@ -39,12 +40,21 @@ export default function NewConversationPage() {
     () => parseAttachContext(searchParams),
     [searchParams],
   );
+  const initialAttachSignature = useMemo(
+    () => getAttachContextSignature(initialAttach),
+    [initialAttach],
+  );
   const [attachedContexts, setAttachedContexts] =
     useState<ContextItem[]>(initialAttach);
+  const syncedAttachSignatureRef = useRef(initialAttachSignature);
 
   useEffect(() => {
+    if (syncedAttachSignatureRef.current === initialAttachSignature) {
+      return;
+    }
+    syncedAttachSignatureRef.current = initialAttachSignature;
     setAttachedContexts(initialAttach);
-  }, [initialAttach]);
+  }, [initialAttach, initialAttachSignature]);
 
   // Hydrate context items with full data from API
   useEffect(() => {

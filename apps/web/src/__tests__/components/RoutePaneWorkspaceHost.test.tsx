@@ -265,6 +265,25 @@ describe("RoutePaneWorkspaceHost", () => {
     expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
   });
 
+  it("keeps linked items reopenable after closing in mobile pane switcher", async () => {
+    mockPathname.value = "/conversations/conv-123";
+    mockSearch.value =
+      "attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line";
+    mockIsMobile.value = true;
+    const user = userEvent.setup();
+
+    render(<RoutePaneWorkspaceHost />);
+
+    await user.click(screen.getByRole("button", { name: "Open panes" }));
+    expect(screen.getByRole("button", { name: "Linked items" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Close Linked items" }));
+    expect(screen.getByRole("button", { name: "Linked items" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Linked items" }));
+    expect(screen.getByRole("heading", { name: "Linked items" })).toBeInTheDocument();
+  });
+
   it("renders libraries in pane shell with fixed chrome and scrolling body", () => {
     mockPathname.value = "/libraries";
 

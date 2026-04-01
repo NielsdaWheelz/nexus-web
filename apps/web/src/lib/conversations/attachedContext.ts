@@ -68,6 +68,27 @@ export function parseAttachContext(
 }
 
 /**
+ * Stable signature for URL-backed attach context state.
+ *
+ * Includes only fields sourced from attach_* params so hydrated enrichment
+ * does not trigger false-positive "changed" comparisons.
+ */
+export function getAttachContextSignature(items: ContextItem[]): string {
+  return items
+    .map((item) =>
+      [
+        item.type,
+        item.id,
+        item.color ?? "",
+        item.preview ?? "",
+        item.mediaId ?? "",
+        item.mediaTitle ?? "",
+      ].join("\u001f")
+    )
+    .join("\u001e");
+}
+
+/**
  * Remove attach_type and attach_id from query params while preserving
  * all other keys. Returns a new URLSearchParams instance.
  */

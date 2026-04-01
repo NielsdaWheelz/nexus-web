@@ -11,6 +11,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ContextItem } from "@/lib/api/sse";
 import {
+  getAttachContextSignature,
   parseAttachContext,
   stripAttachParams,
 } from "@/lib/conversations/attachedContext";
@@ -73,12 +74,21 @@ export default function ConversationPaneBody() {
     () => parseAttachContext(searchParams),
     [searchParams],
   );
+  const initialAttachSignature = useMemo(
+    () => getAttachContextSignature(initialAttach),
+    [initialAttach],
+  );
   const [attachedContexts, setAttachedContexts] =
     useState<ContextItem[]>(initialAttach);
+  const syncedAttachSignatureRef = useRef(initialAttachSignature);
 
   useEffect(() => {
+    if (syncedAttachSignatureRef.current === initialAttachSignature) {
+      return;
+    }
+    syncedAttachSignatureRef.current = initialAttachSignature;
     setAttachedContexts(initialAttach);
-  }, [initialAttach]);
+  }, [initialAttach, initialAttachSignature]);
 
   // Hydrate context items with full data from API
   useEffect(() => {

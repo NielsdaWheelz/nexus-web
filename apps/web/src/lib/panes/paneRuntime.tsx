@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { normalizePaneHref } from "@/lib/panes/openInAppPane";
 
@@ -199,18 +199,20 @@ export function usePaneRouter(): PaneScopedRouter {
 export function usePaneSearchParams(): URLSearchParams {
   const paneRuntime = usePaneRuntime();
   const rootNavigation = useContext(PaneRootNavigationContext);
+  const paneSearch = paneRuntime?.searchParams.toString();
+  const rootSearch = rootNavigation?.searchParams.toString();
   return useMemo(() => {
-    if (paneRuntime) {
-      return new URLSearchParams(paneRuntime.searchParams.toString());
+    if (typeof paneSearch === "string") {
+      return new URLSearchParams(paneSearch);
     }
-    if (rootNavigation) {
-      return new URLSearchParams(rootNavigation.searchParams.toString());
+    if (typeof rootSearch === "string") {
+      return new URLSearchParams(rootSearch);
     }
     if (typeof window !== "undefined") {
       return new URLSearchParams(window.location.search);
     }
     return new URLSearchParams();
-  }, [paneRuntime, rootNavigation]);
+  }, [paneSearch, rootSearch]);
 }
 
 export function usePaneParam(paramName: string): string | null {
@@ -228,11 +230,19 @@ export function usePaneParam(paramName: string): string | null {
 export function useSetPaneTitle(title: string | null | undefined): void {
   const paneRuntime = usePaneRuntime();
   const normalizedTitle = normalizePaneTitle(title);
+  const lastPublishedTitleRef = useRef<{ paneId: string; title: string | null } | null>(null);
+  const paneId = paneRuntime?.paneId ?? null;
+  const setPaneTitle = paneRuntime?.setPaneTitle;
 
   useEffect(() => {
-    if (!paneRuntime) {
+    if (!paneId || !setPaneTitle) {
       return;
     }
-    paneRuntime.setPaneTitle(normalizedTitle);
-  }, [paneRuntime, normalizedTitle]);
+    const lastPublished = lastPublishedTitleRef.current;
+    if (lastPublished && lastPublished.paneId === paneId && lastPublished.title === normalizedTitle) {
+      return;
+    }
+    setPaneTitle(normalizedTitle);
+    lastPublishedTitleRef.current = { paneId, title: normalizedTitle };
+  }, [normalizedTitle, paneId, setPaneTitle]);
 }

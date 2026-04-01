@@ -1,11 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
-import { PaneRuntimeProvider, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import { useEffect, useState } from "react";
+import {
+  PaneRuntimeProvider,
+  usePaneSearchParams,
+  useSetPaneTitle,
+} from "@/lib/panes/paneRuntime";
 
 function PaneTitlePublisher({ title }: { title: string }) {
   useSetPaneTitle(title);
+  return null;
+}
+
+function SearchParamsConsumer({ onSeen }: { onSeen: (value: string) => void }) {
+  const searchParams = usePaneSearchParams();
+  useEffect(() => {
+    onSeen(searchParams.toString());
+  }, [onSeen, searchParams]);
   return null;
 }
 
@@ -40,6 +52,30 @@ function PaneTitleHarness({ onSetPaneTitle }: {
         onSetPaneTitle={onSetPaneTitle}
       >
         <PaneTitlePublisher title={title} />
+      </PaneRuntimeProvider>
+    </>
+  );
+}
+
+function SearchParamsHarness({ onSeen }: { onSeen: (value: string) => void }) {
+  const [renderTick, setRenderTick] = useState(0);
+  return (
+    <>
+      <button type="button" onClick={() => setRenderTick((value) => value + 1)}>
+        Force rerender
+      </button>
+      <output data-testid="search-render-tick">{renderTick}</output>
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href="/libraries/lib-1?foo=bar"
+        routeId="library"
+        resourceRef="library:lib-1"
+        pathParams={{ id: "lib-1" }}
+        onNavigatePane={() => {}}
+        onReplacePane={() => {}}
+        onOpenInNewPane={() => {}}
+      >
+        <SearchParamsConsumer onSeen={onSeen} />
       </PaneRuntimeProvider>
     </>
   );
@@ -84,5 +120,24 @@ describe("useSetPaneTitle", () => {
       routeId: "library",
       resourceRef: "library:lib-1",
     });
+  });
+});
+
+describe("usePaneSearchParams", () => {
+  it("does not republish unchanged params on provider rerenders", async () => {
+    const user = userEvent.setup();
+    const onSeen = vi.fn();
+    render(<SearchParamsHarness onSeen={onSeen} />);
+
+    await waitFor(() => {
+      expect(onSeen).toHaveBeenCalledTimes(1);
+    });
+    expect(onSeen).toHaveBeenLastCalledWith("foo=bar");
+
+    await user.click(screen.getByRole("button", { name: "Force rerender" }));
+    await user.click(screen.getByRole("button", { name: "Force rerender" }));
+    await user.click(screen.getByRole("button", { name: "Force rerender" }));
+
+    expect(onSeen).toHaveBeenCalledTimes(1);
   });
 });

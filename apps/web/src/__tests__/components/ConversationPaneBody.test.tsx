@@ -1,10 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 
 const apiFetchMock = vi.hoisted(() => vi.fn());
+const hydrateContextItemsMock = vi.hoisted(() => vi.fn(async (items: unknown[]) => items));
 
 vi.mock("@/lib/api/client", () => ({
   apiFetch: apiFetchMock,
@@ -12,7 +13,7 @@ vi.mock("@/lib/api/client", () => ({
 }));
 
 vi.mock("@/lib/conversations/hydrateContextItems", () => ({
-  hydrateContextItems: async (items: unknown[]) => items,
+  hydrateContextItems: hydrateContextItemsMock,
 }));
 
 vi.mock("@/components/ChatComposer", () => ({
@@ -78,7 +79,20 @@ vi.mock("@/components/ChatComposer", () => ({
   ),
 }));
 
-function renderConversationPane(href: string) {
+function renderConversationPane(
+  href: string,
+  {
+    onReplacePane = () => {},
+    onSetPaneTitle,
+  }: {
+    onReplacePane?: (paneId: string, href: string) => void;
+    onSetPaneTitle?: (
+      paneId: string,
+      title: string | null,
+      metadata: { routeId: string; resourceRef: string | null }
+    ) => void;
+  } = {}
+) {
   return render(
     <PaneRuntimeProvider
       paneId="pane-conversation"
@@ -87,8 +101,9 @@ function renderConversationPane(href: string) {
       resourceRef="conversation:conv-1"
       pathParams={{ id: "conv-1" }}
       onNavigatePane={() => {}}
-      onReplacePane={() => {}}
+      onReplacePane={onReplacePane}
       onOpenInNewPane={() => {}}
+      onSetPaneTitle={onSetPaneTitle}
     >
       <ConversationPaneBody />
     </PaneRuntimeProvider>
@@ -98,6 +113,7 @@ function renderConversationPane(href: string) {
 describe("ConversationPaneBody", () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
+    hydrateContextItemsMock.mockClear();
   });
 
   it("loads messages into a transcript scroll container and keeps composer visible", async () => {
@@ -171,6 +187,81 @@ describe("ConversationPaneBody", () => {
 
     expect(screen.getByText("new user message")).toBeInTheDocument();
     expect(screen.getByText("new assistant reply")).toBeInTheDocument();
+  });
+
+  it("clears attach params after send while preserving non-attach params", async () => {
+    const user = userEvent.setup();
+    const onReplacePane = vi.fn();
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === "/api/conversations/conv-1") {
+        return {
+          data: {
+            id: "conv-1",
+            title: "Chat title",
+            sharing: "private",
+            message_count: 0,
+            created_at: "2026-03-30T00:00:00.000Z",
+            updated_at: "2026-03-30T00:00:00.000Z",
+          },
+        };
+      }
+      if (path.startsWith("/api/conversations/conv-1/messages")) {
+        return { data: [], page: { next_cursor: null } };
+      }
+      throw new Error(`unexpected api path: ${path}`);
+    });
+
+    renderConversationPane(
+      "/conversations/conv-1?foo=bar&attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line",
+      { onReplacePane }
+    );
+    await screen.findByRole("button", { name: "Send mock message" });
+
+    await user.click(screen.getByRole("button", { name: "Send mock message" }));
+
+    expect(onReplacePane).toHaveBeenCalledWith(
+      "pane-conversation",
+      "/conversations/conv-1?foo=bar"
+    );
+  });
+
+  it("does not rehydrate unchanged attach context on host rerenders", async () => {
+    const { rerender } = render(
+      <PaneRuntimeProvider
+        paneId="pane-conversation"
+        href="/conversations/conv-1?pane=context&attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line"
+        routeId="conversation"
+        resourceRef="conversation:conv-1"
+        pathParams={{ id: "conv-1" }}
+        onNavigatePane={() => {}}
+        onReplacePane={() => {}}
+        onOpenInNewPane={() => {}}
+      >
+        <ConversationPaneBody />
+      </PaneRuntimeProvider>
+    );
+
+    await screen.findByTestId("conversation-linked-items");
+    expect(hydrateContextItemsMock).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <PaneRuntimeProvider
+        paneId="pane-conversation"
+        href="/conversations/conv-1?pane=context&attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line"
+        routeId="conversation"
+        resourceRef="conversation:conv-1"
+        pathParams={{ id: "conv-1" }}
+        onNavigatePane={() => {}}
+        onReplacePane={() => {}}
+        onOpenInNewPane={() => {}}
+      >
+        <ConversationPaneBody />
+      </PaneRuntimeProvider>
+    );
+
+    await waitFor(() => {
+      expect(hydrateContextItemsMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("renders linked-items pane content without legacy nested Pane shell", () => {

@@ -32,13 +32,11 @@ export default function RoutePaneWorkspaceHost() {
   const route = useMemo(() => resolvePaneRoute(href), [href]);
   const definition = route.definition;
 
-  const [dismissedCompanionPaneIds, setDismissedCompanionPaneIds] = useState<string[]>([]);
   const [widthByPaneId, setWidthByPaneId] = useState<Record<string, number>>({});
   const [runtimeTitleByPaneId, setRuntimeTitleByPaneId] = useState<Record<string, string>>({});
   const [activePaneId, setActivePaneId] = useState(PRIMARY_ROUTE_PANE_ID);
 
   useEffect(() => {
-    setDismissedCompanionPaneIds([]);
     setActivePaneId(PRIMARY_ROUTE_PANE_ID);
   }, [href]);
 
@@ -96,17 +94,11 @@ export default function RoutePaneWorkspaceHost() {
     return [primaryPane, ...companionPanes];
   }, [definition, href, route.id, route.params, route.resourceRef, route.staticTitle]);
 
-  const visiblePaneDrafts = useMemo(
-    () =>
-      paneDrafts.filter((pane) => !dismissedCompanionPaneIds.includes(pane.paneId)),
-    [dismissedCompanionPaneIds, paneDrafts]
-  );
-
   useEffect(() => {
     setWidthByPaneId((previousWidths) => {
       const nextWidths: Record<string, number> = {};
       let changed = false;
-      for (const pane of visiblePaneDrafts) {
+      for (const pane of paneDrafts) {
         const existing = previousWidths[pane.paneId];
         const widthPx = typeof existing === "number" ? existing : pane.defaultWidthPx;
         nextWidths[pane.paneId] = widthPx;
@@ -123,7 +115,7 @@ export default function RoutePaneWorkspaceHost() {
     setRuntimeTitleByPaneId((previousTitles) => {
       const nextTitles: Record<string, string> = {};
       let changed = false;
-      for (const pane of visiblePaneDrafts) {
+      for (const pane of paneDrafts) {
         const existing = previousTitles[pane.paneId];
         if (typeof existing === "string" && existing.trim()) {
           nextTitles[pane.paneId] = existing;
@@ -134,13 +126,13 @@ export default function RoutePaneWorkspaceHost() {
       }
       return changed ? nextTitles : previousTitles;
     });
-  }, [visiblePaneDrafts]);
+  }, [paneDrafts]);
 
   useEffect(() => {
-    if (!visiblePaneDrafts.some((pane) => pane.paneId === activePaneId)) {
-      setActivePaneId(visiblePaneDrafts[0]?.paneId ?? PRIMARY_ROUTE_PANE_ID);
+    if (!paneDrafts.some((pane) => pane.paneId === activePaneId)) {
+      setActivePaneId(paneDrafts[0]?.paneId ?? PRIMARY_ROUTE_PANE_ID);
     }
-  }, [activePaneId, visiblePaneDrafts]);
+  }, [activePaneId, paneDrafts]);
 
   const handleSetPaneTitle = useCallback((paneId: string, title: string | null) => {
     const normalizedTitle =
@@ -162,9 +154,30 @@ export default function RoutePaneWorkspaceHost() {
     });
   }, []);
 
+  const handleNavigatePane = useCallback(
+    (_paneId: string, nextHref: string) => {
+      router.push(nextHref);
+    },
+    [router]
+  );
+
+  const handleReplacePane = useCallback(
+    (_paneId: string, nextHref: string) => {
+      router.replace(nextHref);
+    },
+    [router]
+  );
+
+  const handleOpenInNewPane = useCallback(
+    (nextHref: string) => {
+      router.push(nextHref);
+    },
+    [router]
+  );
+
   const panes = useMemo<WorkspaceShellPane[]>(
     () =>
-      visiblePaneDrafts.map((pane) => ({
+      paneDrafts.map((pane) => ({
         paneId: pane.paneId,
         title: runtimeTitleByPaneId[pane.paneId] ?? pane.title,
         subtitle: pane.subtitle,
@@ -182,10 +195,10 @@ export default function RoutePaneWorkspaceHost() {
             routeId={pane.routeId}
             resourceRef={pane.resourceRef}
             pathParams={pane.params}
-            onNavigatePane={(_paneId, nextHref) => router.push(nextHref)}
-            onReplacePane={(_paneId, nextHref) => router.replace(nextHref)}
-            onOpenInNewPane={(nextHref) => router.push(nextHref)}
-            onSetPaneTitle={(paneId, title) => handleSetPaneTitle(paneId, title)}
+            onNavigatePane={handleNavigatePane}
+            onReplacePane={handleReplacePane}
+            onOpenInNewPane={handleOpenInNewPane}
+            onSetPaneTitle={handleSetPaneTitle}
           >
             <div className={styles.bodyContent}>
               {pane.renderBody?.({ href: pane.href, params: pane.params }) ?? (
@@ -197,7 +210,16 @@ export default function RoutePaneWorkspaceHost() {
           </PaneRuntimeProvider>
         ),
       })),
-    [activePaneId, handleSetPaneTitle, router, runtimeTitleByPaneId, visiblePaneDrafts, widthByPaneId]
+    [
+      activePaneId,
+      handleNavigatePane,
+      handleOpenInNewPane,
+      handleReplacePane,
+      handleSetPaneTitle,
+      paneDrafts,
+      runtimeTitleByPaneId,
+      widthByPaneId,
+    ]
   );
 
   const handleClosePane = useCallback(
@@ -206,11 +228,7 @@ export default function RoutePaneWorkspaceHost() {
         router.push(closeFallbackHref);
         return;
       }
-      setDismissedCompanionPaneIds((previousPaneIds) =>
-        previousPaneIds.includes(paneId)
-          ? previousPaneIds
-          : [...previousPaneIds, paneId]
-      );
+      // Keep companion panes reopenable for the current href.
       setActivePaneId(PRIMARY_ROUTE_PANE_ID);
     },
     [closeFallbackHref, router]
