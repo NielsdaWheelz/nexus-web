@@ -131,8 +131,19 @@ export default function PaneShell({
         data-pane-content="true"
         style={
           bodyMode === "document"
-            ? { overflow: "hidden" }
-            : { overflowY: "auto", overflowX: "hidden" }
+            ? {
+                display: "flex",
+                flexDirection: "column",
+                minHeight: 0,
+                overflow: "hidden",
+              }
+            : {
+                display: "flex",
+                flexDirection: "column",
+                minHeight: 0,
+                overflowY: "auto",
+                overflowX: "hidden",
+              }
         }
       >
         {children}

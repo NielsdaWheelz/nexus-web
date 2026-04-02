@@ -26,7 +26,13 @@ describe("PaneShell", () => {
     expect(body).toBeInTheDocument();
     expect(body).toHaveAttribute("data-body-mode", "standard");
     expect(body).toHaveAttribute("data-pane-content", "true");
-    expect(body).toHaveStyle({ overflowY: "auto", overflowX: "hidden" });
+    expect(body).toHaveStyle({
+      display: "flex",
+      flexDirection: "column",
+      minHeight: "0",
+      overflowY: "auto",
+      overflowX: "hidden",
+    });
   });
 
   it("delegates keyboard resize to the focused resize handle", () => {
@@ -104,7 +110,12 @@ describe("PaneShell", () => {
     const viewport = screen.getByTestId("document-viewport");
     expect(body).toHaveAttribute("data-body-mode", "document");
     expect(body).toHaveAttribute("data-pane-content", "true");
-    expect(body).toHaveStyle({ overflow: "hidden" });
+    expect(body).toHaveStyle({
+      display: "flex",
+      flexDirection: "column",
+      minHeight: "0",
+      overflow: "hidden",
+    });
     expect(viewport).toHaveAttribute("data-pane-content", "true");
     expect(viewport).toHaveStyle({ overflow: "auto" });
   });
