@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import PaneRouteRenderer from "@/components/PaneRouteRenderer";
 import WorkspaceShell, { type WorkspaceShellPane } from "@/components/workspace/WorkspaceShell";
 import {
@@ -13,6 +13,56 @@ import { resolvePaneRoute, getParentHref } from "@/lib/panes/paneRouteRegistry";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import styles from "./WorkspaceHost.module.css";
+
+const PaneContent = memo(function PaneContent({
+  paneId,
+  href,
+  navigatePane,
+  openPane,
+  publishPaneTitle,
+}: {
+  paneId: string;
+  href: string;
+  navigatePane: (paneId: string, href: string, options?: { replace?: boolean }) => void;
+  openPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
+  publishPaneTitle: (
+    paneId: string,
+    title: string | null,
+    options?: { resourceRef?: string | null }
+  ) => void;
+}) {
+  const handleReplacePane = useCallback(
+    (pid: string, h: string) => navigatePane(pid, h, { replace: true }),
+    [navigatePane]
+  );
+  const handleOpenInNewPane = useCallback(
+    (h: string) => openPane({ href: h, openerPaneId: paneId, activate: true }),
+    [openPane, paneId]
+  );
+  const handleSetPaneTitle = useCallback(
+    (
+      pid: string,
+      title: string | null,
+      metadata: { routeId: string; resourceRef: string | null }
+    ) => {
+      publishPaneTitle(pid, title, { resourceRef: metadata.resourceRef });
+    },
+    [publishPaneTitle]
+  );
+
+  return (
+    <div className={styles.routeShell}>
+      <PaneRouteRenderer
+        paneId={paneId}
+        href={href}
+        onNavigatePane={navigatePane}
+        onReplacePane={handleReplacePane}
+        onOpenInNewPane={handleOpenInNewPane}
+        onSetPaneTitle={handleSetPaneTitle}
+      />
+    </div>
+  );
+});
 
 function buildShellPane(input: {
   pane: WorkspacePaneStateV3;
@@ -69,26 +119,13 @@ function buildShellPane(input: {
     maxWidthPx: route.definition?.maxWidthPx ?? MAX_STANDARD_PANE_WIDTH_PX,
     isActive: input.isActive,
     content: (
-      <div className={styles.routeShell}>
-        <PaneRouteRenderer
-          paneId={input.pane.id}
-          href={input.pane.href}
-          onNavigatePane={(paneId, href) => input.onNavigatePane(paneId, href)}
-          onReplacePane={(paneId, href) => input.onNavigatePane(paneId, href, { replace: true })}
-          onOpenInNewPane={(href) =>
-            input.onOpenPane({
-              href,
-              openerPaneId: input.pane.id,
-              activate: true,
-            })
-          }
-          onSetPaneTitle={(paneId, paneTitle, metadata) => {
-            input.onPublishPaneTitle(paneId, paneTitle, {
-              resourceRef: metadata.resourceRef,
-            });
-          }}
-        />
-      </div>
+      <PaneContent
+        paneId={input.pane.id}
+        href={input.pane.href}
+        navigatePane={input.onNavigatePane}
+        openPane={input.onOpenPane}
+        publishPaneTitle={input.onPublishPaneTitle}
+      />
     ),
   };
 }
