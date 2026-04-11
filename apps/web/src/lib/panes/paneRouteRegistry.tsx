@@ -18,6 +18,7 @@ import SettingsPaneBody from "@/components/panes/routes/SettingsPaneBody";
 import SettingsReaderPaneBody from "@/components/panes/routes/SettingsReaderPaneBody";
 import SettingsKeysPaneBody from "@/components/panes/routes/SettingsKeysPaneBody";
 import SettingsIdentitiesPaneBody from "@/components/panes/routes/SettingsIdentitiesPaneBody";
+import KeybindingsPaneBody from "@/components/panes/routes/KeybindingsPaneBody";
 
 type RouteParamValue = string;
 type RouteParams = Record<string, RouteParamValue>;
@@ -53,7 +54,8 @@ export type PaneRouteId =
   | "settings"
   | "settingsReader"
   | "settingsKeys"
-  | "settingsIdentities";
+  | "settingsIdentities"
+  | "settingsKeybindings";
 
 interface PaneRouteDefinition {
   id: PaneRouteId;
@@ -369,6 +371,21 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       subtitle: "Manage Google and GitHub identities linked to this account.",
     }),
     renderBody: () => <SettingsIdentitiesPaneBody />,
+  },
+  {
+    id: "settingsKeybindings",
+    pattern: ["settings", "keybindings"],
+    staticTitle: "Keyboard shortcuts",
+    render: () => <KeybindingsPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Keyboard Shortcuts",
+      subtitle: "Customize key bindings for palette actions.",
+    }),
+    renderBody: () => <KeybindingsPaneBody />,
   },
 ];
 

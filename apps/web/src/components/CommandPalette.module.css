@@ -55,6 +55,10 @@
 }
 
 .item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -64,6 +68,39 @@
 .item.active {
   background: var(--color-surface);
   color: var(--color-text);
+}
+
+.itemLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchResultMeta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+  padding: 0 var(--space-1);
+  flex-shrink: 0;
+}
+
+.shortcutHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-family: monospace;
+  flex-shrink: 0;
+}
+
+.searchingIndicator {
+  padding: var(--space-2) var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
 }
 
 .empty {
@@ -143,7 +180,6 @@
   color: var(--color-text-secondary);
 }
 
-/* Mobile items: larger touch targets */
 @media (max-width: 768px) {
   .backdrop {
     display: none;
@@ -151,8 +187,6 @@
 
   .item {
     min-height: 44px;
-    display: flex;
-    align-items: center;
     padding: var(--space-3) var(--space-4);
     touch-action: manipulation;
   }

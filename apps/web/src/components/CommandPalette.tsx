@@ -3,10 +3,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { apiFetch } from "@/lib/api/client";
+import {
+  type SearchResponseShape,
+  type SearchResultRowViewModel,
+  ALL_SEARCH_TYPES,
+  buildSearchQueryParams,
+  normalizeSearchResult,
+  adaptSearchResultRow,
+} from "@/lib/search/resultRowAdapter";
+import {
+  loadKeybindings,
+  matchesKeyEvent,
+  formatKeyCombo,
+} from "@/lib/keybindings";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./CommandPalette.module.css";
 
-type Section = "Navigate" | "Create";
+type Section = "Recent" | "Create" | "Navigate" | "Search Results";
 
 interface Action {
   id: string;
@@ -18,6 +32,9 @@ interface Action {
 
 const OPEN_UPLOAD_EVENT = "nexus:open-upload";
 const OPEN_COMMAND_PALETTE_EVENT = "nexus:open-command-palette";
+
+const RECENT_STORAGE_KEY = "nexus.commandPalette.recent.v1";
+const MAX_RECENT = 8;
 
 function dispatchOpenUpload() {
   window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
@@ -36,6 +53,7 @@ const ACTIONS: Action[] = [
   { id: "nav-reader-settings", label: "Reader Settings", keywords: ["typography", "font", "theme"], section: "Navigate", execute: () => requestOpenInAppPane("/settings/reader") },
   { id: "nav-api-keys", label: "API Keys", keywords: ["credentials", "providers"], section: "Navigate", execute: () => requestOpenInAppPane("/settings/keys") },
   { id: "nav-identities", label: "Linked Identities", keywords: ["google", "github", "oauth"], section: "Navigate", execute: () => requestOpenInAppPane("/settings/identities") },
+  { id: "nav-keybindings", label: "Keyboard Shortcuts", keywords: ["keybindings", "hotkeys", "shortcuts"], section: "Navigate", execute: () => requestOpenInAppPane("/settings/keybindings") },
 
   // Create
   { id: "create-conversation", label: "New conversation", keywords: ["chat", "message"], section: "Create", execute: () => requestOpenInAppPane("/conversations/new") },
@@ -44,7 +62,30 @@ const ACTIONS: Action[] = [
   { id: "create-url", label: "Add from URL", keywords: ["link", "paste", "import"], section: "Create", execute: dispatchOpenUpload },
 ];
 
-const SECTION_ORDER: Section[] = ["Create", "Navigate"];
+const ACTIONS_BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
+const SECTION_ORDER: Section[] = ["Recent", "Create", "Navigate", "Search Results"];
+
+function loadRecentIds(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentIds(ids: string[]): void {
+  try {
+    localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(ids));
+  } catch { /* quota or private mode — ignore */ }
+}
+
+function pushRecent(ids: string[], actionId: string): string[] {
+  const next = [actionId, ...ids.filter((id) => id !== actionId)];
+  return next.slice(0, MAX_RECENT);
+}
 
 function getFocusableElements(container: HTMLElement): HTMLElement[] {
   const selectors = [
@@ -64,15 +105,28 @@ export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [recentIds, setRecentIds] = useState<string[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResultRowViewModel[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [keybindings, setKeybindings] = useState<Record<string, string>>({});
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLElement>(null);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMobile = useIsMobileViewport();
 
-  // Cmd+K / Ctrl+K to toggle
+  // Load recent IDs and keybindings on mount
+  useEffect(() => {
+    setRecentIds(loadRecentIds());
+    setKeybindings(loadKeybindings());
+  }, []);
+
+  // Global keyboard shortcut listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      // Check palette toggle binding (default: Cmd+K / Ctrl+K)
+      const paletteCombo = keybindings["open-palette"];
+      if (paletteCombo && matchesKeyEvent(paletteCombo, e)) {
         e.preventDefault();
         setOpen((prev) => {
           if (!prev) {
@@ -81,11 +135,28 @@ export default function CommandPalette() {
           }
           return !prev;
         });
+        return;
+      }
+
+      // Check action-specific bindings
+      for (const [actionId, combo] of Object.entries(keybindings)) {
+        if (actionId === "open-palette") continue;
+        if (matchesKeyEvent(combo, e)) {
+          e.preventDefault();
+          const action = ACTIONS_BY_ID.get(actionId);
+          if (action) {
+            const next = pushRecent(recentIds, actionId);
+            setRecentIds(next);
+            saveRecentIds(next);
+            action.execute();
+          }
+          return;
+        }
       }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [keybindings, recentIds]);
 
   // External open trigger (mobile Search button)
   useEffect(() => {
@@ -140,6 +211,47 @@ export default function CommandPalette() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isMobile, open]);
 
+  // Debounced backend search
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+
+    if (query.trim().length < 2) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    setSearchLoading(true);
+    const q = query.trim();
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const params = buildSearchQueryParams({
+          query: q,
+          selectedTypes: new Set(ALL_SEARCH_TYPES),
+          limit: 5,
+          cursor: null,
+        });
+        const response = await apiFetch<SearchResponseShape>(
+          `/api/search?${params.toString()}`,
+        );
+        const valid = response.results
+          .map((r) => normalizeSearchResult(r))
+          .filter((r): r is NonNullable<typeof r> => r !== null)
+          .map((r) => adaptSearchResultRow(r));
+        setSearchResults(valid);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, [query]);
+
+  // Filter static actions
   const filtered = useMemo(() => {
     if (!query) return ACTIONS;
     const q = query.toLowerCase();
@@ -150,14 +262,38 @@ export default function CommandPalette() {
     );
   }, [query]);
 
+  // Build recent actions (only when no query)
+  const recentActions = useMemo(() => {
+    if (query) return [];
+    return recentIds
+      .map((id) => ACTIONS_BY_ID.get(id))
+      .filter((a): a is Action => a !== undefined)
+      .map((a) => ({ ...a, section: "Recent" as Section }));
+  }, [query, recentIds]);
+
+  // Build search result actions
+  const searchActions: Action[] = useMemo(
+    () =>
+      searchResults.map((r) => ({
+        id: `search-${r.key}`,
+        label: r.primaryText,
+        keywords: [],
+        section: "Search Results" as Section,
+        execute: () => requestOpenInAppPane(r.href),
+      })),
+    [searchResults],
+  );
+
+  // Group by section in display order
   const grouped = useMemo(() => {
+    const allItems = [...recentActions, ...filtered, ...searchActions];
     const groups: { section: Section; items: Action[] }[] = [];
     for (const section of SECTION_ORDER) {
-      const items = filtered.filter((a) => a.section === section);
+      const items = allItems.filter((a) => a.section === section);
       if (items.length > 0) groups.push({ section, items });
     }
     return groups;
-  }, [filtered]);
+  }, [recentActions, filtered, searchActions]);
 
   const flatItems = useMemo(
     () => grouped.flatMap((g) => g.items),
@@ -168,10 +304,16 @@ export default function CommandPalette() {
 
   const executeAction = useCallback(
     (action: Action) => {
+      // Track in recents (only for static actions, not search results)
+      if (ACTIONS_BY_ID.has(action.id)) {
+        const next = pushRecent(recentIds, action.id);
+        setRecentIds(next);
+        saveRecentIds(next);
+      }
       close();
       action.execute();
     },
-    [close],
+    [close, recentIds],
   );
 
   const handleKeyDown = useCallback(
@@ -221,7 +363,7 @@ export default function CommandPalette() {
       className={styles.list}
       role="listbox"
     >
-      {grouped.length === 0 && (
+      {grouped.length === 0 && !searchLoading && (
         <div className={styles.empty}>No matching commands</div>
       )}
       {grouped.map((group) => (
@@ -231,6 +373,10 @@ export default function CommandPalette() {
           </div>
           {group.items.map((action) => {
             const idx = itemIndex++;
+            const combo = keybindings[action.id];
+            const searchVm = action.id.startsWith("search-")
+              ? searchResults.find((r) => `search-${r.key}` === action.id)
+              : null;
             return (
               <div
                 key={action.id}
@@ -242,12 +388,23 @@ export default function CommandPalette() {
                 onClick={() => executeAction(action)}
                 onMouseEnter={() => setActiveIndex(idx)}
               >
-                {action.label}
+                <span className={styles.itemLabel}>
+                  {action.label}
+                  {searchVm && (
+                    <span className={styles.searchResultMeta}>{searchVm.typeLabel}</span>
+                  )}
+                </span>
+                {combo && (
+                  <span className={styles.shortcutHint}>{formatKeyCombo(combo)}</span>
+                )}
               </div>
             );
           })}
         </div>
       ))}
+      {searchLoading && (
+        <div className={styles.searchingIndicator}>Searching...</div>
+      )}
     </div>
   );
 
