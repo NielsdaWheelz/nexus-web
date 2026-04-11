@@ -16,8 +16,6 @@ import { buildAuthCallbackUrl } from "@/lib/auth/redirects";
 import { createClient } from "@/lib/supabase/client";
 import styles from "./page.module.css";
 
-const LINKING_RETURN_PATH = "/settings/identities";
-
 function linkedDate(identity: LinkedIdentity): string {
   if (!identity.createdAt) {
     return "linked date unavailable";
@@ -77,7 +75,7 @@ export default function SettingsIdentitiesPaneBody() {
       const { error: linkError } = await supabase.auth.linkIdentity({
         provider,
         options: {
-          redirectTo: buildAuthCallbackUrl(window.location.origin, LINKING_RETURN_PATH),
+          redirectTo: buildAuthCallbackUrl(window.location.origin, "/settings/identities"),
         },
       });
 

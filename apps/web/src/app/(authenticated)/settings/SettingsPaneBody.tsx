@@ -1,70 +1,52 @@
 "use client";
 
-import { ArrowRight, BookOpen, KeyRound, Link2, ShieldCheck } from "lucide-react";
+import type { ComponentType } from "react";
+import { ArrowRight, BookOpen, KeyRound, Link2 } from "lucide-react";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
 
+const SETTINGS_ITEMS: {
+  href: string;
+  title: string;
+  description: string;
+  Icon: ComponentType<{ size?: number }>;
+}[] = [
+  {
+    href: "/settings/keys",
+    title: "API Keys",
+    description: "Configure OpenAI, Anthropic, and Gemini keys.",
+    Icon: KeyRound,
+  },
+  {
+    href: "/settings/reader",
+    title: "Reader Settings",
+    description: "Theme, font, line height, column width, focus mode.",
+    Icon: BookOpen,
+  },
+  {
+    href: "/settings/identities",
+    title: "Linked Identities",
+    description: "Connect or remove Google and GitHub sign-in methods.",
+    Icon: Link2,
+  },
+];
+
 export default function SettingsPaneBody() {
   return (
-    <>
-      <SectionCard
-        title="Integrations"
-        description="Bring-your-own-key provider credentials."
-      >
-        <AppList>
+    <SectionCard>
+      <AppList>
+        {SETTINGS_ITEMS.map(({ href, title, description, Icon }) => (
           <AppListItem
-            href="/settings/keys"
-            icon={<KeyRound size={18} />}
-            title="API Keys"
-            description="Configure OpenAI, Anthropic, and Gemini keys."
+            key={href}
+            href={href}
+            icon={<Icon size={18} />}
+            title={title}
+            description={description}
             trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
           />
-        </AppList>
-      </SectionCard>
-
-      <SectionCard
-        title="Reader"
-        description="Typography, theme, and layout preferences."
-      >
-        <AppList>
-          <AppListItem
-            href="/settings/reader"
-            icon={<BookOpen size={18} />}
-            title="Reader Settings"
-            description="Theme, font, line height, column width, focus mode."
-            trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
-          />
-        </AppList>
-      </SectionCard>
-
-      <SectionCard
-        title="Authentication"
-        description="Manage linked OAuth identities for this account."
-      >
-        <AppList>
-          <AppListItem
-            href="/settings/identities"
-            icon={<Link2 size={18} />}
-            title="Linked Identities"
-            description="Connect or remove Google and GitHub sign-in methods."
-            trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
-          />
-        </AppList>
-      </SectionCard>
-
-      <SectionCard
-        title="Security"
-        description="Baseline account posture."
-      >
-        <AppList>
-          <AppListItem
-            title="Session Security"
-            icon={<ShieldCheck size={18} />}
-            description="Signed-in state and server-side auth checks are active."
-          />
-        </AppList>
-      </SectionCard>
-    </>
+        ))}
+      </AppList>
+    </SectionCard>
   );
 }

@@ -19,10 +19,6 @@ import StatusPill from "@/components/ui/StatusPill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
 
-// ============================================================================
-// Types
-// ============================================================================
-
 interface ApiKey {
   id: string;
   provider: string;
@@ -32,25 +28,16 @@ interface ApiKey {
   last_tested_at: string | null;
 }
 
-// ============================================================================
-// Component
-// ============================================================================
-
 export default function SettingsKeysPaneBody() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Form state
   const [provider, setProvider] = useState("openai");
   const [apiKey, setApiKey] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  // --------------------------------------------------------------------------
-  // Fetch keys
-  // --------------------------------------------------------------------------
 
   const fetchKeys = useCallback(async () => {
     try {
@@ -71,10 +58,6 @@ export default function SettingsKeysPaneBody() {
   useEffect(() => {
     fetchKeys();
   }, [fetchKeys]);
-
-  // --------------------------------------------------------------------------
-  // Add/update key
-  // --------------------------------------------------------------------------
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -105,10 +88,6 @@ export default function SettingsKeysPaneBody() {
     [provider, apiKey, fetchKeys]
   );
 
-  // --------------------------------------------------------------------------
-  // Revoke key
-  // --------------------------------------------------------------------------
-
   const handleRevoke = useCallback(
     async (keyId: string) => {
       try {
@@ -120,17 +99,6 @@ export default function SettingsKeysPaneBody() {
     },
     [fetchKeys]
   );
-
-  // --------------------------------------------------------------------------
-  // Render
-  // --------------------------------------------------------------------------
-
-  const statusVariant = (status: ApiKey["status"]) => {
-    if (status === "valid") return "success";
-    if (status === "untested") return "warning";
-    if (status === "invalid") return "danger";
-    return "neutral";
-  };
 
   return (
     <>
@@ -155,7 +123,14 @@ export default function SettingsKeysPaneBody() {
                     : "never tested"
                 }
                 trailing={
-                  <StatusPill variant={statusVariant(key.status)}>
+                  <StatusPill
+                    variant={
+                      key.status === "valid" ? "success"
+                        : key.status === "untested" ? "warning"
+                        : key.status === "invalid" ? "danger"
+                        : "neutral"
+                    }
+                  >
                     {key.status}
                   </StatusPill>
                 }
