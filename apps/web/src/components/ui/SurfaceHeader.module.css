@@ -16,6 +16,31 @@
   flex: 1;
 }
 
+.backButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.backButton:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.backButton:active {
+  background: var(--color-bg-active);
+}
+
 .titles {
   display: flex;
   flex-direction: column;

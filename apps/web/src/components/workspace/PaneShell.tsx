@@ -17,6 +17,7 @@ interface PaneShellProps {
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
   options?: SurfaceHeaderOption[];
+  onBack?: () => void;
   widthPx: number;
   minWidthPx: number;
   maxWidthPx: number;
@@ -34,6 +35,7 @@ export default function PaneShell({
   toolbar,
   actions,
   options,
+  onBack,
   widthPx,
   minWidthPx,
   maxWidthPx,
@@ -209,7 +211,7 @@ export default function PaneShell({
         data-pane-chrome-focus="true"
         tabIndex={-1}
       >
-        <SurfaceHeader title={title} subtitle={subtitle} options={options} actions={actions} />
+        <SurfaceHeader title={title} subtitle={subtitle} options={options} actions={actions} onBack={onBack} />
         {toolbar ? <div className={styles.toolbar}>{toolbar}</div> : null}
       </div>
       <div

@@ -9,7 +9,7 @@ import {
   type WorkspacePaneStateV3,
 } from "@/lib/workspace/schema";
 import { resolvePaneDescriptor } from "@/lib/workspace/paneDescriptor";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
+import { resolvePaneRoute, getParentHref } from "@/lib/panes/paneRouteRegistry";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import styles from "./WorkspaceHost.module.css";
@@ -51,12 +51,18 @@ function buildShellPane(input: {
     ? chrome?.title || descriptor.resolvedTitle || "Pane"
     : descriptor.resolvedTitle || chrome?.title || "Pane";
 
+  const parentHref = getParentHref(route);
+  const onBack = parentHref
+    ? () => input.onNavigatePane(input.pane.id, parentHref)
+    : undefined;
+
   return {
     paneId: input.pane.id,
     title,
     subtitle: chrome?.subtitle,
     toolbar: chrome?.toolbar,
     actions: chrome?.actions,
+    onBack,
     bodyMode: route.definition?.bodyMode ?? "standard",
     widthPx: input.pane.widthPx,
     minWidthPx: route.definition?.minWidthPx ?? MIN_PANE_WIDTH_PX,

@@ -16,6 +16,7 @@ export interface WorkspaceShellPane {
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
   options?: SurfaceHeaderOption[];
+  onBack?: () => void;
   bodyMode: PaneBodyMode;
   widthPx: number;
   minWidthPx: number;
@@ -142,6 +143,7 @@ export default function WorkspaceShell({
               toolbar={pane.toolbar}
               actions={pane.actions}
               options={pane.options}
+              onBack={pane.onBack}
               widthPx={pane.widthPx}
               minWidthPx={pane.minWidthPx}
               maxWidthPx={pane.maxWidthPx}

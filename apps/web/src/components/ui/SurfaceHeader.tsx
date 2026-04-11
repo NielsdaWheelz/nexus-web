@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, type ReactNode } from "react";
+import { ChevronLeft } from "lucide-react";
 import ActionMenu, { type ActionMenuOption } from "./ActionMenu";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./SurfaceHeader.module.css";
@@ -15,6 +16,7 @@ interface SurfaceHeaderProps {
   options?: SurfaceHeaderOption[];
   headingLevel?: 1 | 2;
   className?: string;
+  onBack?: () => void;
 }
 
 const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function SurfaceHeader(
@@ -26,6 +28,7 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
     options = [],
     headingLevel = 2,
     className,
+    onBack,
   }: SurfaceHeaderProps,
   ref
 ) {
@@ -44,6 +47,16 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
       data-mobile={isMobile ? "true" : undefined}
     >
       <div className={styles.leading}>
+        {onBack && (
+          <button
+            type="button"
+            className={styles.backButton}
+            onClick={onBack}
+            aria-label="Go back"
+          >
+            <ChevronLeft size={20} />
+          </button>
+        )}
         <div className={styles.titles}>
           <HeadingTag className={styles.title}>{title}</HeadingTag>
           {subtitle && <p className={styles.subtitle}>{subtitle}</p>}

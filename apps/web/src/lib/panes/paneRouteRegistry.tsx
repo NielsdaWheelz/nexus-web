@@ -435,6 +435,28 @@ function parseHrefPathname(href: string): string {
   return new URL(href, baseOrigin).pathname;
 }
 
+/**
+ * Returns the parent href for a resolved route, or null if it's a top-level route.
+ * Derived mechanically: drop the last pattern segment and find the matching route.
+ */
+export function getParentHref(resolved: ResolvedPaneRoute): string | null {
+  if (!resolved.definition || resolved.definition.pattern.length <= 1) {
+    return null;
+  }
+  const parentPattern = resolved.definition.pattern.slice(0, -1);
+  const parentPathname = "/" + parentPattern.join("/");
+  // Verify a route actually exists at the parent path
+  for (const def of ROUTE_DEFINITIONS) {
+    if (
+      def.pattern.length === parentPattern.length &&
+      def.pattern.every((token, i) => token === parentPattern[i])
+    ) {
+      return parentPathname;
+    }
+  }
+  return null;
+}
+
 export function resolvePaneRoute(href: string): ResolvedPaneRoute {
   const pathname = parseHrefPathname(href);
   for (const definition of ROUTE_DEFINITIONS) {
