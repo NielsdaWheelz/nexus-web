@@ -15,6 +15,7 @@ const DISCOVER_HREFS = ["/discover"] as const;
 const CONVERSATIONS_HREFS = ["/conversations"] as const;
 const CONVERSATION_DETAIL_HREFS = ["/conversations/conv-123"] as const;
 const LIBRARIES_HREFS = ["/libraries"] as const;
+const LIBRARY_DETAIL_HREFS = ["/libraries/lib-123"] as const;
 
 const SETTINGS_ROUTE_FILES = [
   "src/app/(authenticated)/settings/page.tsx",
@@ -30,6 +31,9 @@ const CONVERSATION_DETAIL_ROUTE_FILES = [
   "src/app/(authenticated)/conversations/[id]/page.tsx",
 ] as const;
 const LIBRARIES_ROUTE_FILES = ["src/app/(authenticated)/libraries/page.tsx"] as const;
+const LIBRARY_DETAIL_ROUTE_FILES = [
+  "src/app/(authenticated)/libraries/[id]/page.tsx",
+] as const;
 
 function resolveFromWebRoot(relativePath: string): string {
   return path.resolve(process.cwd(), relativePath);
@@ -252,6 +256,44 @@ describe("workspace pane cutover contract (libraries slice)", () => {
   });
 
   it("routes /libraries through the unified workspace host", () => {
+    const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
+    expect(layoutSource.includes("WorkspaceHost")).toBe(true);
+  });
+});
+
+describe("workspace pane cutover contract (library detail slice)", () => {
+  it("declares /libraries/:id with pane metadata for chrome/body/width ownership", () => {
+    for (const href of LIBRARY_DETAIL_HREFS) {
+      const route = resolvePaneRoute(href);
+      expect(route.id).toBe("library");
+      expect(route.definition).toBeTruthy();
+      expect(route.definition?.bodyMode).toBe("standard");
+      expect(route.definition?.defaultWidthPx).toBe(560);
+      expect(route.definition?.minWidthPx).toBeTypeOf("number");
+      expect(route.definition?.maxWidthPx).toBeTypeOf("number");
+      expect(route.definition?.getChrome).toBeTypeOf("function");
+      expect(route.definition?.renderBody).toBeTypeOf("function");
+    }
+  });
+
+  it("keeps /libraries/[id] route entrypoint free of legacy pane wrappers", () => {
+    for (const relativeFilePath of LIBRARY_DETAIL_ROUTE_FILES) {
+      const source = readFileSync(resolveFromWebRoot(relativeFilePath), "utf-8");
+      expect(source.includes('from "@/components/PaneContainer"')).toBe(false);
+      expect(source.includes('from "@/components/Pane"')).toBe(false);
+      expect(source.includes("SplitSurface")).toBe(false);
+    }
+  });
+
+  it("keeps library-detail pane registry wiring off route page modules", () => {
+    const registrySource = readFileSync(
+      resolveFromWebRoot("src/lib/panes/paneRouteRegistry.tsx"),
+      "utf-8"
+    );
+    expect(registrySource.includes('"/libraries/[id]/page"')).toBe(false);
+  });
+
+  it("routes /libraries/[id] through the unified workspace host", () => {
     const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
     expect(layoutSource.includes("WorkspaceHost")).toBe(true);
   });

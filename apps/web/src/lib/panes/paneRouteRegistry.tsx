@@ -129,6 +129,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Library" }),
+    renderBody: () => <LibraryPaneBody />,
   },
   {
     id: "media",
