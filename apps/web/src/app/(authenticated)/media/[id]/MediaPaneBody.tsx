@@ -24,6 +24,7 @@ import { type Highlight } from "@/components/HighlightEditor";
 import HighlightEditPopover from "@/components/HighlightEditPopover";
 import { useToast } from "@/components/Toast";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
+import { DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX } from "@/lib/panes/paneRouteRegistry";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
@@ -2650,7 +2651,7 @@ export default function MediaPaneBody() {
   // Linked-items column state (must be before early returns)
   // ==========================================================================
   const [linkedDrawerOpen, setLinkedDrawerOpen] = useState(false);
-  const [linkedWidth, setLinkedWidth] = useState(360);
+  const [linkedWidth, setLinkedWidth] = useState(DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX);
   const splitRef = useRef<HTMLDivElement>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
 
@@ -2688,7 +2689,7 @@ export default function MediaPaneBody() {
       const onMove = (ev: MouseEvent) => {
         // Dragging left grows the linked column, dragging right shrinks it
         const delta = startX - ev.clientX;
-        setLinkedWidth(Math.min(600, Math.max(240, startWidth + delta)));
+        setLinkedWidth(Math.min(480, Math.max(240, startWidth + delta)));
       };
       const onUp = () => cleanup();
       doc.body.style.cursor = "col-resize";
@@ -2702,9 +2703,9 @@ export default function MediaPaneBody() {
 
   const handleDividerKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "ArrowLeft") { e.preventDefault(); setLinkedWidth((w) => Math.min(600, w + 16)); }
+      if (e.key === "ArrowLeft") { e.preventDefault(); setLinkedWidth((w) => Math.min(480, w + 16)); }
       else if (e.key === "ArrowRight") { e.preventDefault(); setLinkedWidth((w) => Math.max(240, w - 16)); }
-      else if (e.key === "Home") { e.preventDefault(); setLinkedWidth(600); }
+      else if (e.key === "Home") { e.preventDefault(); setLinkedWidth(480); }
       else if (e.key === "End") { e.preventDefault(); setLinkedWidth(240); }
     },
     []
