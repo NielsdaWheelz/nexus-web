@@ -27,6 +27,7 @@ import Link from "next/link";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { resolvePaneDescriptor } from "@/lib/workspace/paneDescriptor";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { OPEN_UPLOAD_EVENT } from "@/components/CommandPalette";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import FileUpload from "@/components/FileUpload";
 import AddFromUrl from "@/components/AddFromUrl";
@@ -194,6 +195,13 @@ export default function Navbar({ onToggle }: NavbarProps) {
     },
     [],
   );
+
+  // Open upload popover when command palette dispatches the event
+  useEffect(() => {
+    const handler = () => setUploadOpen(true);
+    window.addEventListener(OPEN_UPLOAD_EVENT, handler);
+    return () => window.removeEventListener(OPEN_UPLOAD_EVENT, handler);
+  }, []);
 
   // Desktop: close upload popover on click-outside or Escape
   useEffect(() => {
