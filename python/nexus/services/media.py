@@ -36,7 +36,6 @@ from nexus.schemas.media import (
     ListeningStateOut,
     ListeningStateUpsertRequest,
     MediaAuthorOut,
-    MediaListeningStateOut,
     MediaOut,
     PodcastEpisodeChapterOut,
 )
@@ -289,14 +288,14 @@ def _load_podcast_episode_chapters_by_ids(
 
 def _media_listening_state_from_row(
     row: Mapping[str, object],
-) -> MediaListeningStateOut | None:
+) -> ListeningStateOut | None:
     position_ms = row.get("listening_position_ms")
     playback_speed = row.get("listening_playback_speed")
     if position_ms is None or playback_speed is None:
         return None
 
     duration_ms = row.get("listening_duration_ms")
-    return MediaListeningStateOut(
+    return ListeningStateOut(
         position_ms=int(position_ms),
         duration_ms=int(duration_ms) if duration_ms is not None else None,
         playback_speed=float(playback_speed),
