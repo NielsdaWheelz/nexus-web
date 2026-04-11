@@ -128,7 +128,7 @@ describe("GlobalPlayerFooter", () => {
     await user.click(screen.getByRole("button", { name: "Load episode" }));
     await waitFor(() => {
       const footer = screen.getByRole("contentinfo", { name: "Global player footer" });
-      expect(footer).toHaveAttribute("data-mobile", "true");
+      expect(footer).toHaveAttribute("data-mobile-view", "minibar");
     });
   });
 

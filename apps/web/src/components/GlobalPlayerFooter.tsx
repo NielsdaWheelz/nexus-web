@@ -70,6 +70,7 @@ export default function GlobalPlayerFooter() {
   const isMobile = useIsMobileViewport();
   const [queueOpen, setQueueOpen] = useState(false);
   const [effectsOpen, setEffectsOpen] = useState(false);
+  const [mobileExpanded, setMobileExpanded] = useState(false);
   const {
     track,
     setTrack,
@@ -110,6 +111,15 @@ export default function GlobalPlayerFooter() {
     }
     void refreshQueue();
   }, [queueOpen, refreshQueue, track]);
+
+  useEffect(() => {
+    if (!mobileExpanded || !isMobile) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [mobileExpanded, isMobile]);
 
   if (!track) {
     return null;
@@ -178,251 +188,551 @@ export default function GlobalPlayerFooter() {
     void reorderQueue(nextItems.map((item) => item.item_id));
   };
 
+  const closeMobileExpanded = () => {
+    setMobileExpanded(false);
+    setQueueOpen(false);
+    setEffectsOpen(false);
+  };
+
   return (
     <footer
       className={styles.footer}
       role="contentinfo"
       aria-label="Global player footer"
-      data-mobile={isMobile ? "true" : "false"}
+      data-mobile-view={isMobile ? (mobileExpanded ? "expanded" : "minibar") : undefined}
     >
-      <div className={styles.metaRow}>
-        <span className={styles.kicker}>Now playing</span>
-        <div className={styles.metaText}>
-          <a href={`/media/${track.media_id}`} className={styles.trackLink}>
-            {track.title}
-          </a>
-          {currentChapter && (
-            <span className={styles.chapterLabel}>
-              Chapter {currentChapter.chapter_idx + 1}: {currentChapter.title}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div
-        className={styles.controlsRow}
-        role="group"
-        aria-label="Global player controls"
-      >
-        <button
-          type="button"
-          className={styles.transportButton}
-          onClick={() => void playPreviousInQueue()}
-          aria-label="Previous in queue"
-        >
-          ⏮
-        </button>
-
-        <button
-          type="button"
-          className={styles.transportButton}
-          onClick={() => skipBySeconds(-SKIP_BACK_SECONDS)}
-          aria-label="Back 15 seconds"
-        >
-          ◄◄ 15s
-        </button>
-
-        <button
-          type="button"
-          className={styles.transportButton}
-          onClick={isPlaying ? pause : play}
-          aria-label={isPlaying ? "Pause global player" : "Play global player"}
-        >
-          {isPlaying ? "Pause" : "Play"}
-        </button>
-
-        <button
-          type="button"
-          className={styles.transportButton}
-          onClick={() => skipBySeconds(SKIP_FORWARD_SECONDS)}
-          aria-label="Forward 30 seconds"
-        >
-          30s ►►
-        </button>
-
-        <button
-          type="button"
-          className={styles.transportButton}
-          onClick={() => void playNextInQueue()}
-          aria-label="Next in queue"
-          disabled={!hasNextInQueue}
-        >
-          ⏭
-        </button>
-
-        <div className={styles.seekArea}>
-          <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
-          {chapterMarkers.length > 0 && (
-            <div className={styles.chapterTicks} aria-hidden="true">
-              {chapterMarkers.map((chapter) => (
-                <span
-                  key={`${chapter.chapter_idx}-${chapter.t_start_ms}`}
-                  className={styles.chapterTick}
-                  style={{ left: `${chapter.leftPercent}%` }}
-                  title={chapter.title}
-                />
-              ))}
-            </div>
-          )}
-          <input
-            type="range"
-            min={0}
-            max={durationSafe}
-            step={1}
-            value={seekSliderValue}
-            onInput={(event) => onSeek(Number(event.currentTarget.value))}
-            onChange={(event) => onSeek(Number(event.currentTarget.value))}
-            className={styles.seekSlider}
-            aria-label="Seek playback position"
-            disabled={durationSafe <= 0}
+      {isMobile ? (
+        <>
+          {/* Mini progress bar at top edge */}
+          <div
+            className={styles.miniProgressBar}
+            style={{ "--progress-percent": `${progressPercent}%` } as CSSProperties}
+            aria-hidden="true"
           />
-        </div>
 
-        {playbackError ? (
-          <div className={styles.playbackErrorArea} role="status" aria-live="polite">
-            <span className={styles.playbackErrorMessage}>{playbackError.message}</span>
+          {/* Compact mini-bar */}
+          <div className={styles.miniBar}>
             <button
               type="button"
-              className={styles.playbackErrorAction}
-              onClick={retryPlayback}
-              aria-label="Retry playback"
+              className={styles.miniTapArea}
+              onClick={() => setMobileExpanded(true)}
+              aria-label="Expand player"
             >
-              Retry
+              {track.image_url ? (
+                <img src={track.image_url} alt="" className={styles.miniArtwork} />
+              ) : (
+                <div className={styles.miniArtworkFallback} aria-hidden="true" />
+              )}
+              <span className={styles.miniTitle}>{track.title}</span>
             </button>
-            <a
-              href={track.source_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={styles.playbackErrorLink}
-              aria-label="Open source audio"
+            <button
+              type="button"
+              className={styles.transportButton}
+              onClick={isPlaying ? pause : play}
+              aria-label={isPlaying ? "Pause" : "Play"}
             >
-              Open source
-            </a>
+              {isPlaying ? "Pause" : "Play"}
+            </button>
+            <button
+              type="button"
+              className={styles.transportButton}
+              onClick={() => skipBySeconds(SKIP_FORWARD_SECONDS)}
+              aria-label="Forward 30 seconds"
+            >
+              30s ►►
+            </button>
           </div>
-        ) : (
-          <span className={styles.timecode}>
-            {isBuffering && (
-              <span className={styles.bufferingIndicator} role="status" aria-live="polite">
-                <span className={styles.bufferingDot} aria-hidden="true" />
-                Buffering...
+
+          {/* Expanded bottom sheet */}
+          {mobileExpanded && (
+            <div className={styles.expandedBackdrop} onClick={closeMobileExpanded}>
+              <section
+                className={styles.expandedSheet}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Expanded player"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") closeMobileExpanded();
+                }}
+              >
+                <div className={styles.expandedHandle} aria-hidden="true" />
+                <button
+                  type="button"
+                  className={styles.expandedClose}
+                  onClick={closeMobileExpanded}
+                  aria-label="Collapse player"
+                >
+                  Close
+                </button>
+
+                {track.image_url ? (
+                  <img src={track.image_url} alt={track.title} className={styles.expandedArtwork} />
+                ) : (
+                  <div className={styles.expandedArtworkFallback} aria-hidden="true" />
+                )}
+
+                <div className={styles.expandedMeta}>
+                  <a href={`/media/${track.media_id}`} className={styles.trackLink}>
+                    {track.title}
+                  </a>
+                  {currentChapter && (
+                    <span className={styles.chapterLabel}>
+                      Chapter {currentChapter.chapter_idx + 1}: {currentChapter.title}
+                    </span>
+                  )}
+                </div>
+
+                <div className={styles.seekArea}>
+                  <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
+                  {chapterMarkers.length > 0 && (
+                    <div className={styles.chapterTicks} aria-hidden="true">
+                      {chapterMarkers.map((chapter) => (
+                        <span
+                          key={`${chapter.chapter_idx}-${chapter.t_start_ms}`}
+                          className={styles.chapterTick}
+                          style={{ left: `${chapter.leftPercent}%` }}
+                          title={chapter.title}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <input
+                    type="range"
+                    min={0}
+                    max={durationSafe}
+                    step={1}
+                    value={seekSliderValue}
+                    onInput={(event) => onSeek(Number(event.currentTarget.value))}
+                    onChange={(event) => onSeek(Number(event.currentTarget.value))}
+                    className={styles.seekSlider}
+                    aria-label="Seek playback position"
+                    disabled={durationSafe <= 0}
+                  />
+                </div>
+
+                {playbackError ? (
+                  <div className={styles.playbackErrorArea} role="status" aria-live="polite">
+                    <span className={styles.playbackErrorMessage}>{playbackError.message}</span>
+                    <button
+                      type="button"
+                      className={styles.playbackErrorAction}
+                      onClick={retryPlayback}
+                      aria-label="Retry playback"
+                    >
+                      Retry
+                    </button>
+                    <a
+                      href={track.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={styles.playbackErrorLink}
+                      aria-label="Open source audio"
+                    >
+                      Open source
+                    </a>
+                  </div>
+                ) : (
+                  <span className={styles.timecode}>
+                    {isBuffering && (
+                      <span className={styles.bufferingIndicator} role="status" aria-live="polite">
+                        <span className={styles.bufferingDot} aria-hidden="true" />
+                        Buffering...
+                      </span>
+                    )}
+                    {formatClock(currentSafe)} / {formatClock(durationSafe)}
+                  </span>
+                )}
+
+                <div className={styles.expandedTransport}>
+                  <button
+                    type="button"
+                    className={styles.transportButton}
+                    onClick={() => void playPreviousInQueue()}
+                    aria-label="Previous in queue"
+                  >
+                    ⏮
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.transportButton}
+                    onClick={() => skipBySeconds(-SKIP_BACK_SECONDS)}
+                    aria-label="Back 15 seconds"
+                  >
+                    ◄◄ 15s
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.transportButton}
+                    onClick={isPlaying ? pause : play}
+                    aria-label={isPlaying ? "Pause" : "Play"}
+                  >
+                    {isPlaying ? "Pause" : "Play"}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.transportButton}
+                    onClick={() => skipBySeconds(SKIP_FORWARD_SECONDS)}
+                    aria-label="Forward 30 seconds"
+                  >
+                    30s ►►
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.transportButton}
+                    onClick={() => void playNextInQueue()}
+                    aria-label="Next in queue"
+                    disabled={!hasNextInQueue}
+                  >
+                    ⏭
+                  </button>
+                </div>
+
+                <div className={styles.expandedSecondary}>
+                  <label className={styles.speedControl}>
+                    <span className={styles.controlLabel}>Speed</span>
+                    <select
+                      aria-label="Playback speed"
+                      value={speedValue.toString()}
+                      onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
+                      className={styles.select}
+                    >
+                      {SPEED_OPTIONS.map((option) => (
+                        <option key={option} value={option.toString()}>
+                          {option.toFixed(option % 1 === 0 ? 0 : 2)}x
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <button
+                    type="button"
+                    className={styles.effectsButton}
+                    aria-label="Audio effects"
+                    aria-expanded={effectsOpen}
+                    data-active={hasActiveAudioEffects ? "true" : "false"}
+                    onClick={() => setEffectsOpen((previous) => !previous)}
+                  >
+                    Effects
+                    <span className={styles.effectsIndicator} aria-hidden="true" />
+                  </button>
+
+                  <button
+                    type="button"
+                    className={styles.queueButton}
+                    onClick={() => setQueueOpen(true)}
+                    aria-label={`Open playback queue (${upcomingCount} upcoming)`}
+                  >
+                    Queue
+                    <span className={styles.queueBadge}>{upcomingCount}</span>
+                  </button>
+                </div>
+
+                {effectsOpen && (
+                  <section className={styles.effectsPanel} aria-label="Audio effects panel">
+                    {!audioEffectsAvailable && (
+                      <p className={styles.effectsUnavailable}>Audio effects unavailable for this source.</p>
+                    )}
+
+                    <label className={styles.effectsToggle}>
+                      <input
+                        type="checkbox"
+                        aria-label="Silence trimming"
+                        checked={audioEffects.silenceTrim}
+                        disabled={!audioEffectsAvailable}
+                        onChange={(event) => {
+                          setAudioEffects({ silenceTrim: event.currentTarget.checked });
+                        }}
+                      />
+                      <span>Silence trimming</span>
+                    </label>
+
+                    <label className={styles.effectsSelectControl}>
+                      <span className={styles.controlLabel}>Volume boost</span>
+                      <select
+                        aria-label="Volume boost"
+                        value={audioEffects.volumeBoost}
+                        disabled={!audioEffectsAvailable}
+                        onChange={(event) => {
+                          setAudioEffects({
+                            volumeBoost: event.currentTarget.value as AudioEffectsVolumeBoost,
+                          });
+                        }}
+                        className={styles.select}
+                      >
+                        {VOLUME_BOOST_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className={styles.effectsToggle}>
+                      <input
+                        type="checkbox"
+                        aria-label="Mono audio"
+                        checked={audioEffects.mono}
+                        disabled={!audioEffectsAvailable}
+                        onChange={(event) => {
+                          setAudioEffects({ mono: event.currentTarget.checked });
+                        }}
+                      />
+                      <span>Mono audio</span>
+                    </label>
+
+                    <p className={styles.effectsMeta}>Time saved: {formatTimeSavedSeconds(silenceTimeSavedSeconds)}s</p>
+                    {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
+                  </section>
+                )}
+              </section>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {/* Desktop: full footer layout */}
+          <div className={styles.metaRow}>
+            {track.image_url && (
+              <img src={track.image_url} alt="" className={styles.desktopArtwork} />
+            )}
+            <span className={styles.kicker}>Now playing</span>
+            <div className={styles.metaText}>
+              <a href={`/media/${track.media_id}`} className={styles.trackLink}>
+                {track.title}
+              </a>
+              {currentChapter && (
+                <span className={styles.chapterLabel}>
+                  Chapter {currentChapter.chapter_idx + 1}: {currentChapter.title}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div
+            className={styles.controlsRow}
+            role="group"
+            aria-label="Global player controls"
+          >
+            <button
+              type="button"
+              className={styles.transportButton}
+              onClick={() => void playPreviousInQueue()}
+              aria-label="Previous in queue"
+            >
+              ⏮
+            </button>
+
+            <button
+              type="button"
+              className={styles.transportButton}
+              onClick={() => skipBySeconds(-SKIP_BACK_SECONDS)}
+              aria-label="Back 15 seconds"
+            >
+              ◄◄ 15s
+            </button>
+
+            <button
+              type="button"
+              className={styles.transportButton}
+              onClick={isPlaying ? pause : play}
+              aria-label={isPlaying ? "Pause global player" : "Play global player"}
+            >
+              {isPlaying ? "Pause" : "Play"}
+            </button>
+
+            <button
+              type="button"
+              className={styles.transportButton}
+              onClick={() => skipBySeconds(SKIP_FORWARD_SECONDS)}
+              aria-label="Forward 30 seconds"
+            >
+              30s ►►
+            </button>
+
+            <button
+              type="button"
+              className={styles.transportButton}
+              onClick={() => void playNextInQueue()}
+              aria-label="Next in queue"
+              disabled={!hasNextInQueue}
+            >
+              ⏭
+            </button>
+
+            <div className={styles.seekArea}>
+              <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
+              {chapterMarkers.length > 0 && (
+                <div className={styles.chapterTicks} aria-hidden="true">
+                  {chapterMarkers.map((chapter) => (
+                    <span
+                      key={`${chapter.chapter_idx}-${chapter.t_start_ms}`}
+                      className={styles.chapterTick}
+                      style={{ left: `${chapter.leftPercent}%` }}
+                      title={chapter.title}
+                    />
+                  ))}
+                </div>
+              )}
+              <input
+                type="range"
+                min={0}
+                max={durationSafe}
+                step={1}
+                value={seekSliderValue}
+                onInput={(event) => onSeek(Number(event.currentTarget.value))}
+                onChange={(event) => onSeek(Number(event.currentTarget.value))}
+                className={styles.seekSlider}
+                aria-label="Seek playback position"
+                disabled={durationSafe <= 0}
+              />
+            </div>
+
+            {playbackError ? (
+              <div className={styles.playbackErrorArea} role="status" aria-live="polite">
+                <span className={styles.playbackErrorMessage}>{playbackError.message}</span>
+                <button
+                  type="button"
+                  className={styles.playbackErrorAction}
+                  onClick={retryPlayback}
+                  aria-label="Retry playback"
+                >
+                  Retry
+                </button>
+                <a
+                  href={track.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.playbackErrorLink}
+                  aria-label="Open source audio"
+                >
+                  Open source
+                </a>
+              </div>
+            ) : (
+              <span className={styles.timecode}>
+                {isBuffering && (
+                  <span className={styles.bufferingIndicator} role="status" aria-live="polite">
+                    <span className={styles.bufferingDot} aria-hidden="true" />
+                    Buffering...
+                  </span>
+                )}
+                {formatClock(currentSafe)} / {formatClock(durationSafe)}
               </span>
             )}
-            {formatClock(currentSafe)} / {formatClock(durationSafe)}
-          </span>
-        )}
 
-        <label className={styles.speedControl}>
-          <span className={styles.controlLabel}>Speed</span>
-          <select
-            aria-label="Playback speed"
-            value={speedValue.toString()}
-            onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
-            className={styles.select}
-          >
-            {SPEED_OPTIONS.map((option) => (
-              <option key={option} value={option.toString()}>
-                {option.toFixed(option % 1 === 0 ? 0 : 2)}x
-              </option>
-            ))}
-          </select>
-        </label>
+            <label className={styles.speedControl}>
+              <span className={styles.controlLabel}>Speed</span>
+              <select
+                aria-label="Playback speed"
+                value={speedValue.toString()}
+                onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
+                className={styles.select}
+              >
+                {SPEED_OPTIONS.map((option) => (
+                  <option key={option} value={option.toString()}>
+                    {option.toFixed(option % 1 === 0 ? 0 : 2)}x
+                  </option>
+                ))}
+              </select>
+            </label>
 
-        <button
-          type="button"
-          className={styles.effectsButton}
-          aria-label="Audio effects"
-          aria-expanded={effectsOpen}
-          data-active={hasActiveAudioEffects ? "true" : "false"}
-          onClick={() => setEffectsOpen((previous) => !previous)}
-        >
-          Effects
-          <span className={styles.effectsIndicator} aria-hidden="true" />
-        </button>
-
-        {!isMobile && (
-          <label className={styles.volumeControl}>
-            <span className={styles.controlLabel}>Volume</span>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={volume}
-              onInput={(event) => setVolume(Number(event.currentTarget.value))}
-              onChange={(event) => setVolume(Number(event.currentTarget.value))}
-              className={styles.volumeSlider}
-              aria-label="Volume"
-            />
-          </label>
-        )}
-
-        <button
-          type="button"
-          className={styles.queueButton}
-          onClick={() => setQueueOpen(true)}
-          aria-label={`Open playback queue (${upcomingCount} upcoming)`}
-        >
-          Queue
-          <span className={styles.queueBadge}>{upcomingCount}</span>
-        </button>
-      </div>
-
-      {effectsOpen && (
-        <section className={styles.effectsPanel} aria-label="Audio effects panel">
-          {!audioEffectsAvailable && (
-            <p className={styles.effectsUnavailable}>Audio effects unavailable for this source.</p>
-          )}
-
-          <label className={styles.effectsToggle}>
-            <input
-              type="checkbox"
-              aria-label="Silence trimming"
-              checked={audioEffects.silenceTrim}
-              disabled={!audioEffectsAvailable}
-              onChange={(event) => {
-                setAudioEffects({ silenceTrim: event.currentTarget.checked });
-              }}
-            />
-            <span>Silence trimming</span>
-          </label>
-
-          <label className={styles.effectsSelectControl}>
-            <span className={styles.controlLabel}>Volume boost</span>
-            <select
-              aria-label="Volume boost"
-              value={audioEffects.volumeBoost}
-              disabled={!audioEffectsAvailable}
-              onChange={(event) => {
-                setAudioEffects({
-                  volumeBoost: event.currentTarget.value as AudioEffectsVolumeBoost,
-                });
-              }}
-              className={styles.select}
+            <button
+              type="button"
+              className={styles.effectsButton}
+              aria-label="Audio effects"
+              aria-expanded={effectsOpen}
+              data-active={hasActiveAudioEffects ? "true" : "false"}
+              onClick={() => setEffectsOpen((previous) => !previous)}
             >
-              {VOLUME_BOOST_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              Effects
+              <span className={styles.effectsIndicator} aria-hidden="true" />
+            </button>
 
-          <label className={styles.effectsToggle}>
-            <input
-              type="checkbox"
-              aria-label="Mono audio"
-              checked={audioEffects.mono}
-              disabled={!audioEffectsAvailable}
-              onChange={(event) => {
-                setAudioEffects({ mono: event.currentTarget.checked });
-              }}
-            />
-            <span>Mono audio</span>
-          </label>
+            <label className={styles.volumeControl}>
+              <span className={styles.controlLabel}>Volume</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={volume}
+                onInput={(event) => setVolume(Number(event.currentTarget.value))}
+                onChange={(event) => setVolume(Number(event.currentTarget.value))}
+                className={styles.volumeSlider}
+                aria-label="Volume"
+              />
+            </label>
 
-          <p className={styles.effectsMeta}>Time saved: {formatTimeSavedSeconds(silenceTimeSavedSeconds)}s</p>
-          {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
-        </section>
+            <button
+              type="button"
+              className={styles.queueButton}
+              onClick={() => setQueueOpen(true)}
+              aria-label={`Open playback queue (${upcomingCount} upcoming)`}
+            >
+              Queue
+              <span className={styles.queueBadge}>{upcomingCount}</span>
+            </button>
+          </div>
+
+          {effectsOpen && (
+            <section className={styles.effectsPanel} aria-label="Audio effects panel">
+              {!audioEffectsAvailable && (
+                <p className={styles.effectsUnavailable}>Audio effects unavailable for this source.</p>
+              )}
+
+              <label className={styles.effectsToggle}>
+                <input
+                  type="checkbox"
+                  aria-label="Silence trimming"
+                  checked={audioEffects.silenceTrim}
+                  disabled={!audioEffectsAvailable}
+                  onChange={(event) => {
+                    setAudioEffects({ silenceTrim: event.currentTarget.checked });
+                  }}
+                />
+                <span>Silence trimming</span>
+              </label>
+
+              <label className={styles.effectsSelectControl}>
+                <span className={styles.controlLabel}>Volume boost</span>
+                <select
+                  aria-label="Volume boost"
+                  value={audioEffects.volumeBoost}
+                  disabled={!audioEffectsAvailable}
+                  onChange={(event) => {
+                    setAudioEffects({
+                      volumeBoost: event.currentTarget.value as AudioEffectsVolumeBoost,
+                    });
+                  }}
+                  className={styles.select}
+                >
+                  {VOLUME_BOOST_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className={styles.effectsToggle}>
+                <input
+                  type="checkbox"
+                  aria-label="Mono audio"
+                  checked={audioEffects.mono}
+                  disabled={!audioEffectsAvailable}
+                  onChange={(event) => {
+                    setAudioEffects({ mono: event.currentTarget.checked });
+                  }}
+                />
+                <span>Mono audio</span>
+              </label>
+
+              <p className={styles.effectsMeta}>Time saved: {formatTimeSavedSeconds(silenceTimeSavedSeconds)}s</p>
+              {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
+            </section>
+          )}
+        </>
       )}
 
       <audio

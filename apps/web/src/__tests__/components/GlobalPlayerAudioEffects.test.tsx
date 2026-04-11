@@ -270,6 +270,8 @@ function createFrame(amplitude: number): Float32Array {
 
 describe("GlobalPlayer audio effects cutover", () => {
   beforeEach(() => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
+    window.dispatchEvent(new Event("resize"));
     window.localStorage.clear();
   });
 

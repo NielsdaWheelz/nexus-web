@@ -80,6 +80,8 @@ function App() {
 
 describe("GlobalPlayer listening-state persistence", () => {
   beforeEach(() => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
+    window.dispatchEvent(new Event("resize"));
     window.localStorage.clear();
   });
 
