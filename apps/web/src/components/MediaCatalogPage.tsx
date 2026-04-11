@@ -326,17 +326,10 @@ export default function MediaCatalogPage({
   );
 
   return (
-    <>
-      {headerSlot}
+    <SectionCard>
+      <div className={styles.content}>
+        {headerSlot}
 
-      <SectionCard
-        title="Catalog"
-        actions={
-          <span className={styles.count}>
-            {filteredItems.length} {filteredItems.length === 1 ? "item" : "items"}
-          </span>
-        }
-      >
         <div className={styles.toolbar}>
           <input
             className={styles.input}
@@ -414,7 +407,7 @@ export default function MediaCatalogPage({
             {loadingMore ? "Loading..." : "Load more"}
           </button>
         )}
-      </SectionCard>
-    </>
+      </div>
+    </SectionCard>
   );
 }

@@ -101,57 +101,8 @@ export default function SettingsKeysPaneBody() {
   );
 
   return (
-    <>
-      <SectionCard title="Your Keys">
-        {loading && <StateMessage variant="loading">Loading...</StateMessage>}
-        {error && <StateMessage variant="error">{error}</StateMessage>}
-
-        {!loading && keys.length === 0 && (
-          <StateMessage variant="empty">No API keys configured. Add one below.</StateMessage>
-        )}
-
-        {keys.length > 0 && (
-          <AppList>
-            {keys.map((key) => (
-              <AppListItem
-                key={key.id}
-                title={key.provider}
-                description={`...${key.key_fingerprint}`}
-                meta={
-                  key.last_tested_at
-                    ? `tested ${new Date(key.last_tested_at).toLocaleDateString()}`
-                    : "never tested"
-                }
-                trailing={
-                  <StatusPill
-                    variant={
-                      key.status === "valid" ? "success"
-                        : key.status === "untested" ? "warning"
-                        : key.status === "invalid" ? "danger"
-                        : "neutral"
-                    }
-                  >
-                    {key.status}
-                  </StatusPill>
-                }
-                actions={
-                  key.status !== "revoked" ? (
-                    <button
-                      type="button"
-                      className={styles.revokeBtn}
-                      onClick={() => handleRevoke(key.id)}
-                    >
-                      Revoke
-                    </button>
-                  ) : null
-                }
-              />
-            ))}
-          </AppList>
-        )}
-      </SectionCard>
-
-      <SectionCard title="Add / Update Key">
+    <SectionCard>
+      <div className={styles.content}>
         <form className={styles.form} onSubmit={handleSubmit}>
           <div className={styles.formRow}>
             <div className={styles.formField}>
@@ -199,7 +150,54 @@ export default function SettingsKeysPaneBody() {
           {formError && <StateMessage variant="error">{formError}</StateMessage>}
           {formSuccess && <StateMessage variant="success">{formSuccess}</StateMessage>}
         </form>
-      </SectionCard>
-    </>
+
+        {loading && <StateMessage variant="loading">Loading...</StateMessage>}
+        {error && <StateMessage variant="error">{error}</StateMessage>}
+
+        {!loading && keys.length === 0 && (
+          <StateMessage variant="empty">No API keys configured yet.</StateMessage>
+        )}
+
+        {keys.length > 0 && (
+          <AppList>
+            {keys.map((key) => (
+              <AppListItem
+                key={key.id}
+                title={key.provider}
+                description={`...${key.key_fingerprint}`}
+                meta={
+                  key.last_tested_at
+                    ? `tested ${new Date(key.last_tested_at).toLocaleDateString()}`
+                    : "never tested"
+                }
+                trailing={
+                  <StatusPill
+                    variant={
+                      key.status === "valid" ? "success"
+                        : key.status === "untested" ? "warning"
+                        : key.status === "invalid" ? "danger"
+                        : "neutral"
+                    }
+                  >
+                    {key.status}
+                  </StatusPill>
+                }
+                actions={
+                  key.status !== "revoked" ? (
+                    <button
+                      type="button"
+                      className={styles.revokeBtn}
+                      onClick={() => handleRevoke(key.id)}
+                    >
+                      Revoke
+                    </button>
+                  ) : null
+                }
+              />
+            ))}
+          </AppList>
+        )}
+      </div>
+    </SectionCard>
   );
 }

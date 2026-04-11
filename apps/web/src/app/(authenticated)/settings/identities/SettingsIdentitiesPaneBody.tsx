@@ -127,11 +127,8 @@ export default function SettingsIdentitiesPaneBody() {
   );
 
   return (
-    <>
-      <SectionCard
-        title="Connected identities"
-        description="Manual linking enables a single account to carry identities with different provider emails."
-      >
+    <SectionCard>
+      <div className={styles.content}>
         {loading && <StateMessage variant="loading">Loading identities...</StateMessage>}
         {error && <StateMessage variant="error">{error}</StateMessage>}
         {notice && <StateMessage variant="success">{notice}</StateMessage>}
@@ -173,12 +170,7 @@ export default function SettingsIdentitiesPaneBody() {
             })}
           </AppList>
         )}
-      </SectionCard>
 
-      <SectionCard
-        title="Link another provider"
-        description="Connect both Google and GitHub if you intentionally use different provider emails."
-      >
         {connectableProviders.length === 0 ? (
           <StateMessage variant="success">
             Google and GitHub are already linked for this account.
@@ -203,7 +195,7 @@ export default function SettingsIdentitiesPaneBody() {
             })}
           </div>
         )}
-      </SectionCard>
-    </>
+      </div>
+    </SectionCard>
   );
 }

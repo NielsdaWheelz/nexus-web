@@ -1,3 +1,9 @@
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
 .searchForm {
   display: flex;
   flex-direction: column;
@@ -68,11 +74,6 @@
 
 .filterLabel input[type="checkbox"] {
   accent-color: var(--color-accent);
-}
-
-.searchingHint {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
 }
 
 .resultRows {

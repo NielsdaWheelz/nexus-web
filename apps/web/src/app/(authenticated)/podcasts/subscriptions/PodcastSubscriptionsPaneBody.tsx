@@ -614,11 +614,11 @@ export default function PodcastSubscriptionsPaneBody() {
 
   return (
     <>
-      <SectionCard title="Plan and quota">
-        {planLoading && <StateMessage variant="loading">Loading plan snapshot...</StateMessage>}
-        {planError && <StateMessage variant="error">{planError}</StateMessage>}
-        {plan && (
-          <>
+      <SectionCard>
+        <div className={styles.content}>
+          {planLoading && <StateMessage variant="loading">Loading plan snapshot...</StateMessage>}
+          {planError && <StateMessage variant="error">{planError}</StateMessage>}
+          {plan && (
             <p className={styles.planSummary}>
               Plan <strong>{plan.plan.plan_tier}</strong> - window{" "}
               <strong>{plan.plan.initial_episode_window}</strong> episodes - used{" "}
@@ -627,14 +627,8 @@ export default function PodcastSubscriptionsPaneBody() {
                 ? " (unlimited remaining)"
                 : ` (${plan.usage.remaining_minutes} remaining)`}
             </p>
-            <p className={styles.planSummary}>Plan changes are managed by internal billing controls.</p>
-          </>
-        )}
-      </SectionCard>
+          )}
 
-      <SectionCard
-        title="Subscriptions"
-        actions={
           <div className={styles.sectionActions}>
             <button
               type="button"
@@ -652,7 +646,6 @@ export default function PodcastSubscriptionsPaneBody() {
             >
               Import OPML
             </button>
-            { }
             <a
               href="/api/podcasts/export/opml"
               download="nexus-podcasts.opml"
@@ -663,8 +656,7 @@ export default function PodcastSubscriptionsPaneBody() {
             </a>
             <span>{activeCount} active</span>
           </div>
-        }
-      >
+
         <div className={styles.unsubscribeModeRow}>
           <label htmlFor="unsubscribe-mode" className={styles.unsubscribeModeLabel}>
             Unsubscribe behavior
@@ -962,7 +954,8 @@ export default function PodcastSubscriptionsPaneBody() {
             {loadingMore ? "Loading..." : "Load more subscriptions"}
           </button>
         )}
-      </SectionCard>
+      </div>
+    </SectionCard>
 
       {settingsRow && (
         <div

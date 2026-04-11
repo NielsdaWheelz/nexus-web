@@ -1,7 +1,11 @@
+.discoveryHeader {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .discoveryForm {
   display: flex;
   gap: var(--space-2);
-  margin-bottom: var(--space-3);
 }
 
 .input {

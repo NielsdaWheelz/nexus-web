@@ -125,8 +125,8 @@ export default function SearchPaneBody() {
   // --------------------------------------------------------------------------
 
   return (
-    <>
-      <SectionCard title="Query">
+    <SectionCard>
+      <div className={styles.content}>
         <form className={styles.searchForm} onSubmit={handleSubmit}>
           <div className={styles.searchRow}>
             <input
@@ -159,14 +159,7 @@ export default function SearchPaneBody() {
             ))}
           </div>
         </form>
-      </SectionCard>
 
-      <SectionCard
-        title="Results"
-        actions={
-          searching ? <span className={styles.searchingHint}>Searching...</span> : null
-        }
-      >
         {error && <StateMessage variant="error">{error}</StateMessage>}
 
         {!hasSearched && (
@@ -178,6 +171,8 @@ export default function SearchPaneBody() {
         {hasSearched && results.length === 0 && !searching && (
           <StateMessage variant="empty">No results found.</StateMessage>
         )}
+
+        {searching && <StateMessage variant="loading">Searching...</StateMessage>}
 
         {results.length > 0 && (
           <div className={styles.resultRows}>
@@ -199,7 +194,7 @@ export default function SearchPaneBody() {
             Load more
           </button>
         )}
-      </SectionCard>
-    </>
+      </div>
+    </SectionCard>
   );
 }

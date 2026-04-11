@@ -1,3 +1,9 @@
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
 .linkButtons {
   display: flex;
   flex-wrap: wrap;

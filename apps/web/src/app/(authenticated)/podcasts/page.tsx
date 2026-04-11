@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import MediaCatalogPage from "@/components/MediaCatalogPage";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
@@ -169,15 +168,12 @@ export default function PodcastsPage() {
       allowedKinds={["podcast_episode"]}
       emptyMessage="No podcast episodes found in your visible libraries."
       headerSlot={
-        <SectionCard
-          title="Discover podcasts"
-          description="Search global feeds, subscribe, and open podcast detail views."
-          actions={
+        <>
+          <div className={styles.discoveryHeader}>
             <Link href="/podcasts/subscriptions" className={styles.subscriptionsLink}>
               My podcasts
             </Link>
-          }
-        >
+          </div>
           <form className={styles.discoveryForm} onSubmit={handleDiscover}>
             <input
               className={styles.input}
@@ -262,7 +258,7 @@ export default function PodcastsPage() {
               })}
             </AppList>
           )}
-        </SectionCard>
+        </>
       }
     />
   );

@@ -1,6 +1,10 @@
-.toolbar {
-  margin-bottom: var(--space-3);
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
+
+.toolbar {}
 
 .input {
   width: 100%;
@@ -15,12 +19,6 @@
 .input:focus {
   outline: none;
   border-color: var(--color-accent);
-}
-
-.count {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-  white-space: nowrap;
 }
 
 .loadMoreBtn {
