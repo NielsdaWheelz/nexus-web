@@ -1,10 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import SurfaceHeader, { type SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import styles from "./PaneShell.module.css";
 
 export type PaneBodyMode = "standard" | "document";
+
+type PaneShellStyle = CSSProperties & {
+  "--mobile-pane-chrome-height"?: string;
+};
 
 interface PaneShellProps {
   paneId: string;
@@ -40,6 +44,10 @@ export default function PaneShell({
   children,
 }: PaneShellProps) {
   const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const chromeRef = useRef<HTMLDivElement>(null);
+  const lastScrollTopRef = useRef(0);
+  const [mobileChromeHidden, setMobileChromeHidden] = useState(false);
+  const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
 
   useEffect(
     () => () => {
@@ -47,6 +55,30 @@ export default function PaneShell({
     },
     []
   );
+
+  // Reset mobile chrome state when leaving mobile.
+  useEffect(() => {
+    if (!isMobile) {
+      setMobileChromeHidden(false);
+      lastScrollTopRef.current = 0;
+    }
+  }, [isMobile]);
+
+  // Track chrome height for padding offset.
+  useEffect(() => {
+    if (!isMobile || !chromeRef.current) {
+      setMobileChromeHeight(0);
+      return;
+    }
+    const node = chromeRef.current;
+    const update = () => {
+      setMobileChromeHeight(Math.max(0, Math.round(node.getBoundingClientRect().height)));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [isMobile, title, subtitle, toolbar]);
 
   const handleResizeMouseDown = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -103,19 +135,75 @@ export default function PaneShell({
     [maxWidthPx, minWidthPx, onResizePane, paneId, widthPx]
   );
 
+  // Hide chrome on scroll-down, restore on scroll-up.
+  const handleBodyScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      if (!isMobile) {
+        return;
+      }
+      const scrollTop = event.currentTarget.scrollTop;
+      const previous = lastScrollTopRef.current;
+      const delta = scrollTop - previous;
+      lastScrollTopRef.current = scrollTop;
+
+      if (scrollTop <= 24) {
+        setMobileChromeHidden(false);
+        return;
+      }
+      if (delta >= 10) {
+        setMobileChromeHidden(true);
+        return;
+      }
+      if (delta <= -10) {
+        setMobileChromeHidden(false);
+      }
+    },
+    [isMobile]
+  );
+
+  const shellClass = `${styles.paneShell} ${
+    isMobile
+      ? mobileChromeHidden
+        ? styles.mobileChromeHidden
+        : styles.mobileChromeVisible
+      : ""
+  }`.trim();
+
+  const shellStyle: PaneShellStyle = isMobile
+    ? { width: "100%", minWidth: "100%", maxWidth: "100%" }
+    : { width: `${widthPx}px`, minWidth: `${minWidthPx}px`, maxWidth: `${maxWidthPx}px` };
+  if (isMobile && mobileChromeHeight > 0) {
+    shellStyle["--mobile-pane-chrome-height"] = `${mobileChromeHeight}px`;
+  }
+
+  const bodyStyle: CSSProperties =
+    bodyMode === "document"
+      ? {
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          overflow: "hidden",
+          ...(isMobile && { overscrollBehavior: "contain" }),
+        }
+      : {
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          overflowY: "auto",
+          overflowX: "hidden",
+          ...(isMobile && { overscrollBehavior: "contain" }),
+        };
+
   return (
     <section
-      className={styles.paneShell}
+      className={shellClass}
       data-pane-shell="true"
       data-active={isActive ? "true" : "false"}
       data-mobile={isMobile ? "true" : "false"}
-      style={
-        isMobile
-          ? { width: "100%", minWidth: "100%", maxWidth: "100%" }
-          : { width: `${widthPx}px`, minWidth: `${minWidthPx}px`, maxWidth: `${maxWidthPx}px` }
-      }
+      style={shellStyle}
     >
       <div
+        ref={chromeRef}
         className={styles.chrome}
         data-testid="pane-shell-chrome"
         data-pane-chrome-focus="true"
@@ -129,22 +217,8 @@ export default function PaneShell({
         data-testid="pane-shell-body"
         data-body-mode={bodyMode}
         data-pane-content="true"
-        style={
-          bodyMode === "document"
-            ? {
-                display: "flex",
-                flexDirection: "column",
-                minHeight: 0,
-                overflow: "hidden",
-              }
-            : {
-                display: "flex",
-                flexDirection: "column",
-                minHeight: 0,
-                overflowY: "auto",
-                overflowX: "hidden",
-              }
-        }
+        style={bodyStyle}
+        onScroll={handleBodyScroll}
       >
         {children}
       </div>

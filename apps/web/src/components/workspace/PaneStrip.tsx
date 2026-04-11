@@ -2,7 +2,13 @@
 
 import styles from "./PaneStrip.module.css";
 
-export default function PaneStrip({ children }: { children: React.ReactNode }) {
+export default function PaneStrip({
+  children,
+  isMobile = false,
+}: {
+  children: React.ReactNode;
+  isMobile?: boolean;
+}) {
   return (
     <div
       className={styles.strip}
@@ -11,7 +17,7 @@ export default function PaneStrip({ children }: { children: React.ReactNode }) {
         display: "flex",
         flexDirection: "row",
         gap: "0",
-        overflowX: "auto",
+        overflowX: isMobile ? "hidden" : "auto",
         overflowY: "hidden",
       }}
     >

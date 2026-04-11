@@ -45,6 +45,49 @@
   cursor: col-resize;
 }
 
+/* ── Mobile (driven by isMobile prop via data attribute) ── */
+
+.paneShell[data-mobile="true"] {
+  border-right: none;
+  --mobile-pane-chrome-height: 0px;
+}
+
 .paneShell[data-mobile="true"] .resizeHandle {
   display: none;
+}
+
+.paneShell[data-mobile="true"] .toolbar {
+  flex-wrap: nowrap;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+}
+
+.mobileChromeVisible .chrome,
+.mobileChromeHidden .chrome {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 12;
+  padding-top: env(safe-area-inset-top);
+  transition: transform var(--transition-fast), opacity var(--transition-fast);
+  background: rgba(26, 27, 38, 0.94);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.26);
+  will-change: transform;
+}
+
+.mobileChromeVisible .body {
+  padding-top: calc(var(--space-2) + var(--mobile-pane-chrome-height));
+}
+
+.mobileChromeHidden .chrome {
+  transform: translateY(calc(-1 * var(--mobile-pane-chrome-height)));
+  opacity: 0.98;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.mobileChromeHidden .body {
+  padding-top: var(--space-2);
 }

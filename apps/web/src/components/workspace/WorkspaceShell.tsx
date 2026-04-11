@@ -117,7 +117,7 @@ export default function WorkspaceShell({
         onOpenMobileSwitcher={() => setSheetOpen(true)}
         mobileSwitcherButtonRef={mobileSwitcherButtonRef}
       />
-      <PaneStrip>
+      <PaneStrip isMobile={isMobile}>
         {visiblePanes.map((pane) => (
           <div
             key={pane.paneId}
