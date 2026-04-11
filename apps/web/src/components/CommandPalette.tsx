@@ -1,7 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import {
+  BookOpen,
+  Compass,
+  FileText,
+  FolderPlus,
+  Globe,
+  Highlighter,
+  Keyboard,
+  KeyRound,
+  Link,
+  Link2,
+  MessageSquare,
+  MessageSquarePlus,
+  Mic,
+  PanelLeft,
+  Search,
+  Settings,
+  Type,
+  Upload,
+  Video,
+  X,
+} from "lucide-react";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { resolvePaneDescriptor } from "@/lib/workspace/paneDescriptor";
@@ -9,6 +31,7 @@ import { apiFetch } from "@/lib/api/client";
 import {
   type SearchResponseShape,
   type SearchResultRowViewModel,
+  type SearchType,
   ALL_SEARCH_TYPES,
   buildSearchQueryParams,
   normalizeSearchResult,
@@ -29,6 +52,7 @@ interface Action {
   label: string;
   keywords: string[];
   section: Section;
+  icon: LucideIcon;
   execute: () => void;
 }
 
@@ -44,28 +68,36 @@ function dispatchOpenUpload() {
 
 const ACTIONS: Action[] = [
   // Navigate
-  { id: "nav-libraries", label: "Libraries", keywords: ["collections", "sources"], section: "Navigate", execute: () => requestOpenInAppPane("/libraries") },
-  { id: "nav-discover", label: "Discover", keywords: ["browse", "content", "lanes"], section: "Navigate", execute: () => requestOpenInAppPane("/discover") },
-  { id: "nav-documents", label: "Documents", keywords: ["pdf", "epub", "articles"], section: "Navigate", execute: () => requestOpenInAppPane("/documents") },
-  { id: "nav-podcasts", label: "Podcasts", keywords: ["audio", "feeds", "episodes"], section: "Navigate", execute: () => requestOpenInAppPane("/podcasts") },
-  { id: "nav-videos", label: "Videos", keywords: ["youtube", "video"], section: "Navigate", execute: () => requestOpenInAppPane("/videos") },
-  { id: "nav-chat", label: "Chat", keywords: ["conversations", "messages"], section: "Navigate", execute: () => requestOpenInAppPane("/conversations") },
-  { id: "nav-search", label: "Search", keywords: ["find", "query"], section: "Navigate", execute: () => requestOpenInAppPane("/search") },
-  { id: "nav-settings", label: "Settings", keywords: ["preferences", "account"], section: "Navigate", execute: () => requestOpenInAppPane("/settings") },
-  { id: "nav-reader-settings", label: "Reader Settings", keywords: ["typography", "font", "theme"], section: "Navigate", execute: () => requestOpenInAppPane("/settings/reader") },
-  { id: "nav-api-keys", label: "API Keys", keywords: ["credentials", "providers"], section: "Navigate", execute: () => requestOpenInAppPane("/settings/keys") },
-  { id: "nav-identities", label: "Linked Identities", keywords: ["google", "github", "oauth"], section: "Navigate", execute: () => requestOpenInAppPane("/settings/identities") },
-  { id: "nav-keybindings", label: "Keyboard Shortcuts", keywords: ["keybindings", "hotkeys", "shortcuts"], section: "Navigate", execute: () => requestOpenInAppPane("/settings/keybindings") },
+  { id: "nav-libraries", label: "Libraries", keywords: ["collections", "sources"], section: "Navigate", icon: BookOpen, execute: () => requestOpenInAppPane("/libraries") },
+  { id: "nav-discover", label: "Discover", keywords: ["browse", "content", "lanes"], section: "Navigate", icon: Compass, execute: () => requestOpenInAppPane("/discover") },
+  { id: "nav-documents", label: "Documents", keywords: ["pdf", "epub", "articles"], section: "Navigate", icon: FileText, execute: () => requestOpenInAppPane("/documents") },
+  { id: "nav-podcasts", label: "Podcasts", keywords: ["audio", "feeds", "episodes"], section: "Navigate", icon: Mic, execute: () => requestOpenInAppPane("/podcasts") },
+  { id: "nav-videos", label: "Videos", keywords: ["youtube", "video"], section: "Navigate", icon: Video, execute: () => requestOpenInAppPane("/videos") },
+  { id: "nav-chat", label: "Chat", keywords: ["conversations", "messages"], section: "Navigate", icon: MessageSquare, execute: () => requestOpenInAppPane("/conversations") },
+  { id: "nav-search", label: "Search", keywords: ["find", "query"], section: "Navigate", icon: Search, execute: () => requestOpenInAppPane("/search") },
+  { id: "nav-settings", label: "Settings", keywords: ["preferences", "account"], section: "Navigate", icon: Settings, execute: () => requestOpenInAppPane("/settings") },
+  { id: "nav-reader-settings", label: "Reader Settings", keywords: ["typography", "font", "theme"], section: "Navigate", icon: Type, execute: () => requestOpenInAppPane("/settings/reader") },
+  { id: "nav-api-keys", label: "API Keys", keywords: ["credentials", "providers"], section: "Navigate", icon: KeyRound, execute: () => requestOpenInAppPane("/settings/keys") },
+  { id: "nav-identities", label: "Linked Identities", keywords: ["google", "github", "oauth"], section: "Navigate", icon: Link2, execute: () => requestOpenInAppPane("/settings/identities") },
+  { id: "nav-keybindings", label: "Keyboard Shortcuts", keywords: ["keybindings", "hotkeys", "shortcuts"], section: "Navigate", icon: Keyboard, execute: () => requestOpenInAppPane("/settings/keybindings") },
 
   // Create
-  { id: "create-conversation", label: "New conversation", keywords: ["chat", "message"], section: "Create", execute: () => requestOpenInAppPane("/conversations/new") },
-  { id: "create-library", label: "New library", keywords: ["collection", "create"], section: "Create", execute: () => requestOpenInAppPane("/libraries") },
-  { id: "create-upload", label: "Upload file", keywords: ["pdf", "epub", "import", "add"], section: "Create", execute: dispatchOpenUpload },
-  { id: "create-url", label: "Add from URL", keywords: ["link", "paste", "import"], section: "Create", execute: dispatchOpenUpload },
+  { id: "create-conversation", label: "New conversation", keywords: ["chat", "message"], section: "Create", icon: MessageSquarePlus, execute: () => requestOpenInAppPane("/conversations/new") },
+  { id: "create-library", label: "New library", keywords: ["collection", "create"], section: "Create", icon: FolderPlus, execute: () => requestOpenInAppPane("/libraries") },
+  { id: "create-upload", label: "Upload file", keywords: ["pdf", "epub", "import", "add"], section: "Create", icon: Upload, execute: dispatchOpenUpload },
+  { id: "create-url", label: "Add from URL", keywords: ["link", "paste", "import"], section: "Create", icon: Link, execute: dispatchOpenUpload },
 ];
 
 const ACTIONS_BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
 const SECTION_ORDER: Section[] = ["Recent", "Panes", "Create", "Navigate", "Search Results"];
+
+const SEARCH_TYPE_ICON: Record<SearchType, LucideIcon> = {
+  media: Globe,
+  fragment: FileText,
+  annotation: Highlighter,
+  message: MessageSquare,
+  transcript_chunk: Mic,
+};
 
 function loadRecentIds(): string[] {
   try {
@@ -294,6 +326,7 @@ export default function CommandPalette() {
         label: descriptor.resolvedTitle,
         keywords: ["tab", "pane", "switch"],
         section: "Panes" as Section,
+        icon: PanelLeft,
         execute: () => activatePane(pane.id),
       };
     });
@@ -314,6 +347,7 @@ export default function CommandPalette() {
         label: r.primaryText,
         keywords: [],
         section: "Search Results" as Section,
+        icon: SEARCH_TYPE_ICON[r.type],
         execute: () => requestOpenInAppPane(r.href),
       })),
     [searchResults],
@@ -408,6 +442,7 @@ export default function CommandPalette() {
           </div>
           {group.items.map((action) => {
             const idx = itemIndex++;
+            const Icon = action.icon;
             const combo = keybindings[action.id];
             const searchVm = action.id.startsWith("search-")
               ? searchResults.find((r) => `search-${r.key}` === action.id)
@@ -424,6 +459,7 @@ export default function CommandPalette() {
                 onMouseEnter={() => setActiveIndex(idx)}
               >
                 <span className={styles.itemLabel}>
+                  <Icon size={16} aria-hidden="true" />
                   {action.label}
                   {searchVm && (
                     <span className={styles.searchResultMeta}>{searchVm.typeLabel}</span>

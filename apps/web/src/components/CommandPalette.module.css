@@ -80,6 +80,10 @@
   white-space: nowrap;
 }
 
+.itemLabel > svg {
+  flex-shrink: 0;
+}
+
 .searchResultMeta {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
