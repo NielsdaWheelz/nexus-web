@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import sys
 import types
+from dataclasses import dataclass
 
 import pytest
 

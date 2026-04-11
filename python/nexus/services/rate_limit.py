@@ -797,7 +797,7 @@ class RateLimiter:
 
 def _advisory_lock_key(*, scope: str, user_id: UUID, usage_date: date | None = None) -> int:
     date_token = usage_date.isoformat() if usage_date is not None else "-"
-    material = f"{scope}:{user_id}:{date_token}".encode("utf-8")
+    material = f"{scope}:{user_id}:{date_token}".encode()
     digest = hashlib.sha256(material).digest()
     unsigned_value = int.from_bytes(digest[:8], byteorder="big", signed=False)
     return int(unsigned_value - (1 << 63))

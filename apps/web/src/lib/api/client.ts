@@ -90,6 +90,10 @@ export async function apiFetch<T>(
 
   // Check for error response
   if (!response.ok) {
+    if (response.status === 401 && isErrorResponse(body) && body.error.code === "E_UNAUTHENTICATED") {
+      window.location.href = "/auth/signout";
+      throw new ApiError(401, body.error.code, body.error.message, body.error.request_id);
+    }
     if (isErrorResponse(body)) {
       throw new ApiError(
         response.status,
