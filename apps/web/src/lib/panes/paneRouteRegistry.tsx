@@ -1,24 +1,24 @@
 "use client";
 
 import type { ReactNode } from "react";
-import LibrariesPaneBody from "@/components/panes/routes/LibrariesPaneBody";
-import LibraryPaneBody from "@/components/panes/routes/LibraryPaneBody";
-import MediaPaneBody from "@/components/panes/routes/MediaPaneBody";
-import ConversationsPaneBody from "@/components/panes/routes/ConversationsPaneBody";
-import ConversationPaneBody from "@/components/panes/routes/ConversationPaneBody";
-import ConversationNewPaneBody from "@/components/panes/routes/ConversationNewPaneBody";
-import DiscoverPaneBody from "@/components/panes/routes/DiscoverPaneBody";
-import DocumentsPaneBody from "@/components/panes/routes/DocumentsPaneBody";
-import PodcastsPaneBody from "@/components/panes/routes/PodcastsPaneBody";
-import PodcastSubscriptionsPaneBody from "@/components/panes/routes/PodcastSubscriptionsPaneBody";
-import PodcastDetailPaneBody from "@/components/panes/routes/PodcastDetailPaneBody";
-import VideosPaneBody from "@/components/panes/routes/VideosPaneBody";
-import SearchPaneBody from "@/components/panes/routes/SearchPaneBody";
-import SettingsPaneBody from "@/components/panes/routes/SettingsPaneBody";
-import SettingsReaderPaneBody from "@/components/panes/routes/SettingsReaderPaneBody";
-import SettingsKeysPaneBody from "@/components/panes/routes/SettingsKeysPaneBody";
-import SettingsIdentitiesPaneBody from "@/components/panes/routes/SettingsIdentitiesPaneBody";
-import KeybindingsPaneBody from "@/components/panes/routes/KeybindingsPaneBody";
+import LibrariesPaneBody from "@/app/(authenticated)/libraries/LibrariesPaneBody";
+import LibraryPaneBody from "@/app/(authenticated)/libraries/[id]/LibraryPaneBody";
+import MediaPaneBody from "@/app/(authenticated)/media/[id]/MediaPaneBody";
+import ConversationsPaneBody from "@/app/(authenticated)/conversations/ConversationsPaneBody";
+import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
+import ConversationNewPaneBody from "@/app/(authenticated)/conversations/new/ConversationNewPaneBody";
+import DiscoverPaneBody from "@/app/(authenticated)/discover/DiscoverPaneBody";
+import DocumentsPaneBody from "@/app/(authenticated)/documents/DocumentsPaneBody";
+import PodcastsPaneBody from "@/app/(authenticated)/podcasts/PodcastsPaneBody";
+import PodcastSubscriptionsPaneBody from "@/app/(authenticated)/podcasts/subscriptions/PodcastSubscriptionsPaneBody";
+import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
+import VideosPaneBody from "@/app/(authenticated)/videos/VideosPaneBody";
+import SearchPaneBody from "@/app/(authenticated)/search/SearchPaneBody";
+import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
+import SettingsReaderPaneBody from "@/app/(authenticated)/settings/reader/SettingsReaderPaneBody";
+import SettingsKeysPaneBody from "@/app/(authenticated)/settings/keys/SettingsKeysPaneBody";
+import SettingsIdentitiesPaneBody from "@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody";
+import KeybindingsPaneBody from "@/app/(authenticated)/settings/keybindings/KeybindingsPaneBody";
 
 type RouteParamValue = string;
 type RouteParams = Record<string, RouteParamValue>;
@@ -68,7 +68,6 @@ interface PaneRouteDefinition {
   minWidthPx?: number;
   maxWidthPx?: number;
   getChrome?: (ctx: PaneRouteContext) => PaneChromeDescriptor;
-  renderBody?: (ctx: PaneRouteContext) => ReactNode;
   buildCompanionPanes?: (ctx: PaneRouteContext) => PaneCompanionPaneDraft[];
 }
 
@@ -80,7 +79,6 @@ export interface PaneCompanionPaneDraft {
   minWidthPx?: number;
   maxWidthPx?: number;
   getChrome?: (ctx: PaneRouteContext) => PaneChromeDescriptor;
-  renderBody?: (ctx: PaneRouteContext) => ReactNode;
 }
 
 export interface ResolvedPaneRoute {
@@ -113,7 +111,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       title: "Libraries",
       subtitle: "Your source collections.",
     }),
-    renderBody: () => <LibrariesPaneBody />,
   },
   {
     id: "library",
@@ -129,7 +126,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Library" }),
-    renderBody: () => <LibraryPaneBody />,
   },
   {
     id: "media",
@@ -159,7 +155,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       title: "Chats",
       subtitle: "Recent conversations with quick-open and delete actions.",
     }),
-    renderBody: () => <ConversationsPaneBody />,
   },
   {
     id: "conversationNew",
@@ -189,7 +184,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       title: "Chat",
       subtitle: "Conversation transcript and composer.",
     }),
-    renderBody: () => <ConversationPaneBody />,
     buildCompanionPanes: ({ href, params }) => {
       const id = params.id;
       if (!id) {
@@ -231,7 +225,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       title: "Discover",
       subtitle: "Browse content by type.",
     }),
-    renderBody: () => <DiscoverPaneBody />,
   },
   {
     id: "documents",
@@ -311,7 +304,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       title: "Search",
       subtitle: "Search across media, fragments, annotations, chat, and transcript chunks.",
     }),
-    renderBody: () => <SearchPaneBody />,
   },
   {
     id: "settings",
@@ -326,7 +318,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       title: "Settings",
       subtitle: "Account-level controls and integration configuration.",
     }),
-    renderBody: () => <SettingsPaneBody />,
   },
   {
     id: "settingsReader",
@@ -341,7 +332,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       title: "Reader",
       subtitle: "Typography, layout, and display preferences for reading.",
     }),
-    renderBody: () => <SettingsReaderPaneBody />,
   },
   {
     id: "settingsKeys",
@@ -356,7 +346,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       title: "API Keys",
       subtitle: "BYOK credentials for model providers. keys never leave server-side flows.",
     }),
-    renderBody: () => <SettingsKeysPaneBody />,
   },
   {
     id: "settingsIdentities",
@@ -371,7 +360,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       title: "Linked Identities",
       subtitle: "Manage Google and GitHub identities linked to this account.",
     }),
-    renderBody: () => <SettingsIdentitiesPaneBody />,
   },
   {
     id: "settingsKeybindings",
@@ -386,7 +374,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       title: "Keyboard Shortcuts",
       subtitle: "Customize key bindings for palette actions.",
     }),
-    renderBody: () => <KeybindingsPaneBody />,
   },
 ];
 

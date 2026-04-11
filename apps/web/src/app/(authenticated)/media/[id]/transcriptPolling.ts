@@ -74,7 +74,3 @@ export function shouldPollDocumentProcessing({
   }
   return processingStatus !== null && processingStatus !== undefined && processingStatus !== "failed";
 }
-
-export function useTranscriptProvisioningPoll(input: UseIntervalPollInput): void {
-  useIntervalPoll(input);
-}

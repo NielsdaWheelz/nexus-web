@@ -50,7 +50,6 @@ describe("workspace pane cutover contract (settings slice)", () => {
       expect(route.definition?.minWidthPx).toBeTypeOf("number");
       expect(route.definition?.maxWidthPx).toBeTypeOf("number");
       expect(route.definition?.getChrome).toBeTypeOf("function");
-      expect(route.definition?.renderBody).toBeTypeOf("function");
     }
   });
 
@@ -84,7 +83,6 @@ describe("workspace pane cutover contract (search slice)", () => {
       expect(route.definition?.minWidthPx).toBeTypeOf("number");
       expect(route.definition?.maxWidthPx).toBeTypeOf("number");
       expect(route.definition?.getChrome).toBeTypeOf("function");
-      expect(route.definition?.renderBody).toBeTypeOf("function");
     }
   });
 
@@ -115,7 +113,6 @@ describe("workspace pane cutover contract (discover slice)", () => {
       expect(route.definition?.minWidthPx).toBeTypeOf("number");
       expect(route.definition?.maxWidthPx).toBeTypeOf("number");
       expect(route.definition?.getChrome).toBeTypeOf("function");
-      expect(route.definition?.renderBody).toBeTypeOf("function");
     }
   });
 
@@ -151,7 +148,6 @@ describe("workspace pane cutover contract (conversations slice)", () => {
       expect(route.definition?.minWidthPx).toBeTypeOf("number");
       expect(route.definition?.maxWidthPx).toBeTypeOf("number");
       expect(route.definition?.getChrome).toBeTypeOf("function");
-      expect(route.definition?.renderBody).toBeTypeOf("function");
     }
   });
 
@@ -189,13 +185,12 @@ describe("workspace pane cutover contract (conversation detail slice)", () => {
       expect(route.definition?.minWidthPx).toBeTypeOf("number");
       expect(route.definition?.maxWidthPx).toBeTypeOf("number");
       expect(route.definition?.getChrome).toBeTypeOf("function");
-      expect(route.definition?.renderBody).toBeTypeOf("function");
       expect(route.definition?.buildCompanionPanes).toBeTypeOf("function");
       const companionPanes =
         route.definition?.buildCompanionPanes?.({ href, params: route.params }) ?? [];
       expect(companionPanes).toHaveLength(1);
       expect(companionPanes[0]?.href).toContain("/conversations/conv-123");
-      expect(companionPanes[0]?.defaultWidthPx).toBe(360);
+      expect(companionPanes[0]?.defaultWidthPx).toBe(280);
     }
   });
 
@@ -233,7 +228,6 @@ describe("workspace pane cutover contract (libraries slice)", () => {
       expect(route.definition?.minWidthPx).toBeTypeOf("number");
       expect(route.definition?.maxWidthPx).toBeTypeOf("number");
       expect(route.definition?.getChrome).toBeTypeOf("function");
-      expect(route.definition?.renderBody).toBeTypeOf("function");
     }
   });
 
@@ -272,7 +266,6 @@ describe("workspace pane cutover contract (library detail slice)", () => {
       expect(route.definition?.minWidthPx).toBeTypeOf("number");
       expect(route.definition?.maxWidthPx).toBeTypeOf("number");
       expect(route.definition?.getChrome).toBeTypeOf("function");
-      expect(route.definition?.renderBody).toBeTypeOf("function");
     }
   });
 

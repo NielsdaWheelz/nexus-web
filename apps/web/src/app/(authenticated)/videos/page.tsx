@@ -1,13 +1,7 @@
 "use client";
 
-import MediaCatalogPage from "@/components/MediaCatalogPage";
+import VideosPaneBody from "./VideosPaneBody";
 
 export default function VideosPage() {
-  return (
-    <MediaCatalogPage
-      title="Videos"
-      allowedKinds={["video"]}
-      emptyMessage="No videos found in your visible libraries."
-    />
-  );
+  return <VideosPaneBody />;
 }

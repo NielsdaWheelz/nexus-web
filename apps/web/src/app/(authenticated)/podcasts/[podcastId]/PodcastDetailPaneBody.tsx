@@ -1141,13 +1141,14 @@ export default function PodcastDetailPaneBody() {
       return;
     }
 
+    const forecastingSet = forecastingTranscriptMediaIdsRef.current;
     let cancelled = false;
     const pendingForecastRequests = pendingForecastEpisodes.map((episode) => ({
       media_id: episode.id,
       reason: transcriptReasonByMediaId[episode.id] ?? "search",
     }));
     for (const request of pendingForecastRequests) {
-      forecastingTranscriptMediaIdsRef.current.add(request.media_id);
+      forecastingSet.add(request.media_id);
     }
 
     const loadForecasts = async () => {
@@ -1161,7 +1162,7 @@ export default function PodcastDetailPaneBody() {
         // Keep CTA enabled when forecast preflight fails.
       } finally {
         for (const request of pendingForecastRequests) {
-          forecastingTranscriptMediaIdsRef.current.delete(request.media_id);
+          forecastingSet.delete(request.media_id);
         }
       }
     };
@@ -1170,7 +1171,7 @@ export default function PodcastDetailPaneBody() {
     return () => {
       cancelled = true;
       for (const request of pendingForecastRequests) {
-        forecastingTranscriptMediaIdsRef.current.delete(request.media_id);
+        forecastingSet.delete(request.media_id);
       }
     };
   }, [

@@ -59,13 +59,6 @@ function resolveCurrentChapter(
   return activeChapter;
 }
 
-function formatTimeSavedSeconds(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return "0.0";
-  }
-  return seconds.toFixed(1);
-}
-
 export default function GlobalPlayerFooter() {
   const isMobile = useIsMobileViewport();
   const [queueOpen, setQueueOpen] = useState(false);
@@ -481,7 +474,7 @@ export default function GlobalPlayerFooter() {
                       <span>Mono audio</span>
                     </label>
 
-                    <p className={styles.effectsMeta}>Time saved: {formatTimeSavedSeconds(silenceTimeSavedSeconds)}s</p>
+                    <p className={styles.effectsMeta}>Time saved: {Number.isFinite(silenceTimeSavedSeconds) && silenceTimeSavedSeconds > 0 ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
                     {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
                   </section>
                 )}
@@ -728,7 +721,7 @@ export default function GlobalPlayerFooter() {
                 <span>Mono audio</span>
               </label>
 
-              <p className={styles.effectsMeta}>Time saved: {formatTimeSavedSeconds(silenceTimeSavedSeconds)}s</p>
+              <p className={styles.effectsMeta}>Time saved: {Number.isFinite(silenceTimeSavedSeconds) && silenceTimeSavedSeconds > 0 ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
               {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
             </section>
           )}

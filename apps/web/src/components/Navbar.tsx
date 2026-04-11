@@ -27,6 +27,7 @@ import { useWorkspaceStore } from "@/lib/workspace/store";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { OPEN_UPLOAD_EVENT } from "@/components/CommandPalette";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { getFocusableElements } from "@/lib/ui/getFocusableElements";
 import FileUpload from "@/components/FileUpload";
 import AddFromUrl from "@/components/AddFromUrl";
 import styles from "./Navbar.module.css";
@@ -40,20 +41,6 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   isActive?: (pathname: string) => boolean;
-}
-
-function getFocusableElements(container: HTMLElement): HTMLElement[] {
-  const selectors = [
-    "button:not([disabled])",
-    "[href]",
-    "input:not([disabled])",
-    "select:not([disabled])",
-    "textarea:not([disabled])",
-    "[tabindex]:not([tabindex='-1'])",
-  ].join(",");
-  return Array.from(container.querySelectorAll<HTMLElement>(selectors)).filter(
-    (element) => !element.hasAttribute("hidden")
-  );
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -231,11 +218,12 @@ export default function Navbar({ onToggle }: NavbarProps) {
       }
     };
 
+    const uploadButton = uploadButtonRef.current;
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      if (uploadButtonRef.current) {
-        uploadButtonRef.current.focus();
+      if (uploadButton) {
+        uploadButton.focus();
       } else {
         previouslyFocused?.focus();
       }

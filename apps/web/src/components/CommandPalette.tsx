@@ -43,6 +43,7 @@ import {
   formatKeyCombo,
 } from "@/lib/keybindings";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { getFocusableElements } from "@/lib/ui/getFocusableElements";
 import styles from "./CommandPalette.module.css";
 
 type Section = "Recent" | "Panes" | "Create" | "Navigate" | "Search Results";
@@ -119,18 +120,6 @@ function saveRecentIds(ids: string[]): void {
 function pushRecent(ids: string[], actionId: string): string[] {
   const next = [actionId, ...ids.filter((id) => id !== actionId)];
   return next.slice(0, MAX_RECENT);
-}
-
-function getFocusableElements(container: HTMLElement): HTMLElement[] {
-  const selectors = [
-    "button:not([disabled])",
-    "[href]",
-    "input:not([disabled])",
-    "[tabindex]:not([tabindex='-1'])",
-  ].join(",");
-  return Array.from(container.querySelectorAll<HTMLElement>(selectors)).filter(
-    (el) => !el.hasAttribute("hidden"),
-  );
 }
 
 export { OPEN_UPLOAD_EVENT, OPEN_COMMAND_PALETTE_EVENT };

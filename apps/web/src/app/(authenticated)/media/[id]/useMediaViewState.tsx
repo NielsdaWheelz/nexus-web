@@ -59,7 +59,6 @@ import {
   type NormalizedNavigationTocNode,
 } from "@/lib/media/epubReader";
 import {
-  type TranscriptPlaybackSource,
   type TranscriptFragment,
 } from "./TranscriptMediaPane";
 import {
@@ -80,13 +79,11 @@ import {
   type PdfDocumentHighlight,
   type PdfHighlightNavigationTarget,
   type NavigationTocNodeLike,
-  TEXT_ANCHOR_TOP_PADDING_PX,
   TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
   DOCUMENT_PROCESSING_POLL_INTERVAL_MS,
   LIBRARY_MEDIA_PAGE_SIZE,
   escapeAttrValue,
   getPaneScrollContainer,
-  formatResumeTime,
   findFirstVisibleCanonicalOffset,
   scrollToCanonicalTextAnchor,
   fetchHighlights,
@@ -590,8 +587,9 @@ export default function useMediaViewState(id: string) {
     pollIntervalMs: DOCUMENT_PROCESSING_POLL_INTERVAL_MS,
   });
 
+  const mediaId = media?.id;
   useEffect(() => {
-    if (!media || !isTranscriptMedia || !canRequestTranscript) {
+    if (!mediaId || !isTranscriptMedia || !canRequestTranscript) {
       setTranscriptRequestForecast(null);
       return;
     }
@@ -608,7 +606,7 @@ export default function useMediaViewState(id: string) {
             remaining_minutes: number | null;
             fits_budget: boolean;
           };
-        }>(`/api/media/${media.id}/transcript/request`, {
+        }>(`/api/media/${mediaId}/transcript/request`, {
           method: "POST",
           body: JSON.stringify({
             reason: "episode_open",
@@ -623,7 +621,7 @@ export default function useMediaViewState(id: string) {
           fitsBudget: payload.fits_budget,
         });
         setMedia((prev) =>
-          prev && prev.id === media.id
+          prev && prev.id === mediaId
             ? prev.processing_status === payload.processing_status &&
               prev.transcript_state === payload.transcript_state &&
               prev.transcript_coverage === payload.transcript_coverage
@@ -646,7 +644,7 @@ export default function useMediaViewState(id: string) {
     return () => {
       cancelled = true;
     };
-  }, [media?.id, isTranscriptMedia, canRequestTranscript]);
+  }, [mediaId, isTranscriptMedia, canRequestTranscript]);
 
   // ==========================================================================
   // EPUB orchestration — manifest + TOC + initial chapter

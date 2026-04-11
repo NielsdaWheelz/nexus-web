@@ -946,7 +946,6 @@ export default function PdfReader({
         eventBus,
         linkService,
         textLayerMode: PDF_VIEWER_TEXT_LAYER_MODE_ENABLE,
-        enableAutoLinking: false,
       });
       try {
         if (typeof viewerModule.ScrollMode?.VERTICAL === "number") {

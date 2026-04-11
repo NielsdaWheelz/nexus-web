@@ -163,7 +163,7 @@ export default function FileUpload({ onNavigate }: FileUploadProps) {
         setStatus("error");
       }
     },
-    [validateFile, router]
+    [validateFile, router, onNavigate]
   );
 
   const handleFileSelect = useCallback(

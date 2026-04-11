@@ -38,7 +38,7 @@ describe("pane route registry", () => {
       }) ?? [];
     expect(companionPanes).toHaveLength(1);
     expect(companionPanes[0]?.href).toContain("/conversations/abc-123");
-    expect(companionPanes[0]?.defaultWidthPx).toBe(360);
+    expect(companionPanes[0]?.defaultWidthPx).toBe(280);
   });
 
   it("resolves /conversations/new with query params", () => {

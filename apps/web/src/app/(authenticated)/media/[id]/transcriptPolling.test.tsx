@@ -4,7 +4,6 @@ import {
   shouldPollDocumentProcessing,
   shouldPollTranscriptProvisioning,
   useIntervalPoll,
-  useTranscriptProvisioningPoll,
 } from "./transcriptPolling";
 
 describe("shouldPollTranscriptProvisioning", () => {
@@ -195,27 +194,3 @@ describe("useIntervalPoll", () => {
   });
 });
 
-describe("useTranscriptProvisioningPoll", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("delegates to the shared interval poll hook", async () => {
-    vi.useFakeTimers();
-    const onPoll = vi.fn(async () => undefined);
-
-    renderHook(() =>
-      useTranscriptProvisioningPoll({
-        enabled: true,
-        onPoll,
-        pollIntervalMs: 1000,
-      })
-    );
-
-    await act(async () => {
-      vi.advanceTimersByTime(1000);
-      await Promise.resolve();
-    });
-    expect(onPoll).toHaveBeenCalledTimes(1);
-  });
-});

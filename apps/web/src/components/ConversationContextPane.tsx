@@ -14,31 +14,6 @@ interface ConversationContextPaneProps {
   title?: string;
 }
 
-function truncate(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max) + "..." : text;
-}
-
-function formatContextTitle(item: ContextItem): string {
-  if (item.preview) return item.preview;
-  if (item.type === "highlight") return "Highlight";
-  if (item.type === "annotation") return "Annotation";
-  return "Media";
-}
-
-function formatSurroundingContext(item: ContextItem): string | undefined {
-  const parts: string[] = [];
-  if (item.prefix) parts.push("..." + truncate(item.prefix, 40));
-  if (item.suffix) parts.push(truncate(item.suffix, 40) + "...");
-  return parts.length > 0 ? parts.join(" [selection] ") : undefined;
-}
-
-function formatMeta(item: ContextItem): string | undefined {
-  const parts: string[] = [];
-  if (item.mediaTitle) parts.push(item.mediaTitle);
-  if (item.mediaKind) parts.push(item.mediaKind);
-  return parts.length > 0 ? parts.join(" \u2014 ") : undefined;
-}
-
 export default function ConversationContextPane({
   contexts,
   onRemoveContext,
@@ -80,11 +55,16 @@ export default function ConversationContextPane({
                       />
                     ) : undefined
                   }
-                  title={formatContextTitle(contextItem)}
+                  title={contextItem.preview || (contextItem.type === "highlight" ? "Highlight" : contextItem.type === "annotation" ? "Annotation" : "Media")}
                   titleClassName={styles.contextTitle}
-                  description={formatSurroundingContext(contextItem)}
+                  description={(() => {
+                    const parts: string[] = [];
+                    if (contextItem.prefix) parts.push("..." + (contextItem.prefix.length > 40 ? contextItem.prefix.slice(0, 40) + "..." : contextItem.prefix));
+                    if (contextItem.suffix) parts.push((contextItem.suffix.length > 40 ? contextItem.suffix.slice(0, 40) + "..." : contextItem.suffix) + "...");
+                    return parts.length > 0 ? parts.join(" [selection] ") : undefined;
+                  })()}
                   descriptionClassName={styles.contextDescription}
-                  meta={formatMeta(contextItem)}
+                  meta={[contextItem.mediaTitle, contextItem.mediaKind].filter(Boolean).join(" \u2014 ") || undefined}
                   metaClassName={styles.contextMeta}
                   actions={
                     menuOptions.length > 0 ? (

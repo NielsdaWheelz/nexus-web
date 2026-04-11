@@ -48,13 +48,3 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
-
-/* Upload pane content */
-.uploadContent {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
-  min-height: 200px;
-}
