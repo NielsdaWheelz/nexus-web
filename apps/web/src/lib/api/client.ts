@@ -91,7 +91,12 @@ export async function apiFetch<T>(
   // Check for error response
   if (!response.ok) {
     if (response.status === 401 && isErrorResponse(body) && body.error.code === "E_UNAUTHENTICATED") {
-      window.location.href = "/auth/signout";
+      // Signout route is POST-only; submit a hidden form to trigger it.
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = "/auth/signout";
+      document.body.appendChild(form);
+      form.submit();
       throw new ApiError(401, body.error.code, body.error.message, body.error.request_id);
     }
     if (isErrorResponse(body)) {
