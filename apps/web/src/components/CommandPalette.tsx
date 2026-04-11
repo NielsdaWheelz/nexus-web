@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./CommandPalette.module.css";
 
 type Section = "Navigate" | "Create";
@@ -15,6 +17,7 @@ interface Action {
 }
 
 const OPEN_UPLOAD_EVENT = "nexus:open-upload";
+const OPEN_COMMAND_PALETTE_EVENT = "nexus:open-command-palette";
 
 function dispatchOpenUpload() {
   window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
@@ -43,7 +46,19 @@ const ACTIONS: Action[] = [
 
 const SECTION_ORDER: Section[] = ["Create", "Navigate"];
 
-export { OPEN_UPLOAD_EVENT };
+function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  const selectors = [
+    "button:not([disabled])",
+    "[href]",
+    "input:not([disabled])",
+    "[tabindex]:not([tabindex='-1'])",
+  ].join(",");
+  return Array.from(container.querySelectorAll<HTMLElement>(selectors)).filter(
+    (el) => !el.hasAttribute("hidden"),
+  );
+}
+
+export { OPEN_UPLOAD_EVENT, OPEN_COMMAND_PALETTE_EVENT };
 
 export default function CommandPalette() {
   const [open, setOpen] = useState(false);
@@ -51,6 +66,8 @@ export default function CommandPalette() {
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<HTMLElement>(null);
+  const isMobile = useIsMobileViewport();
 
   // Cmd+K / Ctrl+K to toggle
   useEffect(() => {
@@ -70,12 +87,58 @@ export default function CommandPalette() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // External open trigger (mobile Search button)
+  useEffect(() => {
+    const handler = () => {
+      setQuery("");
+      setActiveIndex(0);
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
+    return () => window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
+  }, []);
+
   // Focus input when opening
   useEffect(() => {
     if (open) {
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
+
+  // Mobile: lock scroll
+  useEffect(() => {
+    if (!isMobile || !open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [isMobile, open]);
+
+  // Mobile: focus trap
+  useEffect(() => {
+    if (!isMobile || !open || !sheetRef.current) return;
+    const sheet = sheetRef.current;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const els = getFocusableElements(sheet);
+      if (els.length === 0) return;
+      const first = els[0];
+      const last = els[els.length - 1];
+      const active = document.activeElement;
+      if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isMobile, open]);
 
   const filtered = useMemo(() => {
     if (!query) return ACTIONS;
@@ -87,7 +150,6 @@ export default function CommandPalette() {
     );
   }, [query]);
 
-  // Group by section in display order
   const grouped = useMemo(() => {
     const groups: { section: Section; items: Action[] }[] = [];
     for (const section of SECTION_ORDER) {
@@ -97,7 +159,6 @@ export default function CommandPalette() {
     return groups;
   }, [filtered]);
 
-  // Flat list for arrow-key indexing
   const flatItems = useMemo(
     () => grouped.flatMap((g) => g.items),
     [grouped],
@@ -139,12 +200,10 @@ export default function CommandPalette() {
     [activeIndex, close, executeAction, flatItems],
   );
 
-  // Reset active index when filter changes
   useEffect(() => {
     setActiveIndex(0);
   }, [query]);
 
-  // Scroll active item into view
   useEffect(() => {
     if (!listRef.current) return;
     const active = listRef.current.querySelector(`[data-index="${activeIndex}"]`);
@@ -154,6 +213,96 @@ export default function CommandPalette() {
   if (!open) return null;
 
   let itemIndex = 0;
+
+  const listContent = (
+    <div
+      ref={listRef}
+      id="command-palette-list"
+      className={styles.list}
+      role="listbox"
+    >
+      {grouped.length === 0 && (
+        <div className={styles.empty}>No matching commands</div>
+      )}
+      {grouped.map((group) => (
+        <div key={group.section}>
+          <div className={styles.sectionHeader} role="presentation">
+            {group.section}
+          </div>
+          {group.items.map((action) => {
+            const idx = itemIndex++;
+            return (
+              <div
+                key={action.id}
+                id={`cmd-${action.id}`}
+                className={`${styles.item} ${idx === activeIndex ? styles.active : ""}`}
+                role="option"
+                aria-selected={idx === activeIndex}
+                data-index={idx}
+                onClick={() => executeAction(action)}
+                onMouseEnter={() => setActiveIndex(idx)}
+              >
+                {action.label}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+
+  const inputElement = (
+    <input
+      ref={inputRef}
+      type="text"
+      className={styles.input}
+      placeholder="Type a command..."
+      value={query}
+      onChange={(e) => setQuery(e.target.value)}
+      aria-label="Filter commands"
+      aria-activedescendant={
+        flatItems[activeIndex]
+          ? `cmd-${flatItems[activeIndex].id}`
+          : undefined
+      }
+      role="combobox"
+      aria-expanded="true"
+      aria-controls="command-palette-list"
+      aria-autocomplete="list"
+    />
+  );
+
+  if (isMobile) {
+    return (
+      <div className={styles.mobileBackdrop} onClick={close}>
+        <section
+          ref={sheetRef}
+          className={styles.mobileSheet}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Command palette"
+          tabIndex={-1}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={handleKeyDown}
+        >
+          <div className={styles.mobileHandle} aria-hidden="true" />
+          <header className={styles.mobileHeader}>
+            <h2>Commands</h2>
+            <button
+              type="button"
+              className={styles.mobileClose}
+              onClick={close}
+              aria-label="Close"
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </header>
+          {inputElement}
+          {listContent}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.backdrop} onClick={close}>
@@ -165,58 +314,8 @@ export default function CommandPalette() {
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
-        <input
-          ref={inputRef}
-          type="text"
-          className={styles.input}
-          placeholder="Type a command..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Filter commands"
-          aria-activedescendant={
-            flatItems[activeIndex]
-              ? `cmd-${flatItems[activeIndex].id}`
-              : undefined
-          }
-          role="combobox"
-          aria-expanded="true"
-          aria-controls="command-palette-list"
-          aria-autocomplete="list"
-        />
-        <div
-          ref={listRef}
-          id="command-palette-list"
-          className={styles.list}
-          role="listbox"
-        >
-          {grouped.length === 0 && (
-            <div className={styles.empty}>No matching commands</div>
-          )}
-          {grouped.map((group) => (
-            <div key={group.section}>
-              <div className={styles.sectionHeader} role="presentation">
-                {group.section}
-              </div>
-              {group.items.map((action) => {
-                const idx = itemIndex++;
-                return (
-                  <div
-                    key={action.id}
-                    id={`cmd-${action.id}`}
-                    className={`${styles.item} ${idx === activeIndex ? styles.active : ""}`}
-                    role="option"
-                    aria-selected={idx === activeIndex}
-                    data-index={idx}
-                    onClick={() => executeAction(action)}
-                    onMouseEnter={() => setActiveIndex(idx)}
-                  >
-                    {action.label}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
+        {inputElement}
+        {listContent}
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+/* Desktop: centered overlay */
 .backdrop {
   position: fixed;
   inset: 0;
@@ -22,6 +23,7 @@
   overflow: hidden;
 }
 
+/* Shared (desktop + mobile) */
 .input {
   width: 100%;
   padding: var(--space-4);
@@ -71,8 +73,93 @@
   font-size: var(--font-size-sm);
 }
 
+/* Mobile: bottom sheet */
+.mobileBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: stretch;
+}
+
+.mobileSheet {
+  width: 100%;
+  max-height: min(76dvh, 620px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-border-subtle);
+  border-radius: 16px 16px 0 0;
+  padding-bottom: max(var(--space-2), env(safe-area-inset-bottom));
+  animation: sheetSlideIn 180ms ease-out;
+}
+
+@keyframes sheetSlideIn {
+  from {
+    transform: translateY(14px);
+    opacity: 0.92;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.mobileHandle {
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-border);
+  margin: var(--space-2) auto var(--space-1);
+}
+
+.mobileHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-secondary);
+}
+
+.mobileHeader h2 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.mobileClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  width: 36px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+}
+
+/* Mobile items: larger touch targets */
 @media (max-width: 768px) {
   .backdrop {
+    display: none;
+  }
+
+  .item {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    padding: var(--space-3) var(--space-4);
+    touch-action: manipulation;
+  }
+}
+
+@media (min-width: 769px) {
+  .mobileBackdrop {
     display: none;
   }
 }
