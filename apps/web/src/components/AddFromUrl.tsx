@@ -14,7 +14,11 @@ interface FromUrlResponse {
   };
 }
 
-export default function AddFromUrl() {
+interface AddFromUrlProps {
+  onNavigate?: (href: string) => void;
+}
+
+export default function AddFromUrl({ onNavigate }: AddFromUrlProps) {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState<Status>("idle");
@@ -42,8 +46,13 @@ export default function AddFromUrl() {
       });
       setStatus("success");
       setUrl("");
+      const href = `/media/${resp.data.media_id}`;
       timerRef.current = setTimeout(() => {
-        router.push(`/media/${resp.data.media_id}`);
+        if (onNavigate) {
+          onNavigate(href);
+        } else {
+          router.push(href);
+        }
       }, 800);
     } catch (err) {
       setStatus("error");

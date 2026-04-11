@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { FolderOpen, Library as LibraryIcon } from "lucide-react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import FileUpload from "@/components/FileUpload";
-import AddFromUrl from "@/components/AddFromUrl";
 import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
@@ -261,7 +259,7 @@ export default function LibrariesPaneBody() {
 
   return (
     <>
-      <SectionCard title="Libraries">
+      <SectionCard>
         <div className={styles.content}>
           {/* Create library form */}
           <form className={styles.createForm} onSubmit={handleCreateLibrary}>
@@ -317,12 +315,6 @@ export default function LibrariesPaneBody() {
               ))}
             </AppList>
           )}
-        </div>
-      </SectionCard>
-      <SectionCard title="Upload">
-        <div className={styles.uploadContent}>
-          <FileUpload />
-          <AddFromUrl />
         </div>
       </SectionCard>
 

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType } from "react";
-import { ArrowRight, FileText, Library, Mic, Video } from "lucide-react";
+import { ArrowRight, FileText, Mic, Video } from "lucide-react";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
@@ -37,10 +37,7 @@ const DISCOVER_CARDS: DiscoverCard[] = [
 export default function DiscoverPaneBody() {
   return (
     <>
-      <SectionCard
-        title="Content Lanes"
-        description="Lane pages use shared list and status components."
-      >
+      <SectionCard>
         <AppList>
           {DISCOVER_CARDS.map(({ href, title, description, Icon }) => (
             <AppListItem
@@ -52,21 +49,6 @@ export default function DiscoverPaneBody() {
               trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
             />
           ))}
-        </AppList>
-      </SectionCard>
-
-      <SectionCard
-        title="Capture"
-        description="Ingest and organize content in libraries before discovery."
-      >
-        <AppList>
-          <AppListItem
-            href="/libraries"
-            icon={<Library size={18} />}
-            title="Open Libraries"
-            description="Upload files, paste URLs, and manage source collections."
-            trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
-          />
         </AppList>
       </SectionCard>
     </>

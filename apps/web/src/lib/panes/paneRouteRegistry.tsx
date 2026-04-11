@@ -109,7 +109,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Libraries",
-      subtitle: "Create, open, and manage your libraries.",
+      subtitle: "Your source collections.",
     }),
     renderBody: () => <LibrariesPaneBody />,
   },
@@ -226,7 +226,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Discover",
-      subtitle: "Workflow-first navigation: choose a lane by intent, then drill into items.",
+      subtitle: "Browse content by type.",
     }),
     renderBody: () => <DiscoverPaneBody />,
   },

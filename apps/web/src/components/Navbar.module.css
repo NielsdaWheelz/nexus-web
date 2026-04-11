@@ -290,6 +290,36 @@
   touch-action: manipulation;
 }
 
+/* Upload section (desktop) */
+.uploadSection {
+  position: relative;
+  padding: var(--space-2);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.uploadPopover {
+  position: fixed;
+  z-index: 1000;
+  left: calc(var(--navbar-width) + var(--space-2));
+  bottom: var(--space-4);
+  width: min(420px, calc(100vw - var(--navbar-width) - 2rem));
+  padding: var(--space-4);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.collapsed .uploadPopover {
+  left: calc(var(--navbar-collapsed-width) + var(--space-2));
+}
+
+/* Upload sheet body (mobile) */
+.uploadSheetBody {
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+
 /* Responsive split */
 @media (max-width: 768px) {
   .navbar {
@@ -304,6 +334,10 @@
 @media (min-width: 769px) {
   .mobileNav,
   .mobileTabSwitcherBackdrop {
+    display: none;
+  }
+
+  .uploadSheetBody {
     display: none;
   }
 }

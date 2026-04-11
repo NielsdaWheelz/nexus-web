@@ -18,6 +18,7 @@ import {
   LogOut,
   MessageSquare,
   PanelsTopLeft,
+  Plus,
   Search,
   Settings,
   X,
@@ -25,7 +26,10 @@ import {
 import Link from "next/link";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { resolvePaneDescriptor } from "@/lib/workspace/paneDescriptor";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import FileUpload from "@/components/FileUpload";
+import AddFromUrl from "@/components/AddFromUrl";
 import styles from "./Navbar.module.css";
 
 interface NavbarProps {
@@ -86,9 +90,13 @@ function pathnameFromHref(href: string): string {
 export default function Navbar({ onToggle }: NavbarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [tabSwitcherOpen, setTabSwitcherOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const tabSwitcherId = useId();
+  const uploadPopoverId = useId();
   const tabsButtonRef = useRef<HTMLButtonElement>(null);
   const tabSwitcherRef = useRef<HTMLElement>(null);
+  const uploadButtonRef = useRef<HTMLButtonElement>(null);
+  const uploadPopoverRef = useRef<HTMLElement>(null);
   const isMobile = useIsMobileViewport();
   const {
     state,
@@ -175,6 +183,100 @@ export default function Navbar({ onToggle }: NavbarProps) {
     setTabSwitcherOpen(false);
   }, []);
 
+  const handleCloseUpload = useCallback(() => {
+    setUploadOpen(false);
+  }, []);
+
+  const handleUploadNavigate = useCallback(
+    (href: string) => {
+      setUploadOpen(false);
+      requestOpenInAppPane(href);
+    },
+    [],
+  );
+
+  // Desktop: close upload popover on click-outside or Escape
+  useEffect(() => {
+    if (isMobile || !uploadOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleCloseUpload();
+      }
+    };
+
+    const handleClickOutside = (e: globalThis.MouseEvent) => {
+      if (
+        uploadPopoverRef.current &&
+        !uploadPopoverRef.current.contains(e.target as Node) &&
+        uploadButtonRef.current &&
+        !uploadButtonRef.current.contains(e.target as Node)
+      ) {
+        handleCloseUpload();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isMobile, uploadOpen, handleCloseUpload]);
+
+  // Mobile: lock scroll when upload sheet is open
+  useEffect(() => {
+    if (!isMobile || !uploadOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobile, uploadOpen]);
+
+  // Mobile: focus trap for upload sheet
+  useEffect(() => {
+    if (!isMobile || !uploadOpen || !uploadPopoverRef.current) return;
+    const sheet = uploadPopoverRef.current;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    const focusable = getFocusableElements(sheet);
+    (focusable[0] ?? sheet).focus();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleCloseUpload();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const els = getFocusableElements(sheet);
+      if (els.length === 0) return;
+      const first = els[0];
+      const last = els[els.length - 1];
+      const active = document.activeElement;
+      if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      if (uploadButtonRef.current) {
+        uploadButtonRef.current.focus();
+      } else {
+        previouslyFocused?.focus();
+      }
+    };
+  }, [isMobile, uploadOpen, handleCloseUpload]);
+
   useEffect(() => {
     if (!isMobile || !tabSwitcherOpen) {
       return;
@@ -258,6 +360,18 @@ export default function Navbar({ onToggle }: NavbarProps) {
             );
           })}
           <button
+            ref={uploadButtonRef}
+            type="button"
+            className={`${styles.mobileNavItem} ${uploadOpen ? styles.mobileNavItemActive : ""}`}
+            aria-label="Add content"
+            aria-haspopup="dialog"
+            aria-expanded={uploadOpen}
+            aria-controls={uploadPopoverId}
+            onClick={() => setUploadOpen((prev) => !prev)}
+          >
+            <Plus size={18} strokeWidth={2} aria-hidden="true" />
+          </button>
+          <button
             ref={tabsButtonRef}
             type="button"
             className={`${styles.mobileNavItem} ${tabSwitcherOpen ? styles.mobileNavItemActive : ""}`}
@@ -270,6 +384,41 @@ export default function Navbar({ onToggle }: NavbarProps) {
             <PanelsTopLeft size={18} strokeWidth={2} aria-hidden="true" />
           </button>
         </nav>
+
+        {uploadOpen && (
+          <div
+            className={styles.mobileTabSwitcherBackdrop}
+            onClick={handleCloseUpload}
+          >
+            <section
+              ref={uploadPopoverRef}
+              id={uploadPopoverId}
+              className={styles.mobileTabSwitcher}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Add content"
+              tabIndex={-1}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className={styles.mobileTabSwitcherHandle} aria-hidden="true" />
+              <header className={styles.mobileTabSwitcherHeader}>
+                <h2>Add content</h2>
+                <button
+                  type="button"
+                  className={styles.mobileTabSwitcherClose}
+                  onClick={handleCloseUpload}
+                  aria-label="Close"
+                >
+                  <X size={16} aria-hidden="true" />
+                </button>
+              </header>
+              <div className={styles.uploadSheetBody}>
+                <FileUpload onNavigate={handleUploadNavigate} />
+                <AddFromUrl onNavigate={handleUploadNavigate} />
+              </div>
+            </section>
+          </div>
+        )}
 
         {tabSwitcherOpen && (
           <div
@@ -362,6 +511,37 @@ export default function Navbar({ onToggle }: NavbarProps) {
             </a>
           );
         })}
+      </div>
+
+      <div className={styles.uploadSection}>
+        <button
+          ref={uploadButtonRef}
+          type="button"
+          className={`${styles.navItem} ${uploadOpen ? styles.active : ""}`}
+          aria-label="Add content"
+          aria-haspopup="dialog"
+          aria-expanded={uploadOpen}
+          aria-controls={uploadPopoverId}
+          onClick={() => setUploadOpen((prev) => !prev)}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <Plus size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Add</span>}
+        </button>
+        {uploadOpen && (
+          <section
+            ref={uploadPopoverRef}
+            id={uploadPopoverId}
+            className={styles.uploadPopover}
+            role="dialog"
+            aria-modal="false"
+            aria-label="Add content"
+          >
+            <FileUpload onNavigate={handleUploadNavigate} />
+            <AddFromUrl onNavigate={handleUploadNavigate} />
+          </section>
+        )}
       </div>
 
       <div className={styles.footer}>

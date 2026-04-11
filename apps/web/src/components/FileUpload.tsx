@@ -41,7 +41,11 @@ const MAX_SIZES: Record<string, number> = {
   epub: 50 * 1024 * 1024, // 50 MB
 };
 
-export default function FileUpload() {
+interface FileUploadProps {
+  onNavigate?: (href: string) => void;
+}
+
+export default function FileUpload({ onNavigate }: FileUploadProps) {
   const [status, setStatus] = useState<UploadStatus>("idle");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -143,11 +147,14 @@ export default function FileUpload() {
         setStatus("success");
 
         // Navigate to media page after short delay
+        const href = isDuplicate
+          ? `/media/${finalMediaId}?duplicate=true`
+          : `/media/${finalMediaId}`;
         setTimeout(() => {
-          if (isDuplicate) {
-            router.push(`/media/${finalMediaId}?duplicate=true`);
+          if (onNavigate) {
+            onNavigate(href);
           } else {
-            router.push(`/media/${finalMediaId}`);
+            router.push(href);
           }
         }, 1000);
       } catch (err) {
