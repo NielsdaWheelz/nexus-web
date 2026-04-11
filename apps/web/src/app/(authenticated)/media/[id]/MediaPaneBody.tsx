@@ -2647,6 +2647,70 @@ export default function MediaPaneBody() {
       />
     ) : null;
   // ==========================================================================
+  // Linked-items column state (must be before early returns)
+  // ==========================================================================
+  const [linkedDrawerOpen, setLinkedDrawerOpen] = useState(false);
+  const [linkedWidth, setLinkedWidth] = useState(360);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => { resizeCleanupRef.current?.(); }, []);
+
+  useEffect(() => {
+    if (!linkedDrawerOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLinkedDrawerOpen(false);
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [linkedDrawerOpen]);
+
+  const handleDividerMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 0 || !splitRef.current) return;
+      e.preventDefault();
+      resizeCleanupRef.current?.();
+      const startX = e.clientX;
+      const startWidth = linkedWidth;
+      const doc = e.currentTarget.ownerDocument;
+      const cleanup = () => {
+        doc.body.style.cursor = "";
+        doc.body.style.userSelect = "";
+        doc.removeEventListener("mousemove", onMove);
+        doc.removeEventListener("mouseup", onUp);
+        resizeCleanupRef.current = null;
+      };
+      const onMove = (ev: MouseEvent) => {
+        // Dragging left grows the linked column, dragging right shrinks it
+        const delta = startX - ev.clientX;
+        setLinkedWidth(Math.min(600, Math.max(240, startWidth + delta)));
+      };
+      const onUp = () => cleanup();
+      doc.body.style.cursor = "col-resize";
+      doc.body.style.userSelect = "none";
+      doc.addEventListener("mousemove", onMove);
+      doc.addEventListener("mouseup", onUp);
+      resizeCleanupRef.current = cleanup;
+    },
+    [linkedWidth]
+  );
+
+  const handleDividerKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "ArrowLeft") { e.preventDefault(); setLinkedWidth((w) => Math.min(600, w + 16)); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); setLinkedWidth((w) => Math.max(240, w - 16)); }
+      else if (e.key === "Home") { e.preventDefault(); setLinkedWidth(600); }
+      else if (e.key === "End") { e.preventDefault(); setLinkedWidth(240); }
+    },
+    []
+  );
+
+  // ==========================================================================
   // Render
   // ==========================================================================
 
@@ -2690,142 +2754,121 @@ export default function MediaPaneBody() {
     },
     onToggleEpubToc: () => setEpubTocExpanded((value) => !value),
   });
-  const isLinkedPane = searchParams.get("pane") === "linked";
 
-  if (isLinkedPane) {
-    if (!showHighlightsPane) {
-      return <StateMessage variant="empty">No linked items available for this media.</StateMessage>;
-    }
-    return (
-      <div className={styles.content}>
-        {isEpub && (
-          <SectionCard
-            title="Scope"
-            className={styles.scopeCard}
-            bodyClassName={styles.scopeCardBody}
-          >
-            <div
-              className={styles.highlightScopeToggle}
-              role="group"
-              aria-label="Highlight scope"
+  const linkedItemsContent = showHighlightsPane ? (
+    <>
+      {isEpub && (
+        <SectionCard
+          title="Scope"
+          className={styles.scopeCard}
+          bodyClassName={styles.scopeCardBody}
+        >
+          <div className={styles.highlightScopeToggle} role="group" aria-label="Highlight scope">
+            <button
+              className={`${styles.scopeBtn} ${epubHighlightScope === "chapter" ? styles.scopeBtnActive : ""}`}
+              onClick={() => handleEpubHighlightScopeChange("chapter")}
+              type="button"
+              aria-pressed={epubHighlightScope === "chapter"}
             >
-              <button
-                className={`${styles.scopeBtn} ${
-                  epubHighlightScope === "chapter" ? styles.scopeBtnActive : ""
-                }`}
-                onClick={() => handleEpubHighlightScopeChange("chapter")}
-                type="button"
-                aria-pressed={epubHighlightScope === "chapter"}
-              >
-                This chapter
-              </button>
-              <button
-                className={`${styles.scopeBtn} ${
-                  epubHighlightScope === "book" ? styles.scopeBtnActive : ""
-                }`}
-                onClick={() => handleEpubHighlightScopeChange("book")}
-                type="button"
-                aria-pressed={epubHighlightScope === "book"}
-              >
-                Entire book
-              </button>
-            </div>
-          </SectionCard>
-        )}
-        {isPdf && (
-          <div
-            className={styles.highlightScopeHeader}
-            role="group"
-            aria-label="Highlight scope"
-          >
-            <span className={styles.highlightScopeLabel}>Scope</span>
-            <div className={styles.highlightScopeToggle}>
-              <button
-                className={`${styles.scopeBtn} ${
-                  pdfHighlightScope === "page" ? styles.scopeBtnActive : ""
-                }`}
-                onClick={() => handlePdfHighlightScopeChange("page")}
-                type="button"
-                aria-pressed={pdfHighlightScope === "page"}
-              >
-                This page
-              </button>
-              <button
-                className={`${styles.scopeBtn} ${
-                  pdfHighlightScope === "document" ? styles.scopeBtnActive : ""
-                }`}
-                onClick={() => handlePdfHighlightScopeChange("document")}
-                type="button"
-                aria-pressed={pdfHighlightScope === "document"}
-              >
-                Entire document
-              </button>
-            </div>
+              This chapter
+            </button>
+            <button
+              className={`${styles.scopeBtn} ${epubHighlightScope === "book" ? styles.scopeBtnActive : ""}`}
+              onClick={() => handleEpubHighlightScopeChange("book")}
+              type="button"
+              aria-pressed={epubHighlightScope === "book"}
+            >
+              Entire book
+            </button>
           </div>
-        )}
-
-        <LinkedItemsPane
-          highlights={linkedPaneHighlights}
-          contentRef={linkedItemsContentRef}
-          focusedId={focusState.focusedId}
-          onHighlightClick={handleLinkedItemClick}
-          highlightsVersion={linkedItemsVersion}
-          onSendToChat={handleSendToChat}
-          layoutMode={linkedItemsLayoutMode}
-          anchorDescriptors={linkedItemsAnchorDescriptors}
-          anchorProvider={linkedItemsAnchorProvider}
-          onAnnotationSave={handleAnnotationSave}
-          onAnnotationDelete={handleAnnotationDelete}
-          rowOptions={buildRowOptions}
-        />
-
-        {isPdf && (
-          <div className={styles.bookHighlightsControls}>
-            <p className={styles.hint}>{pdfLinkedItemsHint}</p>
-            {pdfHighlightScope === "document" && pdfHighlightsHasMore && (
-              <button
-                type="button"
-                className={styles.loadMoreBtn}
-                onClick={handleLoadMorePdfHighlights}
-                disabled={pdfHighlightsLoading}
-              >
-                {pdfHighlightsLoading ? "Loading..." : "Load more"}
-              </button>
-            )}
+        </SectionCard>
+      )}
+      {isPdf && (
+        <div className={styles.highlightScopeHeader} role="group" aria-label="Highlight scope">
+          <span className={styles.highlightScopeLabel}>Scope</span>
+          <div className={styles.highlightScopeToggle}>
+            <button
+              className={`${styles.scopeBtn} ${pdfHighlightScope === "page" ? styles.scopeBtnActive : ""}`}
+              onClick={() => handlePdfHighlightScopeChange("page")}
+              type="button"
+              aria-pressed={pdfHighlightScope === "page"}
+            >
+              This page
+            </button>
+            <button
+              className={`${styles.scopeBtn} ${pdfHighlightScope === "document" ? styles.scopeBtnActive : ""}`}
+              onClick={() => handlePdfHighlightScopeChange("document")}
+              type="button"
+              aria-pressed={pdfHighlightScope === "document"}
+            >
+              Entire document
+            </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {isEpub && epubHighlightScope === "book" && (
-          <SectionCard
-            title="Book Highlights"
-            description="Showing highlights from the entire book."
-            className={styles.bookHighlightsCard}
-          >
-            {mediaHighlightsHasMore && (
-              <button
-                type="button"
-                className={styles.loadMoreBtn}
-                onClick={handleLoadMoreMediaHighlights}
-                disabled={mediaHighlightsLoading}
-              >
-                {mediaHighlightsLoading ? "Loading..." : "Load more"}
-              </button>
-            )}
-          </SectionCard>
-        )}
+      <LinkedItemsPane
+        highlights={linkedPaneHighlights}
+        contentRef={linkedItemsContentRef}
+        focusedId={focusState.focusedId}
+        onHighlightClick={handleLinkedItemClick}
+        highlightsVersion={linkedItemsVersion}
+        onSendToChat={handleSendToChat}
+        layoutMode={linkedItemsLayoutMode}
+        anchorDescriptors={linkedItemsAnchorDescriptors}
+        anchorProvider={linkedItemsAnchorProvider}
+        onAnnotationSave={handleAnnotationSave}
+        onAnnotationDelete={handleAnnotationDelete}
+        rowOptions={buildRowOptions}
+      />
 
-        {isPdf && (
-          <div className={styles.pdfPagePill}>
-            <StatusPill variant="info">Active page: {pdfActivePage}</StatusPill>
-          </div>
-        )}
-      </div>
-    );
-  }
+      {isPdf && (
+        <div className={styles.bookHighlightsControls}>
+          <p className={styles.hint}>{pdfLinkedItemsHint}</p>
+          {pdfHighlightScope === "document" && pdfHighlightsHasMore && (
+            <button
+              type="button"
+              className={styles.loadMoreBtn}
+              onClick={handleLoadMorePdfHighlights}
+              disabled={pdfHighlightsLoading}
+            >
+              {pdfHighlightsLoading ? "Loading..." : "Load more"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {isEpub && epubHighlightScope === "book" && (
+        <SectionCard
+          title="Book Highlights"
+          description="Showing highlights from the entire book."
+          className={styles.bookHighlightsCard}
+        >
+          {mediaHighlightsHasMore && (
+            <button
+              type="button"
+              className={styles.loadMoreBtn}
+              onClick={handleLoadMoreMediaHighlights}
+              disabled={mediaHighlightsLoading}
+            >
+              {mediaHighlightsLoading ? "Loading..." : "Load more"}
+            </button>
+          )}
+        </SectionCard>
+      )}
+
+      {isPdf && (
+        <div className={styles.pdfPagePill}>
+          <StatusPill variant="info">Active page: {pdfActivePage}</StatusPill>
+        </div>
+      )}
+    </>
+  ) : null;
 
   return (
     <>
-      <div className={styles.content}>
+      <div className={styles.splitLayout} ref={splitRef}>
+        <div className={styles.readerColumn}>
         {mediaHeaderMeta ? <div className={styles.surfaceMeta}>{mediaHeaderMeta}</div> : null}
         {mediaToolbar ? <div className={styles.surfaceToolbar}>{mediaToolbar}</div> : null}
         {mediaHeaderOptions.length > 0 ? (
@@ -2987,7 +3030,55 @@ export default function MediaPaneBody() {
             </ReaderContentArea>
           </DocumentViewport>
         )}
+        </div>
+
+        {!isMobileViewport && linkedItemsContent && (
+          <>
+            <div
+              className={styles.splitDivider}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize linked items"
+              tabIndex={0}
+              onMouseDown={handleDividerMouseDown}
+              onKeyDown={handleDividerKeyDown}
+            />
+            <div className={styles.linkedColumn} style={{ width: linkedWidth, flex: `0 0 ${linkedWidth}px` }}>
+              {linkedItemsContent}
+            </div>
+          </>
+        )}
       </div>
+
+      {isMobileViewport && showHighlightsPane && (
+        <button
+          type="button"
+          className={styles.linkedFab}
+          onClick={() => setLinkedDrawerOpen((v) => !v)}
+          aria-label="Linked items"
+          aria-expanded={linkedDrawerOpen}
+        >
+          Linked items
+        </button>
+      )}
+
+      {isMobileViewport && linkedDrawerOpen && linkedItemsContent && (
+        <div className={styles.linkedBackdrop} onClick={() => setLinkedDrawerOpen(false)}>
+          <aside
+            className={styles.linkedDrawer}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Linked items"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className={styles.linkedDrawerHeader}>
+              <h2>Linked items</h2>
+              <button type="button" onClick={() => setLinkedDrawerOpen(false)}>Close</button>
+            </header>
+            <div className={styles.linkedDrawerBody}>{linkedItemsContent}</div>
+          </aside>
+        </div>
+      )}
 
       {editPopoverHighlight && editPopoverAnchorRect && (
         <HighlightEditPopover

@@ -1,18 +1,18 @@
 "use client";
 
 import type { ReactNode } from "react";
-import LibraryDetailPage from "@/app/(authenticated)/libraries/[id]/page";
-import MediaViewPage from "@/app/(authenticated)/media/[id]/page";
-import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
-import NewConversationPage from "@/app/(authenticated)/conversations/new/page";
-import DocumentsPage from "@/app/(authenticated)/documents/page";
-import PodcastsPage from "@/app/(authenticated)/podcasts/page";
-import PodcastSubscriptionsPage from "@/app/(authenticated)/podcasts/subscriptions/page";
-import PodcastDetailPage from "@/app/(authenticated)/podcasts/[podcastId]/page";
-import VideosPage from "@/app/(authenticated)/videos/page";
 import LibrariesPaneBody from "@/components/panes/routes/LibrariesPaneBody";
+import LibraryPaneBody from "@/components/panes/routes/LibraryPaneBody";
+import MediaPaneBody from "@/components/panes/routes/MediaPaneBody";
 import ConversationsPaneBody from "@/components/panes/routes/ConversationsPaneBody";
+import ConversationPaneBody from "@/components/panes/routes/ConversationPaneBody";
+import ConversationNewPaneBody from "@/components/panes/routes/ConversationNewPaneBody";
 import DiscoverPaneBody from "@/components/panes/routes/DiscoverPaneBody";
+import DocumentsPaneBody from "@/components/panes/routes/DocumentsPaneBody";
+import PodcastsPaneBody from "@/components/panes/routes/PodcastsPaneBody";
+import PodcastSubscriptionsPaneBody from "@/components/panes/routes/PodcastSubscriptionsPaneBody";
+import PodcastDetailPaneBody from "@/components/panes/routes/PodcastDetailPaneBody";
+import VideosPaneBody from "@/components/panes/routes/VideosPaneBody";
 import SearchPaneBody from "@/components/panes/routes/SearchPaneBody";
 import SettingsPaneBody from "@/components/panes/routes/SettingsPaneBody";
 import SettingsReaderPaneBody from "@/components/panes/routes/SettingsReaderPaneBody";
@@ -121,7 +121,12 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       const id = params.id;
       return id ? `library:${id}` : null;
     },
-    render: () => <LibraryDetailPage />,
+    render: () => <LibraryPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Library" }),
   },
   {
     id: "media",
@@ -131,7 +136,12 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       const id = params.id;
       return id ? `media:${id}` : null;
     },
-    render: () => <MediaViewPage />,
+    render: () => <MediaPaneBody />,
+    bodyMode: "document",
+    defaultWidthPx: 1280,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: 1800,
+    getChrome: () => ({ title: "Media" }),
   },
   {
     id: "conversations",
@@ -152,7 +162,12 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "conversationNew",
     pattern: ["conversations", "new"],
     staticTitle: "New chat",
-    render: () => <NewConversationPage />,
+    render: () => <ConversationNewPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "New chat" }),
   },
   {
     id: "conversation",
@@ -219,19 +234,37 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "documents",
     pattern: ["documents"],
     staticTitle: "Documents",
-    render: () => <DocumentsPage />,
+    render: () => <DocumentsPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Documents",
+      subtitle: "All your readable sources in one place: articles, EPUBs, and PDFs.",
+    }),
   },
   {
     id: "podcasts",
     pattern: ["podcasts"],
     staticTitle: "Podcasts",
-    render: () => <PodcastsPage />,
+    render: () => <PodcastsPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Podcasts" }),
   },
   {
     id: "podcastSubscriptions",
     pattern: ["podcasts", "subscriptions"],
     staticTitle: "My podcasts",
-    render: () => <PodcastSubscriptionsPage />,
+    render: () => <PodcastSubscriptionsPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "My podcasts" }),
   },
   {
     id: "podcastDetail",
@@ -241,13 +274,26 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       const podcastId = params.podcastId;
       return podcastId ? `podcast:${podcastId}` : null;
     },
-    render: () => <PodcastDetailPage />,
+    render: () => <PodcastDetailPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Podcast" }),
   },
   {
     id: "videos",
     pattern: ["videos"],
     staticTitle: "Videos",
-    render: () => <VideosPage />,
+    render: () => <VideosPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Videos",
+      subtitle: "Video items from your libraries, including YouTube ingests.",
+    }),
   },
   {
     id: "search",

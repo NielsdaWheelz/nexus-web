@@ -90,6 +90,24 @@ docker exec "$DB_CONTAINER" createdb -U postgres nexus_test_migrations 2>/dev/nu
 echo "Test databases ready (nexus_test, nexus_test_migrations)"
 echo ""
 
+# Create storage bucket for file uploads (idempotent)
+echo "Creating storage bucket..."
+BUCKET_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "${SUPABASE_URL}/storage/v1/bucket" \
+    -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+    -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+    -H "Content-Type: application/json" \
+    -d '{"name": "media", "public": false}')
+if [ "$BUCKET_STATUS" = "200" ] || [ "$BUCKET_STATUS" = "201" ]; then
+    echo "Storage bucket 'media' created"
+elif [ "$BUCKET_STATUS" = "409" ]; then
+    echo "Storage bucket 'media' already exists"
+else
+    echo "Warning: Failed to create storage bucket (HTTP $BUCKET_STATUS)"
+    echo "  Create the 'media' bucket manually via Supabase Studio: http://localhost:54323"
+fi
+echo ""
+
 # Install python dependencies
 echo "Installing python dependencies..."
 cd "$PROJECT_ROOT/python"

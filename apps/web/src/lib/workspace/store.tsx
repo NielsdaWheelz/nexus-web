@@ -68,10 +68,51 @@ function ensureActivePaneId(state: WorkspaceStateV3): WorkspaceStateV3 {
   return { ...state, activePaneId: state.panes[0]!.id };
 }
 
+/**
+ * For each pane whose route declares buildCompanionPanes, ensure those
+ * companions exist. Companions are inserted immediately after their source.
+ * Runs after hydrate and navigate so companions appear regardless of entry path.
+ */
+function ensureCompanionPanes(state: WorkspaceStateV3): WorkspaceStateV3 {
+  const paneIds = new Set(state.panes.map((p) => p.id));
+  let panes = state.panes;
+  let changed = false;
+
+  for (let i = 0; i < panes.length; i++) {
+    const pane = panes[i]!;
+    // Skip companion panes themselves — don't spawn companions of companions
+    if (pane.companionOfPaneId) continue;
+
+    const route = resolvePaneRoute(pane.href);
+    if (!route.definition?.buildCompanionPanes) continue;
+
+    // Check if this pane already has companions
+    const hasCompanion = panes.some((p) => p.companionOfPaneId === pane.id);
+    if (hasCompanion) continue;
+
+    const drafts = route.definition.buildCompanionPanes({ href: pane.href, params: route.params });
+    if (!drafts.length) continue;
+
+    const newCompanions: WorkspacePaneStateV3[] = drafts.map((draft) => {
+      let id = createPaneId();
+      while (paneIds.has(id)) id = createPaneId();
+      paneIds.add(id);
+      return { id, href: draft.href, widthPx: draft.defaultWidthPx, companionOfPaneId: pane.id };
+    });
+
+    // Insert companions right after the source pane
+    panes = [...panes.slice(0, i + 1), ...newCompanions, ...panes.slice(i + 1)];
+    i += newCompanions.length; // skip past the inserted companions
+    changed = true;
+  }
+
+  return changed ? { ...state, panes } : state;
+}
+
 function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): WorkspaceStateV3 {
   switch (action.type) {
     case "hydrate":
-      return ensureActivePaneId(action.state);
+      return ensureCompanionPanes(ensureActivePaneId(action.state));
 
     case "activate_pane": {
       if (!state.panes.some((p) => p.id === action.paneId)) {
@@ -98,10 +139,14 @@ function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): Wor
     }
 
     case "navigate_pane": {
-      const panes = state.panes.map((p) =>
+      // When navigating away, drop old companions of this pane
+      const withoutOldCompanions = state.panes.filter(
+        (p) => p.id === action.paneId || p.companionOfPaneId !== action.paneId
+      );
+      const panes = withoutOldCompanions.map((p) =>
         p.id === action.paneId ? { ...p, href: action.href } : p
       );
-      return { ...state, panes, activePaneId: action.paneId };
+      return ensureCompanionPanes({ ...state, panes, activePaneId: action.paneId });
     }
 
     case "close_pane": {
@@ -237,7 +282,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     null,
     () => createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF)
   );
-  const [meta, setMeta] = useState<{
+  const [, setMeta] = useState<{
     lastDecodeError: WorkspaceDecodeResult["errorCode"];
     lastEncodeError: WorkspaceEncodeResult["errorCode"];
   }>({ lastDecodeError: null, lastEncodeError: null });

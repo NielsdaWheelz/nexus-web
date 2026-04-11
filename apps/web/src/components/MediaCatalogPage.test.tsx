@@ -69,7 +69,6 @@ describe("media catalog action menu cutover", () => {
     render(
       <MediaCatalogPage
         title="Documents"
-        description="All docs"
         allowedKinds={["pdf"]}
         emptyMessage="No docs"
       />
@@ -149,7 +148,6 @@ describe("media catalog action menu cutover", () => {
     render(
       <MediaCatalogPage
         title="Documents"
-        description="All docs"
         allowedKinds={["pdf"]}
         emptyMessage="No docs"
       />

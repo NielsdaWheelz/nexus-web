@@ -166,7 +166,6 @@ export default function PodcastsPaneBody() {
   return (
     <MediaCatalogPage
       title="Podcasts"
-      description="Discover podcasts globally and review podcast episodes already in your libraries."
       allowedKinds={["podcast_episode"]}
       emptyMessage="No podcast episodes found in your visible libraries."
       headerSlot={

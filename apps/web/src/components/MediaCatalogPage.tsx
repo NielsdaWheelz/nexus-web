@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import PageLayout from "@/components/ui/PageLayout";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import { AppList, AppListItem } from "@/components/ui/AppList";
@@ -18,7 +17,6 @@ export type MediaKind =
 
 interface MediaCatalogPageProps {
   title: string;
-  description: string;
   allowedKinds: MediaKind[];
   emptyMessage: string;
   headerSlot?: React.ReactNode;
@@ -114,7 +112,6 @@ function statusVariant(
 
 export default function MediaCatalogPage({
   title,
-  description,
   allowedKinds,
   emptyMessage,
   headerSlot,
@@ -329,7 +326,7 @@ export default function MediaCatalogPage({
   );
 
   return (
-    <PageLayout title={title} description={description}>
+    <>
       {headerSlot}
 
       <SectionCard
@@ -418,6 +415,6 @@ export default function MediaCatalogPage({
           </button>
         )}
       </SectionCard>
-    </PageLayout>
+    </>
   );
 }
