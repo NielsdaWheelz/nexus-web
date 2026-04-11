@@ -2,5 +2,11 @@
   display: flex;
   flex: 1;
   min-width: 0;
+}
+
+/* Document-mode panes manage scroll internally (PdfReader, DocumentViewport).
+   They need the route shell constrained to body height so nested height: 100%
+   and absolute-positioned scroll containers resolve correctly. */
+[data-body-mode="document"] > .routeShell {
   min-height: 0;
 }
