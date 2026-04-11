@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 
-const { workspaceShellSpy, mockStore } = vi.hoisted(() => ({
-  workspaceShellSpy: vi.fn(),
+const mockIsMobileViewport = vi.hoisted(() => ({ value: false }));
+
+const { paneShellSpy, mockStore } = vi.hoisted(() => ({
+  paneShellSpy: vi.fn(),
   mockStore: {
     state: {
       schemaVersion: 3 as const,
@@ -25,15 +29,61 @@ const { workspaceShellSpy, mockStore } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/components/PaneRouteRenderer", () => ({
-  default: () => <div data-testid="pane-route-renderer" />,
+vi.mock("@/lib/ui/useIsMobileViewport", () => ({
+  useIsMobileViewport: () => mockIsMobileViewport.value,
 }));
 
-vi.mock("@/components/workspace/WorkspaceShell", () => ({
-  default: (props: unknown) => {
-    workspaceShellSpy(props);
-    return <div data-testid="workspace-shell" />;
+vi.mock("@/lib/panes/paneRuntime", () => ({
+  PaneRuntimeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  PaneRootNavigationProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  usePaneRuntime: () => null,
+  usePaneRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePaneSearchParams: () => new URLSearchParams(),
+  usePaneParam: () => null,
+  useSetPaneTitle: () => {},
+}));
+
+vi.mock("@/components/workspace/PaneShell", () => ({
+  default: (props: { paneId: string; title: string; children: React.ReactNode; isMobile?: boolean; isActive?: boolean; widthPx: number; minWidthPx: number; maxWidthPx: number; bodyMode: string; onResizePane: () => void }) => {
+    paneShellSpy(props);
+    return (
+      <div
+        data-testid={`pane-shell-${props.paneId}`}
+        data-title={props.title}
+        data-pane-shell="true"
+        data-active={props.isActive ? "true" : "false"}
+        data-mobile={props.isMobile ? "true" : "false"}
+        style={props.isMobile ? { width: "100%", minWidth: "100%", maxWidth: "100%" } : {}}
+      >
+        <div data-testid="pane-shell-chrome" data-pane-chrome-focus="true" tabIndex={-1} />
+        <div data-testid="pane-shell-body" data-body-mode={props.bodyMode}>
+          {props.children}
+        </div>
+      </div>
+    );
   },
+  usePaneChromeOverride: () => {},
+}));
+
+vi.mock("@/components/workspace/PaneStrip", () => ({
+  default: ({ children }: { children: React.ReactNode }) => <div data-testid="pane-strip">{children}</div>,
+}));
+
+vi.mock("@/components/workspace/WorkspaceTabsBar", () => ({
+  default: (props: { tabs: Array<{ paneId: string; title: string; isActive: boolean }>; onActivatePane: (id: string, opts?: { focusPaneChrome?: boolean }) => void; onClosePane: (id: string) => void }) => (
+    <div data-testid="workspace-tabs-bar" role="tablist">
+      {props.tabs.map((tab) => (
+        <button
+          key={tab.paneId}
+          role="tab"
+          aria-selected={tab.isActive}
+          onClick={() => props.onActivatePane(tab.paneId)}
+        >
+          {tab.title}
+        </button>
+      ))}
+    </div>
+  ),
 }));
 
 vi.mock("@/lib/workspace/store", () => ({
@@ -46,20 +96,27 @@ vi.mock("@/lib/workspace/telemetry", () => ({
 
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 
-function latestShellProps() {
-  const latestCall = workspaceShellSpy.mock.calls.at(-1)?.[0];
+function latestPaneShellProps() {
+  const latestCall = paneShellSpy.mock.calls.at(-1)?.[0];
   if (!latestCall) {
-    throw new Error("WorkspaceShell was not rendered");
+    throw new Error("PaneShell was not rendered");
   }
-  return latestCall as { panes: Array<{ title: string }> };
+  return latestCall as { paneId: string; title: string };
 }
 
 describe("WorkspaceHost", () => {
   beforeEach(() => {
-    workspaceShellSpy.mockClear();
+    paneShellSpy.mockClear();
+    mockIsMobileViewport.value = false;
+    mockStore.state = {
+      schemaVersion: 3 as const,
+      activePaneId: "pane-1",
+      panes: [{ id: "pane-1", href: "/conversations/conv-1", widthPx: 560 }],
+    };
     mockStore.runtimeTitleByPaneId = new Map();
     mockStore.openHintByPaneId = new Map();
     mockStore.resourceTitleByRef = new Map();
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
   });
 
   it("prefers runtime pane titles over static chrome titles", () => {
@@ -67,7 +124,7 @@ describe("WorkspaceHost", () => {
 
     render(<WorkspaceHost />);
 
-    expect(latestShellProps().panes[0]?.title).toBe("Weekly planning");
+    expect(latestPaneShellProps().title).toBe("Weekly planning");
   });
 
   it("uses cached resource titles when runtime titles are absent", () => {
@@ -84,6 +141,97 @@ describe("WorkspaceHost", () => {
 
     render(<WorkspaceHost />);
 
-    expect(latestShellProps().panes[0]?.title).toBe("Roadmap review");
+    expect(latestPaneShellProps().title).toBe("Roadmap review");
+  });
+
+  // --- Tests migrated from WorkspaceShell.test.tsx ---
+
+  it("scrolls the activated pane into view when selecting its tab", async () => {
+    const scrollIntoViewMock = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoViewMock;
+    mockStore.state = {
+      schemaVersion: 3 as const,
+      activePaneId: "pane-a",
+      panes: [
+        { id: "pane-a", href: "/libraries", widthPx: 560 },
+        { id: "pane-b", href: "/search", widthPx: 560 },
+      ],
+    };
+    const user = userEvent.setup();
+
+    render(<WorkspaceHost />);
+
+    await user.click(screen.getByRole("tab", { name: "Search" }));
+
+    expect(mockStore.activatePane).toHaveBeenCalledWith("pane-b");
+    expect(scrollIntoViewMock).toHaveBeenCalled();
+  });
+
+  it("moves focus into the activated pane chrome when selecting a tab", async () => {
+    mockStore.state = {
+      schemaVersion: 3 as const,
+      activePaneId: "pane-a",
+      panes: [
+        { id: "pane-a", href: "/libraries", widthPx: 560 },
+        { id: "pane-b", href: "/search", widthPx: 560 },
+      ],
+    };
+    const user = userEvent.setup();
+
+    render(<WorkspaceHost />);
+
+    await user.click(screen.getByRole("tab", { name: "Search" }));
+
+    const paneChromes = screen.getAllByTestId("pane-shell-chrome");
+    expect(paneChromes[1]).toHaveFocus();
+  });
+
+  it("renders only the active pane at full viewport width on mobile", () => {
+    mockIsMobileViewport.value = true;
+    mockStore.state = {
+      schemaVersion: 3 as const,
+      activePaneId: "pane-a",
+      panes: [
+        { id: "pane-a", href: "/libraries", widthPx: 560 },
+        { id: "pane-b", href: "/search", widthPx: 560 },
+      ],
+    };
+
+    render(<WorkspaceHost />);
+
+    expect(screen.getByTestId("pane-shell-pane-a")).toBeInTheDocument();
+    expect(screen.queryByTestId("pane-shell-pane-b")).not.toBeInTheDocument();
+  });
+
+  it("moves focus into newly activated pane chrome on mobile pane switch", async () => {
+    mockIsMobileViewport.value = true;
+    const user = userEvent.setup();
+    const activePaneId = { value: "pane-a" };
+    mockStore.state = {
+      schemaVersion: 3 as const,
+      activePaneId: "pane-a",
+      panes: [
+        { id: "pane-a", href: "/libraries", widthPx: 560 },
+        { id: "pane-b", href: "/search", widthPx: 560 },
+      ],
+    };
+    mockStore.activatePane = vi.fn((id: string) => {
+      activePaneId.value = id;
+      mockStore.state = {
+        ...mockStore.state,
+        activePaneId: id,
+      };
+    });
+
+    const { rerender } = render(<WorkspaceHost />);
+
+    // Simulate switching to pane-b (e.g., via command palette)
+    mockStore.state = {
+      ...mockStore.state,
+      activePaneId: "pane-b",
+    };
+    rerender(<WorkspaceHost />);
+
+    expect(screen.getByTestId("pane-shell-chrome")).toHaveFocus();
   });
 });

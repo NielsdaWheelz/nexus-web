@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { setAudioMetrics } from "../helpers/audio";
 
 class FakeAudioParam {
   value: number;
@@ -207,14 +208,6 @@ function installAnimationFrameHarness() {
   };
 }
 
-function setAudioMetrics(audio: HTMLAudioElement, values: { duration: number; currentTime: number }): void {
-  Object.defineProperty(audio, "duration", {
-    configurable: true,
-    value: values.duration,
-  });
-  audio.currentTime = values.currentTime;
-}
-
 function Harness() {
   const { setTrack } = useGlobalPlayer();
   return (
@@ -372,6 +365,8 @@ describe("GlobalPlayer audio effects cutover", () => {
       await waitFor(() => {
         expect(audio.playbackRate).toBeCloseTo(6, 2);
       });
+      // Reopen popover to see effects indicators (popover closed on Play click)
+      await user.click(screen.getByRole("button", { name: "More controls" }));
       expect(screen.getByText("Trimming silence")).toBeVisible();
 
       setAudioMetrics(audio, { duration: 180, currentTime: 10 });

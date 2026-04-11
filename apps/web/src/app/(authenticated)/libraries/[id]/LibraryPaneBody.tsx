@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import MediaKindIcon from "@/components/MediaKindIcon";
+import { BookOpen, FileText, Globe, Mic, Video } from "lucide-react";
 import StateMessage from "@/components/ui/StateMessage";
 import ActionMenu from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
@@ -16,6 +16,13 @@ import type {
 } from "@/components/LibraryEditDialog";
 import { usePaneParam, usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
+
+const MEDIA_KIND_ICONS: Record<string, typeof Globe> = {
+  podcast_episode: Mic,
+  video: Video,
+  epub: BookOpen,
+  pdf: FileText,
+};
 
 interface Media {
   id: string;
@@ -359,7 +366,7 @@ export default function LibraryPaneBody() {
                       )}
                       <a href={`/media/${item.id}`} className={styles.mediaLink}>
                         <span className={styles.mediaTitleRow}>
-                          <MediaKindIcon kind={item.kind} />
+                          {(() => { const Icon = MEDIA_KIND_ICONS[item.kind] ?? Globe; return <Icon size={18} aria-hidden="true" />; })()}
                           <span className={styles.mediaTitle}>{item.title}</span>
                         </span>
                         <span className={styles.mediaMeta}>

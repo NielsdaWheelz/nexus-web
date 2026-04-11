@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { setAudioMetrics, jsonResponse } from "../helpers/audio";
 
 type QueueItem = {
   item_id: string;
@@ -18,24 +19,6 @@ type QueueItem = {
   listening_state: { position_ms: number; playback_speed: number } | null;
   subscription_default_playback_speed?: number | null;
 };
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function setAudioMetrics(
-  audio: HTMLAudioElement,
-  values: { duration: number; currentTime: number }
-): void {
-  Object.defineProperty(audio, "duration", {
-    configurable: true,
-    value: values.duration,
-  });
-  audio.currentTime = values.currentTime;
-}
 
 function buildQueueItem(
   itemId: string,

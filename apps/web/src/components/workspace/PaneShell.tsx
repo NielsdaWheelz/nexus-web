@@ -13,6 +13,7 @@ import {
 import { Search } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/CommandPalette";
 import SurfaceHeader, { type SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
+import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import styles from "./PaneShell.module.css";
 
 export type PaneBodyMode = "standard" | "document";
@@ -84,7 +85,13 @@ export default function PaneShell({
   isMobile = false,
   children,
 }: PaneShellProps) {
-  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const { handleResizeMouseDown, handleResizeKeyDown } = useResizeHandle({
+    paneId,
+    widthPx,
+    minWidthPx,
+    maxWidthPx,
+    onResizePane,
+  });
   const chromeRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef(0);
   const [mobileChromeHidden, setMobileChromeHidden] = useState(false);
@@ -94,13 +101,6 @@ export default function PaneShell({
   const effectiveToolbar = chromeOverrides.toolbar ?? toolbar;
   const effectiveActions = chromeOverrides.actions ?? actions;
   const effectiveOptions = chromeOverrides.options ?? options;
-
-  useEffect(
-    () => () => {
-      resizeCleanupRef.current?.();
-    },
-    []
-  );
 
   // Reset mobile chrome state when leaving mobile.
   useEffect(() => {
@@ -125,61 +125,6 @@ export default function PaneShell({
     observer.observe(node);
     return () => observer.disconnect();
   }, [isMobile, title, subtitle, effectiveToolbar]);
-
-  const handleResizeMouseDown = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      if (event.button !== 0) {
-        return;
-      }
-      event.preventDefault();
-      resizeCleanupRef.current?.();
-
-      const startX = event.clientX;
-      const startWidth = widthPx;
-      const doc = event.currentTarget.ownerDocument;
-      const cleanup = () => {
-        doc.body.style.cursor = "";
-        doc.body.style.userSelect = "";
-        doc.removeEventListener("mousemove", handleMouseMove);
-        doc.removeEventListener("mouseup", handleMouseUp);
-        resizeCleanupRef.current = null;
-      };
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const delta = moveEvent.clientX - startX;
-        const nextWidth = Math.min(maxWidthPx, Math.max(minWidthPx, startWidth + delta));
-        onResizePane(paneId, nextWidth);
-      };
-      const handleMouseUp = () => {
-        cleanup();
-      };
-
-      doc.body.style.cursor = "col-resize";
-      doc.body.style.userSelect = "none";
-      doc.addEventListener("mousemove", handleMouseMove);
-      doc.addEventListener("mouseup", handleMouseUp);
-      resizeCleanupRef.current = cleanup;
-    },
-    [maxWidthPx, minWidthPx, onResizePane, paneId, widthPx]
-  );
-
-  const handleResizeKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        onResizePane(paneId, Math.max(minWidthPx, widthPx - 16));
-      } else if (event.key === "ArrowRight") {
-        event.preventDefault();
-        onResizePane(paneId, Math.min(maxWidthPx, widthPx + 16));
-      } else if (event.key === "Home") {
-        event.preventDefault();
-        onResizePane(paneId, minWidthPx);
-      } else if (event.key === "End") {
-        event.preventDefault();
-        onResizePane(paneId, maxWidthPx);
-      }
-    },
-    [maxWidthPx, minWidthPx, onResizePane, paneId, widthPx]
-  );
 
   // Hide chrome on scroll-down, restore on scroll-up.
   const handleBodyScroll = useCallback(

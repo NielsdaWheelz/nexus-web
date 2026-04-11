@@ -733,8 +733,9 @@ describe("podcasts product flows", () => {
       screen.queryByRole("button", { name: "Request transcript for Episode 2" })
     ).not.toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText("Transcript request reason for Episode 0"), "quote");
     await user.click(screen.getByRole("button", { name: "Request transcript for Episode 0" }));
+    await user.selectOptions(screen.getByLabelText("Transcript request reason for Episode 0"), "quote");
+    await user.click(screen.getByRole("button", { name: "Submit transcript request for Episode 0" }));
     expect(
       await screen.findByText(/transcript partial \(partial coverage\)/i, undefined, {
         timeout: 8000,
@@ -1099,12 +1100,13 @@ describe("podcasts product flows", () => {
     );
 
     expect(await screen.findByText("Batch Episode 0")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show more for Batch Episode 0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show notes for Batch Episode 0" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Show more for Batch Episode 0" }));
-    expect(screen.getByRole("button", { name: "Show less for Batch Episode 0" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show notes for Batch Episode 0" }));
+    expect(screen.getByRole("button", { name: "Hide notes for Batch Episode 0" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Transcribe unplayed episodes" }));
+    await user.click(screen.getByRole("button", { name: "Episode actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Transcribe unplayed" }));
 
     await waitFor(() => {
       expect(confirmMock).toHaveBeenCalled();
@@ -1556,15 +1558,18 @@ describe("podcasts product flows", () => {
 
     expect(await screen.findByText("Budget Episode")).toBeInTheDocument();
 
-    const requestButton = screen.getByRole("button", {
-      name: "Request transcript for Budget Episode",
+    // Expand transcript request UI
+    await user.click(screen.getByRole("button", { name: "Request transcript for Budget Episode" }));
+
+    const submitButton = screen.getByRole("button", {
+      name: "Submit transcript request for Budget Episode",
     });
     await waitFor(() => {
-      expect(requestButton).toBeDisabled();
+      expect(submitButton).toBeDisabled();
       expect(screen.getByText(/2 min · remaining 1 min/i)).toBeInTheDocument();
     });
 
-    await user.click(requestButton);
+    await user.click(submitButton);
 
     await waitFor(() => {
       const transcriptRequestCalls = fetchMock.mock.calls.filter(([url]) => {

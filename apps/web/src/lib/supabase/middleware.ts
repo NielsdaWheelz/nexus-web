@@ -7,15 +7,10 @@
  * - Allow access to public routes without authentication
  */
 
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
 import { buildLoginRedirectUrl } from "@/lib/auth/redirects";
-
-interface CookieToSet {
-  name: string;
-  value: string;
-  options?: CookieOptions;
-}
+import { type CookieToSet } from "./types";
 
 /**
  * Routes that don't require authentication

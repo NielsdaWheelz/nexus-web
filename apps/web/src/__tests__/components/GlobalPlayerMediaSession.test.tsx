@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { setAudioMetrics, jsonResponse } from "../helpers/audio";
 
 type QueueItem = {
   item_id: string;
@@ -23,13 +24,6 @@ type MediaSessionHarness = {
   setPositionStateSpy: ReturnType<typeof vi.fn>;
   restore: () => void;
 };
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
 
 function buildQueueItem(
   itemId: string,
@@ -137,14 +131,6 @@ function installMediaSessionHarness(): MediaSessionHarness {
       }
     },
   };
-}
-
-function setAudioMetrics(audio: HTMLAudioElement, values: { duration: number; currentTime: number }): void {
-  Object.defineProperty(audio, "duration", {
-    configurable: true,
-    value: values.duration,
-  });
-  audio.currentTime = values.currentTime;
 }
 
 function Harness() {

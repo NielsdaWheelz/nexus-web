@@ -59,6 +59,78 @@ function resolveCurrentChapter(
   return activeChapter;
 }
 
+function EffectsPanel({
+  audioEffects,
+  audioEffectsAvailable,
+  setAudioEffects,
+  silenceTimeSavedSeconds,
+  isSilenceTrimming,
+}: {
+  audioEffects: ReturnType<typeof useGlobalPlayer>["audioEffects"];
+  audioEffectsAvailable: boolean;
+  setAudioEffects: ReturnType<typeof useGlobalPlayer>["setAudioEffects"];
+  silenceTimeSavedSeconds: number;
+  isSilenceTrimming: boolean;
+}) {
+  return (
+    <section className={styles.effectsPanel} aria-label="Audio effects panel">
+      {!audioEffectsAvailable && (
+        <p className={styles.effectsUnavailable}>Audio effects unavailable for this source.</p>
+      )}
+
+      <label className={styles.effectsToggle}>
+        <input
+          type="checkbox"
+          aria-label="Silence trimming"
+          checked={audioEffects.silenceTrim}
+          disabled={!audioEffectsAvailable}
+          onChange={(event) => {
+            setAudioEffects({ silenceTrim: event.currentTarget.checked });
+          }}
+        />
+        <span>Silence trimming</span>
+      </label>
+
+      <label className={styles.effectsSelectControl}>
+        <span className={styles.controlLabel}>Volume boost</span>
+        <select
+          aria-label="Volume boost"
+          value={audioEffects.volumeBoost}
+          disabled={!audioEffectsAvailable}
+          onChange={(event) => {
+            setAudioEffects({
+              volumeBoost: event.currentTarget.value as AudioEffectsVolumeBoost,
+            });
+          }}
+          className={styles.select}
+        >
+          {VOLUME_BOOST_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className={styles.effectsToggle}>
+        <input
+          type="checkbox"
+          aria-label="Mono audio"
+          checked={audioEffects.mono}
+          disabled={!audioEffectsAvailable}
+          onChange={(event) => {
+            setAudioEffects({ mono: event.currentTarget.checked });
+          }}
+        />
+        <span>Mono audio</span>
+      </label>
+
+      <p className={styles.effectsMeta}>Time saved: {Number.isFinite(silenceTimeSavedSeconds) && silenceTimeSavedSeconds > 0 ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
+      {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
+    </section>
+  );
+}
+
 export default function GlobalPlayerFooter() {
   const isMobile = useIsMobileViewport();
   const [queueOpen, setQueueOpen] = useState(false);
@@ -127,13 +199,11 @@ export default function GlobalPlayerFooter() {
         !moreButtonRef.current.contains(event.target as Node)
       ) {
         setMoreOpen(false);
-        setEffectsOpen(false);
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setMoreOpen(false);
-        setEffectsOpen(false);
       }
     };
     document.addEventListener("mousedown", onPointerDown);
@@ -451,61 +521,13 @@ export default function GlobalPlayerFooter() {
                 </div>
 
                 {effectsOpen && (
-                  <section className={styles.effectsPanel} aria-label="Audio effects panel">
-                    {!audioEffectsAvailable && (
-                      <p className={styles.effectsUnavailable}>Audio effects unavailable for this source.</p>
-                    )}
-
-                    <label className={styles.effectsToggle}>
-                      <input
-                        type="checkbox"
-                        aria-label="Silence trimming"
-                        checked={audioEffects.silenceTrim}
-                        disabled={!audioEffectsAvailable}
-                        onChange={(event) => {
-                          setAudioEffects({ silenceTrim: event.currentTarget.checked });
-                        }}
-                      />
-                      <span>Silence trimming</span>
-                    </label>
-
-                    <label className={styles.effectsSelectControl}>
-                      <span className={styles.controlLabel}>Volume boost</span>
-                      <select
-                        aria-label="Volume boost"
-                        value={audioEffects.volumeBoost}
-                        disabled={!audioEffectsAvailable}
-                        onChange={(event) => {
-                          setAudioEffects({
-                            volumeBoost: event.currentTarget.value as AudioEffectsVolumeBoost,
-                          });
-                        }}
-                        className={styles.select}
-                      >
-                        {VOLUME_BOOST_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className={styles.effectsToggle}>
-                      <input
-                        type="checkbox"
-                        aria-label="Mono audio"
-                        checked={audioEffects.mono}
-                        disabled={!audioEffectsAvailable}
-                        onChange={(event) => {
-                          setAudioEffects({ mono: event.currentTarget.checked });
-                        }}
-                      />
-                      <span>Mono audio</span>
-                    </label>
-
-                    <p className={styles.effectsMeta}>Time saved: {Number.isFinite(silenceTimeSavedSeconds) && silenceTimeSavedSeconds > 0 ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
-                    {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
-                  </section>
+                  <EffectsPanel
+                    audioEffects={audioEffects}
+                    audioEffectsAvailable={audioEffectsAvailable}
+                    setAudioEffects={setAudioEffects}
+                    silenceTimeSavedSeconds={silenceTimeSavedSeconds}
+                    isSilenceTrimming={isSilenceTrimming}
+                  />
                 )}
               </section>
             </div>
@@ -716,61 +738,13 @@ export default function GlobalPlayerFooter() {
               </div>
 
               {effectsOpen && (
-                <section className={styles.effectsPanel} aria-label="Audio effects panel">
-                  {!audioEffectsAvailable && (
-                    <p className={styles.effectsUnavailable}>Audio effects unavailable for this source.</p>
-                  )}
-
-                  <label className={styles.effectsToggle}>
-                    <input
-                      type="checkbox"
-                      aria-label="Silence trimming"
-                      checked={audioEffects.silenceTrim}
-                      disabled={!audioEffectsAvailable}
-                      onChange={(event) => {
-                        setAudioEffects({ silenceTrim: event.currentTarget.checked });
-                      }}
-                    />
-                    <span>Silence trimming</span>
-                  </label>
-
-                  <label className={styles.effectsSelectControl}>
-                    <span className={styles.controlLabel}>Volume boost</span>
-                    <select
-                      aria-label="Volume boost"
-                      value={audioEffects.volumeBoost}
-                      disabled={!audioEffectsAvailable}
-                      onChange={(event) => {
-                        setAudioEffects({
-                          volumeBoost: event.currentTarget.value as AudioEffectsVolumeBoost,
-                        });
-                      }}
-                      className={styles.select}
-                    >
-                      {VOLUME_BOOST_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className={styles.effectsToggle}>
-                    <input
-                      type="checkbox"
-                      aria-label="Mono audio"
-                      checked={audioEffects.mono}
-                      disabled={!audioEffectsAvailable}
-                      onChange={(event) => {
-                        setAudioEffects({ mono: event.currentTarget.checked });
-                      }}
-                    />
-                    <span>Mono audio</span>
-                  </label>
-
-                  <p className={styles.effectsMeta}>Time saved: {Number.isFinite(silenceTimeSavedSeconds) && silenceTimeSavedSeconds > 0 ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
-                  {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
-                </section>
+                <EffectsPanel
+                  audioEffects={audioEffects}
+                  audioEffectsAvailable={audioEffectsAvailable}
+                  setAudioEffects={setAudioEffects}
+                  silenceTimeSavedSeconds={silenceTimeSavedSeconds}
+                  isSilenceTrimming={isSilenceTrimming}
+                />
               )}
             </div>
           )}

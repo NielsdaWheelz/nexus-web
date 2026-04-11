@@ -10,7 +10,7 @@ import {
 } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import SelectionPopover from "./SelectionPopover";
-import { type HighlightColor } from "@/lib/highlights";
+import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import {
   normalizeQuarterTurnRotation,

@@ -30,7 +30,7 @@ import {
   type SendMessageRequest,
 } from "@/lib/api/sse";
 import { fetchStreamToken } from "@/lib/api/streamToken";
-import styles from "@/app/(authenticated)/conversations/page.module.css";
+import styles from "./ChatComposer.module.css";
 
 // ============================================================================
 // Types

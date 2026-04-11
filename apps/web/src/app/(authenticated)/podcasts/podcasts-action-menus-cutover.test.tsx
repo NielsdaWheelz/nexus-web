@@ -379,8 +379,12 @@ describe("podcast ui action menu cutover", () => {
     expect(row).not.toBeNull();
     expect(within(row as HTMLElement).getByRole("button", { name: "Play next for Episode 0" })).toBeInTheDocument();
     expect(within(row as HTMLElement).getByRole("button", { name: "Add Episode 0 to queue" })).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByLabelText("Transcript request reason for Episode 0")).toBeInTheDocument();
     expect(within(row as HTMLElement).getByRole("button", { name: "Request transcript for Episode 0" })).toBeInTheDocument();
+
+    // Expand transcript request UI
+    await user.click(within(row as HTMLElement).getByRole("button", { name: "Request transcript for Episode 0" }));
+    expect(within(row as HTMLElement).getByLabelText("Transcript request reason for Episode 0")).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByRole("button", { name: "Submit transcript request for Episode 0" })).toBeInTheDocument();
     expect(within(row as HTMLElement).queryByRole("button", { name: "Mark as played for Episode 0" })).not.toBeInTheDocument();
     expect(within(row as HTMLElement).queryByRole("button", { name: "Add Episode 0 to library" })).not.toBeInTheDocument();
 

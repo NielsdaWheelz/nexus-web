@@ -5,8 +5,15 @@ import { apiFetch, isApiError } from "@/lib/api/client";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import { AppList, AppListItem } from "@/components/ui/AppList";
-import MediaKindIcon from "@/components/MediaKindIcon";
+import { BookOpen, FileText, Globe, Mic, Video } from "lucide-react";
 import styles from "./MediaCatalogPage.module.css";
+
+const MEDIA_KIND_ICONS: Record<string, typeof Globe> = {
+  podcast_episode: Mic,
+  video: Video,
+  epub: BookOpen,
+  pdf: FileText,
+};
 
 export type MediaKind =
   | "web_article"
@@ -384,7 +391,7 @@ export default function MediaCatalogPage({
                 <AppListItem
                   key={item.id}
                   href={`/media/${item.id}`}
-                  icon={<MediaKindIcon kind={item.kind} />}
+                  icon={(() => { const Icon = MEDIA_KIND_ICONS[item.kind] ?? Globe; return <Icon size={18} aria-hidden="true" />; })()}
                   title={item.title}
                   status={statusVariant(item.processing_status)}
                   meta={[KIND_LABEL[item.kind], `Updated ${formatDate(item.updated_at)}`].join(" · ")}

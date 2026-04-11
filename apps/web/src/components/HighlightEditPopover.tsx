@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
-import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights";
+import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights/segmenter";
 import { COLOR_LABELS } from "@/lib/highlights/colors";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./HighlightEditPopover.module.css";

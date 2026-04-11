@@ -1,6 +1,6 @@
 "use client";
 
-import type { HighlightColor } from "@/lib/highlights";
+import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { cx } from "@/lib/ui/cx";
 import styles from "./HighlightSnippet.module.css";
 

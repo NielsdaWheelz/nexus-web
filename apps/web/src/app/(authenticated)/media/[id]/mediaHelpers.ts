@@ -1,10 +1,10 @@
 import { apiFetch } from "@/lib/api/client";
 import {
   canonicalCpToRawCp,
-  codepointToUtf16,
-  type HighlightColor,
   type CanonicalCursorResult,
-} from "@/lib/highlights";
+} from "@/lib/highlights/canonicalCursor";
+import { codepointToUtf16 } from "@/lib/highlights/selectionToOffsets";
+import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { type Highlight } from "@/components/HighlightEditor";
 import { type PdfHighlightOut } from "@/components/PdfReader";
 import {

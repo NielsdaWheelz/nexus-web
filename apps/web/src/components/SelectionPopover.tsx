@@ -16,7 +16,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights";
+import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights/segmenter";
 import { COLOR_LABELS } from "@/lib/highlights/colors";
 import styles from "./SelectionPopover.module.css";
 

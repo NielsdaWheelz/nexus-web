@@ -1,12 +1,7 @@
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-
-interface CookieToSet {
-  name: string;
-  value: string;
-  options?: CookieOptions;
-}
+import { type CookieToSet } from "./types";
 
 function isNextResponse(response: Response): response is NextResponse {
   return "cookies" in response;

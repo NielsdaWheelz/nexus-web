@@ -13,7 +13,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights";
+import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights/segmenter";
 import { COLOR_LABELS } from "@/lib/highlights/colors";
 import { useToast } from "./Toast";
 import AnnotationEditor from "./AnnotationEditor";

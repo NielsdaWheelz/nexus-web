@@ -1,4 +1,4 @@
-import type { HighlightColor } from "@/lib/highlights";
+import type { HighlightColor } from "./segmenter";
 
 export const COLOR_LABELS: Record<HighlightColor, string> = {
   yellow: "Yellow",

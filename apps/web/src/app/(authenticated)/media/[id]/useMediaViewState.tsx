@@ -20,12 +20,14 @@ import { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import {
   applyHighlightsToHtmlMemoized,
   clearHighlightCache,
+  type HighlightInput,
+} from "@/lib/highlights/applySegments";
+import {
   buildCanonicalCursor,
   validateCanonicalText,
-  type HighlightColor,
-  type HighlightInput,
   type CanonicalCursorResult,
-} from "@/lib/highlights";
+} from "@/lib/highlights/canonicalCursor";
+import type { HighlightColor } from "@/lib/highlights/segmenter";
 import {
   sortPdfHighlightsByStableKey,
 } from "@/lib/highlights/highlightIndexAdapter";

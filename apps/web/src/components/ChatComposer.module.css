@@ -1,0 +1,165 @@
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-bg);
+}
+
+.composerError {
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border: 1px solid var(--color-error);
+  border-radius: 6px;
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+}
+
+.contextChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.contextChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  max-width: 280px;
+}
+
+.chipSwatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.chipSwatchYellow {
+  background: rgba(255, 235, 59, 0.8);
+}
+
+.chipSwatchGreen {
+  background: rgba(76, 175, 80, 0.7);
+}
+
+.chipSwatchBlue {
+  background: rgba(33, 150, 243, 0.7);
+}
+
+.chipSwatchPink {
+  background: rgba(233, 30, 99, 0.7);
+}
+
+.chipSwatchPurple {
+  background: rgba(156, 39, 176, 0.7);
+}
+
+.chipText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 2px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.chipRemove:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.composerRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.composerInput {
+  flex: 1;
+  resize: none;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.composerInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.composerInput:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sendBtn {
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  border: none;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sendBtn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.sendBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.composerControls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.modelSelect {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.modelSelect:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

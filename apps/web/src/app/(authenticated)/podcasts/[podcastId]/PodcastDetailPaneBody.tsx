@@ -17,6 +17,7 @@ import {
 } from "@/lib/player/subscriptionPlaybackSpeed";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
+import ActionMenu from "@/components/ui/ActionMenu";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
 
@@ -405,6 +406,7 @@ export default function PodcastDetailPaneBody() {
   const [batchTranscriptBusy, setBatchTranscriptBusy] = useState(false);
   const [batchTranscriptSummary, setBatchTranscriptSummary] = useState<string | null>(null);
   const [expandedShowNotesMediaIds, setExpandedShowNotesMediaIds] = useState<Set<string>>(new Set());
+  const [expandedTranscriptMediaIds, setExpandedTranscriptMediaIds] = useState<Set<string>>(new Set());
   const [requestingTranscriptMediaIds, setRequestingTranscriptMediaIds] = useState<Set<string>>(
     new Set()
   );
@@ -1443,23 +1445,23 @@ export default function PodcastDetailPaneBody() {
         actions={
           <div className={styles.episodeHeaderActions}>
             <span>{activeEpisodeCount} episodes</span>
-            <button
-              type="button"
-              className={styles.batchTranscribeButton}
-              onClick={() => void handleBatchTranscriptRequest()}
-              disabled={batchTranscriptBusy || batchTranscriptCandidateEpisodes.length === 0}
-              aria-label="Transcribe unplayed episodes"
-            >
-              {batchTranscriptBusy ? "Transcribing..." : "Transcribe unplayed"}
-            </button>
-            <button
-              type="button"
-              className={styles.markAllButton}
-              onClick={() => void handleMarkAllVisibleUnplayedAsPlayed()}
-              disabled={markAllAsPlayedBusy || visibleUnplayedEpisodeIds.length === 0}
-            >
-              {markAllAsPlayedBusy ? "Marking..." : "Mark all as played"}
-            </button>
+            <ActionMenu
+              label="Episode actions"
+              options={[
+                {
+                  id: "transcribe-unplayed",
+                  label: batchTranscriptBusy ? "Transcribing..." : "Transcribe unplayed",
+                  disabled: batchTranscriptBusy || batchTranscriptCandidateEpisodes.length === 0,
+                  onSelect: () => void handleBatchTranscriptRequest(),
+                },
+                {
+                  id: "mark-all-played",
+                  label: markAllAsPlayedBusy ? "Marking..." : "Mark all as played",
+                  disabled: markAllAsPlayedBusy || visibleUnplayedEpisodeIds.length === 0,
+                  onSelect: () => void handleMarkAllVisibleUnplayedAsPlayed(),
+                },
+              ]}
+            />
           </div>
         }
       >
@@ -1599,30 +1601,37 @@ export default function PodcastDetailPaneBody() {
                           />
                         </span>
                       )}
-                      {showNotesText && (
+                      {showNotesText && !showNotesExpanded && (
+                        <button
+                          type="button"
+                          className={styles.showNotesToggleButton}
+                          aria-label={`Show notes for ${episode.title}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            toggleEpisodeShowNotesExpansion(episode.id);
+                          }}
+                        >
+                          Show notes
+                        </button>
+                      )}
+                      {showNotesText && showNotesExpanded && (
                         <span className={styles.episodeShowNotes}>
-                          <span
-                            className={styles.episodeShowNotesPreview}
-                            data-expanded={showNotesExpanded ? "true" : "false"}
-                          >
+                          <span className={styles.episodeShowNotesPreview} data-expanded="true">
                             {showNotesText}
                           </span>
-                          {canToggleShowNotes && (
-                            <button
-                              type="button"
-                              className={styles.showNotesToggleButton}
-                              aria-label={`${
-                                showNotesExpanded ? "Show less" : "Show more"
-                              } for ${episode.title}`}
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                toggleEpisodeShowNotesExpansion(episode.id);
-                              }}
-                            >
-                              {showNotesExpanded ? "Show less" : "Show more"}
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            className={styles.showNotesToggleButton}
+                            aria-label={`Hide notes for ${episode.title}`}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              toggleEpisodeShowNotesExpansion(episode.id);
+                            }}
+                          >
+                            Hide notes
+                          </button>
                         </span>
                       )}
                     </span>
@@ -1651,7 +1660,21 @@ export default function PodcastDetailPaneBody() {
                         Add to queue
                       </button>
                       {inQueue && <span className={styles.queueBadge}>In Queue</span>}
-                      {canRequestTranscript ? (
+                      {canRequestTranscript && !expandedTranscriptMediaIds.has(episode.id) && (
+                        <button
+                          type="button"
+                          className={styles.requestButton}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setExpandedTranscriptMediaIds((prev) => new Set(prev).add(episode.id));
+                          }}
+                          aria-label={`Request transcript for ${episode.title}`}
+                        >
+                          Request transcript...
+                        </button>
+                      )}
+                      {canRequestTranscript && expandedTranscriptMediaIds.has(episode.id) && (
                         <>
                           <label className={styles.reasonLabel}>
                             Transcript reason
@@ -1674,7 +1697,7 @@ export default function PodcastDetailPaneBody() {
                           <button
                             type="button"
                             className={styles.requestButton}
-                            aria-label={`Request transcript for ${episode.title}`}
+                            aria-label={`Submit transcript request for ${episode.title}`}
                             disabled={transcriptRequestDisabled}
                             onClick={() => void handleRequestTranscript(episode.id)}
                           >
@@ -1682,8 +1705,28 @@ export default function PodcastDetailPaneBody() {
                               ? "Requesting..."
                               : "Request transcript"}
                           </button>
+                          {forecastForSelectedReason && (
+                            <span className={styles.transcriptRequestHint}>
+                              {forecastForSelectedReason.source === "request"
+                                ? forecastForSelectedReason.request_enqueued
+                                  ? "queued"
+                                  : "acknowledged"
+                                : "estimate"}{" "}
+                              · {forecastForSelectedReason.required_minutes} min · remaining{" "}
+                              {forecastForSelectedReason.remaining_minutes == null
+                                ? "unlimited"
+                                : `${forecastForSelectedReason.remaining_minutes} min`}
+                            </span>
+                          )}
+                          {forecastForSelectedReason &&
+                            !forecastForSelectedReason.fits_budget && (
+                              <span className={styles.transcriptQuotaWarning}>
+                                Not enough daily quota for this request.
+                              </span>
+                            )}
                         </>
-                      ) : (
+                      )}
+                      {!canRequestTranscript && (
                         <span className={styles.transcriptStatus}>
                           {episode.transcript_state === "ready"
                             ? "Transcript ready"
@@ -1696,26 +1739,6 @@ export default function PodcastDetailPaneBody() {
                                   : "Transcript state unavailable"}
                         </span>
                       )}
-                      {canRequestTranscript && forecastForSelectedReason && (
-                        <span className={styles.transcriptRequestHint}>
-                          {forecastForSelectedReason.source === "request"
-                            ? forecastForSelectedReason.request_enqueued
-                              ? "queued"
-                              : "acknowledged"
-                            : "estimate"}{" "}
-                          · {forecastForSelectedReason.required_minutes} min · remaining{" "}
-                          {forecastForSelectedReason.remaining_minutes == null
-                            ? "unlimited"
-                            : `${forecastForSelectedReason.remaining_minutes} min`}
-                        </span>
-                      )}
-                      {canRequestTranscript &&
-                        forecastForSelectedReason &&
-                        !forecastForSelectedReason.fits_budget && (
-                          <span className={styles.transcriptQuotaWarning}>
-                            Not enough daily quota for this request.
-                          </span>
-                        )}
                     </div>
                   }
                   options={rowOptions}

@@ -9,14 +9,9 @@
  * - Session is managed via HTTP-only cookies
  */
 
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-
-interface CookieToSet {
-  name: string;
-  value: string;
-  options?: CookieOptions;
-}
+import { type CookieToSet } from "./types";
 
 /**
  * Create a Supabase client for server-side operations.
