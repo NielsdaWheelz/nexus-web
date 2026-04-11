@@ -104,7 +104,7 @@ function buildShellPane(input: {
   const parentHref = getParentHref(route);
   const onBack = parentHref
     ? () => input.onNavigatePane(input.pane.id, parentHref)
-    : undefined;
+    : () => window.history.back();
 
   return {
     paneId: input.pane.id,
