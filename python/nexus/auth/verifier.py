@@ -205,12 +205,14 @@ class SupabaseJwksVerifier:
 
         Raises:
             PyJWKClientError: If JWKS fetch fails.
-            ApiError(E_UNAUTHENTICATED): If kid not found after refresh.
+            ApiError(E_UNAUTHENTICATED): If token is malformed or kid not found after refresh.
         """
         client = self._get_jwks_client()
 
         try:
             return client.get_signing_key_from_jwt(token)
+        except DecodeError as e:
+            raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid token format") from e
         except PyJWKClientError as e:
             # Check if this is a "kid not found" error
             if "Unable to find" in str(e) or "kid" in str(e).lower():
