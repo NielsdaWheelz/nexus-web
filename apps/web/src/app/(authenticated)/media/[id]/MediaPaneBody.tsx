@@ -25,7 +25,7 @@ import HighlightEditPopover from "@/components/HighlightEditPopover";
 import { useToast } from "@/components/Toast";
 import { DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX } from "@/lib/panes/paneRouteRegistry";
 import MediaLinkedItemsPaneBody from "./MediaLinkedItemsPaneBody";
-import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
 import DocumentViewport from "@/components/workspace/DocumentViewport";
@@ -85,6 +85,7 @@ import {
   useIntervalPoll,
 } from "./transcriptPolling";
 import ResponsiveToolbar, { type ToolbarItem } from "@/components/ui/ResponsiveToolbar";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { buildMediaHeaderOptions } from "./mediaActionMenuOptions";
 import styles from "./page.module.css";
 
@@ -2533,6 +2534,12 @@ export default function MediaPaneBody() {
     onToggleEpubToc: () => setEpubTocExpanded((value) => !value),
   });
 
+  usePaneChromeOverride({
+    toolbar: mediaToolbar,
+    options: mediaHeaderOptions,
+    meta: mediaHeaderMeta,
+  });
+
   const linkedItemsContent = showHighlightsPane ? (
     <MediaLinkedItemsPaneBody
       mediaId={media.id}
@@ -2566,13 +2573,6 @@ export default function MediaPaneBody() {
     <>
       <div className={styles.splitLayout} ref={splitRef}>
         <div className={styles.readerColumn}>
-        {mediaHeaderMeta ? <div className={styles.surfaceMeta}>{mediaHeaderMeta}</div> : null}
-        {mediaToolbar ? <div className={styles.surfaceToolbar}>{mediaToolbar}</div> : null}
-        {mediaHeaderOptions.length > 0 ? (
-          <div className={styles.surfaceMenu}>
-            <ActionMenu options={mediaHeaderOptions} />
-          </div>
-        ) : null}
         {!isPdf && isMismatchDisabled && (
           <div className={styles.mismatchBanner}>
             Highlights disabled due to content mismatch. Try reloading.

@@ -1,12 +1,49 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { Search } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/CommandPalette";
 import SurfaceHeader, { type SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import styles from "./PaneShell.module.css";
 
 export type PaneBodyMode = "standard" | "document";
+
+// ---------------------------------------------------------------------------
+// Chrome override — lets body components push toolbar/options/meta into the
+// PaneShell chrome without routing through the workspace store.
+// ---------------------------------------------------------------------------
+
+interface PaneChromeOverrides {
+  toolbar?: React.ReactNode;
+  actions?: React.ReactNode;
+  options?: SurfaceHeaderOption[];
+  meta?: React.ReactNode;
+}
+
+const PaneChromeOverrideContext = createContext<
+  ((overrides: PaneChromeOverrides) => void) | null
+>(null);
+
+/**
+ * Call from a body component rendered inside PaneShell to push toolbar,
+ * options, meta, or actions into the pane chrome. Uses useLayoutEffect so the
+ * chrome is ready before the browser paints.
+ */
+export function usePaneChromeOverride(overrides: PaneChromeOverrides): void {
+  const setOverrides = useContext(PaneChromeOverrideContext);
+  useLayoutEffect(() => {
+    setOverrides?.(overrides);
+  });
+}
 
 type PaneShellStyle = CSSProperties & {
   "--mobile-pane-chrome-height"?: string;
@@ -52,6 +89,11 @@ export default function PaneShell({
   const lastScrollTopRef = useRef(0);
   const [mobileChromeHidden, setMobileChromeHidden] = useState(false);
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
+  const [chromeOverrides, setChromeOverrides] = useState<PaneChromeOverrides>({});
+
+  const effectiveToolbar = chromeOverrides.toolbar ?? toolbar;
+  const effectiveActions = chromeOverrides.actions ?? actions;
+  const effectiveOptions = chromeOverrides.options ?? options;
 
   useEffect(
     () => () => {
@@ -82,7 +124,7 @@ export default function PaneShell({
     const observer = new ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [isMobile, title, subtitle, toolbar]);
+  }, [isMobile, title, subtitle, effectiveToolbar]);
 
   const handleResizeMouseDown = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -216,11 +258,12 @@ export default function PaneShell({
         <SurfaceHeader
           title={title}
           subtitle={subtitle}
-          options={options}
+          meta={chromeOverrides.meta}
+          options={effectiveOptions}
           actions={
             isMobile ? (
               <>
-                {actions}
+                {effectiveActions}
                 <button
                   type="button"
                   className={styles.commandPaletteButton}
@@ -231,12 +274,12 @@ export default function PaneShell({
                 </button>
               </>
             ) : (
-              actions
+              effectiveActions
             )
           }
           onBack={onBack}
         />
-        {toolbar ? <div className={styles.toolbar}>{toolbar}</div> : null}
+        {effectiveToolbar ? <div className={styles.toolbar}>{effectiveToolbar}</div> : null}
       </div>
       <div
         className={styles.body}
@@ -246,7 +289,9 @@ export default function PaneShell({
         style={bodyStyle}
         onScroll={handleBodyScroll}
       >
-        {children}
+        <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
+          {children}
+        </PaneChromeOverrideContext.Provider>
       </div>
       <div
         className={styles.resizeHandle}
