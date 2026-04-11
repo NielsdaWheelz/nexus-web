@@ -24,8 +24,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { getActivePaneTab } from "@/lib/workspace/schema";
-import { resolveTabDescriptor } from "@/lib/workspace/tabDescriptor";
+import { resolvePaneDescriptor } from "@/lib/workspace/paneDescriptor";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./Navbar.module.css";
 
@@ -93,44 +92,38 @@ export default function Navbar({ onToggle }: NavbarProps) {
   const isMobile = useIsMobileViewport();
   const {
     state,
-    runtimeTitleByTabId,
-    openHintByTabId,
+    runtimeTitleByPaneId,
+    openHintByPaneId,
     resourceTitleByRef,
-    navigateTab,
-    activateGroup,
-    activateTab,
+    navigatePane,
+    activatePane,
   } = useWorkspaceStore();
 
-  const activeTab = useMemo(() => getActivePaneTab(state), [state]);
-  const currentPathname = useMemo(
-    () => (activeTab ? pathnameFromHref(activeTab.href) : ""),
-    [activeTab],
-  );
-
-  const activeGroup = useMemo(
-    () => state.groups.find((g) => g.id === state.activeGroupId) ?? null,
+  const activePane = useMemo(
+    () => state.panes.find((p) => p.id === state.activePaneId) ?? null,
     [state],
+  );
+  const currentPathname = useMemo(
+    () => (activePane ? pathnameFromHref(activePane.href) : ""),
+    [activePane],
   );
 
   const tabSwitcherItems = useMemo(
     () =>
-      state.groups.flatMap((group) =>
-        group.tabs.map((tab) => {
-          const descriptor = resolveTabDescriptor(tab, {
-            nowMs: Date.now(),
-            runtimeTitleByTabId,
-            openHintByTabId,
-            resourceTitleByRef,
-          });
-          return {
-            groupId: group.id,
-            tabId: tab.id,
-            title: descriptor.resolvedTitle,
-            isActive: group.id === state.activeGroupId && tab.id === group.activeTabId,
-          };
-        }),
-      ),
-    [openHintByTabId, resourceTitleByRef, runtimeTitleByTabId, state],
+      state.panes.map((pane) => {
+        const descriptor = resolvePaneDescriptor(pane, {
+          nowMs: Date.now(),
+          runtimeTitleByPaneId,
+          openHintByPaneId,
+          resourceTitleByRef,
+        });
+        return {
+          paneId: pane.id,
+          title: descriptor.resolvedTitle,
+          isActive: pane.id === state.activePaneId,
+        };
+      }),
+    [openHintByPaneId, resourceTitleByRef, runtimeTitleByPaneId, state],
   );
 
   const handleToggle = () => {
@@ -141,13 +134,13 @@ export default function Navbar({ onToggle }: NavbarProps) {
 
   const navigateToHref = useCallback(
     (href: string) => {
-      if (activeGroup && activeTab) {
-        navigateTab(activeGroup.id, activeTab.id, href);
+      if (activePane) {
+        navigatePane(activePane.id, href);
       } else {
         window.location.assign(href);
       }
     },
-    [activeGroup, activeTab, navigateTab],
+    [activePane, navigatePane],
   );
 
   const handleNavClick = useCallback(
@@ -171,12 +164,11 @@ export default function Navbar({ onToggle }: NavbarProps) {
   const ToggleIcon = collapsed ? ChevronRight : ChevronLeft;
 
   const handleTabSelect = useCallback(
-    (groupId: string, tabId: string) => {
-      activateGroup(groupId);
-      activateTab(groupId, tabId);
+    (paneId: string) => {
+      activatePane(paneId);
       setTabSwitcherOpen(false);
     },
-    [activateGroup, activateTab],
+    [activatePane],
   );
 
   const handleCloseTabSwitcher = useCallback(() => {
@@ -309,11 +301,11 @@ export default function Navbar({ onToggle }: NavbarProps) {
               <div className={styles.mobileTabList}>
                 {tabSwitcherItems.map((item) => (
                   <button
-                    key={`${item.groupId}:${item.tabId}`}
+                    key={item.paneId}
                     type="button"
                     className={`${styles.mobileTabItem} ${item.isActive ? styles.mobileTabItemActive : ""}`}
                     aria-current={item.isActive ? "page" : undefined}
-                    onClick={() => handleTabSelect(item.groupId, item.tabId)}
+                    onClick={() => handleTabSelect(item.paneId)}
                   >
                     {item.title}
                   </button>

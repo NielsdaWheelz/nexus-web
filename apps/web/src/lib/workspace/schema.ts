@@ -1,36 +1,36 @@
 "use client";
 
-export const WORKSPACE_SCHEMA_VERSION = 2;
+export const WORKSPACE_SCHEMA_VERSION = 3;
 export const WORKSPACE_VERSION_PARAM = "wsv";
 export const WORKSPACE_STATE_PARAM = "ws";
 export const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
 
-export const MAX_PANE_GROUPS = 4;
-export const MAX_TABS_PER_GROUP = 12;
-export const MAX_TOTAL_TABS = 24;
-export const MIN_GROUP_WIDTH_PX = 280;
-export const MAX_GROUP_WIDTH_PX = 1400;
+export const MAX_PANES = 12;
+export const MIN_PANE_WIDTH_PX = 320;
+export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 
-export interface WorkspaceTabStateV2 {
+export interface WorkspacePaneStateV3 {
   id: string;
   href: string;
+  widthPx: number;
+  companionOfPaneId?: string | null;
 }
 
-export interface WorkspacePaneGroupStateV2 {
-  id: string;
-  activeTabId: string;
-  tabs: WorkspaceTabStateV2[];
-  widthPx?: number;
-}
-
-export interface WorkspaceStateV2 {
+export interface WorkspaceStateV3 {
   schemaVersion: typeof WORKSPACE_SCHEMA_VERSION;
-  activeGroupId: string;
-  groups: WorkspacePaneGroupStateV2[];
+  activePaneId: string;
+  panes: WorkspacePaneStateV3[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+export function createPaneId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `pane-${crypto.randomUUID()}`;
+  }
+  return `pane-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function resolveBaseOrigin(baseOrigin?: string): string {
@@ -47,21 +47,6 @@ function resolveBaseOrigin(baseOrigin?: string): string {
   return "http://localhost";
 }
 
-function clampWidth(value: number): number {
-  if (!Number.isFinite(value)) {
-    return MIN_GROUP_WIDTH_PX;
-  }
-  return Math.min(MAX_GROUP_WIDTH_PX, Math.max(MIN_GROUP_WIDTH_PX, Math.round(value)));
-}
-
-export function createWorkspaceId(prefix: "group" | "tab"): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `${prefix}-${crypto.randomUUID()}`;
-  }
-  const random = Math.random().toString(36).slice(2, 8);
-  return `${prefix}-${Date.now()}-${random}`;
-}
-
 export function normalizeWorkspaceHref(
   href: string,
   options?: { baseOrigin?: string }
@@ -69,7 +54,6 @@ export function normalizeWorkspaceHref(
   if (typeof href !== "string" || href.trim().length === 0) {
     return null;
   }
-
   const baseOrigin = resolveBaseOrigin(options?.baseOrigin);
   try {
     const parsed = new URL(href, baseOrigin);
@@ -85,94 +69,59 @@ export function normalizeWorkspaceHref(
   }
 }
 
-export function createDefaultWorkspaceState(primaryHref: string): WorkspaceStateV2 {
-  const normalizedHref =
-    normalizeWorkspaceHref(primaryHref) ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
-  const groupId = createWorkspaceId("group");
-  const tabId = createWorkspaceId("tab");
+export function clampPaneWidth(value: number): number {
+  if (!Number.isFinite(value)) {
+    return MIN_PANE_WIDTH_PX;
+  }
+  return Math.min(MAX_STANDARD_PANE_WIDTH_PX, Math.max(MIN_PANE_WIDTH_PX, Math.round(value)));
+}
+
+export function createDefaultWorkspaceState(
+  primaryHref: string,
+  widthPx?: number
+): WorkspaceStateV3 {
+  const href = normalizeWorkspaceHref(primaryHref) ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
+  const id = createPaneId();
   return {
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
-    activeGroupId: groupId,
-    groups: [
-      {
-        id: groupId,
-        activeTabId: tabId,
-        tabs: [{ id: tabId, href: normalizedHref }],
-      },
-    ],
+    activePaneId: id,
+    panes: [{ id, href, widthPx: widthPx != null ? clampPaneWidth(widthPx) : 480 }],
   };
 }
 
-function sanitizeTab(
+function sanitizePane(
   value: unknown,
   fallbackHref: string,
-  seenTabIds: Set<string>,
+  seenIds: Set<string>,
   options?: { baseOrigin?: string }
-): WorkspaceTabStateV2 | null {
+): WorkspacePaneStateV3 | null {
   if (!isRecord(value)) {
     return null;
   }
   const rawHref = typeof value.href === "string" ? value.href : fallbackHref;
   const href = normalizeWorkspaceHref(rawHref, options) ?? fallbackHref;
-  let id = typeof value.id === "string" && value.id.trim().length > 0 ? value.id : "";
-  if (!id || seenTabIds.has(id)) {
-    id = createWorkspaceId("tab");
-  }
-  seenTabIds.add(id);
-  return { id, href };
-}
-
-function sanitizeGroup(
-  value: unknown,
-  fallbackHref: string,
-  remainingTabCapacity: number,
-  options?: { baseOrigin?: string }
-): WorkspacePaneGroupStateV2 | null {
-  if (!isRecord(value) || !Array.isArray(value.tabs)) {
-    return null;
-  }
-
-  const seenTabIds = new Set<string>();
-  const tabs: WorkspaceTabStateV2[] = [];
-  for (const rawTab of value.tabs) {
-    if (tabs.length >= MAX_TABS_PER_GROUP || tabs.length >= remainingTabCapacity) {
-      break;
-    }
-    const nextTab = sanitizeTab(rawTab, fallbackHref, seenTabIds, options);
-    if (nextTab) {
-      tabs.push(nextTab);
-    }
-  }
-
-  if (tabs.length === 0) {
-    return null;
-  }
 
   let id = typeof value.id === "string" && value.id.trim().length > 0 ? value.id : "";
-  if (!id) {
-    id = createWorkspaceId("group");
+  if (!id || seenIds.has(id)) {
+    id = createPaneId();
   }
-
-  const requestedActiveTabId =
-    typeof value.activeTabId === "string" ? value.activeTabId : "";
-  const activeTabId =
-    tabs.find((tab) => tab.id === requestedActiveTabId)?.id ?? tabs[0]?.id ?? "";
-  if (!activeTabId) {
-    return null;
-  }
+  seenIds.add(id);
 
   const widthPx =
-    typeof value.widthPx === "number" && Number.isFinite(value.widthPx)
-      ? clampWidth(value.widthPx)
-      : undefined;
+    typeof value.widthPx === "number" ? clampPaneWidth(value.widthPx) : 480;
 
-  return { id, activeTabId, tabs, widthPx };
+  const companionOfPaneId =
+    typeof value.companionOfPaneId === "string" && value.companionOfPaneId.trim().length > 0
+      ? value.companionOfPaneId
+      : null;
+
+  return { id, href, widthPx, ...(companionOfPaneId ? { companionOfPaneId } : {}) };
 }
 
 export function sanitizeWorkspaceState(
   value: unknown,
   options: { fallbackHref: string; baseOrigin?: string }
-): WorkspaceStateV2 {
+): WorkspaceStateV3 {
   const fallbackHref =
     normalizeWorkspaceHref(options.fallbackHref, options) ??
     WORKSPACE_DEFAULT_FALLBACK_HREF;
@@ -181,98 +130,38 @@ export function sanitizeWorkspaceState(
     return createDefaultWorkspaceState(fallbackHref);
   }
 
-  const rawGroups = Array.isArray(value.groups) ? value.groups : [];
-  const groups: WorkspacePaneGroupStateV2[] = [];
-  const seenGroupIds = new Set<string>();
-  let totalTabs = 0;
+  const rawPanes = Array.isArray(value.panes) ? value.panes : [];
+  const seenIds = new Set<string>();
+  const panes: WorkspacePaneStateV3[] = [];
 
-  for (const rawGroup of rawGroups) {
-    if (groups.length >= MAX_PANE_GROUPS || totalTabs >= MAX_TOTAL_TABS) {
+  for (const rawPane of rawPanes) {
+    if (panes.length >= MAX_PANES) {
       break;
     }
-
-    const sanitized = sanitizeGroup(
-      rawGroup,
-      fallbackHref,
-      MAX_TOTAL_TABS - totalTabs,
-      options
-    );
-    if (!sanitized) {
-      continue;
+    const pane = sanitizePane(rawPane, fallbackHref, seenIds, options);
+    if (pane) {
+      panes.push(pane);
     }
-
-    if (seenGroupIds.has(sanitized.id)) {
-      sanitized.id = createWorkspaceId("group");
-    }
-    seenGroupIds.add(sanitized.id);
-    groups.push(sanitized);
-    totalTabs += sanitized.tabs.length;
   }
 
-  if (groups.length === 0) {
+  // Drop companion panes whose source doesn't exist
+  const validIds = new Set(panes.map((p) => p.id));
+  const filtered = panes.filter(
+    (p) => !p.companionOfPaneId || validIds.has(p.companionOfPaneId)
+  );
+
+  if (filtered.length === 0) {
     return createDefaultWorkspaceState(fallbackHref);
   }
 
-  const requestedActiveGroupId =
-    typeof value.activeGroupId === "string" ? value.activeGroupId : "";
-  const activeGroupId =
-    groups.find((group) => group.id === requestedActiveGroupId)?.id ?? groups[0]?.id ?? "";
+  const requestedActiveId =
+    typeof value.activePaneId === "string" ? value.activePaneId : "";
+  const activePaneId =
+    filtered.find((p) => p.id === requestedActiveId)?.id ?? filtered[0]?.id ?? "";
 
-  if (!activeGroupId) {
+  if (!activePaneId) {
     return createDefaultWorkspaceState(fallbackHref);
   }
 
-  return {
-    schemaVersion: WORKSPACE_SCHEMA_VERSION,
-    activeGroupId,
-    groups,
-  };
-}
-
-export function getActivePaneGroup(
-  state: WorkspaceStateV2
-): WorkspacePaneGroupStateV2 | null {
-  if (!state.groups.length) {
-    return null;
-  }
-  return state.groups.find((group) => group.id === state.activeGroupId) ?? state.groups[0] ?? null;
-}
-
-export function getActivePaneTab(state: WorkspaceStateV2): WorkspaceTabStateV2 | null {
-  const group = getActivePaneGroup(state);
-  if (!group) {
-    return null;
-  }
-  return group.tabs.find((tab) => tab.id === group.activeTabId) ?? group.tabs[0] ?? null;
-}
-
-export function getPrimaryHrefFromWorkspaceState(state: WorkspaceStateV2): string {
-  return getActivePaneTab(state)?.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
-}
-
-/**
- * Legacy href-based title fallback used by older callers.
- * New pane tabs should use the descriptor pipeline in tabDescriptor.ts.
- */
-export function tabTitleFromHref(href: string): string {
-  const titleCase = (value: string): string =>
-    value
-      .replace(/[-_]+/g, " ")
-      .trim()
-      .replace(/\b\w/g, (char) => char.toUpperCase());
-
-  try {
-    const parsed = new URL(href, "http://localhost");
-    const path = parsed.pathname.replace(/^\/+/, "");
-    if (!path) {
-      return "Home";
-    }
-    const [root] = path.split("/");
-    if (!root) {
-      return "Tab";
-    }
-    return titleCase(root);
-  } catch {
-    return "Tab";
-  }
+  return { schemaVersion: WORKSPACE_SCHEMA_VERSION, activePaneId, panes: filtered };
 }

@@ -4,8 +4,8 @@ import {
   WORKSPACE_SCHEMA_VERSION,
   WORKSPACE_STATE_PARAM,
   WORKSPACE_VERSION_PARAM,
-  type WorkspaceStateV2,
-  getPrimaryHrefFromWorkspaceState,
+  WORKSPACE_DEFAULT_FALLBACK_HREF,
+  type WorkspaceStateV3,
   sanitizeWorkspaceState,
 } from "@/lib/workspace/schema";
 
@@ -14,7 +14,7 @@ export const MAX_WORKSPACE_STATE_PARAM_LENGTH = 1800;
 type DecodeSource = "query" | "inferred" | "fallback";
 
 export interface WorkspaceDecodeResult {
-  state: WorkspaceStateV2;
+  state: WorkspaceStateV3;
   source: DecodeSource;
   errorCode:
     | null
@@ -86,7 +86,7 @@ export function buildWorkspaceFallbackHref(
   return `${pathname}${qs ? `?${qs}` : ""}${hash}`;
 }
 
-export function encodeWorkspaceStateParam(state: WorkspaceStateV2): WorkspaceEncodeResult {
+export function encodeWorkspaceStateParam(state: WorkspaceStateV3): WorkspaceEncodeResult {
   try {
     const payload = encodeUtf8(JSON.stringify(state));
     if (payload.length > MAX_WORKSPACE_STATE_PARAM_LENGTH) {
@@ -179,10 +179,11 @@ export function decodeWorkspaceStateFromUrl(
 }
 
 export function buildWorkspaceUrl(
-  state: WorkspaceStateV2,
+  state: WorkspaceStateV3,
   options?: { baseOrigin?: string }
 ): { href: string; errorCode: WorkspaceEncodeResult["errorCode"] } {
-  const primaryHref = getPrimaryHrefFromWorkspaceState(state);
+  const activePane = state.panes.find((p) => p.id === state.activePaneId);
+  const primaryHref = activePane?.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
   const baseOrigin =
     options?.baseOrigin ??
     (typeof window !== "undefined" &&
@@ -193,13 +194,11 @@ export function buildWorkspaceUrl(
 
   const parsed = new URL(primaryHref, baseOrigin);
   const params = stripWorkspaceParams(new URLSearchParams(parsed.search));
-  const isTrivialState =
-    state.groups.length === 1 &&
-    state.groups[0]?.id === state.activeGroupId &&
-    state.groups[0]?.tabs.length === 1 &&
-    state.groups[0]?.activeTabId === state.groups[0]?.tabs[0]?.id &&
-    typeof state.groups[0]?.widthPx === "undefined";
-  if (isTrivialState) {
+
+  // Single pane with no companion → omit workspace params from URL
+  const isTrivial =
+    state.panes.length === 1 && !state.panes[0]?.companionOfPaneId;
+  if (isTrivial) {
     const qs = params.toString();
     return {
       href: `${parsed.pathname}${qs ? `?${qs}` : ""}${parsed.hash}`,
@@ -224,4 +223,3 @@ export function buildWorkspaceUrl(
     errorCode: null,
   };
 }
-

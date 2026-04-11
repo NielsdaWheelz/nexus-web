@@ -130,9 +130,9 @@ describe("workspace pane cutover contract (discover slice)", () => {
     expect(registrySource.includes('"/discover/page"')).toBe(false);
   });
 
-  it("routes /discover through the shared route pane workspace host", () => {
+  it("routes /discover through the unified workspace host", () => {
     const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
-    expect(layoutSource.includes('pathname === "/discover"')).toBe(true);
+    expect(layoutSource.includes("WorkspaceHost")).toBe(true);
   });
 });
 
@@ -168,9 +168,9 @@ describe("workspace pane cutover contract (conversations slice)", () => {
     expect(registrySource.includes('"/conversations/page"')).toBe(false);
   });
 
-  it("routes /conversations through the shared route pane workspace host", () => {
+  it("routes /conversations through the unified workspace host", () => {
     const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
-    expect(layoutSource.includes('pathname === "/conversations"')).toBe(true);
+    expect(layoutSource.includes("WorkspaceHost")).toBe(true);
   });
 });
 
@@ -212,10 +212,9 @@ describe("workspace pane cutover contract (conversation detail slice)", () => {
     expect(registrySource.includes('"/conversations/[id]/page"')).toBe(false);
   });
 
-  it("routes /conversations/[id] through the shared route pane workspace host but excludes /new", () => {
+  it("routes /conversations/[id] through the unified workspace host", () => {
     const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
-    expect(layoutSource.includes('pathname.startsWith("/conversations/")')).toBe(true);
-    expect(layoutSource.includes('pathname !== "/conversations/new"')).toBe(true);
+    expect(layoutSource.includes("WorkspaceHost")).toBe(true);
   });
 });
 
@@ -252,8 +251,8 @@ describe("workspace pane cutover contract (libraries slice)", () => {
     expect(registrySource.includes('"/libraries/page"')).toBe(false);
   });
 
-  it("routes /libraries through the shared route pane workspace host", () => {
+  it("routes /libraries through the unified workspace host", () => {
     const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
-    expect(layoutSource.includes('pathname === "/libraries"')).toBe(true);
+    expect(layoutSource.includes("WorkspaceHost")).toBe(true);
   });
 });

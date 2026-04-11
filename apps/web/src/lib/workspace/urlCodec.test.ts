@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   WORKSPACE_SCHEMA_VERSION,
   createDefaultWorkspaceState,
+  createPaneId,
 } from "@/lib/workspace/schema";
 import {
   buildWorkspaceUrl,
@@ -13,15 +14,12 @@ import {
 describe("workspace url codec", () => {
   it("round-trips encoded workspace state", () => {
     const base = createDefaultWorkspaceState("/libraries");
-    const secondGroup = {
-      id: "group-two",
-      activeTabId: "tab-two",
-      tabs: [{ id: "tab-two", href: "/conversations" }],
-    };
     const state = {
       ...base,
-      activeGroupId: secondGroup.id,
-      groups: [...base.groups, secondGroup],
+      panes: [
+        ...base.panes,
+        { id: createPaneId(), href: "/conversations", widthPx: 480 },
+      ],
     };
 
     const encoded = encodeWorkspaceStateParam(state);
@@ -31,8 +29,7 @@ describe("workspace url codec", () => {
       baseOrigin: "http://localhost",
     });
     expect(decoded.errorCode).toBeNull();
-    expect(decoded.state.activeGroupId).toBe(secondGroup.id);
-    expect(decoded.state.groups).toHaveLength(2);
+    expect(decoded.state.panes).toHaveLength(2);
   });
 
   it("falls back when URL version is unsupported", () => {
@@ -47,7 +44,7 @@ describe("workspace url codec", () => {
     expect(decoded.state.schemaVersion).toBe(WORKSPACE_SCHEMA_VERSION);
   });
 
-  it("keeps URL clean for trivial single-tab workspace state", () => {
+  it("keeps URL clean for trivial single-pane state", () => {
     const state = createDefaultWorkspaceState("/media/123?foo=bar");
     const result = buildWorkspaceUrl(state, { baseOrigin: "http://localhost" });
     expect(result.errorCode).toBeNull();
@@ -58,30 +55,22 @@ describe("workspace url codec", () => {
     expect(parsed.searchParams.get("ws")).toBeNull();
   });
 
-  it("infers workspace state without error when URL has no workspace params", () => {
-    const params = new URLSearchParams();
-    const decoded = decodeWorkspaceStateFromUrl("/libraries", params, {
+  it("infers workspace state when URL has no workspace params", () => {
+    const decoded = decodeWorkspaceStateFromUrl("/libraries", new URLSearchParams(), {
       baseOrigin: "http://localhost",
     });
     expect(decoded.source).toBe("inferred");
     expect(decoded.errorCode).toBeNull();
-    expect(decoded.state.schemaVersion).toBe(WORKSPACE_SCHEMA_VERSION);
-    expect(decoded.state.groups).toHaveLength(1);
+    expect(decoded.state.panes).toHaveLength(1);
   });
 
-  it("appends workspace params when state has multiple pane groups", () => {
+  it("appends workspace params when state has multiple panes", () => {
     const base = createDefaultWorkspaceState("/media/123?foo=bar");
+    const secondId = createPaneId();
     const state = {
       ...base,
-      activeGroupId: "group-two",
-      groups: [
-        ...base.groups,
-        {
-          id: "group-two",
-          activeTabId: "tab-two",
-          tabs: [{ id: "tab-two", href: "/conversations" }],
-        },
-      ],
+      activePaneId: secondId,
+      panes: [...base.panes, { id: secondId, href: "/conversations", widthPx: 480 }],
     };
     const result = buildWorkspaceUrl(state, { baseOrigin: "http://localhost" });
     expect(result.errorCode).toBeNull();

@@ -42,9 +42,9 @@
   --navbar-collapsed-width: 48px;
   --tabsbar-height: 40px;
   --mobile-bottom-nav-height: 64px;
-  --pane-min-width: 280px;
+  --pane-min-width: 320px;
   --pane-default-width: 480px;
-  --pane-max-width: 900px;
+  --pane-max-width: 1400px;
   --resize-handle-width: 8px;
 
   /* Transitions */

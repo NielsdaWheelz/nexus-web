@@ -1,10 +1,8 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { usePathname } from "next/navigation";
 import Navbar from "@/components/Navbar";
-import AuthenticatedWorkspaceHost from "@/components/AuthenticatedWorkspaceHost";
-import RoutePaneWorkspaceHost from "@/components/workspace/RoutePaneWorkspaceHost";
+import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { ToastProvider } from "@/components/Toast";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
@@ -15,22 +13,6 @@ import styles from "./layout.module.css";
 
 export default function AuthenticatedLayout() {
   const [navbarCollapsed, setNavbarCollapsed] = useState(false);
-  const pathname = usePathname() ?? "";
-  const settingsRouteActive = pathname === "/settings" || pathname.startsWith("/settings/");
-  const searchRouteActive = pathname === "/search";
-  const discoverRouteActive = pathname === "/discover";
-  const conversationsRouteActive = pathname === "/conversations";
-  const conversationDetailRouteActive =
-    pathname.startsWith("/conversations/") &&
-    pathname !== "/conversations/new";
-  const librariesRouteActive = pathname === "/libraries";
-  const paneWorkspaceRouteActive =
-    settingsRouteActive ||
-    searchRouteActive ||
-    discoverRouteActive ||
-    conversationsRouteActive ||
-    conversationDetailRouteActive ||
-    librariesRouteActive;
 
   return (
     <ToastProvider>
@@ -44,11 +26,7 @@ export default function AuthenticatedLayout() {
                 <Navbar onToggle={setNavbarCollapsed} />
                 <main className={styles.main}>
                   <GlobalPlayerProvider>
-                    {paneWorkspaceRouteActive ? (
-                      <RoutePaneWorkspaceHost />
-                    ) : (
-                      <AuthenticatedWorkspaceHost />
-                    )}
+                    <WorkspaceHost />
                     <GlobalPlayerFooter />
                   </GlobalPlayerProvider>
                 </main>

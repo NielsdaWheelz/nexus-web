@@ -43,7 +43,7 @@ function buildShellPane(input: {
     openHintByPaneId: input.openHintByPaneId,
     resourceTitleByRef: input.resourceTitleByRef,
   });
-  const chrome = route.definition?.getChrome({
+  const chrome = route.definition?.getChrome?.({
     href: input.pane.href,
     params: route.params,
   });

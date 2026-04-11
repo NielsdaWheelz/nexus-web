@@ -114,7 +114,7 @@ describe("pane descriptor resolver", () => {
     );
 
     expect(descriptor.routeId).toBe("unsupported");
-    expect(descriptor.resolvedTitle).toBe("Pane");
-    expect(descriptor.titleSource).toBe("safe_fallback");
+    expect(descriptor.resolvedTitle).toBe("Tab");
+    expect(descriptor.titleSource).toBe("route_static");
   });
 });

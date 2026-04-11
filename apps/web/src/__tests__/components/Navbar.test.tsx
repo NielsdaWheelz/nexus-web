@@ -3,47 +3,34 @@ import { render, screen, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const {
-  mockNavigateTab,
-  mockActivateGroup,
-  mockActivateTab,
+  mockNavigatePane,
+  mockActivatePane,
   MOCK_STORE,
 } = vi.hoisted(() => {
-  const mockNavigateTab = vi.fn();
-  const mockActivateGroup = vi.fn();
-  const mockActivateTab = vi.fn();
+  const mockNavigatePane = vi.fn();
+  const mockActivatePane = vi.fn();
   return {
-    mockNavigateTab,
-    mockActivateGroup,
-    mockActivateTab,
+    mockNavigatePane,
+    mockActivatePane,
     MOCK_STORE: {
       state: {
-        schemaVersion: 2,
-        activeGroupId: "group-test-1",
-        groups: [
-          {
-            id: "group-test-1",
-            activeTabId: "tab-test-1",
-            tabs: [
-              { id: "tab-test-1", href: "/libraries" },
-              { id: "tab-test-2", href: "/conversations" },
-            ],
-          },
+        schemaVersion: 3,
+        activePaneId: "pane-test-1",
+        panes: [
+          { id: "pane-test-1", href: "/libraries", widthPx: 480 },
+          { id: "pane-test-2", href: "/conversations", widthPx: 480 },
         ],
       },
-      meta: { lastDecodeError: null, lastEncodeError: null },
-      runtimeTitleByTabId: new Map(),
-      openHintByTabId: new Map(),
+      runtimeTitleByPaneId: new Map(),
+      openHintByPaneId: new Map(),
       resourceTitleByRef: new Map(),
-      activateGroup: mockActivateGroup,
-      activateTab: mockActivateTab,
-      openTab: vi.fn(),
-      openGroupWithTab: vi.fn(),
-      navigateTab: mockNavigateTab,
-      closeTab: vi.fn(),
-      closeGroup: vi.fn(),
-      setGroupWidth: vi.fn(),
-      publishTabTitle: vi.fn(),
-      replaceState: vi.fn(),
+      activatePane: mockActivatePane,
+      openPane: vi.fn(),
+      navigatePane: mockNavigatePane,
+      closePane: vi.fn(),
+      closePaneFamily: vi.fn(),
+      resizePane: vi.fn(),
+      publishPaneTitle: vi.fn(),
     },
   };
 });
@@ -67,9 +54,8 @@ import Navbar from "@/components/Navbar";
 
 describe("Navbar", () => {
   beforeEach(() => {
-    mockNavigateTab.mockClear();
-    mockActivateGroup.mockClear();
-    mockActivateTab.mockClear();
+    mockNavigatePane.mockClear();
+    mockActivatePane.mockClear();
     vi.stubGlobal("innerWidth", 1200);
     window.dispatchEvent(new Event("resize"));
   });
@@ -131,14 +117,12 @@ describe("Navbar", () => {
     const labels = ["Libraries", "Discover", "Chat", "Search", "Settings", "Tabs"];
 
     for (const label of labels) {
-      // No visible text label inside the nav button
       expect(within(nav).queryByText(label)).not.toBeInTheDocument();
-      // Accessible name still present via aria-label
       expect(within(nav).getByRole("button", { name: label })).toBeInTheDocument();
     }
   });
 
-  it("opens a mobile tab switcher and allows tab activation", async () => {
+  it("opens a mobile tab switcher and allows pane activation", async () => {
     vi.stubGlobal("innerWidth", 390);
     window.dispatchEvent(new Event("resize"));
     const user = userEvent.setup();
@@ -153,10 +137,8 @@ describe("Navbar", () => {
     const chatTab = within(dialog).getByRole("button", { name: "Chats" });
     await user.click(chatTab);
 
-    expect(mockActivateGroup).toHaveBeenCalledTimes(1);
-    expect(mockActivateGroup).toHaveBeenCalledWith("group-test-1");
-    expect(mockActivateTab).toHaveBeenCalledTimes(1);
-    expect(mockActivateTab).toHaveBeenCalledWith("group-test-1", "tab-test-2");
+    expect(mockActivatePane).toHaveBeenCalledTimes(1);
+    expect(mockActivatePane).toHaveBeenCalledWith("pane-test-2");
     expect(screen.queryByRole("dialog", { name: "Open tabs" })).not.toBeInTheDocument();
   });
 

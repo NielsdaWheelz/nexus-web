@@ -9,18 +9,16 @@ import {
   useReducer,
   useRef,
   useState,
-  type Dispatch,
 } from "react";
 import {
-  MAX_PANE_GROUPS,
-  MAX_TABS_PER_GROUP,
+  MAX_PANES,
   WORKSPACE_DEFAULT_FALLBACK_HREF,
+  clampPaneWidth,
   createDefaultWorkspaceState,
-  createWorkspaceId,
+  createPaneId,
   normalizeWorkspaceHref,
-  type WorkspacePaneGroupStateV2,
-  type WorkspaceStateV2,
-  type WorkspaceTabStateV2,
+  type WorkspacePaneStateV3,
+  type WorkspaceStateV3,
 } from "@/lib/workspace/schema";
 import {
   buildWorkspaceUrl,
@@ -40,294 +38,176 @@ import {
 import {
   createResourceTitleCacheEntry,
   loadResourceTitleCacheFromStorage,
-  normalizeTabTitle,
+  normalizePaneTitle,
   pruneResourceTitleCache,
   RESOURCE_TITLE_CACHE_TTL_MS,
   saveResourceTitleCacheToStorage,
+  type PaneOpenHint,
   type ResourceTitleCacheEntry,
-  type TabOpenHint,
-} from "@/lib/workspace/tabDescriptor";
+} from "@/lib/workspace/paneDescriptor";
+import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 
 type HistoryMode = "replace" | "push";
 
-interface WorkspaceStoreMeta {
-  lastDecodeError: WorkspaceDecodeResult["errorCode"];
-  lastEncodeError: WorkspaceEncodeResult["errorCode"];
-}
-
-interface OpenTabOptions {
-  groupId?: string;
-  activate?: boolean;
-  historyMode?: HistoryMode;
-  titleHint?: string;
-  resourceRef?: string;
-}
-
-interface OpenGroupWithTabOptions {
-  historyMode?: HistoryMode;
-  titleHint?: string;
-  resourceRef?: string;
-}
-
-interface NavigateTabOptions {
-  replace?: boolean;
-}
-
-interface WorkspaceStoreValue {
-  state: WorkspaceStateV2;
-  meta: WorkspaceStoreMeta;
-  runtimeTitleByTabId: ReadonlyMap<string, string>;
-  openHintByTabId: ReadonlyMap<string, TabOpenHint>;
-  resourceTitleByRef: ReadonlyMap<string, ResourceTitleCacheEntry>;
-  activateGroup: (groupId: string) => void;
-  activateTab: (groupId: string, tabId: string) => void;
-  openTab: (href: string, options?: OpenTabOptions) => void;
-  openGroupWithTab: (href: string, options?: OpenGroupWithTabOptions) => void;
-  navigateTab: (
-    groupId: string,
-    tabId: string,
-    href: string,
-    options?: NavigateTabOptions
-  ) => void;
-  closeTab: (groupId: string, tabId: string) => void;
-  closeGroup: (groupId: string) => void;
-  setGroupWidth: (groupId: string, widthPx: number) => void;
-  publishTabTitle: (
-    groupId: string,
-    tabId: string,
-    title: string | null,
-    options?: { resourceRef?: string | null }
-  ) => void;
-  replaceState: (nextState: WorkspaceStateV2) => void;
-}
-
 type WorkspaceAction =
-  | { type: "hydrate"; state: WorkspaceStateV2 }
-  | { type: "activate_group"; groupId: string }
-  | { type: "activate_tab"; groupId: string; tabId: string }
-  | {
-      type: "open_tab";
-      href: string;
-      groupId?: string;
-      activate: boolean;
-      tabId?: string;
-    }
-  | { type: "open_group_with_tab"; href: string; groupId?: string; tabId?: string }
-  | { type: "navigate_tab"; groupId: string; tabId: string; href: string }
-  | { type: "close_tab"; groupId: string; tabId: string }
-  | { type: "close_group"; groupId: string }
-  | { type: "set_group_width"; groupId: string; widthPx: number };
+  | { type: "hydrate"; state: WorkspaceStateV3 }
+  | { type: "activate_pane"; paneId: string }
+  | { type: "open_pane"; panes: WorkspacePaneStateV3[]; afterPaneId: string | null; activate: boolean }
+  | { type: "navigate_pane"; paneId: string; href: string }
+  | { type: "close_pane"; paneId: string }
+  | { type: "close_pane_family"; paneId: string }
+  | { type: "resize_pane"; paneId: string; widthPx: number };
 
-const WorkspaceStoreContext = createContext<WorkspaceStoreValue | null>(null);
-
-function ensureActiveGroup(state: WorkspaceStateV2): WorkspaceStateV2 {
-  if (!state.groups.length) {
+function ensureActivePaneId(state: WorkspaceStateV3): WorkspaceStateV3 {
+  if (!state.panes.length) {
     return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
   }
-  const active = state.groups.find((group) => group.id === state.activeGroupId);
-  if (active) {
+  if (state.panes.some((p) => p.id === state.activePaneId)) {
     return state;
   }
-  return {
-    ...state,
-    activeGroupId: state.groups[0]?.id ?? state.activeGroupId,
-  };
+  return { ...state, activePaneId: state.panes[0]!.id };
 }
 
-function ensureActiveTab(group: WorkspacePaneGroupStateV2): WorkspacePaneGroupStateV2 {
-  if (!group.tabs.length) {
-    return group;
-  }
-  if (group.tabs.some((tab) => tab.id === group.activeTabId)) {
-    return group;
-  }
-  return { ...group, activeTabId: group.tabs[0]?.id ?? group.activeTabId };
-}
-
-function evictToMaxTabs(tabs: WorkspaceTabStateV2[], maxTabs: number): WorkspaceTabStateV2[] {
-  if (tabs.length <= maxTabs) {
-    return tabs;
-  }
-  return tabs.slice(tabs.length - maxTabs);
-}
-
-function openTabInGroup(
-  group: WorkspacePaneGroupStateV2,
-  href: string,
-  activate: boolean,
-  tabId?: string
-): WorkspacePaneGroupStateV2 {
-  const nextTab = { id: tabId ?? createWorkspaceId("tab"), href };
-  const nextTabs = evictToMaxTabs([...group.tabs, nextTab], MAX_TABS_PER_GROUP);
-  const activeTabId = activate ? nextTab.id : group.activeTabId;
-  return ensureActiveTab({
-    ...group,
-    tabs: nextTabs,
-    activeTabId,
-  });
-}
-
-function openGroupWithSingleTab(
-  state: WorkspaceStateV2,
-  href: string,
-  options?: { tabId?: string; groupId?: string }
-): WorkspaceStateV2 {
-  const nextTabId = options?.tabId ?? createWorkspaceId("tab");
-  const nextGroupId = options?.groupId ?? createWorkspaceId("group");
-  const nextGroup: WorkspacePaneGroupStateV2 = {
-    id: nextGroupId,
-    activeTabId: nextTabId,
-    tabs: [{ id: nextTabId, href }],
-  };
-
-  let groups = [...state.groups, nextGroup];
-  if (groups.length > MAX_PANE_GROUPS) {
-    const activeId = state.activeGroupId;
-    const dropIdx = groups.findIndex((group) => group.id !== activeId);
-    const removeIdx = dropIdx >= 0 ? dropIdx : 0;
-    groups = groups.filter((_, idx) => idx !== removeIdx);
-  }
-
-  return ensureActiveGroup({
-    ...state,
-    groups,
-    activeGroupId: nextGroupId,
-  });
-}
-
-function workspaceReducer(state: WorkspaceStateV2, action: WorkspaceAction): WorkspaceStateV2 {
+function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): WorkspaceStateV3 {
   switch (action.type) {
     case "hydrate":
-      return ensureActiveGroup(action.state);
-    case "activate_group": {
-      if (!state.groups.some((group) => group.id === action.groupId)) {
+      return ensureActivePaneId(action.state);
+
+    case "activate_pane": {
+      if (!state.panes.some((p) => p.id === action.paneId)) {
         return state;
       }
-      return { ...state, activeGroupId: action.groupId };
+      return { ...state, activePaneId: action.paneId };
     }
-    case "activate_tab": {
-      const groups = state.groups.map((group) => {
-        if (group.id !== action.groupId) {
-          return group;
-        }
-        if (!group.tabs.some((tab) => tab.id === action.tabId)) {
-          return group;
-        }
-        return { ...group, activeTabId: action.tabId };
-      });
-      return ensureActiveGroup({
-        ...state,
-        groups,
-        activeGroupId: action.groupId,
-      });
-    }
-    case "open_tab": {
-      const targetGroupId = action.groupId ?? state.activeGroupId;
-      if (!state.groups.some((group) => group.id === targetGroupId)) {
-        return openGroupWithSingleTab(state, action.href, { tabId: action.tabId });
+
+    case "open_pane": {
+      let panes = state.panes;
+      if (panes.length + action.panes.length > MAX_PANES) {
+        // Drop oldest non-active panes to make room
+        const keep = MAX_PANES - action.panes.length;
+        panes = panes.filter((p) => p.id === state.activePaneId).concat(
+          panes.filter((p) => p.id !== state.activePaneId).slice(-(keep - 1))
+        );
       }
-      const groups = state.groups.map((group) =>
-        group.id === targetGroupId
-          ? openTabInGroup(group, action.href, action.activate, action.tabId)
-          : group
+      const insertIdx = action.afterPaneId
+        ? panes.findIndex((p) => p.id === action.afterPaneId) + 1
+        : panes.length;
+      const next = [...panes.slice(0, insertIdx), ...action.panes, ...panes.slice(insertIdx)];
+      const activePaneId = action.activate ? action.panes[0]!.id : state.activePaneId;
+      return ensureActivePaneId({ ...state, panes: next, activePaneId });
+    }
+
+    case "navigate_pane": {
+      const panes = state.panes.map((p) =>
+        p.id === action.paneId ? { ...p, href: action.href } : p
       );
-      return ensureActiveGroup({
-        ...state,
-        groups,
-        activeGroupId: action.activate ? targetGroupId : state.activeGroupId,
-      });
+      return { ...state, panes, activePaneId: action.paneId };
     }
-    case "open_group_with_tab":
-      return openGroupWithSingleTab(state, action.href, {
-        groupId: action.groupId,
-        tabId: action.tabId,
-      });
-    case "navigate_tab": {
-      const groups = state.groups.map((group) => {
-        if (group.id !== action.groupId) {
-          return group;
-        }
-        if (!group.tabs.some((tab) => tab.id === action.tabId)) {
-          return group;
-        }
-        return {
-          ...group,
-          tabs: group.tabs.map((tab) =>
-            tab.id === action.tabId ? { ...tab, href: action.href } : tab
-          ),
-          activeTabId: action.tabId,
-        };
-      });
-      return ensureActiveGroup({
-        ...state,
-        groups,
-        activeGroupId: action.groupId,
-      });
-    }
-    case "close_tab": {
-      const groups: WorkspacePaneGroupStateV2[] = [];
-      let nextActiveGroupId = state.activeGroupId;
-      for (const group of state.groups) {
-        if (group.id !== action.groupId) {
-          groups.push(group);
-          continue;
-        }
-        const nextTabs = group.tabs.filter((tab) => tab.id !== action.tabId);
-        if (nextTabs.length === 0) {
-          continue;
-        }
-        const nextGroup = ensureActiveTab({
-          ...group,
-          tabs: nextTabs,
-          activeTabId:
-            group.activeTabId === action.tabId ? nextTabs[0]?.id ?? group.activeTabId : group.activeTabId,
-        });
-        groups.push(nextGroup);
-      }
-      if (groups.length === 0) {
+
+    case "close_pane": {
+      const panes = state.panes.filter((p) => p.id !== action.paneId);
+      if (!panes.length) {
         return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
       }
-      if (!groups.some((group) => group.id === nextActiveGroupId)) {
-        nextActiveGroupId = groups[0]?.id ?? nextActiveGroupId;
+      let { activePaneId } = state;
+      if (activePaneId === action.paneId) {
+        const closedIdx = state.panes.findIndex((p) => p.id === action.paneId);
+        activePaneId = panes[Math.min(closedIdx, panes.length - 1)]?.id ?? panes[0]!.id;
       }
-      return ensureActiveGroup({
-        ...state,
-        groups,
-        activeGroupId: nextActiveGroupId,
-      });
+      return ensureActivePaneId({ ...state, panes, activePaneId });
     }
-    case "close_group": {
-      if (state.groups.length <= 1) {
-        return state;
-      }
-      const groups = state.groups.filter((group) => group.id !== action.groupId);
-      if (!groups.length) {
-        return state;
-      }
-      return ensureActiveGroup({
-        ...state,
-        groups,
-        activeGroupId:
-          state.activeGroupId === action.groupId
-            ? groups[0]?.id ?? state.activeGroupId
-            : state.activeGroupId,
-      });
-    }
-    case "set_group_width": {
-      const groups = state.groups.map((group) =>
-        group.id === action.groupId
-          ? {
-              ...group,
-              widthPx: Math.round(action.widthPx),
-            }
-          : group
+
+    case "close_pane_family": {
+      const panes = state.panes.filter(
+        (p) => p.id !== action.paneId && p.companionOfPaneId !== action.paneId
       );
-      return { ...state, groups };
+      if (!panes.length) {
+        return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
+      }
+      let { activePaneId } = state;
+      if (!panes.some((p) => p.id === activePaneId)) {
+        const closedIdx = state.panes.findIndex((p) => p.id === action.paneId);
+        activePaneId = panes[Math.min(closedIdx, panes.length - 1)]?.id ?? panes[0]!.id;
+      }
+      return ensureActivePaneId({ ...state, panes, activePaneId });
     }
+
+    case "resize_pane": {
+      const panes = state.panes.map((p) =>
+        p.id === action.paneId ? { ...p, widthPx: clampPaneWidth(action.widthPx) } : p
+      );
+      return { ...state, panes };
+    }
+
     default:
       return state;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Build pane(s) for an open action, including companion panes from the route
+// ---------------------------------------------------------------------------
+
+function buildPanesForOpen(
+  href: string,
+  openerPaneId: string | null
+): WorkspacePaneStateV3[] {
+  const route = resolvePaneRoute(href);
+  const mainId = createPaneId();
+  const mainPane: WorkspacePaneStateV3 = {
+    id: mainId,
+    href,
+    widthPx: route.definition?.defaultWidthPx ?? 480,
+  };
+
+  const panes: WorkspacePaneStateV3[] = [mainPane];
+
+  if (route.definition?.buildCompanionPanes && route.params) {
+    const companions = route.definition.buildCompanionPanes({
+      href,
+      params: route.params,
+    });
+    for (const draft of companions) {
+      panes.push({
+        id: createPaneId(),
+        href: draft.href,
+        widthPx: draft.defaultWidthPx,
+        companionOfPaneId: mainId,
+      });
+    }
+  }
+
+  // If opened from another pane, mark as companion
+  if (openerPaneId && panes.length === 1) {
+    // Don't mark as companion — the opener just wanted a new pane to the right
+  }
+
+  return panes;
+}
+
+// ---------------------------------------------------------------------------
+// Store context + provider
+// ---------------------------------------------------------------------------
+
+interface WorkspaceStoreValue {
+  state: WorkspaceStateV3;
+  runtimeTitleByPaneId: ReadonlyMap<string, string>;
+  openHintByPaneId: ReadonlyMap<string, PaneOpenHint>;
+  resourceTitleByRef: ReadonlyMap<string, ResourceTitleCacheEntry>;
+  activatePane: (paneId: string) => void;
+  openPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
+  navigatePane: (paneId: string, href: string, options?: { replace?: boolean }) => void;
+  closePane: (paneId: string) => void;
+  closePaneFamily: (paneId: string) => void;
+  resizePane: (paneId: string, widthPx: number) => void;
+  publishPaneTitle: (
+    paneId: string,
+    title: string | null,
+    options?: { resourceRef?: string | null }
+  ) => void;
+}
+
+const WorkspaceStoreContext = createContext<WorkspaceStoreValue | null>(null);
 
 function getWindowLocationState(): WorkspaceDecodeResult {
   if (typeof window === "undefined") {
@@ -357,14 +237,14 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     null,
     () => createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF)
   );
-  const [meta, setMeta] = useState<WorkspaceStoreMeta>({
-    lastDecodeError: null,
-    lastEncodeError: null,
-  });
-  const [runtimeTitleByTabId, setRuntimeTitleByTabId] = useState<Map<string, string>>(
+  const [meta, setMeta] = useState<{
+    lastDecodeError: WorkspaceDecodeResult["errorCode"];
+    lastEncodeError: WorkspaceEncodeResult["errorCode"];
+  }>({ lastDecodeError: null, lastEncodeError: null });
+  const [runtimeTitleByPaneId, setRuntimeTitleByPaneId] = useState<Map<string, string>>(
     () => new Map()
   );
-  const [openHintByTabId, setOpenHintByTabId] = useState<Map<string, TabOpenHint>>(
+  const [openHintByPaneId, setOpenHintByPaneId] = useState<Map<string, PaneOpenHint>>(
     () => new Map()
   );
   const [resourceTitleByRef, setResourceTitleByRef] = useState<
@@ -373,90 +253,67 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   const historyModeRef = useRef<HistoryMode>("replace");
   const skipSyncRef = useRef(false);
   const readyRef = useRef(false);
-  const lastDecodeTelemetryRef = useRef<string>("");
-  const lastEncodeTelemetryRef = useRef<string>("");
-  const tabHrefByIdRef = useRef<Map<string, string>>(new Map());
+  const lastDecodeTelemetryRef = useRef("");
+  const lastEncodeTelemetryRef = useRef("");
+  const paneHrefByIdRef = useRef<Map<string, string>>(new Map());
   const stateRef = useRef(state);
   stateRef.current = state;
-  const openHintByTabIdRef = useRef(openHintByTabId);
-  openHintByTabIdRef.current = openHintByTabId;
-
-  const setHistoryMode = useCallback((mode: HistoryMode) => {
-    historyModeRef.current = mode;
-  }, []);
+  const openHintRef = useRef(openHintByPaneId);
+  openHintRef.current = openHintByPaneId;
 
   const dispatchAndSync = useCallback(
     (action: WorkspaceAction, historyMode: HistoryMode = "replace") => {
-      setHistoryMode(historyMode);
+      historyModeRef.current = historyMode;
       dispatch(action);
     },
-    [setHistoryMode]
+    []
   );
 
   const publishDecodeTelemetry = useCallback((decoded: WorkspaceDecodeResult) => {
     const key = `${decoded.source}:${decoded.errorCode ?? "ok"}`;
-    if (lastDecodeTelemetryRef.current === key) {
-      return;
-    }
+    if (lastDecodeTelemetryRef.current === key) return;
     lastDecodeTelemetryRef.current = key;
     emitWorkspaceTelemetry({
       type: "decode",
       status: decoded.errorCode
-        ? decoded.source === "fallback"
-          ? "fallback"
-          : "error"
+        ? decoded.source === "fallback" ? "fallback" : "error"
         : "ok",
       errorCode: decoded.errorCode,
     });
   }, []);
 
-  const upsertResourceTitleForRef = useCallback((resourceRef: string, title: string) => {
-    const normalizedRef = resourceRef.trim();
-    if (!normalizedRef) {
-      return;
-    }
-    const normalizedTitle = normalizeTabTitle(title);
-    if (!normalizedTitle) {
-      return;
-    }
+  const upsertResourceTitle = useCallback((resourceRef: string, title: string) => {
+    const ref = resourceRef.trim();
+    const normalized = normalizePaneTitle(title);
+    if (!ref || !normalized) return;
     setResourceTitleByRef((prev) => {
       const nowMs = Date.now();
       const next = pruneResourceTitleCache(prev, nowMs);
-      const entry = createResourceTitleCacheEntry(
-        normalizedTitle,
-        nowMs,
-        RESOURCE_TITLE_CACHE_TTL_MS
-      );
-      if (!entry) {
-        return next;
-      }
-      next.set(normalizedRef, entry);
+      const entry = createResourceTitleCacheEntry(normalized, nowMs, RESOURCE_TITLE_CACHE_TTL_MS);
+      if (!entry) return next;
+      next.set(ref, entry);
       return next;
     });
   }, []);
 
-  const setOpenHintForTab = useCallback((tabId: string, hint: TabOpenHint) => {
-    const normalizedTitleHint = normalizeTabTitle(hint.titleHint);
-    const normalizedResourceRef =
+  const setOpenHint = useCallback((paneId: string, hint: PaneOpenHint) => {
+    const titleHint = normalizePaneTitle(hint.titleHint) ?? undefined;
+    const resourceRef =
       typeof hint.resourceRef === "string" && hint.resourceRef.trim().length > 0
         ? hint.resourceRef.trim()
         : undefined;
-    if (!normalizedTitleHint && !normalizedResourceRef) {
-      return;
-    }
-    setOpenHintByTabId((prev) => {
+    if (!titleHint && !resourceRef) return;
+    setOpenHintByPaneId((prev) => {
       const next = new Map(prev);
-      next.set(tabId, {
-        titleHint: normalizedTitleHint ?? undefined,
-        resourceRef: normalizedResourceRef ?? undefined,
-      });
+      next.set(paneId, { titleHint, resourceRef });
       return next;
     });
-    if (normalizedTitleHint && normalizedResourceRef) {
-      upsertResourceTitleForRef(normalizedResourceRef, normalizedTitleHint);
+    if (titleHint && resourceRef) {
+      upsertResourceTitle(resourceRef, titleHint);
     }
-  }, [upsertResourceTitleForRef]);
+  }, [upsertResourceTitle]);
 
+  // --- Hydrate from URL on mount ---
   useEffect(() => {
     const decoded = getWindowLocationState();
     dispatch({ type: "hydrate", state: decoded.state });
@@ -465,14 +322,12 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     setMounted(true);
   }, [publishDecodeTelemetry]);
 
+  // --- Event listeners: popstate, open-pane events ---
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    if (readyRef.current) {
-      return;
-    }
+    if (typeof window === "undefined") return;
+    if (readyRef.current) return;
     readyRef.current = true;
+
     const handlePopState = () => {
       const decoded = getWindowLocationState();
       skipSyncRef.current = true;
@@ -480,48 +335,32 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       setMeta((prev) => ({ ...prev, lastDecodeError: decoded.errorCode }));
       publishDecodeTelemetry(decoded);
     };
-    const enqueueOpenPaneDetail = (detail: OpenInAppPaneDetail) => {
-      const normalizedHref =
-        normalizePaneHref(detail.href) ?? normalizeWorkspaceHref(detail.href);
-      if (!normalizedHref) {
-        return;
-      }
-      const tabId = createWorkspaceId("tab");
-      const groupId = createWorkspaceId("group");
-      const titleHint = normalizeTabTitle(detail.titleHint);
+
+    const handleOpenPaneDetail = (detail: OpenInAppPaneDetail) => {
+      const href = normalizePaneHref(detail.href) ?? normalizeWorkspaceHref(detail.href);
+      if (!href) return;
+      const panes = buildPanesForOpen(href, null);
+      const titleHint = normalizePaneTitle(detail.titleHint) ?? undefined;
       const resourceRef =
         typeof detail.resourceRef === "string" && detail.resourceRef.trim().length > 0
           ? detail.resourceRef.trim()
           : undefined;
       if (titleHint || resourceRef) {
-        setOpenHintForTab(tabId, {
-          titleHint: titleHint ?? undefined,
-          resourceRef,
-        });
+        setOpenHint(panes[0]!.id, { titleHint, resourceRef });
       }
       historyModeRef.current = "push";
-      dispatch({
-        type: "open_group_with_tab",
-        href: normalizedHref,
-        groupId,
-        tabId,
-      });
+      dispatch({ type: "open_pane", panes, afterPaneId: null, activate: true });
     };
+
     const handleOpenPaneEvent = (event: Event) => {
-      const customEvent = event as CustomEvent<OpenInAppPaneDetail>;
-      if (!customEvent.detail?.href) {
-        return;
-      }
-      enqueueOpenPaneDetail(customEvent.detail);
+      const detail = (event as CustomEvent<OpenInAppPaneDetail>).detail;
+      if (detail?.href) handleOpenPaneDetail(detail);
     };
+
     const handleWindowMessage = (event: MessageEvent<unknown>) => {
-      if (event.origin !== window.location.origin) {
-        return;
-      }
-      if (!isOpenInAppPaneMessage(event.data)) {
-        return;
-      }
-      enqueueOpenPaneDetail({
+      if (event.origin !== window.location.origin) return;
+      if (!isOpenInAppPaneMessage(event.data)) return;
+      handleOpenPaneDetail({
         href: event.data.href,
         titleHint: event.data.titleHint,
         resourceRef: event.data.resourceRef,
@@ -532,8 +371,8 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     window.addEventListener(NEXUS_OPEN_PANE_EVENT, handleOpenPaneEvent);
     window.addEventListener("message", handleWindowMessage);
     setPaneGraphReady(true);
-    for (const queuedDetail of consumePendingPaneOpenQueue()) {
-      enqueueOpenPaneDetail(queuedDetail);
+    for (const queued of consumePendingPaneOpenQueue()) {
+      handleOpenPaneDetail(queued);
     }
 
     return () => {
@@ -543,67 +382,53 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       window.removeEventListener("message", handleWindowMessage);
       setPaneGraphReady(false);
     };
-  }, [publishDecodeTelemetry, setOpenHintForTab]);
+  }, [publishDecodeTelemetry, setOpenHint]);
 
+  // --- Prune stale title caches when panes change ---
   useEffect(() => {
-    const liveTabIds = new Set<string>();
-    const nextHrefByTabId = new Map<string, string>();
-    const changedHrefTabIds = new Set<string>();
+    const livePaneIds = new Set<string>();
+    const nextHrefById = new Map<string, string>();
+    const changedHrefIds = new Set<string>();
 
-    for (const group of state.groups) {
-      for (const tab of group.tabs) {
-        liveTabIds.add(tab.id);
-        nextHrefByTabId.set(tab.id, tab.href);
-        const previousHref = tabHrefByIdRef.current.get(tab.id);
-        if (previousHref && previousHref !== tab.href) {
-          changedHrefTabIds.add(tab.id);
-        }
-      }
+    for (const pane of state.panes) {
+      livePaneIds.add(pane.id);
+      nextHrefById.set(pane.id, pane.href);
+      const prev = paneHrefByIdRef.current.get(pane.id);
+      if (prev && prev !== pane.href) changedHrefIds.add(pane.id);
     }
-    tabHrefByIdRef.current = nextHrefByTabId;
+    paneHrefByIdRef.current = nextHrefById;
 
-    setRuntimeTitleByTabId((prev) => {
+    setRuntimeTitleByPaneId((prev) => {
       let changed = false;
       const next = new Map<string, string>();
-      for (const [tabId, title] of prev) {
-        if (!liveTabIds.has(tabId) || changedHrefTabIds.has(tabId)) {
-          changed = true;
-          continue;
-        }
-        next.set(tabId, title);
+      for (const [id, title] of prev) {
+        if (!livePaneIds.has(id) || changedHrefIds.has(id)) { changed = true; continue; }
+        next.set(id, title);
       }
       return changed || next.size !== prev.size ? next : prev;
     });
 
-    setOpenHintByTabId((prev) => {
+    setOpenHintByPaneId((prev) => {
       let changed = false;
-      const next = new Map<string, TabOpenHint>();
-      for (const [tabId, hint] of prev) {
-        if (!liveTabIds.has(tabId) || changedHrefTabIds.has(tabId)) {
-          changed = true;
-          continue;
-        }
-        next.set(tabId, hint);
+      const next = new Map<string, PaneOpenHint>();
+      for (const [id, hint] of prev) {
+        if (!livePaneIds.has(id) || changedHrefIds.has(id)) { changed = true; continue; }
+        next.set(id, hint);
       }
       return changed || next.size !== prev.size ? next : prev;
     });
-  }, [state.groups]);
+  }, [state.panes]);
 
+  // --- Persist resource title cache ---
   useEffect(() => {
     saveResourceTitleCacheToStorage(resourceTitleByRef, Date.now());
   }, [resourceTitleByRef]);
 
+  // --- Sync state → URL ---
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    if (!readyRef.current) {
-      return;
-    }
-    if (skipSyncRef.current) {
-      skipSyncRef.current = false;
-      return;
-    }
+    if (typeof window === "undefined" || !readyRef.current) return;
+    if (skipSyncRef.current) { skipSyncRef.current = false; return; }
+
     const { href, errorCode } = buildWorkspaceUrl(state, {
       baseOrigin:
         window.location.origin && window.location.origin !== "null"
@@ -614,11 +439,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     const encodeKey = errorCode ?? "ok";
     if (lastEncodeTelemetryRef.current !== encodeKey) {
       lastEncodeTelemetryRef.current = encodeKey;
-      emitWorkspaceTelemetry({
-        type: "encode",
-        status: errorCode ? "error" : "ok",
-        errorCode,
-      });
+      emitWorkspaceTelemetry({ type: "encode", status: errorCode ? "error" : "ok", errorCode });
     }
 
     const currentHref = `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -632,205 +453,98 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     historyModeRef.current = "replace";
   }, [state]);
 
-  const activateGroup = useCallback(
-    (groupId: string) => {
-      dispatchAndSync({ type: "activate_group", groupId }, "replace");
+  // --- Stable callbacks ---
+
+  const activatePane = useCallback(
+    (paneId: string) => dispatchAndSync({ type: "activate_pane", paneId }, "replace"),
+    [dispatchAndSync]
+  );
+
+  const openPane = useCallback(
+    (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => {
+      const href = normalizeWorkspaceHref(input.href);
+      if (!href) return;
+      const panes = buildPanesForOpen(href, input.openerPaneId ?? null);
+      if (input.openerPaneId) {
+        // Title hints are set by the opener's publishPaneTitle, not here
+      }
+      dispatchAndSync(
+        { type: "open_pane", panes, afterPaneId: input.openerPaneId ?? null, activate: input.activate ?? true },
+        "push"
+      );
     },
     [dispatchAndSync]
   );
 
-  const activateTab = useCallback(
-    (groupId: string, tabId: string) => {
-      dispatchAndSync({ type: "activate_tab", groupId, tabId }, "replace");
-    },
-    [dispatchAndSync]
-  );
-
-  const openTab = useCallback(
-    (href: string, options?: OpenTabOptions) => {
-      const normalizedHref = normalizeWorkspaceHref(href);
-      if (!normalizedHref) {
-        return;
-      }
-      const tabId =
-        options?.titleHint || options?.resourceRef ? createWorkspaceId("tab") : undefined;
-      if (tabId && (options?.titleHint || options?.resourceRef)) {
-        setOpenHintForTab(tabId, {
-          titleHint: options.titleHint,
-          resourceRef: options.resourceRef,
-        });
-      }
+  const navigatePane = useCallback(
+    (paneId: string, href: string, options?: { replace?: boolean }) => {
+      const normalized = normalizeWorkspaceHref(href);
+      if (!normalized) return;
       dispatchAndSync(
-        {
-          type: "open_tab",
-          href: normalizedHref,
-          groupId: options?.groupId,
-          activate: options?.activate ?? true,
-          tabId,
-        },
-        options?.historyMode ?? "push"
-      );
-    },
-    [dispatchAndSync, setOpenHintForTab]
-  );
-
-  const openGroupWithTab = useCallback(
-    (href: string, options?: OpenGroupWithTabOptions) => {
-      const normalizedHref = normalizeWorkspaceHref(href);
-      if (!normalizedHref) {
-        return;
-      }
-      const tabId = createWorkspaceId("tab");
-      const groupId = createWorkspaceId("group");
-      if (options?.titleHint || options?.resourceRef) {
-        setOpenHintForTab(tabId, {
-          titleHint: options.titleHint,
-          resourceRef: options.resourceRef,
-        });
-      }
-      dispatchAndSync(
-        {
-          type: "open_group_with_tab",
-          href: normalizedHref,
-          groupId,
-          tabId,
-        },
-        options?.historyMode ?? "push"
-      );
-    },
-    [dispatchAndSync, setOpenHintForTab]
-  );
-
-  const navigateTab = useCallback(
-    (groupId: string, tabId: string, href: string, options?: NavigateTabOptions) => {
-      const normalizedHref = normalizeWorkspaceHref(href);
-      if (!normalizedHref) {
-        return;
-      }
-      dispatchAndSync(
-        {
-          type: "navigate_tab",
-          groupId,
-          tabId,
-          href: normalizedHref,
-        },
+        { type: "navigate_pane", paneId, href: normalized },
         options?.replace ? "replace" : "push"
       );
     },
     [dispatchAndSync]
   );
 
-  const closeTab = useCallback(
-    (groupId: string, tabId: string) => {
-      dispatchAndSync({ type: "close_tab", groupId, tabId }, "replace");
-    },
+  const closePane = useCallback(
+    (paneId: string) => dispatchAndSync({ type: "close_pane", paneId }, "push"),
     [dispatchAndSync]
   );
 
-  const closeGroup = useCallback(
-    (groupId: string) => {
-      dispatchAndSync({ type: "close_group", groupId }, "replace");
-    },
+  const closePaneFamily = useCallback(
+    (paneId: string) => dispatchAndSync({ type: "close_pane_family", paneId }, "push"),
     [dispatchAndSync]
   );
 
-  const setGroupWidth = useCallback(
-    (groupId: string, widthPx: number) => {
-      dispatchAndSync({ type: "set_group_width", groupId, widthPx }, "replace");
-    },
+  const resizePane = useCallback(
+    (paneId: string, widthPx: number) => dispatchAndSync({ type: "resize_pane", paneId, widthPx }, "replace"),
     [dispatchAndSync]
   );
 
-  const publishTabTitle = useCallback(
-    (
-      groupId: string,
-      tabId: string,
-      title: string | null,
-      options?: { resourceRef?: string | null }
-    ) => {
-      const currentState = stateRef.current;
-      const group = currentState.groups.find((candidate) => candidate.id === groupId);
-      const tab = group?.tabs.find((candidate) => candidate.id === tabId);
-      if (!tab) {
-        return;
-      }
+  const publishPaneTitle = useCallback(
+    (paneId: string, title: string | null, options?: { resourceRef?: string | null }) => {
+      if (!stateRef.current.panes.some((p) => p.id === paneId)) return;
 
-      const normalizedTitle = normalizeTabTitle(title);
-      setRuntimeTitleByTabId((prev) => {
-        const existing = prev.get(tabId);
-        if (normalizedTitle ? existing === normalizedTitle : !existing) {
-          return prev;
-        }
+      const normalized = normalizePaneTitle(title);
+      setRuntimeTitleByPaneId((prev) => {
+        const existing = prev.get(paneId);
+        if (normalized ? existing === normalized : !existing) return prev;
         const next = new Map(prev);
-        if (!normalizedTitle) {
-          next.delete(tabId);
-        } else {
-          next.set(tabId, normalizedTitle);
-        }
+        if (!normalized) { next.delete(paneId); } else { next.set(paneId, normalized); }
         return next;
       });
 
-      if (!normalizedTitle) {
-        return;
-      }
-      const resourceRef =
-        options?.resourceRef ??
-        openHintByTabIdRef.current.get(tabId)?.resourceRef ??
-        null;
-      if (resourceRef) {
-        upsertResourceTitleForRef(resourceRef, normalizedTitle);
-      }
+      if (!normalized) return;
+      const resourceRef = options?.resourceRef ?? openHintRef.current.get(paneId)?.resourceRef ?? null;
+      if (resourceRef) upsertResourceTitle(resourceRef, normalized);
     },
-    [upsertResourceTitleForRef]
-  );
-
-  const replaceState = useCallback(
-    (nextState: WorkspaceStateV2) => {
-      dispatchAndSync({ type: "hydrate", state: nextState }, "replace");
-    },
-    [dispatchAndSync]
+    [upsertResourceTitle]
   );
 
   const value = useMemo<WorkspaceStoreValue>(
     () => ({
       state,
-      meta,
-      runtimeTitleByTabId,
-      openHintByTabId,
+      runtimeTitleByPaneId,
+      openHintByPaneId,
       resourceTitleByRef,
-      activateGroup,
-      activateTab,
-      openTab,
-      openGroupWithTab,
-      navigateTab,
-      closeTab,
-      closeGroup,
-      setGroupWidth,
-      publishTabTitle,
-      replaceState,
+      activatePane,
+      openPane,
+      navigatePane,
+      closePane,
+      closePaneFamily,
+      resizePane,
+      publishPaneTitle,
     }),
     [
-      activateGroup,
-      activateTab,
-      closeGroup,
-      closeTab,
-      meta,
-      navigateTab,
-      openGroupWithTab,
-      openTab,
-      openHintByTabId,
-      publishTabTitle,
-      replaceState,
-      resourceTitleByRef,
-      runtimeTitleByTabId,
-      setGroupWidth,
-      state,
+      state, runtimeTitleByPaneId, openHintByPaneId, resourceTitleByRef,
+      activatePane, openPane, navigatePane, closePane, closePaneFamily,
+      resizePane, publishPaneTitle,
     ]
   );
 
-  if (!mounted) {
-    return null;
-  }
+  if (!mounted) return null;
 
   return <WorkspaceStoreContext.Provider value={value}>{children}</WorkspaceStoreContext.Provider>;
 }
@@ -843,49 +557,4 @@ export function useWorkspaceStore(): WorkspaceStoreValue {
   return value;
 }
 
-export function useWorkspaceDispatchOnly(): Dispatch<WorkspaceAction> {
-  const value = useWorkspaceStore();
-  return ((action: WorkspaceAction) => {
-    if (action.type === "hydrate") {
-      value.replaceState(action.state);
-      return;
-    }
-    if (action.type === "activate_group") {
-      value.activateGroup(action.groupId);
-      return;
-    }
-    if (action.type === "activate_tab") {
-      value.activateTab(action.groupId, action.tabId);
-      return;
-    }
-    if (action.type === "open_tab") {
-      value.openTab(action.href, {
-        groupId: action.groupId,
-        activate: action.activate,
-      });
-      return;
-    }
-    if (action.type === "open_group_with_tab") {
-      value.openGroupWithTab(action.href);
-      return;
-    }
-    if (action.type === "navigate_tab") {
-      value.navigateTab(action.groupId, action.tabId, action.href);
-      return;
-    }
-    if (action.type === "close_tab") {
-      value.closeTab(action.groupId, action.tabId);
-      return;
-    }
-    if (action.type === "close_group") {
-      value.closeGroup(action.groupId);
-      return;
-    }
-    if (action.type === "set_group_width") {
-      value.setGroupWidth(action.groupId, action.widthPx);
-    }
-  }) as Dispatch<WorkspaceAction>;
-}
-
 export { workspaceReducer };
-
