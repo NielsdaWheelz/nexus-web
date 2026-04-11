@@ -226,6 +226,8 @@ migrate-down:
 
 seed:
 	cd python && DATABASE_URL=$(DATABASE_URL) \
+		SUPABASE_URL=$(SUPABASE_URL) \
+		SUPABASE_SERVICE_KEY=$(SUPABASE_SERVICE_KEY) \
 		uv run python ../scripts/seed_dev.py
 
 # === Layer Targets ===
