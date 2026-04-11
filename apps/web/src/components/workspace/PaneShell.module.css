@@ -91,3 +91,27 @@
 .mobileChromeHidden .body {
   padding-top: var(--space-2);
 }
+
+.commandPaletteButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.commandPaletteButton:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.commandPaletteButton:active {
+  background: var(--color-bg-active);
+}

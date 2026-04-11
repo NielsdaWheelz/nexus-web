@@ -116,60 +116,6 @@
   border-top: 1px solid var(--color-border-subtle);
 }
 
-/* Mobile bottom nav */
-.mobileNav {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 140;
-  display: none;
-  align-items: stretch;
-  justify-content: space-between;
-  gap: var(--space-1);
-  height: calc(var(--mobile-bottom-nav-height) + env(safe-area-inset-bottom));
-  padding:
-    var(--space-2)
-    max(var(--space-2), env(safe-area-inset-right))
-    calc(var(--space-2) + env(safe-area-inset-bottom))
-    max(var(--space-2), env(safe-area-inset-left));
-  background: rgba(26, 27, 38, 0.92);
-  border-top: 1px solid var(--color-border-subtle);
-  box-shadow: 0 -10px 26px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(10px);
-}
-
-.mobileNavItem {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  min-width: 0;
-  min-height: 44px;
-  flex: 1;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--color-text-muted);
-  padding: var(--space-1);
-  transition: background-color var(--transition-fast), color var(--transition-fast),
-    border-color var(--transition-fast);
-  touch-action: manipulation;
-}
-
-.mobileNavItem.active,
-.mobileNavItemActive {
-  color: var(--color-accent);
-  background: rgba(122, 162, 247, 0.16);
-  border-color: rgba(122, 162, 247, 0.36);
-}
-
-.mobileNavItem:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: -1px;
-}
-
 .mobileTabSwitcherBackdrop {
   position: fixed;
   inset: 0;
@@ -239,57 +185,6 @@
   color: var(--color-text-secondary);
 }
 
-.mobileTabList {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-3);
-  padding-bottom: var(--space-2);
-  overflow-y: auto;
-}
-
-.mobileTabItem {
-  width: 100%;
-  text-align: left;
-  min-height: 44px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-bg-secondary);
-  color: var(--color-text-secondary);
-  padding: var(--space-2) var(--space-3);
-  touch-action: manipulation;
-}
-
-.mobileTabItemActive {
-  color: var(--color-text);
-  border-color: var(--color-accent);
-  background: rgba(122, 162, 247, 0.14);
-}
-
-.mobileTabActions {
-  padding: 0 var(--space-3) var(--space-2);
-  border-top: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-secondary);
-}
-
-.mobileSignOutForm {
-  margin: 0;
-}
-
-.mobileTabActionBtn {
-  width: 100%;
-  min-height: 44px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg);
-  color: var(--color-text-secondary);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  touch-action: manipulation;
-}
-
 /* Upload section (desktop) */
 .uploadSection {
   position: relative;
@@ -325,14 +220,9 @@
   .navbar {
     display: none;
   }
-
-  .mobileNav {
-    display: flex;
-  }
 }
 
 @media (min-width: 769px) {
-  .mobileNav,
   .mobileTabSwitcherBackdrop {
     display: none;
   }

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { useWorkspaceStore } from "@/lib/workspace/store";
+import { resolvePaneDescriptor } from "@/lib/workspace/paneDescriptor";
 import { apiFetch } from "@/lib/api/client";
 import {
   type SearchResponseShape,
@@ -20,7 +22,7 @@ import {
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./CommandPalette.module.css";
 
-type Section = "Recent" | "Create" | "Navigate" | "Search Results";
+type Section = "Recent" | "Panes" | "Create" | "Navigate" | "Search Results";
 
 interface Action {
   id: string;
@@ -63,7 +65,7 @@ const ACTIONS: Action[] = [
 ];
 
 const ACTIONS_BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
-const SECTION_ORDER: Section[] = ["Recent", "Create", "Navigate", "Search Results"];
+const SECTION_ORDER: Section[] = ["Recent", "Panes", "Create", "Navigate", "Search Results"];
 
 function loadRecentIds(): string[] {
   try {
@@ -114,6 +116,13 @@ export default function CommandPalette() {
   const sheetRef = useRef<HTMLElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMobile = useIsMobileViewport();
+  const {
+    state: workspaceState,
+    runtimeTitleByPaneId,
+    openHintByPaneId,
+    resourceTitleByRef,
+    activatePane,
+  } = useWorkspaceStore();
 
   // Load recent IDs and keybindings on mount
   useEffect(() => {
@@ -271,6 +280,32 @@ export default function CommandPalette() {
       .map((a) => ({ ...a, section: "Recent" as Section }));
   }, [query, recentIds]);
 
+  // Build pane-switching actions from workspace state
+  const paneActions: Action[] = useMemo(() => {
+    const panes = workspaceState.panes.map((pane) => {
+      const descriptor = resolvePaneDescriptor(pane, {
+        nowMs: Date.now(),
+        runtimeTitleByPaneId,
+        openHintByPaneId,
+        resourceTitleByRef,
+      });
+      return {
+        id: `pane-${pane.id}`,
+        label: descriptor.resolvedTitle,
+        keywords: ["tab", "pane", "switch"],
+        section: "Panes" as Section,
+        execute: () => activatePane(pane.id),
+      };
+    });
+    if (!query) return panes;
+    const q = query.toLowerCase();
+    return panes.filter(
+      (a) =>
+        a.label.toLowerCase().includes(q) ||
+        a.keywords.some((k) => k.includes(q)),
+    );
+  }, [workspaceState.panes, runtimeTitleByPaneId, openHintByPaneId, resourceTitleByRef, activatePane, query]);
+
   // Build search result actions
   const searchActions: Action[] = useMemo(
     () =>
@@ -286,14 +321,14 @@ export default function CommandPalette() {
 
   // Group by section in display order
   const grouped = useMemo(() => {
-    const allItems = [...recentActions, ...filtered, ...searchActions];
+    const allItems = [...recentActions, ...paneActions, ...filtered, ...searchActions];
     const groups: { section: Section; items: Action[] }[] = [];
     for (const section of SECTION_ORDER) {
       const items = allItems.filter((a) => a.section === section);
       if (items.length > 0) groups.push({ section, items });
     }
     return groups;
-  }, [recentActions, filtered, searchActions]);
+  }, [recentActions, paneActions, filtered, searchActions]);
 
   const flatItems = useMemo(
     () => grouped.flatMap((g) => g.items),

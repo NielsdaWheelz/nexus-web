@@ -17,7 +17,6 @@ import {
   Compass,
   LogOut,
   MessageSquare,
-  PanelsTopLeft,
   Plus,
   Search,
   Settings,
@@ -25,12 +24,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { resolvePaneDescriptor } from "@/lib/workspace/paneDescriptor";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import {
-  OPEN_UPLOAD_EVENT,
-  OPEN_COMMAND_PALETTE_EVENT,
-} from "@/components/CommandPalette";
+import { OPEN_UPLOAD_EVENT } from "@/components/CommandPalette";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import FileUpload from "@/components/FileUpload";
 import AddFromUrl from "@/components/AddFromUrl";
@@ -93,23 +88,12 @@ function pathnameFromHref(href: string): string {
 
 export default function Navbar({ onToggle }: NavbarProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const [tabSwitcherOpen, setTabSwitcherOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
-  const tabSwitcherId = useId();
   const uploadPopoverId = useId();
-  const tabsButtonRef = useRef<HTMLButtonElement>(null);
-  const tabSwitcherRef = useRef<HTMLElement>(null);
   const uploadButtonRef = useRef<HTMLButtonElement>(null);
   const uploadPopoverRef = useRef<HTMLElement>(null);
   const isMobile = useIsMobileViewport();
-  const {
-    state,
-    runtimeTitleByPaneId,
-    openHintByPaneId,
-    resourceTitleByRef,
-    navigatePane,
-    activatePane,
-  } = useWorkspaceStore();
+  const { state, navigatePane } = useWorkspaceStore();
 
   const activePane = useMemo(
     () => state.panes.find((p) => p.id === state.activePaneId) ?? null,
@@ -118,24 +102,6 @@ export default function Navbar({ onToggle }: NavbarProps) {
   const currentPathname = useMemo(
     () => (activePane ? pathnameFromHref(activePane.href) : ""),
     [activePane],
-  );
-
-  const tabSwitcherItems = useMemo(
-    () =>
-      state.panes.map((pane) => {
-        const descriptor = resolvePaneDescriptor(pane, {
-          nowMs: Date.now(),
-          runtimeTitleByPaneId,
-          openHintByPaneId,
-          resourceTitleByRef,
-        });
-        return {
-          paneId: pane.id,
-          title: descriptor.resolvedTitle,
-          isActive: pane.id === state.activePaneId,
-        };
-      }),
-    [openHintByPaneId, resourceTitleByRef, runtimeTitleByPaneId, state],
   );
 
   const handleToggle = () => {
@@ -174,18 +140,6 @@ export default function Navbar({ onToggle }: NavbarProps) {
   };
 
   const ToggleIcon = collapsed ? ChevronRight : ChevronLeft;
-
-  const handleTabSelect = useCallback(
-    (paneId: string) => {
-      activatePane(paneId);
-      setTabSwitcherOpen(false);
-    },
-    [activatePane],
-  );
-
-  const handleCloseTabSwitcher = useCallback(() => {
-    setTabSwitcherOpen(false);
-  }, []);
 
   const handleCloseUpload = useCallback(() => {
     setUploadOpen(false);
@@ -288,207 +242,41 @@ export default function Navbar({ onToggle }: NavbarProps) {
     };
   }, [isMobile, uploadOpen, handleCloseUpload]);
 
-  useEffect(() => {
-    if (!isMobile || !tabSwitcherOpen) {
-      return;
-    }
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [isMobile, tabSwitcherOpen]);
-
-  useEffect(() => {
-    if (!isMobile || !tabSwitcherOpen || !tabSwitcherRef.current) {
-      return;
-    }
-    const dialog = tabSwitcherRef.current;
-    const tabsButton = tabsButtonRef.current;
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    const initialFocusable = getFocusableElements(dialog);
-    (initialFocusable[0] ?? dialog).focus();
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        handleCloseTabSwitcher();
-        return;
-      }
-      if (event.key !== "Tab") {
-        return;
-      }
-
-      const focusable = getFocusableElements(dialog);
-      if (focusable.length === 0) {
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-
-      if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-        return;
-      }
-      if (event.shiftKey && active === first) {
-        event.preventDefault();
-        last.focus();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      if (tabsButton) {
-        tabsButton.focus();
-      } else {
-        previouslyFocused?.focus();
-      }
-    };
-  }, [handleCloseTabSwitcher, isMobile, tabSwitcherOpen]);
-
   if (isMobile) {
+    if (!uploadOpen) return null;
     return (
-      <>
-        <nav className={styles.mobileNav} aria-label="Mobile navigation">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(item);
-            return (
-              <button
-                key={item.href}
-                type="button"
-                className={`${styles.mobileNavItem} ${active ? styles.active : ""}`}
-                aria-label={item.label}
-                onClick={() => {
-                  if (item.href === "/search") {
-                    window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT));
-                  } else {
-                    navigateToHref(item.href);
-                  }
-                }}
-              >
-                <Icon size={18} strokeWidth={2} aria-hidden="true" />
-              </button>
-            );
-          })}
-          <button
-            ref={uploadButtonRef}
-            type="button"
-            className={`${styles.mobileNavItem} ${uploadOpen ? styles.mobileNavItemActive : ""}`}
-            aria-label="Add content"
-            aria-haspopup="dialog"
-            aria-expanded={uploadOpen}
-            aria-controls={uploadPopoverId}
-            onClick={() => setUploadOpen((prev) => !prev)}
-          >
-            <Plus size={18} strokeWidth={2} aria-hidden="true" />
-          </button>
-          <button
-            ref={tabsButtonRef}
-            type="button"
-            className={`${styles.mobileNavItem} ${tabSwitcherOpen ? styles.mobileNavItemActive : ""}`}
-            aria-label="Tabs"
-            aria-haspopup="dialog"
-            aria-expanded={tabSwitcherOpen}
-            aria-controls={tabSwitcherId}
-            onClick={() => setTabSwitcherOpen((prev) => !prev)}
-          >
-            <PanelsTopLeft size={18} strokeWidth={2} aria-hidden="true" />
-          </button>
-        </nav>
-
-        {uploadOpen && (
-          <div
-            className={styles.mobileTabSwitcherBackdrop}
-            onClick={handleCloseUpload}
-          >
-            <section
-              ref={uploadPopoverRef}
-              id={uploadPopoverId}
-              className={styles.mobileTabSwitcher}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Add content"
-              tabIndex={-1}
-              onClick={(event) => event.stopPropagation()}
+      <div
+        className={styles.mobileTabSwitcherBackdrop}
+        onClick={handleCloseUpload}
+      >
+        <section
+          ref={uploadPopoverRef}
+          id={uploadPopoverId}
+          className={styles.mobileTabSwitcher}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Add content"
+          tabIndex={-1}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className={styles.mobileTabSwitcherHandle} aria-hidden="true" />
+          <header className={styles.mobileTabSwitcherHeader}>
+            <h2>Add content</h2>
+            <button
+              type="button"
+              className={styles.mobileTabSwitcherClose}
+              onClick={handleCloseUpload}
+              aria-label="Close"
             >
-              <div className={styles.mobileTabSwitcherHandle} aria-hidden="true" />
-              <header className={styles.mobileTabSwitcherHeader}>
-                <h2>Add content</h2>
-                <button
-                  type="button"
-                  className={styles.mobileTabSwitcherClose}
-                  onClick={handleCloseUpload}
-                  aria-label="Close"
-                >
-                  <X size={16} aria-hidden="true" />
-                </button>
-              </header>
-              <div className={styles.uploadSheetBody}>
-                <FileUpload onNavigate={handleUploadNavigate} />
-                <AddFromUrl onNavigate={handleUploadNavigate} />
-              </div>
-            </section>
+              <X size={16} aria-hidden="true" />
+            </button>
+          </header>
+          <div className={styles.uploadSheetBody}>
+            <FileUpload onNavigate={handleUploadNavigate} />
+            <AddFromUrl onNavigate={handleUploadNavigate} />
           </div>
-        )}
-
-        {tabSwitcherOpen && (
-          <div
-            className={styles.mobileTabSwitcherBackdrop}
-            onClick={handleCloseTabSwitcher}
-          >
-            <section
-              ref={tabSwitcherRef}
-              id={tabSwitcherId}
-              className={styles.mobileTabSwitcher}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Open tabs"
-              tabIndex={-1}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className={styles.mobileTabSwitcherHandle} aria-hidden="true" />
-              <header className={styles.mobileTabSwitcherHeader}>
-                <h2>Open tabs</h2>
-                <button
-                  type="button"
-                  className={styles.mobileTabSwitcherClose}
-                  onClick={handleCloseTabSwitcher}
-                  aria-label="Close tabs"
-                >
-                  <X size={16} aria-hidden="true" />
-                </button>
-              </header>
-              <div className={styles.mobileTabList}>
-                {tabSwitcherItems.map((item) => (
-                  <button
-                    key={item.paneId}
-                    type="button"
-                    className={`${styles.mobileTabItem} ${item.isActive ? styles.mobileTabItemActive : ""}`}
-                    aria-current={item.isActive ? "page" : undefined}
-                    onClick={() => handleTabSelect(item.paneId)}
-                  >
-                    {item.title}
-                  </button>
-                ))}
-              </div>
-              <div className={styles.mobileTabActions}>
-                <form action="/auth/signout" method="post" className={styles.mobileSignOutForm}>
-                  <button type="submit" className={styles.mobileTabActionBtn}>
-                    <LogOut size={16} aria-hidden="true" />
-                    <span>Sign Out</span>
-                  </button>
-                </form>
-              </div>
-            </section>
-          </div>
-        )}
-      </>
+        </section>
+      </div>
     );
   }
 

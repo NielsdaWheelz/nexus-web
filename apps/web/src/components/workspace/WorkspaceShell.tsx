@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import PaneShell, { type PaneBodyMode } from "@/components/workspace/PaneShell";
 import PaneStrip from "@/components/workspace/PaneStrip";
 import WorkspaceTabsBar from "@/components/workspace/WorkspaceTabsBar";
-import WorkspaceTabsSheet from "@/components/workspace/WorkspaceTabsSheet";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import styles from "./WorkspaceShell.module.css";
@@ -41,8 +40,6 @@ export default function WorkspaceShell({
   onResizePane,
 }: WorkspaceShellProps) {
   const isMobile = useIsMobileViewport();
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const mobileSwitcherButtonRef = useRef<HTMLButtonElement>(null);
   const paneWrapRefById = useRef<Map<string, HTMLDivElement>>(new Map());
   const pendingPaneChromeFocusPaneIdRef = useRef<string | null>(null);
 
@@ -60,9 +57,6 @@ export default function WorkspaceShell({
   const visiblePanes = isMobile ? (activePane ? [activePane] : []) : panes;
 
   useEffect(() => {
-    if (sheetOpen) {
-      return;
-    }
     const pendingPaneId = pendingPaneChromeFocusPaneIdRef.current;
     if (!pendingPaneId) {
       return;
@@ -80,7 +74,7 @@ export default function WorkspaceShell({
     }
     chrome.focus({ preventScroll: true });
     pendingPaneChromeFocusPaneIdRef.current = null;
-  }, [activePaneId, sheetOpen]);
+  }, [activePaneId]);
 
   const handleActivatePane = (
     paneId: string,
@@ -110,14 +104,14 @@ export default function WorkspaceShell({
 
   return (
     <section className={styles.host} aria-label="Workspace host">
-      <WorkspaceTabsBar
-        tabs={tabs}
-        onActivatePane={handleActivatePane}
-        onClosePane={onClosePane}
-        mobileSwitcherLabel="Open panes"
-        onOpenMobileSwitcher={() => setSheetOpen(true)}
-        mobileSwitcherButtonRef={mobileSwitcherButtonRef}
-      />
+      {!isMobile && (
+        <WorkspaceTabsBar
+          tabs={tabs}
+          onActivatePane={handleActivatePane}
+          onClosePane={onClosePane}
+          mobileSwitcherLabel="Open panes"
+        />
+      )}
       <PaneStrip isMobile={isMobile}>
         {visiblePanes.map((pane) => (
           <div
@@ -157,17 +151,6 @@ export default function WorkspaceShell({
           </div>
         ))}
       </PaneStrip>
-      <WorkspaceTabsSheet
-        open={isMobile && sheetOpen}
-        tabs={tabs}
-        triggerRef={mobileSwitcherButtonRef}
-        onActivatePane={(paneId) => {
-          handleActivatePane(paneId);
-          setSheetOpen(false);
-        }}
-        onClosePane={onClosePane}
-        onRequestClose={() => setSheetOpen(false)}
-      />
     </section>
   );
 }

@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Search } from "lucide-react";
+import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/CommandPalette";
 import SurfaceHeader, { type SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import styles from "./PaneShell.module.css";
 
@@ -211,7 +213,29 @@ export default function PaneShell({
         data-pane-chrome-focus="true"
         tabIndex={-1}
       >
-        <SurfaceHeader title={title} subtitle={subtitle} options={options} actions={actions} onBack={onBack} />
+        <SurfaceHeader
+          title={title}
+          subtitle={subtitle}
+          options={options}
+          actions={
+            isMobile ? (
+              <>
+                {actions}
+                <button
+                  type="button"
+                  className={styles.commandPaletteButton}
+                  onClick={() => window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT))}
+                  aria-label="Commands"
+                >
+                  <Search size={18} strokeWidth={2} />
+                </button>
+              </>
+            ) : (
+              actions
+            )
+          }
+          onBack={onBack}
+        />
         {toolbar ? <div className={styles.toolbar}>{toolbar}</div> : null}
       </div>
       <div
