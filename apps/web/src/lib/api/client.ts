@@ -91,12 +91,13 @@ export async function apiFetch<T>(
   // Check for error response
   if (!response.ok) {
     if (response.status === 401 && isErrorResponse(body) && body.error.code === "E_UNAUTHENTICATED") {
-      // Signout route is POST-only; submit a hidden form to trigger it.
-      const form = document.createElement("form");
-      form.method = "POST";
-      form.action = "/auth/signout";
-      document.body.appendChild(form);
-      form.submit();
+      // Reload once to let the Next.js middleware refresh the session.
+      // If the session is truly dead, the middleware redirects to /login.
+      // The flag prevents an infinite reload loop.
+      if (!sessionStorage.getItem("nexus.auth-recovery-attempted")) {
+        sessionStorage.setItem("nexus.auth-recovery-attempted", "1");
+        window.location.reload();
+      }
       throw new ApiError(401, body.error.code, body.error.message, body.error.request_id);
     }
     if (isErrorResponse(body)) {
@@ -113,6 +114,9 @@ export async function apiFetch<T>(
       `Request failed with status ${response.status}`
     );
   }
+
+  // Successful auth — clear the recovery flag so future expirations can retry.
+  sessionStorage.removeItem("nexus.auth-recovery-attempted");
 
   return body as T;
 }
