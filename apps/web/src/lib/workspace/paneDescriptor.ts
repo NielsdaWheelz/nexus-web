@@ -64,7 +64,7 @@ export function normalizePaneTitle(raw: string | null | undefined): string | nul
   return singleSpaced.slice(0, MAX_PANE_TITLE_LENGTH).trim();
 }
 
-function normalizeResourceRef(raw: string | null | undefined): string | null {
+export function normalizeResourceRef(raw: string | null | undefined): string | null {
   if (typeof raw !== "string") {
     return null;
   }

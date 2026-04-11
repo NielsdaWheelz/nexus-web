@@ -43,7 +43,7 @@ import {
   formatKeyCombo,
 } from "@/lib/keybindings";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { getFocusableElements } from "@/lib/ui/getFocusableElements";
+import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import styles from "./CommandPalette.module.css";
 
 type Section = "Recent" | "Panes" | "Create" | "Navigate" | "Search Results";
@@ -217,29 +217,7 @@ export default function CommandPalette() {
   }, [isMobile, open]);
 
   // Mobile: focus trap
-  useEffect(() => {
-    if (!isMobile || !open || !sheetRef.current) return;
-    const sheet = sheetRef.current;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Tab") return;
-      const els = getFocusableElements(sheet);
-      if (els.length === 0) return;
-      const first = els[0];
-      const last = els[els.length - 1];
-      const active = document.activeElement;
-      if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      } else if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isMobile, open]);
+  useFocusTrap(sheetRef, isMobile && open);
 
   // Debounced backend search
   useEffect(() => {

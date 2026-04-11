@@ -57,11 +57,13 @@ export default function WorkspaceShell({
   const visiblePanes = isMobile ? (activePane ? [activePane] : []) : panes;
 
   useEffect(() => {
-    const pendingPaneId = pendingPaneChromeFocusPaneIdRef.current;
-    if (!pendingPaneId) {
+    // On mobile, only the active pane is rendered — always focus its chrome
+    // when it appears (e.g. via Command Palette, tab switch, etc.).
+    const targetPaneId = pendingPaneChromeFocusPaneIdRef.current ?? (isMobile ? activePaneId : null);
+    if (!targetPaneId) {
       return;
     }
-    const paneWrap = paneWrapRefById.current.get(pendingPaneId);
+    const paneWrap = paneWrapRefById.current.get(targetPaneId);
     if (!paneWrap) {
       return;
     }
@@ -74,7 +76,7 @@ export default function WorkspaceShell({
     }
     chrome.focus({ preventScroll: true });
     pendingPaneChromeFocusPaneIdRef.current = null;
-  }, [activePaneId]);
+  }, [activePaneId, isMobile]);
 
   const handleActivatePane = (
     paneId: string,

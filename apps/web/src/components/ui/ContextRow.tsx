@@ -1,6 +1,7 @@
 "use client";
 
 import type { CSSProperties, KeyboardEvent, MouseEvent, ReactNode } from "react";
+import { cx } from "@/lib/ui/cx";
 import styles from "./ContextRow.module.css";
 
 interface ContextRowProps {
@@ -33,10 +34,6 @@ interface ContextRowProps {
   mainTabIndex?: number;
   ariaPressed?: boolean;
   ariaExpanded?: boolean;
-}
-
-function cx(...parts: Array<string | undefined | false | null>): string {
-  return parts.filter(Boolean).join(" ");
 }
 
 export default function ContextRow({

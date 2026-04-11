@@ -8,21 +8,18 @@
  * @see docs/v1/s2/s2_prs/s2_pr09.md §10
  */
 
-import { NextRequest } from "next/server";
 import { proxyToFastAPI } from "@/lib/api/proxy";
 
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ highlightId: string }> }
-) {
+export const runtime = "nodejs";
+
+type Params = Promise<{ highlightId: string }>;
+
+export async function PUT(req: Request, { params }: { params: Params }) {
   const { highlightId } = await params;
-  return proxyToFastAPI(request, `/highlights/${highlightId}/annotation`);
+  return proxyToFastAPI(req, `/highlights/${highlightId}/annotation`);
 }
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ highlightId: string }> }
-) {
+export async function DELETE(req: Request, { params }: { params: Params }) {
   const { highlightId } = await params;
-  return proxyToFastAPI(request, `/highlights/${highlightId}/annotation`);
+  return proxyToFastAPI(req, `/highlights/${highlightId}/annotation`);
 }

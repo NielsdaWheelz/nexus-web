@@ -1,5 +1,7 @@
 "use client";
 
+import { normalizePaneTitle, normalizeResourceRef } from "@/lib/workspace/paneDescriptor";
+
 export const NEXUS_OPEN_PANE_EVENT = "nexus:open-pane";
 export const NEXUS_OPEN_PANE_MESSAGE_TYPE = "nexus:open-pane";
 const NEXUS_PANE_GRAPH_READY_KEY = "__nexusPaneGraphReady";
@@ -32,22 +34,6 @@ function isPaneGraphReady(): boolean {
   return paneWindow()?.[NEXUS_PANE_GRAPH_READY_KEY] === true;
 }
 
-function normalizeTitleHint(value: string | undefined): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const normalized = value.trim().replace(/\s+/g, " ");
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function normalizeResourceRef(value: string | undefined): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const normalized = value.trim();
-  return normalized.length > 0 ? normalized : undefined;
-}
-
 function sanitizeOpenPaneDetail(detail: unknown): OpenInAppPaneDetail | null {
   if (typeof detail !== "object" || detail === null) {
     return null;
@@ -68,11 +54,11 @@ function sanitizeOpenPaneDetail(detail: unknown): OpenInAppPaneDetail | null {
     href,
     titleHint:
       typeof candidate.titleHint === "string"
-        ? normalizeTitleHint(candidate.titleHint)
+        ? normalizePaneTitle(candidate.titleHint) ?? undefined
         : undefined,
     resourceRef:
       typeof candidate.resourceRef === "string"
-        ? normalizeResourceRef(candidate.resourceRef)
+        ? normalizeResourceRef(candidate.resourceRef) ?? undefined
         : undefined,
   };
 }

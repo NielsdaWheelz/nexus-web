@@ -191,16 +191,11 @@ describe("podcast ui action menu cutover", () => {
 
     expect(await screen.findByText("Episode 0")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "My podcasts" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Refresh sync for/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open subscription settings" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Unsubscribe from/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh sync" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unsubscribe" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Options" }));
-    expect(await screen.findByRole("menuitem", { name: "Refresh sync" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Unsubscribe" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("menuitem", { name: "Refresh sync" }));
+    await user.click(screen.getByRole("button", { name: "Refresh sync" }));
     await waitFor(() => {
       expect(
         fetchSpy.mock.calls.some(([url, init]) => {

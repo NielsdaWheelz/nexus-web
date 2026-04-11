@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const {
@@ -50,7 +50,20 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({}),
 }));
 
+// Mock heavy child components used in the mobile upload sheet
+vi.mock("@/components/FileUpload", () => ({
+  default: ({ onNavigate }: { onNavigate?: (href: string) => void }) => (
+    <div data-testid="file-upload">FileUpload</div>
+  ),
+}));
+vi.mock("@/components/AddFromUrl", () => ({
+  default: ({ onNavigate }: { onNavigate?: (href: string) => void }) => (
+    <div data-testid="add-from-url">AddFromUrl</div>
+  ),
+}));
+
 import Navbar from "@/components/Navbar";
+import { OPEN_UPLOAD_EVENT } from "@/components/CommandPalette";
 
 describe("Navbar", () => {
   beforeEach(() => {
@@ -97,71 +110,71 @@ describe("Navbar", () => {
     expect(librariesLink?.className).toMatch(/active/i);
   });
 
-  it("renders a mobile bottom nav with a tabs button", async () => {
+  it("renders nothing on mobile by default", () => {
+    vi.stubGlobal("innerWidth", 390);
+    window.dispatchEvent(new Event("resize"));
+
+    const { container } = render(<Navbar />);
+
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("opens an Add content sheet on mobile when upload event fires", async () => {
     vi.stubGlobal("innerWidth", 390);
     window.dispatchEvent(new Event("resize"));
 
     render(<Navbar />);
 
-    expect(screen.getByRole("navigation", { name: "Mobile navigation" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Tabs" })).toBeInTheDocument();
+    act(() => {
+      window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "Add content" });
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText("Add content")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
-  it("renders mobile nav buttons as icon-only without visible text labels", () => {
-    vi.stubGlobal("innerWidth", 390);
-    window.dispatchEvent(new Event("resize"));
-
-    render(<Navbar />);
-
-    const nav = screen.getByRole("navigation", { name: "Mobile navigation" });
-    const labels = ["Libraries", "Discover", "Chat", "Search", "Settings", "Tabs"];
-
-    for (const label of labels) {
-      expect(within(nav).queryByText(label)).not.toBeInTheDocument();
-      expect(within(nav).getByRole("button", { name: label })).toBeInTheDocument();
-    }
-  });
-
-  it("opens a mobile tab switcher and allows pane activation", async () => {
+  it("closes the mobile upload sheet via the close button", async () => {
     vi.stubGlobal("innerWidth", 390);
     window.dispatchEvent(new Event("resize"));
     const user = userEvent.setup();
 
     render(<Navbar />);
 
-    await user.click(screen.getByRole("button", { name: "Tabs" }));
-    const dialog = screen.getByRole("dialog", { name: "Open tabs" });
-    expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Libraries" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Sign Out" })).toBeInTheDocument();
-    const chatTab = within(dialog).getByRole("button", { name: "Chats" });
-    await user.click(chatTab);
+    act(() => {
+      window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
+    });
 
-    expect(mockActivatePane).toHaveBeenCalledTimes(1);
-    expect(mockActivatePane).toHaveBeenCalledWith("pane-test-2");
-    expect(screen.queryByRole("dialog", { name: "Open tabs" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Add content" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    expect(screen.queryByRole("dialog", { name: "Add content" })).not.toBeInTheDocument();
   });
 
-  it("locks body scroll while the mobile tab switcher is open", async () => {
+  it("locks body scroll while the mobile upload sheet is open", async () => {
     vi.stubGlobal("innerWidth", 390);
     window.dispatchEvent(new Event("resize"));
     const user = userEvent.setup();
 
     const { unmount } = render(<Navbar />);
 
-    const tabsButton = screen.getByRole("button", { name: "Tabs" });
-    expect(document.body.style.overflow).toBe("");
-    await user.click(tabsButton);
-    expect(document.body.style.overflow).toBe("hidden");
-    await user.keyboard("{Escape}");
     expect(document.body.style.overflow).toBe("");
 
-    await user.click(tabsButton);
-    await user.click(screen.getByRole("button", { name: "Close tabs" }));
+    act(() => {
+      window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
+    });
+    expect(document.body.style.overflow).toBe("hidden");
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
     expect(document.body.style.overflow).toBe("");
 
-    await user.click(tabsButton);
+    act(() => {
+      window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
+    });
     expect(document.body.style.overflow).toBe("hidden");
+
     unmount();
     expect(document.body.style.overflow).toBe("");
   });

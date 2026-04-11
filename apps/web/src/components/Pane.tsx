@@ -14,6 +14,7 @@ import SurfaceHeader, {
   type SurfaceHeaderOption,
 } from "@/components/ui/SurfaceHeader";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useMobileChromeVisibility } from "@/lib/ui/useMobileChromeVisibility";
 import { SplitSurfaceOverlayContext } from "@/components/workspace/SplitSurfaceContext";
 
 interface PaneProps {
@@ -54,22 +55,17 @@ export default function Pane({
   fluid = false,
 }: PaneProps) {
   const [width, setWidth] = useState(defaultWidth);
-  const [mobileChromeHidden, setMobileChromeHidden] = useState(false);
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
   const isMobileViewport = useIsMobileViewport();
   const insideOverlay = useContext(SplitSurfaceOverlayContext);
   const paneRef = useRef<HTMLDivElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
   const isResizing = useRef(false);
-  const lastScrollTopRef = useRef(0);
   const hasChrome = Boolean(header || title || toolbar) && !insideOverlay;
-
-  useEffect(() => {
-    if (!isMobileViewport) {
-      setMobileChromeHidden(false);
-      lastScrollTopRef.current = 0;
-    }
-  }, [isMobileViewport]);
+  const { mobileChromeHidden, onContentScroll } = useMobileChromeVisibility(
+    isMobileViewport,
+    hasChrome,
+  );
 
   useEffect(() => {
     if (!isMobileViewport || !chromeRef.current || !hasChrome) {
@@ -133,31 +129,6 @@ export default function Pane({
     [maxWidth, minWidth]
   );
 
-  const handleContentScroll = useCallback(
-    (event: React.UIEvent<HTMLDivElement>) => {
-      if (!isMobileViewport || !hasChrome) {
-        return;
-      }
-      const scrollTop = event.currentTarget.scrollTop;
-      const previous = lastScrollTopRef.current;
-      const delta = scrollTop - previous;
-      lastScrollTopRef.current = scrollTop;
-
-      if (scrollTop <= 24) {
-        setMobileChromeHidden(false);
-        return;
-      }
-      if (delta >= 10) {
-        setMobileChromeHidden(true);
-        return;
-      }
-      if (delta <= -10) {
-        setMobileChromeHidden(false);
-      }
-    },
-    [hasChrome, isMobileViewport]
-  );
-
   const paneClasses = `${styles.pane} ${fluid ? styles.fluid : ""} ${
     isMobileViewport
       ? mobileChromeHidden
@@ -211,7 +182,7 @@ export default function Pane({
       <div
         className={`${styles.content} ${contentClassName ?? ""}`.trim()}
         data-pane-content="true"
-        onScroll={handleContentScroll}
+        onScroll={onContentScroll}
       >
         {children}
       </div>

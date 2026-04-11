@@ -3,7 +3,6 @@
   line-height: 1.7;
   color: var(--reader-text, var(--color-text));
   overflow-wrap: break-word;
-  overflow-x: hidden;
 }
 
 /* Typography */
@@ -83,7 +82,7 @@
   padding: 0.125em 0.25em;
   background-color: var(--reader-surface, var(--color-surface));
   border-radius: 3px;
-  font-family: var(--font-sans);
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }
 

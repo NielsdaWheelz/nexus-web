@@ -17,6 +17,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights";
+import { COLOR_LABELS } from "@/lib/highlights/colors";
 import styles from "./SelectionPopover.module.css";
 
 // =============================================================================
@@ -43,14 +44,6 @@ export interface SelectionPopoverProps {
 // =============================================================================
 
 const DEFAULT_COLOR: HighlightColor = "yellow";
-
-const COLOR_LABELS: Record<HighlightColor, string> = {
-  yellow: "Yellow",
-  green: "Green",
-  blue: "Blue",
-  pink: "Pink",
-  purple: "Purple",
-};
 
 // =============================================================================
 // Component

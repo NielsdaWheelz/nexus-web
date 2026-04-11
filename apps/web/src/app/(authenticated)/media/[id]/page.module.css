@@ -11,25 +11,6 @@
   gap: var(--space-4);
 }
 
-.header {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-
-.backLink {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-  text-decoration: none;
-  transition: color var(--transition-fast);
-}
-
-.backLink:hover {
-  color: var(--color-accent);
-}
-
 .metadata {
   display: flex;
   align-items: center;
@@ -94,15 +75,6 @@
   margin-bottom: var(--space-1);
 }
 
-.selectionError {
-  padding: var(--space-2);
-  background-color: rgba(247, 118, 142, 0.1);
-  border: 1px solid var(--color-error);
-  border-radius: 4px;
-  color: var(--color-error);
-  font-size: var(--font-size-sm);
-}
-
 .notReady {
   padding: var(--space-6);
   text-align: center;
@@ -154,11 +126,6 @@
   gap: var(--space-2);
   padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--color-border-subtle);
-}
-
-.player {
-  width: 100%;
-  max-width: 100%;
 }
 
 .playerFrame {
@@ -454,14 +421,6 @@
    Linked Items Pane
    ============================================================================= */
 
-.linkedItems {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-}
-
-
 .scopeCard {
   margin-bottom: var(--space-2);
 }
@@ -520,71 +479,6 @@
   margin-top: var(--space-2);
 }
 
-.highlightList {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.highlightItem {
-  border: 1px solid transparent;
-  border-radius: 8px;
-  transition: border-color 150ms ease;
-  cursor: pointer;
-}
-
-.highlightItem:hover:not(.focused) {
-  border-color: var(--color-border);
-}
-
-.highlightItem.focused {
-  border-color: var(--color-accent);
-  cursor: default;
-}
-
-.highlightPreview {
-  padding: var(--space-3);
-}
-
-.previewMark {
-  display: block;
-  padding: var(--space-1);
-  border-radius: 2px;
-  font-size: var(--font-size-sm);
-  line-height: 1.5;
-  word-break: break-word;
-}
-
-/* Color classes for preview */
-.color-yellow {
-  background: rgba(255, 235, 59, 0.5);
-}
-
-.color-green {
-  background: rgba(76, 175, 80, 0.4);
-}
-
-.color-blue {
-  background: rgba(33, 150, 243, 0.35);
-}
-
-.color-pink {
-  background: rgba(233, 30, 99, 0.35);
-}
-
-.color-purple {
-  background: rgba(156, 39, 176, 0.35);
-}
-
-.annotationPreview {
-  margin: var(--space-2) 0 0;
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border-subtle);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  line-height: 1.4;
-}
-
 /* =============================================================================
    EPUB Chapter Navigation (S5 PR-05)
    ============================================================================= */
@@ -593,54 +487,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-}
-
-.chapterControls {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--reader-border-subtle, var(--color-border-subtle));
-}
-
-.chapterNavBtn {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--reader-border, var(--color-border));
-  border-radius: 4px;
-  background: var(--reader-surface, var(--color-surface));
-  color: var(--reader-text-secondary, var(--color-text-secondary));
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.chapterNavBtn:hover:not(:disabled) {
-  background: var(--reader-bg-secondary, var(--color-bg-secondary));
-  color: var(--reader-text, var(--color-text));
-}
-
-.chapterNavBtn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.chapterSelector {
-  flex: 1;
-  min-width: 0;
-}
-
-.chapterSelect {
-  width: 100%;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--reader-border, var(--color-border));
-  border-radius: 4px;
-  background: var(--reader-surface, var(--color-surface));
-  color: var(--reader-text, var(--color-text));
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  text-overflow: ellipsis;
 }
 
 /* =============================================================================
@@ -728,20 +574,6 @@
 }
 
 @media (max-width: 768px) {
-  .chapterControls {
-    flex-wrap: wrap;
-    gap: var(--space-1);
-  }
-
-  .chapterSelector {
-    order: -1;
-    flex-basis: 100%;
-  }
-
-  .chapterNavBtn {
-    flex: 1;
-  }
-
   .tocTree {
     max-height: 200px;
   }

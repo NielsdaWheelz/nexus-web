@@ -20,6 +20,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { cx } from "@/lib/ui/cx";
 import styles from "./SortableList.module.css";
 
 type SortableHookResult = ReturnType<typeof useSortable>;
@@ -53,10 +54,6 @@ interface SortableListItemProps<T> {
   className?: string;
 }
 
-function joinClassNames(...parts: Array<string | undefined>): string {
-  return parts.filter(Boolean).join(" ");
-}
-
 function SortableListItem<T>({
   item,
   id,
@@ -75,7 +72,7 @@ function SortableListItem<T>({
     <li
       ref={setNodeRef}
       style={style}
-      className={joinClassNames(styles.item, className)}
+      className={cx(styles.item, className)}
       data-dragging={isDragging ? "true" : "false"}
       data-over={isOver ? "true" : "false"}
     >
@@ -149,7 +146,7 @@ export default function SortableList<T>({
       onDragEnd={handleDragEnd}
     >
       <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
-        <ul className={joinClassNames(styles.list, className)}>
+        <ul className={cx(styles.list, className)}>
           {items.map((item) => {
             const id = getItemId(item);
             return (

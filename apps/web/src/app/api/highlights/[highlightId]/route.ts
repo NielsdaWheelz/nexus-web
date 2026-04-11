@@ -9,29 +9,23 @@
  * @see docs/v1/s2/s2_prs/s2_pr09.md §8
  */
 
-import { NextRequest } from "next/server";
 import { proxyToFastAPI } from "@/lib/api/proxy";
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ highlightId: string }> }
-) {
+export const runtime = "nodejs";
+
+type Params = Promise<{ highlightId: string }>;
+
+export async function GET(req: Request, { params }: { params: Params }) {
   const { highlightId } = await params;
-  return proxyToFastAPI(request, `/highlights/${highlightId}`);
+  return proxyToFastAPI(req, `/highlights/${highlightId}`);
 }
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ highlightId: string }> }
-) {
+export async function PATCH(req: Request, { params }: { params: Params }) {
   const { highlightId } = await params;
-  return proxyToFastAPI(request, `/highlights/${highlightId}`);
+  return proxyToFastAPI(req, `/highlights/${highlightId}`);
 }
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ highlightId: string }> }
-) {
+export async function DELETE(req: Request, { params }: { params: Params }) {
   const { highlightId } = await params;
-  return proxyToFastAPI(request, `/highlights/${highlightId}`);
+  return proxyToFastAPI(req, `/highlights/${highlightId}`);
 }

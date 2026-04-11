@@ -744,16 +744,14 @@ describe("podcasts product flows", () => {
     await user.click(screen.getByRole("button", { name: "Load more episodes" }));
     expect(await screen.findByText("Episode 100")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Options" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Refresh sync" }));
+    await user.click(screen.getByRole("button", { name: "Refresh sync" }));
     expect(await screen.findByText("Resynced Episode 0")).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.queryByText("Episode 100")).not.toBeInTheDocument();
     });
 
     await user.selectOptions(screen.getByLabelText("Unsubscribe behavior"), "2");
-    fireEvent.click(screen.getByRole("button", { name: "Options" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Unsubscribe" }));
+    await user.click(screen.getByRole("button", { name: "Unsubscribe" }));
 
     await waitFor(() => {
       expect(
@@ -1795,8 +1793,7 @@ describe("podcasts product flows", () => {
     expect(screen.getByText("1.5x default speed · Auto-queue on")).toBeInTheDocument();
     expect(screen.getByText("Category: Tech")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Options" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Settings" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.selectOptions(screen.getByLabelText("Default playback speed"), "2");
     await user.click(screen.getByLabelText("Automatically add new episodes to my queue"));
     await user.selectOptions(screen.getByLabelText("Subscription category"), "cat-news");

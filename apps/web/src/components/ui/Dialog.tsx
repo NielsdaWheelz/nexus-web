@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode } from "react";
+import { X } from "lucide-react";
 import styles from "./Dialog.module.css";
 
 interface DialogProps {
@@ -63,7 +64,7 @@ export default function Dialog({ open, onClose, title, children }: DialogProps) 
             onClick={onClose}
             aria-label="Close dialog"
           >
-            &times;
+            <X size={16} />
           </button>
         </header>
         <div className={styles.body}>{children}</div>

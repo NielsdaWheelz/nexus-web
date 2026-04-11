@@ -1,6 +1,7 @@
 "use client";
 
 import type { HighlightColor } from "@/lib/highlights";
+import { cx } from "@/lib/ui/cx";
 import styles from "./HighlightSnippet.module.css";
 
 export type HighlightSnippetColor = HighlightColor | "neutral";
@@ -12,10 +13,6 @@ interface HighlightSnippetProps {
   color?: HighlightSnippetColor;
   compact?: boolean;
   className?: string;
-}
-
-function cx(...parts: Array<string | undefined | false | null>): string {
-  return parts.filter(Boolean).join(" ");
 }
 
 export default function HighlightSnippet({

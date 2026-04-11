@@ -250,8 +250,6 @@ test-e2e: ensure-e2e-deps
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright install --with-deps chromium && \
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright test
 
-e2e: test-e2e
-
 test-e2e-ui: ensure-e2e-deps
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \

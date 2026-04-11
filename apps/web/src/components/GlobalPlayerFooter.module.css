@@ -48,16 +48,9 @@
 }
 
 .controlsRow {
-  display: grid;
-  grid-template-columns: auto auto auto auto auto minmax(180px, 1fr) auto auto auto auto auto;
+  display: flex;
   align-items: center;
   gap: var(--space-2);
-  outline: none;
-}
-
-.controlsRow:focus-visible {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-border-strong) 70%, transparent);
-  border-radius: 8px;
 }
 
 .transportButton {
@@ -82,6 +75,7 @@
 
 .seekArea {
   position: relative;
+  flex: 1;
   min-width: 140px;
 }
 
@@ -167,6 +161,7 @@
 
 .timecode {
   color: var(--color-text-muted);
+  font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   display: inline-flex;
   align-items: center;
@@ -230,9 +225,14 @@
   white-space: nowrap;
 }
 
-.speedControl,
-.volumeControl {
+.speedControl {
   display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.volumeControl {
+  display: flex;
   align-items: center;
   gap: 6px;
 }
@@ -312,7 +312,8 @@
 }
 
 .volumeSlider {
-  width: 96px;
+  flex: 1;
+  min-width: 96px;
   accent-color: var(--color-accent, #4f7cff);
 }
 
@@ -339,6 +340,44 @@
   line-height: 16px;
   text-align: center;
   padding: 0 4px;
+}
+
+.moreButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.moreButton:hover {
+  border-color: var(--color-border-strong);
+}
+
+.morePopover {
+  position: absolute;
+  right: var(--space-4);
+  bottom: 100%;
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-panel);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.2);
+  z-index: 50;
+  min-width: 280px;
+}
+
+.morePopoverRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .hiddenAudio {
@@ -684,21 +723,12 @@
     padding: 0 var(--space-3) calc(var(--space-1) + env(safe-area-inset-bottom));
   }
 
-  .controlsRow {
-    grid-template-columns: auto auto auto auto auto minmax(120px, 1fr) auto auto auto auto;
-    gap: 6px;
-  }
-
   .seekArea {
     min-width: 120px;
   }
 
   .transportButton {
     padding: 6px 8px;
-  }
-
-  .speedControl {
-    justify-self: end;
   }
 
   .queuePanel {

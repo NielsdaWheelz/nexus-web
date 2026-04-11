@@ -196,6 +196,7 @@ describe("GlobalPlayer queue behavior", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Load A" }));
+    await user.click(screen.getByRole("button", { name: "More controls" }));
 
     expect(screen.getByRole("button", { name: "Previous in queue" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next in queue" })).toBeDisabled();
@@ -210,6 +211,7 @@ describe("GlobalPlayer queue behavior", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Load A" }));
+    await user.click(screen.getByRole("button", { name: "More controls" }));
     await user.click(screen.getByRole("button", { name: "Next in queue" }));
 
     await waitFor(() => {
@@ -236,6 +238,7 @@ describe("GlobalPlayer queue behavior", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Load A" }));
+    await user.click(screen.getByRole("button", { name: "More controls" }));
     await user.click(screen.getByRole("button", { name: "Next in queue" }));
 
     await waitFor(() => {
@@ -262,6 +265,7 @@ describe("GlobalPlayer queue behavior", () => {
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
 
+    await user.click(screen.getByRole("button", { name: "More controls" }));
     await user.click(screen.getByRole("button", { name: "Previous in queue" }));
     expect(Math.floor(audio.currentTime)).toBe(0);
     expect(screen.getByText("Episode B")).toBeInTheDocument();
@@ -284,6 +288,7 @@ describe("GlobalPlayer queue behavior", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Load A" }));
+    await user.click(screen.getByRole("button", { name: "More controls" }));
 
     expect(screen.getByRole("button", { name: "Open playback queue (2 upcoming)" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Open playback queue (2 upcoming)" }));

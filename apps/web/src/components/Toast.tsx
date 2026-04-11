@@ -7,6 +7,7 @@ import {
   useCallback,
   useRef,
 } from "react";
+import { X } from "lucide-react";
 import styles from "./Toast.module.css";
 
 // =============================================================================
@@ -98,7 +99,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 onClick={() => dismiss(t.id)}
                 aria-label="Dismiss"
               >
-                ✕
+                <X size={16} />
               </button>
             </div>
           ))}

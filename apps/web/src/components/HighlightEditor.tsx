@@ -14,6 +14,7 @@
 
 import { useState, useCallback } from "react";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights";
+import { COLOR_LABELS } from "@/lib/highlights/colors";
 import { useToast } from "./Toast";
 import AnnotationEditor from "./AnnotationEditor";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
@@ -62,18 +63,6 @@ export interface HighlightEditorProps {
   /** Render a denser inline-friendly layout. */
   compact?: boolean;
 }
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-const COLOR_LABELS: Record<HighlightColor, string> = {
-  yellow: "Yellow",
-  green: "Green",
-  blue: "Blue",
-  pink: "Pink",
-  purple: "Purple",
-};
 
 // =============================================================================
 // Component

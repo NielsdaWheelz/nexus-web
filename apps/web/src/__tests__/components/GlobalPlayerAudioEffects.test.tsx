@@ -289,6 +289,7 @@ describe("GlobalPlayer audio effects cutover", () => {
 
       expect(audioContextMock.instances).toHaveLength(0);
 
+      await user.click(screen.getByRole("button", { name: "More controls" }));
       await user.click(screen.getByRole("button", { name: "Audio effects" }));
       await user.click(screen.getByRole("checkbox", { name: "Silence trimming" }));
       await user.selectOptions(screen.getByRole("combobox", { name: "Volume boost" }), "medium");
@@ -331,6 +332,7 @@ describe("GlobalPlayer audio effects cutover", () => {
 
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Load A" }));
+    await user.click(screen.getByRole("button", { name: "More controls" }));
     await user.click(screen.getByRole("button", { name: "Audio effects" }));
 
     expect(screen.getByRole("checkbox", { name: "Silence trimming" })).toBeChecked();
@@ -350,6 +352,7 @@ describe("GlobalPlayer audio effects cutover", () => {
 
       const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
       vi.spyOn(audio, "play").mockResolvedValue(undefined);
+      await user.click(screen.getByRole("button", { name: "More controls" }));
       await user.selectOptions(screen.getByRole("combobox", { name: "Playback speed" }), "1.5");
       await user.click(screen.getByRole("button", { name: "Audio effects" }));
       await user.click(screen.getByRole("checkbox", { name: "Silence trimming" }));
@@ -418,6 +421,7 @@ describe("GlobalPlayer audio effects cutover", () => {
         expect(audioContextMock.instances).toHaveLength(1);
       });
 
+      await user.click(screen.getByRole("button", { name: "More controls" }));
       await user.click(screen.getByRole("button", { name: "Audio effects" }));
       await user.click(screen.getByRole("checkbox", { name: "Mono audio" }));
 
@@ -455,6 +459,7 @@ describe("GlobalPlayer audio effects cutover", () => {
       });
       expect(playSpy).toHaveBeenCalled();
 
+      await user.click(screen.getByRole("button", { name: "More controls" }));
       await user.click(screen.getByRole("button", { name: "Audio effects" }));
       expect(screen.getByText("Audio effects unavailable for this source.")).toBeVisible();
       expect(screen.getByRole("checkbox", { name: "Silence trimming" })).toBeDisabled();

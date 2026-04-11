@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { normalizePaneHref } from "@/lib/panes/openInAppPane";
+import { normalizePaneTitle } from "@/lib/workspace/paneDescriptor";
 
 export interface PaneScopedRouter {
   push: (href: string) => void;
@@ -125,14 +126,6 @@ export function PaneRuntimeProvider({
   );
 
   return <PaneRuntimeContext.Provider value={value}>{children}</PaneRuntimeContext.Provider>;
-}
-
-function normalizePaneTitle(value: string | null | undefined): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const normalized = value.trim().replace(/\s+/g, " ");
-  return normalized.length > 0 ? normalized : null;
 }
 
 export function PaneRootNavigationProvider({ children }: { children: React.ReactNode }) {

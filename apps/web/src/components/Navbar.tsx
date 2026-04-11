@@ -28,6 +28,7 @@ import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { OPEN_UPLOAD_EVENT } from "@/components/CommandPalette";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { getFocusableElements } from "@/lib/ui/getFocusableElements";
+import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import FileUpload from "@/components/FileUpload";
 import AddFromUrl from "@/components/AddFromUrl";
 import styles from "./Navbar.module.css";
@@ -188,6 +189,9 @@ export default function Navbar({ onToggle }: NavbarProps) {
   }, [isMobile, uploadOpen]);
 
   // Mobile: focus trap for upload sheet
+  useFocusTrap(uploadPopoverRef, isMobile && uploadOpen);
+
+  // Mobile: initial focus, Escape handling, and focus restoration for upload sheet
   useEffect(() => {
     if (!isMobile || !uploadOpen || !uploadPopoverRef.current) return;
     const sheet = uploadPopoverRef.current;
@@ -201,20 +205,6 @@ export default function Navbar({ onToggle }: NavbarProps) {
       if (e.key === "Escape") {
         e.preventDefault();
         handleCloseUpload();
-        return;
-      }
-      if (e.key !== "Tab") return;
-      const els = getFocusableElements(sheet);
-      if (els.length === 0) return;
-      const first = els[0];
-      const last = els[els.length - 1];
-      const active = document.activeElement;
-      if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      } else if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
       }
     };
 

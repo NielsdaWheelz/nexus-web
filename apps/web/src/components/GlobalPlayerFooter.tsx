@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
@@ -64,6 +64,9 @@ export default function GlobalPlayerFooter() {
   const [queueOpen, setQueueOpen] = useState(false);
   const [effectsOpen, setEffectsOpen] = useState(false);
   const [mobileExpanded, setMobileExpanded] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const morePopoverRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const {
     track,
     setTrack,
@@ -113,6 +116,33 @@ export default function GlobalPlayerFooter() {
       document.body.style.overflow = prev;
     };
   }, [mobileExpanded, isMobile]);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (
+        morePopoverRef.current &&
+        !morePopoverRef.current.contains(event.target as Node) &&
+        moreButtonRef.current &&
+        !moreButtonRef.current.contains(event.target as Node)
+      ) {
+        setMoreOpen(false);
+        setEffectsOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMoreOpen(false);
+        setEffectsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [moreOpen]);
 
   if (!track) {
     return null;
@@ -297,7 +327,6 @@ export default function GlobalPlayerFooter() {
                     step={1}
                     value={seekSliderValue}
                     onInput={(event) => onSeek(Number(event.currentTarget.value))}
-                    onChange={(event) => onSeek(Number(event.currentTarget.value))}
                     className={styles.seekSlider}
                     aria-label="Seek playback position"
                     disabled={durationSafe <= 0}
@@ -510,15 +539,6 @@ export default function GlobalPlayerFooter() {
             <button
               type="button"
               className={styles.transportButton}
-              onClick={() => void playPreviousInQueue()}
-              aria-label="Previous in queue"
-            >
-              ⏮
-            </button>
-
-            <button
-              type="button"
-              className={styles.transportButton}
               onClick={() => skipBySeconds(-SKIP_BACK_SECONDS)}
               aria-label="Back 15 seconds"
             >
@@ -543,16 +563,6 @@ export default function GlobalPlayerFooter() {
               30s ►►
             </button>
 
-            <button
-              type="button"
-              className={styles.transportButton}
-              onClick={() => void playNextInQueue()}
-              aria-label="Next in queue"
-              disabled={!hasNextInQueue}
-            >
-              ⏭
-            </button>
-
             <div className={styles.seekArea}>
               <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
               {chapterMarkers.length > 0 && (
@@ -574,7 +584,6 @@ export default function GlobalPlayerFooter() {
                 step={1}
                 value={seekSliderValue}
                 onInput={(event) => onSeek(Number(event.currentTarget.value))}
-                onChange={(event) => onSeek(Number(event.currentTarget.value))}
                 className={styles.seekSlider}
                 aria-label="Seek playback position"
                 disabled={durationSafe <= 0}
@@ -614,116 +623,156 @@ export default function GlobalPlayerFooter() {
               </span>
             )}
 
-            <label className={styles.speedControl}>
-              <span className={styles.controlLabel}>Speed</span>
-              <select
-                aria-label="Playback speed"
-                value={speedValue.toString()}
-                onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
-                className={styles.select}
-              >
-                {SPEED_OPTIONS.map((option) => (
-                  <option key={option} value={option.toString()}>
-                    {option.toFixed(option % 1 === 0 ? 0 : 2)}x
-                  </option>
-                ))}
-              </select>
-            </label>
-
             <button
+              ref={moreButtonRef}
               type="button"
-              className={styles.effectsButton}
-              aria-label="Audio effects"
-              aria-expanded={effectsOpen}
-              data-active={hasActiveAudioEffects ? "true" : "false"}
-              onClick={() => setEffectsOpen((previous) => !previous)}
+              className={styles.moreButton}
+              onClick={() => setMoreOpen((prev) => !prev)}
+              aria-label="More controls"
+              aria-expanded={moreOpen}
             >
-              Effects
-              <span className={styles.effectsIndicator} aria-hidden="true" />
-            </button>
-
-            <label className={styles.volumeControl}>
-              <span className={styles.controlLabel}>Volume</span>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={volume}
-                onInput={(event) => setVolume(Number(event.currentTarget.value))}
-                onChange={(event) => setVolume(Number(event.currentTarget.value))}
-                className={styles.volumeSlider}
-                aria-label="Volume"
-              />
-            </label>
-
-            <button
-              type="button"
-              className={styles.queueButton}
-              onClick={() => setQueueOpen(true)}
-              aria-label={`Open playback queue (${upcomingCount} upcoming)`}
-            >
-              Queue
-              <span className={styles.queueBadge}>{upcomingCount}</span>
+              More ▾
             </button>
           </div>
 
-          {effectsOpen && (
-            <section className={styles.effectsPanel} aria-label="Audio effects panel">
-              {!audioEffectsAvailable && (
-                <p className={styles.effectsUnavailable}>Audio effects unavailable for this source.</p>
-              )}
-
-              <label className={styles.effectsToggle}>
-                <input
-                  type="checkbox"
-                  aria-label="Silence trimming"
-                  checked={audioEffects.silenceTrim}
-                  disabled={!audioEffectsAvailable}
-                  onChange={(event) => {
-                    setAudioEffects({ silenceTrim: event.currentTarget.checked });
-                  }}
-                />
-                <span>Silence trimming</span>
-              </label>
-
-              <label className={styles.effectsSelectControl}>
-                <span className={styles.controlLabel}>Volume boost</span>
-                <select
-                  aria-label="Volume boost"
-                  value={audioEffects.volumeBoost}
-                  disabled={!audioEffectsAvailable}
-                  onChange={(event) => {
-                    setAudioEffects({
-                      volumeBoost: event.currentTarget.value as AudioEffectsVolumeBoost,
-                    });
-                  }}
-                  className={styles.select}
+          {moreOpen && (
+            <div className={styles.morePopover} ref={morePopoverRef}>
+              <div className={styles.morePopoverRow}>
+                <button
+                  type="button"
+                  className={styles.transportButton}
+                  onClick={() => void playPreviousInQueue()}
+                  aria-label="Previous in queue"
                 >
-                  {VOLUME_BOOST_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  ⏮
+                </button>
 
-              <label className={styles.effectsToggle}>
+                <label className={styles.speedControl}>
+                  <span className={styles.controlLabel}>Speed</span>
+                  <select
+                    aria-label="Playback speed"
+                    value={speedValue.toString()}
+                    onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
+                    className={styles.select}
+                  >
+                    {SPEED_OPTIONS.map((option) => (
+                      <option key={option} value={option.toString()}>
+                        {option.toFixed(option % 1 === 0 ? 0 : 2)}x
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <button
+                  type="button"
+                  className={styles.transportButton}
+                  onClick={() => void playNextInQueue()}
+                  aria-label="Next in queue"
+                  disabled={!hasNextInQueue}
+                >
+                  ⏭
+                </button>
+              </div>
+
+              <label className={styles.volumeControl}>
+                <span className={styles.controlLabel}>Volume</span>
                 <input
-                  type="checkbox"
-                  aria-label="Mono audio"
-                  checked={audioEffects.mono}
-                  disabled={!audioEffectsAvailable}
-                  onChange={(event) => {
-                    setAudioEffects({ mono: event.currentTarget.checked });
-                  }}
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={volume}
+                  onInput={(event) => setVolume(Number(event.currentTarget.value))}
+                  className={styles.volumeSlider}
+                  aria-label="Volume"
                 />
-                <span>Mono audio</span>
               </label>
 
-              <p className={styles.effectsMeta}>Time saved: {Number.isFinite(silenceTimeSavedSeconds) && silenceTimeSavedSeconds > 0 ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
-              {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
-            </section>
+              <div className={styles.morePopoverRow}>
+                <button
+                  type="button"
+                  className={styles.effectsButton}
+                  aria-label="Audio effects"
+                  aria-expanded={effectsOpen}
+                  data-active={hasActiveAudioEffects ? "true" : "false"}
+                  onClick={() => setEffectsOpen((previous) => !previous)}
+                >
+                  Effects
+                  <span className={styles.effectsIndicator} aria-hidden="true" />
+                </button>
+
+                <button
+                  type="button"
+                  className={styles.queueButton}
+                  onClick={() => {
+                    setQueueOpen(true);
+                    setMoreOpen(false);
+                  }}
+                  aria-label={`Open playback queue (${upcomingCount} upcoming)`}
+                >
+                  Queue
+                  <span className={styles.queueBadge}>{upcomingCount}</span>
+                </button>
+              </div>
+
+              {effectsOpen && (
+                <section className={styles.effectsPanel} aria-label="Audio effects panel">
+                  {!audioEffectsAvailable && (
+                    <p className={styles.effectsUnavailable}>Audio effects unavailable for this source.</p>
+                  )}
+
+                  <label className={styles.effectsToggle}>
+                    <input
+                      type="checkbox"
+                      aria-label="Silence trimming"
+                      checked={audioEffects.silenceTrim}
+                      disabled={!audioEffectsAvailable}
+                      onChange={(event) => {
+                        setAudioEffects({ silenceTrim: event.currentTarget.checked });
+                      }}
+                    />
+                    <span>Silence trimming</span>
+                  </label>
+
+                  <label className={styles.effectsSelectControl}>
+                    <span className={styles.controlLabel}>Volume boost</span>
+                    <select
+                      aria-label="Volume boost"
+                      value={audioEffects.volumeBoost}
+                      disabled={!audioEffectsAvailable}
+                      onChange={(event) => {
+                        setAudioEffects({
+                          volumeBoost: event.currentTarget.value as AudioEffectsVolumeBoost,
+                        });
+                      }}
+                      className={styles.select}
+                    >
+                      {VOLUME_BOOST_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className={styles.effectsToggle}>
+                    <input
+                      type="checkbox"
+                      aria-label="Mono audio"
+                      checked={audioEffects.mono}
+                      disabled={!audioEffectsAvailable}
+                      onChange={(event) => {
+                        setAudioEffects({ mono: event.currentTarget.checked });
+                      }}
+                    />
+                    <span>Mono audio</span>
+                  </label>
+
+                  <p className={styles.effectsMeta}>Time saved: {Number.isFinite(silenceTimeSavedSeconds) && silenceTimeSavedSeconds > 0 ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
+                  {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
+                </section>
+              )}
+            </div>
           )}
         </>
       )}

@@ -165,6 +165,7 @@ describe("GlobalPlayerFooter", () => {
     await user.click(screen.getByRole("button", { name: /forward 30 seconds/i }));
     expect(Math.floor(audio.currentTime)).toBe(120);
 
+    await user.click(screen.getByRole("button", { name: "More controls" }));
     const speedControl = screen.getByRole("combobox", { name: /playback speed/i });
     await user.selectOptions(speedControl, "1.5");
     expect(audio.playbackRate).toBeCloseTo(1.5, 3);

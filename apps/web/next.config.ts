@@ -9,11 +9,6 @@ const nextConfig: NextConfig = {
     },
   },
 
-  // Environment variables validation
-  env: {
-    // These are exposed to the client - only add truly public vars here
-  },
-
   // Headers for security (CSP with nonces handled in middleware)
   async headers() {
     return [

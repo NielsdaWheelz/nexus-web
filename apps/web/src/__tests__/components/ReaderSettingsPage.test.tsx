@@ -34,7 +34,7 @@ describe("ReaderSettingsPage", () => {
   it("renders reader settings page with theme and font controls", async () => {
     render(<ReaderSettingsPage />);
 
-    expect(screen.getByRole("heading", { name: /reader/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /appearance/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/^theme$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^font$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/font size \(\d+px\)/i)).toBeInTheDocument();

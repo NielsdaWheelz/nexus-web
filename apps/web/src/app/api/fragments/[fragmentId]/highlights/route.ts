@@ -8,21 +8,18 @@
  * @see docs/v1/s2/s2_prs/s2_pr09.md §7.5
  */
 
-import { NextRequest } from "next/server";
 import { proxyToFastAPI } from "@/lib/api/proxy";
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ fragmentId: string }> }
-) {
+export const runtime = "nodejs";
+
+type Params = Promise<{ fragmentId: string }>;
+
+export async function GET(req: Request, { params }: { params: Params }) {
   const { fragmentId } = await params;
-  return proxyToFastAPI(request, `/fragments/${fragmentId}/highlights`);
+  return proxyToFastAPI(req, `/fragments/${fragmentId}/highlights`);
 }
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ fragmentId: string }> }
-) {
+export async function POST(req: Request, { params }: { params: Params }) {
   const { fragmentId } = await params;
-  return proxyToFastAPI(request, `/fragments/${fragmentId}/highlights`);
+  return proxyToFastAPI(req, `/fragments/${fragmentId}/highlights`);
 }

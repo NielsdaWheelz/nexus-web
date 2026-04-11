@@ -101,7 +101,7 @@ describe("WorkspaceShell", () => {
     expect(paneShell).toHaveAttribute("style", expect.stringContaining("max-width: 100%"));
   });
 
-  it("moves focus into newly activated pane chrome on mobile switcher selection", async () => {
+  it("moves focus into newly activated pane chrome on mobile pane switch", async () => {
     mockIsMobileViewport.value = true;
     const user = userEvent.setup();
 
@@ -112,25 +112,24 @@ describe("WorkspaceShell", () => {
         isActive: pane.paneId === activePaneId,
       }));
       return (
-        <WorkspaceShell
-          panes={mobilePanes}
-          activePaneId={activePaneId}
-          onActivatePane={setActivePaneId}
-          onClosePane={() => {}}
-          onResizePane={() => {}}
-        />
+        <>
+          <button onClick={() => setActivePaneId("pane-b")}>Switch to Search</button>
+          <WorkspaceShell
+            panes={mobilePanes}
+            activePaneId={activePaneId}
+            onActivatePane={setActivePaneId}
+            onClosePane={() => {}}
+            onResizePane={() => {}}
+          />
+        </>
       );
     }
 
     render(<MobileShellHarness />);
 
-    const switcherTrigger = screen.getByRole("button", { name: "Open panes" });
-    await user.click(switcherTrigger);
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.click(screen.getByRole("button", { name: "Switch to Search" }));
 
     expect(screen.getByText("Search body")).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Workspace panes" })).not.toBeInTheDocument();
     expect(screen.getByTestId("pane-shell-chrome")).toHaveFocus();
-    expect(switcherTrigger).not.toHaveFocus();
   });
 });

@@ -10,17 +10,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights";
+import { COLOR_LABELS } from "@/lib/highlights/colors";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./HighlightEditPopover.module.css";
-
-const COLOR_LABELS: Record<HighlightColor, string> = {
-  yellow: "Yellow",
-  green: "Green",
-  blue: "Blue",
-  pink: "Pink",
-  purple: "Purple",
-};
 
 export interface HighlightEditPopoverProps {
   highlight: { id: string; color: HighlightColor; annotationBody?: string | null };
@@ -176,7 +170,7 @@ export default function HighlightEditPopover({
         onClick={onDismiss}
         aria-label="Close"
       >
-        ×
+        <X size={16} />
       </button>
 
       <div className={styles.colorPicker}>

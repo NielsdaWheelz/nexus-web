@@ -119,7 +119,7 @@ describe("HtmlRenderer", () => {
     expect(getComputedStyle(renderer).overflowWrap).toBe("break-word");
   });
 
-  it("applies overflow-x hidden to clip wide server-rendered content", () => {
+  it("lets wide content overflow so DocumentViewport can scroll it", () => {
     const html = '<div style="width: 9999px; height: 10px;">wide</div>';
     render(
       <div style={{ width: "320px" }}>
@@ -131,7 +131,7 @@ describe("HtmlRenderer", () => {
     const renderer = text.closest("div[class]") as HTMLElement;
     expect(renderer).not.toBeNull();
 
-    expect(getComputedStyle(renderer).overflowX).toBe("hidden");
+    expect(getComputedStyle(renderer).overflowX).not.toBe("hidden");
   });
 
   it("falls back to global tokens when reader tokens are absent", () => {
