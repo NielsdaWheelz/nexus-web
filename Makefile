@@ -11,7 +11,7 @@ export
 
 # Supabase local database port (fixed by supabase/config.toml)
 SUPABASE_DB_PORT ?= 54322
-SUPABASE_URL ?= http://localhost:54321
+SUPABASE_URL ?= http://127.0.0.1:54321
 AUTH_ALLOWED_REDIRECT_ORIGINS ?= http://localhost:3000,http://localhost:3001
 
 # Database URLs using Supabase local Postgres
