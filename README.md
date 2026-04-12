@@ -114,7 +114,7 @@ nexus/
 ### Prerequisites
 
 - Python 3.12+
-- Node.js 20+
+- Node.js 22+
 - Docker (running)
 - [uv](https://github.com/astral-sh/uv) package manager
 - Supabase CLI (`brew install supabase/tap/supabase`)
@@ -188,34 +188,34 @@ project starts:
   - `e2e/.seed/reader-resume-media.json` (cross-media reader resume specs)
 
 `globalSetup` loads root `.env` and `.dev-ports` automatically so direct runs like
-`cd e2e && npm test -- tests/pdf-reader.spec.ts --project=chromium` behave like `make test-e2e`.
+`cd e2e && bun test -- tests/pdf-reader.spec.ts --project=chromium` behave like `make test-e2e`.
 
 Useful targeted E2E runs:
 
 ```bash
 cd e2e
-npm test -- tests/pdf-reader.spec.ts --project=chromium
-npm test -- tests/pane-chrome.spec.ts --project=chromium
-npm test -- tests/non-pdf-linked-items.spec.ts --project=chromium
-npm test -- tests/epub.spec.ts --project=chromium
-npm test -- tests/youtube-transcript.spec.ts --project=chromium
-npm test -- tests/reader-resume.spec.ts --project=chromium
-npm test -- tests/pdf-reader.spec.ts --grep "highlights on non-active page are visible immediately in document scope and click navigates to projected target" --project=chromium
+bun test -- tests/pdf-reader.spec.ts --project=chromium
+bun test -- tests/pane-chrome.spec.ts --project=chromium
+bun test -- tests/non-pdf-linked-items.spec.ts --project=chromium
+bun test -- tests/epub.spec.ts --project=chromium
+bun test -- tests/youtube-transcript.spec.ts --project=chromium
+bun test -- tests/reader-resume.spec.ts --project=chromium
+bun test -- tests/pdf-reader.spec.ts --grep "highlights on non-active page are visible immediately in document scope and click navigates to projected target" --project=chromium
 ```
 
 For fast local reruns when seed state is known-good:
 
 ```bash
 cd e2e
-SKIP_SEED=1 npm test -- tests/pdf-reader.spec.ts --project=chromium
-SKIP_SEED=1 npm test -- tests/epub.spec.ts --project=chromium
+SKIP_SEED=1 bun test -- tests/pdf-reader.spec.ts --project=chromium
+SKIP_SEED=1 bun test -- tests/epub.spec.ts --project=chromium
 ```
 
 Runtime CSP verification profile (production Next runtime + CSP enabled):
 
 ```bash
 cd e2e
-npm run test:csp -- tests/youtube-transcript.csp.spec.ts --project=chromium-csp
+bun run test:csp -- tests/youtube-transcript.csp.spec.ts --project=chromium-csp
 ```
 
 ### Run Full Stack
@@ -590,10 +590,10 @@ For YouTube media, `GET /media/{id}` includes a typed playback contract with pro
 make worker
 ```
 
-The worker requires Node.js 20+. On first run:
+The worker requires Node.js 22+. On first run:
 ```bash
 cd node/ingest
-npm ci
+bun install --frozen-lockfile
 ```
 
 ### Ingest Reliability Guardrails
@@ -789,7 +789,7 @@ For first-time E2E setup:
 
 ```bash
 cd e2e
-npm install
+bun install
 ```
 
 Backend tests are hermetic: they start their own Postgres on free ports,

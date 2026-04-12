@@ -71,6 +71,7 @@ yarn-error.log*
 # Build outputs
 *.js.map
 *.d.ts
+!apps/web/src/css.d.ts
 
 # Local development
 /apps/web/.env.local
@@ -96,4 +97,4 @@ e2e/test-results/
 e2e/playwright-report/
 
 # Lock files that shouldn't be edited manually
-# (uv.lock and package-lock.json SHOULD be committed)
+# (uv.lock and bun.lock SHOULD be committed)

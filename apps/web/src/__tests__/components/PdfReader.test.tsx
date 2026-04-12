@@ -34,7 +34,7 @@ interface FakePdfDocumentLike {
   numPages: number;
   __pages: FakePdfPageSpec[];
   __renderErrorsByPage: Record<number, unknown>;
-  destroy: ReturnType<typeof vi.fn>;
+  destroy: ReturnType<typeof vi.fn<() => Promise<void>>>;
 }
 
 function createFakePage(options?: {

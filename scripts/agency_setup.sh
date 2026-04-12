@@ -44,7 +44,7 @@ echo "Checking required tools..."
 check_tool uv
 check_tool docker
 check_tool node
-check_tool npm
+check_tool bun
 check_tool supabase
 echo "Required tools found"
 echo ""
@@ -118,14 +118,14 @@ echo ""
 # Install frontend dependencies
 echo "Installing frontend dependencies..."
 cd "$PROJECT_ROOT/apps/web"
-npm install
+bun install
 echo "Frontend dependencies installed"
 echo ""
 
 # Install node ingest worker dependencies (fetch + jsdom + Readability)
 echo "Installing node ingest worker dependencies..."
 cd "$PROJECT_ROOT/node/ingest"
-npm ci
+bun install --frozen-lockfile
 echo "Node ingest worker dependencies installed"
 echo ""
 

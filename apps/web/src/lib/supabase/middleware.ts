@@ -49,7 +49,10 @@ export async function updateSession(request: NextRequest) {
         getAll() {
           return request.cookies.getAll();
         },
-        setAll(cookiesToSet: CookieToSet[]) {
+        setAll(
+          cookiesToSet: CookieToSet[],
+          headers?: Record<string, string>
+        ) {
           cookiesToSet.forEach(({ name, value }: CookieToSet) =>
             request.cookies.set(name, value)
           );
@@ -59,6 +62,13 @@ export async function updateSession(request: NextRequest) {
           cookiesToSet.forEach(({ name, value, options }: CookieToSet) =>
             supabaseResponse.cookies.set(name, value, options)
           );
+          // Forward cache-busting headers so CDNs/proxies don't cache
+          // responses that carry auth cookies.
+          if (headers) {
+            Object.entries(headers).forEach(([key, value]) =>
+              supabaseResponse.headers.set(key, value)
+            );
+          }
         },
       },
     }

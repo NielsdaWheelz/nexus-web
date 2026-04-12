@@ -89,10 +89,10 @@ supabase status
 
 ```bash
 # Install dependencies
-npm install
+bun install
 
 # Start the development server
-npm run dev
+bun run dev
 
 # Or from repo root
 make web
@@ -209,22 +209,22 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
 
 ```bash
 # Run tests
-npm test
+bun test
 
 # Run tests in watch mode
-npm run test:watch
+bun run test:watch
 
 # Run tests for CI
-npm run test:ci
+bun run test:ci
 
 # Run TypeScript type checking
-npm run typecheck
+bun run typecheck
 ```
 
 Pane-specific browser-mode checks:
 
 ```bash
-npm test -- src/__tests__/components/Navbar.test.tsx src/__tests__/components/Pane.test.tsx src/__tests__/components/SplitSurface.test.tsx src/__tests__/components/WorkspaceRoot.test.tsx src/__tests__/components/HighlightEditPopover.test.tsx src/__tests__/components/PdfReader.test.tsx
+bun test -- src/__tests__/components/Navbar.test.tsx src/__tests__/components/Pane.test.tsx src/__tests__/components/SplitSurface.test.tsx src/__tests__/components/WorkspaceRoot.test.tsx src/__tests__/components/HighlightEditPopover.test.tsx src/__tests__/components/PdfReader.test.tsx
 ```
 
 ## Highlight Libraries
@@ -491,12 +491,12 @@ Anchors are invisible zero-width spans used for positioning the linked-items pan
 ## Linting
 
 ```bash
-npm run lint
+bun run lint
 ```
 
 ## Building
 
 ```bash
-npm run build
-npm start
+bun run build
+bun start
 ```

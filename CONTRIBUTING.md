@@ -4,7 +4,7 @@
 
 1. Install prerequisites:
    - Python 3.12+
-   - Node.js 20+
+   - Node.js 22+
    - Docker
    - [uv](https://github.com/astral-sh/uv)
 

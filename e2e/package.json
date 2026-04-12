@@ -6,12 +6,12 @@
     "test": "playwright test",
     "test:csp": "playwright test --config=playwright.csp.config.ts",
     "test:ui": "playwright test --ui",
-    "seed": "npx tsx seed-e2e-user.ts"
+    "seed": "bunx tsx seed-e2e-user.ts"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.0",
-    "@types/node": "^25.3.2",
+    "@playwright/test": "^1.59.1",
+    "@types/node": "^25.6.0",
     "tsx": "^4.7.0",
-    "typescript": "^5.7.0"
+    "typescript": "^6.0.2"
   }
 }

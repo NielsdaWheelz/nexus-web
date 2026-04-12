@@ -115,14 +115,14 @@ ensure-services:
 ensure-node-ingest:
 	@if [ ! -d "node/ingest/node_modules" ]; then \
 		echo "Installing Node.js ingest worker dependencies..."; \
-		cd node/ingest && npm ci; \
+		cd node/ingest && bun install --frozen-lockfile; \
 	fi
 
 # Ensure E2E dependencies are installed
 ensure-e2e-deps:
 	@if [ ! -d "e2e/node_modules" ]; then \
 		echo "Installing E2E dependencies..."; \
-		cd e2e && npm install; \
+		cd e2e && bun install; \
 	fi
 
 test: test-back-and-migrations test-front
@@ -155,7 +155,7 @@ test-back-real-no-services:
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m slow -o addopts=""
 
 test-front:
-	cd apps/web && npm test -- --passWithNoTests
+	cd apps/web && bun run test -- --passWithNoTests
 
 test-migrations:
 	./scripts/with_test_services.sh $(MAKE) test-migrations-no-services
@@ -178,7 +178,7 @@ lint-back:
 	cd python && uv run ruff check .
 
 lint-front:
-	cd apps/web && npm run lint
+	cd apps/web && bun run lint
 
 # === Format ===
 
@@ -188,7 +188,7 @@ fmt-back:
 	cd python && uv run ruff format .
 
 fmt-front:
-	cd apps/web && npm run lint -- --fix
+	cd apps/web && bun run lint -- --fix
 
 # === Run ===
 
@@ -203,7 +203,7 @@ web:
 		NEXT_PUBLIC_SUPABASE_URL=$${NEXT_PUBLIC_SUPABASE_URL:-$(SUPABASE_URL)} \
 		NEXT_PUBLIC_SUPABASE_ANON_KEY=$${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$(SUPABASE_ANON_KEY)} \
 		AUTH_ALLOWED_REDIRECT_ORIGINS=$${AUTH_ALLOWED_REDIRECT_ORIGINS:-$(AUTH_ALLOWED_REDIRECT_ORIGINS)} \
-		npm run dev
+		bun run dev
 
 worker:
 	cd python && PYTHONPATH=$$PWD:$$PWD/.. \
@@ -236,27 +236,27 @@ test-back-unit:
 	cd python && NEXUS_ENV=test uv run pytest -v -m "unit and not integration"
 
 test-front-unit:
-	cd apps/web && npx vitest run --project unit
+	cd apps/web && bunx vitest run --project unit
 
 test-front-browser:
-	@npx playwright install chromium >/dev/null 2>&1 || npx playwright install chromium
-	cd apps/web && npx vitest run --project browser
+	@bunx playwright install chromium >/dev/null 2>&1 || bunx playwright install chromium
+	cd apps/web && bunx vitest run --project browser
 
 test-e2e: ensure-e2e-deps
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
 	cd e2e && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright install --with-deps chromium && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright test
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright test
 
 test-e2e-ui: ensure-e2e-deps
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e ui with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
 	cd e2e && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright install --with-deps chromium && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT npx playwright test --ui
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright test --ui
 
 # === Verify ===
 
@@ -283,10 +283,10 @@ fmt-check:
 
 typecheck:
 	@echo "=== Running Frontend Type Check ==="
-	cd apps/web && npm run typecheck
+	cd apps/web && bun run typecheck
 	@echo "✓ Frontend type check OK"
 
 build:
 	@echo "=== Running Frontend Build ==="
-	cd apps/web && npm run build
+	cd apps/web && bun run build
 	@echo "✓ Frontend build OK"

@@ -92,7 +92,7 @@ make e2e
 
 ```bash
 cd e2e
-npm test -- tests/reader-resume.spec.ts --project=chromium
+bun test -- tests/reader-resume.spec.ts --project=chromium
 ```
 
 ## open risks / next hardening candidates
@@ -204,7 +204,7 @@ targeted resume suite:
 
 ```bash
 cd e2e
-npm test -- tests/reader-resume.spec.ts --project=chromium
+bun test -- tests/reader-resume.spec.ts --project=chromium
 ```
 
 ## open risks / next hardening candidates
@@ -320,7 +320,7 @@ targeted resume suite:
 
 ```bash
 cd e2e
-npm test -- tests/reader-resume.spec.ts --project=chromium
+bun test -- tests/reader-resume.spec.ts --project=chromium
 ```
 
 ## open risks / next hardening candidates

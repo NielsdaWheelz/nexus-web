@@ -11,7 +11,7 @@
 **Dependencies**: None
 
 **Acceptance**:
-- `npm run dev` starts the server
+- `bun run dev` starts the server
 - `GET /api/v1/health` returns `{ "status": "ok" }`
 - PostgreSQL tables created via migrations
 

@@ -64,13 +64,13 @@ function run(label, command, cwd, envOverrides) {
 }
 
 export default function globalSetup() {
-  // Mirror Makefile behavior so direct `npm test` runs work too.
+  // Mirror Makefile behavior so direct `bun test` runs work too.
   loadEnvFile(path.join(ROOT, ".env"));
   loadEnvFile(path.join(ROOT, ".dev-ports"));
   applyResolvedSupabaseEnv(ROOT, process.env);
 
   // Always ensure auth bootstrap user exists, even on SKIP_SEED reruns.
-  run("Seed E2E user", "npx tsx seed-e2e-user.ts", E2E_DIR);
+  run("Seed E2E user", "bunx tsx seed-e2e-user.ts", E2E_DIR);
 
   // Skip seeding if all artifacts exist and SKIP_SEED is set.
   // Useful for rapid local re-runs where the DB hasn't changed.

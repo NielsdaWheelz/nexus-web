@@ -14,6 +14,7 @@ export async function createRouteHandlerClient() {
   cookieStore.getAll();
 
   const cookiesToApply: CookieToSet[] = [];
+  const headersToApply: Record<string, string> = {};
   let cookieWriteCount = 0;
 
   const supabase = createServerClient(
@@ -24,12 +25,18 @@ export async function createRouteHandlerClient() {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(nextCookiesToSet: CookieToSet[]) {
+        setAll(
+          nextCookiesToSet: CookieToSet[],
+          headers?: Record<string, string>
+        ) {
           nextCookiesToSet.forEach(({ name, value, options }) => {
             cookieStore.set(name, value, options);
             cookiesToApply.push({ name, value, options });
             cookieWriteCount += 1;
           });
+          if (headers) {
+            Object.assign(headersToApply, headers);
+          }
         },
       },
     }
@@ -59,6 +66,11 @@ export async function createRouteHandlerClient() {
 
       cookiesToApply.forEach(({ name, value, options }) => {
         response.cookies.set(name, value, options);
+      });
+      // Forward cache-busting headers so CDNs/proxies don't cache
+      // responses that carry auth cookies.
+      Object.entries(headersToApply).forEach(([key, value]) => {
+        response.headers.set(key, value);
       });
 
       return response;

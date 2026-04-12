@@ -53,7 +53,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `cd ../apps/web && npm run build && npm run start -- --port ${WEB_PORT}`,
+      command: `cd ../apps/web && bun run build && bun run start -- --port ${WEB_PORT}`,
       url: `http://localhost:${WEB_PORT}`,
       reuseExistingServer: false,
       timeout: 240_000,
