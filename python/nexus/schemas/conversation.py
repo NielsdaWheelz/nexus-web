@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # Valid sharing modes - must match DB constraint
 SHARING_MODES = Literal["private", "library", "public"]
@@ -59,6 +59,7 @@ class MessageOut(BaseModel):
     seq: int
     role: str  # "user" | "assistant" | "system"
     content: str
+    contexts: list[dict] = Field(default_factory=list)
     status: str  # "pending" | "complete" | "error"
     error_code: str | None = None
     created_at: datetime

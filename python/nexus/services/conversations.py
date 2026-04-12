@@ -215,6 +215,7 @@ def message_to_out(message: Message) -> MessageOut:
         seq=message.seq,
         role=message.role,
         content=message.content,
+        contexts=message.context_items or [],
         status=message.status,
         error_code=message.error_code,
         created_at=message.created_at,
@@ -507,7 +508,7 @@ def list_messages(
         # Tuple comparison for ASC ordering: (seq, id) > (cursor.seq, cursor.id)
         result = db.execute(
             text("""
-                SELECT m.id, m.seq, m.role, m.content, m.status, m.error_code,
+                SELECT m.id, m.seq, m.role, m.content, m.context_items, m.status, m.error_code,
                        m.created_at, m.updated_at
                 FROM messages m
                 WHERE m.conversation_id = :conversation_id
@@ -525,7 +526,7 @@ def list_messages(
     else:
         result = db.execute(
             text("""
-                SELECT m.id, m.seq, m.role, m.content, m.status, m.error_code,
+                SELECT m.id, m.seq, m.role, m.content, m.context_items, m.status, m.error_code,
                        m.created_at, m.updated_at
                 FROM messages m
                 WHERE m.conversation_id = :conversation_id
@@ -551,10 +552,11 @@ def list_messages(
             seq=row[1],
             role=row[2],
             content=row[3],
-            status=row[4],
-            error_code=row[5],
-            created_at=row[6],
-            updated_at=row[7],
+            contexts=row[4] or [],
+            status=row[5],
+            error_code=row[6],
+            created_at=row[7],
+            updated_at=row[8],
         )
         for row in rows
     ]

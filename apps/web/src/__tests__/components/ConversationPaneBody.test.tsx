@@ -160,6 +160,67 @@ describe("ConversationPaneBody", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders persisted user context snapshots above user message content", async () => {
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === "/api/conversations/conv-1") {
+        return {
+          data: {
+            id: "conv-1",
+            title: "Chat title",
+            sharing: "private",
+            message_count: 2,
+            created_at: "2026-03-30T00:00:00.000Z",
+            updated_at: "2026-03-30T00:00:00.000Z",
+          },
+        };
+      }
+      if (path.startsWith("/api/conversations/conv-1/messages")) {
+        return {
+          data: [
+            {
+              id: "msg-user",
+              seq: 1,
+              role: "user",
+              content: "What does this mean?",
+              contexts: [
+                {
+                  type: "highlight",
+                  id: "hl-1",
+                  preview: "Persisted quote",
+                  color: "yellow",
+                  media_title: "Source",
+                  media_kind: "pdf",
+                },
+              ],
+              status: "complete",
+              error_code: null,
+              created_at: "2026-03-30T00:00:00.000Z",
+              updated_at: "2026-03-30T00:00:00.000Z",
+            },
+            {
+              id: "msg-asst",
+              seq: 2,
+              role: "assistant",
+              content: "It means this is context-aware.",
+              status: "complete",
+              error_code: null,
+              created_at: "2026-03-30T00:00:00.000Z",
+              updated_at: "2026-03-30T00:00:00.000Z",
+            },
+          ],
+          page: { next_cursor: null },
+        };
+      }
+      throw new Error(`unexpected api path: ${path}`);
+    });
+
+    renderConversationPane("/conversations/conv-1");
+
+    expect(await screen.findByText("Persisted quote")).toBeInTheDocument();
+    expect(screen.getByText("Source - pdf")).toBeInTheDocument();
+    expect(screen.getByText("What does this mean?")).toBeInTheDocument();
+  });
+
   it("appends optimistic user+assistant messages when composer sends", async () => {
     const user = userEvent.setup();
     apiFetchMock.mockImplementation(async (path: string) => {
@@ -273,5 +334,48 @@ describe("ConversationPaneBody", () => {
     expect(screen.getByTestId("conversation-linked-items")).toBeInTheDocument();
     expect(screen.getByText("highlighted quote")).toBeInTheDocument();
     expect(screen.queryByRole("separator", { name: "Resize pane" })).not.toBeInTheDocument();
+  });
+
+  it("shows persisted linked context from prior user messages in context pane", async () => {
+    const user = userEvent.setup();
+
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/conversations/conv-1/messages")) {
+        return {
+          data: [
+            {
+              id: "msg-user",
+              seq: 1,
+              role: "user",
+              content: "What does this mean?",
+              contexts: [
+                {
+                  type: "highlight",
+                  id: "hl-1",
+                  preview: "Persisted quote",
+                  color: "yellow",
+                  media_id: "media-1",
+                  media_title: "Source",
+                  media_kind: "pdf",
+                },
+              ],
+              status: "complete",
+              error_code: null,
+              created_at: "2026-03-30T00:00:00.000Z",
+              updated_at: "2026-03-30T00:00:00.000Z",
+            },
+          ],
+          page: { next_cursor: null },
+        };
+      }
+      throw new Error(`unexpected api path: ${path}`);
+    });
+
+    renderConversationPane("/conversations/conv-1?pane=context");
+
+    expect(await screen.findByText("Persisted quote")).toBeInTheDocument();
+    expect(screen.getByText(/Message #1/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    expect(screen.getByRole("menuitem", { name: "Open source" })).toBeInTheDocument();
   });
 });

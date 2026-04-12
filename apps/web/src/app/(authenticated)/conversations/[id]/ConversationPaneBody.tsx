@@ -38,10 +38,24 @@ export interface Message {
   seq: number;
   role: "user" | "assistant" | "system";
   content: string;
+  contexts?: MessageContextSnapshot[];
   status: "pending" | "complete" | "error";
   error_code: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface MessageContextSnapshot {
+  type: "highlight" | "annotation" | "media";
+  id: string;
+  color?: "yellow" | "green" | "blue" | "pink" | "purple";
+  preview?: string;
+  prefix?: string;
+  suffix?: string;
+  annotation_body?: string;
+  media_id?: string;
+  media_title?: string;
+  media_kind?: string;
 }
 
 interface MessagesResponse {
@@ -122,7 +136,8 @@ export default function ConversationPaneBody() {
   if (searchParams.get("pane") === "context") {
     return (
       <ConversationLinkedItemsPaneBody
-        contexts={attachedContexts}
+        conversationId={id}
+        attachedContexts={attachedContexts}
         onRemoveContext={handleRemoveContext}
       />
     );
@@ -369,6 +384,7 @@ function ChatView({
 // ============================================================================
 
 function MessageBubble({ message }: { message: Message }) {
+  const messageContexts = message.contexts ?? [];
   const roleClass =
     message.role === "user"
       ? styles.user
@@ -385,6 +401,36 @@ function MessageBubble({ message }: { message: Message }) {
 
   return (
     <div className={`${styles.messageBubble} ${roleClass} ${statusClass}`}>
+      {message.role === "user" && messageContexts.length > 0 && (
+        <div className={styles.messageContextBlock}>
+          {messageContexts.map((contextItem, index) => {
+            const surrounding = formatMessageSurroundingContext(contextItem);
+            const meta = formatMessageMeta(contextItem);
+            return (
+              <div
+                key={`${message.id}-${contextItem.type}-${contextItem.id}-${index}`}
+                className={styles.messageContextItem}
+              >
+                <div className={styles.messageContextTitleRow}>
+                  {contextItem.color ? (
+                    <span
+                      className={`${styles.linkedItemsColorSwatch} ${styles[`swatch-${contextItem.color}`]}`}
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <span className={styles.messageContextTitle}>
+                    {formatMessageContextTitle(contextItem)}
+                  </span>
+                </div>
+                {surrounding ? (
+                  <div className={styles.messageContextDescription}>{surrounding}</div>
+                ) : null}
+                {meta ? <div className={styles.messageContextMeta}>{meta}</div> : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
       {message.content || (message.status === "pending" ? "..." : "")}
       {message.status === "error" && message.error_code && (
         <div className={styles.retryBtn}>
@@ -420,20 +466,131 @@ function formatMeta(item: ContextItem): string | undefined {
   return parts.length > 0 ? parts.join(" - ") : undefined;
 }
 
+function formatMessageContextTitle(item: MessageContextSnapshot): string {
+  if (item.preview) return item.preview;
+  if (item.type === "highlight") return "Highlight";
+  if (item.type === "annotation") return "Annotation";
+  return "Media";
+}
+
+function formatMessageSurroundingContext(item: MessageContextSnapshot): string | undefined {
+  const parts: string[] = [];
+  if (item.prefix) parts.push(`...${truncate(item.prefix, 40)}`);
+  if (item.suffix) parts.push(`${truncate(item.suffix, 40)}...`);
+  return parts.length > 0 ? parts.join(" [selection] ") : undefined;
+}
+
+function formatMessageMeta(item: MessageContextSnapshot): string | undefined {
+  const parts: string[] = [];
+  if (item.media_title) parts.push(item.media_title);
+  if (item.media_kind) parts.push(item.media_kind);
+  return parts.length > 0 ? parts.join(" - ") : undefined;
+}
+
 function ConversationLinkedItemsPaneBody({
-  contexts,
+  conversationId,
+  attachedContexts,
   onRemoveContext,
 }: {
-  contexts: ContextItem[];
+  conversationId: string;
+  attachedContexts: ContextItem[];
   onRemoveContext: (index: number) => void;
 }) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [olderCursor, setOlderCursor] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const response = await apiFetch<MessagesResponse>(
+          `/api/conversations/${conversationId}/messages?limit=50`,
+        );
+        if (cancelled) return;
+        setMessages(response.data);
+        setOlderCursor(response.page.next_cursor);
+        setError(null);
+      } catch (err) {
+        if (cancelled) return;
+        if (isApiError(err)) {
+          setError(err.message);
+        } else {
+          setError("Failed to load linked context");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId]);
+
+  const loadOlder = useCallback(async () => {
+    if (!olderCursor) return;
+    try {
+      const params = new URLSearchParams({
+        limit: "50",
+        cursor: olderCursor,
+      });
+      const response = await apiFetch<MessagesResponse>(
+        `/api/conversations/${conversationId}/messages?${params}`,
+      );
+      setMessages((prev) => {
+        const existing = new Set(prev.map((m) => m.id));
+        const older = response.data.filter((m) => !existing.has(m.id));
+        return [...older, ...prev];
+      });
+      setOlderCursor(response.page.next_cursor);
+    } catch (err) {
+      if (isApiError(err)) {
+        setError(err.message);
+      } else {
+        setError("Failed to load older linked context");
+      }
+    }
+  }, [conversationId, olderCursor]);
+
+  const persistedContexts = useMemo(() => {
+    const rows: Array<{
+      context: MessageContextSnapshot;
+      messageId: string;
+      messageSeq: number;
+    }> = [];
+
+    for (const message of messages) {
+      if (message.role !== "user" || !message.contexts || message.contexts.length === 0) {
+        continue;
+      }
+      for (const context of message.contexts) {
+        rows.push({
+          context,
+          messageId: message.id,
+          messageSeq: message.seq,
+        });
+      }
+    }
+
+    return rows;
+  }, [messages]);
+
   return (
     <div className={styles.linkedItemsBody} data-testid="conversation-linked-items">
-      {contexts.length === 0 ? (
+      {loading ? <StateMessage variant="loading">Loading linked context...</StateMessage> : null}
+      {error ? <StateMessage variant="error">{error}</StateMessage> : null}
+      {attachedContexts.length === 0 && persistedContexts.length === 0 && !loading && !error ? (
         <StateMessage variant="empty">No linked context yet.</StateMessage>
-      ) : (
+      ) : null}
+
+      {attachedContexts.length > 0 ? (
         <div className={styles.linkedItemsList}>
-          {contexts.map((contextItem, index) => {
+          {attachedContexts.map((contextItem, index) => {
             const menuOptions: ActionMenuOption[] = [
               {
                 id: "remove",
@@ -479,7 +636,65 @@ function ConversationLinkedItemsPaneBody({
             );
           })}
         </div>
-      )}
+      ) : null}
+
+      {persistedContexts.length > 0 ? (
+        <div className={styles.linkedItemsList}>
+          {persistedContexts.map(({ context, messageId, messageSeq }, index) => {
+            const menuOptions: ActionMenuOption[] = [];
+            if (context.media_id) {
+              menuOptions.push({
+                id: "open-source",
+                label: "Open source",
+                href: `/media/${context.media_id}`,
+              });
+            }
+
+            const metaParts: string[] = [];
+            const itemMeta = formatMessageMeta(context);
+            if (itemMeta) metaParts.push(itemMeta);
+            metaParts.push(`Message #${messageSeq}`);
+
+            return (
+              <ContextRow
+                key={`${messageId}-${context.type}-${context.id}-${index}`}
+                leading={
+                  context.color ? (
+                    <span
+                      className={`${styles.linkedItemsColorSwatch} ${styles[`swatch-${context.color}`]}`}
+                      aria-hidden="true"
+                    />
+                  ) : undefined
+                }
+                title={formatMessageContextTitle(context)}
+                titleClassName={styles.linkedItemsTitle}
+                description={formatMessageSurroundingContext(context)}
+                descriptionClassName={styles.linkedItemsDescription}
+                meta={metaParts.join(" - ")}
+                metaClassName={styles.linkedItemsMeta}
+                actions={menuOptions.length > 0 ? <ActionMenu options={menuOptions} /> : undefined}
+                expandedContent={
+                  context.annotation_body ? (
+                    <div className={styles.linkedItemsAnnotation}>
+                      {context.annotation_body}
+                    </div>
+                  ) : undefined
+                }
+              />
+            );
+          })}
+        </div>
+      ) : null}
+
+      {olderCursor ? (
+        <button
+          className={styles.loadOlder}
+          aria-label="Load older linked context"
+          onClick={loadOlder}
+        >
+          Load older linked context
+        </button>
+      ) : null}
     </div>
   );
 }

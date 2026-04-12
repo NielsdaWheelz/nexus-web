@@ -40,8 +40,8 @@ from nexus.services.api_key_resolver import (
 from nexus.services.context_rendering import PROMPT_VERSION, render_context_blocks
 from nexus.services.llm import LLMRouter
 from nexus.services.llm.errors import LLMError, LLMErrorClass
-from nexus.services.llm.prompt import DEFAULT_SYSTEM_PROMPT
-from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMUsage, Turn
+from nexus.services.llm.prompt import DEFAULT_SYSTEM_PROMPT, render_prompt
+from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMUsage
 from nexus.services.quote_context_errors import (
     QuoteContextBlockingError,
     get_quote_context_error_message,
@@ -54,6 +54,7 @@ from nexus.services.send_message import (
     TRUNCATION_NOTICE,
     check_idempotency,
     compute_payload_hash,
+    load_prompt_history,
     phase1_prepare,
     validate_pre_phase,
 )
@@ -252,7 +253,13 @@ async def stream_send_message_async(
 
     # Compute payload hash for idempotency
     context_dicts = [{"type": c.get("type"), "id": str(c.get("id"))} for c in contexts]
-    payload_hash = compute_payload_hash(content, model_id, key_mode, context_dicts)
+    payload_hash = compute_payload_hash(
+        content,
+        model_id,
+        key_mode,
+        context_dicts,
+        conversation_id,
+    )
 
     # --- Idempotency replay ---
     replay = await run_in_threadpool(
@@ -522,16 +529,19 @@ async def stream_send_message_async(
 
         # --- Phase 2: Stream from provider (async, same event loop) ---
         context_text, _ = await run_in_threadpool(render_context_blocks, db, contexts)
-
-        messages: list[Turn] = [Turn(role="system", content=DEFAULT_SYSTEM_PROMPT)]
-        if context_text:
-            messages.append(
-                Turn(
-                    role="user",
-                    content=f"Here is the context for my question:\n\n{context_text}",
-                )
-            )
-        messages.append(Turn(role="user", content=content))
+        history = await run_in_threadpool(
+            load_prompt_history,
+            db,
+            prepare_result.conversation.id,
+            prepare_result.user_message.seq,
+        )
+        context_blocks = [context_text] if context_text else []
+        messages = render_prompt(
+            user_content=content,
+            history=history,
+            context_blocks=context_blocks,
+            system_prompt=DEFAULT_SYSTEM_PROMPT,
+        )
 
         llm_request = LLMRequest(
             model_name=model.model_name,

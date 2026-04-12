@@ -22,7 +22,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
-  sseClient,
   sseClientDirect,
   toWireContextItem,
   type SSEEvent,
@@ -48,6 +47,18 @@ interface Message {
   seq: number;
   role: "user" | "assistant" | "system";
   content: string;
+  contexts?: Array<{
+    type: "highlight" | "annotation" | "media";
+    id: string;
+    color?: "yellow" | "green" | "blue" | "pink" | "purple";
+    preview?: string;
+    prefix?: string;
+    suffix?: string;
+    annotation_body?: string;
+    media_id?: string;
+    media_title?: string;
+    media_kind?: string;
+  }>;
   status: "pending" | "complete" | "error";
   error_code: string | null;
   created_at: string;
@@ -173,7 +184,6 @@ export default function ChatComposer({
           );
           if (found) {
             onDone?.(assistantMessageId, "complete", null);
-            onMessageSent?.();
             return;
           }
         } catch {
@@ -183,7 +193,49 @@ export default function ChatComposer({
       // Timed out — show message
       setError("Message is still generating — please wait and try again.");
     },
-    [conversationId, onDone, onMessageSent]
+    [conversationId, onDone]
+  );
+
+  // --------------------------------------------------------------------------
+  // Non-streaming send (fallback)
+  // --------------------------------------------------------------------------
+
+  const sendNonStreaming = useCallback(
+    async (body: SendMessageRequest, idempotencyKey: string): Promise<boolean> => {
+      try {
+        const url = conversationId
+          ? `/api/conversations/${conversationId}/messages`
+          : `/api/conversations/messages`;
+
+        const response = await apiFetch<SendResponse>(url, {
+          method: "POST",
+          body: JSON.stringify(body),
+          headers: { "Idempotency-Key": idempotencyKey },
+        });
+
+        const { conversation, user_message, assistant_message } =
+          response.data;
+
+        onNonStreamMessages?.(user_message, assistant_message);
+
+        if (!conversationId) {
+          if (onConversationCreated) {
+            onConversationCreated(conversation.id);
+          } else {
+            router.replace(`/conversations/${conversation.id}`);
+          }
+        }
+        return true;
+      } catch (err) {
+        if (isApiError(err)) {
+          setError(err.message);
+        } else {
+          setError("Failed to send message");
+        }
+        return false;
+      }
+    },
+    [conversationId, onConversationCreated, onNonStreamMessages, router]
   );
 
   // --------------------------------------------------------------------------
@@ -191,7 +243,17 @@ export default function ChatComposer({
   // --------------------------------------------------------------------------
 
   const sendStreaming = useCallback(
-    async (body: SendMessageRequest, idempotencyKey: string) => {
+    async (body: SendMessageRequest, idempotencyKey: string): Promise<boolean> => {
+      let streamBaseUrl: string;
+      let streamToken: string;
+      try {
+        const tokenResponse = await fetchStreamToken();
+        streamBaseUrl = tokenResponse.stream_base_url;
+        streamToken = tokenResponse.token;
+      } catch {
+        return sendNonStreaming(body, idempotencyKey);
+      }
+
       const tempUserId = `temp-user-${crypto.randomUUID()}`;
       const tempAsstId = `temp-assistant-${crypto.randomUUID()}`;
       const now = new Date().toISOString();
@@ -202,6 +264,14 @@ export default function ChatComposer({
         seq: 0,
         role: "user",
         content: body.content,
+        contexts: body.contexts?.map((ctx) => ({
+          type: ctx.type,
+          id: ctx.id,
+          ...(ctx.color !== undefined && { color: ctx.color }),
+          ...(ctx.preview !== undefined && { preview: ctx.preview }),
+          ...(ctx.mediaId !== undefined && { media_id: ctx.mediaId }),
+          ...(ctx.mediaTitle !== undefined && { media_title: ctx.mediaTitle }),
+        })),
         status: "complete",
         error_code: null,
         created_at: now,
@@ -223,33 +293,14 @@ export default function ChatComposer({
       // Track current assistant ID (may change from temp to real)
       let currentAsstId = tempAsstId;
       let receivedMeta = false;
+      let sendAccepted = false;
 
-      // PR-08: Direct-to-fastapi streaming via stream token
-      // Fetch a short-lived stream token, then open SSE directly to fastapi
-      let streamBaseUrl: string | null = null;
-      let streamToken: string | null = null;
-
-      try {
-        const tokenResponse = await fetchStreamToken();
-        streamBaseUrl = tokenResponse.stream_base_url;
-        streamToken = tokenResponse.token;
-      } catch (tokenErr) {
-        // Token fetch failed — fall back to BFF streaming
-        console.warn(
-          "Stream token fetch failed, falling back to BFF:",
-          tokenErr
-        );
-      }
-
-      // Choose direct or BFF path based on token availability
-      const useDirect = streamBaseUrl && streamToken;
-
-      // Shared event handlers for both direct and BFF paths
       const eventHandlers = {
         onEvent: (event: SSEEvent) => {
           switch (event.type) {
             case "meta": {
               receivedMeta = true;
+              sendAccepted = true;
               const {
                 conversation_id,
                 user_message_id,
@@ -278,9 +329,7 @@ export default function ChatComposer({
               break;
             }
             case "done": {
-              // PR-08 §11.3: E_STREAM_IN_PROGRESS handling
               if (event.data.error_code === "E_STREAM_IN_PROGRESS") {
-                // Don't show error — poll for completion
                 pollForCompletion(currentAsstId);
               }
               onDone?.(
@@ -294,7 +343,7 @@ export default function ChatComposer({
         },
         onError: (err: Error) => {
           if (!receivedMeta) {
-            setError(`Stream error: ${err.message}. Trying non-streaming...`);
+            setError(`Stream error: ${err.message}`);
           } else {
             onDone?.(currentAsstId, "error", "E_STREAM_INTERRUPTED");
           }
@@ -302,40 +351,37 @@ export default function ChatComposer({
         onComplete: () => {},
       };
 
-      return new Promise<void>((resolve) => {
+      return new Promise<boolean>((resolve) => {
+        let settled = false;
+        const finish = (ok: boolean) => {
+          if (settled) return;
+          settled = true;
+          resolve(ok);
+        };
+
         const wrappedHandlers = {
           ...eventHandlers,
           onError: (err: Error) => {
             eventHandlers.onError(err);
-            resolve();
+            finish(sendAccepted);
           },
           onComplete: () => {
-            resolve();
+            finish(sendAccepted);
           },
           onEvent: (event: SSEEvent) => {
             eventHandlers.onEvent(event);
-            if (event.type === "done") resolve();
+            if (event.type === "done") finish(sendAccepted);
           },
         };
 
-        let abort: () => void;
-        if (useDirect) {
-          abort = sseClientDirect(
-            streamBaseUrl!,
-            streamToken!,
-            conversationId,
-            body,
-            wrappedHandlers,
-            { idempotencyKey }
-          );
-        } else {
-          const bffUrl = conversationId
-            ? `/api/conversations/${conversationId}/messages/stream`
-            : `/api/conversations/messages/stream`;
-          abort = sseClient(bffUrl, body, wrappedHandlers, { idempotencyKey });
-        }
-
-        abortRef.current = abort;
+        abortRef.current = sseClientDirect(
+          streamBaseUrl,
+          streamToken,
+          conversationId,
+          body,
+          wrappedHandlers,
+          { idempotencyKey }
+        );
       });
     },
     [
@@ -347,47 +393,8 @@ export default function ChatComposer({
       onOptimisticMessages,
       pollForCompletion,
       router,
+      sendNonStreaming,
     ]
-  );
-
-  // --------------------------------------------------------------------------
-  // Non-streaming send (fallback)
-  // --------------------------------------------------------------------------
-
-  const sendNonStreaming = useCallback(
-    async (body: SendMessageRequest, idempotencyKey: string) => {
-      try {
-        const url = conversationId
-          ? `/api/conversations/${conversationId}/messages`
-          : `/api/conversations/messages`;
-
-        const response = await apiFetch<SendResponse>(url, {
-          method: "POST",
-          body: JSON.stringify(body),
-          headers: { "Idempotency-Key": idempotencyKey },
-        });
-
-        const { conversation, user_message, assistant_message } =
-          response.data;
-
-        onNonStreamMessages?.(user_message, assistant_message);
-
-        if (!conversationId) {
-          if (onConversationCreated) {
-            onConversationCreated(conversation.id);
-          } else {
-            router.replace(`/conversations/${conversation.id}`);
-          }
-        }
-      } catch (err) {
-        if (isApiError(err)) {
-          setError(err.message);
-        } else {
-          setError("Failed to send message");
-        }
-      }
-    },
-    [conversationId, onConversationCreated, onNonStreamMessages, router]
   );
 
   // --------------------------------------------------------------------------
@@ -412,15 +419,21 @@ export default function ChatComposer({
           : undefined,
     };
 
-    if (streamingEnabled) {
-      await sendStreaming(body, idempotencyKey);
-    } else {
-      await sendNonStreaming(body, idempotencyKey);
+    let sent = false;
+    try {
+      if (streamingEnabled) {
+        sent = await sendStreaming(body, idempotencyKey);
+      } else {
+        sent = await sendNonStreaming(body, idempotencyKey);
+      }
+    } finally {
+      setSending(false);
     }
 
-    setContent("");
-    setSending(false);
-    onMessageSent?.();
+    if (sent) {
+      setContent("");
+      onMessageSent?.();
+    }
   }, [
     content,
     sending,

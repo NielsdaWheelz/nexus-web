@@ -409,8 +409,11 @@ class TestListMessages:
         # Oldest first (ASC order)
         assert data[0]["seq"] == 1
         assert data[0]["content"] == "First"
+        assert data[0]["contexts"] == []
         assert data[1]["seq"] == 2
+        assert data[1]["contexts"] == []
         assert data[2]["seq"] == 3
+        assert data[2]["contexts"] == []
 
     def test_list_messages_pagination(self, auth_client, direct_db: DirectSessionManager):
         """Message pagination works correctly."""

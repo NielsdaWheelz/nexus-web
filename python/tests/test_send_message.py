@@ -631,7 +631,14 @@ class TestSendMessageContext:
         )
 
         assert response.status_code == 200
-        conversation_id = response.json()["data"]["conversation"]["id"]
+        payload = response.json()["data"]
+        conversation_id = payload["conversation"]["id"]
+        user_contexts = payload["user_message"]["contexts"]
+        assert len(user_contexts) == 1
+        assert user_contexts[0]["type"] == "highlight"
+        assert user_contexts[0]["id"] == str(highlight_id)
+        assert user_contexts[0]["preview"] == "highlighted portion"
+        assert user_contexts[0]["color"] == "yellow"
 
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)

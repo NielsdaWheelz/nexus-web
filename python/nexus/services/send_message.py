@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -84,7 +85,7 @@ from nexus.services.conversations import (
 from nexus.services.llm import LLMRouter
 from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.prompt import DEFAULT_SYSTEM_PROMPT, render_prompt
-from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMResponse
+from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMResponse, Turn
 from nexus.services.media import can_read_media
 from nexus.services.quote_context_errors import (
     QuoteContextBlockingError,
@@ -112,6 +113,7 @@ TRUNCATION_NOTICE = "\n\n[Response truncated due to length]"
 MAX_RENDERED_CONTEXT_CHARS = 25000
 LLM_TIMEOUT_SECONDS = 45.0
 IDEMPOTENCY_EXPIRY_HOURS = 24
+MAX_HISTORY_TURNS = 40
 
 
 @dataclass
@@ -128,12 +130,43 @@ def compute_payload_hash(
     model_id: UUID,
     key_mode: str,
     contexts: list[dict],
+    conversation_id: UUID | None,
 ) -> str:
     """Compute a hash of the request payload for idempotency."""
     # Sort contexts by type and id for deterministic hashing
     sorted_contexts = sorted(contexts, key=lambda c: (c.get("type", ""), str(c.get("id", ""))))
-    payload_str = f"{content}|{model_id}|{key_mode}|{sorted_contexts}"
+    payload_str = f"{conversation_id}|{content}|{model_id}|{key_mode}|{sorted_contexts}"
     return hashlib.sha256(payload_str.encode()).hexdigest()
+
+
+def load_prompt_history(
+    db: Session,
+    conversation_id: UUID,
+    before_seq: int,
+) -> list[Turn]:
+    """Load bounded user/assistant history for prompt construction."""
+    rows = db.execute(
+        text(
+            """
+            SELECT role, content
+            FROM messages
+            WHERE conversation_id = :conversation_id
+              AND status = 'complete'
+              AND role IN ('user', 'assistant')
+              AND seq < :before_seq
+            ORDER BY seq DESC
+            LIMIT :limit
+            """
+        ),
+        {
+            "conversation_id": conversation_id,
+            "before_seq": before_seq,
+            "limit": MAX_HISTORY_TURNS,
+        },
+    ).fetchall()
+
+    rows.reverse()
+    return [Turn(role=row[0], content=row[1]) for row in rows]
 
 
 def check_idempotency(
@@ -423,9 +456,62 @@ def phase1_prepare(
     db.flush()
 
     # Insert contexts
+    context_items: list[dict] = []
     for i, ctx in enumerate(contexts):
         ctx_type = ctx.get("type")
         ctx_id = ctx.get("id")
+
+        item = {"type": ctx_type, "id": str(ctx_id)}
+
+        if ctx_type == "media":
+            media = db.get(Media, ctx_id)
+            if media is not None:
+                item["media_id"] = str(media.id)
+                item["media_title"] = media.title
+                item["media_kind"] = media.kind
+                item["preview"] = media.title
+
+        elif ctx_type == "highlight":
+            from nexus.services.highlight_kernel import ResolverState, resolve_highlight
+
+            highlight = db.get(Highlight, ctx_id)
+            if highlight is not None:
+                item["color"] = highlight.color
+                item["preview"] = highlight.exact
+                item["prefix"] = highlight.prefix
+                item["suffix"] = highlight.suffix
+                if highlight.annotation is not None:
+                    item["annotation_body"] = highlight.annotation.body
+
+                resolution = resolve_highlight(highlight)
+                if resolution.state != ResolverState.mismatch and resolution.anchor_media_id is not None:
+                    media = db.get(Media, resolution.anchor_media_id)
+                    if media is not None:
+                        item["media_id"] = str(media.id)
+                        item["media_title"] = media.title
+                        item["media_kind"] = media.kind
+
+        elif ctx_type == "annotation":
+            annotation = db.get(Annotation, ctx_id)
+            if annotation is not None and annotation.highlight is not None:
+                highlight = annotation.highlight
+                item["annotation_body"] = annotation.body
+                item["preview"] = highlight.exact
+                item["prefix"] = highlight.prefix
+                item["suffix"] = highlight.suffix
+                item["color"] = highlight.color
+
+                from nexus.services.highlight_kernel import ResolverState, resolve_highlight
+
+                resolution = resolve_highlight(highlight)
+                if resolution.state != ResolverState.mismatch and resolution.anchor_media_id is not None:
+                    media = db.get(Media, resolution.anchor_media_id)
+                    if media is not None:
+                        item["media_id"] = str(media.id)
+                        item["media_title"] = media.title
+                        item["media_kind"] = media.kind
+
+        context_items.append(item)
 
         insert_context(
             db=db,
@@ -436,6 +522,9 @@ def phase1_prepare(
             highlight_id=ctx_id if ctx_type == "highlight" else None,
             annotation_id=ctx_id if ctx_type == "annotation" else None,
         )
+
+    user_message.context_items = context_items
+    db.flush()
 
     # Assign seq for assistant message
     assistant_seq = assign_next_message_seq(db, conversation.id)
@@ -620,7 +709,13 @@ async def send_message(
 
     try:
         context_dicts = [{"type": c.get("type"), "id": str(c.get("id"))} for c in contexts]
-        payload_hash = compute_payload_hash(content, model_id, key_mode, context_dicts)
+        payload_hash = compute_payload_hash(
+            content,
+            model_id,
+            key_mode,
+            context_dicts,
+            conversation_id,
+        )
 
         # Idempotency replay
         replay = await run_in_threadpool(
@@ -714,10 +809,16 @@ async def send_message(
                     limit=MAX_RENDERED_CONTEXT_CHARS,
                 )
 
+            history = await run_in_threadpool(
+                load_prompt_history,
+                db,
+                prepare_result.conversation.id,
+                prepare_result.user_message.seq,
+            )
             context_blocks = [context_text] if context_text else []
             messages = render_prompt(
                 user_content=content,
-                history=[],
+                history=history,
                 context_blocks=context_blocks,
                 system_prompt=DEFAULT_SYSTEM_PROMPT,
             )

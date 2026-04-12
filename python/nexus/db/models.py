@@ -2095,6 +2095,11 @@ class Message(Base):
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    context_items: Mapped[list[dict]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="complete")
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_id: Mapped[UUID | None] = mapped_column(
