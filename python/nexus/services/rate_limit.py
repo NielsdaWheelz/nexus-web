@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
-from typing import Generator
 from uuid import UUID
 
 from sqlalchemy import text
@@ -445,9 +445,7 @@ class RateLimiter:
                 .mappings()
                 .first()
             )
-            usage_date = (
-                reservation["usage_date"] if reservation is not None else self._today_utc()
-            )
+            usage_date = reservation["usage_date"] if reservation is not None else self._today_utc()
             self._load_budget_totals_for_update(
                 db=db,
                 user_id=user_id,

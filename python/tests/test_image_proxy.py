@@ -785,6 +785,7 @@ class TestFetchImageIntegration:
 # =============================================================================
 
 
+@pytest.mark.integration
 class TestImageProxyEndpoint:
     """Integration tests for the /media/image endpoint.
 
@@ -909,6 +910,7 @@ class TestImageProxyEndpoint:
 # =============================================================================
 
 
+@pytest.mark.integration
 class TestImageProxyE2E:
     """E2E integration tests for image proxy per PR-11 spec section 7.
 

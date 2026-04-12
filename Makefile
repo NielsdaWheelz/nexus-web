@@ -233,7 +233,7 @@ seed:
 # === Layer Targets ===
 
 test-back-unit:
-	cd python && NEXUS_ENV=test uv run pytest -v -m unit
+	cd python && NEXUS_ENV=test uv run pytest -v -m "unit and not integration"
 
 test-front-unit:
 	cd apps/web && npx vitest run --project unit
