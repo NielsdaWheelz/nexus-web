@@ -129,6 +129,12 @@ npm ci
 echo "Node ingest worker dependencies installed"
 echo ""
 
+# Generate encryption key for BYOK API keys
+echo "Generating key encryption key..."
+NEXUS_KEY_ENCRYPTION_KEY=$(python3 -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())")
+echo "Key encryption key generated"
+echo ""
+
 # Database URLs using Supabase local Postgres
 DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:${SUPABASE_DB_PORT}/postgres"
 DATABASE_URL_TEST="postgresql+psycopg://postgres:postgres@localhost:${SUPABASE_DB_PORT}/nexus_test"
@@ -190,6 +196,9 @@ SUPABASE_ISSUER=${SUPABASE_ISSUER}
 SUPABASE_JWKS_URL=${SUPABASE_JWKS_URL}
 SUPABASE_AUDIENCES=${SUPABASE_AUDIENCES}
 AUTH_ALLOWED_REDIRECT_ORIGINS=${AUTH_ALLOWED_REDIRECT_ORIGINS}
+
+# Key encryption for BYOK API keys (XChaCha20-Poly1305)
+NEXUS_KEY_ENCRYPTION_KEY=${NEXUS_KEY_ENCRYPTION_KEY}
 EOF
 echo "Created .env file"
 echo ""
