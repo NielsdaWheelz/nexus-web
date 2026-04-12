@@ -311,6 +311,10 @@ const result = segmentHighlights(textLen, highlights);
 
 Builds a mapping from DOM text nodes to codepoint offsets in canonical text. **Must match backend canonicalization exactly** (`python/nexus/services/canonicalize.py`).
 
+The backend canonical text is generated from a browser-equivalent HTML5
+fragment parse of `html_sanitized`. The frontend should match that single
+canonicalization path exactly. There is no fallback normalization mode.
+
 ```typescript
 const result = buildCanonicalCursor(rootElement);
 // result.nodes: CanonicalNode[] - text nodes with start/end offsets

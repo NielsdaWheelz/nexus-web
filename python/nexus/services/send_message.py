@@ -484,7 +484,10 @@ def phase1_prepare(
                     item["annotation_body"] = highlight.annotation.body
 
                 resolution = resolve_highlight(highlight)
-                if resolution.state != ResolverState.mismatch and resolution.anchor_media_id is not None:
+                if (
+                    resolution.state != ResolverState.mismatch
+                    and resolution.anchor_media_id is not None
+                ):
                     media = db.get(Media, resolution.anchor_media_id)
                     if media is not None:
                         item["media_id"] = str(media.id)
@@ -504,7 +507,10 @@ def phase1_prepare(
                 from nexus.services.highlight_kernel import ResolverState, resolve_highlight
 
                 resolution = resolve_highlight(highlight)
-                if resolution.state != ResolverState.mismatch and resolution.anchor_media_id is not None:
+                if (
+                    resolution.state != ResolverState.mismatch
+                    and resolution.anchor_media_id is not None
+                ):
                     media = db.get(Media, resolution.anchor_media_id)
                     if media is not None:
                         item["media_id"] = str(media.id)
@@ -745,8 +751,14 @@ async def send_message(
         # Phase 0: Pre-validation
         model = await run_in_threadpool(
             validate_pre_phase,
-            db, viewer_id, conversation_id, content, model_id,
-            key_mode, contexts, use_platform_key,
+            db,
+            viewer_id,
+            conversation_id,
+            content,
+            model_id,
+            key_mode,
+            contexts,
+            use_platform_key,
         )
 
         rate_limiter.acquire_inflight_slot(viewer_id)
@@ -756,8 +768,14 @@ async def send_message(
             phase1_start = time.monotonic()
             prepare_result = await run_in_threadpool(
                 phase1_prepare,
-                db, viewer_id, conversation_id, content, model_id,
-                contexts, idempotency_key, payload_hash,
+                db,
+                viewer_id,
+                conversation_id,
+                content,
+                model_id,
+                contexts,
+                idempotency_key,
+                payload_hash,
             )
             phase1_ms = int((time.monotonic() - phase1_start) * 1000)
 
@@ -783,8 +801,13 @@ async def send_message(
                 phase3_start = time.monotonic()
                 await run_in_threadpool(
                     finalize_pre_llm_quote_failure,
-                    db, prepare_result.assistant_message, model,
-                    resolved_key, key_mode, quote_err.error_code, phase2_ms,
+                    db,
+                    prepare_result.assistant_message,
+                    model,
+                    resolved_key,
+                    key_mode,
+                    quote_err.error_code,
+                    phase2_ms,
                 )
                 phase3_ms = int((time.monotonic() - phase3_start) * 1000)
                 total_ms = int((time.monotonic() - total_start) * 1000)
@@ -850,8 +873,15 @@ async def send_message(
             phase3_start = time.monotonic()
             await run_in_threadpool(
                 phase3_finalize,
-                db, viewer_id, prepare_result.assistant_message, model,
-                response, llm_error, phase2_ms, resolved_key, key_mode,
+                db,
+                viewer_id,
+                prepare_result.assistant_message,
+                model,
+                response,
+                llm_error,
+                phase2_ms,
+                resolved_key,
+                key_mode,
             )
             phase3_ms = int((time.monotonic() - phase3_start) * 1000)
 

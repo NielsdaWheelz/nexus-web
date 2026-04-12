@@ -2191,4 +2191,3 @@ export default function useMediaViewState(id: string) {
     isMobileViewport,
   };
 }
-

@@ -104,9 +104,9 @@ function isHidden(element: Element): boolean {
  */
 function normalizeWhitespace(text: string): string {
   if (!text) return "";
-  // Replace all Unicode whitespace (including \u00a0 nbsp) with space
-  // Then collapse consecutive spaces
-  return text.replace(/[\s\u00a0]+/g, " ");
+  // \u0085 (NEL) is in Python's \s but not JavaScript's — must be explicit
+  // to match backend canonicalize.py exactly.
+  return text.replace(/[\s\u00a0\u0085]+/g, " ");
 }
 
 /**
@@ -119,10 +119,10 @@ export function codepointLength(str: string): number {
 
 /**
  * Test whether a codepoint is whitespace (including non-breaking space).
- * Must match the regex used in normalizeWhitespace: /[\s\u00a0]+/g
+ * Must match the regex used in normalizeWhitespace: /[\s\u00a0\u0085]+/g
  */
 function isWsCp(cp: string): boolean {
-  return /[\s\u00a0]/.test(cp);
+  return /[\s\u00a0\u0085]/.test(cp);
 }
 
 /**
@@ -227,14 +227,6 @@ type Part = {
 
 /**
  * Walk a DOM tree and collect parts following backend algorithm exactly.
- *
- * The backend algorithm (from canonicalize.py):
- * 1. Add newline before block elements if parts exist and last part isn't newline
- * 2. Process element text content
- * 3. Recursively process children
- * 4. Add newline after block elements if parts exist and last part isn't newline
- * 5. Handle <br> as newline
- * 6. Skip hidden and script/style elements entirely
  */
 function collectParts(root: Element): Part[] {
   const parts: Part[] = [];
@@ -461,11 +453,21 @@ export function validateCanonicalText(
   fragmentId: string
 ): boolean {
   if (result.emitted !== expectedCanonicalText) {
+    const emittedCps = [...result.emitted];
+    const expectedCps = [...expectedCanonicalText];
+    let firstDiffIdx = -1;
+    for (let i = 0; i < Math.max(emittedCps.length, expectedCps.length); i++) {
+      if (emittedCps[i] !== expectedCps[i]) { firstDiffIdx = i; break; }
+    }
     console.warn("canonical_text_mismatch", {
       fragmentId,
       emittedLength: result.length,
       expectedLength: codepointLength(expectedCanonicalText),
-      // Don't log the actual text to avoid console spam
+      firstDiffIdx,
+      emittedAround: emittedCps.slice(Math.max(0, firstDiffIdx - 20), firstDiffIdx + 20).join(""),
+      expectedAround: expectedCps.slice(Math.max(0, firstDiffIdx - 20), firstDiffIdx + 20).join(""),
+      emittedCharCodes: emittedCps.slice(firstDiffIdx, firstDiffIdx + 5).map(c => c.codePointAt(0)?.toString(16)),
+      expectedCharCodes: expectedCps.slice(firstDiffIdx, firstDiffIdx + 5).map(c => c.codePointAt(0)?.toString(16)),
     });
     return false;
   }

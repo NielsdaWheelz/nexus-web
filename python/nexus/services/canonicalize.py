@@ -1,6 +1,9 @@
 """Canonical text generation from sanitized HTML.
 
-Produces fragment.canonical_text from fragment.html_sanitized per constitution §7:
+Produces fragment.canonical_text from fragment.html_sanitized per constitution §7.
+
+Canonicalization runs on a browser-equivalent HTML5 fragment parse so the
+persisted canonical_text matches the frontend DOM walk exactly.
 
 Canonicalization Rules:
 1. Walk text nodes in document order
@@ -22,8 +25,10 @@ After ready_for_reading, canonical_text is immutable.
 
 import re
 import unicodedata
+from xml.dom import Node
+from xml.dom.minidom import Element
 
-from lxml.html import HtmlElement, document_fromstring
+import html5lib
 
 # Block-level elements that introduce line breaks
 BLOCK_ELEMENTS = frozenset(
@@ -85,15 +90,28 @@ def generate_canonical_text(html_sanitized: str) -> str:
         return ""
 
     try:
-        doc = document_fromstring(html_sanitized)
+        fragment = html5lib.parseFragment(
+            f"<div>{html_sanitized}</div>",
+            treebuilder="dom",
+            namespaceHTMLElements=False,
+        )
     except Exception as e:
         raise ValueError(f"Failed to parse HTML: {e}") from e
+
+    root = None
+    for child in fragment.childNodes:
+        if child.nodeType == Node.ELEMENT_NODE:
+            root = child
+            break
+
+    if root is None:
+        return ""
 
     # Collect text parts
     parts: list[str] = []
 
-    # Walk the document tree
-    _walk_element(doc.body, parts)
+    # Walk the detached fragment root
+    _walk_element(root, parts)
 
     # Join and normalize
     text = "".join(parts)
@@ -114,56 +132,39 @@ def generate_canonical_text(html_sanitized: str) -> str:
     return text
 
 
-def _walk_element(element: HtmlElement, parts: list[str]) -> None:
-    """Recursively walk element tree and extract text.
+def _walk_element(element: Element, parts: list[str]) -> None:
+    """Recursively walk a DOM element tree and extract text."""
+    tag = element.tagName.lower()
 
-    Args:
-        element: Current element to process.
-        parts: List to append text parts to.
-    """
-    tag = element.tag.lower() if isinstance(element.tag, str) else ""
-
-    # Skip hidden elements
     if _is_hidden(element):
         return
 
-    # Skip script/style entirely
     if tag in SKIP_ELEMENTS:
         return
 
-    # Check if this is a block element
     is_block = tag in BLOCK_ELEMENTS
 
-    # Handle <br> specially - inserts newline
     if tag == "br":
         parts.append("\n")
-        # Process tail text
-        if element.tail:
-            parts.append(_normalize_text(element.tail))
         return
 
-    # Add newline before block elements (if we have content already)
-    if is_block and parts and parts[-1] not in ("\n", ""):
-        parts.append("\n")
-
-    # Process text content
-    if element.text:
-        parts.append(_normalize_text(element.text))
-
-    # Process children
-    for child in element:
-        if isinstance(child, HtmlElement):
-            _walk_element(child, parts)
-        # Tail text of child is handled in the child's processing
-
-    # Add newline after block elements
-    if is_block:
-        if parts and parts[-1] not in ("\n", ""):
+    if is_block and parts:
+        last_char = parts[-1][-1:]
+        if last_char not in ("\n", ""):
             parts.append("\n")
 
-    # Process tail text (text after this element's closing tag)
-    if element.tail:
-        parts.append(_normalize_text(element.tail))
+    for child in element.childNodes:
+        if child.nodeType == Node.TEXT_NODE:
+            normalized = _normalize_text(child.data or "")
+            if normalized:
+                parts.append(normalized)
+        elif child.nodeType == Node.ELEMENT_NODE:
+            _walk_element(child, parts)
+
+    if is_block and parts:
+        last_char = parts[-1][-1:]
+        if last_char not in ("\n", ""):
+            parts.append("\n")
 
 
 def _normalize_text(text: str) -> str:
@@ -181,14 +182,12 @@ def _normalize_text(text: str) -> str:
     return normalized
 
 
-def _is_hidden(element: HtmlElement) -> bool:
+def _is_hidden(element: Element) -> bool:
     """Check if element is hidden (hidden attr or aria-hidden="true")."""
-    # Check hidden attribute
-    if element.get("hidden") is not None:
+    if element.hasAttribute("hidden"):
         return True
 
-    # Check aria-hidden
-    aria_hidden = element.get("aria-hidden", "").lower()
+    aria_hidden = element.getAttribute("aria-hidden").lower()
     if aria_hidden == "true":
         return True
 

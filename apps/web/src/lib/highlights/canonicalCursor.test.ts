@@ -294,6 +294,15 @@ describe("buildCanonicalCursor", () => {
       verifyNodeOffsets(result);
     });
 
+    it("collapses NEL (\\u0085) as whitespace to match Python \\s", () => {
+      const result = buildCanonicalCursor(
+        html("<p>Hello\u0085World</p>")
+      );
+
+      expect(result.emitted).toBe("Hello World");
+      verifyNodeOffsets(result);
+    });
+
     it("trims leading whitespace from lines", () => {
       const result = buildCanonicalCursor(
         html("<p>   Hello</p>")
@@ -319,8 +328,18 @@ describe("buildCanonicalCursor", () => {
 
       // Whitespace between blocks creates a blank line after normalization.
       // The pattern \n\s*\n+ in post-processing collapses to \n\n.
-      // This matches backend behavior where tail text contributes whitespace.
+      // This matches backend behavior where the parser keeps that whitespace
+      // as separate text nodes between blocks.
       expect(result.emitted).toBe("Hello\n\nWorld");
+      verifyNodeOffsets(result);
+    });
+
+    it("preserves browser text-node spacing across comment seams", () => {
+      const result = buildCanonicalCursor(
+        html("<p>Before <!--comment--> after</p>")
+      );
+
+      expect(result.emitted).toBe("Before  after");
       verifyNodeOffsets(result);
     });
   });

@@ -89,6 +89,12 @@ class TestWhitespaceNormalization:
         result = generate_canonical_text(html)
         assert "Text with nbsp" in result
 
+    def test_nel_becomes_space(self):
+        """NEL should collapse to a regular space."""
+        html = "<p>Hello\u0085World</p>"
+        result = generate_canonical_text(html)
+        assert result == "Hello World"
+
     def test_tabs_and_newlines_collapsed(self):
         """Tabs and newlines in source should be collapsed to spaces."""
         html = "<p>Text\twith\ttabs\nand\nnewlines</p>"
@@ -108,6 +114,12 @@ class TestWhitespaceNormalization:
         result = generate_canonical_text(html)
         # Should not have more than one consecutive blank line
         assert "\n\n\n" not in result
+
+    def test_comment_boundary_preserves_browser_text_node_spacing(self):
+        """HTML5 comment seams should match browser DOM spacing exactly."""
+        html = "<p>Before <!--comment--> after</p>"
+        result = generate_canonical_text(html)
+        assert result == "Before  after"
 
 
 class TestExclusions:

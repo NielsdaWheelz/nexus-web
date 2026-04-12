@@ -449,10 +449,8 @@ export function applyHighlightsToHtml(
     };
   }
 
-  // Build canonical cursor
+  // Build canonical cursor and validate.
   const cursorResult = buildCanonicalCursor(root);
-
-  // Validate canonical text
   const validationPassed = validateCanonicalText(
     cursorResult,
     canonicalText,
