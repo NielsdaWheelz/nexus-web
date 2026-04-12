@@ -18,8 +18,8 @@
  * PR-10: Changed data-highlight-ids (comma-delimited) to data-active-highlight-ids
  * (space-delimited) for efficient CSS ~= selector matching.
  *
- * @see docs/v1/s2/s2_prs/s2_pr08.md §6
- * @see docs/v1/s2/s2_prs/s2_pr10.md §15
+ * @see apps/web/README.md (Highlight Libraries / applySegments.ts)
+ * @see python/nexus/services/canonicalize.py
  */
 
 import {

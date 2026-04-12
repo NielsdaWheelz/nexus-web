@@ -11,11 +11,12 @@
  * Note: Some tests that require full Range API behavior are skipped in
  * the Vitest Browser Mode environment. Integration tests cover these scenarios.
  *
- * @see docs/v1/s2/s2_prs/s2_pr09.md §13
+ * @see apps/web/README.md (Highlight Libraries / selectionToOffsets.ts)
  */
 
 import { describe, it, expect } from "vitest";
 import {
+  selectionToOffsets,
   selectionIntersectsCodeBlock,
   findDuplicateHighlight,
   utf16ToCodepoint,
@@ -353,20 +354,104 @@ describe("selection validation logic", () => {
 });
 
 // =============================================================================
-// Note: Full Range-based Selection Tests
+// Integration Tests: selectionToOffsets() with real Range boundaries
 // =============================================================================
 
-/*
- * Full selectionToOffsets() integration tests require a real browser environment
- * because the test environment's Range implementation has limitations:
- * - Cannot properly set range endpoints on text nodes created from innerHTML
- * - compareBoundaryPoints() behavior differs from browsers
- *
- * These scenarios are covered by:
- * 1. E2E tests in CI (Playwright)
- * 2. Manual testing in browser
- * 3. Backend integration tests that validate the offset logic
- *
- * The unit tests above verify the individual helper functions that
- * selectionToOffsets uses internally.
- */
+describe("selectionToOffsets integration", () => {
+  it("maps paragraph-start selection when startContainer is an element boundary", () => {
+    const { container, cursor } = setupDOM("<p>Alpha beta</p>");
+    const paragraph = container.querySelector("p");
+    const textNode = paragraph?.firstChild;
+    if (!paragraph || !(textNode instanceof Text)) {
+      throw new Error("Expected paragraph text node");
+    }
+
+    const range = document.createRange();
+    range.setStart(paragraph, 0); // Element boundary at paragraph start
+    range.setEnd(textNode, 5); // "Alpha"
+
+    const result = selectionToOffsets(range, cursor, cursor.emitted, false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.startOffset).toBe(0);
+      expect(result.endOffset).toBe(5);
+      expect(result.selectedText).toBe("Alpha");
+    }
+
+    cleanupDOM(container);
+  });
+
+  it("maps selection when startContainer is a whitespace-only text node", () => {
+    const { container, cursor } = setupDOM("  \n\t<p>Alpha beta</p>");
+    const whitespaceNode = container.firstChild;
+    const paragraph = container.querySelector("p");
+    const textNode = paragraph?.firstChild;
+    if (!(whitespaceNode instanceof Text) || !paragraph || !(textNode instanceof Text)) {
+      throw new Error("Expected whitespace node and paragraph text node");
+    }
+
+    const range = document.createRange();
+    range.setStart(whitespaceNode, 0);
+    range.setEnd(textNode, 5); // "Alpha"
+
+    const result = selectionToOffsets(range, cursor, cursor.emitted, false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.startOffset).toBe(0);
+      expect(result.endOffset).toBe(5);
+      expect(result.selectedText).toBe("Alpha");
+    }
+
+    cleanupDOM(container);
+  });
+
+  it("maps selection when endContainer is an element boundary", () => {
+    const { container, cursor } = setupDOM("<p>Alpha beta</p>");
+    const paragraph = container.querySelector("p");
+    const textNode = paragraph?.firstChild;
+    if (!paragraph || !(textNode instanceof Text)) {
+      throw new Error("Expected paragraph text node");
+    }
+
+    const range = document.createRange();
+    range.setStart(textNode, 6); // "beta"
+    range.setEnd(paragraph, 1); // Element boundary after the only text child
+
+    const result = selectionToOffsets(range, cursor, cursor.emitted, false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.startOffset).toBe(6);
+      expect(result.endOffset).toBe(10);
+      expect(result.selectedText).toBe("beta");
+    }
+
+    cleanupDOM(container);
+  });
+
+  it("returns OUTSIDE_CONTENT for selection that starts outside rendered content", () => {
+    const { container, cursor } = setupDOM("<p>Alpha beta</p>");
+    const outside = document.createElement("div");
+    outside.textContent = "Outside content";
+    document.body.appendChild(outside);
+    const outsideText = outside.firstChild;
+    if (!(outsideText instanceof Text)) {
+      throw new Error("Expected outside text node");
+    }
+
+    const range = document.createRange();
+    range.setStart(outsideText, 0);
+    range.setEnd(outsideText, 7);
+
+    const result = selectionToOffsets(range, cursor, cursor.emitted, false);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toBe("OUTSIDE_CONTENT");
+      expect(result.message).toBe("Selection start is outside rendered content.");
+    }
+
+    if (outside.parentNode) {
+      outside.parentNode.removeChild(outside);
+    }
+    cleanupDOM(container);
+  });
+});

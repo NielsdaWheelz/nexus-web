@@ -9,7 +9,8 @@
  * - PR-08: Read-only highlight rendering
  * - PR-09: Selection-based highlight creation
  *
- * @see docs/v1/s2/s2_prs/s2_pr08.md §5
+ * @see apps/web/README.md (Highlight Libraries / canonicalCursor.ts)
+ * @see python/nexus/services/canonicalize.py
  */
 
 // =============================================================================

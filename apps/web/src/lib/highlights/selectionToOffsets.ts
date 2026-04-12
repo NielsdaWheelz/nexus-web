@@ -5,20 +5,19 @@
  * offsets that can be sent to the backend for highlight creation.
  *
  * The algorithm:
- * 1. Normalize backwards selections (right→left)
+ * 1. Resolve selection boundaries to mapped cursor text nodes
  * 2. Map DOM positions to canonical text offsets using the cursor
  * 3. Convert UTF-16 indices to codepoint indices
  * 4. Trim leading/trailing whitespace
  * 5. Validate length constraints
  * 6. Reject selections intersecting <pre>/<code>
  *
- * @see docs/v1/s2/s2_prs/s2_pr09.md §4
+ * @see apps/web/README.md (Highlight Libraries / selectionToOffsets.ts)
  */
 
 import {
   rawCpToCanonicalCp,
   type CanonicalCursorResult,
-  type CanonicalNode,
 } from "./canonicalCursor";
 
 // =============================================================================
@@ -132,21 +131,6 @@ function isInsideCodeBlock(node: Node): boolean {
 }
 
 /**
- * Find a text node in the cursor mapping.
- */
-function findNodeInCursor(
-  cursor: CanonicalCursorResult,
-  node: Text
-): CanonicalNode | null {
-  for (const entry of cursor.nodes) {
-    if (entry.node === node) {
-      return entry;
-    }
-  }
-  return null;
-}
-
-/**
  * Find the first non-whitespace codepoint index from the start.
  */
 function findFirstNonWhitespace(text: string): number {
@@ -171,54 +155,6 @@ function findLastNonWhitespace(text: string): number {
     }
   }
   return 0; // All whitespace
-}
-
-/**
- * Normalize a Range so that start is always before end.
- * Handles backwards selections (right-to-left).
- */
-function normalizeRange(range: Range): {
-  startContainer: Node;
-  startOffset: number;
-  endContainer: Node;
-  endOffset: number;
-} {
-  // If the selection is collapsed, just return as-is
-  if (range.collapsed) {
-    return {
-      startContainer: range.startContainer,
-      startOffset: range.startOffset,
-      endContainer: range.endContainer,
-      endOffset: range.endOffset,
-    };
-  }
-
-  // Use compareBoundaryPoints to check if start is after end
-  // This can happen with backwards selections
-  const comparison = range.compareBoundaryPoints(
-    Range.START_TO_END,
-    range
-  );
-
-  // If comparison > 0, start is after end (backwards selection)
-  // In practice, the browser normalizes this for us in most cases,
-  // but we check anyway for robustness
-  if (comparison < 0) {
-    // Swap start and end
-    return {
-      startContainer: range.endContainer,
-      startOffset: range.endOffset,
-      endContainer: range.startContainer,
-      endOffset: range.startOffset,
-    };
-  }
-
-  return {
-    startContainer: range.startContainer,
-    startOffset: range.startOffset,
-    endContainer: range.endContainer,
-    endOffset: range.endOffset,
-  };
 }
 
 // =============================================================================
@@ -258,7 +194,7 @@ export function selectionIntersectsCodeBlock(
  *
  * This is the main entry point for selection → offset conversion.
  * It handles all the complexity of:
- * - Backwards selection normalization
+ * - Boundary resolution against mapped cursor nodes
  * - UTF-16 to codepoint conversion
  * - Whitespace trimming
  * - Length validation
@@ -294,58 +230,47 @@ export function selectionToOffsets(
     };
   }
 
-  // Normalize backwards selections
-  const normalized = normalizeRange(range);
+  const startContainer = range.startContainer;
+  const endContainer = range.endContainer;
 
-  // Get the text nodes at start and end positions
-  let startContainer = normalized.startContainer;
-  let endContainer = normalized.endContainer;
-  let startUtf16Offset = normalized.startOffset;
-  let endUtf16Offset = normalized.endOffset;
+  let startNode: CanonicalCursorResult["nodes"][number] | null = null;
+  let endNode: CanonicalCursorResult["nodes"][number] | null = null;
+  let startUtf16Offset = range.startOffset;
+  let endUtf16Offset = range.endOffset;
 
-  // If container is not a text node, find the text node
-  if (startContainer.nodeType !== Node.TEXT_NODE) {
-    // Navigate to the actual text node
-    const walker = document.createTreeWalker(
-      startContainer,
-      NodeFilter.SHOW_TEXT
-    );
-    const firstText = walker.nextNode();
-    if (!firstText) {
-      return {
-        success: false,
-        error: "OUTSIDE_CONTENT",
-        message: "Selection is outside text content.",
-      };
+  // Resolve start boundary to a mapped cursor node.
+  if (startContainer.nodeType === Node.TEXT_NODE) {
+    for (const entry of cursor.nodes) {
+      if (entry.node === startContainer) {
+        startNode = entry;
+        const max = entry.node.textContent?.length ?? 0;
+        startUtf16Offset = Math.max(0, Math.min(range.startOffset, max));
+        break;
+      }
     }
-    startContainer = firstText;
-    startUtf16Offset = 0;
   }
 
-  if (endContainer.nodeType !== Node.TEXT_NODE) {
-    // Navigate to the actual text node
-    const walker = document.createTreeWalker(
-      endContainer,
-      NodeFilter.SHOW_TEXT
-    );
-    let lastText: Node | null = null;
-    while (walker.nextNode()) {
-      lastText = walker.currentNode;
-    }
-    if (!lastText) {
-      return {
-        success: false,
-        error: "OUTSIDE_CONTENT",
-        message: "Selection is outside text content.",
-      };
-    }
-    endContainer = lastText;
-    endUtf16Offset = (lastText as Text).textContent?.length ?? 0;
-  }
+  if (!startNode) {
+    const startBoundary = document.createRange();
+    startBoundary.setStart(startContainer, range.startOffset);
+    startBoundary.collapse(true);
 
-  // Find the text nodes in the cursor mapping
-  const startNode = findNodeInCursor(cursor, startContainer as Text);
-  const endNode = findNodeInCursor(cursor, endContainer as Text);
+    for (const entry of cursor.nodes) {
+      const nodeStart = document.createRange();
+      nodeStart.setStart(entry.node, 0);
+      nodeStart.collapse(true);
+      if (
+        nodeStart.compareBoundaryPoints(
+          Range.START_TO_START,
+          startBoundary
+        ) >= 0
+      ) {
+        startNode = entry;
+        startUtf16Offset = 0;
+        break;
+      }
+    }
+  }
 
   if (!startNode) {
     return {
@@ -353,6 +278,42 @@ export function selectionToOffsets(
       error: "OUTSIDE_CONTENT",
       message: "Selection start is outside rendered content.",
     };
+  }
+
+  // Resolve end boundary to a mapped cursor node.
+  if (endContainer.nodeType === Node.TEXT_NODE) {
+    for (const entry of cursor.nodes) {
+      if (entry.node === endContainer) {
+        endNode = entry;
+        const max = entry.node.textContent?.length ?? 0;
+        endUtf16Offset = Math.max(0, Math.min(range.endOffset, max));
+        break;
+      }
+    }
+  }
+
+  if (!endNode) {
+    const endBoundary = document.createRange();
+    endBoundary.setStart(endContainer, range.endOffset);
+    endBoundary.collapse(true);
+
+    for (let i = cursor.nodes.length - 1; i >= 0; i--) {
+      const entry = cursor.nodes[i];
+      const nodeEndUtf16 = entry.node.textContent?.length ?? 0;
+      const nodeEnd = document.createRange();
+      nodeEnd.setStart(entry.node, nodeEndUtf16);
+      nodeEnd.collapse(true);
+      if (
+        nodeEnd.compareBoundaryPoints(
+          Range.START_TO_START,
+          endBoundary
+        ) <= 0
+      ) {
+        endNode = entry;
+        endUtf16Offset = nodeEndUtf16;
+        break;
+      }
+    }
   }
 
   if (!endNode) {
