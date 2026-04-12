@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "pdfjs-dist/web/pdf_viewer.css";
+import "@/lib/highlights/highlights.css";
 
 export const metadata: Metadata = {
   title: "Nexus",

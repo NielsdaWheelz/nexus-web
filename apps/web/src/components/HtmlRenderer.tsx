@@ -19,8 +19,6 @@
 
 import { memo } from "react";
 import styles from "./HtmlRenderer.module.css";
-// Import highlight styles to ensure they're available when rendering highlights
-import "@/lib/highlights/highlights.css";
 
 interface HtmlRendererProps {
   /**
