@@ -1,6 +1,6 @@
 """Context rendering for LLM prompts.
 
-Renders context items (media, highlights, annotations) into markdown blocks
+Renders context items (media, highlights, annotations) into XML-tagged blocks
 for inclusion in LLM prompts.
 
 Per S3 spec:
@@ -12,8 +12,8 @@ Note: This module has DB access and is intentionally kept outside the LLM
 adapter layer (which must be DB-free per PR-04 spec).
 """
 
-from dataclasses import dataclass
 from uuid import UUID
+from xml.sax.saxutils import escape as xml_escape
 
 from sqlalchemy.orm import Session
 
@@ -37,7 +37,7 @@ from nexus.services.quote_context_errors import QuoteContextBlockingError
 logger = get_logger(__name__)
 
 # System prompt version (tracked in message_llm.prompt_version)
-PROMPT_VERSION = "s3_v1"
+PROMPT_VERSION = "v2"
 
 # Limits
 MAX_CONTEXTS = 10
@@ -52,20 +52,11 @@ def _format_timestamp_ms(timestamp_ms: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-@dataclass
-class RenderedContext:
-    """A rendered context block for the prompt."""
-
-    text: str
-    media_id: UUID | None
-    char_count: int
-
-
 def render_context_blocks(
     db: Session,
     contexts: list[dict],
 ) -> tuple[str, int]:
-    """Render context items into markdown blocks for the prompt.
+    """Render context items into XML-tagged blocks for the prompt.
 
     Args:
         db: Database session.
@@ -126,14 +117,13 @@ def render_context_blocks(
             continue
 
     if rendered_blocks:
-        result = "\n\n---\n\n".join(rendered_blocks)
-        return result, total_chars
+        return "\n\n".join(rendered_blocks), total_chars
 
     return "", 0
 
 
 def _render_single_context(db: Session, ctx: dict) -> str | None:
-    """Render a single context item to a markdown block."""
+    """Render a single context item to an XML block."""
     ctx_type = ctx.get("type")
     ctx_id = ctx.get("id")
 
@@ -157,13 +147,10 @@ def _render_media_context(db: Session, media_id: UUID) -> str | None:
     if not media:
         return None
 
-    lines = [
-        f"**Source:** {media.title}",
-    ]
-
+    lines = ["<media>", f"<source>{xml_escape(media.title)}</source>"]
     if media.canonical_source_url:
-        lines.append(f"URL: {media.canonical_source_url}")
-
+        lines.append(f"<url>{xml_escape(media.canonical_source_url)}</url>")
+    lines.append("</media>")
     return "\n".join(lines)
 
 
@@ -199,7 +186,7 @@ def _render_highlight_context(db: Session, highlight_id: UUID) -> str | None:
 
 
 def _render_fragment_highlight_context(db, highlight, resolution) -> str | None:
-    """Render a fragment-anchored highlight context (unchanged from pre-PR-02)."""
+    """Render a fragment-anchored highlight context."""
     fragment = highlight.fragment
     if fragment is None:
         return None
@@ -212,28 +199,17 @@ def _render_fragment_highlight_context(db, highlight, resolution) -> str | None:
         highlight.end_offset,
     )
 
-    lines = [
-        f"**Source:** {media.title}",
-    ]
-
+    lines = ["<highlight>", f"<source>{xml_escape(media.title)}</source>"]
     if media.canonical_source_url:
-        lines.append(f"URL: {media.canonical_source_url}")
-
+        lines.append(f"<url>{xml_escape(media.canonical_source_url)}</url>")
     if fragment.t_start_ms is not None:
-        lines.append(f"Timestamp: {_format_timestamp_ms(fragment.t_start_ms)}")
+        lines.append(f"<timestamp>{_format_timestamp_ms(fragment.t_start_ms)}</timestamp>")
     if fragment.speaker_label:
-        lines.append(f"Speaker: {fragment.speaker_label}")
-
-    lines.append("")
-    lines.append("**Quoted text:**")
-    for line in highlight.exact.split("\n"):
-        lines.append(f"> {line}")
-
+        lines.append(f"<speaker>{xml_escape(fragment.speaker_label)}</speaker>")
+    lines.append(f"<quote>{xml_escape(highlight.exact)}</quote>")
     if context_window.text != highlight.exact:
-        lines.append("")
-        lines.append("**Context:**")
-        lines.append(context_window.text)
-
+        lines.append(f"<surrounding>{xml_escape(context_window.text)}</surrounding>")
+    lines.append("</highlight>")
     return "\n".join(lines)
 
 
@@ -437,20 +413,14 @@ def _render_pdf_highlight_context(db, highlight, resolution) -> str | None:
     if pdf_anchor is None:
         return None
 
-    lines = [f"**Source:** {media.title}"]
+    lines = ["<highlight>", f"<source>{xml_escape(media.title)}</source>"]
     if media.canonical_source_url:
-        lines.append(f"URL: {media.canonical_source_url}")
-    lines.append("")
-    lines.append("**Quoted text:**")
-    for line in highlight.exact.split("\n"):
-        lines.append(f"> {line}")
-
+        lines.append(f"<url>{xml_escape(media.canonical_source_url)}</url>")
+    lines.append(f"<quote>{xml_escape(highlight.exact)}</quote>")
     nearby_context = _resolve_pdf_nearby_context(db, highlight, media, pdf_anchor)
     if nearby_context and nearby_context != highlight.exact:
-        lines.append("")
-        lines.append("**Context:**")
-        lines.append(nearby_context)
-
+        lines.append(f"<surrounding>{xml_escape(nearby_context)}</surrounding>")
+    lines.append("</highlight>")
     return "\n".join(lines)
 
 
@@ -469,24 +439,15 @@ def _render_pdf_annotation_context(db, highlight, annotation, resolution) -> str
     if pdf_anchor is None:
         return None
 
-    lines = [f"**Source:** {media.title}"]
+    lines = ["<annotation>", f"<source>{xml_escape(media.title)}</source>"]
     if media.canonical_source_url:
-        lines.append(f"URL: {media.canonical_source_url}")
-    lines.append("")
-    lines.append("**Quoted text:**")
-    for line in highlight.exact.split("\n"):
-        lines.append(f"> {line}")
-
-    lines.append("")
-    lines.append("**User's note:**")
-    lines.append(annotation.body)
-
+        lines.append(f"<url>{xml_escape(media.canonical_source_url)}</url>")
+    lines.append(f"<quote>{xml_escape(highlight.exact)}</quote>")
+    lines.append(f"<note>{xml_escape(annotation.body)}</note>")
     nearby_context = _resolve_pdf_nearby_context(db, highlight, media, pdf_anchor)
     if nearby_context and nearby_context != highlight.exact:
-        lines.append("")
-        lines.append("**Context:**")
-        lines.append(nearby_context)
-
+        lines.append(f"<surrounding>{xml_escape(nearby_context)}</surrounding>")
+    lines.append("</annotation>")
     return "\n".join(lines)
 
 
@@ -501,14 +462,12 @@ def _render_fallback_highlight_context(db, highlight, resolution) -> str | None:
     if media is None:
         return None
 
-    lines = [f"**Source:** {media.title}"]
+    lines = ["<highlight>", f"<source>{xml_escape(media.title)}</source>"]
     if media.canonical_source_url:
-        lines.append(f"URL: {media.canonical_source_url}")
+        lines.append(f"<url>{xml_escape(media.canonical_source_url)}</url>")
     if highlight.exact:
-        lines.append("")
-        lines.append("**Quoted text:**")
-        for line in highlight.exact.split("\n"):
-            lines.append(f"> {line}")
+        lines.append(f"<quote>{xml_escape(highlight.exact)}</quote>")
+    lines.append("</highlight>")
     return "\n".join(lines)
 
 
@@ -548,7 +507,7 @@ def _render_annotation_context(db: Session, annotation_id: UUID) -> str | None:
 
 
 def _render_fragment_annotation_context(db, highlight, annotation, resolution) -> str | None:
-    """Render a fragment-anchored annotation context (unchanged from pre-PR-02)."""
+    """Render a fragment-anchored annotation context."""
     fragment = highlight.fragment
     if fragment is None:
         return None
@@ -561,32 +520,18 @@ def _render_fragment_annotation_context(db, highlight, annotation, resolution) -
         highlight.end_offset,
     )
 
-    lines = [
-        f"**Source:** {media.title}",
-    ]
-
+    lines = ["<annotation>", f"<source>{xml_escape(media.title)}</source>"]
     if media.canonical_source_url:
-        lines.append(f"URL: {media.canonical_source_url}")
-
+        lines.append(f"<url>{xml_escape(media.canonical_source_url)}</url>")
     if fragment.t_start_ms is not None:
-        lines.append(f"Timestamp: {_format_timestamp_ms(fragment.t_start_ms)}")
+        lines.append(f"<timestamp>{_format_timestamp_ms(fragment.t_start_ms)}</timestamp>")
     if fragment.speaker_label:
-        lines.append(f"Speaker: {fragment.speaker_label}")
-
-    lines.append("")
-    lines.append("**Quoted text:**")
-    for line in highlight.exact.split("\n"):
-        lines.append(f"> {line}")
-
-    lines.append("")
-    lines.append("**User's note:**")
-    lines.append(annotation.body)
-
+        lines.append(f"<speaker>{xml_escape(fragment.speaker_label)}</speaker>")
+    lines.append(f"<quote>{xml_escape(highlight.exact)}</quote>")
+    lines.append(f"<note>{xml_escape(annotation.body)}</note>")
     if context_window.text != highlight.exact:
-        lines.append("")
-        lines.append("**Context:**")
-        lines.append(context_window.text)
-
+        lines.append(f"<surrounding>{xml_escape(context_window.text)}</surrounding>")
+    lines.append("</annotation>")
     return "\n".join(lines)
 
 
@@ -601,15 +546,11 @@ def _render_fallback_annotation_context(db, highlight, annotation, resolution) -
     if media is None:
         return None
 
-    lines = [f"**Source:** {media.title}"]
+    lines = ["<annotation>", f"<source>{xml_escape(media.title)}</source>"]
     if media.canonical_source_url:
-        lines.append(f"URL: {media.canonical_source_url}")
+        lines.append(f"<url>{xml_escape(media.canonical_source_url)}</url>")
     if highlight.exact:
-        lines.append("")
-        lines.append("**Quoted text:**")
-        for line in highlight.exact.split("\n"):
-            lines.append(f"> {line}")
-    lines.append("")
-    lines.append("**User's note:**")
-    lines.append(annotation.body)
+        lines.append(f"<quote>{xml_escape(highlight.exact)}</quote>")
+    lines.append(f"<note>{xml_escape(annotation.body)}</note>")
+    lines.append("</annotation>")
     return "\n".join(lines)

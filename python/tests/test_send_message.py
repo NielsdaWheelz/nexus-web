@@ -770,8 +770,8 @@ class TestSendMessageContext:
 
         assert response.status_code == 200
         system_prompt = _extract_openai_system_prompt(mock_openai_api)
-        assert "Timestamp: 00:01:01" in system_prompt
-        assert "Speaker: Host" in system_prompt
+        assert "<timestamp>00:01:01</timestamp>" in system_prompt
+        assert "<speaker>Host</speaker>" in system_prompt
 
         conversation_id = response.json()["data"]["conversation"]["id"]
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
@@ -909,8 +909,8 @@ class TestSendMessageContext:
 
         assert response.status_code == 200
         system_prompt = _extract_openai_system_prompt(mock_openai_api)
-        assert "Timestamp: 00:01:30" in system_prompt
-        assert "Speaker: Narrator" in system_prompt
+        assert "<timestamp>00:01:30</timestamp>" in system_prompt
+        assert "<speaker>Narrator</speaker>" in system_prompt
 
         conversation_id = response.json()["data"]["conversation"]["id"]
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
@@ -1245,9 +1245,8 @@ class TestSendMessagePdfQuoteToChat:
 
         assert response.status_code == 200
         system_prompt = _extract_openai_system_prompt(mock_openai_api)
-        assert "**Quoted text:**" in system_prompt
-        assert "> target phrase" in system_prompt
-        assert "**Context:**" in system_prompt
+        assert "<quote>target phrase</quote>" in system_prompt
+        assert "<surrounding>" in system_prompt
         assert "alpha beta target phrase gamma delta" in system_prompt
 
         conversation_id = response.json()["data"]["conversation"]["id"]
@@ -1344,9 +1343,8 @@ class TestSendMessagePdfQuoteToChat:
 
         assert response.status_code == 200
         system_prompt = _extract_openai_system_prompt(mock_openai_api)
-        assert "**Quoted text:**" in system_prompt
-        assert "> repeat" in system_prompt
-        assert "**Context:**" not in system_prompt
+        assert "<quote>repeat</quote>" in system_prompt
+        assert "<surrounding>" not in system_prompt
         assert "DO_NOT_USE_PREFIX" not in system_prompt
         assert "DO_NOT_USE_SUFFIX" not in system_prompt
 

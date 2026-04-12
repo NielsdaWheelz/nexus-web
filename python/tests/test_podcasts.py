@@ -7554,8 +7554,8 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         assert transcript_anchor_row[1] == 0
         assert transcript_anchor_row[2] == 1200
         assert rendered_context is not None
-        assert "Timestamp: 00:00:00" in rendered_context
-        assert "Speaker: SpeakerA" in rendered_context
+        assert "<timestamp>00:00:00</timestamp>" in rendered_context
+        assert "<speaker>SpeakerA</speaker>" in rendered_context
 
         highlight_detail = auth_client.get(
             f"/highlights/{highlight_id}",

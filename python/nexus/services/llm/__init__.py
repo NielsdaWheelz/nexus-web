@@ -31,7 +31,6 @@ Per PR-04 spec:
 from nexus.services.llm.adapter import LLMAdapter
 from nexus.services.llm.errors import LLMError, LLMErrorClass, classify_provider_error
 from nexus.services.llm.prompt import (
-    DEFAULT_SYSTEM_PROMPT,
     PromptTooLargeError,
     render_prompt,
     validate_prompt_size,
@@ -68,5 +67,4 @@ __all__ = [
     "render_prompt",
     "validate_prompt_size",
     "PromptTooLargeError",
-    "DEFAULT_SYSTEM_PROMPT",
 ]

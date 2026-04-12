@@ -31,7 +31,6 @@ import pytest
 import respx
 
 from nexus.services.llm import (
-    DEFAULT_SYSTEM_PROMPT,
     LLMChunk,
     LLMError,
     LLMErrorClass,
@@ -698,7 +697,7 @@ class TestPromptRendering:
     """Tests for prompt rendering."""
 
     def test_prompt_render_no_context(self):
-        """Render prompt without context blocks."""
+        """Render prompt without context blocks — identity + instructions only."""
         turns = render_prompt(
             user_content="What is 2+2?",
             history=[],
@@ -707,23 +706,27 @@ class TestPromptRendering:
 
         assert len(turns) == 2
         assert turns[0].role == "system"
-        assert turns[0].content == DEFAULT_SYSTEM_PROMPT
+        assert "reading assistant" in turns[0].content
+        assert "Answer using the provided context" in turns[0].content
+        assert "<context>" not in turns[0].content
         assert turns[1].role == "user"
         assert turns[1].content == "What is 2+2?"
 
     def test_prompt_render_with_context(self):
-        """Render prompt with context blocks."""
+        """Render prompt with context blocks wraps them in <context> tags."""
         turns = render_prompt(
             user_content="What does this mean?",
             history=[],
-            context_blocks=["Context block 1", "Context block 2"],
+            context_blocks=["<highlight><quote>block 1</quote></highlight>"],
+            context_types={"highlight"},
         )
 
         assert len(turns) == 2
         assert turns[0].role == "system"
-        assert "Context block 1" in turns[0].content
-        assert "Context block 2" in turns[0].content
-        assert "---\nContext:" in turns[0].content
+        assert "<context>" in turns[0].content
+        assert "</context>" in turns[0].content
+        assert "block 1" in turns[0].content
+        assert "highlighted a passage" in turns[0].content
 
     def test_prompt_render_with_history(self):
         """Render prompt with conversation history."""
@@ -762,22 +765,47 @@ class TestPromptRendering:
 
         assert len(turns) == 3
         assert turns[0].role == "system"
-        assert turns[0].content == DEFAULT_SYSTEM_PROMPT  # Fresh system prompt
+        assert "reading assistant" in turns[0].content  # Fresh system prompt
         assert turns[1].role == "user"
         assert turns[1].content == "Previous question"
 
-    def test_prompt_render_custom_system_prompt(self):
-        """Custom system prompt should be used."""
-        custom_prompt = "You are a pirate assistant."
-
+    def test_prompt_render_situation_varies_by_context_type(self):
+        """Situation line adapts to attached context types."""
+        # Highlight
         turns = render_prompt(
-            user_content="Ahoy!",
+            user_content="?",
             history=[],
-            context_blocks=[],
-            system_prompt=custom_prompt,
+            context_blocks=["x"],
+            context_types={"highlight"},
         )
+        assert "highlighted a passage" in turns[0].content
 
-        assert turns[0].content == custom_prompt
+        # Annotation
+        turns = render_prompt(
+            user_content="?",
+            history=[],
+            context_blocks=["x"],
+            context_types={"annotation"},
+        )
+        assert "annotated a passage" in turns[0].content
+
+        # Media
+        turns = render_prompt(
+            user_content="?",
+            history=[],
+            context_blocks=["x"],
+            context_types={"media"},
+        )
+        assert "saved document" in turns[0].content
+
+        # Mixed
+        turns = render_prompt(
+            user_content="?",
+            history=[],
+            context_blocks=["x"],
+            context_types={"highlight", "annotation"},
+        )
+        assert "highlighted and annotated passages" in turns[0].content
 
 
 class TestPromptValidation:

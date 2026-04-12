@@ -40,7 +40,7 @@ from nexus.services.api_key_resolver import (
 from nexus.services.context_rendering import PROMPT_VERSION, render_context_blocks
 from nexus.services.llm import LLMRouter
 from nexus.services.llm.errors import LLMError, LLMErrorClass
-from nexus.services.llm.prompt import DEFAULT_SYSTEM_PROMPT, render_prompt
+from nexus.services.llm.prompt import render_prompt
 from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMUsage
 from nexus.services.quote_context_errors import (
     QuoteContextBlockingError,
@@ -535,12 +535,11 @@ async def stream_send_message_async(
             prepare_result.conversation.id,
             prepare_result.user_message.seq,
         )
-        context_blocks = [context_text] if context_text else []
         messages = render_prompt(
             user_content=content,
             history=history,
-            context_blocks=context_blocks,
-            system_prompt=DEFAULT_SYSTEM_PROMPT,
+            context_blocks=[context_text] if context_text else [],
+            context_types={c.get("type") for c in contexts},
         )
 
         llm_request = LLMRequest(

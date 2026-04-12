@@ -1,31 +1,22 @@
 """Provider-agnostic prompt rendering for LLM requests.
 
-Per PR-04 spec section 7:
-- prompt.py is provider-agnostic. It produces a list of Turn objects.
-- Each adapter handles conversion to provider-specific format.
-
-System Prompt (v1, fixed):
-    You are a careful assistant.
-    Answer only using the provided context when possible.
-    Quote directly when citing.
-    If information is missing or uncertain, say so.
-
 Prompt structure:
-- System turn always first (if present)
+- System turn always first: identity + situation + context + instructions
 - History turns (user/assistant only, skip any old system turns)
 - Current user message last
+
+The system prompt adapts to what context the user attached:
+- Highlights: "The user has highlighted a passage..."
+- Annotations: "The user has annotated a passage..."
+- Media: "The user is asking about a saved document."
+- Mixed: generic framing
+- No context: no situation line
 
 Validation:
 - Total prompt size must not exceed max_chars (100,000 default)
 """
 
 from nexus.services.llm.types import Turn
-
-# Default system prompt per S3 spec section 4.4
-DEFAULT_SYSTEM_PROMPT = """You are a careful assistant.
-Answer only using the provided context when possible.
-Quote directly when citing.
-If information is missing or uncertain, say so."""
 
 # Maximum total prompt size in characters (100,000 per spec)
 MAX_PROMPT_CHARS = 100_000
@@ -44,44 +35,61 @@ def render_prompt(
     user_content: str,
     history: list[Turn],
     context_blocks: list[str],
-    system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+    context_types: set[str] | None = None,
 ) -> list[Turn]:
     """Build provider-agnostic turn list for LLM request.
 
     Args:
         user_content: Current user message text.
         history: Previous turns (may include prior system if multi-turn).
-        context_blocks: Pre-rendered context strings (from context_window helper).
-        system_prompt: System instructions (uses default v1 if not specified).
+        context_blocks: Pre-rendered context XML strings.
+        context_types: Set of context types attached ("highlight", "annotation", "media").
 
     Returns:
         List of Turn objects ready for adapter consumption.
-        System turn always first (if present).
-
-    Example output:
-        [
-            Turn(role="system", content="You are a careful assistant...\\n\\n---\\nContext:\\n..."),
-            Turn(role="user", content="What is X?"),
-            Turn(role="assistant", content="X is..."),
-            Turn(role="user", content="<current user message>"),
-        ]
+        System turn always first.
     """
-    turns: list[Turn] = []
+    context_types = context_types or set()
 
-    # Build system prompt with context
-    full_system = system_prompt
+    # -- System prompt: identity + situation + context + instructions --
+    parts = [
+        "You are a reading assistant. Users save articles, books, podcasts, and PDFs, "
+        "highlight passages, and annotate them.",
+    ]
+
+    # Situation: tell the model what the user is doing
+    if "highlight" in context_types and "annotation" in context_types:
+        parts.append(
+            "The user is asking about highlighted and annotated passages "
+            "from their saved content."
+        )
+    elif "annotation" in context_types:
+        parts.append(
+            "The user has annotated a passage with their own notes "
+            "and is asking about it."
+        )
+    elif "highlight" in context_types:
+        parts.append("The user has highlighted a passage and is asking about it.")
+    elif "media" in context_types:
+        parts.append("The user is asking about a saved document.")
+
     if context_blocks:
-        context_section = "\n\n---\nContext:\n" + "\n\n".join(context_blocks)
-        full_system = system_prompt + context_section
+        parts.append("<context>\n" + "\n\n".join(context_blocks) + "\n</context>")
 
-    turns.append(Turn(role="system", content=full_system))
+    parts.append(
+        "Answer using the provided context. Quote the source text directly when citing. "
+        "If the context does not contain enough information to answer, say so."
+    )
 
-    # Add history (user/assistant only, skip any old system turns)
+    turns: list[Turn] = []
+    turns.append(Turn(role="system", content="\n\n".join(parts)))
+
+    # History (user/assistant only, skip any old system turns)
     for turn in history:
         if turn.role in ("user", "assistant"):
             turns.append(turn)
 
-    # Add current user message
+    # Current user message
     turns.append(Turn(role="user", content=user_content))
 
     return turns
@@ -89,10 +97,6 @@ def render_prompt(
 
 def validate_prompt_size(turns: list[Turn], max_chars: int = MAX_PROMPT_CHARS) -> None:
     """Validate that total prompt size is within limits.
-
-    Args:
-        turns: List of Turn objects to validate.
-        max_chars: Maximum allowed total characters.
 
     Raises:
         PromptTooLargeError: If total chars exceed limit.
@@ -103,18 +107,8 @@ def validate_prompt_size(turns: list[Turn], max_chars: int = MAX_PROMPT_CHARS) -
 
 
 def estimate_token_count(text: str) -> int:
-    """Rough estimate of token count for a text string.
+    """Rough estimate of token count (~4 chars per token).
 
-    Uses a simple heuristic of ~4 chars per token.
-    This is a conservative estimate; actual counts vary by model.
-
-    This is NOT used for billing - just for quick pre-validation.
-    Actual token counts come from provider responses.
-
-    Args:
-        text: The text to estimate tokens for.
-
-    Returns:
-        Estimated token count.
+    NOT used for billing — just for quick pre-validation.
     """
     return len(text) // 4 + 1
