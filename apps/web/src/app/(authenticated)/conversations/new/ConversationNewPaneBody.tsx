@@ -18,6 +18,7 @@ import {
 import { hydrateContextItems } from "@/lib/conversations/hydrateContextItems";
 import ChatComposer from "@/components/ChatComposer";
 import ConversationContextPane from "@/components/ConversationContextPane";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneRouter,
   usePaneSearchParams,
@@ -38,12 +39,14 @@ export default function ConversationNewPaneBody() {
     () => parseAttachContext(searchParams),
     [searchParams],
   );
+  const isMobileViewport = useIsMobileViewport();
   const initialAttachSignature = useMemo(
     () => getAttachContextSignature(initialAttach),
     [initialAttach],
   );
   const [attachedContexts, setAttachedContexts] =
     useState<ContextItem[]>(initialAttach);
+  const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   const syncedAttachSignatureRef = useRef(initialAttachSignature);
 
   useEffect(() => {
@@ -92,28 +95,92 @@ export default function ConversationNewPaneBody() {
     setAttachedContexts([]);
   }, []);
 
-  const paneMode = searchParams.get("pane");
-  if (paneMode === "context") {
-    return (
-      <ConversationContextPane
-        contexts={attachedContexts}
-        onRemoveContext={handleRemoveContext}
-      />
-    );
-  }
+  useEffect(() => {
+    if (!contextDrawerOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setContextDrawerOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [contextDrawerOpen]);
 
   return (
-    <div className={styles.paneContentChat}>
-      <div className={styles.chatContainer}>
-        <div className={styles.messageList} />
-        <ChatComposer
-          conversationId={null}
-          attachedContexts={attachedContexts}
-          onRemoveContext={handleRemoveContext}
-          onConversationCreated={handleConversationCreated}
-          onMessageSent={clearAttachState}
-        />
+    <>
+      <div className={styles.chatSplitLayout}>
+        <div className={styles.chatPrimaryColumn}>
+          <div className={styles.paneContentChat}>
+            <div className={styles.chatContainer}>
+              <div className={styles.messageList} />
+              <ChatComposer
+                conversationId={null}
+                attachedContexts={attachedContexts}
+                onRemoveContext={handleRemoveContext}
+                onConversationCreated={handleConversationCreated}
+                onMessageSent={clearAttachState}
+              />
+            </div>
+          </div>
+        </div>
+
+        {!isMobileViewport ? (
+          <aside className={styles.chatContextColumn}>
+            <ConversationContextPane
+              contexts={attachedContexts}
+              onRemoveContext={handleRemoveContext}
+            />
+          </aside>
+        ) : null}
       </div>
-    </div>
+
+      {isMobileViewport ? (
+        <button
+          type="button"
+          className={styles.chatContextFab}
+          onClick={() => setContextDrawerOpen((open) => !open)}
+          aria-label="Linked context"
+          aria-expanded={contextDrawerOpen}
+        >
+          Linked context
+        </button>
+      ) : null}
+
+      {isMobileViewport && contextDrawerOpen ? (
+        <div
+          className={styles.chatContextBackdrop}
+          onClick={() => setContextDrawerOpen(false)}
+        >
+          <aside
+            className={styles.chatContextDrawer}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Linked context"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className={styles.chatContextDrawerHeader}>
+              <h2>Linked context</h2>
+              <button
+                type="button"
+                onClick={() => setContextDrawerOpen(false)}
+              >
+                Close
+              </button>
+            </header>
+            <div className={styles.chatContextDrawerBody}>
+              <ConversationContextPane
+                contexts={attachedContexts}
+                onRemoveContext={handleRemoveContext}
+              />
+            </div>
+          </aside>
+        </div>
+      ) : null}
+    </>
   );
 }

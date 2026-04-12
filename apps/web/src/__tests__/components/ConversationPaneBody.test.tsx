@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
@@ -288,10 +288,30 @@ describe("ConversationPaneBody", () => {
   });
 
   it("does not rehydrate unchanged attach context on host rerenders", async () => {
+    const user = userEvent.setup();
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === "/api/conversations/conv-1") {
+        return {
+          data: {
+            id: "conv-1",
+            title: "Chat title",
+            sharing: "private",
+            message_count: 0,
+            created_at: "2026-03-30T00:00:00.000Z",
+            updated_at: "2026-03-30T00:00:00.000Z",
+          },
+        };
+      }
+      if (path.startsWith("/api/conversations/conv-1/messages")) {
+        return { data: [], page: { next_cursor: null } };
+      }
+      throw new Error(`unexpected api path: ${path}`);
+    });
+
     const { rerender } = render(
       <PaneRuntimeProvider
         paneId="pane-conversation"
-        href="/conversations/conv-1?pane=context&attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line"
+        href="/conversations/conv-1?attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line"
         routeId="conversation"
         resourceRef="conversation:conv-1"
         pathParams={{ id: "conv-1" }}
@@ -303,13 +323,18 @@ describe("ConversationPaneBody", () => {
       </PaneRuntimeProvider>
     );
 
-    await screen.findByTestId("conversation-linked-items");
+    await waitFor(() => {
+      expect(hydrateContextItemsMock).toHaveBeenCalledTimes(1);
+    });
+    await screen.findByTestId("chat-transcript");
+    await user.click(screen.getByRole("button", { name: "Linked context" }));
+    await screen.findByRole("dialog", { name: "Linked context" });
     expect(hydrateContextItemsMock).toHaveBeenCalledTimes(1);
 
     rerender(
       <PaneRuntimeProvider
         paneId="pane-conversation"
-        href="/conversations/conv-1?pane=context&attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line"
+        href="/conversations/conv-1?attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line"
         routeId="conversation"
         resourceRef="conversation:conv-1"
         pathParams={{ id: "conv-1" }}
@@ -326,12 +351,33 @@ describe("ConversationPaneBody", () => {
     });
   });
 
-  it("renders linked-items pane content without legacy nested Pane shell", () => {
+  it("renders linked context in the secondary drawer surface", async () => {
+    const user = userEvent.setup();
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === "/api/conversations/conv-1") {
+        return {
+          data: {
+            id: "conv-1",
+            title: "Chat title",
+            sharing: "private",
+            message_count: 0,
+            created_at: "2026-03-30T00:00:00.000Z",
+            updated_at: "2026-03-30T00:00:00.000Z",
+          },
+        };
+      }
+      if (path.startsWith("/api/conversations/conv-1/messages")) {
+        return { data: [], page: { next_cursor: null } };
+      }
+      throw new Error(`unexpected api path: ${path}`);
+    });
+
     renderConversationPane(
-      "/conversations/conv-1?pane=context&attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=highlighted%20quote"
+      "/conversations/conv-1?attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=highlighted%20quote"
     );
 
-    expect(screen.getByTestId("conversation-linked-items")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Linked context" }));
+    expect(await screen.findByRole("dialog", { name: "Linked context" })).toBeInTheDocument();
     expect(screen.getByText("highlighted quote")).toBeInTheDocument();
     expect(screen.queryByRole("separator", { name: "Resize pane" })).not.toBeInTheDocument();
   });
@@ -340,6 +386,18 @@ describe("ConversationPaneBody", () => {
     const user = userEvent.setup();
 
     apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === "/api/conversations/conv-1") {
+        return {
+          data: {
+            id: "conv-1",
+            title: "Chat title",
+            sharing: "private",
+            message_count: 1,
+            created_at: "2026-03-30T00:00:00.000Z",
+            updated_at: "2026-03-30T00:00:00.000Z",
+          },
+        };
+      }
       if (path.startsWith("/api/conversations/conv-1/messages")) {
         return {
           data: [
@@ -371,11 +429,13 @@ describe("ConversationPaneBody", () => {
       throw new Error(`unexpected api path: ${path}`);
     });
 
-    renderConversationPane("/conversations/conv-1?pane=context");
+    renderConversationPane("/conversations/conv-1");
 
-    expect(await screen.findByText("Persisted quote")).toBeInTheDocument();
-    expect(screen.getByText(/Message #1/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(await screen.findByRole("button", { name: "Linked context" }));
+    const contextPane = await screen.findByTestId("conversation-context-pane");
+    expect(within(contextPane).getByText("Persisted quote")).toBeInTheDocument();
+    expect(within(contextPane).getByText(/Message #1/)).toBeInTheDocument();
+    await user.click(within(contextPane).getByRole("button", { name: "Actions" }));
     expect(screen.getByRole("menuitem", { name: "Open source" })).toBeInTheDocument();
   });
 });

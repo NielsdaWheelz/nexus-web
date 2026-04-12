@@ -22,7 +22,6 @@ const { paneShellSpy, mockStore } = vi.hoisted(() => ({
     openPane: vi.fn(),
     navigatePane: vi.fn(),
     closePane: vi.fn(),
-    closePaneFamily: vi.fn(),
     resizePane: vi.fn(),
     publishPaneTitle: vi.fn(),
   },
@@ -204,7 +203,6 @@ describe("WorkspaceHost", () => {
 
   it("moves focus into newly activated pane chrome on mobile pane switch", async () => {
     mockIsMobileViewport.value = true;
-    const user = userEvent.setup();
     const activePaneId = { value: "pane-a" };
     mockStore.state = {
       schemaVersion: 3 as const,

@@ -13,7 +13,6 @@ export interface WorkspacePaneStateV3 {
   id: string;
   href: string;
   widthPx: number;
-  companionOfPaneId?: string | null;
 }
 
 export interface WorkspaceStateV3 {
@@ -110,12 +109,7 @@ function sanitizePane(
   const widthPx =
     typeof value.widthPx === "number" ? clampPaneWidth(value.widthPx) : 480;
 
-  const companionOfPaneId =
-    typeof value.companionOfPaneId === "string" && value.companionOfPaneId.trim().length > 0
-      ? value.companionOfPaneId
-      : null;
-
-  return { id, href, widthPx, ...(companionOfPaneId ? { companionOfPaneId } : {}) };
+  return { id, href, widthPx };
 }
 
 export function sanitizeWorkspaceState(
@@ -144,24 +138,18 @@ export function sanitizeWorkspaceState(
     }
   }
 
-  // Drop companion panes whose source doesn't exist
-  const validIds = new Set(panes.map((p) => p.id));
-  const filtered = panes.filter(
-    (p) => !p.companionOfPaneId || validIds.has(p.companionOfPaneId)
-  );
-
-  if (filtered.length === 0) {
+  if (panes.length === 0) {
     return createDefaultWorkspaceState(fallbackHref);
   }
 
   const requestedActiveId =
     typeof value.activePaneId === "string" ? value.activePaneId : "";
   const activePaneId =
-    filtered.find((p) => p.id === requestedActiveId)?.id ?? filtered[0]?.id ?? "";
+    panes.find((p) => p.id === requestedActiveId)?.id ?? panes[0]?.id ?? "";
 
   if (!activePaneId) {
     return createDefaultWorkspaceState(fallbackHref);
   }
 
-  return { schemaVersion: WORKSPACE_SCHEMA_VERSION, activePaneId, panes: filtered };
+  return { schemaVersion: WORKSPACE_SCHEMA_VERSION, activePaneId, panes };
 }

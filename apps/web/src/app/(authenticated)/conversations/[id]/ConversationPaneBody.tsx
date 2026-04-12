@@ -17,11 +17,10 @@ import {
 } from "@/lib/conversations/attachedContext";
 import { hydrateContextItems } from "@/lib/conversations/hydrateContextItems";
 import ChatComposer from "@/components/ChatComposer";
-import ContextRow from "@/components/ui/ContextRow";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
-import ActionMenu from "@/components/ui/ActionMenu";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
+import ConversationContextPane from "@/components/ConversationContextPane";
 import StateMessage from "@/components/ui/StateMessage";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneParam,
   usePaneRouter,
@@ -75,7 +74,7 @@ interface Conversation {
 }
 
 // ============================================================================
-// ConversationPaneBody — routes between context pane and chat view
+// ConversationPaneBody — chat view with inline linked-context surface
 // ============================================================================
 
 export default function ConversationPaneBody() {
@@ -134,17 +133,6 @@ export default function ConversationPaneBody() {
     router.replace(qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`);
   }, [router, searchParams, id]);
 
-  // --- Branch ---
-  if (searchParams.get("pane") === "context") {
-    return (
-      <ConversationLinkedItemsPaneBody
-        conversationId={id}
-        attachedContexts={attachedContexts}
-        onRemoveContext={handleRemoveContext}
-      />
-    );
-  }
-
   return (
     <ChatView
       id={id}
@@ -170,6 +158,7 @@ function ChatView({
   onRemoveContext: (index: number) => void;
   onMessageSent: () => void;
 }) {
+  const isMobileViewport = useIsMobileViewport();
   const router = usePaneRouter();
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -177,10 +166,33 @@ function ChatView({
   const [error, setError] = useState<string | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   useSetPaneTitle(conversation?.title ?? "Chat");
 
   const messageListRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
+  const persistedRows = useMemo(() => {
+    const rows: Array<{
+      context: MessageContextSnapshot;
+      messageId: string;
+      messageSeq: number;
+    }> = [];
+
+    for (const message of messages) {
+      if (message.role !== "user" || !message.contexts || message.contexts.length === 0) {
+        continue;
+      }
+      for (const context of message.contexts) {
+        rows.push({
+          context,
+          messageId: message.id,
+          messageSeq: message.seq,
+        });
+      }
+    }
+
+    return rows;
+  }, [messages]);
 
   // --------------------------------------------------------------------------
   // Data fetching
@@ -315,6 +327,22 @@ function ChatView({
     []
   );
 
+  useEffect(() => {
+    if (!contextDrawerOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setContextDrawerOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [contextDrawerOpen]);
+
   // --------------------------------------------------------------------------
   // Render
   // --------------------------------------------------------------------------
@@ -328,56 +356,115 @@ function ChatView({
   }
 
   return (
-    <div className={styles.paneContentChat}>
-      <div className={styles.chatContainer}>
-        <div className={styles.chatActions}>
-          <span className={styles.chatMeta}>{conversation.message_count} messages</span>
-          <button
-            type="button"
-            className={styles.deleteConversationBtn}
-            disabled={deleting}
-            onClick={() => {
-              void handleDeleteConversation();
-            }}
-          >
-            {deleting ? "Deleting..." : "Delete conversation"}
-          </button>
+    <>
+      <div className={styles.chatSplitLayout}>
+        <div className={styles.chatPrimaryColumn}>
+          <div className={styles.paneContentChat}>
+            <div className={styles.chatContainer}>
+              <div className={styles.chatActions}>
+                <span className={styles.chatMeta}>{conversation.message_count} messages</span>
+                <button
+                  type="button"
+                  className={styles.deleteConversationBtn}
+                  disabled={deleting}
+                  onClick={() => {
+                    void handleDeleteConversation();
+                  }}
+                >
+                  {deleting ? "Deleting..." : "Delete conversation"}
+                </button>
+              </div>
+
+              <div
+                ref={messageListRef}
+                className={styles.messageList}
+                data-testid="chat-transcript"
+              >
+                {olderCursor && (
+                  <button
+                    className={styles.loadOlder}
+                    aria-label="Load older messages"
+                    onClick={loadOlder}
+                  >
+                    Load older messages
+                  </button>
+                )}
+
+                {messages.map((msg) => (
+                  <MessageBubble key={msg.id} message={msg} />
+                ))}
+              </div>
+
+              <ChatComposer
+                conversationId={id}
+                attachedContexts={attachedContexts}
+                onRemoveContext={onRemoveContext}
+                onOptimisticMessages={handleOptimisticMessages}
+                onMetaReceived={handleMetaReceived}
+                onDelta={handleDelta}
+                onDone={handleDone}
+                onNonStreamMessages={handleNonStreamMessages}
+                onMessageSent={onMessageSent}
+              />
+            </div>
+          </div>
         </div>
 
-        {/* Message thread */}
-        <div
-          ref={messageListRef}
-          className={styles.messageList}
-          data-testid="chat-transcript"
-        >
-          {olderCursor && (
-            <button
-              className={styles.loadOlder}
-              aria-label="Load older messages"
-              onClick={loadOlder}
-            >
-              Load older messages
-            </button>
-          )}
-
-          {messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
-          ))}
-        </div>
-
-        <ChatComposer
-          conversationId={id}
-          attachedContexts={attachedContexts}
-          onRemoveContext={onRemoveContext}
-          onOptimisticMessages={handleOptimisticMessages}
-          onMetaReceived={handleMetaReceived}
-          onDelta={handleDelta}
-          onDone={handleDone}
-          onNonStreamMessages={handleNonStreamMessages}
-          onMessageSent={onMessageSent}
-        />
+        {!isMobileViewport ? (
+          <aside className={styles.chatContextColumn}>
+            <ConversationContextPane
+              contexts={attachedContexts}
+              persistedRows={persistedRows}
+              onRemoveContext={onRemoveContext}
+            />
+          </aside>
+        ) : null}
       </div>
-    </div>
+
+      {isMobileViewport ? (
+        <button
+          type="button"
+          className={styles.chatContextFab}
+          onClick={() => setContextDrawerOpen((open) => !open)}
+          aria-label="Linked context"
+          aria-expanded={contextDrawerOpen}
+        >
+          Linked context
+        </button>
+      ) : null}
+
+      {isMobileViewport && contextDrawerOpen ? (
+        <div
+          className={styles.chatContextBackdrop}
+          onClick={() => setContextDrawerOpen(false)}
+        >
+          <aside
+            className={styles.chatContextDrawer}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Linked context"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className={styles.chatContextDrawerHeader}>
+              <h2>Linked context</h2>
+              <button
+                type="button"
+                onClick={() => setContextDrawerOpen(false)}
+              >
+                Close
+              </button>
+            </header>
+            <div className={styles.chatContextDrawerBody}>
+              <ConversationContextPane
+                contexts={attachedContexts}
+                persistedRows={persistedRows}
+                onRemoveContext={onRemoveContext}
+              />
+            </div>
+          </aside>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -445,234 +532,9 @@ function MessageBubble({ message }: { message: Message }) {
   );
 }
 
-function formatMeta(item: ContextItem): string | undefined {
-  const parts: string[] = [];
-  if (item.mediaTitle) parts.push(item.mediaTitle);
-  if (item.mediaKind) parts.push(item.mediaKind);
-  return parts.length > 0 ? parts.join(" - ") : undefined;
-}
-
 function formatMessageMeta(item: MessageContextSnapshot): string | undefined {
   const parts: string[] = [];
   if (item.media_title) parts.push(item.media_title);
   if (item.media_kind) parts.push(item.media_kind);
   return parts.length > 0 ? parts.join(" - ") : undefined;
-}
-
-function ConversationLinkedItemsPaneBody({
-  conversationId,
-  attachedContexts,
-  onRemoveContext,
-}: {
-  conversationId: string;
-  attachedContexts: ContextItem[];
-  onRemoveContext: (index: number) => void;
-}) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [olderCursor, setOlderCursor] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const response = await apiFetch<MessagesResponse>(
-          `/api/conversations/${conversationId}/messages?limit=50`,
-        );
-        if (cancelled) return;
-        setMessages(response.data);
-        setOlderCursor(response.page.next_cursor);
-        setError(null);
-      } catch (err) {
-        if (cancelled) return;
-        if (isApiError(err)) {
-          setError(err.message);
-        } else {
-          setError("Failed to load linked context");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [conversationId]);
-
-  const loadOlder = useCallback(async () => {
-    if (!olderCursor) return;
-    try {
-      const params = new URLSearchParams({
-        limit: "50",
-        cursor: olderCursor,
-      });
-      const response = await apiFetch<MessagesResponse>(
-        `/api/conversations/${conversationId}/messages?${params}`,
-      );
-      setMessages((prev) => {
-        const existing = new Set(prev.map((m) => m.id));
-        const older = response.data.filter((m) => !existing.has(m.id));
-        return [...older, ...prev];
-      });
-      setOlderCursor(response.page.next_cursor);
-    } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      } else {
-        setError("Failed to load older linked context");
-      }
-    }
-  }, [conversationId, olderCursor]);
-
-  const persistedContexts = useMemo(() => {
-    const rows: Array<{
-      context: MessageContextSnapshot;
-      messageId: string;
-      messageSeq: number;
-    }> = [];
-
-    for (const message of messages) {
-      if (message.role !== "user" || !message.contexts || message.contexts.length === 0) {
-        continue;
-      }
-      for (const context of message.contexts) {
-        rows.push({
-          context,
-          messageId: message.id,
-          messageSeq: message.seq,
-        });
-      }
-    }
-
-    return rows;
-  }, [messages]);
-
-  return (
-    <div className={styles.linkedItemsBody} data-testid="conversation-linked-items">
-      {loading ? <StateMessage variant="loading">Loading linked context...</StateMessage> : null}
-      {error ? <StateMessage variant="error">{error}</StateMessage> : null}
-      {attachedContexts.length === 0 && persistedContexts.length === 0 && !loading && !error ? (
-        <StateMessage variant="empty">No linked context yet.</StateMessage>
-      ) : null}
-
-      {attachedContexts.length > 0 ? (
-        <div className={styles.linkedItemsList}>
-          {attachedContexts.map((contextItem, index) => {
-            const menuOptions: ActionMenuOption[] = [
-              {
-                id: "remove",
-                label: "Remove",
-                tone: "danger",
-                onSelect: () => onRemoveContext(index),
-              },
-            ];
-            if (contextItem.mediaId) {
-              menuOptions.push({
-                id: "open-source",
-                label: "Open source",
-                href: `/media/${contextItem.mediaId}`,
-              });
-            }
-
-            const text = contextItem.exact || contextItem.preview;
-            return (
-              <ContextRow
-                key={`${contextItem.type}-${contextItem.id}-${index}`}
-                leading={
-                  contextItem.color ? (
-                    <span
-                      className={`${styles.linkedItemsColorSwatch} ${styles[`swatch-${contextItem.color}`]}`}
-                      aria-hidden="true"
-                    />
-                  ) : undefined
-                }
-                title={
-                  text
-                    ? <HighlightSnippet exact={text} color={contextItem.color ?? "neutral"} compact />
-                    : contextItem.type === "highlight" ? "Highlight" : contextItem.type === "annotation" ? "Annotation" : "Media"
-                }
-                titleClassName={styles.linkedItemsTitle}
-                meta={formatMeta(contextItem)}
-                metaClassName={styles.linkedItemsMeta}
-                actions={<ActionMenu options={menuOptions} />}
-                expandedContent={
-                  contextItem.annotationBody ? (
-                    <div className={styles.linkedItemsAnnotation}>
-                      {contextItem.annotationBody}
-                    </div>
-                  ) : undefined
-                }
-              />
-            );
-          })}
-        </div>
-      ) : null}
-
-      {persistedContexts.length > 0 ? (
-        <div className={styles.linkedItemsList}>
-          {persistedContexts.map(({ context, messageId, messageSeq }, index) => {
-            const menuOptions: ActionMenuOption[] = [];
-            if (context.media_id) {
-              menuOptions.push({
-                id: "open-source",
-                label: "Open source",
-                href: `/media/${context.media_id}`,
-              });
-            }
-
-            const metaParts: string[] = [];
-            const itemMeta = formatMessageMeta(context);
-            if (itemMeta) metaParts.push(itemMeta);
-            metaParts.push(`Message #${messageSeq}`);
-
-            const text = context.exact || context.preview;
-            return (
-              <ContextRow
-                key={`${messageId}-${context.type}-${context.id}-${index}`}
-                leading={
-                  context.color ? (
-                    <span
-                      className={`${styles.linkedItemsColorSwatch} ${styles[`swatch-${context.color}`]}`}
-                      aria-hidden="true"
-                    />
-                  ) : undefined
-                }
-                title={
-                  text
-                    ? <HighlightSnippet exact={text} color={context.color ?? "neutral"} compact />
-                    : context.type === "highlight" ? "Highlight" : context.type === "annotation" ? "Annotation" : "Media"
-                }
-                titleClassName={styles.linkedItemsTitle}
-                meta={metaParts.join(" - ")}
-                metaClassName={styles.linkedItemsMeta}
-                actions={menuOptions.length > 0 ? <ActionMenu options={menuOptions} /> : undefined}
-                expandedContent={
-                  context.annotation_body ? (
-                    <div className={styles.linkedItemsAnnotation}>
-                      {context.annotation_body}
-                    </div>
-                  ) : undefined
-                }
-              />
-            );
-          })}
-        </div>
-      ) : null}
-
-      {olderCursor ? (
-        <button
-          className={styles.loadOlder}
-          aria-label="Load older linked context"
-          onClick={loadOlder}
-        >
-          Load older linked context
-        </button>
-      ) : null}
-    </div>
-  );
 }

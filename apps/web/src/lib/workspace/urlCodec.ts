@@ -195,9 +195,8 @@ export function buildWorkspaceUrl(
   const parsed = new URL(primaryHref, baseOrigin);
   const params = stripWorkspaceParams(new URLSearchParams(parsed.search));
 
-  // Single pane with no companion → omit workspace params from URL
-  const isTrivial =
-    state.panes.length === 1 && !state.panes[0]?.companionOfPaneId;
+  // Single pane → omit workspace params from URL
+  const isTrivial = state.panes.length === 1;
   if (isTrivial) {
     const qs = params.toString();
     return {

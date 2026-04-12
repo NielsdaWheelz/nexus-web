@@ -44,27 +44,6 @@ describe("workspace reducer", () => {
     expect(next.panes[0]?.href).toBe("/libraries");
   });
 
-  it("close_pane_family removes the target and its companions", () => {
-    const sourceId = createPaneId();
-    const companionId = createPaneId();
-    const initial = workspaceReducer(createDefaultWorkspaceState("/libraries"), {
-      type: "open_pane",
-      panes: [
-        { id: sourceId, href: "/media/1", widthPx: 560 },
-        { id: companionId, href: "/media/1?pane=context", widthPx: 360, companionOfPaneId: sourceId },
-      ],
-      afterPaneId: null,
-      activate: true,
-    });
-    expect(initial.panes).toHaveLength(3);
-    const next = workspaceReducer(initial, {
-      type: "close_pane_family",
-      paneId: sourceId,
-    });
-    expect(next.panes).toHaveLength(1);
-    expect(next.panes[0]?.href).toBe("/libraries");
-  });
-
   it("navigates a pane and makes it active", () => {
     const initial = createDefaultWorkspaceState("/libraries");
     const next = workspaceReducer(initial, {

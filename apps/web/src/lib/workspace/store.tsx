@@ -55,7 +55,6 @@ type WorkspaceAction =
   | { type: "open_pane"; panes: WorkspacePaneStateV3[]; afterPaneId: string | null; activate: boolean }
   | { type: "navigate_pane"; paneId: string; href: string }
   | { type: "close_pane"; paneId: string }
-  | { type: "close_pane_family"; paneId: string }
   | { type: "resize_pane"; paneId: string; widthPx: number };
 
 function ensureActivePaneId(state: WorkspaceStateV3): WorkspaceStateV3 {
@@ -68,51 +67,10 @@ function ensureActivePaneId(state: WorkspaceStateV3): WorkspaceStateV3 {
   return { ...state, activePaneId: state.panes[0]!.id };
 }
 
-/**
- * For each pane whose route declares buildCompanionPanes, ensure those
- * companions exist. Companions are inserted immediately after their source.
- * Runs after hydrate and navigate so companions appear regardless of entry path.
- */
-function ensureCompanionPanes(state: WorkspaceStateV3): WorkspaceStateV3 {
-  const paneIds = new Set(state.panes.map((p) => p.id));
-  let panes = state.panes;
-  let changed = false;
-
-  for (let i = 0; i < panes.length; i++) {
-    const pane = panes[i]!;
-    // Skip companion panes themselves — don't spawn companions of companions
-    if (pane.companionOfPaneId) continue;
-
-    const route = resolvePaneRoute(pane.href);
-    if (!route.definition?.buildCompanionPanes) continue;
-
-    // Check if this pane already has companions
-    const hasCompanion = panes.some((p) => p.companionOfPaneId === pane.id);
-    if (hasCompanion) continue;
-
-    const drafts = route.definition.buildCompanionPanes({ href: pane.href, params: route.params });
-    if (!drafts.length) continue;
-
-    const newCompanions: WorkspacePaneStateV3[] = drafts.map((draft) => {
-      let id = createPaneId();
-      while (paneIds.has(id)) id = createPaneId();
-      paneIds.add(id);
-      return { id, href: draft.href, widthPx: draft.defaultWidthPx, companionOfPaneId: pane.id };
-    });
-
-    // Insert companions right after the source pane
-    panes = [...panes.slice(0, i + 1), ...newCompanions, ...panes.slice(i + 1)];
-    i += newCompanions.length; // skip past the inserted companions
-    changed = true;
-  }
-
-  return changed ? { ...state, panes } : state;
-}
-
 function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): WorkspaceStateV3 {
   switch (action.type) {
     case "hydrate":
-      return ensureCompanionPanes(ensureActivePaneId(action.state));
+      return ensureActivePaneId(action.state);
 
     case "activate_pane": {
       if (!state.panes.some((p) => p.id === action.paneId)) {
@@ -139,14 +97,10 @@ function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): Wor
     }
 
     case "navigate_pane": {
-      // When navigating away, drop old companions of this pane
-      const withoutOldCompanions = state.panes.filter(
-        (p) => p.id === action.paneId || p.companionOfPaneId !== action.paneId
-      );
-      const panes = withoutOldCompanions.map((p) =>
+      const panes = state.panes.map((p) =>
         p.id === action.paneId ? { ...p, href: action.href } : p
       );
-      return ensureCompanionPanes({ ...state, panes, activePaneId: action.paneId });
+      return { ...state, panes, activePaneId: action.paneId };
     }
 
     case "close_pane": {
@@ -156,21 +110,6 @@ function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): Wor
       }
       let { activePaneId } = state;
       if (activePaneId === action.paneId) {
-        const closedIdx = state.panes.findIndex((p) => p.id === action.paneId);
-        activePaneId = panes[Math.min(closedIdx, panes.length - 1)]?.id ?? panes[0]!.id;
-      }
-      return ensureActivePaneId({ ...state, panes, activePaneId });
-    }
-
-    case "close_pane_family": {
-      const panes = state.panes.filter(
-        (p) => p.id !== action.paneId && p.companionOfPaneId !== action.paneId
-      );
-      if (!panes.length) {
-        return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
-      }
-      let { activePaneId } = state;
-      if (!panes.some((p) => p.id === activePaneId)) {
         const closedIdx = state.panes.findIndex((p) => p.id === action.paneId);
         activePaneId = panes[Math.min(closedIdx, panes.length - 1)]?.id ?? panes[0]!.id;
       }
@@ -190,44 +129,19 @@ function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): Wor
 }
 
 // ---------------------------------------------------------------------------
-// Build pane(s) for an open action, including companion panes from the route
+// Build pane for an open action
 // ---------------------------------------------------------------------------
 
-function buildPanesForOpen(
-  href: string,
-  openerPaneId: string | null
-): WorkspacePaneStateV3[] {
+function buildPanesForOpen(href: string): WorkspacePaneStateV3[] {
   const route = resolvePaneRoute(href);
   const mainId = createPaneId();
-  const mainPane: WorkspacePaneStateV3 = {
-    id: mainId,
-    href,
-    widthPx: route.definition?.defaultWidthPx ?? 480,
-  };
-
-  const panes: WorkspacePaneStateV3[] = [mainPane];
-
-  if (route.definition?.buildCompanionPanes && route.params) {
-    const companions = route.definition.buildCompanionPanes({
+  return [
+    {
+      id: mainId,
       href,
-      params: route.params,
-    });
-    for (const draft of companions) {
-      panes.push({
-        id: createPaneId(),
-        href: draft.href,
-        widthPx: draft.defaultWidthPx,
-        companionOfPaneId: mainId,
-      });
-    }
-  }
-
-  // If opened from another pane, mark as companion
-  if (openerPaneId && panes.length === 1) {
-    // Don't mark as companion — the opener just wanted a new pane to the right
-  }
-
-  return panes;
+      widthPx: route.definition?.defaultWidthPx ?? 480,
+    },
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +157,6 @@ interface WorkspaceStoreValue {
   openPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
   navigatePane: (paneId: string, href: string, options?: { replace?: boolean }) => void;
   closePane: (paneId: string) => void;
-  closePaneFamily: (paneId: string) => void;
   resizePane: (paneId: string, widthPx: number) => void;
   publishPaneTitle: (
     paneId: string,
@@ -384,7 +297,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     const handleOpenPaneDetail = (detail: OpenInAppPaneDetail) => {
       const href = normalizePaneHref(detail.href) ?? normalizeWorkspaceHref(detail.href);
       if (!href) return;
-      const panes = buildPanesForOpen(href, null);
+      const panes = buildPanesForOpen(href);
       const titleHint = normalizePaneTitle(detail.titleHint) ?? undefined;
       const resourceRef =
         typeof detail.resourceRef === "string" && detail.resourceRef.trim().length > 0
@@ -509,7 +422,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => {
       const href = normalizeWorkspaceHref(input.href);
       if (!href) return;
-      const panes = buildPanesForOpen(href, input.openerPaneId ?? null);
+      const panes = buildPanesForOpen(href);
       if (input.openerPaneId) {
         // Title hints are set by the opener's publishPaneTitle, not here
       }
@@ -535,11 +448,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
 
   const closePane = useCallback(
     (paneId: string) => dispatchAndSync({ type: "close_pane", paneId }, "push"),
-    [dispatchAndSync]
-  );
-
-  const closePaneFamily = useCallback(
-    (paneId: string) => dispatchAndSync({ type: "close_pane_family", paneId }, "push"),
     [dispatchAndSync]
   );
 
@@ -578,13 +486,12 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       openPane,
       navigatePane,
       closePane,
-      closePaneFamily,
       resizePane,
       publishPaneTitle,
     }),
     [
       state, runtimeTitleByPaneId, openHintByPaneId, resourceTitleByRef,
-      activatePane, openPane, navigatePane, closePane, closePaneFamily,
+      activatePane, openPane, navigatePane, closePane,
       resizePane, publishPaneTitle,
     ]
   );

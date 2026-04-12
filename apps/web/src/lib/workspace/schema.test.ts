@@ -46,22 +46,6 @@ describe("workspace schema", () => {
     expect(state.panes.length).toBeLessThanOrEqual(MAX_PANES);
   });
 
-  it("drops companion panes whose source pane does not exist", () => {
-    const state = sanitizeWorkspaceState(
-      {
-        schemaVersion: WORKSPACE_SCHEMA_VERSION,
-        activePaneId: "pane-1",
-        panes: [
-          { id: "pane-1", href: "/libraries", widthPx: 480 },
-          { id: "pane-2", href: "/media/1", widthPx: 360, companionOfPaneId: "nonexistent" },
-        ],
-      },
-      { fallbackHref: "/libraries" }
-    );
-    expect(state.panes).toHaveLength(1);
-    expect(state.panes[0]?.id).toBe("pane-1");
-  });
-
   it("clamps pane widths to valid range", () => {
     const state = sanitizeWorkspaceState(
       {

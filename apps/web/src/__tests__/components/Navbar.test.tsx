@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -28,7 +28,6 @@ const {
       openPane: vi.fn(),
       navigatePane: mockNavigatePane,
       closePane: vi.fn(),
-      closePaneFamily: vi.fn(),
       resizePane: vi.fn(),
       publishPaneTitle: vi.fn(),
     },
@@ -52,14 +51,10 @@ vi.mock("next/navigation", () => ({
 
 // Mock heavy child components used in the mobile upload sheet
 vi.mock("@/components/FileUpload", () => ({
-  default: ({ onNavigate }: { onNavigate?: (href: string) => void }) => (
-    <div data-testid="file-upload">FileUpload</div>
-  ),
+  default: () => <div data-testid="file-upload">FileUpload</div>,
 }));
 vi.mock("@/components/AddFromUrl", () => ({
-  default: ({ onNavigate }: { onNavigate?: (href: string) => void }) => (
-    <div data-testid="add-from-url">AddFromUrl</div>
-  ),
+  default: () => <div data-testid="add-from-url">AddFromUrl</div>,
 }));
 
 import Navbar from "@/components/Navbar";
@@ -106,8 +101,8 @@ describe("Navbar", () => {
 
   it("highlights active link", () => {
     render(<Navbar />);
-    const librariesLink = screen.getByText("Libraries").closest("a");
-    expect(librariesLink?.className).toMatch(/active/i);
+    const librariesLink = screen.getByRole("link", { name: "Libraries", hidden: true });
+    expect(librariesLink.className).toMatch(/active/i);
   });
 
   it("renders nothing on mobile by default", () => {

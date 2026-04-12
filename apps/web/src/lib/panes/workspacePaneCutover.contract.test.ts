@@ -175,7 +175,7 @@ describe("workspace pane cutover contract (conversations slice)", () => {
 });
 
 describe("workspace pane cutover contract (conversation detail slice)", () => {
-  it("declares /conversations/:id with pane metadata and companion-pane builder", () => {
+  it("declares /conversations/:id with pane metadata for a single-pane surface", () => {
     for (const href of CONVERSATION_DETAIL_HREFS) {
       const route = resolvePaneRoute(href);
       expect(route.id).toBe("conversation");
@@ -185,12 +185,6 @@ describe("workspace pane cutover contract (conversation detail slice)", () => {
       expect(route.definition?.minWidthPx).toBeTypeOf("number");
       expect(route.definition?.maxWidthPx).toBeTypeOf("number");
       expect(route.definition?.getChrome).toBeTypeOf("function");
-      expect(route.definition?.buildCompanionPanes).toBeTypeOf("function");
-      const companionPanes =
-        route.definition?.buildCompanionPanes?.({ href, params: route.params }) ?? [];
-      expect(companionPanes).toHaveLength(1);
-      expect(companionPanes[0]?.href).toContain("/conversations/conv-123");
-      expect(companionPanes[0]?.defaultWidthPx).toBe(280);
     }
   });
 

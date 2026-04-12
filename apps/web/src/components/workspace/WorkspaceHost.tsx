@@ -261,9 +261,7 @@ function buildShellPane(input: {
     href: input.pane.href,
     params: route.params,
   });
-  const title = input.pane.companionOfPaneId
-    ? chrome?.title || descriptor.resolvedTitle || "Pane"
-    : descriptor.resolvedTitle || chrome?.title || "Pane";
+  const title = descriptor.resolvedTitle || chrome?.title || "Pane";
 
   const parentHref = getParentHref(route);
   const onBack = parentHref
@@ -309,7 +307,6 @@ export default function WorkspaceHost() {
     openPane,
     navigatePane,
     closePane,
-    closePaneFamily,
     resizePane,
     publishPaneTitle,
   } = useWorkspaceStore();
@@ -444,17 +441,9 @@ export default function WorkspaceHost() {
   // --- Close handler ---
   const handleClosePane = useCallback(
     (paneId: string) => {
-      const pane = state.panes.find((candidate) => candidate.id === paneId);
-      if (!pane) {
-        return;
-      }
-      if (!pane.companionOfPaneId) {
-        closePaneFamily(paneId);
-        return;
-      }
       closePane(paneId);
     },
-    [state.panes, closePane, closePaneFamily]
+    [closePane]
   );
 
   return (

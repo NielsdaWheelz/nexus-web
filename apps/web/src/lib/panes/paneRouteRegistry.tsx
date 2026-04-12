@@ -68,17 +68,6 @@ interface PaneRouteDefinition {
   minWidthPx?: number;
   maxWidthPx?: number;
   getChrome?: (ctx: PaneRouteContext) => PaneChromeDescriptor;
-  buildCompanionPanes?: (ctx: PaneRouteContext) => PaneCompanionPaneDraft[];
-}
-
-export interface PaneCompanionPaneDraft {
-  href: string;
-  staticTitle: string;
-  bodyMode?: PaneBodyMode;
-  defaultWidthPx: number;
-  minWidthPx?: number;
-  maxWidthPx?: number;
-  getChrome?: (ctx: PaneRouteContext) => PaneChromeDescriptor;
 }
 
 export interface ResolvedPaneRoute {
@@ -184,33 +173,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       title: "Chat",
       subtitle: "Conversation transcript and composer.",
     }),
-    buildCompanionPanes: ({ href, params }) => {
-      const id = params.id;
-      if (!id) {
-        return [];
-      }
-      const parsed = new URL(href, "http://localhost");
-      if (parsed.searchParams.get("pane") === "context") {
-        return [];
-      }
-      const nextSearch = new URLSearchParams(parsed.searchParams.toString());
-      nextSearch.set("pane", "context");
-      const query = nextSearch.toString();
-      return [
-        {
-          href: `/conversations/${encodeURIComponent(id)}${query ? `?${query}` : ""}`,
-          staticTitle: "Linked items",
-          bodyMode: "standard",
-          defaultWidthPx: DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX,
-          minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-          maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-          getChrome: () => ({
-            title: "Linked items",
-            subtitle: "Context attached to this conversation.",
-          }),
-        },
-      ];
-    },
   },
   {
     id: "discover",
@@ -471,4 +433,3 @@ export function resolvePaneRoute(href: string): ResolvedPaneRoute {
     definition: null,
   };
 }
-

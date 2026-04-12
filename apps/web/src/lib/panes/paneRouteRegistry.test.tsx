@@ -25,20 +25,12 @@ describe("pane route registry", () => {
     expect(route.resourceRef).toBe("conversation:abc-123");
   });
 
-  it("declares chat-detail companion pane metadata in the registry", () => {
+  it("keeps chat-detail route as a single pane surface", () => {
     const route = resolvePaneRoute("/conversations/abc-123");
     expect(route.id).toBe("conversation");
     expect(route.definition?.bodyMode).toBe("standard");
     expect(route.definition?.defaultWidthPx).toBe(560);
-    expect(route.definition?.buildCompanionPanes).toBeTypeOf("function");
-    const companionPanes =
-      route.definition?.buildCompanionPanes?.({
-        href: "/conversations/abc-123?attach_type=highlight",
-        params: route.params,
-      }) ?? [];
-    expect(companionPanes).toHaveLength(1);
-    expect(companionPanes[0]?.href).toContain("/conversations/abc-123");
-    expect(companionPanes[0]?.defaultWidthPx).toBe(280);
+    expect(route.definition?.getChrome).toBeTypeOf("function");
   });
 
   it("resolves /conversations/new with query params", () => {
