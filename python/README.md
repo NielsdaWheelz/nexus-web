@@ -1,595 +1,79 @@
-# Nexus Python Package
+# Nexus Python Backend
 
-Shared Python code for the Nexus platform.
+Shared Python package for the API server and worker runtime.
 
-## Structure
+## Scope
 
-```
-nexus/
-├── config.py      # Pydantic settings (loads from .env)
-├── errors.py      # Error codes and exceptions
-├── responses.py   # Response envelope helpers (includes request_id)
-├── logging.py     # Structured logging with structlog
-├── app.py         # FastAPI app factory + middleware setup (no module-level app)
-├── api/           # HTTP routers
-│   ├── deps.py    # FastAPI dependencies
-│   └── routes/    # Route handlers
-│       ├── health.py        # Health check
-│       ├── me.py            # Current user endpoint
-│       ├── libraries.py     # Library CRUD + library-media
-│       ├── media.py         # Media read endpoints
-│       ├── highlights.py    # Highlight/annotation CRUD (S2)
-│       ├── conversations.py # Conversation/message CRUD (S3)
-│       ├── keys.py          # User API key management (S3)
-│       ├── models.py        # LLM model registry (S3)
-│       ├── search.py        # Keyword search (S3, PR-06)
-│       └── podcasts.py      # Podcast discovery/subscription sync APIs (S7)
-├── auth/          # Authentication
-│   ├── middleware.py  # Auth middleware
-│   ├── permissions.py # Authorization predicates (can_read_media, etc.)
-│   └── verifier.py    # JWT verifier (SupabaseJwksVerifier)
-├── middleware/    # Request middleware
-│   ├── __init__.py
-│   └── request_id.py  # X-Request-ID generation and logging
-├── db/            # Database layer
-│   ├── engine.py  # SQLAlchemy engine
-│   ├── models.py  # SQLAlchemy ORM models (incl. S3 conversation models)
-│   └── session.py # Session management
-├── schemas/       # Pydantic request/response models
-│   ├── library.py      # Library schemas
-│   ├── media.py        # Media and fragment schemas
-│   ├── highlights.py   # Highlight and annotation schemas (S2)
-│   ├── conversation.py # Conversation and message schemas (S3)
-│   ├── keys.py         # Model registry and user API key schemas (S3)
-│   └── search.py       # Search result schemas (S3, PR-06)
-├── services/      # Business logic
-│   ├── bootstrap.py     # User/library bootstrap
-│   ├── capabilities.py  # Media capabilities derivation
-│   ├── highlights.py    # Highlight/annotation CRUD operations (S2)
-│   ├── libraries.py     # Library domain logic
-│   ├── media.py         # Media visibility + retrieval + URL-based creation
-│   ├── upload.py        # File upload + ingest logic
-│   ├── url_normalize.py # URL validation and normalization (S2)
-│   ├── conversations.py # Conversation/message CRUD (S3)
-│   ├── shares.py        # Conversation sharing invariants (S3)
-│   ├── contexts.py      # Message context management (S3)
-│   ├── crypto.py        # XChaCha20-Poly1305 encryption for BYOK keys (S3)
-│   ├── user_keys.py     # User API key management (S3)
-│   ├── models.py        # LLM model registry and availability (S3)
-│   ├── search.py        # Keyword search with visibility filtering (S3, PR-06)
-│   ├── send_message.py  # Core send-message three-phase flow (S3 PR-05)
-│   ├── send_message_stream.py  # SSE streaming send-message (S3 PR-05)
-│   ├── rate_limit.py    # Postgres-backed rate limiting and token budgets (S3 PR-05)
-│   ├── context_rendering.py  # Context rendering for prompts (S3 PR-05)
-│   ├── api_key_resolver.py   # API key resolution for LLM calls (S3 PR-05)
-│   ├── podcasts.py      # Podcast discovery + async subscription sync (S7)
-│   └── llm/             # LLM adapter layer (S3 PR-04)
-│       ├── __init__.py       # Public exports
-│       ├── types.py          # Turn, LLMRequest, LLMResponse, LLMChunk, LLMUsage
-│       ├── errors.py         # LLMError, LLMErrorClass, error classification
-│       ├── adapter.py        # Abstract LLMAdapter base class (async)
-│       ├── router.py         # Adapter selection + error normalization
-│       ├── prompt.py         # Provider-agnostic prompt rendering
-│       ├── openai_adapter.py # OpenAI implementation (async)
-│       ├── anthropic_adapter.py # Anthropic implementation (async)
-│       └── gemini_adapter.py # Gemini implementation (async)
-└── storage/       # Supabase Storage client
-    ├── client.py    # StorageClient abstraction + FakeStorageClient
-    └── paths.py     # Storage path building utilities
-```
+`python/` owns:
 
-## API Endpoints
+- FastAPI app and route handlers
+- Service-layer business logic
+- Auth verification and authorization predicates
+- Database models and migrations integration
+- Background job handlers used by the worker
 
-### Authenticated Endpoints (require bearer token)
+## Local Run
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/me` | Get current user info |
-| GET | `/libraries` | List viewer's libraries |
-| POST | `/libraries` | Create a new library |
-| PATCH | `/libraries/{id}` | Rename a library |
-| DELETE | `/libraries/{id}` | Delete a library |
-| GET | `/libraries/{id}/media` | List media in library |
-| POST | `/libraries/{id}/media` | Add media to library |
-| DELETE | `/libraries/{id}/media/{media_id}` | Remove media from library |
-| GET | `/media/{id}` | Get media by ID (visibility enforced, includes `capabilities` and transcript `playback_source` when available; video playback_source is used for in-app YouTube embed playback) |
-| GET | `/media/{id}/fragments` | Get fragments for media (visibility enforced) |
-| POST | `/media/from_url` | Create provisional web_article from URL (S2) |
-| POST | `/media/upload/init` | Initialize file upload (PDF/EPUB) |
-| POST | `/media/{id}/ingest` | Confirm upload and process file |
-| POST | `/media/{id}/transcript/request` | Forecast or admit podcast transcript work (`reason`, `dry_run`, quota-fit response) |
-| GET | `/media/{id}/file` | Get signed download URL |
-| POST | `/fragments/{id}/highlights` | Create highlight (S2) |
-| GET | `/fragments/{id}/highlights` | List highlights for fragment (S2) |
-| GET | `/highlights/{id}` | Get highlight by ID (S2) |
-| PATCH | `/highlights/{id}` | Update highlight (S2) |
-| DELETE | `/highlights/{id}` | Delete highlight (S2) |
-| PUT | `/highlights/{id}/annotation` | Upsert annotation (S2) |
-| DELETE | `/highlights/{id}/annotation` | Delete annotation (S2) |
-| GET | `/conversations` | List viewer's conversations (S3) |
-| POST | `/conversations` | Create a new conversation (S3) |
-| GET | `/conversations/{id}` | Get conversation by ID (S3) |
-| DELETE | `/conversations/{id}` | Delete conversation (S3) |
-| GET | `/conversations/{id}/messages` | List messages in conversation (S3) |
-| DELETE | `/messages/{id}` | Delete a message (S3) |
-| POST | `/conversations/messages` | Send message, create new conversation (S3 PR-05) |
-| POST | `/conversations/{id}/messages` | Send message to existing conversation (S3 PR-05) |
-| POST | `/conversations/messages/stream` | Send message with SSE streaming (S3 PR-05) |
-| POST | `/conversations/{id}/messages/stream` | Send message to existing with SSE (S3 PR-05) |
-| GET | `/models` | List available LLM models for current user (S3) |
-| GET | `/keys` | List user's API keys (safe fields only) (S3) |
-| POST | `/keys` | Add or update API key for provider (S3) |
-| DELETE | `/keys/{id}` | Revoke an API key (S3) |
-| GET | `/search` | Keyword search across visible content (S3, PR-06) |
-| GET | `/podcasts/discover` | Global podcast discovery metadata (S7) |
-| GET | `/podcasts/subscriptions` | List active subscriptions for current viewer (S7) |
-| POST | `/podcasts/subscriptions` | Create/update subscription and enqueue async sync (S7) |
-| GET | `/podcasts/subscriptions/{podcast_id}` | Read per-user subscription sync lifecycle status (S7) |
-| DELETE | `/podcasts/subscriptions/{podcast_id}` | Unsubscribe with explicit retention mode (`mode=1|2|3`, default `1`) (S7 PR-02) |
-| GET | `/podcasts/{podcast_id}` | Podcast detail for current viewer (S7) |
-| GET | `/podcasts/{podcast_id}/episodes` | List visible episode media for subscribed podcast (S7) |
-| PUT | `/internal/podcasts/users/{user_id}/plan` | Internal operator plan override endpoint (S7); requires billing/admin principal authorization |
-| POST | `/internal/ingest/reconcile` | Internal operator trigger for stale-ingest reconciliation |
-| GET | `/internal/ingest/reconcile/health` | Internal operator stale-ingest backlog snapshot |
-
-`GET /models` is migration-managed and deterministic: it returns only rows where
-`models.is_available=true`, provider flag `ENABLE_*` is true, and the provider has
-either a platform key or a usable user key (`untested|valid`).
-
-### Public Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Health check (`status=ok`, includes `task_contract_version`) |
-
-## Architecture
-
-### JWT Verification
-
-All environments use Supabase JWKS for JWT verification:
-- Local/test: Supabase local at `http://127.0.0.1:54321`
-- Staging/prod: Supabase cloud
-
-The `SupabaseJwksVerifier` validates:
-- Signature via JWKS
-- Algorithm: RS256 only
-- Expiration with ±60s clock skew
-- Issuer matches configured value
-- Audience is in configured list
-- Subject is valid UUID
-
-### Podcast Subscription Sync (S7)
-
-Podcast subscription ingest is split into control-plane and data-plane paths:
-
-- `POST /podcasts/subscriptions` writes/updates per-user subscription state and enqueues a worker job.
-- `DELETE /podcasts/subscriptions/{podcast_id}` marks the subscription unsubscribed and records `unsubscribe_mode` (`1`, `2`, or `3`) for deterministic retention behavior.
-- Worker task `podcast_sync_subscription_job` runs episode selection + idempotent ingest, then updates sync status.
-- Worker scheduler enqueues `podcast_active_subscription_poll_job` on a bounded schedule.
-- Transcript persistence (S7 PR-03) is provider-driven:
-  - new episodes with external audio URLs run transcription work via Deepgram
-  - diarized attempt falls back to non-diarized attempt when diarization fails
-  - persisted transcript segments come from provider output, not discovery/feed payload transcript fields
-  - transcript text is canonicalized (NFC + whitespace collapse) before persistence
-  - segment timing invariants are strict (`t_start_ms < t_end_ms`) at ingest validation and DB constraint layers
-- Transcription failure semantics:
-  - terminal/readability failure: `E_TRANSCRIPTION_FAILED`, `E_TRANSCRIPTION_TIMEOUT`, `E_TRANSCRIPT_UNAVAILABLE`
-  - diagnostic-only fallback signal: `E_DIARIZATION_FAILED` on completed transcription jobs when non-diarized fallback succeeds
-- Sync status is explicit and queryable via `GET /podcasts/subscriptions/{podcast_id}`:
-  `pending`, `running`, `partial`, `complete`, `source_limited`, `failed`.
-- `source_limited` indicates upstream source pagination limits prevented fully satisfying requested prefetch depth.
-- Ongoing polling ingest only processes `active` subscriptions and reuses the same sync/idempotency/quota path as direct subscription sync.
-- Scheduled polling runs are singleton-safe at cluster scope (durable `podcast_subscription_poll_runs` lease rows) and persist deterministic counters + failure-code breakdowns in `podcast_subscription_poll_run_failures`.
-- Runtime controls:
-  - `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS`
-  - `PODCAST_ACTIVE_POLL_LIMIT`
-  - `PODCAST_ACTIVE_POLL_RUN_LEASE_SECONDS`
-  - `PODCAST_SYNC_RUNNING_LEASE_SECONDS`
-
-### Ingest Worker Contract and Stale Recovery
-
-PDF/EPUB ingest reliability is guarded by the Postgres job registry and bounded recovery:
-
-- `nexus.jobs.registry` is the source of truth for required job kinds, retry policy, lease policy, and periodic schedule metadata.
-- Worker startup logs a deterministic `task_contract_version` fingerprint from the registry for deploy checks.
-- Scheduler-enqueued `reconcile_stale_ingest_media_job` scans stale `extracting` rows (`pdf`, `epub`, `podcast_episode`) and:
-  - re-dispatches up to `INGEST_STALE_REQUEUE_MAX_ATTEMPTS`
-  - fail-closes with deterministic timeout metadata after max attempts
-- Operator endpoints:
-  - `POST /internal/ingest/reconcile`
-  - `GET /internal/ingest/reconcile/health`
-
-Runtime controls:
-
-- `INGEST_RECONCILE_SCHEDULE_SECONDS` (default: `300`)
-- `INGEST_STALE_EXTRACTING_SECONDS` (default: `1800`)
-- `INGEST_STALE_REQUEUE_MAX_ATTEMPTS` (default: `3`)
-
-### Request Tracing (X-Request-ID)
-
-Every request gets a unique `X-Request-ID` for tracing:
-
-- Generated if not present in request
-- Preserved and normalized if valid (UUID lowercase, alphanumeric preserved)
-- Included in all response headers
-- Included in error response bodies for easy debugging
-- Propagated through BFF → FastAPI → worker logs
-
-Example error response:
-```json
-{
-  "error": {
-    "code": "E_MEDIA_NOT_FOUND",
-    "message": "Media not found",
-    "request_id": "550e8400-e29b-41d4-a716-446655440000"
-  }
-}
-```
-
-### Structured Logging
-
-All logs are JSON-formatted via structlog with consistent fields:
-- `request_id`: Correlation ID for the request
-- `user_id`: Authenticated user (when available)
-- `timestamp`: ISO8601 formatted
-- `method`, `path`, `status_code`, `duration_ms` for access logs
-
-### Authorization Predicates
-
-Visibility checks use canonical predicates in `nexus.auth.permissions`:
-
-```python
-from nexus.auth.permissions import can_read_media, is_library_admin
-
-# Check media readability
-if can_read_media(session, viewer_id, media_id):
-    # User can read
-    
-# Check library admin role
-if is_library_admin(session, viewer_id, library_id):
-    # User is admin
-```
-
-Available predicates:
-- `can_read_media(session, viewer_id, media_id)` - media in any library user belongs to
-- `can_read_media_bulk(session, viewer_id, media_ids)` - batch check (single query)
-- `is_library_admin(session, viewer_id, library_id)` - admin role in library
-- `is_admin_of_any_containing_library(session, viewer_id, media_id)` - admin of any library with media
-- `is_library_member(session, viewer_id, library_id)` - any role in library
-
-### Capabilities Derivation
-
-Media capabilities are derived from status and metadata:
-
-```python
-from nexus.services.capabilities import derive_capabilities
-
-caps = derive_capabilities(
-    kind="pdf",
-    processing_status="pending",
-    last_error_code=None,
-    media_file_exists=True,
-    external_playback_url_exists=False,
-)
-
-# caps.can_read == True (PDF can render before extraction)
-# caps.can_download_file == True (file exists)
-```
-
-Capabilities:
-- `can_read` - can render primary content pane
-- `can_highlight` - can create highlights
-- `can_quote` - can quote-to-chat
-- `can_search` - included in search results
-- `can_play` - has playable external URL
-- `can_download_file` - can download original file
-
-### LLM Adapter Layer (S3 PR-04)
-
-Provider-agnostic LLM integration supporting OpenAI, Anthropic, and Gemini:
-
-```python
-from nexus.services.llm import LLMRouter, LLMRequest, Turn
-import httpx
-
-# Create router with feature flags
-async with httpx.AsyncClient() as client:
-    router = LLMRouter(
-        client,
-        enable_openai=True,
-        enable_anthropic=True,
-        enable_gemini=True,
-    )
-    
-    # Build request
-    request = LLMRequest(
-        model_name="gpt-4",
-        messages=[
-            Turn(role="system", content="You are helpful."),
-            Turn(role="user", content="Hello!"),
-        ],
-        max_tokens=100,
-        temperature=0.7,
-    )
-    
-    # Non-streaming generation
-    response = await router.generate("openai", request, api_key="sk-...")
-    print(response.text)
-    
-    # Streaming generation
-    async for chunk in router.generate_stream("openai", request, api_key="sk-..."):
-        print(chunk.delta_text, end="")
-        if chunk.done:
-            print(f"\nUsage: {chunk.usage}")
-```
-
-**Prompt Rendering:**
-
-```python
-from nexus.services.llm import render_prompt, validate_prompt_size, Turn
-
-# Render prompt with context
-turns = render_prompt(
-    user_content="What does this mean?",
-    history=[Turn(role="user", content="Previous question")],
-    context_blocks=["Context block 1", "Context block 2"],
-)
-
-# Validate size before sending
-validate_prompt_size(turns)  # Raises PromptTooLargeError if > 100k chars
-```
-
-**Error Handling:**
-
-```python
-from nexus.services.llm import LLMError, LLMErrorClass
-
-try:
-    response = await router.generate("openai", request, api_key="sk-...")
-except LLMError as e:
-    if e.error_class == LLMErrorClass.RATE_LIMIT:
-        # Handle rate limit
-    elif e.error_class == LLMErrorClass.INVALID_KEY:
-        # Handle invalid key
-```
-
-Error classes: `INVALID_KEY`, `RATE_LIMIT`, `CONTEXT_TOO_LARGE`, `TIMEOUT`, `PROVIDER_DOWN`, `MODEL_NOT_AVAILABLE`
-
-**Configuration (environment variables):**
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ENABLE_OPENAI` | Enable OpenAI provider | `true` |
-| `ENABLE_ANTHROPIC` | Enable Anthropic provider | `true` |
-| `ENABLE_GEMINI` | Enable Gemini provider | `true` |
-| `ENABLE_DEEPSEEK` | Enable DeepSeek provider | `true` |
-| `OPENAI_API_KEY` | Platform OpenAI key | - |
-| `ANTHROPIC_API_KEY` | Platform Anthropic key | - |
-| `GEMINI_API_KEY` | Platform Gemini key | - |
-| `DEEPSEEK_API_KEY` | Platform DeepSeek key | - |
-
-### Storage Client
-
-File storage uses Supabase Storage with signed URLs:
-
-```python
-from nexus.storage import get_storage_client, build_storage_path
-
-client = get_storage_client()
-
-# Sign upload URL
-signed = client.sign_upload(path, content_type="application/pdf")
-# Returns { path, token } for uploadToSignedUrl()
-
-# Sign download URL
-url = client.sign_download(path, expires_in=300)
-
-# Build storage paths (applies test prefix automatically)
-path = build_storage_path(media_id, "pdf")
-# Production: media/{id}/original.pdf
-# Test: test_runs/{run_id}/media/{id}/original.pdf
-```
-
-### Send Message Architecture (PR-05)
-
-The send-message flow uses three-phase execution to avoid holding DB transactions during LLM calls:
-
-```
-Phase 0: Pre-Validation (read-only)
-  └── Model, key, rate limits, conversation busy checks
-
-Phase 1: Prepare (single transaction)
-  ├── Lock conversation row (FOR UPDATE)
-  ├── Create user message (status=complete)
-  ├── Create assistant placeholder (status=pending)
-  └── Insert idempotency record
-
-Phase 2: Execute (no transaction held)
-  ├── Resolve API key (BYOK or platform)
-  ├── Render prompt with context
-  └── Call LLM adapter (up to 45s timeout)
-
-Phase 3: Finalize (single transaction)
-  ├── Update assistant content and status
-  ├── Record usage in message_llm
-  └── Charge token budget (platform keys)
-```
-
-Rate limiting uses Postgres runtime tables:
-- RPM: 20/min per user (sliding window)
-- Concurrent: 3 in-flight per user
-- Budget: 100k tokens/day for platform keys
-
-### Service/Route Separation
-
-Routes are transport-only. All domain logic lives in `services/`:
-
-```python
-# Routes: extract viewer, call service, return response
-@router.post("/libraries", status_code=201)
-def create_library(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    body: CreateLibraryRequest,
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = libraries_service.create_library(db, viewer.user_id, body.name)
-    return success_response(result.model_dump(mode="json"))
-```
-
-Routes may not:
-- Contain domain logic
-- Perform raw DB operations (no `db.execute()`)
-- Import SQLAlchemy modules (except `Session` type annotation)
-
-### Default Library Closure Invariant
-
-When media is added to any library:
-- Media is automatically added to all members' default libraries
-
-When media is removed from default library:
-- Media is also removed from all single-member libraries owned by that user
-
-### Keyword Search (PR-06)
-
-The `/search` endpoint provides PostgreSQL full-text search across all user-visible content:
-
-```python
-# Search with default parameters
-GET /search?q=python+programming
-
-# Search with scope and type filtering
-GET /search?q=test&scope=library:UUID&types=media,fragment
-
-# Search with pagination
-GET /search?q=test&limit=10&cursor=BASE64_CURSOR
-```
-
-**Searchable Content Types:**
-- `media` - Media titles
-- `fragment` - Document fragment canonical_text
-- `annotation` - Annotation body text
-- `message` - Conversation message content
-- `transcript_chunk` - Transcript chunk semantic search (requires `semantic=true`)
-
-**Scopes:**
-- `all` - All visible content (default)
-- `media:<id>` - Content anchored to specific media
-- `library:<id>` - Content in media belonging to library
-- `conversation:<id>` - Messages within specific conversation
-
-**Visibility Enforcement:**
-- Media/fragments: visible via library membership
-- Annotations: visible via highlight/media visibility + library intersection checks
-- Messages: visible via conversation ownership or sharing
-- Pending messages are never searchable
-- Search never leaks invisible content
-
-**Query Semantics:**
-- Uses PostgreSQL `websearch_to_tsquery` for natural syntax
-- Supports quoted phrases, `-` exclusions, implicit AND
-- Queries < 2 chars return empty results
-- All-stopword queries return empty results
-- `types` omitted means "all types"; explicit `types=` means "no types" (empty results)
-
-**Response Format (v2 discriminated union):**
-```json
-{
-  "results": [
-    {
-      "type": "media",
-      "id": "uuid",
-      "score": 0.85,
-      "snippet": "...highlighted text...",
-      "source": {
-        "media_id": "uuid",
-        "media_kind": "web_article",
-        "title": "Media Title",
-        "authors": ["Ada Lovelace"],
-        "published_date": "2024-02-29"
-      }
-    },
-    {
-      "type": "annotation",
-      "id": "uuid",
-      "score": 0.72,
-      "snippet": "...matched text...",
-      "highlight_id": "uuid",
-      "fragment_id": "uuid",
-      "fragment_idx": 3,
-      "annotation_body": "note text",
-      "highlight": {
-        "exact": "matched quote",
-        "prefix": "prefix text",
-        "suffix": "suffix text"
-      },
-      "source": {
-        "media_id": "uuid",
-        "media_kind": "epub",
-        "title": "Book Title",
-        "authors": [],
-        "published_date": null
-      }
-    }
-  ],
-  "page": {
-    "has_more": true,
-    "next_cursor": "encoded_cursor"
-  }
-}
-```
-
-## Usage
-
-This package is imported by:
-- `apps/api/` - FastAPI server
-- `apps/worker/` - Postgres queue worker
-
-## Development
-
-From the repo root, use Make commands:
+From repo root:
 
 ```bash
-make test-back         # Run tests (excludes migration tests)
-make test-migrations   # Run migration tests (separate database)
-make test-supabase     # Supabase auth/storage integration tests (opt-in)
-make lint-back         # Run linter
-make fmt-back          # Format code
-make verify-fast       # Fast verification (static + unit tests)
-make verify            # Full verification
+make api
 ```
 
-`make test-back` and `make test-migrations` are hermetic: they start Postgres
-on free ports, run migrations, and shut everything down automatically.
-`make test-supabase` starts Supabase local for JWKS/storage integration tests.
-Hermetic test env variables are centralized in `scripts/test_env.sh`.
-
-Or run directly:
+Manual run:
 
 ```bash
-cd python
-
-# Install dependencies
-uv sync --all-extras
-
-# Run tests against existing services (bypass hermetic wrapper)
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/nexus_test \
-  NEXUS_ENV=test uv run pytest -v
-
-# Lint and format
-uv run ruff check .
-uv run ruff format .
+cd apps/api
+PYTHONPATH=$PWD/../../python uv run --project ../../python uvicorn main:app --reload --port 8000
 ```
 
-## Test Architecture
+## API Docs
 
-- **Savepoint isolation**: Most tests use `db_session` fixture with auto-rollback
-- **Direct DB access**: Tests needing multiple connections use `direct_db` fixture
-- **Migration tests**: Run on separate `nexus_test_migrations` database
-- **Test auth**: Tests use `MockJwtVerifier` (local RSA keypair, same validation as production)
-- **Structural tests**: AST-based tests verify route files follow separation rules
+When running locally:
 
-## Install as Editable
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
+
+## Layout
+
+- `nexus/app.py` -> FastAPI app factory
+- `nexus/api/routes/` -> HTTP route handlers
+- `nexus/services/` -> business logic
+- `nexus/auth/` -> auth middleware + permissions + JWT verification
+- `nexus/db/` -> SQLAlchemy models and session utilities
+- `nexus/jobs/` + `nexus/tasks/` -> job policies and task handlers
+- `tests/` -> backend test suite
+
+## Backend Commands
+
+From repo root:
 
 ```bash
-pip install -e .
+make test-back
+make test-migrations
+make test-supabase
+make lint-back
+make fmt-back
+make verify-fast
+make verify
 ```
+
+## Runtime Contracts
+
+- JWT verification is based on Supabase JWKS.
+- Request tracing uses `X-Request-ID` across BFF, API, and worker logs.
+- Job kind/retry/lease policy source of truth is `nexus/jobs/registry.py`.
+
+## Environment
+
+Environment variables and defaults are defined in root `.env.example`.
+Keep local `.env` in sync via `make setup`.
+
+## Rule Owners
+
+Repository-wide backend rules live in:
+
+- `docs/rules/layers.md`
+- `docs/rules/database.md`
+- `docs/rules/errors.md`
+- `docs/rules/concurrency.md`
