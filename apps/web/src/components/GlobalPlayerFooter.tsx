@@ -11,6 +11,7 @@ import {
   countUpcomingQueueItems,
   type PlaybackQueueItem,
 } from "@/lib/player/playbackQueueClient";
+import Image from "next/image";
 import SortableList from "@/components/sortable/SortableList";
 import styles from "./GlobalPlayerFooter.module.css";
 
@@ -312,7 +313,7 @@ export default function GlobalPlayerFooter() {
               aria-label="Expand player"
             >
               {track.image_url ? (
-                <img src={track.image_url} alt="" className={styles.miniArtwork} />
+                <Image src={track.image_url} alt="" width={40} height={40} className={styles.miniArtwork} unoptimized />
               ) : (
                 <div className={styles.miniArtworkFallback} aria-hidden="true" />
               )}
@@ -360,7 +361,7 @@ export default function GlobalPlayerFooter() {
                 </button>
 
                 {track.image_url ? (
-                  <img src={track.image_url} alt={track.title} className={styles.expandedArtwork} />
+                  <Image src={track.image_url} alt={track.title} width={240} height={240} className={styles.expandedArtwork} unoptimized />
                 ) : (
                   <div className={styles.expandedArtworkFallback} aria-hidden="true" />
                 )}
@@ -538,7 +539,7 @@ export default function GlobalPlayerFooter() {
           {/* Desktop: full footer layout */}
           <div className={styles.metaRow}>
             {track.image_url && (
-              <img src={track.image_url} alt="" className={styles.desktopArtwork} />
+              <Image src={track.image_url} alt="" width={32} height={32} className={styles.desktopArtwork} unoptimized />
             )}
             <span className={styles.kicker}>Now playing</span>
             <div className={styles.metaText}>

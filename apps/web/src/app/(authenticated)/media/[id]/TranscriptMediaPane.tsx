@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import Image from "next/image";
 import {
   useGlobalPlayer,
   type GlobalPlayerChapter,
@@ -640,10 +641,13 @@ export default function TranscriptMediaPane({
               return (
                 <li key={`${chapter.chapter_idx}-${chapter.t_start_ms}`} className={styles.chapterItem}>
                   {chapter.image_url && (
-                    <img
+                    <Image
                       src={chapter.image_url}
                       alt={`${chapter.title} thumbnail`}
+                      width={40}
+                      height={40}
                       className={styles.chapterThumbnail}
+                      unoptimized
                     />
                   )}
                   <div className={styles.chapterBody}>

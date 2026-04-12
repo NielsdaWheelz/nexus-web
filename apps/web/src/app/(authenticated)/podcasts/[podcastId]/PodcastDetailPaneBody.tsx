@@ -26,7 +26,6 @@ const LIBRARY_MEDIA_PAGE_SIZE = 200;
 const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
 const TRANSCRIPT_FORECAST_BATCH_SIZE = 100;
 const EPISODE_SEARCH_DEBOUNCE_MS = 300;
-const SHOW_NOTES_PREVIEW_MAX_CHARS = 280;
 
 type TranscriptRequestReason = "search" | "highlight" | "quote";
 type EpisodeState = "unplayed" | "in_progress" | "played";
@@ -1541,7 +1540,6 @@ export default function PodcastDetailPaneBody() {
               const inQueue = queueMediaIds.has(episode.id);
               const showNotesText = episode.description_text?.trim() ?? "";
               const showNotesExpanded = expandedShowNotesMediaIds.has(episode.id);
-              const canToggleShowNotes = showNotesText.length > SHOW_NOTES_PREVIEW_MAX_CHARS;
               const rowOptions = [
                 {
                   id: "toggle-played",

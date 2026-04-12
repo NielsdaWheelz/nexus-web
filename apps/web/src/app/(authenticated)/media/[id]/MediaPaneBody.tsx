@@ -55,6 +55,7 @@ export default function MediaPaneBody() {
         setLinkedDrawerOpen(true);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- property-level deps are intentional; mv is a new object each render
     [mv.handleContentClick, mv.isMobileViewport, mv.showHighlightsPane]
   );
 
@@ -66,6 +67,7 @@ export default function MediaPaneBody() {
         setLinkedDrawerOpen(true);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- property-level deps are intentional; mv is a new object each render
     [mv.dismissEditPopover, mv.focusHighlight, mv.isMobileViewport, mv.showHighlightsPane]
   );
 

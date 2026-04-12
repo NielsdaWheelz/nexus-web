@@ -467,7 +467,6 @@ export default function ChatComposer({
   }, [
     content,
     sending,
-    selectedProvider,
     selectedModelId,
     selectedReasoning,
     attachedContexts,
