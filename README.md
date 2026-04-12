@@ -89,7 +89,7 @@ nexus/
 - **Chat Infrastructure** (S3): Conversations, messages, and LLM integration for AI-assisted reading. Conversation titles are first-class (`conversations.title`): default `"Chat"` for empty threads, then derived from the first user message when the thread receives its first send.
 - **Library Sharing** (S4): Multi-user library membership, invitations, and shared visibility. Canonical visibility predicates enforce S4 provenance rules for media (non-default membership, intrinsic, active closure edge), conversations (owner/public/library-shared with dual membership), and highlights (media visibility + library intersection).
 - **Send Message Flow**: Three-phase execution (Prepare → Execute → Finalize) to avoid holding DB transactions during LLM calls.
-- **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations; the UI opens chat context in a side pane when pane dispatch succeeds.
+- **Quote-to-Chat**: Users can include highlights, media, and annotations as context for LLM conversations. Quote-to-chat reuses an open chat pane when deterministic reuse rules match (active chat pane first, else the only open chat pane), otherwise it opens a new `/conversations/new` pane.
 - **In-App Pane Workspace**: Authenticated pages render inside a URL-encoded multi-group workspace (`ws` query param, schema v2). Each group holds tabbed panes with resize handles and keyboard navigation. Mobile contract: bottom navigation replaces desktop sidebar, a Tabs sheet controls open-tab switching, only the active group is visible, pane/page chrome auto-hides on downward scroll, and two-pane surfaces expose the secondary pane via a floating top-right drawer toggle. Supported pane routes: `/libraries`, `/libraries/{id}`, `/media/{id}`, `/conversations`, `/conversations/{id}`, `/discover`, `/documents`, `/podcasts`, `/videos`, `/search`, `/settings`, `/settings/reader`, `/settings/keys`. Groups are capped at 4, tabs at 12 per group (24 total).
 - **Pane Title Resolution**: Tab labels are resolved via a descriptor pipeline (`runtime_page` → `resource_cache` → `title_hint` → `route_static` → `safe_fallback`) rather than URL-slicing. Route metadata provides canonical static titles and `resourceRef` keys for cache lookups.
 - **Pane Open Hints + Cache**: `requestOpenInAppPane(href, { titleHint?, resourceRef? })` can provide zero-jank initial labels. Workspace layout stays in the URL; resource-title cache persists separately in `localStorage` (`nexus.workspace.resource-title-cache.v1`) to avoid URL bloat.
@@ -176,7 +176,7 @@ project starts:
 - seeds PDF media fixtures (quote-ready + password-protected failure) via
   `python/scripts/seed_e2e_data.py`
 - seeds deterministic non-PDF linked-items media with highlights
-- quote-to-chat E2E assertions for non-PDF linked items validate in-app pane open behavior (`Close pane` control present in-page, no browser popup)
+- quote-to-chat E2E assertions for non-PDF linked items validate deterministic chat-pane targeting (reuse existing eligible chat pane; otherwise open exactly one new chat pane)
 - seeds a test API key (provider=openai) so the models endpoint returns data
 - seeds a 3-chapter EPUB for EPUB reader tests
 - seeds dedicated reader-resume fixtures (web + EPUB + PDF)
@@ -720,7 +720,7 @@ The chat UI is accessible at `/conversations`:
 - **Conversation list**: sidebar with cursor pagination
 - **Message thread**: paginated history (oldest first), streaming append
 - **Composer**: textarea + model picker + context chips
-- **Quote-to-chat**: "send to chat" button on highlight rows in the linked-items pane opens attached chat in a side pane (fallback: in-place navigation)
+- **Quote-to-chat**: "send to chat" button on highlight rows targets chat panes deterministically (reuse eligible open chat pane; otherwise open a new `/conversations/new` pane) and shows attached context chips in composer
 - **Search**: keyword search at `/search` across media, fragments, annotations, messages
 - **BYOK keys**: manage API keys at `/settings/keys`
 

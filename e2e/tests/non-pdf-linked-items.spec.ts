@@ -48,51 +48,6 @@ function distanceOutsideViewport(top: number, viewportHeight: number): number {
   return 0;
 }
 
-async function readQueuedQuoteRoute(
-  page: Parameters<typeof test>[0]["page"],
-  highlightId: string
-): Promise<string | null> {
-  return page.evaluate((targetHighlightId) => {
-    const isQuoteToChatRoute = (pathname: string, attachType: string | null, attachId: string | null) =>
-      (pathname === "/conversations/new" || pathname === "/conversations") &&
-      attachType === "highlight" &&
-      attachId === targetHighlightId;
-
-    const currentWindow = window as Window & {
-      __nexusPendingPaneOpenQueue?: Array<
-        string | { href?: string; titleHint?: string; resourceRef?: string }
-      >;
-    };
-    const queue = currentWindow.__nexusPendingPaneOpenQueue ?? [];
-    for (const entry of queue) {
-      const href =
-        typeof entry === "string"
-          ? entry
-          : typeof entry?.href === "string"
-            ? entry.href
-            : null;
-      if (!href) {
-        continue;
-      }
-      try {
-        const parsed = new URL(href, window.location.origin);
-        if (
-          isQuoteToChatRoute(
-            parsed.pathname,
-            parsed.searchParams.get("attach_type"),
-            parsed.searchParams.get("attach_id"),
-          )
-        ) {
-          return href;
-        }
-      } catch {
-        continue;
-      }
-    }
-    return null;
-  }, highlightId);
-}
-
 test.describe("non-pdf linked-items", () => {
   test("row quote and row focus/scroll interactions work end-to-end", async ({ page }) => {
     const seeded = readSeededNonPdfMedia();
@@ -116,84 +71,84 @@ test.describe("non-pdf linked-items", () => {
       .getByRole("tab", { name: /chat/i })
       .count();
     await chatButton.click();
-    const chatAttachPrefix = `highlight: ${seeded.focus_highlight_id.slice(0, 8)}`;
-    let quoteNavigationOutcome: "url" | "queued" | "pane" | null = null;
+
     await expect
       .poll(
-        async () => {
+        async () => page.getByRole("tab", { name: /chat/i }).count(),
+        { timeout: 15_000 }
+      )
+      .toBe(conversationTabCountBefore + 1);
+
+    await expect
+      .poll(
+        () => {
           const currentUrl = new URL(page.url());
-          if (
-            (currentUrl.pathname === "/conversations/new" ||
-              currentUrl.pathname === "/conversations") &&
-            currentUrl.searchParams.get("attach_type") === "highlight" &&
-            currentUrl.searchParams.get("attach_id") === seeded.focus_highlight_id
-          ) {
-            quoteNavigationOutcome = "url";
-            return quoteNavigationOutcome;
+          if (currentUrl.pathname !== "/conversations/new") {
+            return null;
           }
-          const queuedRoute = await readQueuedQuoteRoute(page, seeded.focus_highlight_id);
-          if (queuedRoute) {
-            quoteNavigationOutcome = "queued";
-            return quoteNavigationOutcome;
+          if (currentUrl.searchParams.get("attach_type") !== "highlight") {
+            return null;
           }
-          const contextChipCount = await page.getByText(chatAttachPrefix, { exact: false }).count();
-          if (contextChipCount > 0) {
-            quoteNavigationOutcome = "pane";
-            return quoteNavigationOutcome;
-          }
-          const tabCount = await page.getByRole("tab", { name: /chat/i }).count();
-          if (tabCount > conversationTabCountBefore) {
-            quoteNavigationOutcome = "pane";
-            return quoteNavigationOutcome;
-          }
-          return null;
+          return currentUrl.searchParams.get("attach_id");
         },
         { timeout: 15_000 }
       )
-      .not.toBeNull();
+      .toBe(seeded.focus_highlight_id);
 
-    if (quoteNavigationOutcome === "url") {
-      await expect
-        .poll(() => {
-          const currentUrl = new URL(page.url());
-          if (
-            currentUrl.pathname !== "/conversations/new" &&
-            currentUrl.pathname !== "/conversations"
-          ) {
-            return null;
-          }
-          if (currentUrl.searchParams.get("attach_type") !== "highlight") {
-            return null;
-          }
-          return currentUrl.searchParams.get("attach_id");
-        })
-        .toBe(seeded.focus_highlight_id);
-    } else if (quoteNavigationOutcome === "queued") {
-      const queuedRoute = await readQueuedQuoteRoute(page, seeded.focus_highlight_id);
-      expect(queuedRoute).toBeTruthy();
-      if (queuedRoute) {
-        await page.goto(queuedRoute);
+    await expect(
+      page.getByText(`highlight: ${seeded.focus_highlight_id.slice(0, 8)}`, { exact: false })
+    ).toBeVisible({ timeout: 10_000 });
+
+    const conversationTabCountAfterFirstQuote = await page
+      .getByRole("tab", { name: /chat/i })
+      .count();
+    const tabsAfterFirstQuote = page.getByRole("tab");
+    const tabCountAfterFirstQuote = await tabsAfterFirstQuote.count();
+    let switchedBackToMediaTab = false;
+    for (let idx = 0; idx < tabCountAfterFirstQuote; idx += 1) {
+      const tab = tabsAfterFirstQuote.nth(idx);
+      const label = ((await tab.textContent()) ?? "").trim();
+      if (/chat/i.test(label)) {
+        continue;
       }
-      await expect
-        .poll(() => {
+      await tab.click();
+      switchedBackToMediaTab = true;
+      break;
+    }
+    expect(switchedBackToMediaTab).toBe(true);
+    await expect(contentPane).toBeVisible({ timeout: 10_000 });
+
+    const quoteRow = page.locator(linkedItemRowByText(seeded.quote_exact)).first();
+    await expect(quoteRow).toBeVisible({ timeout: 10_000 });
+    await quoteRow.hover();
+    const quoteRowChatButton = quoteRow.getByLabel("Send to chat");
+    await expect(quoteRowChatButton).toBeVisible();
+    await quoteRowChatButton.click();
+
+    await expect
+      .poll(
+        async () => page.getByRole("tab", { name: /chat/i }).count(),
+        { timeout: 15_000 }
+      )
+      .toBe(conversationTabCountAfterFirstQuote);
+    await expect
+      .poll(
+        () => {
           const currentUrl = new URL(page.url());
-          if (
-            currentUrl.pathname !== "/conversations/new" &&
-            currentUrl.pathname !== "/conversations"
-          ) {
+          if (currentUrl.pathname !== "/conversations/new") {
             return null;
           }
           if (currentUrl.searchParams.get("attach_type") !== "highlight") {
             return null;
           }
           return currentUrl.searchParams.get("attach_id");
-        })
-        .toBe(seeded.focus_highlight_id);
-    } else {
-      await expect(page.getByText(chatAttachPrefix, { exact: false })).toBeVisible({
-        timeout: 10_000,
-      });
-    }
+        },
+        { timeout: 15_000 }
+      )
+      .toBe(seeded.quote_highlight_id);
+    await expect(
+      page.getByText(`highlight: ${seeded.quote_highlight_id.slice(0, 8)}`, { exact: false })
+    ).toBeVisible({ timeout: 10_000 });
 
     await page.goto(mediaUrl);
     await expect(contentPane).toBeVisible({ timeout: 10_000 });

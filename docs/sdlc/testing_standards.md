@@ -306,10 +306,11 @@ Rule:
 ### E2E Determinism and Pane-Aware Assertions
 
 - Normalize persisted per-media state before asserting initial reader UI (for example, reset reader state and explicitly select chapter/page where applicable)
-- For pane-capable navigation actions (quote-to-chat, open-in-pane flows), assert successful behavior across valid outcomes:
-  - URL navigation outcome (`/conversations?...`)
-  - In-app pane outcome (conversation tab/context chip visible)
-  - Queued pane-open outcome (`__nexusPendingPaneOpenQueue`) when pane graph is not yet ready
+- Quote-to-chat assertions must be deterministic:
+  - If the active pane is chat (`/conversations/new` or `/conversations/:id`), assert quote-to-chat updates that pane with new `attach_*` params and does not open another chat tab
+  - If the active pane is not chat and exactly one chat pane exists, assert quote-to-chat updates that existing chat pane and does not open another chat tab
+  - Otherwise, assert quote-to-chat opens one new chat pane at `/conversations/new` with the expected `attach_*` params
+  - In all quote-to-chat cases, assert the linked-context chip is visible in chat composer after navigation
 - Prefer explicit action-menu interactions (`Actions` -> `menuitem`) over styling-dependent selectors
 - Keep single-flow E2E tests focused on one behavior; use API setup for prerequisites already covered by separate UI stress/interaction tests
 
