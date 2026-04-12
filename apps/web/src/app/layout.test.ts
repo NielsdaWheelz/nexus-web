@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect } from "vitest";
+import { viewport } from "@/app/viewport";
 
 /**
  * Verifies the root layout exports a Next.js Viewport with viewport-fit=cover.
@@ -6,15 +7,6 @@ import { describe, it, expect, beforeAll } from "vitest";
  * devices, making all safe-area padding in the app ineffective.
  */
 describe("Root layout viewport export", () => {
-  let viewport: Record<string, unknown>;
-
-  beforeAll(async () => {
-    const mod = await import("@/app/layout");
-    const v = (mod as Record<string, unknown>).viewport;
-    expect(v).toBeDefined();
-    viewport = v as Record<string, unknown>;
-  });
-
   it("sets viewportFit to cover for safe-area-inset activation", () => {
     expect(viewport.viewportFit).toBe("cover");
   });

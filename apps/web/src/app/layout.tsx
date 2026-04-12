@@ -1,8 +1,9 @@
-import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "@/lib/highlights/highlights.css";
+
+export { metadata, viewport } from "./viewport";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -15,17 +16,6 @@ const jetbrainsMono = JetBrains_Mono({
   weight: ["400", "500", "600", "700"],
   variable: "--font-jetbrains-mono",
 });
-
-export const metadata: Metadata = {
-  title: "Nexus",
-  description: "A reading and annotation platform",
-};
-
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  viewportFit: "cover",
-};
 
 export default function RootLayout({
   children,
