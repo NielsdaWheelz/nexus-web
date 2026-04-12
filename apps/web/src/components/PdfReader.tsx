@@ -56,6 +56,7 @@ export interface PdfHighlightOut {
   } | null;
   author_user_id: string;
   is_owner: boolean;
+  linked_conversations?: { conversation_id: string; title: string }[];
 }
 
 export interface PdfHighlightNavigationRequest {

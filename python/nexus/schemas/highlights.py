@@ -141,6 +141,7 @@ class TypedHighlightOut(BaseModel):
     annotation: AnnotationOut | None = None
     author_user_id: UUID
     is_owner: bool
+    linked_conversations: list[LinkedConversationRef] = []
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -1504,7 +1504,7 @@ export default function useMediaViewState(id: string) {
   // ==========================================================================
 
   const handleContentClick = useCallback(
-    (e: React.MouseEvent) => {
+    (e: React.MouseEvent): string | null => {
       const target = e.target as Element;
       const highlightEl = findHighlightElement(target);
 
@@ -1512,24 +1512,21 @@ export default function useMediaViewState(id: string) {
         const clickData = parseHighlightElement(highlightEl);
         if (clickData) {
           handleHighlightClick(clickData);
-          if (isMobileViewport) {
-            setEditPopoverHighlightId(clickData.topmostId);
-            setEditPopoverAnchorRect(highlightEl.getBoundingClientRect());
-          }
-          return;
+          setEditPopoverHighlightId(null);
+          setEditPopoverAnchorRect(null);
+          return clickData.topmostId;
         }
       }
 
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) {
         clearFocus();
-        if (isMobileViewport) {
-          setEditPopoverHighlightId(null);
-          setEditPopoverAnchorRect(null);
-        }
+        setEditPopoverHighlightId(null);
+        setEditPopoverAnchorRect(null);
       }
+      return null;
     },
-    [handleHighlightClick, clearFocus, isMobileViewport]
+    [handleHighlightClick, clearFocus]
   );
 
   // ==========================================================================
@@ -1864,18 +1861,6 @@ export default function useMediaViewState(id: string) {
     setEditPopoverAnchorRect(null);
     cancelEditBounds();
   }, [cancelEditBounds]);
-
-  const handleMobilePdfHighlightTap = useCallback(
-    (highlightId: string, anchorRect: DOMRect) => {
-      if (!isMobileViewport) {
-        return;
-      }
-      focusHighlight(highlightId);
-      setEditPopoverHighlightId(highlightId);
-      setEditPopoverAnchorRect(anchorRect);
-    },
-    [focusHighlight, isMobileViewport]
-  );
 
   const buildRowOptions = useCallback(
     (highlightId: string): ActionMenuOption[] => {
@@ -2222,13 +2207,9 @@ export default function useMediaViewState(id: string) {
     transcriptRequestForecast,
 
     // Edit popover
-    editPopoverHighlightId,
-    setEditPopoverHighlightId,
     editPopoverAnchorRect,
-    setEditPopoverAnchorRect,
     editPopoverHighlight,
     dismissEditPopover,
-    handleMobilePdfHighlightTap,
 
     // Row options
     buildRowOptions,

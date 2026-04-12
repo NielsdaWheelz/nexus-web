@@ -622,6 +622,75 @@ class TestListPdfHighlightsIndex:
         )
         assert mine_only_resp.json()["data"]["highlights"] == []
 
+    def test_page_and_index_include_linked_conversations(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = _setup_pdf_media(auth_client, direct_db, user_id)
+
+        create_resp = auth_client.post(
+            f"/media/{media_id}/pdf-highlights",
+            json={"page_number": 1, "quads": SAMPLE_QUADS, "exact": "linked", "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert create_resp.status_code == 201
+        highlight_id = create_resp.json()["data"]["id"]
+
+        conversation_id = uuid4()
+        message_id = uuid4()
+        context_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO conversations (id, owner_user_id, title, sharing, next_seq)
+                    VALUES (:id, :owner_user_id, 'Linked chat', 'private', 2)
+                """),
+                {"id": conversation_id, "owner_user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                    VALUES (:id, :conversation_id, 1, 'user', 'hello', 'complete')
+                """),
+                {"id": message_id, "conversation_id": conversation_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_contexts (id, message_id, ordinal, target_type, highlight_id)
+                    VALUES (:id, :message_id, 0, 'highlight', :highlight_id)
+                """),
+                {
+                    "id": context_id,
+                    "message_id": message_id,
+                    "highlight_id": highlight_id,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("message_contexts", "id", context_id)
+        direct_db.register_cleanup("messages", "id", message_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        page_resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights?page_number=1&mine_only=false",
+            headers=auth_headers(user_id),
+        )
+        assert page_resp.status_code == 200
+        page_highlights = page_resp.json()["data"]["highlights"]
+        assert page_highlights[0]["linked_conversations"] == [
+            {"conversation_id": str(conversation_id), "title": "Linked chat"}
+        ]
+
+        index_resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights/index?mine_only=false",
+            headers=auth_headers(user_id),
+        )
+        assert index_resp.status_code == 200
+        index_highlights = index_resp.json()["data"]["highlights"]
+        assert index_highlights[0]["linked_conversations"] == [
+            {"conversation_id": str(conversation_id), "title": "Linked chat"}
+        ]
+
     def test_list_index_is_deterministic_for_tied_sort_keys_and_cursor(
         self, auth_client, direct_db: DirectSessionManager
     ):

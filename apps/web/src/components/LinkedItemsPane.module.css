@@ -23,11 +23,6 @@
   padding-right: var(--space-1);
 }
 
-.listModeSlot {
-  height: 48px;
-  position: relative;
-}
-
 /* =============================================================================
    Row Styles
    ============================================================================= */
@@ -259,6 +254,13 @@
 .linkedItemRowMain:focus-within .actionMenu,
 .actionMenu[data-open="true"] {
   opacity: 1;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .chatButton,
+  .actionMenu {
+    opacity: 1;
+  }
 }
 
 /* =============================================================================

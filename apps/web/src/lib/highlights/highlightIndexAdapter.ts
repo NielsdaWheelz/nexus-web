@@ -134,6 +134,7 @@ export function toPdfPagePaneItems(highlights: PdfHighlightOut[]): PaneHighlight
     color: highlight.color,
     annotation: highlight.annotation,
     created_at: highlight.created_at,
+    linked_conversations: highlight.linked_conversations,
   }));
 }
 
@@ -151,6 +152,7 @@ export function toPdfDocumentPaneItems(highlights: PdfHighlightOut[]): PaneHighl
       start_offset: Math.round(metrics.top * 1000),
       end_offset: Math.round(metrics.bottom * 1000),
       stable_order_key: encodePdfStableOrderKey(key),
+      linked_conversations: highlight.linked_conversations,
     };
   });
 }
@@ -170,4 +172,3 @@ export function toHtmlAnchorDescriptors(highlights: PaneHighlightIndexItem[]): A
     id: highlight.id,
   }));
 }
-

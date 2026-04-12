@@ -17,16 +17,19 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import and_, delete, or_, text
+from sqlalchemy import and_, delete, or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, highlight_visibility_filter
 from nexus.db.models import (
     Annotation,
+    Conversation,
     Highlight,
     HighlightPdfAnchor,
     HighlightPdfQuad,
     Media,
+    Message,
+    MessageContext,
     PdfPageTextSpan,
 )
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
@@ -34,6 +37,7 @@ from nexus.logging import get_logger
 from nexus.schemas.highlights import (
     AnnotationOut,
     CreatePdfHighlightRequest,
+    LinkedConversationRef,
     MediaHighlightPageInfoOut,
     PdfAnchorOut,
     PdfBoundsUpdate,
@@ -107,6 +111,34 @@ def _annotation_out(ann: Annotation | None) -> AnnotationOut | None:
         created_at=ann.created_at,
         updated_at=ann.updated_at,
     )
+
+
+def _batch_linked_conversations(
+    db: Session, highlight_ids: list[UUID], viewer_id: UUID
+) -> dict[UUID, list[LinkedConversationRef]]:
+    if not highlight_ids:
+        return {}
+    rows = db.execute(
+        select(
+            MessageContext.highlight_id,
+            Conversation.id,
+            Conversation.title,
+        )
+        .join(Message, Message.id == MessageContext.message_id)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(
+            MessageContext.target_type == "highlight",
+            MessageContext.highlight_id.in_(highlight_ids),
+            Conversation.owner_user_id == viewer_id,
+        )
+        .group_by(MessageContext.highlight_id, Conversation.id, Conversation.title)
+    ).all()
+    result: dict[UUID, list[LinkedConversationRef]] = {}
+    for highlight_id, conversation_id, title in rows:
+        result.setdefault(highlight_id, []).append(
+            LinkedConversationRef(conversation_id=conversation_id, title=title)
+        )
+    return result
 
 
 def _highlight_to_typed_out(
@@ -472,7 +504,15 @@ def list_pdf_highlights(
         Highlight.id.asc(),
     ).all()
 
-    return [_highlight_to_typed_out(h, viewer_id) for h in highlights]
+    linked_conversations_by_highlight = _batch_linked_conversations(
+        db, [highlight.id for highlight in highlights], viewer_id
+    )
+    results = []
+    for highlight in highlights:
+        out = _highlight_to_typed_out(highlight, viewer_id)
+        out.linked_conversations = linked_conversations_by_highlight.get(highlight.id, [])
+        results.append(out)
+    return results
 
 
 def list_pdf_highlights_index(
@@ -556,7 +596,14 @@ def list_pdf_highlights_index(
     if has_more:
         rows = rows[:limit]
 
-    highlights_out = [_highlight_to_typed_out(highlight, viewer_id) for highlight, _anchor in rows]
+    linked_conversations_by_highlight = _batch_linked_conversations(
+        db, [highlight.id for highlight, _anchor in rows], viewer_id
+    )
+    highlights_out = []
+    for highlight, _anchor in rows:
+        out = _highlight_to_typed_out(highlight, viewer_id)
+        out.linked_conversations = linked_conversations_by_highlight.get(highlight.id, [])
+        highlights_out.append(out)
 
     next_cursor = None
     if has_more and rows:

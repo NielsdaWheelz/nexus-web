@@ -47,6 +47,28 @@ export default function MediaPaneBody() {
   const [desktopLinkedCollapsed, setDesktopLinkedCollapsed] = useState(false);
   const splitRef = useRef<HTMLDivElement>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
+
+  const handleContentClick = useCallback(
+    (e: React.MouseEvent) => {
+      const highlightId = mv.handleContentClick(e);
+      if (mv.isMobileViewport && mv.showHighlightsPane && highlightId) {
+        setLinkedDrawerOpen(true);
+      }
+    },
+    [mv.handleContentClick, mv.isMobileViewport, mv.showHighlightsPane]
+  );
+
+  const handlePdfHighlightTap = useCallback(
+    (highlightId: string, _anchorRect: DOMRect) => {
+      mv.dismissEditPopover();
+      mv.focusHighlight(highlightId);
+      if (mv.isMobileViewport && mv.showHighlightsPane) {
+        setLinkedDrawerOpen(true);
+      }
+    },
+    [mv.dismissEditPopover, mv.focusHighlight, mv.isMobileViewport, mv.showHighlightsPane]
+  );
+
   // ==========================================================================
   // Chrome override — push toolbar/options/meta/actions into PaneShell
   // ==========================================================================
@@ -253,7 +275,7 @@ export default function MediaPaneBody() {
               renderedHtml={mv.renderedHtml}
               contentRef={mv.contentRef}
               onSegmentSelect={mv.handleTranscriptSegmentSelect}
-              onContentClick={mv.handleContentClick}
+              onContentClick={handleContentClick}
             />
           </DocumentViewport>
         ) : !mv.canRead ? (
@@ -292,7 +314,7 @@ export default function MediaPaneBody() {
               navigateToHighlight={mv.pdfNavigationTarget}
               onHighlightNavigationComplete={() => mv.setPdfNavigationTarget(null)}
               onHighlightsMutated={mv.schedulePdfHighlightsRefresh}
-              onHighlightTap={mv.isMobileViewport ? mv.handleMobilePdfHighlightTap : undefined}
+              onHighlightTap={mv.isMobileViewport ? handlePdfHighlightTap : undefined}
               onQuoteToChat={mv.media.capabilities?.can_quote ? mv.handleSendToChat : undefined}
               showToolbar={false}
               onControlsStateChange={mv.setPdfControlsState}
@@ -335,7 +357,7 @@ export default function MediaPaneBody() {
                 tocExpanded={mv.epubTocExpanded}
                 contentRef={mv.contentRef}
                 renderedHtml={mv.renderedHtml}
-                onContentClick={mv.handleContentClick}
+                onContentClick={handleContentClick}
                 onNavigate={mv.navigateToSection}
               />
             </ReaderContentArea>
@@ -350,7 +372,7 @@ export default function MediaPaneBody() {
               <div
                 ref={mv.contentRef}
                 className={styles.fragments}
-                onClick={mv.handleContentClick}
+                onClick={handleContentClick}
               >
                 <HtmlRenderer
                   htmlSanitized={mv.renderedHtml}

@@ -227,4 +227,33 @@ describe("LinkedItemRow", () => {
       expect(onAnnotationSave).toHaveBeenCalledWith("h-6", "quick note");
     });
   });
+
+  it("renders linked conversations and opens selected conversation", async () => {
+    const onOpenConversation = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <LinkedItemRow
+        highlight={{
+          id: "h-7",
+          color: "yellow",
+          exact: "Some text",
+          annotation: null,
+          linked_conversations: [
+            { conversation_id: "conv-1", title: "Open thread" },
+            { conversation_id: "conv-2", title: "Follow-up" },
+          ],
+        }}
+        isFocused={false}
+        onClick={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onOpenConversation={onOpenConversation}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open thread" }));
+    expect(onOpenConversation).toHaveBeenCalledWith("conv-1", "Open thread");
+    expect(screen.getByRole("button", { name: "Follow-up" })).toBeInTheDocument();
+  });
 });

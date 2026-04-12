@@ -20,7 +20,7 @@ The browser **never** calls FastAPI directly. All requests go through Next.js ro
 Authenticated views also run inside an in-app multi-pane workspace:
 - primary content renders in the main pane
 - side panes are route-rendered (no iframes) via `PaneRouteRenderer`
-- workspace layout state is URL-encoded in the `ws` query param (schema v2)
+- workspace layout state is URL-encoded in the `ws` query param (schema v3)
 - tab labels resolve by descriptor precedence: runtime page title → resource cache → open hint → route static title → safe fallback
 - pane-open requests flow through `requestOpenInAppPane(href, { titleHint?, resourceRef? })` / `nexus:open-pane`
 - resource title cache persists in `localStorage` key `nexus.workspace.resource-title-cache.v1`
@@ -31,6 +31,7 @@ Authenticated views also run inside an in-app multi-pane workspace:
 - split surfaces keep secondary panes behind a right-side drawer toggled by a floating top-right action
 - media reader desktop keeps a resizable linked-items column that can be hidden/restored via pane chrome action
 - `LinkedItemsPane` uses list mode on mobile (aligned mode requires side-by-side panes, impossible when tabbed)
+- mobile highlight taps focus the highlight and open the linked-items drawer; linked conversations are listed under the highlight row
 - root layout uses `100dvh` with `100vh` fallback for correct dynamic mobile viewport height
 
 ### Request Tracing

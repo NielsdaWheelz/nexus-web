@@ -18,14 +18,7 @@
 
 "use client";
 
-import {
-  useRef,
-  useEffect,
-  useState,
-  useCallback,
-  useMemo,
-  type RefObject,
-} from "react";
+import { useRef, useEffect, useState, useCallback, useMemo, type RefObject } from "react";
 import LinkedItemRow, { type LinkedItemRowHighlight } from "./LinkedItemRow";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import {
@@ -49,10 +42,6 @@ import {
 } from "@/lib/highlights/coordinateTransforms";
 import StateMessage from "@/components/ui/StateMessage";
 import styles from "./LinkedItemsPane.module.css";
-
-const LIST_ROW_SLOT_HEIGHT = ROW_HEIGHT + 4;
-const LIST_OVERSCAN_ROWS = 8;
-const INITIAL_LIST_ROWS = LIST_OVERSCAN_ROWS * 2 + 16;
 
 function escapeAttrValue(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
@@ -141,8 +130,6 @@ export default function LinkedItemsPane({
 
   // Count of rows below visible area
   const [overflowCount, setOverflowCount] = useState(0);
-  const [listScrollTop, setListScrollTop] = useState(0);
-  const [listViewportHeight, setListViewportHeight] = useState(0);
 
   // ==========================================================================
   // Measurement Phase
@@ -418,29 +405,14 @@ export default function LinkedItemsPane({
   }, [missingAnchors, isAlignedMode]);
 
   useEffect(() => {
-    if (isAlignedMode) return;
-    const containerEl = containerRef.current;
-    if (!containerEl) return;
-
-    const updateListMetrics = () => {
-      setListViewportHeight(containerEl.clientHeight);
-      setListScrollTop(containerEl.scrollTop);
-    };
-
-    updateListMetrics();
-    const handleListScroll = () => {
-      setListScrollTop(containerEl.scrollTop);
-    };
-
-    const observer = new ResizeObserver(updateListMetrics);
-    observer.observe(containerEl);
-    containerEl.addEventListener("scroll", handleListScroll, { passive: true });
-
-    return () => {
-      containerEl.removeEventListener("scroll", handleListScroll);
-      observer.disconnect();
-    };
-  }, [isAlignedMode, highlights.length, highlightsVersion]);
+    if (isAlignedMode || !focusedId) {
+      return;
+    }
+    const focusedRow = rowRefs.current.get(focusedId);
+    if (focusedRow) {
+      focusedRow.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [focusedId, highlightsVersion, isAlignedMode]);
 
   // Build a map for fast lookup
   const highlightMap = new Map(highlights.map((h) => [h.id, h]));
@@ -492,48 +464,6 @@ export default function LinkedItemsPane({
     return sorted;
   }, [highlights, isAlignedMode]);
 
-  const listWindow = useMemo(() => {
-    if (isAlignedMode) {
-      return {
-        visible: [] as LinkedItemRowHighlight[],
-        topSpacerPx: 0,
-        bottomSpacerPx: 0,
-        overflowCountBelow: 0,
-      };
-    }
-
-    const totalRows = listModeHighlights.length;
-    if (totalRows === 0) {
-      return {
-        visible: [] as LinkedItemRowHighlight[],
-        topSpacerPx: 0,
-        bottomSpacerPx: 0,
-        overflowCountBelow: 0,
-      };
-    }
-
-    if (listViewportHeight <= 0) {
-      const fallbackCount = Math.min(totalRows, INITIAL_LIST_ROWS);
-      return {
-        visible: listModeHighlights.slice(0, fallbackCount),
-        topSpacerPx: 0,
-        bottomSpacerPx: (totalRows - fallbackCount) * LIST_ROW_SLOT_HEIGHT,
-        overflowCountBelow: Math.max(totalRows - fallbackCount, 0),
-      };
-    }
-
-    const rowsPerViewport = Math.max(1, Math.ceil(listViewportHeight / LIST_ROW_SLOT_HEIGHT));
-    const start = Math.max(0, Math.floor(listScrollTop / LIST_ROW_SLOT_HEIGHT) - LIST_OVERSCAN_ROWS);
-    const end = Math.min(totalRows, start + rowsPerViewport + LIST_OVERSCAN_ROWS * 2);
-
-    return {
-      visible: listModeHighlights.slice(start, end),
-      topSpacerPx: start * LIST_ROW_SLOT_HEIGHT,
-      bottomSpacerPx: (totalRows - end) * LIST_ROW_SLOT_HEIGHT,
-      overflowCountBelow: Math.max(totalRows - end, 0),
-    };
-  }, [isAlignedMode, listModeHighlights, listScrollTop, listViewportHeight]);
-
   if (highlights.length === 0) {
     return (
       <div className={styles.linkedItemsContainer}>
@@ -552,31 +482,23 @@ export default function LinkedItemsPane({
         ref={containerRef}
         className={`${styles.linkedItemsContainer} ${styles.listMode}`}
       >
-        <div style={{ height: `${listWindow.topSpacerPx}px` }} aria-hidden />
-        {listWindow.visible.map((highlight) => (
-          <div
+        {listModeHighlights.map((highlight) => (
+          <LinkedItemRow
             key={highlight.id}
-            className={styles.listModeSlot}
-          >
-            <LinkedItemRow
-              highlight={highlight}
-              className={styles.listModeRow}
-              isFocused={focusedId === highlight.id}
-              onClick={handleRowClick}
-              onMouseEnter={handleRowMouseEnter}
-              onMouseLeave={handleRowMouseLeave}
-              onSendToChat={onSendToChat}
-              onAnnotationSave={onAnnotationSave}
-              onAnnotationDelete={onAnnotationDelete}
-              options={rowOptions?.(highlight.id)}
-              onOpenConversation={onOpenConversation}
-            />
-          </div>
+            ref={setRowRef(highlight.id)}
+            highlight={highlight}
+            className={styles.listModeRow}
+            isFocused={focusedId === highlight.id}
+            onClick={handleRowClick}
+            onMouseEnter={handleRowMouseEnter}
+            onMouseLeave={handleRowMouseLeave}
+            onSendToChat={onSendToChat}
+            onAnnotationSave={onAnnotationSave}
+            onAnnotationDelete={onAnnotationDelete}
+            options={rowOptions?.(highlight.id)}
+            onOpenConversation={onOpenConversation}
+          />
         ))}
-        <div style={{ height: `${listWindow.bottomSpacerPx}px` }} aria-hidden />
-        {listWindow.overflowCountBelow > 0 && (
-          <div className={styles.overflowIndicator}>{listWindow.overflowCountBelow} more below</div>
-        )}
       </div>
     );
   }

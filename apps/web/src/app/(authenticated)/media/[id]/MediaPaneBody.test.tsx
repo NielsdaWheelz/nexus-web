@@ -37,7 +37,20 @@ vi.mock("@/components/HtmlRenderer", () => ({
 }));
 
 vi.mock("@/components/PdfReader", () => ({
-  default: () => <div data-testid="pdf-reader" />,
+  default: ({
+    onHighlightTap,
+  }: {
+    onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
+  }) => (
+    <div data-testid="pdf-reader">
+      <button
+        type="button"
+        onClick={() => onHighlightTap?.("pdf-highlight-1", new DOMRect(10, 20, 30, 12))}
+      >
+        Tap PDF highlight
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock("@/components/SelectionPopover", () => ({
@@ -147,7 +160,6 @@ function buildViewState(overrides: Record<string, unknown> = {}): Record<string,
     pdfNavigationTarget: null,
     setPdfNavigationTarget: vi.fn(),
     schedulePdfHighlightsRefresh: vi.fn(),
-    handleMobilePdfHighlightTap: vi.fn(),
     setPdfControlsState: vi.fn(),
     pdfControlsRef: { current: null },
     selection: null,
@@ -265,5 +277,60 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
 
     expect(screen.queryByRole("dialog", { name: "Linked items" })).not.toBeInTheDocument();
     expect(document.body.style.overflow).toBe("");
+  });
+
+  it("opens the mobile linked-items drawer when tapping a content highlight", async () => {
+    const user = userEvent.setup();
+    const handleContentClick = vi.fn(() => "hl-1");
+    currentViewState = buildViewState({
+      isMobileViewport: true,
+      handleContentClick,
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+    expect(screen.queryByRole("dialog", { name: "Linked items" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("html-renderer"));
+
+    expect(handleContentClick).toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Linked items" })).toBeInTheDocument();
+  });
+
+  it("opens the mobile linked-items drawer when tapping a PDF highlight", async () => {
+    const user = userEvent.setup();
+    const focusHighlight = vi.fn();
+    const dismissEditPopover = vi.fn();
+    currentViewState = buildViewState({
+      isMobileViewport: true,
+      isPdf: true,
+      media: {
+        id: "media-1",
+        kind: "pdf",
+        title: "Example PDF",
+        processing_status: "ready_for_reading",
+        canonical_source_url: null,
+        podcast_title: null,
+        podcast_image_url: null,
+        chapters: [],
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        last_error_code: null,
+      },
+      focusHighlight,
+      dismissEditPopover,
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+    expect(screen.queryByRole("dialog", { name: "Linked items" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Tap PDF highlight" }));
+
+    expect(dismissEditPopover).toHaveBeenCalledTimes(1);
+    expect(focusHighlight).toHaveBeenCalledWith("pdf-highlight-1");
+    expect(screen.getByRole("dialog", { name: "Linked items" })).toBeInTheDocument();
   });
 });

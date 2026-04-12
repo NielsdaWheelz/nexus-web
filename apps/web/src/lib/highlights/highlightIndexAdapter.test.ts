@@ -4,6 +4,7 @@ import {
   encodePdfStableOrderKey,
   sortPdfHighlightsByStableKey,
   toPdfDocumentPaneItems,
+  toPdfPagePaneItems,
   toPdfStableOrderKey,
 } from "./highlightIndexAdapter";
 
@@ -133,5 +134,25 @@ describe("highlightIndexAdapter", () => {
     expect(comparePdfStableOrderKeys(a, b)).toBeLessThan(0);
     expect(encodePdfStableOrderKey(a) < encodePdfStableOrderKey(b)).toBe(true);
   });
-});
 
+  it("preserves linked conversations in page and document pane items", () => {
+    const highlight = {
+      ...makePdfHighlight({
+        id: "id-linked",
+        page: 1,
+        top: 10,
+        left: 5,
+        createdAt: "2026-01-01T00:00:00Z",
+      }),
+      linked_conversations: [{ conversation_id: "conv-1", title: "Linked chat" }],
+    };
+    const pageItems = toPdfPagePaneItems([highlight]);
+    const documentItems = toPdfDocumentPaneItems([highlight]);
+    expect(pageItems[0]?.linked_conversations).toEqual([
+      { conversation_id: "conv-1", title: "Linked chat" },
+    ]);
+    expect(documentItems[0]?.linked_conversations).toEqual([
+      { conversation_id: "conv-1", title: "Linked chat" },
+    ]);
+  });
+});

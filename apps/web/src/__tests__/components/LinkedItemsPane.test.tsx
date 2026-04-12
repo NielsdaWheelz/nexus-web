@@ -240,81 +240,47 @@ describe("LinkedItemsPane", () => {
     expect(onHighlightClick).toHaveBeenCalledWith("h-2");
   });
 
-  it("virtualizes large list-mode highlight sets and renders new rows on scroll", async () => {
-    const highlights = Array.from({ length: 240 }, (_, idx) => ({
-      id: `h-${idx}`,
-      exact: `virtual row ${idx}`,
-      color: "yellow" as const,
-      annotation: null,
-      fragment_idx: Math.floor(idx / 40),
-      start_offset: idx * 3,
-      end_offset: idx * 3 + 2,
-      created_at: "2026-01-01T00:00:00Z",
-    }));
+  it("scrolls focused row into view in list mode", async () => {
+    const scrollIntoViewSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => undefined);
 
     render(
-      <div style={{ height: "320px" }}>
-        <LinkedItemsPane
-          highlights={highlights as never}
-          contentRef={{ current: null }}
-          focusedId={null}
-          onHighlightClick={vi.fn()}
-          layoutMode="list"
-        />
-      </div>
+      <LinkedItemsPane
+        highlights={[
+          {
+            id: "focus-1",
+            exact: "focus row 1",
+            color: "yellow",
+            annotation: null,
+            fragment_idx: 0,
+            start_offset: 0,
+            end_offset: 8,
+            created_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "focus-2",
+            exact: "focus row 2",
+            color: "green",
+            annotation: null,
+            fragment_idx: 0,
+            start_offset: 9,
+            end_offset: 17,
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        ] as never}
+        contentRef={{ current: null }}
+        focusedId="focus-2"
+        onHighlightClick={vi.fn()}
+        layoutMode="list"
+      />
     );
 
     await waitFor(() => {
-      expect(screen.getByText("virtual row 0")).toBeInTheDocument();
+      expect(getRowButtons()).toHaveLength(2);
     });
-
-    expect(screen.getByText("virtual row 0")).toBeInTheDocument();
-    expect(screen.queryByText("virtual row 239")).not.toBeInTheDocument();
-
-    const renderedRowsBefore = getRowButtons().length;
-    expect(renderedRowsBefore).toBeLessThan(120);
-
-    const listContainer = document.querySelector('[class*="linkedItemsContainer"]');
-    if (!(listContainer instanceof HTMLDivElement)) {
-      throw new Error("Expected linked-items container to render for virtualization test");
-    }
-
-    listContainer.scrollTop = 11100;
-    listContainer.dispatchEvent(new Event("scroll"));
-
-    await waitFor(() => {
-      expect(screen.getByText("virtual row 230")).toBeInTheDocument();
-    });
-    expect(screen.queryByText("virtual row 0")).not.toBeInTheDocument();
-  });
-
-  it("shows list-mode overflow count for highlights below the viewport", async () => {
-    const highlights = Array.from({ length: 140 }, (_, idx) => ({
-      id: `overflow-${idx}`,
-      exact: `overflow row ${idx}`,
-      color: "yellow" as const,
-      annotation: null,
-      fragment_idx: Math.floor(idx / 20),
-      start_offset: idx * 4,
-      end_offset: idx * 4 + 2,
-      created_at: "2026-01-01T00:00:00Z",
-    }));
-
-    render(
-      <div style={{ height: "300px" }}>
-        <LinkedItemsPane
-          highlights={highlights as never}
-          contentRef={{ current: null }}
-          focusedId={null}
-          onHighlightClick={vi.fn()}
-          layoutMode="list"
-        />
-      </div>
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText(/more below/i)).toBeInTheDocument();
-    });
+    expect(scrollIntoViewSpy).toHaveBeenCalled();
+    scrollIntoViewSpy.mockRestore();
   });
 
   it("has scrollable container in list mode (overflow-y: auto)", async () => {

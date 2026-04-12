@@ -16,11 +16,11 @@ this translates the reader research into concrete engineering constraints and re
 
 ### mobile reader shell contract
 
-- bottom navigation is fixed to the viewport bottom; desktop sidebar is disabled on narrow viewports
-- tab management uses a mobile tabs sheet (open tabs list + sign-out action)
+- mobile has no bottom nav or tab bar; navigation and tab switching are handled through pane chrome + command palette
 - only the active workspace group is visible on mobile to keep one primary pane in view
 - split surfaces hide secondary panes behind a right-side drawer toggled from pane chrome actions
 - pane/page chrome remains at the top but auto-hides on downward scroll and restores on upward scroll
+- tapping a highlight on mobile focuses that highlight and opens the linked-items drawer
 - highlight editing on mobile uses a sheet-style editor with annotation support
 - text selection actions support both highlight creation and immediate quote-to-chat
 - pdf viewer on mobile uses `page-width` auto-fit for the initial scale instead of the persisted numeric zoom (user can still manually zoom after load); the viewport uses `dvh` units with a `vh` fallback for correct height under mobile browser chrome
