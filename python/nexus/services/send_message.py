@@ -477,6 +477,7 @@ def phase1_prepare(
             highlight = db.get(Highlight, ctx_id)
             if highlight is not None:
                 item["color"] = highlight.color
+                item["exact"] = highlight.exact
                 item["preview"] = highlight.exact
                 item["prefix"] = highlight.prefix
                 item["suffix"] = highlight.suffix
@@ -499,6 +500,7 @@ def phase1_prepare(
             if annotation is not None and annotation.highlight is not None:
                 highlight = annotation.highlight
                 item["annotation_body"] = annotation.body
+                item["exact"] = highlight.exact
                 item["preview"] = highlight.exact
                 item["prefix"] = highlight.prefix
                 item["suffix"] = highlight.suffix

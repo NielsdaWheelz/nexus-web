@@ -40,6 +40,7 @@ async function hydrateOne(item: ContextItem): Promise<ContextItem> {
         `/api/highlights/${item.id}`,
       );
       const h = res.data;
+      enriched.exact = h.exact;
       enriched.preview = enriched.preview || h.exact;
       enriched.prefix = h.prefix;
       enriched.suffix = h.suffix;

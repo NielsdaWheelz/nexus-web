@@ -468,10 +468,11 @@ export default function ChatComposer({
       {attachedContexts.length > 0 && (
         <div className={styles.contextChips}>
           {attachedContexts.map((ctx, i) => {
-            const chipLabel = ctx.preview
-              ? ctx.preview.length > 60
-                ? ctx.preview.slice(0, 60) + "..."
-                : ctx.preview
+            const chipText = ctx.exact || ctx.preview;
+            const chipLabel = chipText
+              ? chipText.length > 60
+                ? chipText.slice(0, 60) + "..."
+                : chipText
               : `${ctx.type}: ${ctx.id.slice(0, 8)}...`;
             const swatchClass = ctx.color
               ? styles[`chipSwatch${ctx.color.charAt(0).toUpperCase()}${ctx.color.slice(1)}` as keyof typeof styles]

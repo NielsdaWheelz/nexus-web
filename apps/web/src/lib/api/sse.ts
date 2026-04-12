@@ -76,6 +76,7 @@ export interface ContextItem {
   mediaId?: string;
   mediaTitle?: string;
   /** Enriched fields — populated via API hydration */
+  exact?: string;
   prefix?: string;
   suffix?: string;
   annotationBody?: string;
@@ -89,12 +90,13 @@ export interface ContextItem {
  */
 export function toWireContextItem(
   item: ContextItem,
-): Pick<ContextItem, "type" | "id" | "color" | "preview" | "mediaId" | "mediaTitle"> {
+): Pick<ContextItem, "type" | "id" | "color" | "preview" | "exact" | "mediaId" | "mediaTitle"> {
   return {
     type: item.type,
     id: item.id,
     ...(item.color !== undefined && { color: item.color }),
     ...(item.preview !== undefined && { preview: item.preview }),
+    ...(item.exact !== undefined && { exact: item.exact }),
     ...(item.mediaId !== undefined && { mediaId: item.mediaId }),
     ...(item.mediaTitle !== undefined && { mediaTitle: item.mediaTitle }),
   };

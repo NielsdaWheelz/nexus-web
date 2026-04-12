@@ -70,6 +70,8 @@
   transform: none !important;
   left: 0;
   right: 0;
+  height: auto;
+  overflow: visible;
 }
 
 .linkedItemPrimary:hover {

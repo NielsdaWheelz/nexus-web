@@ -2,7 +2,7 @@
  * LinkedItemRow - Individual row component for linked-items pane.
  *
  * Each row represents one highlight with two lines:
- * - Line 1: Color swatch + truncated text preview + ActionMenu
+ * - Line 1: Color swatch + full highlight text (via HighlightSnippet) + ActionMenu
  * - Line 2: Annotation body or "Add a note…" placeholder (click to edit inline)
  *
  * @see docs/v1/s2/s2_prs/s2_pr10.md §6
@@ -19,6 +19,7 @@ import {
 } from "react";
 import { MessageSquare } from "lucide-react";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import styles from "./LinkedItemsPane.module.css";
 
 // =============================================================================
@@ -62,13 +63,6 @@ export interface LinkedItemRowProps {
   /** Delete annotation callback. */
   onAnnotationDelete?: (highlightId: string) => Promise<void>;
 }
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-/** Maximum characters to show in the text preview */
-const MAX_PREVIEW_LENGTH = 60;
 
 // =============================================================================
 // Component
@@ -189,12 +183,6 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
       [onSendToChat, highlight.id]
     );
 
-    // Truncate text for preview
-    const previewText =
-      highlight.exact.length > MAX_PREVIEW_LENGTH
-        ? `${highlight.exact.slice(0, MAX_PREVIEW_LENGTH)}…`
-        : highlight.exact;
-
     const annotationBody = highlight.annotation?.body;
 
     return (
@@ -227,7 +215,7 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
               className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
               aria-hidden="true"
             />
-            <span className={styles.previewText}>{previewText}</span>
+            <HighlightSnippet exact={highlight.exact} color={highlight.color} compact className={styles.previewText} />
           </div>
           {onSendToChat && (
             <button

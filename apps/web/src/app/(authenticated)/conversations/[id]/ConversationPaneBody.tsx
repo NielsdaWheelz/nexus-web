@@ -18,6 +18,7 @@ import {
 import { hydrateContextItems } from "@/lib/conversations/hydrateContextItems";
 import ChatComposer from "@/components/ChatComposer";
 import ContextRow from "@/components/ui/ContextRow";
+import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import ActionMenu from "@/components/ui/ActionMenu";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import StateMessage from "@/components/ui/StateMessage";
@@ -50,6 +51,7 @@ interface MessageContextSnapshot {
   id: string;
   color?: "yellow" | "green" | "blue" | "pink" | "purple";
   preview?: string;
+  exact?: string;
   prefix?: string;
   suffix?: string;
   annotation_body?: string;
@@ -404,8 +406,8 @@ function MessageBubble({ message }: { message: Message }) {
       {message.role === "user" && messageContexts.length > 0 && (
         <div className={styles.messageContextBlock}>
           {messageContexts.map((contextItem, index) => {
-            const surrounding = formatMessageSurroundingContext(contextItem);
             const meta = formatMessageMeta(contextItem);
+            const text = contextItem.exact || contextItem.preview;
             return (
               <div
                 key={`${message.id}-${contextItem.type}-${contextItem.id}-${index}`}
@@ -419,13 +421,15 @@ function MessageBubble({ message }: { message: Message }) {
                     />
                   ) : null}
                   <span className={styles.messageContextTitle}>
-                    {formatMessageContextTitle(contextItem)}
+                    {text
+                      ? <HighlightSnippet exact={text} color={contextItem.color ?? "neutral"} compact />
+                      : contextItem.type === "highlight" ? "Highlight" : contextItem.type === "annotation" ? "Annotation" : "Media"}
                   </span>
                 </div>
-                {surrounding ? (
-                  <div className={styles.messageContextDescription}>{surrounding}</div>
-                ) : null}
                 {meta ? <div className={styles.messageContextMeta}>{meta}</div> : null}
+                {contextItem.annotation_body ? (
+                  <div className={styles.linkedItemsAnnotation}>{contextItem.annotation_body}</div>
+                ) : null}
               </div>
             );
           })}
@@ -441,43 +445,11 @@ function MessageBubble({ message }: { message: Message }) {
   );
 }
 
-function truncate(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}...` : text;
-}
-
-function formatContextTitle(item: ContextItem): string {
-  if (item.preview) return item.preview;
-  if (item.type === "highlight") return "Highlight";
-  if (item.type === "annotation") return "Annotation";
-  return "Media";
-}
-
-function formatSurroundingContext(item: ContextItem): string | undefined {
-  const parts: string[] = [];
-  if (item.prefix) parts.push(`...${truncate(item.prefix, 40)}`);
-  if (item.suffix) parts.push(`${truncate(item.suffix, 40)}...`);
-  return parts.length > 0 ? parts.join(" [selection] ") : undefined;
-}
-
 function formatMeta(item: ContextItem): string | undefined {
   const parts: string[] = [];
   if (item.mediaTitle) parts.push(item.mediaTitle);
   if (item.mediaKind) parts.push(item.mediaKind);
   return parts.length > 0 ? parts.join(" - ") : undefined;
-}
-
-function formatMessageContextTitle(item: MessageContextSnapshot): string {
-  if (item.preview) return item.preview;
-  if (item.type === "highlight") return "Highlight";
-  if (item.type === "annotation") return "Annotation";
-  return "Media";
-}
-
-function formatMessageSurroundingContext(item: MessageContextSnapshot): string | undefined {
-  const parts: string[] = [];
-  if (item.prefix) parts.push(`...${truncate(item.prefix, 40)}`);
-  if (item.suffix) parts.push(`${truncate(item.suffix, 40)}...`);
-  return parts.length > 0 ? parts.join(" [selection] ") : undefined;
 }
 
 function formatMessageMeta(item: MessageContextSnapshot): string | undefined {
@@ -607,6 +579,7 @@ function ConversationLinkedItemsPaneBody({
               });
             }
 
+            const text = contextItem.exact || contextItem.preview;
             return (
               <ContextRow
                 key={`${contextItem.type}-${contextItem.id}-${index}`}
@@ -618,10 +591,12 @@ function ConversationLinkedItemsPaneBody({
                     />
                   ) : undefined
                 }
-                title={formatContextTitle(contextItem)}
+                title={
+                  text
+                    ? <HighlightSnippet exact={text} color={contextItem.color ?? "neutral"} compact />
+                    : contextItem.type === "highlight" ? "Highlight" : contextItem.type === "annotation" ? "Annotation" : "Media"
+                }
                 titleClassName={styles.linkedItemsTitle}
-                description={formatSurroundingContext(contextItem)}
-                descriptionClassName={styles.linkedItemsDescription}
                 meta={formatMeta(contextItem)}
                 metaClassName={styles.linkedItemsMeta}
                 actions={<ActionMenu options={menuOptions} />}
@@ -655,6 +630,7 @@ function ConversationLinkedItemsPaneBody({
             if (itemMeta) metaParts.push(itemMeta);
             metaParts.push(`Message #${messageSeq}`);
 
+            const text = context.exact || context.preview;
             return (
               <ContextRow
                 key={`${messageId}-${context.type}-${context.id}-${index}`}
@@ -666,10 +642,12 @@ function ConversationLinkedItemsPaneBody({
                     />
                   ) : undefined
                 }
-                title={formatMessageContextTitle(context)}
+                title={
+                  text
+                    ? <HighlightSnippet exact={text} color={context.color ?? "neutral"} compact />
+                    : context.type === "highlight" ? "Highlight" : context.type === "annotation" ? "Annotation" : "Media"
+                }
                 titleClassName={styles.linkedItemsTitle}
-                description={formatMessageSurroundingContext(context)}
-                descriptionClassName={styles.linkedItemsDescription}
                 meta={metaParts.join(" - ")}
                 metaClassName={styles.linkedItemsMeta}
                 actions={menuOptions.length > 0 ? <ActionMenu options={menuOptions} /> : undefined}

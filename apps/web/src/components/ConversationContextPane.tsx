@@ -3,6 +3,7 @@
 import Pane from "@/components/Pane";
 import StateMessage from "@/components/ui/StateMessage";
 import ContextRow from "@/components/ui/ContextRow";
+import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import ActionMenu from "@/components/ui/ActionMenu";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { ContextItem } from "@/lib/api/sse";
@@ -55,15 +56,12 @@ export default function ConversationContextPane({
                       />
                     ) : undefined
                   }
-                  title={contextItem.preview || (contextItem.type === "highlight" ? "Highlight" : contextItem.type === "annotation" ? "Annotation" : "Media")}
+                  title={
+                    contextItem.exact || contextItem.preview
+                      ? <HighlightSnippet exact={contextItem.exact || contextItem.preview!} color={contextItem.color ?? "neutral"} compact />
+                      : contextItem.type === "highlight" ? "Highlight" : contextItem.type === "annotation" ? "Annotation" : "Media"
+                  }
                   titleClassName={styles.contextTitle}
-                  description={(() => {
-                    const parts: string[] = [];
-                    if (contextItem.prefix) parts.push("..." + (contextItem.prefix.length > 40 ? contextItem.prefix.slice(0, 40) + "..." : contextItem.prefix));
-                    if (contextItem.suffix) parts.push((contextItem.suffix.length > 40 ? contextItem.suffix.slice(0, 40) + "..." : contextItem.suffix) + "...");
-                    return parts.length > 0 ? parts.join(" [selection] ") : undefined;
-                  })()}
-                  descriptionClassName={styles.contextDescription}
                   meta={[contextItem.mediaTitle, contextItem.mediaKind].filter(Boolean).join(" \u2014 ") || undefined}
                   metaClassName={styles.contextMeta}
                   actions={
