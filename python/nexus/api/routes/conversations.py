@@ -259,7 +259,7 @@ def delete_message(
 
 
 @router.post("/conversations/messages", status_code=200)
-def send_message_new_conversation(
+async def send_message_new_conversation(
     body: SendMessageRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
@@ -286,13 +286,12 @@ def send_message_new_conversation(
         E_TOKEN_BUDGET_EXCEEDED (429): Platform token budget exceeded.
         E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409): Key reused with different payload.
     """
-    # Convert contexts to dicts
     contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
 
-    result = send_message_service.send_message(
+    result = await send_message_service.send_message(
         db=db,
         viewer_id=viewer.user_id,
-        conversation_id=None,  # New conversation
+        conversation_id=None,
         content=body.content,
         model_id=body.model_id,
         key_mode=body.key_mode,
@@ -305,7 +304,7 @@ def send_message_new_conversation(
 
 
 @router.post("/conversations/{conversation_id}/messages", status_code=200)
-def send_message_existing_conversation(
+async def send_message_existing_conversation(
     conversation_id: UUID,
     body: SendMessageRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -335,10 +334,9 @@ def send_message_existing_conversation(
         E_TOKEN_BUDGET_EXCEEDED (429): Platform token budget exceeded.
         E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409): Key reused with different payload.
     """
-    # Convert contexts to dicts
     contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
 
-    result = send_message_service.send_message(
+    result = await send_message_service.send_message(
         db=db,
         viewer_id=viewer.user_id,
         conversation_id=conversation_id,

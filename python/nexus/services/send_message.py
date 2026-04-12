@@ -40,17 +40,15 @@ Invariants:
 - Idempotency prevents duplicate execution
 """
 
-import asyncio
 import hashlib
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-import httpx
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
-from nexus.config import get_settings
 from nexus.db.models import (
     Annotation,
     Conversation,
@@ -116,69 +114,6 @@ LLM_TIMEOUT_SECONDS = 45.0
 IDEMPOTENCY_EXPIRY_HOURS = 24
 
 
-def generate(
-    provider: str,
-    request: LLMRequest,
-    api_key: str,
-    timeout_s: int = 45,
-    router: LLMRouter | None = None,
-    key_mode: str = "unknown",
-    call_context: LLMCallContext | None = None,
-) -> LLMResponse:
-    """Sync wrapper for LLM generation.
-
-    This function exists to maintain test compatibility with mocking.
-
-    Args:
-        provider: LLM provider name.
-        request: The LLM request.
-        api_key: API key for the provider.
-        timeout_s: Timeout in seconds.
-        router: Optional shared LLMRouter (from app.state). If None, creates a
-                temporary client (less efficient, used in tests).
-        key_mode: Key resolution mode for logging.
-        call_context: Observability metadata.
-
-    Returns:
-        LLMResponse from the provider.
-    """
-    if router is not None:
-        # Use provided router (from app.state) - async call wrapped in sync
-        async def _call_with_router():
-            return await router.generate(
-                provider,
-                request,
-                api_key,
-                timeout_s=timeout_s,
-                key_mode=key_mode,
-                call_context=call_context,
-            )
-
-        return asyncio.run(_call_with_router())
-
-    # Fallback: create temporary client (for tests or when router not available)
-    settings = get_settings()
-
-    async def _call():
-        async with httpx.AsyncClient() as client:
-            temp_router = LLMRouter(
-                client,
-                enable_openai=settings.enable_openai,
-                enable_anthropic=settings.enable_anthropic,
-                enable_gemini=settings.enable_gemini,
-            )
-            return await temp_router.generate(
-                provider,
-                request,
-                api_key,
-                timeout_s=timeout_s,
-                key_mode=key_mode,
-                call_context=call_context,
-            )
-
-    return asyncio.run(_call())
-
-
 @dataclass
 class PrepareResult:
     """Result of Phase 1 (prepare)."""
@@ -186,33 +121,6 @@ class PrepareResult:
     conversation: Conversation
     user_message: Message
     assistant_message: Message
-
-
-@dataclass
-class ExecuteResult:
-    """Result of Phase 2 (execute)."""
-
-    success: bool
-    response: LLMResponse | None = None
-    error: LLMError | None = None
-    latency_ms: int = 0
-
-
-class PreLLMQuoteContextError(Exception):
-    """Quote-context failure raised before provider execution starts."""
-
-    def __init__(
-        self,
-        error_code: ApiErrorCode,
-        message: str,
-        resolved_key: ResolvedKey,
-        latency_ms: int,
-    ):
-        self.error_code = error_code
-        self.message = message
-        self.resolved_key = resolved_key
-        self.latency_ms = latency_ms
-        super().__init__(message)
 
 
 def compute_payload_hash(
@@ -566,105 +474,6 @@ def phase1_prepare(
     )
 
 
-def phase2_execute(
-    db: Session,
-    viewer_id: UUID,
-    model: Model,
-    content: str,
-    key_mode: str,
-    contexts: list[dict],
-    router: LLMRouter | None = None,
-    call_context: LLMCallContext | None = None,
-) -> tuple[ExecuteResult, ResolvedKey]:
-    """Phase 2: Execute (no DB transaction held).
-
-    Resolves key, renders prompt, calls LLM.
-
-    Args:
-        db: Database session.
-        viewer_id: User ID.
-        model: Model to use.
-        content: User message content.
-        key_mode: Key resolution mode.
-        contexts: Context items.
-        router: Optional shared LLMRouter from app.state.
-        call_context: Observability metadata for the LLM call.
-
-    Returns:
-        Tuple of (ExecuteResult, ResolvedKey).
-    """
-    start_time = time.monotonic()
-
-    # Resolve key
-    resolved_key = resolve_api_key(db, viewer_id, model.provider, key_mode)
-
-    # Render context blocks (from context_rendering.py - has DB access)
-    try:
-        context_text, context_chars = render_context_blocks(db, contexts)
-    except QuoteContextBlockingError as quote_err:
-        latency_ms = int((time.monotonic() - start_time) * 1000)
-        raise PreLLMQuoteContextError(
-            error_code=quote_err.error_code,
-            message=quote_err.message,
-            resolved_key=resolved_key,
-            latency_ms=latency_ms,
-        ) from quote_err
-
-    if context_chars > MAX_RENDERED_CONTEXT_CHARS:
-        logger.warning(
-            "context_exceeds_limit",
-            context_chars=context_chars,
-            limit=MAX_RENDERED_CONTEXT_CHARS,
-        )
-
-    # Split context into blocks for render_prompt
-    context_blocks = [context_text] if context_text else []
-
-    # Use PR-04's render_prompt for provider-agnostic prompt building
-    messages = render_prompt(
-        user_content=content,
-        history=[],  # No history for single-turn
-        context_blocks=context_blocks,
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-    )
-
-    # Build request using PR-04's LLMRequest format
-    request = LLMRequest(
-        model_name=model.model_name,
-        messages=messages,
-        max_tokens=4096,
-        temperature=0.7,
-    )
-
-    # Call LLM using sync wrapper (tests can mock this)
-    try:
-        response = generate(
-            model.provider,
-            request,
-            resolved_key.api_key,
-            int(LLM_TIMEOUT_SECONDS),
-            router=router,
-            key_mode=resolved_key.mode,
-            call_context=call_context,
-        )
-        latency_ms = int((time.monotonic() - start_time) * 1000)
-
-        return ExecuteResult(
-            success=True,
-            response=response,
-            latency_ms=latency_ms,
-        ), resolved_key
-
-    except LLMError as e:
-        latency_ms = int((time.monotonic() - start_time) * 1000)
-
-        return ExecuteResult(
-            success=False,
-            error=e,
-            latency_ms=latency_ms,
-        ), resolved_key
-
-
 def finalize_pre_llm_quote_failure(
     db: Session,
     assistant_message: Message,
@@ -706,7 +515,9 @@ def phase3_finalize(
     viewer_id: UUID,
     assistant_message: Message,
     model: Model,
-    execute_result: ExecuteResult,
+    response: LLMResponse | None,
+    error: LLMError | None,
+    latency_ms: int,
     resolved_key: ResolvedKey,
     key_mode: str,
 ) -> None:
@@ -716,89 +527,73 @@ def phase3_finalize(
     """
     rate_limiter = get_rate_limiter()
 
-    if execute_result.success and execute_result.response:
-        response = execute_result.response
-
-        # Truncate if needed (PR-04 uses 'text' instead of 'content')
+    if response is not None:
         response_text = response.text
         if len(response_text) > MAX_ASSISTANT_CONTENT_LENGTH:
             response_text = response_text[:MAX_ASSISTANT_CONTENT_LENGTH] + TRUNCATION_NOTICE
 
-        # Update assistant message
         assistant_message.content = response_text
         assistant_message.status = "complete"
         assistant_message.updated_at = datetime.now(UTC)
 
-        # Extract usage (may be None per PR-04 spec)
         usage = response.usage
         prompt_tokens = usage.prompt_tokens if usage else None
         completion_tokens = usage.completion_tokens if usage else None
         total_tokens = usage.total_tokens if usage else None
 
-        # Insert message_llm (with provider_request_id from PR-09)
-        message_llm = MessageLLM(
-            message_id=assistant_message.id,
-            provider=model.provider,
-            model_name=model.model_name,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            key_mode_requested=key_mode,
-            key_mode_used=resolved_key.mode,
-            latency_ms=execute_result.latency_ms,
-            provider_request_id=response.provider_request_id,
-            prompt_version=PROMPT_VERSION,
+        db.add(
+            MessageLLM(
+                message_id=assistant_message.id,
+                provider=model.provider,
+                model_name=model.model_name,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                key_mode_requested=key_mode,
+                key_mode_used=resolved_key.mode,
+                latency_ms=latency_ms,
+                provider_request_id=response.provider_request_id,
+                prompt_version=PROMPT_VERSION,
+            )
         )
-        db.add(message_llm)
 
-        # Update BYOK status
         if resolved_key.mode == "byok":
             update_user_key_status(db, resolved_key.user_key_id, "valid")
 
-        # Charge token budget (platform keys only)
         if resolved_key.mode == "platform" and total_tokens:
-            rate_limiter.charge_token_budget(
-                viewer_id,
-                assistant_message.id,
-                total_tokens,
-            )
+            rate_limiter.charge_token_budget(viewer_id, assistant_message.id, total_tokens)
 
     else:
-        error = execute_result.error
-        # Handle unknown error class gracefully
         error_class = error.error_class if error else LLMErrorClass.PROVIDER_DOWN
+        error_message = ERROR_CLASS_TO_MESSAGE.get(
+            error_class, "An unexpected error occurred. Please try again."
+        )
 
-        # Set user-friendly error message
-        default_message = "An unexpected error occurred. Please try again."
-        error_message = ERROR_CLASS_TO_MESSAGE.get(error_class, default_message)
-
-        # Update assistant message
         assistant_message.content = error_message
         assistant_message.status = "error"
         assistant_message.error_code = error_class.value
         assistant_message.updated_at = datetime.now(UTC)
 
-        # Insert message_llm with error
-        message_llm = MessageLLM(
-            message_id=assistant_message.id,
-            provider=model.provider,
-            model_name=model.model_name,
-            key_mode_requested=key_mode,
-            key_mode_used=resolved_key.mode,
-            latency_ms=execute_result.latency_ms,
-            error_class=error_class.value,
-            prompt_version=PROMPT_VERSION,
+        db.add(
+            MessageLLM(
+                message_id=assistant_message.id,
+                provider=model.provider,
+                model_name=model.model_name,
+                key_mode_requested=key_mode,
+                key_mode_used=resolved_key.mode,
+                latency_ms=latency_ms,
+                error_class=error_class.value,
+                prompt_version=PROMPT_VERSION,
+            )
         )
-        db.add(message_llm)
 
-        # Update BYOK status if invalid key
         if resolved_key.mode == "byok" and error_class == LLMErrorClass.INVALID_KEY:
             update_user_key_status(db, resolved_key.user_key_id, "invalid")
 
     db.commit()
 
 
-def send_message(
+async def send_message(
     db: Session,
     viewer_id: UUID,
     conversation_id: UUID | None,
@@ -807,120 +602,94 @@ def send_message(
     key_mode: str = "auto",
     contexts: list[dict] | None = None,
     idempotency_key: str | None = None,
-    router: LLMRouter | None = None,
+    *,
+    router: LLMRouter,
 ) -> SendMessageResponse:
     """Send a message and get LLM response.
 
-    Main entry point for the send-message flow.
-
-    Args:
-        db: Database session.
-        viewer_id: User sending the message.
-        conversation_id: Existing conversation ID, or None to create new.
-        content: User message content.
-        model_id: Model to use.
-        key_mode: Key resolution mode (auto, byok_only, platform_only).
-        contexts: Context items to include.
-        idempotency_key: Optional idempotency key.
-        router: Optional shared LLMRouter from app.state (for connection pooling).
-
-    Returns:
-        SendMessageResponse with conversation and messages.
-
-    Raises:
-        ApiError: Various error codes on failure.
+    Async entry point for the non-streaming send-message flow.
+    Sync DB calls run via run_in_threadpool; the LLM call awaits on the
+    main event loop so the shared httpx.AsyncClient is used correctly.
     """
     contexts = contexts or []
     rate_limiter = get_rate_limiter()
 
-    # PR-09: Generate flow_id for phase correlation
     flow_id = str(uuid4())
     set_flow_id(flow_id)
     total_start = time.monotonic()
 
     try:
-        # Compute payload hash for idempotency
         context_dicts = [{"type": c.get("type"), "id": str(c.get("id"))} for c in contexts]
         payload_hash = compute_payload_hash(content, model_id, key_mode, context_dicts)
 
-        # Check idempotency replay
-        replay = check_idempotency(db, viewer_id, idempotency_key, payload_hash)
+        # Idempotency replay
+        replay = await run_in_threadpool(
+            check_idempotency, db, viewer_id, idempotency_key, payload_hash
+        )
         if replay:
             user_message, assistant_message, conversation = replay
-            message_count = get_message_count(db, conversation.id)
-
+            message_count = await run_in_threadpool(get_message_count, db, conversation.id)
             return SendMessageResponse(
                 conversation=conversation_to_out(conversation, message_count, viewer_id=viewer_id),
                 user_message=message_to_out(user_message),
                 assistant_message=message_to_out(assistant_message),
             )
 
-        # Determine if using platform key
-        model = get_model_by_id(db, model_id)
+        model = await run_in_threadpool(get_model_by_id, db, model_id)
         if not model:
             raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model not found")
 
         try:
-            resolved = resolve_api_key(db, viewer_id, model.provider, key_mode)
+            resolved = await run_in_threadpool(
+                resolve_api_key, db, viewer_id, model.provider, key_mode
+            )
             use_platform_key = resolved.mode == "platform"
         except LLMError:
             use_platform_key = False
 
         # Phase 0: Pre-validation
-        model = validate_pre_phase(
-            db, viewer_id, conversation_id, content, model_id, key_mode, contexts, use_platform_key
+        model = await run_in_threadpool(
+            validate_pre_phase,
+            db, viewer_id, conversation_id, content, model_id,
+            key_mode, contexts, use_platform_key,
         )
 
-        # Acquire one in-flight slot for this request.
         rate_limiter.acquire_inflight_slot(viewer_id)
 
         try:
             # Phase 1: Prepare
             phase1_start = time.monotonic()
-            prepare_result = phase1_prepare(
-                db,
-                viewer_id,
-                conversation_id,
-                content,
-                model_id,
-                contexts,
-                idempotency_key,
-                payload_hash,
+            prepare_result = await run_in_threadpool(
+                phase1_prepare,
+                db, viewer_id, conversation_id, content, model_id,
+                contexts, idempotency_key, payload_hash,
             )
             phase1_ms = int((time.monotonic() - phase1_start) * 1000)
 
-            # Build LLM call context for observability
             call_ctx = LLMCallContext(
                 operation=LLMOperation.CHAT_SEND,
                 conversation_id=str(prepare_result.conversation.id),
                 assistant_message_id=str(prepare_result.assistant_message.id),
             )
 
-            # Phase 2: Execute
+            # Phase 2: Resolve key, render context, call LLM
             phase2_start = time.monotonic()
+
+            resolved_key = await run_in_threadpool(
+                resolve_api_key, db, viewer_id, model.provider, key_mode
+            )
+
             try:
-                execute_result, resolved_key = phase2_execute(
-                    db,
-                    viewer_id,
-                    model,
-                    content,
-                    key_mode,
-                    contexts,
-                    router=router,
-                    call_context=call_ctx,
+                context_text, context_chars = await run_in_threadpool(
+                    render_context_blocks, db, contexts
                 )
-                phase2_ms = int((time.monotonic() - phase2_start) * 1000)
-            except PreLLMQuoteContextError as quote_err:
+            except QuoteContextBlockingError as quote_err:
                 phase2_ms = int((time.monotonic() - phase2_start) * 1000)
                 phase3_start = time.monotonic()
-                finalize_pre_llm_quote_failure(
-                    db=db,
-                    assistant_message=prepare_result.assistant_message,
-                    model=model,
-                    resolved_key=quote_err.resolved_key,
-                    key_mode=key_mode,
-                    error_code=quote_err.error_code,
-                    latency_ms=quote_err.latency_ms,
+                await run_in_threadpool(
+                    finalize_pre_llm_quote_failure,
+                    db, prepare_result.assistant_message, model,
+                    resolved_key, key_mode, quote_err.error_code, phase2_ms,
                 )
                 phase3_ms = int((time.monotonic() - phase3_start) * 1000)
                 total_ms = int((time.monotonic() - total_start) * 1000)
@@ -938,28 +707,60 @@ def send_message(
                 )
                 raise ApiError(quote_err.error_code, quote_err.message) from quote_err
 
+            if context_chars > MAX_RENDERED_CONTEXT_CHARS:
+                logger.warning(
+                    "context_exceeds_limit",
+                    context_chars=context_chars,
+                    limit=MAX_RENDERED_CONTEXT_CHARS,
+                )
+
+            context_blocks = [context_text] if context_text else []
+            messages = render_prompt(
+                user_content=content,
+                history=[],
+                context_blocks=context_blocks,
+                system_prompt=DEFAULT_SYSTEM_PROMPT,
+            )
+            llm_request = LLMRequest(
+                model_name=model.model_name,
+                messages=messages,
+                max_tokens=4096,
+                temperature=0.7,
+            )
+
+            # LLM call — await on main event loop (no asyncio.run)
+            response: LLMResponse | None = None
+            llm_error: LLMError | None = None
+            try:
+                response = await router.generate(
+                    model.provider,
+                    llm_request,
+                    resolved_key.api_key,
+                    timeout_s=int(LLM_TIMEOUT_SECONDS),
+                    key_mode=resolved_key.mode,
+                    call_context=call_ctx,
+                )
+            except LLMError as e:
+                llm_error = e
+
+            phase2_ms = int((time.monotonic() - phase2_start) * 1000)
+
             # Phase 3: Finalize
             phase3_start = time.monotonic()
-            phase3_finalize(
-                db,
-                viewer_id,
-                prepare_result.assistant_message,
-                model,
-                execute_result,
-                resolved_key,
-                key_mode,
+            await run_in_threadpool(
+                phase3_finalize,
+                db, viewer_id, prepare_result.assistant_message, model,
+                response, llm_error, phase2_ms, resolved_key, key_mode,
             )
             phase3_ms = int((time.monotonic() - phase3_start) * 1000)
 
-            # Refresh to get updated data
-            db.refresh(prepare_result.conversation)
-            db.refresh(prepare_result.user_message)
-            db.refresh(prepare_result.assistant_message)
+            await run_in_threadpool(db.refresh, prepare_result.conversation)
+            await run_in_threadpool(db.refresh, prepare_result.user_message)
+            await run_in_threadpool(db.refresh, prepare_result.assistant_message)
 
-            outcome = "success" if execute_result.success else "error"
+            outcome = "success" if response is not None else "error"
             total_ms = int((time.monotonic() - total_start) * 1000)
 
-            # PR-09: Emit send.completed event
             log_fn = logger.info if outcome == "success" else logger.error
             log_fn(
                 "send.completed",
@@ -974,7 +775,9 @@ def send_message(
                 ),
             )
 
-            message_count = get_message_count(db, prepare_result.conversation.id)
+            message_count = await run_in_threadpool(
+                get_message_count, db, prepare_result.conversation.id
+            )
 
             return SendMessageResponse(
                 conversation=conversation_to_out(
@@ -985,9 +788,7 @@ def send_message(
             )
 
         finally:
-            # Release the in-flight slot for this request.
             rate_limiter.release_inflight_slot(viewer_id)
 
     finally:
-        # PR-09: Clear flow_id
         set_flow_id(None)

@@ -19,6 +19,7 @@ Error handling:
 - Other → E_LLM_PROVIDER_DOWN
 """
 
+import json
 import time
 from collections.abc import AsyncIterator
 
@@ -277,7 +278,7 @@ class LLMRouter:
             # Re-raise LLMError as-is (e.g., from adapter stream parsing)
             raise
 
-        except Exception as e:
+        except (json.JSONDecodeError, KeyError, IndexError, ValueError) as e:
             latency_ms = int((time.monotonic() - start) * 1000)
             logger.error(
                 "llm.request.failed",
@@ -286,6 +287,30 @@ class LLMRouter:
                     outcome="error",
                     error_class=LLMErrorClass.PROVIDER_DOWN.value,
                     latency_ms=latency_ms,
+                    exception_type=type(e).__name__,
+                    exception_message=str(e),
+                ),
+            )
+            raise LLMError(
+                LLMErrorClass.PROVIDER_DOWN,
+                f"Response parsing error: {type(e).__name__}",
+                provider=provider,
+            ) from e
+
+        except Exception as e:
+            # justify-ignore-error: adapter boundary — unknown exceptions from
+            # provider SDK or transport internals are normalized to PROVIDER_DOWN
+            # so callers get a classifiable error. The real type is logged above.
+            latency_ms = int((time.monotonic() - start) * 1000)
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **base,
+                    outcome="error",
+                    error_class=LLMErrorClass.PROVIDER_DOWN.value,
+                    latency_ms=latency_ms,
+                    exception_type=type(e).__name__,
+                    exception_message=str(e),
                 ),
             )
             raise LLMError(
@@ -412,7 +437,7 @@ class LLMRouter:
             # Re-raise LLMError as-is
             raise
 
-        except Exception as e:
+        except (json.JSONDecodeError, KeyError, IndexError, ValueError) as e:
             latency_ms = int((time.monotonic() - start) * 1000)
             logger.error(
                 "llm.request.failed",
@@ -421,6 +446,30 @@ class LLMRouter:
                     outcome="error",
                     error_class=LLMErrorClass.PROVIDER_DOWN.value,
                     latency_ms=latency_ms,
+                    exception_type=type(e).__name__,
+                    exception_message=str(e),
+                ),
+            )
+            raise LLMError(
+                LLMErrorClass.PROVIDER_DOWN,
+                f"Stream parsing error: {type(e).__name__}",
+                provider=provider,
+            ) from e
+
+        except Exception as e:
+            # justify-ignore-error: adapter boundary — unknown exceptions from
+            # provider SDK or transport internals are normalized to PROVIDER_DOWN
+            # so callers get a classifiable error. The real type is logged above.
+            latency_ms = int((time.monotonic() - start) * 1000)
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **base,
+                    outcome="error",
+                    error_class=LLMErrorClass.PROVIDER_DOWN.value,
+                    latency_ms=latency_ms,
+                    exception_type=type(e).__name__,
+                    exception_message=str(e),
                 ),
             )
             raise LLMError(
