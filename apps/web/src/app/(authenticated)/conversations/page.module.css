@@ -6,40 +6,6 @@
   min-height: 0;
 }
 
-.chatActions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-secondary);
-}
-
-.chatMeta {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-}
-
-.deleteConversationBtn {
-  padding: var(--space-1) var(--space-2);
-  background: none;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-size: var(--font-size-xs);
-}
-
-.deleteConversationBtn:hover:not(:disabled) {
-  background: var(--color-surface);
-}
-
-.deleteConversationBtn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .messageList {
   flex: 1;
   overflow-y: auto;

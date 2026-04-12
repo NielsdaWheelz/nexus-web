@@ -27,6 +27,7 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import styles from "../page.module.css";
 
 // ============================================================================
@@ -68,7 +69,6 @@ interface Conversation {
   id: string;
   title: string;
   sharing: string;
-  message_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -273,6 +273,20 @@ function ChatView({
     }
   }, [id, router]);
 
+  usePaneChromeOverride({
+    options: [
+      {
+        id: "delete-conversation",
+        label: deleting ? "Deleting..." : "Delete conversation",
+        tone: "danger",
+        disabled: deleting,
+        onSelect: () => {
+          void handleDeleteConversation();
+        },
+      },
+    ],
+  });
+
   // --------------------------------------------------------------------------
   // Streaming message handlers
   // --------------------------------------------------------------------------
@@ -361,20 +375,6 @@ function ChatView({
         <div className={styles.chatPrimaryColumn}>
           <div className={styles.paneContentChat}>
             <div className={styles.chatContainer}>
-              <div className={styles.chatActions}>
-                <span className={styles.chatMeta}>{conversation.message_count} messages</span>
-                <button
-                  type="button"
-                  className={styles.deleteConversationBtn}
-                  disabled={deleting}
-                  onClick={() => {
-                    void handleDeleteConversation();
-                  }}
-                >
-                  {deleting ? "Deleting..." : "Delete conversation"}
-                </button>
-              </div>
-
               <div
                 ref={messageListRef}
                 className={styles.messageList}
