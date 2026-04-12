@@ -20,7 +20,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import zipfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from html import escape
 from io import BytesIO
@@ -105,6 +107,66 @@ EPUB_TOC_ANCHOR_LABEL = "Chapter 1: Deep Anchor Target"
 EPUB_TOC_ANCHOR_HEADING = "Deep Anchor Target"
 READER_RESUME_WEB_ANCHOR_TEXT = "reader resume anchor target omega"
 READER_RESUME_PDF_PAGE_COUNT = 8
+SUPABASE_READY_ATTEMPTS = 8
+SUPABASE_READY_DELAY_SECONDS = 1.5
+
+
+def _run_with_retries[T](
+    *,
+    label: str,
+    fn: Callable[[], T],
+    attempts: int = SUPABASE_READY_ATTEMPTS,
+    delay_seconds: float = SUPABASE_READY_DELAY_SECONDS,
+) -> T:
+    """Run operation with bounded retries to absorb startup readiness races."""
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - seed bootstrap should retry any startup failure.
+            last_error = exc
+            if attempt == attempts:
+                break
+            print(
+                f"{label} failed (attempt {attempt}/{attempts}): {exc}. "
+                f"Retrying in {delay_seconds:.1f}s..."
+            )
+            time.sleep(delay_seconds)
+    raise RuntimeError(f"{label} failed after {attempts} attempts") from last_error
+
+
+def _ensure_storage_bucket(*, supabase_url: str, service_key: str, bucket: str) -> None:
+    """Ensure storage bucket exists (idempotent)."""
+    headers = {
+        "Authorization": f"Bearer {service_key}",
+        "apikey": service_key,
+    }
+    bucket_url = f"{supabase_url.rstrip('/')}/storage/v1/bucket/{bucket}"
+    create_url = f"{supabase_url.rstrip('/')}/storage/v1/bucket"
+    with httpx.Client(timeout=30.0) as client:
+        response = client.get(bucket_url, headers=headers)
+        if response.status_code == 200:
+            return
+        if response.status_code not in (400, 404):
+            raise RuntimeError(
+                f"Failed checking storage bucket {bucket}: {response.status_code} {response.text}"
+            )
+
+        for payload in (
+            {"name": bucket, "public": False},
+            {"id": bucket, "name": bucket, "public": False},
+        ):
+            create_response = client.post(create_url, headers=headers, json=payload)
+            if create_response.status_code in (200, 201, 409):
+                return
+
+            if create_response.status_code not in (400, 422):
+                raise RuntimeError(
+                    "Failed creating storage bucket "
+                    f"{bucket}: {create_response.status_code} {create_response.text}"
+                )
+
+    raise RuntimeError(f"Failed to ensure storage bucket exists: {bucket}")
 
 
 def _build_pdf_bytes(page_count: int) -> bytes:
@@ -286,6 +348,15 @@ def _upload_to_signed_url(
             content=content,
             timeout=60.0,
         )
+        # Some Supabase versions accept POST instead of PUT for signed uploads.
+        if response.status_code == 405:
+            response = client.post(
+                url,
+                params={"token": token},
+                headers=headers,
+                content=content,
+                timeout=60.0,
+            )
 
     if response.status_code not in (200, 201):
         raise RuntimeError(
@@ -990,10 +1061,22 @@ def main() -> None:
         print("ERROR: SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
         sys.exit(1)
 
-    user_id = _fetch_e2e_user_id(
-        supabase_url=settings.supabase_url,
-        service_key=settings.supabase_service_key,
-        email=E2E_USER_EMAIL,
+    _run_with_retries(
+        label=f"Ensure storage bucket '{settings.storage_bucket}'",
+        fn=lambda: _ensure_storage_bucket(
+            supabase_url=settings.supabase_url,
+            service_key=settings.supabase_service_key,
+            bucket=settings.storage_bucket,
+        ),
+    )
+
+    user_id = _run_with_retries(
+        label=f"Fetch E2E auth user '{E2E_USER_EMAIL}'",
+        fn=lambda: _fetch_e2e_user_id(
+            supabase_url=settings.supabase_url,
+            service_key=settings.supabase_service_key,
+            email=E2E_USER_EMAIL,
+        ),
     )
 
     pdf_bytes = _build_pdf_bytes(PDF_PAGE_COUNT)
