@@ -132,6 +132,10 @@ nexus/
 | POST | `/internal/ingest/reconcile` | Internal operator trigger for stale-ingest reconciliation |
 | GET | `/internal/ingest/reconcile/health` | Internal operator stale-ingest backlog snapshot |
 
+`GET /models` is migration-managed and deterministic: it returns only rows where
+`models.is_available=true`, provider flag `ENABLE_*` is true, and the provider has
+either a platform key or a usable user key (`untested|valid`).
+
 ### Public Endpoints
 
 | Method | Path | Description |
@@ -358,9 +362,11 @@ Error classes: `INVALID_KEY`, `RATE_LIMIT`, `CONTEXT_TOO_LARGE`, `TIMEOUT`, `PRO
 | `ENABLE_OPENAI` | Enable OpenAI provider | `true` |
 | `ENABLE_ANTHROPIC` | Enable Anthropic provider | `true` |
 | `ENABLE_GEMINI` | Enable Gemini provider | `true` |
+| `ENABLE_DEEPSEEK` | Enable DeepSeek provider | `true` |
 | `OPENAI_API_KEY` | Platform OpenAI key | - |
 | `ANTHROPIC_API_KEY` | Platform Anthropic key | - |
 | `GEMINI_API_KEY` | Platform Gemini key | - |
+| `DEEPSEEK_API_KEY` | Platform DeepSeek key | - |
 
 ### Storage Client
 

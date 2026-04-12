@@ -199,6 +199,20 @@ class TestApiSafety:
 class TestValidation:
     """Tests for input validation error handling."""
 
+    def test_deepseek_provider_is_accepted(self, auth_client):
+        """POST /keys accepts deepseek provider."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        response = auth_client.post(
+            "/keys",
+            json={"provider": "deepseek", "api_key": "sk-deepseek-key-1234567890abcdef"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 201
+        assert response.json()["data"]["provider"] == "deepseek"
+
     def test_invalid_provider_returns_400(self, auth_client):
         """POST /keys with invalid provider returns 400 E_KEY_PROVIDER_INVALID."""
         user_id = create_test_user_id()

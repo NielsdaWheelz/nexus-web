@@ -373,11 +373,20 @@ This file is:
 | `OPENAI_API_KEY` | For OpenAI | Platform API key for OpenAI models |
 | `ANTHROPIC_API_KEY` | For Anthropic | Platform API key for Anthropic models |
 | `GEMINI_API_KEY` | For Gemini | Platform API key for Gemini models |
+| `DEEPSEEK_API_KEY` | For DeepSeek | Platform API key for DeepSeek models |
+| `ENABLE_OPENAI` | No | Enable OpenAI provider for chat/model listing (default: `true`) |
+| `ENABLE_ANTHROPIC` | No | Enable Anthropic provider for chat/model listing (default: `true`) |
+| `ENABLE_GEMINI` | No | Enable Gemini provider for chat/model listing (default: `true`) |
+| `ENABLE_DEEPSEEK` | No | Enable DeepSeek provider for chat/model listing (default: `true`) |
 | `ENABLE_STREAMING` | No | Enable SSE streaming endpoints (default: false) |
 | `STREAM_TOKEN_SIGNING_KEY` | staging/prod | Base64-encoded 32-byte key for stream token JWTs |
 | `STREAM_BASE_URL` | No | Public URL for /stream/* (default: http://localhost:8000) |
 | `STREAM_CORS_ORIGINS` | No | Comma-separated CORS origins for /stream/* (no wildcard) |
 | `STREAM_MAX_OUTPUT_TOKENS_DEFAULT` | No | Default output ceiling for budget reservation (default: 1024) |
+
+`GET /models` is migration-managed and deterministic: it returns only rows where
+`models.is_available=true`, provider flag `ENABLE_*` is true, and the provider has
+either a platform key or a usable user key (`untested|valid`).
 
 To generate an encryption key:
 ```bash

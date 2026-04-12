@@ -6,6 +6,7 @@ Tests cover PR-03 requirements:
 
 Per PR-03 spec, a model is available to a user iff:
 - model.is_available = true
+- model.provider is enabled by feature flag
 - AND (platform key exists for model.provider OR user has BYOK with status ∈ {untested, valid})
 
 Keys with status='invalid' or status='revoked' do NOT enable models.
@@ -39,9 +40,19 @@ def setup_test_master_key(monkeypatch):
 
     test_key_b64 = base64.b64encode(test_key).decode("ascii")
     monkeypatch.setenv("NEXUS_KEY_ENCRYPTION_KEY", test_key_b64)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("ENABLE_OPENAI", raising=False)
+    monkeypatch.delenv("ENABLE_ANTHROPIC", raising=False)
+    monkeypatch.delenv("ENABLE_GEMINI", raising=False)
+    monkeypatch.delenv("ENABLE_DEEPSEEK", raising=False)
+    clear_settings_cache()
 
     yield
 
+    clear_settings_cache()
     clear_master_key_cache()
 
 
@@ -105,6 +116,59 @@ class TestModelFiltering:
         providers = {m["provider"] for m in data}
         assert providers == {"openai"}
         assert len(data) == 2  # gpt-5.4-mini and gpt-4.1-nano
+
+    def test_disabled_provider_hides_models_even_with_platform_key(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """Provider feature flag off → models hidden even if platform key exists."""
+        user_id = create_test_user_id()
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-platform-key-openai")
+        monkeypatch.setenv("ENABLE_OPENAI", "false")
+        clear_settings_cache()
+
+        with direct_db.session() as session:
+            seed_test_models(session)
+
+        auth_client.get("/me", headers=auth_headers(user_id))
+        response = auth_client.get("/models", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        assert response.json()["data"] == []
+
+    def test_deepseek_platform_key_enables_deepseek_models(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """DeepSeek platform key + enabled flag → DeepSeek models appear."""
+        user_id = create_test_user_id()
+
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-platform-key-deepseek")
+        monkeypatch.setenv("ENABLE_DEEPSEEK", "true")
+        clear_settings_cache()
+
+        with direct_db.session() as session:
+            seed_test_models(session)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
+                    VALUES
+                        (gen_random_uuid(), 'deepseek', 'deepseek-chat', 128000, true),
+                        (gen_random_uuid(), 'deepseek', 'deepseek-reasoner', 128000, true)
+                    ON CONFLICT (provider, model_name) DO NOTHING
+                    """
+                )
+            )
+            session.commit()
+
+        auth_client.get("/me", headers=auth_headers(user_id))
+        response = auth_client.get("/models", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        providers = {m["provider"] for m in data}
+        assert providers == {"deepseek"}
+        assert len(data) == 2
 
     def test_byok_untested_enables_provider_models(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch

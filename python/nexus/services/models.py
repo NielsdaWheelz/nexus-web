@@ -5,10 +5,11 @@ Handles model availability and filtering:
 - Model availability rules based on key status
 
 Per PR-03 spec, a model is available to a user iff:
-- model.is_available = true AND (
-    platform key exists for model.provider
-    OR user has API key with status ∈ {'untested', 'valid'}
-  )
+- model.is_available = true
+- model.provider is enabled by feature flag
+- provider has usable credentials:
+  - platform key exists for model.provider
+  - OR user has API key with status ∈ {'untested', 'valid'}
 
 Notes:
 - Keys with status='invalid' or status='revoked' do NOT enable models
@@ -29,38 +30,12 @@ from nexus.services.user_keys import get_usable_key_providers
 logger = get_logger(__name__)
 
 
-def get_platform_key_providers() -> set[str]:
-    """Get providers for which platform keys are configured.
-
-    Reads from environment variables:
-    - OPENAI_API_KEY
-    - ANTHROPIC_API_KEY
-    - GEMINI_API_KEY
-    - DEEPSEEK_API_KEY
-
-    Returns:
-        Set of provider names with platform keys configured.
-    """
-    settings = get_settings()
-    providers = set()
-
-    if settings.openai_api_key:
-        providers.add("openai")
-    if settings.anthropic_api_key:
-        providers.add("anthropic")
-    if settings.gemini_api_key:
-        providers.add("gemini")
-    if settings.deepseek_api_key:
-        providers.add("deepseek")
-
-    return providers
-
-
 def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
     """List models available to a specific user.
 
     A model is available iff:
     - model.is_available = true
+    - provider is enabled by feature flag
     - AND (platform key exists for provider OR user has usable BYOK)
 
     Args:
@@ -70,18 +45,41 @@ def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
     Returns:
         List of ModelOut for available models.
     """
-    # Get providers with usable keys
-    platform_providers = get_platform_key_providers()
+    settings = get_settings()
+
+    enabled_providers: set[str] = set()
+    if settings.enable_openai:
+        enabled_providers.add("openai")
+    if settings.enable_anthropic:
+        enabled_providers.add("anthropic")
+    if settings.enable_gemini:
+        enabled_providers.add("gemini")
+    if settings.enable_deepseek:
+        enabled_providers.add("deepseek")
+
+    platform_providers: set[str] = set()
+    if settings.openai_api_key:
+        platform_providers.add("openai")
+    if settings.anthropic_api_key:
+        platform_providers.add("anthropic")
+    if settings.gemini_api_key:
+        platform_providers.add("gemini")
+    if settings.deepseek_api_key:
+        platform_providers.add("deepseek")
+
     user_providers = get_usable_key_providers(db, user_id)
 
-    # Union of providers with any valid key
-    available_providers = platform_providers | user_providers
+    key_enabled_providers = platform_providers | user_providers
+    available_providers = enabled_providers & key_enabled_providers
 
     if not available_providers:
         logger.info(
             "no_models_available",
             user_id=str(user_id),
-            reason="no_keys",
+            reason="no_enabled_provider_with_key",
+            enabled_providers=sorted(enabled_providers),
+            platform_providers=sorted(platform_providers),
+            user_providers=sorted(user_providers),
         )
         return []
 
@@ -100,8 +98,9 @@ def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
         "models_listed",
         user_id=str(user_id),
         model_count=len(models),
-        platform_providers=list(platform_providers),
-        user_providers=list(user_providers),
+        enabled_providers=sorted(enabled_providers),
+        platform_providers=sorted(platform_providers),
+        user_providers=sorted(user_providers),
     )
 
     return [

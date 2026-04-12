@@ -7,7 +7,9 @@ Per PR-03 spec:
 - GET /models: List models available to the current user
 
 Model availability rule:
-- model.is_available = true AND (
+- model.is_available = true
+- model.provider is enabled by feature flag
+- AND (
     platform key exists for model.provider
     OR user has API key with status ∈ {'untested', 'valid'}
   )
@@ -39,6 +41,7 @@ def list_models(
 
     A model is included iff:
     - model.is_available = true
+    - model.provider is enabled by feature flag
     - AND (platform key exists for model.provider OR user has usable BYOK)
 
     Keys with status='invalid' or status='revoked' do NOT enable models.

@@ -34,7 +34,7 @@ from nexus.services.crypto import encrypt_api_key
 logger = get_logger(__name__)
 
 # Valid providers (lowercase only)
-VALID_PROVIDERS = frozenset({"openai", "anthropic", "gemini"})
+VALID_PROVIDERS = frozenset({"openai", "anthropic", "gemini", "deepseek"})
 
 
 def list_user_keys(db: Session, user_id: UUID) -> list[UserApiKeyOut]:
@@ -91,7 +91,7 @@ def upsert_user_key(
     Args:
         db: Database session.
         user_id: The user's ID.
-        provider: The LLM provider (openai, anthropic, gemini).
+        provider: The LLM provider (openai, anthropic, gemini, deepseek).
         api_key: The plaintext API key (already validated by schema).
 
     Returns:

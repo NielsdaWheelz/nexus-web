@@ -44,7 +44,6 @@ from nexus.db.models import (
     MediaKind,
     Membership,
     Message,
-    Model,
     PdfPageTextSpan,
     Podcast,
     PodcastEpisode,
@@ -166,33 +165,6 @@ def main() -> None:
             track("library: Research", True)
         else:
             track("library: Research", False)
-
-        # ── LLM models ───────────────────────────────────────────────
-        model_count = db.execute(select(Model)).scalars().first()
-        if model_count is None:
-            for provider, model_name, max_tokens in [
-                ("openai", "gpt-5.4-mini", 400000),
-                ("openai", "gpt-4.1-nano", 1047576),
-                ("anthropic", "claude-opus-4-6", 1000000),
-                ("anthropic", "claude-sonnet-4-6", 1000000),
-                ("anthropic", "claude-haiku-4-5-20251001", 200000),
-                ("gemini", "gemini-2.5-pro", 1048576),
-                ("gemini", "gemini-2.5-flash", 1048576),
-                ("deepseek", "deepseek-chat", 128000),
-                ("deepseek", "deepseek-reasoner", 128000),
-            ]:
-                db.add(
-                    Model(
-                        provider=provider,
-                        model_name=model_name,
-                        max_context_tokens=max_tokens,
-                        is_available=True,
-                    )
-                )
-            db.flush()
-            track("LLM models (9)", True)
-        else:
-            track("LLM models", False)
 
         # ── Web articles ──────────────────────────────────────────────
         # Article 1: Paul Graham — Beating the Averages
