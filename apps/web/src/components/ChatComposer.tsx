@@ -177,7 +177,7 @@ export default function ChatComposer({
       }
     };
     loadModels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once
+     
   }, []);
 
   const selectedModel = models.find((model) => model.id === selectedModelId);

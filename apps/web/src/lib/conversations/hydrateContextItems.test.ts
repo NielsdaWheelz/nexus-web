@@ -55,6 +55,7 @@ describe("hydrateContextItems", () => {
       type: "highlight",
       id: "h1",
       hydrated: true,
+      exact: "selected text",
       preview: "selected text",
       prefix: "before ",
       suffix: " after",

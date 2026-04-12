@@ -60,13 +60,11 @@ def render_prompt(
     # Situation: tell the model what the user is doing
     if "highlight" in context_types and "annotation" in context_types:
         parts.append(
-            "The user is asking about highlighted and annotated passages "
-            "from their saved content."
+            "The user is asking about highlighted and annotated passages from their saved content."
         )
     elif "annotation" in context_types:
         parts.append(
-            "The user has annotated a passage with their own notes "
-            "and is asking about it."
+            "The user has annotated a passage with their own notes and is asking about it."
         )
     elif "highlight" in context_types:
         parts.append("The user has highlighted a passage and is asking about it.")
