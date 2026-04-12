@@ -41,6 +41,7 @@ export interface Highlight {
     created_at: string;
     updated_at: string;
   } | null;
+  linked_conversations?: { conversation_id: string; title: string }[];
 }
 
 export interface HighlightEditorProps {

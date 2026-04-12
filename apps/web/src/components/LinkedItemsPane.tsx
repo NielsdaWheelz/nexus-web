@@ -90,6 +90,8 @@ export interface LinkedItemsPaneProps {
   onAnnotationDelete?: (highlightId: string) => Promise<void>;
   /** Per-row action menu options builder. */
   rowOptions?: (highlightId: string) => ActionMenuOption[];
+  /** Callback when a linked conversation is opened from a highlight row. */
+  onOpenConversation?: (conversationId: string, title: string) => void;
 }
 
 // =============================================================================
@@ -109,6 +111,7 @@ export default function LinkedItemsPane({
   onAnnotationSave,
   onAnnotationDelete,
   rowOptions,
+  onOpenConversation,
 }: LinkedItemsPaneProps) {
   const isAlignedMode = layoutMode === "aligned";
   const resolvedAnchorProvider = anchorProvider ?? DEFAULT_HTML_ANCHOR_PROVIDER;
@@ -566,6 +569,7 @@ export default function LinkedItemsPane({
               onAnnotationSave={onAnnotationSave}
               onAnnotationDelete={onAnnotationDelete}
               options={rowOptions?.(highlight.id)}
+              onOpenConversation={onOpenConversation}
             />
           </div>
         ))}
@@ -597,6 +601,7 @@ export default function LinkedItemsPane({
             onAnnotationSave={onAnnotationSave}
             onAnnotationDelete={onAnnotationDelete}
             options={rowOptions?.(row.highlight.id)}
+            onOpenConversation={onOpenConversation}
           />
         );
       })}

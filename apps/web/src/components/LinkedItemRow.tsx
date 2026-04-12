@@ -37,6 +37,7 @@ export interface LinkedItemRowHighlight {
   fragment_id?: string;
   fragment_idx?: number;
   stable_order_key?: string;
+  linked_conversations?: { conversation_id: string; title: string }[];
 }
 
 export interface LinkedItemRowProps {
@@ -62,6 +63,8 @@ export interface LinkedItemRowProps {
   onAnnotationSave?: (highlightId: string, body: string) => Promise<void>;
   /** Delete annotation callback. */
   onAnnotationDelete?: (highlightId: string) => Promise<void>;
+  /** Callback when a linked conversation is clicked. */
+  onOpenConversation?: (conversationId: string, title: string) => void;
 }
 
 // =============================================================================
@@ -82,6 +85,7 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
       options: optionsProp,
       onAnnotationSave,
       onAnnotationDelete,
+      onOpenConversation,
     },
     ref
   ) {
@@ -267,6 +271,22 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
             {annotationBody || "Add a note\u2026"}
           </span>
         )}
+
+        {/* Line 3: linked conversations */}
+        {highlight.linked_conversations?.map((conv) => (
+          <button
+            key={conv.conversation_id}
+            type="button"
+            className={styles.linkedConversationLine}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenConversation?.(conv.conversation_id, conv.title);
+            }}
+          >
+            <MessageSquare size={10} />
+            <span>{conv.title}</span>
+          </button>
+        ))}
       </div>
     );
   }

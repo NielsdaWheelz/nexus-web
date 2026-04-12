@@ -17,6 +17,7 @@ export interface PaneHighlightIndexItem {
   fragment_id?: string;
   fragment_idx?: number;
   stable_order_key?: string;
+  linked_conversations?: { conversation_id: string; title: string }[];
 }
 
 export interface PdfStableOrderKey {
@@ -107,6 +108,7 @@ export function toFragmentPaneItems(highlights: Highlight[]): PaneHighlightIndex
     end_offset: highlight.end_offset,
     created_at: highlight.created_at,
     fragment_id: highlight.fragment_id,
+    linked_conversations: highlight.linked_conversations,
   }));
 }
 
@@ -121,6 +123,7 @@ export function toMediaPaneItems(highlights: MediaHighlightForIndex[]): PaneHigh
     created_at: highlight.created_at,
     fragment_id: highlight.fragment_id,
     fragment_idx: highlight.fragment_idx,
+    linked_conversations: highlight.linked_conversations,
   }));
 }
 

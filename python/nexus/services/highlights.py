@@ -27,18 +27,21 @@ import json
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, text, update
+from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_highlight, can_read_media, highlight_visibility_filter
 from nexus.db.models import (
     Annotation,
+    Conversation,
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
     HighlightTranscriptAnchor,
     Media,
+    Message,
+    MessageContext,
 )
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
@@ -47,6 +50,7 @@ from nexus.schemas.highlights import (
     CreateHighlightRequest,
     FragmentAnchorOut,
     HighlightOut,
+    LinkedConversationRef,
     MediaHighlightOut,
     MediaHighlightPageInfoOut,
     PdfAnchorOut,
@@ -283,6 +287,35 @@ def _annotation_to_out(annotation: Annotation | None) -> AnnotationOut | None:
         created_at=annotation.created_at,
         updated_at=annotation.updated_at,
     )
+
+
+def _batch_linked_conversations(
+    db: Session, highlight_ids: list[UUID], viewer_id: UUID
+) -> dict[UUID, list[LinkedConversationRef]]:
+    """Batch-fetch conversations that reference the given highlights via message context."""
+    if not highlight_ids:
+        return {}
+    rows = db.execute(
+        select(
+            MessageContext.highlight_id,
+            Conversation.id,
+            Conversation.title,
+        )
+        .join(Message, Message.id == MessageContext.message_id)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(
+            MessageContext.target_type == "highlight",
+            MessageContext.highlight_id.in_(highlight_ids),
+            Conversation.owner_user_id == viewer_id,
+        )
+        .group_by(MessageContext.highlight_id, Conversation.id, Conversation.title)
+    ).all()
+    result: dict[UUID, list[LinkedConversationRef]] = {}
+    for hl_id, conv_id, title in rows:
+        result.setdefault(hl_id, []).append(
+            LinkedConversationRef(conversation_id=conv_id, title=title)
+        )
+    return result
 
 
 def _highlight_to_out(highlight: Highlight, viewer_id: UUID) -> HighlightOut:
@@ -525,7 +558,13 @@ def list_highlights_for_fragment(
         Highlight.id.asc(),
     ).all()
 
-    return [_highlight_to_out(h, viewer_id) for h in highlights]
+    conv_map = _batch_linked_conversations(db, [h.id for h in highlights], viewer_id)
+    results = []
+    for h in highlights:
+        out = _highlight_to_out(h, viewer_id)
+        out.linked_conversations = conv_map.get(h.id, [])
+        results.append(out)
+    return results
 
 
 def list_highlights_for_media(
@@ -612,6 +651,8 @@ def list_highlights_for_media(
     if has_more:
         rows = rows[:limit]
 
+    conv_map = _batch_linked_conversations(db, [h.id for h, _ in rows], viewer_id)
+
     highlights_out: list[MediaHighlightOut] = []
     for highlight, fragment_idx in rows:
         base = _highlight_to_out(highlight, viewer_id)
@@ -620,6 +661,7 @@ def list_highlights_for_media(
                 **base.model_dump(),
                 media_id=media_id,
                 fragment_idx=int(fragment_idx),
+                linked_conversations=conv_map.get(highlight.id, []),
             )
         )
 

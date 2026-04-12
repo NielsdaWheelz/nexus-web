@@ -56,6 +56,7 @@ export default function MediaLinkedItemsPaneBody({
   onAnnotationSave,
   onAnnotationDelete,
   buildRowOptions,
+  onOpenConversation,
 }: {
   mediaId: string;
   isPdf: boolean;
@@ -89,6 +90,7 @@ export default function MediaLinkedItemsPaneBody({
   onAnnotationSave: (id: string, body: string) => Promise<void>;
   onAnnotationDelete: (id: string) => Promise<void>;
   buildRowOptions: (id: string) => ActionMenuOption[];
+  onOpenConversation: (conversationId: string, title: string) => void;
 }) {
   // ---- Scope state ----
 
@@ -357,6 +359,7 @@ export default function MediaLinkedItemsPaneBody({
         onAnnotationSave={onAnnotationSave}
         onAnnotationDelete={onAnnotationDelete}
         rowOptions={buildRowOptions}
+        onOpenConversation={onOpenConversation}
       />
 
       {isPdf && (

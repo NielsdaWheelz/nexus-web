@@ -73,6 +73,13 @@ class PdfAnchorOut(BaseModel):
 # --- Highlight output schemas ---
 
 
+class LinkedConversationRef(BaseModel):
+    """Conversation that references a highlight via message context."""
+
+    conversation_id: UUID
+    title: str
+
+
 class HighlightOut(BaseModel):
     """Response schema for a fragment highlight (legacy fragment-route compat).
 
@@ -94,6 +101,7 @@ class HighlightOut(BaseModel):
     annotation: AnnotationOut | None = None
     author_user_id: UUID
     is_owner: bool
+    linked_conversations: list[LinkedConversationRef] = []
 
     model_config = ConfigDict(from_attributes=True)
 

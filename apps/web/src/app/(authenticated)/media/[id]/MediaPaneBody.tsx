@@ -185,6 +185,7 @@ export default function MediaPaneBody() {
       onAnnotationSave={mv.handleAnnotationSave}
       onAnnotationDelete={mv.handleAnnotationDelete}
       buildRowOptions={mv.buildRowOptions}
+      onOpenConversation={mv.handleOpenConversation}
     />
   ) : null;
   const showDesktopLinkedPane =
