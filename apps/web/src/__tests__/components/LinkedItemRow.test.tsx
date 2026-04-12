@@ -105,6 +105,36 @@ describe("LinkedItemRow", () => {
     expect(screen.getByText("Add a note\u2026")).toBeInTheDocument();
   });
 
+  it("does not trigger row click when opening actions with keyboard", async () => {
+    const onClick = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <LinkedItemRow
+        highlight={{
+          id: "h-keyboard-actions",
+          color: "yellow",
+          exact: "Keyboard action row",
+          annotation: null,
+        }}
+        isFocused={false}
+        onClick={onClick}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onSendToChat={vi.fn()}
+      />
+    );
+
+    const actionsButton = screen.getByRole("button", { name: "Actions" });
+    actionsButton.focus();
+    await user.keyboard("{Enter}");
+
+    expect(onClick).not.toHaveBeenCalled();
+    expect(
+      await screen.findByRole("menuitem", { name: "Quote to chat" })
+    ).toBeInTheDocument();
+  });
+
   it("enters inline edit on annotation click and saves on blur", async () => {
     const onAnnotationSave = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();

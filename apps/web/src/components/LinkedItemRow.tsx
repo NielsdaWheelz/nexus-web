@@ -217,24 +217,26 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
         onMouseLeave={onMouseLeave}
       >
         {/* Line 1: swatch + text + actions */}
-        <div
-          className={styles.linkedItemRowMain}
-          onClick={handleClick}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              handleClick();
-            }
-          }}
-          role="button"
-          tabIndex={0}
-          aria-pressed={isFocused}
-        >
-          <span
-            className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
-            aria-hidden="true"
-          />
-          <span className={styles.previewText}>{previewText}</span>
+        <div className={styles.linkedItemRowMain}>
+          <div
+            className={styles.linkedItemPrimary}
+            onClick={handleClick}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleClick();
+              }
+            }}
+            role="button"
+            tabIndex={0}
+            aria-pressed={isFocused}
+          >
+            <span
+              className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
+              aria-hidden="true"
+            />
+            <span className={styles.previewText}>{previewText}</span>
+          </div>
           {menuOptions.length > 0 && (
             <ActionMenu
               options={menuOptions}

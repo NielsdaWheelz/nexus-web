@@ -31,7 +31,7 @@
 }
 
 .menu {
-  z-index: 1000;
+  z-index: 1200;
   list-style: none;
   margin: 0;
   padding: var(--space-1);

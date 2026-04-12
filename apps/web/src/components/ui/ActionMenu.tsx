@@ -9,6 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import styles from "./ActionMenu.module.css";
 
 export interface ActionMenuOption {
@@ -57,19 +58,19 @@ export default function ActionMenu({
     });
   }, []);
 
-  // Compute fixed position when menu opens
-  useEffect(() => {
-    if (!menuOpen || !toggleRef.current) return;
-
-    const rect = toggleRef.current.getBoundingClientRect();
-    setMenuPos({
-      top: rect.bottom + 4,
-      left: rect.right,
-    });
-  }, [menuOpen]);
-
   useEffect(() => {
     if (!menuOpen) return;
+
+    const updateMenuPos = () => {
+      if (!toggleRef.current) return;
+      const rect = toggleRef.current.getBoundingClientRect();
+      setMenuPos({
+        top: rect.bottom + 4,
+        left: rect.right,
+      });
+    };
+
+    updateMenuPos();
 
     requestAnimationFrame(() => {
       const [first] = getFocusableItems();
@@ -94,22 +95,20 @@ export default function ActionMenu({
       }
     };
 
-    const handleScroll = () => {
-      setMenuOpen(false);
-      setMenuPos(null);
-    };
-
     document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("scroll", updateMenuPos, true);
+    window.addEventListener("resize", updateMenuPos);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("scroll", updateMenuPos, true);
+      window.removeEventListener("resize", updateMenuPos);
     };
   }, [closeAndRestoreFocus, getFocusableItems, menuOpen]);
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLUListElement>) => {
+    event.stopPropagation();
     const focusable = getFocusableItems();
     if (focusable.length === 0) return;
 
@@ -171,8 +170,80 @@ export default function ActionMenu({
     .filter(Boolean)
     .join(" ");
 
+  const menu =
+    menuOpen && menuPos ? (
+      <ul
+        ref={menuRef}
+        id={menuId}
+        className={styles.menu}
+        role="menu"
+        style={{
+          position: "fixed",
+          top: `${menuPos.top}px`,
+          left: `${menuPos.left}px`,
+          transform: "translateX(-100%)",
+        }}
+        onKeyDown={handleMenuKeyDown}
+      >
+        {options.map((option) => (
+          <li key={option.id} role="none">
+            {option.href ? (
+              <a
+                href={option.href}
+                role="menuitem"
+                className={`${styles.menuItem} ${
+                  option.tone === "danger" ? styles.menuItemDanger : ""
+                }`}
+                aria-disabled={option.disabled || undefined}
+                tabIndex={option.disabled ? -1 : undefined}
+                onKeyDown={(event: ReactKeyboardEvent<HTMLAnchorElement>) => {
+                  if (
+                    option.disabled &&
+                    (event.key === "Enter" || event.key === " ")
+                  ) {
+                    event.preventDefault();
+                  }
+                }}
+                onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
+                  event.stopPropagation();
+                  if (option.disabled) {
+                    event.preventDefault();
+                    return;
+                  }
+                  option.onSelect?.();
+                  closeAndRestoreFocus();
+                }}
+              >
+                {option.label}
+              </a>
+            ) : (
+              <button
+                type="button"
+                role="menuitem"
+                className={`${styles.menuItem} ${
+                  option.tone === "danger" ? styles.menuItemDanger : ""
+                }`}
+                disabled={option.disabled}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  option.onSelect?.();
+                  closeAndRestoreFocus();
+                }}
+              >
+                {option.label}
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    ) : null;
+
   return (
-    <div className={containerClassName} ref={menuContainerRef}>
+    <div
+      className={containerClassName}
+      ref={menuContainerRef}
+      data-open={menuOpen ? "true" : "false"}
+    >
       <button
         type="button"
         ref={toggleRef}
@@ -183,77 +254,25 @@ export default function ActionMenu({
         aria-label={label}
         onClick={(e) => {
           e.stopPropagation();
-          setMenuOpen((open) => !open);
+          setMenuOpen((open) => {
+            const next = !open;
+            if (!next) {
+              setMenuPos(null);
+            }
+            return next;
+          });
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.stopPropagation();
+          }
         }}
       >
         &hellip;
       </button>
-      {menuOpen && menuPos && (
-        <ul
-          ref={menuRef}
-          id={menuId}
-          className={styles.menu}
-          role="menu"
-          style={{
-            position: "fixed",
-            top: `${menuPos.top}px`,
-            left: `${menuPos.left}px`,
-            transform: "translateX(-100%)",
-          }}
-          onKeyDown={handleMenuKeyDown}
-        >
-          {options.map((option) => (
-            <li key={option.id} role="none">
-              {option.href ? (
-                <a
-                  href={option.href}
-                  role="menuitem"
-                  className={`${styles.menuItem} ${
-                    option.tone === "danger" ? styles.menuItemDanger : ""
-                  }`}
-                  aria-disabled={option.disabled || undefined}
-                  tabIndex={option.disabled ? -1 : undefined}
-                  onKeyDown={(event: ReactKeyboardEvent<HTMLAnchorElement>) => {
-                    if (
-                      option.disabled &&
-                      (event.key === "Enter" || event.key === " ")
-                    ) {
-                      event.preventDefault();
-                    }
-                  }}
-                  onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
-                    event.stopPropagation();
-                    if (option.disabled) {
-                      event.preventDefault();
-                      return;
-                    }
-                    option.onSelect?.();
-                    closeAndRestoreFocus();
-                  }}
-                >
-                  {option.label}
-                </a>
-              ) : (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={`${styles.menuItem} ${
-                    option.tone === "danger" ? styles.menuItemDanger : ""
-                  }`}
-                  disabled={option.disabled}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    option.onSelect?.();
-                    closeAndRestoreFocus();
-                  }}
-                >
-                  {option.label}
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+      {menu && typeof document !== "undefined"
+        ? createPortal(menu, document.body)
+        : null}
     </div>
   );
 }

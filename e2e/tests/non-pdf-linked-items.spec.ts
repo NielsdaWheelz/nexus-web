@@ -118,7 +118,7 @@ test.describe("non-pdf linked-items", () => {
     await actionsButton.click();
     const quoteToChat = page.getByRole("menuitem", { name: "Quote to chat" });
     await expect(quoteToChat).toBeVisible();
-    await quoteToChat.click({ force: true });
+    await quoteToChat.click();
     const chatAttachPrefix = `highlight: ${seeded.focus_highlight_id.slice(0, 8)}`;
     let quoteNavigationOutcome: "url" | "queued" | "pane" | null = null;
     await expect
