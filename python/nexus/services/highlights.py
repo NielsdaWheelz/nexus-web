@@ -318,9 +318,9 @@ def _batch_linked_conversations(
     return result
 
 
-def _highlight_to_out(highlight: Highlight, viewer_id: UUID) -> HighlightOut:
-    """Convert Highlight ORM model to HighlightOut schema (fragment-route compat)."""
-    return HighlightOut(
+def _highlight_fields(highlight: Highlight, viewer_id: UUID) -> dict:
+    """Common ORM-to-schema fields shared by HighlightOut and MediaHighlightOut."""
+    return dict(
         id=highlight.id,
         fragment_id=highlight.fragment_id,
         start_offset=highlight.start_offset,
@@ -559,12 +559,13 @@ def list_highlights_for_fragment(
     ).all()
 
     conv_map = _batch_linked_conversations(db, [h.id for h in highlights], viewer_id)
-    results = []
-    for h in highlights:
-        out = _highlight_to_out(h, viewer_id)
-        out.linked_conversations = conv_map.get(h.id, [])
-        results.append(out)
-    return results
+    return [
+        HighlightOut(
+            **_highlight_fields(h, viewer_id),
+            linked_conversations=conv_map.get(h.id, []),
+        )
+        for h in highlights
+    ]
 
 
 def list_highlights_for_media(
@@ -653,17 +654,15 @@ def list_highlights_for_media(
 
     conv_map = _batch_linked_conversations(db, [h.id for h, _ in rows], viewer_id)
 
-    highlights_out: list[MediaHighlightOut] = []
-    for highlight, fragment_idx in rows:
-        base = _highlight_to_out(highlight, viewer_id)
-        highlights_out.append(
-            MediaHighlightOut(
-                **base.model_dump(),
-                media_id=media_id,
-                fragment_idx=int(fragment_idx),
-                linked_conversations=conv_map.get(highlight.id, []),
-            )
+    highlights_out = [
+        MediaHighlightOut(
+            **_highlight_fields(highlight, viewer_id),
+            media_id=media_id,
+            fragment_idx=int(fragment_idx),
+            linked_conversations=conv_map.get(highlight.id, []),
         )
+        for highlight, fragment_idx in rows
+    ]
 
     next_cursor = None
     if has_more and rows:
