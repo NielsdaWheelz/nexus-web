@@ -452,6 +452,7 @@ class TestPdfQuoteBlockingStream:
             conversation_id=None,
             content="Explain this PDF quote",
             model_id=model_id,
+            reasoning="none",
             key_mode="auto",
             contexts=[{"type": "highlight", "id": highlight_id}],
             llm_router=router,

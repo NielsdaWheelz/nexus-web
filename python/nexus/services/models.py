@@ -1,20 +1,4 @@
-"""LLM Models registry service layer.
-
-Handles model availability and filtering:
-- List models available to a specific user
-- Model availability rules based on key status
-
-Per PR-03 spec, a model is available to a user iff:
-- model.is_available = true
-- model.provider is enabled by feature flag
-- provider has usable credentials:
-  - platform key exists for model.provider
-  - OR user has API key with status ∈ {'untested', 'valid'}
-
-Notes:
-- Keys with status='invalid' or status='revoked' do NOT enable models
-- Empty model list is valid if no models are available
-"""
+"""LLM Models registry service layer."""
 
 from uuid import UUID
 
@@ -30,21 +14,112 @@ from nexus.services.user_keys import get_usable_key_providers
 logger = get_logger(__name__)
 
 
-def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
-    """List models available to a specific user.
-
-    A model is available iff:
-    - model.is_available = true
-    - provider is enabled by feature flag
-    - AND (platform key exists for provider OR user has usable BYOK)
-
-    Args:
-        db: Database session.
-        user_id: The user's ID.
+def get_model_catalog_metadata(
+    provider: str,
+    model_name: str,
+) -> tuple[str, str, str, list[str]] | None:
+    """Return curated catalog metadata for supported models.
 
     Returns:
-        List of ModelOut for available models.
+        (provider_display_name, model_display_name, model_tier, reasoning_modes)
+        or None if model is outside the curated catalog.
     """
+    if provider == "openai":
+        if model_name == "gpt-5.4":
+            return (
+                "OpenAI",
+                "GPT-5.4",
+                "sota",
+                ["none", "minimal", "low", "medium", "high", "max"],
+            )
+        if model_name == "gpt-5.4-mini":
+            return (
+                "OpenAI",
+                "GPT-5.4 Mini",
+                "light",
+                ["none", "minimal", "low", "medium", "high", "max"],
+            )
+        return None
+
+    if provider == "anthropic":
+        if model_name == "claude-opus-4-6":
+            return (
+                "Anthropic",
+                "Opus 4.6",
+                "sota",
+                ["none", "minimal", "low", "medium", "high", "max"],
+            )
+        if model_name == "claude-sonnet-4-6":
+            return (
+                "Anthropic",
+                "Sonnet 4.6",
+                "sota",
+                ["none", "minimal", "low", "medium", "high", "max"],
+            )
+        if model_name.startswith("claude-haiku-4-5"):
+            return (
+                "Anthropic",
+                "Haiku 4.5",
+                "light",
+                ["none", "minimal", "low", "medium", "high", "max"],
+            )
+        return None
+
+    if provider == "gemini":
+        if model_name.startswith("gemini-3.1-pro"):
+            return (
+                "Google",
+                "Gemini 3.1 Pro",
+                "sota",
+                ["minimal", "low", "medium", "high", "max"],
+            )
+        if model_name.startswith("gemini-3-flash"):
+            return (
+                "Google",
+                "Gemini 3 Flash",
+                "light",
+                ["none", "minimal", "low", "medium", "high", "max"],
+            )
+        return None
+
+    if provider == "deepseek":
+        if model_name == "deepseek-reasoner":
+            return (
+                "DeepSeek",
+                "DeepSeek-V3.2 (Reasoner)",
+                "sota",
+                ["minimal", "low", "medium", "high", "max"],
+            )
+        if model_name == "deepseek-chat":
+            return (
+                "DeepSeek",
+                "DeepSeek-V3.2 (Chat)",
+                "light",
+                ["none"],
+            )
+        return None
+
+    return None
+
+
+def _provider_sort_rank(provider: str) -> int:
+    if provider == "openai":
+        return 0
+    if provider == "anthropic":
+        return 1
+    if provider == "gemini":
+        return 2
+    if provider == "deepseek":
+        return 3
+    return 999
+
+
+def _tier_sort_rank(model_tier: str) -> int:
+    return 0 if model_tier == "sota" else 1
+
+
+def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
+    """List curated models available to a specific user."""
     settings = get_settings()
 
     enabled_providers: set[str] = set()
@@ -83,7 +158,6 @@ def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
         )
         return []
 
-    # Query models that are available and have an available provider
     stmt = (
         select(Model)
         .where(
@@ -94,21 +168,40 @@ def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
     )
     models = db.scalars(stmt).all()
 
+    curated: list[ModelOut] = []
+    for model in models:
+        metadata = get_model_catalog_metadata(model.provider, model.model_name)
+        if metadata is None:
+            continue
+
+        provider_display_name, model_display_name, model_tier, reasoning_modes = metadata
+        curated.append(
+            ModelOut(
+                id=model.id,
+                provider=model.provider,
+                provider_display_name=provider_display_name,
+                model_name=model.model_name,
+                model_display_name=model_display_name,
+                model_tier=model_tier,
+                reasoning_modes=reasoning_modes,
+                max_context_tokens=model.max_context_tokens,
+            )
+        )
+
     logger.info(
         "models_listed",
         user_id=str(user_id),
-        model_count=len(models),
+        model_count=len(curated),
         enabled_providers=sorted(enabled_providers),
         platform_providers=sorted(platform_providers),
         user_providers=sorted(user_providers),
     )
 
-    return [
-        ModelOut(
-            id=model.id,
-            provider=model.provider,
-            model_name=model.model_name,
-            max_context_tokens=model.max_context_tokens,
+    curated.sort(
+        key=lambda model: (
+            _provider_sort_rank(model.provider),
+            _tier_sort_rank(model.model_tier),
+            model.model_display_name,
         )
-        for model in models
-    ]
+    )
+    return curated

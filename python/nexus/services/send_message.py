@@ -87,6 +87,7 @@ from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.prompt import render_prompt
 from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMResponse, Turn
 from nexus.services.media import can_read_media
+from nexus.services.models import get_model_catalog_metadata
 from nexus.services.quote_context_errors import (
     QuoteContextBlockingError,
     get_quote_context_error_message,
@@ -128,6 +129,7 @@ class PrepareResult:
 def compute_payload_hash(
     content: str,
     model_id: UUID,
+    reasoning: str,
     key_mode: str,
     contexts: list[dict],
     conversation_id: UUID | None,
@@ -135,7 +137,7 @@ def compute_payload_hash(
     """Compute a hash of the request payload for idempotency."""
     # Sort contexts by type and id for deterministic hashing
     sorted_contexts = sorted(contexts, key=lambda c: (c.get("type", ""), str(c.get("id", ""))))
-    payload_str = f"{conversation_id}|{content}|{model_id}|{key_mode}|{sorted_contexts}"
+    payload_str = f"{conversation_id}|{content}|{model_id}|{reasoning}|{key_mode}|{sorted_contexts}"
     return hashlib.sha256(payload_str.encode()).hexdigest()
 
 
@@ -250,6 +252,7 @@ def validate_pre_phase(
     conversation_id: UUID | None,
     content: str,
     model_id: UUID,
+    reasoning: str,
     key_mode: str,
     contexts: list[dict],
     use_platform_key: bool,
@@ -282,6 +285,18 @@ def validate_pre_phase(
         raise ApiError(
             ApiErrorCode.E_MODEL_NOT_AVAILABLE,
             "Model not found or not available",
+        )
+    metadata = get_model_catalog_metadata(model.provider, model.model_name)
+    if metadata is None:
+        raise ApiError(
+            ApiErrorCode.E_MODEL_NOT_AVAILABLE,
+            "Model is outside the curated catalog",
+        )
+    _, _, _, reasoning_modes = metadata
+    if reasoning not in reasoning_modes:
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Reasoning mode '{reasoning}' is not supported for {model.provider}/{model.model_name}",
         )
 
     # Validate key availability (will raise if no key)
@@ -696,6 +711,7 @@ async def send_message(
     conversation_id: UUID | None,
     content: str,
     model_id: UUID,
+    reasoning: str,
     key_mode: str = "auto",
     contexts: list[dict] | None = None,
     idempotency_key: str | None = None,
@@ -720,6 +736,7 @@ async def send_message(
         payload_hash = compute_payload_hash(
             content,
             model_id,
+            reasoning,
             key_mode,
             context_dicts,
             conversation_id,
@@ -758,6 +775,7 @@ async def send_message(
             conversation_id,
             content,
             model_id,
+            reasoning,
             key_mode,
             contexts,
             use_platform_key,
@@ -851,6 +869,7 @@ async def send_message(
                 messages=messages,
                 max_tokens=4096,
                 temperature=0.7,
+                reasoning_effort=reasoning,
             )
 
             # LLM call — await on main event loop (no asyncio.run)

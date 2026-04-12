@@ -72,13 +72,13 @@ def seed_test_models(session: Session) -> None:
         return
 
     for provider, model_name, max_tokens in [
+        ("openai", "gpt-5.4", 400000),
         ("openai", "gpt-5.4-mini", 400000),
-        ("openai", "gpt-4.1-nano", 1047576),
         ("anthropic", "claude-opus-4-6", 1000000),
         ("anthropic", "claude-sonnet-4-6", 1000000),
         ("anthropic", "claude-haiku-4-5-20251001", 200000),
-        ("gemini", "gemini-2.5-pro", 1048576),
-        ("gemini", "gemini-2.5-flash", 1048576),
+        ("gemini", "gemini-3.1-pro-preview", 1048576),
+        ("gemini", "gemini-3-flash-preview", 1048576),
         ("deepseek", "deepseek-chat", 128000),
         ("deepseek", "deepseek-reasoner", 128000),
     ]:

@@ -57,6 +57,7 @@ def _base_log_fields(
     fields: dict = {
         "provider": provider,
         "model_name": req.model_name,
+        "reasoning_effort": req.reasoning_effort,
         "key_mode": key_mode,
         "streaming": streaming,
         "llm_operation": call_ctx.operation.value if call_ctx else LLMOperation.OTHER.value,

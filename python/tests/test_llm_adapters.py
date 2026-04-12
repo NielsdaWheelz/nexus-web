@@ -847,6 +847,42 @@ class TestPromptValidation:
 class TestTurnConversion:
     """Tests for provider-specific turn conversion."""
 
+    def test_reasoning_openai_maps_max_to_xhigh(self, httpx_client):
+        adapter = OpenAIAdapter(httpx_client)
+        req = LLMRequest(
+            model_name="gpt-5.4",
+            messages=[Turn(role="user", content="Hello")],
+            max_tokens=100,
+            reasoning_effort="max",
+        )
+
+        body = adapter._build_request_body(req, stream=False)
+        assert body["reasoning_effort"] == "xhigh"
+
+    def test_reasoning_anthropic_none_disables_thinking(self, httpx_client):
+        adapter = AnthropicAdapter(httpx_client)
+        req = LLMRequest(
+            model_name="claude-sonnet-4-6",
+            messages=[Turn(role="user", content="Hello")],
+            max_tokens=4096,
+            reasoning_effort="none",
+        )
+
+        body = adapter._build_request_body(req, stream=False)
+        assert body["thinking"] == {"type": "disabled"}
+
+    def test_reasoning_gemini_high_sets_thinking_level(self, httpx_client):
+        adapter = GeminiAdapter(httpx_client)
+        req = LLMRequest(
+            model_name="gemini-3.1-pro-preview",
+            messages=[Turn(role="user", content="Hello")],
+            max_tokens=100,
+            reasoning_effort="high",
+        )
+
+        body = adapter._build_request_body(req)
+        assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "high"
+
     def test_turn_conversion_anthropic_system(self, httpx_client):
         """Anthropic should extract system turn to separate field."""
         adapter = AnthropicAdapter(httpx_client)

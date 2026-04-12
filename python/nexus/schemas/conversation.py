@@ -105,6 +105,7 @@ class MessageListResponse(BaseModel):
 
 # Valid key modes for LLM calls
 KEY_MODES = Literal["auto", "byok_only", "platform_only"]
+REASONING_MODES = Literal["none", "minimal", "low", "medium", "high", "max"]
 
 # Max content length
 MAX_MESSAGE_CONTENT_LENGTH = 20000
@@ -129,11 +130,13 @@ class SendMessageRequest(BaseModel):
     - content: max 20,000 chars
     - contexts: max 10 items
     - model_id: must exist and be available to user
+    - reasoning: model-specific reasoning intensity
     - key_mode: auto | byok_only | platform_only
     """
 
     content: str
     model_id: UUID
+    reasoning: REASONING_MODES
     key_mode: KEY_MODES = "auto"
     contexts: list[ContextItem] = []
 

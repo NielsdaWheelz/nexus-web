@@ -213,6 +213,31 @@ class AnthropicAdapter(LLMAdapter):
         if req.temperature is not None:
             body["temperature"] = req.temperature
 
+        if req.reasoning_effort == "none":
+            body["thinking"] = {"type": "disabled"}
+        else:
+            if req.reasoning_effort == "minimal":
+                budget_tokens = 1024
+            elif req.reasoning_effort == "low":
+                budget_tokens = 1536
+            elif req.reasoning_effort == "medium":
+                budget_tokens = 2048
+            elif req.reasoning_effort == "high":
+                budget_tokens = 3072
+            elif req.reasoning_effort == "max":
+                budget_tokens = 4000
+            else:
+                raise ValueError(f"Unknown reasoning_effort: {req.reasoning_effort}")
+
+            max_allowed_budget = req.max_tokens - 1
+            if max_allowed_budget < 1024:
+                body["thinking"] = {"type": "disabled"}
+            else:
+                body["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": min(budget_tokens, max_allowed_budget),
+                }
+
         return body
 
     def _turn_to_message(self, turn: Turn) -> dict[str, str]:

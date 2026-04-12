@@ -115,7 +115,7 @@ class TestModelFiltering:
         # Should only have openai models
         providers = {m["provider"] for m in data}
         assert providers == {"openai"}
-        assert len(data) == 2  # gpt-5.4-mini and gpt-4.1-nano
+        assert len(data) == 2  # gpt-5.4 and gpt-5.4-mini
 
     def test_disabled_provider_hides_models_even_with_platform_key(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
@@ -361,7 +361,7 @@ class TestModelResponseFormat:
     def test_model_response_has_required_fields(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
-        """Model response includes id, provider, model_name, max_context_tokens."""
+        """Model response includes display metadata and reasoning modes."""
         user_id = create_test_user_id()
 
         # Platform key for openai
@@ -384,7 +384,11 @@ class TestModelResponseFormat:
         model = data[0]
         assert "id" in model
         assert "provider" in model
+        assert "provider_display_name" in model
         assert "model_name" in model
+        assert "model_display_name" in model
+        assert "model_tier" in model
+        assert "reasoning_modes" in model
         assert "max_context_tokens" in model
 
 

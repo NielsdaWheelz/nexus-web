@@ -206,6 +206,12 @@ class OpenAIAdapter(LLMAdapter):
         if req.temperature is not None:
             body["temperature"] = req.temperature
 
+        if self._provider_name == "openai":
+            if req.reasoning_effort == "max":
+                body["reasoning_effort"] = "xhigh"
+            else:
+                body["reasoning_effort"] = req.reasoning_effort
+
         return body
 
     def _turn_to_message(self, turn: Turn) -> dict[str, str]:

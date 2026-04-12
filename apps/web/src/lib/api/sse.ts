@@ -105,6 +105,7 @@ export function toWireContextItem(
 export interface SendMessageRequest {
   content: string;
   model_id: string;
+  reasoning: "none" | "minimal" | "low" | "medium" | "high" | "max";
   key_mode?: "auto" | "byok_only" | "platform_only";
   contexts?: ContextItem[];
 }

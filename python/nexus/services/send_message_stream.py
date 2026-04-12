@@ -218,6 +218,7 @@ async def stream_send_message_async(
     conversation_id: UUID | None,
     content: str,
     model_id: UUID,
+    reasoning: str,
     key_mode: str = "auto",
     contexts: list[dict] | None = None,
     idempotency_key: str | None = None,
@@ -234,6 +235,7 @@ async def stream_send_message_async(
         conversation_id: Existing conversation or None for new.
         content: User message text.
         model_id: Model to use.
+        reasoning: Reasoning mode for the selected model.
         key_mode: Key resolution mode.
         contexts: Context items.
         idempotency_key: Optional idempotency key.
@@ -256,6 +258,7 @@ async def stream_send_message_async(
     payload_hash = compute_payload_hash(
         content,
         model_id,
+        reasoning,
         key_mode,
         context_dicts,
         conversation_id,
@@ -397,6 +400,7 @@ async def stream_send_message_async(
             conversation_id,
             content,
             model_id,
+            reasoning,
             key_mode,
             contexts,
             use_platform_key,
@@ -547,6 +551,7 @@ async def stream_send_message_async(
             messages=messages,
             max_tokens=4096,
             temperature=0.7,
+            reasoning_effort=reasoning,
         )
 
         if llm_router is None:
@@ -776,6 +781,7 @@ def stream_send_message(
     conversation_id: UUID | None,
     content: str,
     model_id: UUID,
+    reasoning: str,
     key_mode: str = "auto",
     contexts: list[dict] | None = None,
     idempotency_key: str | None = None,
@@ -804,6 +810,7 @@ def stream_send_message(
                 conversation_id=conversation_id,
                 content=content,
                 model_id=model_id,
+                reasoning=reasoning,
                 key_mode=key_mode,
                 contexts=contexts,
                 idempotency_key=idempotency_key,

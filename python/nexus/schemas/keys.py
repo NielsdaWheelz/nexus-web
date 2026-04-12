@@ -19,6 +19,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # Valid providers - must match DB constraint
 VALID_PROVIDERS = {"openai", "anthropic", "gemini", "deepseek"}
 LLMProvider = Literal["openai", "anthropic", "gemini", "deepseek"]
+ModelTier = Literal["sota", "light"]
+ReasoningMode = Literal["none", "minimal", "low", "medium", "high", "max"]
 
 # Valid key statuses - must match DB constraint
 KeyStatus = Literal["untested", "valid", "invalid", "revoked"]
@@ -38,7 +40,11 @@ class ModelOut(BaseModel):
 
     id: UUID
     provider: str
+    provider_display_name: str
     model_name: str
+    model_display_name: str
+    model_tier: ModelTier
+    reasoning_modes: list[ReasoningMode]
     max_context_tokens: int
 
     model_config = ConfigDict(from_attributes=True)
@@ -80,7 +86,7 @@ class UserApiKeyCreate(BaseModel):
 
     provider: LLMProvider = Field(
         ...,
-        description="LLM provider (openai, anthropic, gemini)",
+        description="LLM provider (openai, anthropic, gemini, deepseek)",
     )
     api_key: str = Field(
         ...,

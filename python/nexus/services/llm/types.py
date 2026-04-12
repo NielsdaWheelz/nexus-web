@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "max"]
+
 
 @dataclass(frozen=True)
 class Turn:
@@ -59,12 +61,14 @@ class LLMRequest:
         messages: List of Turn objects (system turn first if present)
         max_tokens: Maximum tokens in the completion
         temperature: Sampling temperature (0.0 to 2.0), None uses provider default
+        reasoning_effort: Normalized reasoning level from none to max
     """
 
     model_name: str
     messages: list[Turn]
     max_tokens: int
     temperature: float | None = None
+    reasoning_effort: ReasoningEffort = "none"
 
 
 @dataclass(frozen=True)

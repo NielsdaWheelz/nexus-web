@@ -220,6 +220,19 @@ class GeminiAdapter(LLMAdapter):
         if req.temperature is not None:
             body["generationConfig"]["temperature"] = req.temperature
 
+        if req.reasoning_effort == "none":
+            pass
+        elif req.reasoning_effort == "minimal":
+            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "minimal"}
+        elif req.reasoning_effort == "low":
+            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
+        elif req.reasoning_effort == "medium":
+            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "medium"}
+        elif req.reasoning_effort == "high" or req.reasoning_effort == "max":
+            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "high"}
+        else:
+            raise ValueError(f"Unknown reasoning_effort: {req.reasoning_effort}")
+
         return body
 
     def _turn_to_content(self, turn: Turn) -> dict:

@@ -38,7 +38,11 @@ import styles from "./ChatComposer.module.css";
 interface Model {
   id: string;
   provider: string;
+  provider_display_name: string;
   model_name: string;
+  model_display_name: string;
+  model_tier: "sota" | "light";
+  reasoning_modes: Array<"none" | "minimal" | "low" | "medium" | "high" | "max">;
   max_context_tokens: number;
 }
 
@@ -126,7 +130,11 @@ export default function ChatComposer({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<Model[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [selectedModelId, setSelectedModelId] = useState<string>("");
+  const [selectedReasoning, setSelectedReasoning] = useState<
+    "none" | "minimal" | "low" | "medium" | "high" | "max" | ""
+  >("");
   const abortRef = useRef<(() => void) | null>(null);
 
   const streamingEnabled =
@@ -142,8 +150,27 @@ export default function ChatComposer({
       try {
         const response = await apiFetch<{ data: Model[] }>("/api/models");
         setModels(response.data);
-        if (response.data.length > 0 && !selectedModelId) {
-          setSelectedModelId(response.data[0].id);
+        if (response.data.length > 0) {
+          const providerOrder = ["openai", "anthropic", "gemini", "deepseek"];
+          let firstProvider = "";
+          for (const provider of providerOrder) {
+            if (response.data.some((model) => model.provider === provider)) {
+              firstProvider = provider;
+              break;
+            }
+          }
+          if (!firstProvider) {
+            firstProvider = response.data[0].provider;
+          }
+
+          const firstModel = response.data.find(
+            (model) => model.provider === firstProvider
+          );
+          const firstReasoning = firstModel?.reasoning_modes[0] ?? "";
+
+          setSelectedProvider(firstProvider);
+          setSelectedModelId(firstModel?.id ?? "");
+          setSelectedReasoning(firstReasoning);
         }
       } catch (err) {
         console.error("Failed to load models:", err);
@@ -152,6 +179,8 @@ export default function ChatComposer({
     loadModels();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once
   }, []);
+
+  const selectedModel = models.find((model) => model.id === selectedModelId);
 
   // --------------------------------------------------------------------------
   // Cleanup on unmount
@@ -403,7 +432,7 @@ export default function ChatComposer({
 
   const handleSend = useCallback(async () => {
     const trimmed = content.trim();
-    if (!trimmed || sending || !selectedModelId) return;
+    if (!trimmed || sending || !selectedModelId || !selectedReasoning) return;
 
     setSending(true);
     setError(null);
@@ -412,6 +441,7 @@ export default function ChatComposer({
     const body: SendMessageRequest = {
       content: trimmed,
       model_id: selectedModelId,
+      reasoning: selectedReasoning,
       key_mode: "auto",
       contexts:
         attachedContexts.length > 0
@@ -437,13 +467,47 @@ export default function ChatComposer({
   }, [
     content,
     sending,
+    selectedProvider,
     selectedModelId,
+    selectedReasoning,
     attachedContexts,
     streamingEnabled,
     sendNonStreaming,
     sendStreaming,
     onMessageSent,
   ]);
+
+  const handleProviderChange = useCallback(
+    (provider: string) => {
+      setSelectedProvider(provider);
+
+      const providerModels = models.filter((model) => model.provider === provider);
+      const nextModel = providerModels[0];
+      setSelectedModelId(nextModel?.id ?? "");
+      setSelectedReasoning(nextModel?.reasoning_modes[0] ?? "");
+    },
+    [models]
+  );
+
+  const handleModelChange = useCallback(
+    (modelId: string) => {
+      setSelectedModelId(modelId);
+
+      const model = models.find((item) => item.id === modelId);
+      if (!model) {
+        setSelectedReasoning("");
+        return;
+      }
+
+      if (
+        selectedReasoning === "" ||
+        !model.reasoning_modes.includes(selectedReasoning)
+      ) {
+        setSelectedReasoning(model.reasoning_modes[0] ?? "");
+      }
+    },
+    [models, selectedReasoning]
+  );
 
   // --------------------------------------------------------------------------
   // Key handling
@@ -519,26 +583,69 @@ export default function ChatComposer({
         <button
           className={styles.sendBtn}
           onClick={handleSend}
-          disabled={sending || !content.trim() || !selectedModelId}
+          disabled={
+            sending ||
+            !content.trim() ||
+            !selectedProvider ||
+            !selectedModelId ||
+            !selectedReasoning
+          }
         >
           {sending ? "..." : "Send"}
         </button>
       </div>
 
-      {/* Model picker */}
+      {/* Provider / model / reasoning */}
       <div className={styles.composerControls}>
         <select
           className={styles.modelSelect}
-          value={selectedModelId}
-          onChange={(e) => setSelectedModelId(e.target.value)}
+          value={selectedProvider}
+          onChange={(e) => handleProviderChange(e.target.value)}
           disabled={sending}
         >
-          {models.length === 0 && (
-            <option value="">No models available</option>
-          )}
-          {models.map((m) => (
+          {models.length === 0 && <option value="">No providers available</option>}
+          {["openai", "anthropic", "gemini", "deepseek"]
+            .filter((provider) => models.some((model) => model.provider === provider))
+            .map((provider) => {
+              const model = models.find((item) => item.provider === provider);
+              return (
+                <option key={provider} value={provider}>
+                  {model?.provider_display_name ?? provider}
+                </option>
+              );
+            })}
+        </select>
+
+        <select
+          className={styles.modelSelect}
+          value={selectedModelId}
+          onChange={(e) => handleModelChange(e.target.value)}
+          disabled={sending}
+        >
+          {models.length === 0 && <option value="">No models available</option>}
+          {models
+            .filter((model) => model.provider === selectedProvider)
+            .map((m) => (
             <option key={m.id} value={m.id}>
-              {m.provider}/{m.model_name}
+              {m.model_display_name} ({m.model_tier})
+            </option>
+            ))}
+        </select>
+
+        <select
+          className={styles.modelSelect}
+          value={selectedReasoning}
+          onChange={(e) =>
+            setSelectedReasoning(
+              e.target.value as "none" | "minimal" | "low" | "medium" | "high" | "max"
+            )
+          }
+          disabled={sending || !selectedModel}
+        >
+          {!selectedModel && <option value="">No reasoning modes</option>}
+          {selectedModel?.reasoning_modes.map((mode) => (
+            <option key={mode} value={mode}>
+              {mode}
             </option>
           ))}
         </select>

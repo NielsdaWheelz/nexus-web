@@ -224,6 +224,7 @@ class TestSendMessageBasic:
             json={
                 "content": "Hello, what is 2+2?",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -283,6 +284,7 @@ class TestSendMessageBasic:
             json={
                 "content": "Follow-up question",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -323,6 +325,7 @@ class TestSendMessageBasic:
             json={
                 "content": "First message should set title",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -372,6 +375,7 @@ class TestSendMessageIdempotency:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -394,6 +398,7 @@ class TestSendMessageIdempotency:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -438,6 +443,7 @@ class TestSendMessageIdempotency:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -458,6 +464,7 @@ class TestSendMessageIdempotency:
             json={
                 "content": "Different content!",  # Different!
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -503,6 +510,7 @@ class TestSendMessageRateLimits:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -539,6 +547,7 @@ class TestSendMessageRateLimits:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -575,6 +584,7 @@ class TestSendMessageRateLimits:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -626,6 +636,7 @@ class TestSendMessageContext:
             json={
                 "content": "What does this mean?",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -764,6 +775,7 @@ class TestSendMessageContext:
             json={
                 "content": "Summarize this podcast quote.",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -903,6 +915,7 @@ class TestSendMessageContext:
             json={
                 "content": "Summarize this video quote.",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -949,6 +962,7 @@ class TestSendMessageContext:
             json={
                 "content": "What does this mean?",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -981,6 +995,7 @@ class TestSendMessageContext:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": contexts,
             },
         )
@@ -1143,6 +1158,7 @@ class TestSendMessagePdfQuoteToChat:
             json={
                 "content": "Explain this PDF quote",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -1239,6 +1255,7 @@ class TestSendMessagePdfQuoteToChat:
             json={
                 "content": "Use this PDF quote",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -1291,6 +1308,7 @@ class TestSendMessagePdfQuoteToChat:
             json={
                 "content": "Use this annotated PDF quote",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "annotation", "id": str(annotation_id)}],
             },
         )
@@ -1337,6 +1355,7 @@ class TestSendMessagePdfQuoteToChat:
             json={
                 "content": "Explain this repeated PDF phrase",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -1382,6 +1401,7 @@ class TestSendMessageKeyModes:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "key_mode": "byok_only",
             },
         )
@@ -1414,6 +1434,7 @@ class TestSendMessageKeyModes:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "key_mode": "platform_only",
             },
         )
@@ -1466,6 +1487,7 @@ class TestSendMessageConversationBusy:
             json={
                 "content": "Another message",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -1506,6 +1528,7 @@ class TestSendMessageLLMErrors:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -1549,6 +1572,7 @@ class TestSendMessageLLMErrors:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -1607,6 +1631,7 @@ class TestSendMessageLLMErrors:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "key_mode": "byok_only",
             },
         )
@@ -1660,6 +1685,7 @@ class TestSendMessageValidation:
             json={
                 "content": "x" * 20001,  # 20,001 chars
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -1685,6 +1711,7 @@ class TestSendMessageValidation:
             json={
                 "content": "Hello!",
                 "model_id": str(fake_model_id),
+                "reasoning": "none",
             },
         )
 
@@ -1714,6 +1741,7 @@ class TestSendMessageValidation:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -1748,6 +1776,7 @@ class TestSendMessageValidation:
             json={
                 "content": "Hello!",
                 "model_id": str(model_id),
+                "reasoning": "none",
             },
         )
 
@@ -1783,7 +1812,7 @@ class TestSendMessageOwnerFields:
         response = auth_client.post(
             "/conversations/messages",
             headers=auth_headers(user_id),
-            json={"content": "Hello", "model_id": str(model_id)},
+            json={"content": "Hello", "model_id": str(model_id), "reasoning": "none"},
         )
 
         assert response.status_code == 200
@@ -1822,7 +1851,7 @@ class TestSendMessageOwnerFields:
         response = auth_client.post(
             f"/conversations/{conversation_id}/messages",
             headers=auth_headers(user_id),
-            json={"content": "Follow up", "model_id": str(model_id)},
+            json={"content": "Follow up", "model_id": str(model_id), "reasoning": "none"},
         )
 
         assert response.status_code == 200
@@ -1898,6 +1927,7 @@ class TestSendMessageEpubQuoteToChat:
             json={
                 "content": "Explain this quote",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "highlight", "id": str(hl_id)}],
             },
         )
@@ -1937,6 +1967,7 @@ class TestSendMessageEpubQuoteToChat:
             json={
                 "content": "What does this mean?",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "highlight", "id": str(hl_id)}],
             },
         )
@@ -1976,6 +2007,7 @@ class TestSendMessageEpubQuoteToChat:
             json={
                 "content": "Explain this",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "highlight", "id": str(hl_id)}],
             },
         )
@@ -2034,6 +2066,7 @@ class TestSendMessageContextKernel:
             json={
                 "content": "What does this mean?",
                 "model_id": str(model_id),
+                "reasoning": "none",
                 "contexts": [{"type": "highlight", "id": str(hl_id)}],
             },
         )
