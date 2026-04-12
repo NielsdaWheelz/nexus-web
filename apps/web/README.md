@@ -144,7 +144,7 @@ src/
 │   └── auth/               # Auth callbacks
 ├── components/             # React components
 │   ├── HtmlRenderer.tsx    # ONLY place with dangerouslySetInnerHTML
-│   ├── SelectionPopover.tsx    # Highlight color picker (PR-09)
+│   ├── SelectionPopover.tsx    # Selection actions (highlight + ask in chat)
 │   ├── HighlightEditor.tsx     # Highlight edit/delete UI (PR-09)
 │   ├── AnnotationEditor.tsx    # Note editor (PR-09)
 │   ├── ChatComposer.tsx        # Chat message input with streaming + context chips

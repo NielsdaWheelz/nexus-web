@@ -48,8 +48,10 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { stripAttachParams } from "@/lib/conversations/attachedContext";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useReaderContext, useReaderState } from "@/lib/reader";
+import { useWorkspaceStore } from "@/lib/workspace/store";
 import {
   fetchAllEpubChapterSummaries,
   normalizeEpubNavigationToc,
@@ -108,6 +110,7 @@ import styles from "./page.module.css";
 export default function useMediaViewState(id: string) {
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
+  const { state: workspaceState, navigatePane } = useWorkspaceStore();
   const requestedFragmentId = searchParams.get("fragment");
   const requestedHighlightId = searchParams.get("highlight");
   const requestedStartMs = (() => {
@@ -1686,49 +1689,105 @@ export default function useMediaViewState(id: string) {
   // Quote-to-Chat
   // ==========================================================================
 
-  const buildQuoteRoute = useCallback((highlightId: string): string => {
-    // Find the highlight data for enriched context
-    const hl =
-      highlights.find((h) => h.id === highlightId) ??
-      pdfPageHighlights.find((h) => h.id === highlightId) ??
-      pdfDocumentHighlights.find((h) => h.id === highlightId);
-
-    const qp = new URLSearchParams({
-      attach_type: "highlight",
-      attach_id: highlightId,
-    });
-    if (hl) {
-      if ("color" in hl && hl.color) {
-        qp.set("attach_color", hl.color);
-      }
-      if ("exact" in hl && hl.exact) {
-        qp.set("attach_preview", hl.exact.slice(0, 120));
-      }
-    }
-    if (media?.id) {
-      qp.set("attach_media_id", media.id);
-    }
-    if (media?.title) {
-      qp.set("attach_media_title", media.title);
-    }
-    return `/conversations/new?${qp}`;
-  }, [highlights, media?.id, media?.title, pdfDocumentHighlights, pdfPageHighlights]);
-
-  const openQuoteRoute = useCallback(
+  const handleSendToChat = useCallback(
     (highlightId: string) => {
-      const route = buildQuoteRoute(highlightId);
-      if (!requestOpenInAppPane(route, { titleHint: "New chat" })) {
+      const highlight =
+        highlights.find((item) => item.id === highlightId) ??
+        pdfPageHighlights.find((item) => item.id === highlightId) ??
+        pdfDocumentHighlights.find((item) => item.id === highlightId);
+
+      const quoteParams = new URLSearchParams({
+        attach_type: "highlight",
+        attach_id: highlightId,
+      });
+      if (highlight) {
+        if ("color" in highlight && highlight.color) {
+          quoteParams.set("attach_color", highlight.color);
+        }
+        if ("exact" in highlight && highlight.exact) {
+          quoteParams.set("attach_preview", highlight.exact.slice(0, 120));
+        }
+      }
+      if (media?.id) {
+        quoteParams.set("attach_media_id", media.id);
+      }
+      if (media?.title) {
+        quoteParams.set("attach_media_title", media.title);
+      }
+
+      const baseOrigin =
+        window.location.origin && window.location.origin !== "null"
+          ? window.location.origin
+          : "http://localhost";
+      const isChatPaneHref = (href: string): boolean => {
+        try {
+          const pathname = new URL(href, baseOrigin).pathname;
+          if (pathname === "/conversations/new") {
+            return true;
+          }
+          return /^\/conversations\/[^/]+$/.test(pathname);
+        } catch {
+          return false;
+        }
+      };
+
+      const activePane =
+        workspaceState.panes.find((pane) => pane.id === workspaceState.activePaneId) ?? null;
+      let paneToReuse = activePane && isChatPaneHref(activePane.href) ? activePane : null;
+      if (!paneToReuse) {
+        const chatPanes = workspaceState.panes.filter((pane) => isChatPaneHref(pane.href));
+        if (chatPanes.length === 1) {
+          paneToReuse = chatPanes[0] ?? null;
+        }
+      }
+
+      if (paneToReuse) {
+        const parsed = new URL(paneToReuse.href, baseOrigin);
+        const cleaned = stripAttachParams(parsed.searchParams);
+        for (const [key, value] of quoteParams.entries()) {
+          cleaned.set(key, value);
+        }
+        const qs = cleaned.toString();
+        navigatePane(
+          paneToReuse.id,
+          qs ? `${parsed.pathname}?${qs}${parsed.hash}` : `${parsed.pathname}${parsed.hash}`
+        );
+        return;
+      }
+
+      requestOpenInAppPane(`/conversations/new?${quoteParams.toString()}`, { titleHint: "New chat" });
+    },
+    [
+      highlights,
+      media?.id,
+      media?.title,
+      navigatePane,
+      pdfDocumentHighlights,
+      pdfPageHighlights,
+      workspaceState.activePaneId,
+      workspaceState.panes,
+    ]
+  );
+
+  const handleQuoteSelectionToNewChat = useCallback(
+    async (color: HighlightColor) => {
+      const highlightId = await handleCreateHighlight(color);
+      if (!highlightId) {
+        return;
+      }
+      handleSendToChat(highlightId);
+    },
+    [handleCreateHighlight, handleSendToChat]
+  );
+
+  const handleOpenConversation = useCallback(
+    (conversationId: string, title: string) => {
+      const route = `/conversations/${conversationId}`;
+      if (!requestOpenInAppPane(route, { titleHint: title })) {
         router.push(route);
       }
     },
-    [buildQuoteRoute, router]
-  );
-
-  const handleSendToChat = useCallback(
-    (highlightId: string) => {
-      openQuoteRoute(highlightId);
-    },
-    [openQuoteRoute]
+    [router]
   );
 
   // ==========================================================================
@@ -2152,6 +2211,8 @@ export default function useMediaViewState(id: string) {
 
     // Chat
     handleSendToChat,
+    handleOpenConversation,
+    handleQuoteSelectionToNewChat,
 
     // Content interaction
     handleContentClick,

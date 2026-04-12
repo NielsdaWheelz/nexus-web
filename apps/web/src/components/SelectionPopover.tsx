@@ -1,9 +1,10 @@
 /**
- * SelectionPopover - Color picker for highlight creation.
+ * SelectionPopover - Selection actions for highlight + chat.
  *
  * Appears when user selects text in the content area. Positioned relative
  * to the selection bounding box. Selecting a color creates the highlight
- * immediately. Dismisses on Escape, click outside, or selection collapse.
+ * immediately, and Ask in chat creates a highlight then opens quote-to-chat.
+ * Dismisses on Escape, click outside, or selection collapse.
  */
 
 "use client";
@@ -21,6 +22,7 @@ export interface SelectionPopoverProps {
   selectionRect: DOMRect;
   containerRef: React.RefObject<HTMLElement | null>;
   onCreateHighlight: (color: HighlightColor) => void | Promise<void | string | null>;
+  onQuoteToChat?: (color: HighlightColor) => void | Promise<void>;
   onDismiss: () => void;
   isCreating?: boolean;
 }
@@ -39,6 +41,7 @@ export default function SelectionPopover({
   selectionRect,
   containerRef,
   onCreateHighlight,
+  onQuoteToChat,
   onDismiss,
   isCreating = false,
 }: SelectionPopoverProps) {
@@ -132,6 +135,13 @@ export default function SelectionPopover({
     [isCreating, onCreateHighlight]
   );
 
+  const handleQuoteToChat = useCallback(() => {
+    if (isCreating || !onQuoteToChat) {
+      return;
+    }
+    void onQuoteToChat(selectedColor);
+  }, [isCreating, onQuoteToChat, selectedColor]);
+
   return (
     <div
       ref={popoverRef}
@@ -159,6 +169,17 @@ export default function SelectionPopover({
           />
         ))}
       </div>
+      {onQuoteToChat && (
+        <button
+          type="button"
+          className={styles.chatButton}
+          onClick={handleQuoteToChat}
+          disabled={isCreating}
+          aria-label="Ask in chat"
+        >
+          Ask in chat
+        </button>
+      )}
     </div>
   );
 }

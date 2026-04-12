@@ -1,7 +1,7 @@
 /**
  * SelectionPopover styles.
  *
- * Styling for the highlight creation popover that appears on text selection.
+ * Styling for the selection actions popover that appears on text selection.
  */
 
 .popover {
@@ -33,6 +33,26 @@
   display: flex;
   gap: var(--space-1);
   justify-content: center;
+}
+
+.chatButton {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.chatButton:hover:not(:disabled) {
+  background: var(--color-bg);
+}
+
+.chatButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .colorButton {
@@ -78,4 +98,3 @@
 .color-purple {
   background: rgba(156, 39, 176, 0.6);
 }
-
