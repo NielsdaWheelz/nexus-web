@@ -54,11 +54,9 @@ describe("LinkedItemRow", () => {
     await user.unhover(row);
     expect(onMouseLeave).toHaveBeenCalledTimes(1);
 
-    // Quote-to-chat is now in ActionMenu
-    const actionsButton = screen.getByRole("button", { name: "Actions" });
-    await user.click(actionsButton);
-    const quoteItem = await screen.findByRole("menuitem", { name: "Quote to chat" });
-    await user.click(quoteItem);
+    // Quote-to-chat is a visible icon button on the row
+    const chatButton = screen.getByRole("button", { name: "Send to chat" });
+    await user.click(chatButton);
 
     expect(onSendToChat).toHaveBeenCalledTimes(1);
     expect(onSendToChat).toHaveBeenCalledWith("h-1");
@@ -105,8 +103,9 @@ describe("LinkedItemRow", () => {
     expect(screen.getByText("Add a note\u2026")).toBeInTheDocument();
   });
 
-  it("does not trigger row click when opening actions with keyboard", async () => {
+  it("does not trigger row click when clicking chat button", async () => {
     const onClick = vi.fn();
+    const onSendToChat = vi.fn();
     const user = userEvent.setup();
 
     render(
@@ -121,18 +120,15 @@ describe("LinkedItemRow", () => {
         onClick={onClick}
         onMouseEnter={vi.fn()}
         onMouseLeave={vi.fn()}
-        onSendToChat={vi.fn()}
+        onSendToChat={onSendToChat}
       />
     );
 
-    const actionsButton = screen.getByRole("button", { name: "Actions" });
-    actionsButton.focus();
-    await user.keyboard("{Enter}");
+    const chatButton = screen.getByRole("button", { name: "Send to chat" });
+    await user.click(chatButton);
 
     expect(onClick).not.toHaveBeenCalled();
-    expect(
-      await screen.findByRole("menuitem", { name: "Quote to chat" })
-    ).toBeInTheDocument();
+    expect(onSendToChat).toHaveBeenCalledWith("h-keyboard-actions");
   });
 
   it("enters inline edit on annotation click and saves on blur", async () => {

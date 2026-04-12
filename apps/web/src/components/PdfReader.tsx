@@ -215,7 +215,6 @@ interface PdfReaderProps {
   navigateToHighlight?: PdfHighlightNavigationRequest | null;
   onHighlightNavigationComplete?: () => void;
   onHighlightsMutated?: () => void;
-  onQuoteToChat?: (highlightId: string) => void;
   onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
   /** Resume: initial page (1-based) from saved reader state */
   initialPageNumber?: number;
@@ -600,7 +599,6 @@ export default function PdfReader({
   navigateToHighlight = null,
   onHighlightNavigationComplete,
   onHighlightsMutated,
-  onQuoteToChat,
   onHighlightTap,
   initialPageNumber,
   initialZoom,
@@ -1510,20 +1508,6 @@ export default function PdfReader({
     ]
   );
 
-  const handleQuoteSelectionToChat = useCallback(
-    async (color: HighlightColor) => {
-      if (!onQuoteToChat) {
-        return;
-      }
-      const highlightId = await handleCreateHighlight(color);
-      if (!highlightId) {
-        return;
-      }
-      onQuoteToChat(highlightId);
-    },
-    [handleCreateHighlight, onQuoteToChat]
-  );
-
   const goToPage = useCallback(
     async (nextPage: number) => {
       const viewer = pdfViewerRef.current;
@@ -2139,9 +2123,6 @@ export default function PdfReader({
           selectionRect={selection.rect}
           containerRef={viewerContainerRef}
           onCreateHighlight={handleCreateHighlight}
-          onQuoteToNewChat={
-            onQuoteToChat && !editingHighlightId ? handleQuoteSelectionToChat : undefined
-          }
           onDismiss={clearSelection}
           isCreating={isCreating}
         />

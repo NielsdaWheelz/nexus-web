@@ -1731,15 +1731,6 @@ export default function useMediaViewState(id: string) {
     [openQuoteRoute]
   );
 
-  const handleQuoteSelectionToNewChat = useCallback(
-    async (color: HighlightColor) => {
-      const highlightId = await handleCreateHighlight(color);
-      if (!highlightId) return;
-      openQuoteRoute(highlightId);
-    },
-    [handleCreateHighlight, openQuoteRoute]
-  );
-
   // ==========================================================================
   // EPUB Chapter Navigation
   // ==========================================================================
@@ -2161,7 +2152,6 @@ export default function useMediaViewState(id: string) {
 
     // Chat
     handleSendToChat,
-    handleQuoteSelectionToNewChat,
 
     // Content interaction
     handleContentClick,

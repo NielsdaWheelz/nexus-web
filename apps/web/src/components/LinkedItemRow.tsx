@@ -14,10 +14,10 @@ import {
   forwardRef,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
+import { MessageSquare } from "lucide-react";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import styles from "./LinkedItemsPane.module.css";
 
@@ -181,21 +181,13 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
       [handleCancelAnnotation, handleSaveAnnotation]
     );
 
-    // Build menu options
-    const menuOptions = useMemo(() => {
-      const items: ActionMenuOption[] = [];
-      if (onSendToChat) {
-        items.push({
-          id: "quote-to-chat",
-          label: "Quote to chat",
-          onSelect: () => onSendToChat(highlight.id),
-        });
-      }
-      if (optionsProp) {
-        items.push(...optionsProp);
-      }
-      return items;
-    }, [onSendToChat, highlight.id, optionsProp]);
+    const handleSendToChat = useCallback(
+      (e: React.MouseEvent) => {
+        e.stopPropagation();
+        onSendToChat?.(highlight.id);
+      },
+      [onSendToChat, highlight.id]
+    );
 
     // Truncate text for preview
     const previewText =
@@ -237,9 +229,19 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
             />
             <span className={styles.previewText}>{previewText}</span>
           </div>
-          {menuOptions.length > 0 && (
+          {onSendToChat && (
+            <button
+              type="button"
+              className={styles.chatButton}
+              onClick={handleSendToChat}
+              aria-label="Send to chat"
+            >
+              <MessageSquare size={14} />
+            </button>
+          )}
+          {optionsProp && optionsProp.length > 0 && (
             <ActionMenu
-              options={menuOptions}
+              options={optionsProp}
               className={styles.actionMenu}
             />
           )}

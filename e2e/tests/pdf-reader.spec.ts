@@ -514,22 +514,12 @@ test.describe("pdf reader", () => {
       const linkedRow = page.locator(`[data-highlight-id="${createdHighlightId}"]`).first();
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await linkedRow.hover();
-      const actionsButton = linkedRow.getByLabel("Actions");
-      await expect(actionsButton).toBeVisible();
+      const chatButton = linkedRow.getByLabel("Send to chat");
+      await expect(chatButton).toBeVisible();
       const conversationTabCountBefore = await page
         .getByRole("tab", { name: /chat/i })
         .count();
-      const clickQuoteToChatMenuItem = async (): Promise<void> => {
-        await linkedRow.hover();
-        if ((await actionsButton.getAttribute("aria-expanded")) !== "true") {
-          await actionsButton.click();
-        }
-        await expect(actionsButton).toHaveAttribute("aria-expanded", "true");
-        const quoteToChat = page.getByRole("menuitem", { name: "Quote to chat" }).first();
-        await expect(quoteToChat).toBeVisible({ timeout: 10_000 });
-        await quoteToChat.click();
-      };
-      await clickQuoteToChatMenuItem();
+      await chatButton.click();
 
       const chatAttachPrefix = `highlight: ${createdHighlightId.slice(0, 8)}`;
       const readQuoteNavigationOutcome = async (): Promise<"url" | "queued" | "pane" | null> => {

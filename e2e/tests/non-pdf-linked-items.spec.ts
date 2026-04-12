@@ -110,15 +110,12 @@ test.describe("non-pdf linked-items", () => {
 
     await expect(focusRow.getByText("Seeded focus note for non-PDF linked-items e2e.")).toBeVisible();
     await focusRow.hover();
-    const actionsButton = focusRow.getByLabel("Actions");
-    await expect(actionsButton).toBeVisible();
+    const chatButton = focusRow.getByLabel("Send to chat");
+    await expect(chatButton).toBeVisible();
     const conversationTabCountBefore = await page
       .getByRole("tab", { name: /chat/i })
       .count();
-    await actionsButton.click();
-    const quoteToChat = page.getByRole("menuitem", { name: "Quote to chat" });
-    await expect(quoteToChat).toBeVisible();
-    await quoteToChat.click();
+    await chatButton.click();
     const chatAttachPrefix = `highlight: ${seeded.focus_highlight_id.slice(0, 8)}`;
     let quoteNavigationOutcome: "url" | "queued" | "pane" | null = null;
     await expect

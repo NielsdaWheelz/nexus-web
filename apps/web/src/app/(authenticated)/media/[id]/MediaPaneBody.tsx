@@ -257,7 +257,6 @@ export default function MediaPaneBody() {
               navigateToHighlight={mv.pdfNavigationTarget}
               onHighlightNavigationComplete={() => mv.setPdfNavigationTarget(null)}
               onHighlightsMutated={mv.schedulePdfHighlightsRefresh}
-              onQuoteToChat={mv.handleSendToChat}
               onHighlightTap={mv.isMobileViewport ? mv.handleMobilePdfHighlightTap : undefined}
               showToolbar={false}
               onControlsStateChange={mv.setPdfControlsState}
@@ -394,7 +393,6 @@ export default function MediaPaneBody() {
           selectionRect={mv.selection.rect}
           containerRef={mv.contentRef}
           onCreateHighlight={mv.handleCreateHighlight}
-          onQuoteToNewChat={mv.handleQuoteSelectionToNewChat}
           onDismiss={mv.handleDismissPopover}
           isCreating={mv.isCreating}
         />

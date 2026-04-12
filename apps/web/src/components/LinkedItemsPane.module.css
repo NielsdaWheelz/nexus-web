@@ -222,16 +222,38 @@
 }
 
 /* =============================================================================
-   Send to Chat Button (quote-to-chat trigger)
+   Row Actions (hover-reveal)
    ============================================================================= */
 
+.chatButton,
 .actionMenu {
   opacity: 0;
   transition: opacity var(--transition-fast);
   flex-shrink: 0;
 }
 
+.chatButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.chatButton:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.linkedItemRowMain:hover .chatButton,
 .linkedItemRowMain:hover .actionMenu,
+.linkedItemRowMain:focus-within .chatButton,
 .linkedItemRowMain:focus-within .actionMenu,
 .actionMenu[data-open="true"] {
   opacity: 1;
