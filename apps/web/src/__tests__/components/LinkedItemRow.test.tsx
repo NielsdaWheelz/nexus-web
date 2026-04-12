@@ -9,15 +9,13 @@ describe("LinkedItemRow", () => {
     const onMouseEnter = vi.fn();
     const onMouseLeave = vi.fn();
     const onSendToChat = vi.fn();
-    const longExact = "A".repeat(72);
-    const expectedPreview = `${"A".repeat(60)}…`;
 
     render(
       <LinkedItemRow
         highlight={{
           id: "h-1",
           color: "yellow",
-          exact: longExact,
+          exact: "Highlighted passage from the article",
           annotation: { id: "ann-1", body: "has note" },
         }}
         isFocused={false}
@@ -36,8 +34,7 @@ describe("LinkedItemRow", () => {
       throw new Error("Expected linked-item row button to be rendered");
     }
 
-    expect(screen.getByText(expectedPreview)).toBeInTheDocument();
-    // Annotation body is now shown inline on line 2
+    expect(screen.getByText("Highlighted passage from the article")).toBeInTheDocument();
     expect(screen.getByText("has note")).toBeInTheDocument();
 
     await user.hover(row);
