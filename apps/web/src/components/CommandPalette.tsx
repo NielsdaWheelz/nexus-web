@@ -46,7 +46,7 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import styles from "./CommandPalette.module.css";
 
-type Section = "Recent" | "Panes" | "Create" | "Navigate" | "Search Results";
+type Section = "Recent" | "Panes" | "Create" | "Navigate" | "Settings" | "Search Results";
 
 interface Action {
   id: string;
@@ -77,10 +77,10 @@ const ACTIONS: Action[] = [
   { id: "nav-chat", label: "Chat", keywords: ["conversations", "messages"], section: "Navigate", icon: MessageSquare, execute: () => requestOpenInAppPane("/conversations") },
   { id: "nav-search", label: "Search", keywords: ["find", "query"], section: "Navigate", icon: Search, execute: () => requestOpenInAppPane("/search") },
   { id: "nav-settings", label: "Settings", keywords: ["preferences", "account"], section: "Navigate", icon: Settings, execute: () => requestOpenInAppPane("/settings") },
-  { id: "nav-reader-settings", label: "Reader Settings", keywords: ["typography", "font", "theme"], section: "Navigate", icon: Type, execute: () => requestOpenInAppPane("/settings/reader") },
-  { id: "nav-api-keys", label: "API Keys", keywords: ["credentials", "providers"], section: "Navigate", icon: KeyRound, execute: () => requestOpenInAppPane("/settings/keys") },
-  { id: "nav-identities", label: "Linked Identities", keywords: ["google", "github", "oauth"], section: "Navigate", icon: Link2, execute: () => requestOpenInAppPane("/settings/identities") },
-  { id: "nav-keybindings", label: "Keyboard Shortcuts", keywords: ["keybindings", "hotkeys", "shortcuts"], section: "Navigate", icon: Keyboard, execute: () => requestOpenInAppPane("/settings/keybindings") },
+  { id: "nav-reader-settings", label: "Reader Settings", keywords: ["typography", "font", "theme"], section: "Settings", icon: Type, execute: () => requestOpenInAppPane("/settings/reader") },
+  { id: "nav-api-keys", label: "API Keys", keywords: ["credentials", "providers"], section: "Settings", icon: KeyRound, execute: () => requestOpenInAppPane("/settings/keys") },
+  { id: "nav-identities", label: "Linked Identities", keywords: ["google", "github", "oauth"], section: "Settings", icon: Link2, execute: () => requestOpenInAppPane("/settings/identities") },
+  { id: "nav-keybindings", label: "Keyboard Shortcuts", keywords: ["keybindings", "hotkeys", "shortcuts"], section: "Settings", icon: Keyboard, execute: () => requestOpenInAppPane("/settings/keybindings") },
 
   // Create
   { id: "create-conversation", label: "New conversation", keywords: ["chat", "message"], section: "Create", icon: MessageSquarePlus, execute: () => requestOpenInAppPane("/conversations/new") },
@@ -90,7 +90,7 @@ const ACTIONS: Action[] = [
 ];
 
 const ACTIONS_BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
-const SECTION_ORDER: Section[] = ["Recent", "Panes", "Create", "Navigate", "Search Results"];
+const SECTION_ORDER: Section[] = ["Recent", "Panes", "Create", "Navigate", "Settings", "Search Results"];
 
 const SEARCH_TYPE_ICON: Record<SearchType, LucideIcon> = {
   media: Globe,
@@ -143,6 +143,7 @@ export default function CommandPalette() {
     openHintByPaneId,
     resourceTitleByRef,
     activatePane,
+    closePane,
   } = useWorkspaceStore();
 
   // Load recent IDs and keybindings on mount
@@ -435,6 +436,19 @@ export default function CommandPalette() {
                 {combo && (
                   <span className={styles.shortcutHint}>{formatKeyCombo(combo)}</span>
                 )}
+                {action.id.startsWith("pane-") && (
+                  <button
+                    type="button"
+                    className={styles.paneClose}
+                    aria-label={`Close ${action.label}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      closePane(action.id.slice(5));
+                    }}
+                  >
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                )}
               </div>
             );
           })}
@@ -480,7 +494,6 @@ export default function CommandPalette() {
           onClick={(e) => e.stopPropagation()}
           onKeyDown={handleKeyDown}
         >
-          <div className={styles.mobileHandle} aria-hidden="true" />
           <header className={styles.mobileHeader}>
             <h2>Commands</h2>
             <button
