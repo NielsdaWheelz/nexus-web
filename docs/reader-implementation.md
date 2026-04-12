@@ -24,6 +24,11 @@ this translates the reader research into concrete engineering constraints and re
 - highlight editing on mobile uses a sheet-style editor with annotation support
 - pdf viewer on mobile uses `page-width` auto-fit for the initial scale instead of the persisted numeric zoom (user can still manually zoom after load); the viewport uses `dvh` units with a `vh` fallback for correct height under mobile browser chrome
 
+### desktop reader shell contract
+
+- media reader uses a side-by-side split with a resizable linked-items column
+- linked-items column can be hidden and restored from a pane chrome action
+
 ### reader state split
 
 - `reader_profile`: per-user defaults (theme, font, line height, column width, focus mode, default view mode)

@@ -29,6 +29,7 @@ Authenticated views also run inside an in-app multi-pane workspace:
 - pane chrome is the single top bar on mobile (back button + title + command palette trigger + options); it auto-hides on scroll-down, reveals on scroll-up; `SurfaceHeader` hides meta/subtitle on mobile viewports
 - media toolbars use `ResponsiveToolbar` with priority-based items: primary actions render as icon-only buttons on mobile, secondary actions collapse into an overflow menu
 - split surfaces keep secondary panes behind a right-side drawer toggled by a floating top-right action
+- media reader desktop keeps a resizable linked-items column that can be hidden/restored via pane chrome action
 - `LinkedItemsPane` uses list mode on mobile (aligned mode requires side-by-side panes, impossible when tabbed)
 - root layout uses `100dvh` with `100vh` fallback for correct dynamic mobile viewport height
 

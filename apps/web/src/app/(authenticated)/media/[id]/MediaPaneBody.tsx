@@ -38,23 +38,38 @@ export default function MediaPaneBody() {
   const { toast } = useToast();
 
   // ==========================================================================
-  // Chrome override — push toolbar/options/meta into PaneShell
+  // Linked-items column state
+  // ==========================================================================
+
+  const [linkedDrawerOpen, setLinkedDrawerOpen] = useState(false);
+  const [linkedWidth, setLinkedWidth] = useState(DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX);
+  const [desktopLinkedCollapsed, setDesktopLinkedCollapsed] = useState(false);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const canToggleDesktopLinkedPane = !mv.isMobileViewport && mv.showHighlightsPane;
+
+  // ==========================================================================
+  // Chrome override — push toolbar/options/meta/actions into PaneShell
   // ==========================================================================
 
   usePaneChromeOverride({
     toolbar: mv.mediaToolbar,
     options: mv.mediaHeaderOptions,
     meta: mv.mediaHeaderMeta,
+    actions: canToggleDesktopLinkedPane ? (
+      <button
+        type="button"
+        className={styles.paneActionButton}
+        onClick={() => {
+          resizeCleanupRef.current?.();
+          setDesktopLinkedCollapsed((value) => !value);
+        }}
+        aria-label={desktopLinkedCollapsed ? "Show highlights pane" : "Hide highlights pane"}
+      >
+        {desktopLinkedCollapsed ? "Show highlights" : "Hide highlights"}
+      </button>
+    ) : undefined,
   });
-
-  // ==========================================================================
-  // Linked-items column state
-  // ==========================================================================
-
-  const [linkedDrawerOpen, setLinkedDrawerOpen] = useState(false);
-  const [linkedWidth, setLinkedWidth] = useState(DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX);
-  const splitRef = useRef<HTMLDivElement>(null);
-  const resizeCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => () => { resizeCleanupRef.current?.(); }, []);
 
@@ -71,6 +86,12 @@ export default function MediaPaneBody() {
       document.removeEventListener("keydown", handleEscape);
     };
   }, [linkedDrawerOpen]);
+
+  useEffect(() => {
+    if (linkedDrawerOpen && (!mv.isMobileViewport || !mv.showHighlightsPane)) {
+      setLinkedDrawerOpen(false);
+    }
+  }, [linkedDrawerOpen, mv.isMobileViewport, mv.showHighlightsPane]);
 
   const handleDividerMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -166,6 +187,8 @@ export default function MediaPaneBody() {
       buildRowOptions={mv.buildRowOptions}
     />
   ) : null;
+  const showDesktopLinkedPane =
+    !mv.isMobileViewport && linkedItemsContent !== null && !desktopLinkedCollapsed;
 
   return (
     <>
@@ -326,7 +349,7 @@ export default function MediaPaneBody() {
         )}
         </div>
 
-        {!mv.isMobileViewport && linkedItemsContent && (
+        {showDesktopLinkedPane && (
           <>
             <div
               className={styles.splitDivider}
@@ -400,4 +423,3 @@ export default function MediaPaneBody() {
     </>
   );
 }
-
