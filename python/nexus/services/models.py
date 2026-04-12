@@ -36,6 +36,7 @@ def get_platform_key_providers() -> set[str]:
     - OPENAI_API_KEY
     - ANTHROPIC_API_KEY
     - GEMINI_API_KEY
+    - DEEPSEEK_API_KEY
 
     Returns:
         Set of provider names with platform keys configured.
@@ -49,6 +50,8 @@ def get_platform_key_providers() -> set[str]:
         providers.add("anthropic")
     if settings.gemini_api_key:
         providers.add("gemini")
+    if settings.deepseek_api_key:
+        providers.add("deepseek")
 
     return providers
 

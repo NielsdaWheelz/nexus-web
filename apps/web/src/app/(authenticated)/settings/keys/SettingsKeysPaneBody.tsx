@@ -119,6 +119,7 @@ export default function SettingsKeysPaneBody() {
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
                 <option value="gemini">Gemini</option>
+                <option value="deepseek">DeepSeek</option>
               </select>
             </div>
 

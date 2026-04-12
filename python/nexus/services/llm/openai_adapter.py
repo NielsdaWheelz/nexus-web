@@ -52,11 +52,22 @@ OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 
 
 class OpenAIAdapter(LLMAdapter):
-    """OpenAI API adapter for chat completions.
+    """OpenAI-compatible API adapter for chat completions.
 
-    Handles conversion between Turn objects and OpenAI message format,
-    and parses both streaming and non-streaming responses.
+    Works with any provider that implements the OpenAI chat completions
+    wire format (OpenAI, DeepSeek, xAI, Mistral, Groq, etc.).
     """
+
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        chat_url: str = OPENAI_CHAT_URL,
+        provider_name: str = "openai",
+    ):
+        super().__init__(client)
+        self._chat_url = chat_url
+        self._provider_name = provider_name
 
     async def generate(
         self,
@@ -70,7 +81,7 @@ class OpenAIAdapter(LLMAdapter):
         body = self._build_request_body(req, stream=False)
 
         response = await self._client.post(
-            OPENAI_CHAT_URL,
+            self._chat_url,
             headers=headers,
             json=body,
             timeout=httpx.Timeout(timeout_s, connect=10.0),
@@ -93,7 +104,7 @@ class OpenAIAdapter(LLMAdapter):
 
         async with self._client.stream(
             "POST",
-            OPENAI_CHAT_URL,
+            self._chat_url,
             headers=headers,
             json=body,
             timeout=httpx.Timeout(timeout_s, connect=10.0),
@@ -172,8 +183,8 @@ class OpenAIAdapter(LLMAdapter):
             if not received_done:
                 raise LLMError(
                     LLMErrorClass.PROVIDER_DOWN,
-                    "OpenAI stream ended without [DONE] marker",
-                    provider="openai",
+                    f"{self._provider_name} stream ended without [DONE] marker",
+                    provider=self._provider_name,
                 )
 
     def _build_headers(self, api_key: str) -> dict[str, str]:
@@ -214,8 +225,8 @@ class OpenAIAdapter(LLMAdapter):
         if not choices:
             raise LLMError(
                 LLMErrorClass.PROVIDER_DOWN,
-                "OpenAI response missing choices",
-                provider="openai",
+                f"{self._provider_name} response missing choices",
+                provider=self._provider_name,
             )
 
         text = choices[0].get("message", {}).get("content", "")

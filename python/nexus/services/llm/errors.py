@@ -88,7 +88,8 @@ def classify_provider_error(
         return LLMErrorClass.PROVIDER_DOWN
 
     # Route to provider-specific classification
-    if provider == "openai":
+    # DeepSeek uses the OpenAI-compatible API format, same error shapes.
+    if provider in ("openai", "deepseek"):
         return _classify_openai_error(status_code, json_body)
     elif provider == "anthropic":
         return _classify_anthropic_error(status_code, json_body)

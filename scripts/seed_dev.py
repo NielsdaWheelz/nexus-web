@@ -171,11 +171,15 @@ def main() -> None:
         model_count = db.execute(select(Model)).scalars().first()
         if model_count is None:
             for provider, model_name, max_tokens in [
-                ("openai", "gpt-4o-mini", 128000),
-                ("openai", "gpt-4o", 128000),
-                ("anthropic", "claude-sonnet-4-20250514", 200000),
-                ("anthropic", "claude-haiku-4-20250514", 200000),
-                ("gemini", "gemini-2.0-flash", 1000000),
+                ("openai", "gpt-5.4-mini", 400000),
+                ("openai", "gpt-4.1-nano", 1047576),
+                ("anthropic", "claude-opus-4-6", 1000000),
+                ("anthropic", "claude-sonnet-4-6", 1000000),
+                ("anthropic", "claude-haiku-4-5-20251001", 200000),
+                ("gemini", "gemini-2.5-pro", 1048576),
+                ("gemini", "gemini-2.5-flash", 1048576),
+                ("deepseek", "deepseek-chat", 128000),
+                ("deepseek", "deepseek-reasoner", 128000),
             ]:
                 db.add(
                     Model(
@@ -186,7 +190,7 @@ def main() -> None:
                     )
                 )
             db.flush()
-            track("LLM models (5)", True)
+            track("LLM models (9)", True)
         else:
             track("LLM models", False)
 

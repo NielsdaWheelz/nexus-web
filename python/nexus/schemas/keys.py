@@ -17,8 +17,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Valid providers - must match DB constraint
-VALID_PROVIDERS = {"openai", "anthropic", "gemini"}
-LLMProvider = Literal["openai", "anthropic", "gemini"]
+VALID_PROVIDERS = {"openai", "anthropic", "gemini", "deepseek"}
+LLMProvider = Literal["openai", "anthropic", "gemini", "deepseek"]
 
 # Valid key statuses - must match DB constraint
 KeyStatus = Literal["untested", "valid", "invalid", "revoked"]

@@ -125,6 +125,7 @@ async def lifespan(app: FastAPI):
         enable_openai=settings.enable_openai,
         enable_anthropic=settings.enable_anthropic,
         enable_gemini=settings.enable_gemini,
+        enable_deepseek=settings.enable_deepseek,
     )
 
     logger.info(

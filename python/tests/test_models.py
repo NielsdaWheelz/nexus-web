@@ -104,7 +104,7 @@ class TestModelFiltering:
         # Should only have openai models
         providers = {m["provider"] for m in data}
         assert providers == {"openai"}
-        assert len(data) == 2  # gpt-4o-mini and gpt-4o
+        assert len(data) == 2  # gpt-5.4-mini and gpt-4.1-nano
 
     def test_byok_untested_enables_provider_models(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
@@ -137,7 +137,7 @@ class TestModelFiltering:
         # Should only have anthropic models
         providers = {m["provider"] for m in data}
         assert providers == {"anthropic"}
-        assert len(data) == 2  # claude-sonnet and claude-haiku
+        assert len(data) == 3  # claude-opus, claude-sonnet, claude-haiku
 
     def test_byok_valid_enables_provider_models(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch

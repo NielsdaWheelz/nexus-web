@@ -160,6 +160,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
+    deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
 
     # S3 PR-04: LLM provider feature flags
     # Controls whether each provider is available to users
@@ -167,6 +168,7 @@ class Settings(BaseSettings):
     enable_openai: bool = Field(default=True, alias="ENABLE_OPENAI")
     enable_anthropic: bool = Field(default=True, alias="ENABLE_ANTHROPIC")
     enable_gemini: bool = Field(default=True, alias="ENABLE_GEMINI")
+    enable_deepseek: bool = Field(default=True, alias="ENABLE_DEEPSEEK")
 
     # PR-05: Rate limiting settings
     rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute

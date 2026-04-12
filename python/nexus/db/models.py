@@ -1925,6 +1925,7 @@ class LLMProvider(str, PyEnum):
     openai = "openai"
     anthropic = "anthropic"
     gemini = "gemini"
+    deepseek = "deepseek"
 
 
 class KeyModeRequested(str, PyEnum):
@@ -2065,7 +2066,7 @@ class Model(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini')",
+            "provider IN ('openai', 'anthropic', 'gemini', 'deepseek')",
             name="ck_models_provider",
         ),
         CheckConstraint(
@@ -2173,7 +2174,7 @@ class MessageLLM(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini')",
+            "provider IN ('openai', 'anthropic', 'gemini', 'deepseek')",
             name="ck_message_llm_provider",
         ),
         CheckConstraint(
@@ -2244,7 +2245,7 @@ class UserApiKey(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini')",
+            "provider IN ('openai', 'anthropic', 'gemini', 'deepseek')",
             name="ck_user_api_keys_provider",
         ),
         CheckConstraint(

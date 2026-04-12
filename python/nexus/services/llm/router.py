@@ -86,6 +86,7 @@ class LLMRouter:
         enable_openai: bool = True,
         enable_anthropic: bool = True,
         enable_gemini: bool = True,
+        enable_deepseek: bool = True,
     ):
         """Initialize router with shared HTTP client and feature flags.
 
@@ -94,17 +95,24 @@ class LLMRouter:
             enable_openai: Whether OpenAI provider is enabled.
             enable_anthropic: Whether Anthropic provider is enabled.
             enable_gemini: Whether Gemini provider is enabled.
+            enable_deepseek: Whether DeepSeek provider is enabled.
         """
         self._client = client
         self._feature_flags = {
             "openai": enable_openai,
             "anthropic": enable_anthropic,
             "gemini": enable_gemini,
+            "deepseek": enable_deepseek,
         }
         self._adapters: dict[str, LLMAdapter] = {
             "openai": OpenAIAdapter(client),
             "anthropic": AnthropicAdapter(client),
             "gemini": GeminiAdapter(client),
+            "deepseek": OpenAIAdapter(
+                client,
+                chat_url="https://api.deepseek.com/chat/completions",
+                provider_name="deepseek",
+            ),
         }
 
     def resolve_adapter(self, provider: str) -> LLMAdapter:

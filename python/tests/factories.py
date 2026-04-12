@@ -43,12 +43,12 @@ from nexus.db.models import (
 def create_test_model(session: Session) -> UUID:
     """Get or create a test model.
 
-    Uses the migration-seeded gpt-4o row if it exists,
+    Uses the migration-seeded gpt-5.4-mini row if it exists,
     otherwise inserts a complete row with all NOT NULL columns.
     """
     existing = (
         session.query(Model)
-        .filter(Model.provider == "openai", Model.model_name == "gpt-4o")
+        .filter(Model.provider == "openai", Model.model_name == "gpt-5.4-mini")
         .first()
     )
     if existing:
@@ -57,8 +57,8 @@ def create_test_model(session: Session) -> UUID:
     model = Model(
         id=uuid4(),
         provider="openai",
-        model_name="gpt-4o",
-        max_context_tokens=128000,
+        model_name="gpt-5.4-mini",
+        max_context_tokens=400000,
         is_available=True,
     )
     session.add(model)
@@ -72,11 +72,15 @@ def seed_test_models(session: Session) -> None:
         return
 
     for provider, model_name, max_tokens in [
-        ("openai", "gpt-4o-mini", 128000),
-        ("openai", "gpt-4o", 128000),
-        ("anthropic", "claude-sonnet-4-20250514", 200000),
-        ("anthropic", "claude-haiku-4-20250514", 200000),
-        ("gemini", "gemini-2.0-flash", 1000000),
+        ("openai", "gpt-5.4-mini", 400000),
+        ("openai", "gpt-4.1-nano", 1047576),
+        ("anthropic", "claude-opus-4-6", 1000000),
+        ("anthropic", "claude-sonnet-4-6", 1000000),
+        ("anthropic", "claude-haiku-4-5-20251001", 200000),
+        ("gemini", "gemini-2.5-pro", 1048576),
+        ("gemini", "gemini-2.5-flash", 1048576),
+        ("deepseek", "deepseek-chat", 128000),
+        ("deepseek", "deepseek-reasoner", 128000),
     ]:
         session.add(
             Model(

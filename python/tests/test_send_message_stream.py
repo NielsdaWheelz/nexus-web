@@ -514,7 +514,7 @@ class TestStreamFinalizeErrorMessages:
                 model_id=model_id,
             )
 
-            model_stub = MagicMock(provider="openai", model_name="gpt-4o")
+            model_stub = MagicMock(provider="openai", model_name="gpt-5.4-mini")
             resolved_key = ResolvedKey(
                 api_key="sk-test",
                 mode="byok",
@@ -567,7 +567,7 @@ class TestStreamFinalizeErrorMessages:
                 model_id=model_id,
             )
 
-            model_stub = MagicMock(provider="openai", model_name="gpt-4o")
+            model_stub = MagicMock(provider="openai", model_name="gpt-5.4-mini")
             resolved_key = ResolvedKey(
                 api_key="sk-test",
                 mode="byok",

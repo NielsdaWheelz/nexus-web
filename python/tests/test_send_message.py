@@ -144,7 +144,7 @@ def _route_openai_completion(
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
             },
-            "model": "gpt-4o",
+            "model": "gpt-5.4-mini",
         },
         headers={"x-request-id": "test-request-id"},
     )
