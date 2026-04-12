@@ -244,13 +244,13 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     ).toBeInTheDocument();
   });
 
-  it("closes the mobile linked-items drawer when highlights pane becomes unavailable", async () => {
-    const user = userEvent.setup();
+  it("closes the mobile linked-items drawer when highlights pane becomes unavailable", () => {
     currentViewState = buildViewState({ isMobileViewport: true, showHighlightsPane: true });
     mockUseMediaViewState.mockImplementation(() => currentViewState);
 
     const { rerender } = render(<MediaPaneBody />);
-    await user.click(screen.getByRole("button", { name: "Linked items" }));
+    const action = getLatestChromeOverride().actions as ToggleActionElement;
+    act(() => { action.props.onClick(); });
 
     expect(screen.getByRole("dialog", { name: "Linked items" })).toBeInTheDocument();
     expect(document.body.style.overflow).toBe("hidden");

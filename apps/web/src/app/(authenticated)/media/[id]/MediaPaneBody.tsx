@@ -26,6 +26,7 @@ import TranscriptMediaPane from "./TranscriptMediaPane";
 import EpubContentPane from "./EpubContentPane";
 import { formatResumeTime } from "./mediaHelpers";
 import useMediaViewState from "./useMediaViewState";
+import { PanelRight } from "lucide-react";
 import styles from "./page.module.css";
 
 export default function MediaPaneBody() {
@@ -46,8 +47,6 @@ export default function MediaPaneBody() {
   const [desktopLinkedCollapsed, setDesktopLinkedCollapsed] = useState(false);
   const splitRef = useRef<HTMLDivElement>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
-  const canToggleDesktopLinkedPane = !mv.isMobileViewport && mv.showHighlightsPane;
-
   // ==========================================================================
   // Chrome override — push toolbar/options/meta/actions into PaneShell
   // ==========================================================================
@@ -56,18 +55,30 @@ export default function MediaPaneBody() {
     toolbar: mv.mediaToolbar,
     options: mv.mediaHeaderOptions,
     meta: mv.mediaHeaderMeta,
-    actions: canToggleDesktopLinkedPane ? (
-      <button
-        type="button"
-        className={styles.paneActionButton}
-        onClick={() => {
-          resizeCleanupRef.current?.();
-          setDesktopLinkedCollapsed((value) => !value);
-        }}
-        aria-label={desktopLinkedCollapsed ? "Show highlights pane" : "Hide highlights pane"}
-      >
-        {desktopLinkedCollapsed ? "Show highlights" : "Hide highlights"}
-      </button>
+    actions: mv.showHighlightsPane ? (
+      mv.isMobileViewport ? (
+        <button
+          type="button"
+          className={styles.paneActionButton}
+          onClick={() => setLinkedDrawerOpen((v) => !v)}
+          aria-label="Linked items"
+          aria-expanded={linkedDrawerOpen}
+        >
+          <PanelRight size={18} />
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={styles.paneActionButton}
+          onClick={() => {
+            resizeCleanupRef.current?.();
+            setDesktopLinkedCollapsed((value) => !value);
+          }}
+          aria-label={desktopLinkedCollapsed ? "Show highlights pane" : "Hide highlights pane"}
+        >
+          {desktopLinkedCollapsed ? "Show highlights" : "Hide highlights"}
+        </button>
+      )
     ) : undefined,
   });
 
@@ -368,18 +379,6 @@ export default function MediaPaneBody() {
           </>
         )}
       </div>
-
-      {mv.isMobileViewport && mv.showHighlightsPane && (
-        <button
-          type="button"
-          className={styles.linkedFab}
-          onClick={() => setLinkedDrawerOpen((v) => !v)}
-          aria-label="Linked items"
-          aria-expanded={linkedDrawerOpen}
-        >
-          Linked items
-        </button>
-      )}
 
       {mv.isMobileViewport && linkedDrawerOpen && linkedItemsContent && (
         <div className={styles.linkedBackdrop} onClick={() => setLinkedDrawerOpen(false)}>

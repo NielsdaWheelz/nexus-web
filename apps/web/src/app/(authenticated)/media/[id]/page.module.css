@@ -647,22 +647,6 @@
 
 /* --- Mobile linked-items drawer --- */
 
-.linkedFab {
-  position: fixed;
-  bottom: calc(var(--mobile-bottom-nav-height, 64px) + 16px);
-  right: 16px;
-  z-index: 100;
-  background: var(--color-accent);
-  color: var(--color-on-accent, #fff);
-  border: none;
-  border-radius: 24px;
-  padding: 10px 18px;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
 .linkedBackdrop {
   position: fixed;
   inset: 0;
