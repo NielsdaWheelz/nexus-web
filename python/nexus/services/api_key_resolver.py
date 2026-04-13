@@ -73,6 +73,8 @@ def resolve_api_key(
         platform_key = settings.anthropic_api_key
     elif provider == "gemini":
         platform_key = settings.gemini_api_key
+    elif provider == "deepseek":
+        platform_key = settings.deepseek_api_key
 
     # Get user BYOK if exists and usable
     user_key = None

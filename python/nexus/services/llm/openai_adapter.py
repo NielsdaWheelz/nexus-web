@@ -206,7 +206,7 @@ class OpenAIAdapter(LLMAdapter):
         if req.temperature is not None:
             body["temperature"] = req.temperature
 
-        if self._provider_name == "openai":
+        if self._provider_name == "openai" and req.reasoning_effort != "none":
             if req.reasoning_effort == "max":
                 body["reasoning_effort"] = "xhigh"
             else:

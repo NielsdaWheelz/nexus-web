@@ -68,6 +68,7 @@ class ApiErrorCode(str, Enum):
     E_LLM_RATE_LIMIT = "E_LLM_RATE_LIMIT"  # 429 - Provider rate limit exceeded
     E_LLM_INVALID_KEY = "E_LLM_INVALID_KEY"  # 400 - API key is invalid or revoked
     E_LLM_PROVIDER_DOWN = "E_LLM_PROVIDER_DOWN"  # 503 - Provider service unavailable
+    E_LLM_BAD_REQUEST = "E_LLM_BAD_REQUEST"  # 400 - Provider rejected the request
     E_LLM_TIMEOUT = "E_LLM_TIMEOUT"  # 504 - Provider request timed out
     E_LLM_CONTEXT_TOO_LARGE = "E_LLM_CONTEXT_TOO_LARGE"  # 400 - Context too large for model
     E_MESSAGE_TOO_LONG = "E_MESSAGE_TOO_LONG"  # 400 - Message exceeds 20,000 char limit
@@ -173,6 +174,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_LLM_RATE_LIMIT: 429,
     ApiErrorCode.E_LLM_INVALID_KEY: 400,
     ApiErrorCode.E_LLM_PROVIDER_DOWN: 503,
+    ApiErrorCode.E_LLM_BAD_REQUEST: 400,
     ApiErrorCode.E_LLM_TIMEOUT: 504,
     ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE: 400,
     ApiErrorCode.E_MESSAGE_TOO_LONG: 400,

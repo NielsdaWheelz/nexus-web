@@ -104,6 +104,7 @@ ERROR_CLASS_TO_MESSAGE: dict[LLMErrorClass, str] = {
     LLMErrorClass.RATE_LIMIT: "The model is temporarily rate-limited. Please try again shortly.",
     LLMErrorClass.INVALID_KEY: "The configured API key is invalid or has been revoked.",
     LLMErrorClass.PROVIDER_DOWN: "The model provider is currently unavailable. Please try again later.",
+    LLMErrorClass.BAD_REQUEST: "The request was rejected by the model provider. Please try a different model or setting.",
     LLMErrorClass.CONTEXT_TOO_LARGE: "The context was too large for the model. Please try with less context.",
     LLMErrorClass.MODEL_NOT_AVAILABLE: "The requested model is not available.",
 }

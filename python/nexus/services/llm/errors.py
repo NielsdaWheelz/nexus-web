@@ -11,6 +11,7 @@ Error classes:
 - E_LLM_CONTEXT_TOO_LARGE: Context length exceeded
 - E_LLM_TIMEOUT: Request timed out
 - E_LLM_PROVIDER_DOWN: Provider unavailable (5xx, network error)
+- E_LLM_BAD_REQUEST: Provider rejected request (unrecognized 4xx)
 - E_MODEL_NOT_AVAILABLE: Model not found or disabled
 """
 
@@ -32,6 +33,7 @@ class LLMErrorClass(str, Enum):
     CONTEXT_TOO_LARGE = "E_LLM_CONTEXT_TOO_LARGE"
     TIMEOUT = "E_LLM_TIMEOUT"
     PROVIDER_DOWN = "E_LLM_PROVIDER_DOWN"
+    BAD_REQUEST = "E_LLM_BAD_REQUEST"
     MODEL_NOT_AVAILABLE = "E_MODEL_NOT_AVAILABLE"
 
 
@@ -135,6 +137,9 @@ def _classify_openai_error(status_code: int, json_body: dict | None) -> LLMError
         if "model" in error_message and "not found" in error_message:
             return LLMErrorClass.MODEL_NOT_AVAILABLE
 
+    if status_code is not None and status_code < 500:
+        return LLMErrorClass.BAD_REQUEST
+
     return LLMErrorClass.PROVIDER_DOWN
 
 
@@ -167,6 +172,9 @@ def _classify_anthropic_error(status_code: int, json_body: dict | None) -> LLMEr
 
         if error_type == "invalid_request_error" and "too long" in error_message:
             return LLMErrorClass.CONTEXT_TOO_LARGE
+
+    if status_code is not None and status_code < 500:
+        return LLMErrorClass.BAD_REQUEST
 
     return LLMErrorClass.PROVIDER_DOWN
 
@@ -201,5 +209,8 @@ def _classify_gemini_error(status_code: int, json_body: dict | None) -> LLMError
 
     if status_code >= 500:
         return LLMErrorClass.PROVIDER_DOWN
+
+    if status_code is not None and status_code < 500:
+        return LLMErrorClass.BAD_REQUEST
 
     return LLMErrorClass.PROVIDER_DOWN
