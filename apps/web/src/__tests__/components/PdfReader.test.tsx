@@ -34,6 +34,7 @@ interface FakePdfDocumentLike {
   numPages: number;
   __pages: FakePdfPageSpec[];
   __renderErrorsByPage: Record<number, unknown>;
+  __annotationLayerErrorsByPage: Record<number, unknown>;
   destroy: ReturnType<typeof vi.fn<() => Promise<void>>>;
 }
 
@@ -52,7 +53,10 @@ function createFakePage(options?: {
 function createFakeDocument(
   numPages: number,
   pagesByNumber?: Record<number, FakePdfPageSpec>,
-  options?: { renderErrorsByPage?: Record<number, unknown> }
+  options?: {
+    renderErrorsByPage?: Record<number, unknown>;
+    annotationLayerErrorsByPage?: Record<number, unknown>;
+  }
 ): FakePdfDocumentLike {
   const pages: FakePdfPageSpec[] = [];
   for (let pageNumber = 1; pageNumber <= numPages; pageNumber += 1) {
@@ -62,6 +66,7 @@ function createFakeDocument(
     numPages,
     __pages: pages,
     __renderErrorsByPage: options?.renderErrorsByPage ?? {},
+    __annotationLayerErrorsByPage: options?.annotationLayerErrorsByPage ?? {},
     destroy: vi.fn(async () => undefined),
   };
 }
@@ -126,6 +131,7 @@ class FakePDFLinkService {
 class FakePDFViewer {
   private static updateCallCount = 0;
   private static _scaleHistory: (string | number)[] = [];
+  private static _lastInitOptions: { enableAutoLinking?: boolean } | null = null;
 
   static resetUpdateCallCount() {
     FakePDFViewer.updateCallCount = 0;
@@ -143,6 +149,14 @@ class FakePDFViewer {
     return FakePDFViewer._scaleHistory;
   }
 
+  static resetLastInitOptions() {
+    FakePDFViewer._lastInitOptions = null;
+  }
+
+  static getLastInitOptions() {
+    return FakePDFViewer._lastInitOptions;
+  }
+
   private readonly container: HTMLDivElement;
   private readonly viewer: HTMLDivElement;
   private readonly eventBus: FakeEventBus;
@@ -157,7 +171,9 @@ class FakePDFViewer {
     container: HTMLDivElement;
     viewer: HTMLDivElement;
     eventBus: FakeEventBus;
+    enableAutoLinking?: boolean;
   }) {
+    FakePDFViewer._lastInitOptions = options;
     this.container = options.container;
     this.viewer = options.viewer;
     this.eventBus = options.eventBus;
@@ -257,6 +273,10 @@ class FakePDFViewer {
       pageNumber,
       source: this.pageViews.get(pageNumber),
       error: this.doc.__renderErrorsByPage[pageNumber],
+    });
+    this.eventBus.dispatch("annotationlayerrendered", {
+      pageNumber,
+      error: this.doc.__annotationLayerErrorsByPage[pageNumber],
     });
   }
 
@@ -1056,6 +1076,105 @@ describe("PdfReader", () => {
     expect(
       await screen.findByText(/unable to load this pdf right now\. please retry\./i)
     ).toBeInTheDocument();
+  });
+
+  it("refreshes signed URL and recovers when annotation layer render fails with expiry error", async () => {
+    const signedUrlA = "https://storage.example/signed-annotation-expired";
+    const signedUrlB = "https://storage.example/signed-annotation-refreshed";
+    const annotationExpiryError = new Error(
+      "Unexpected server response (403) while loading annotation layer"
+    );
+    (annotationExpiryError as { status?: number }).status = 403;
+    const expiredDoc = createFakeDocument(
+      1,
+      {
+        1: createFakePage({ textItems: ["expired annotation layer"] }),
+      },
+      {
+        annotationLayerErrorsByPage: {
+          1: annotationExpiryError,
+        },
+      }
+    );
+    const refreshedDoc = createFakeDocument(1, {
+      1: createFakePage({ textItems: ["refreshed annotation layer"] }),
+    });
+    const { deps, apiFetchMock } = createDeps({
+      urls: [signedUrlA, signedUrlB],
+      docsByUrl: {
+        [signedUrlA]: expiredDoc,
+        [signedUrlB]: refreshedDoc,
+      },
+      highlightsByPage: { 1: [] },
+    });
+
+    render(<PdfReader mediaId="media-16" deps={deps} />);
+
+    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    expect(await screen.findByText("refreshed annotation layer")).toBeInTheDocument();
+    await waitFor(() => {
+      const fileCalls = apiFetchMock.mock.calls.filter(([path]) => path === "/api/media/media-16/file");
+      expect(fileCalls).toHaveLength(2);
+    });
+    expect(screen.queryByText(/unable to load this pdf right now\. please retry\./i)).not.toBeInTheDocument();
+  });
+
+  it("contains non-expiry annotation layer failures without retrying PDF load", async () => {
+    const signedUrl = "https://storage.example/signed-annotation-non-expiry";
+    const annotationLayerError = new Error("annotation layer render crashed");
+    const doc = createFakeDocument(
+      1,
+      {
+        1: createFakePage({ textItems: ["annotation layer stable page"] }),
+      },
+      {
+        annotationLayerErrorsByPage: {
+          1: annotationLayerError,
+        },
+      }
+    );
+    const { deps, apiFetchMock } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: [] },
+    });
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      render(<PdfReader mediaId="media-17" deps={deps} />);
+
+      expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+          "PDF annotation layer render failed:",
+          annotationLayerError
+        );
+      });
+      const fileCalls = apiFetchMock.mock.calls.filter(([path]) => path === "/api/media/media-17/file");
+      expect(fileCalls).toHaveLength(1);
+      expect(
+        screen.queryByText(/unable to load this pdf right now\. please retry\./i)
+      ).not.toBeInTheDocument();
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it("disables pdf.js auto-link inference in viewer construction", async () => {
+    FakePDFViewer.resetLastInitOptions();
+    const signedUrl = "https://storage.example/signed-no-autolink";
+    const doc = createFakeDocument(1, {
+      1: createFakePage({ textItems: ["auto-link toggle check"] }),
+    });
+    const { deps } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: [] },
+    });
+
+    render(<PdfReader mediaId="media-18" deps={deps} />);
+
+    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    expect(FakePDFViewer.getLastInitOptions()?.enableAutoLinking).toBe(false);
   });
 
   it("degrades to area-style geometry when text layer and canvas scale diverge", async () => {

@@ -187,6 +187,7 @@ interface PdfJsViewerLike {
     eventBus: PdfEventBusLike;
     linkService: PdfLinkServiceLike;
     textLayerMode?: number;
+    enableAutoLinking?: boolean;
   }) => PdfViewerLike;
   ScrollMode?: { VERTICAL?: number };
   LinkTarget?: { BLANK?: number };
@@ -266,6 +267,7 @@ interface ViewerEventHandlers {
   pagechanging: (event: unknown) => void;
   pagesloaded: (event: unknown) => void;
   pagerendered: (event: unknown) => void;
+  annotationlayerrendered: (event: unknown) => void;
 }
 
 const DEFAULT_WORKER_SRC = "/api/pdfjs/worker";
@@ -900,6 +902,7 @@ export default function PdfReader({
       eventBus.off("pagechanging", handlers.pagechanging);
       eventBus.off("pagesloaded", handlers.pagesloaded);
       eventBus.off("pagerendered", handlers.pagerendered);
+      eventBus.off("annotationlayerrendered", handlers.annotationlayerrendered);
     }
     eventHandlersRef.current = null;
     linkServiceRef.current?.setDocument(null, null);
@@ -947,6 +950,7 @@ export default function PdfReader({
         eventBus,
         linkService,
         textLayerMode: PDF_VIEWER_TEXT_LAYER_MODE_ENABLE,
+        enableAutoLinking: false,
       });
       try {
         if (typeof viewerModule.ScrollMode?.VERTICAL === "number") {
@@ -1068,9 +1072,37 @@ export default function PdfReader({
         }
       };
 
+      const handleAnnotationLayerRendered = (rawEvent: unknown) => {
+        if (runId !== runRef.current) {
+          return;
+        }
+        const event = rawEvent as { pageNumber?: number; error?: unknown };
+        if (!event.error) {
+          return;
+        }
+        const renderedPage =
+          Number.isFinite(event.pageNumber) && (event.pageNumber as number) > 0
+            ? Math.floor(event.pageNumber as number)
+            : pageNumberRef.current;
+        const expiryError = isLikelySignedUrlExpiryError(event.error);
+        if (expiryError && !recoveringFromRenderErrorRef.current) {
+          recoveringFromRenderErrorRef.current = true;
+          void recoverAndRenderRef.current?.(renderedPage, runRef.current).finally(() => {
+            if (runId === runRef.current) {
+              recoveringFromRenderErrorRef.current = false;
+            }
+          });
+          return;
+        }
+        if (!expiryError) {
+          console.error("PDF annotation layer render failed:", event.error);
+        }
+      };
+
       eventBus.on("pagechanging", handlePageChanging);
       eventBus.on("pagesloaded", handlePagesLoaded);
       eventBus.on("pagerendered", handlePageRendered);
+      eventBus.on("annotationlayerrendered", handleAnnotationLayerRendered);
 
       eventBusRef.current = eventBus;
       linkServiceRef.current = linkService;
@@ -1079,6 +1111,7 @@ export default function PdfReader({
         pagechanging: handlePageChanging,
         pagesloaded: handlePagesLoaded,
         pagerendered: handlePageRendered,
+        annotationlayerrendered: handleAnnotationLayerRendered,
       };
     },
     [
@@ -1108,9 +1141,6 @@ export default function PdfReader({
       pendingViewerPageRef.current = null;
       removeOverlayLayers();
 
-      linkService.setDocument(doc, null);
-      viewer.setDocument(doc);
-
       const boundedPage = Math.max(1, Math.min(targetPage, doc.numPages));
       pageNumberRef.current = boundedPage;
       setPageNumber(boundedPage);
@@ -1130,17 +1160,9 @@ export default function PdfReader({
       activePageScaleRef.current = numericFallback;
 
       pendingViewerScaleRef.current = effectiveScale;
-      if (viewer.pagesCount > 0) {
-        applyViewerScale(viewer, effectiveScale, "attachDocument/currentScaleValue");
-        pendingViewerScaleRef.current = null;
-      }
-      if (boundedPage > 1) {
-        if (viewer.pagesCount > 0) {
-          applyViewerPageNumber(viewer, boundedPage, "attachDocument/currentPageNumber");
-        } else {
-          pendingViewerPageRef.current = boundedPage;
-        }
-      }
+      pendingViewerPageRef.current = boundedPage > 1 ? boundedPage : null;
+      linkService.setDocument(doc, null);
+      viewer.setDocument(doc);
     },
     [initializeViewerIfNeeded, removeOverlayLayers]
   );
