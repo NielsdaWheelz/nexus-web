@@ -1,0 +1,24 @@
+/* Syntax highlighting — matches app color palette */
+.hljs { color: var(--color-text); background: var(--color-bg-secondary); }
+.hljs-keyword,
+.hljs-selector-tag { color: var(--color-accent); }
+.hljs-string,
+.hljs-addition { color: var(--color-success); }
+.hljs-number,
+.hljs-literal { color: var(--color-warning); }
+.hljs-comment,
+.hljs-quote { color: var(--color-text-muted); font-style: italic; }
+.hljs-title,
+.hljs-section { color: var(--color-accent-hover); }
+.hljs-built_in,
+.hljs-type { color: #bb9af7; }
+.hljs-deletion { color: var(--color-error); }
+.hljs-attr,
+.hljs-attribute { color: var(--color-warning); }
+.hljs-meta { color: var(--color-text-secondary); }
+.hljs-variable,
+.hljs-template-variable { color: #f7768e; }
+.hljs-name,
+.hljs-tag { color: #f7768e; }
+.hljs-regexp { color: #b4f9f8; }
+.hljs-symbol { color: var(--color-success); }

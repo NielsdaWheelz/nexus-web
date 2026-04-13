@@ -80,21 +80,21 @@
 
 /* Color-specific backgrounds */
 .color-yellow {
-  background: rgba(255, 235, 59, 0.8);
+  background: var(--highlight-yellow);
 }
 
 .color-green {
-  background: rgba(76, 175, 80, 0.7);
+  background: var(--highlight-green);
 }
 
 .color-blue {
-  background: rgba(33, 150, 243, 0.6);
+  background: var(--highlight-blue);
 }
 
 .color-pink {
-  background: rgba(233, 30, 99, 0.6);
+  background: var(--highlight-pink);
 }
 
 .color-purple {
-  background: rgba(156, 39, 176, 0.6);
+  background: var(--highlight-purple);
 }

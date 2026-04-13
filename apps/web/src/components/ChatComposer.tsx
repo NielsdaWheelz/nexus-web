@@ -19,6 +19,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { ArrowUp } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
@@ -136,6 +137,15 @@ export default function ChatComposer({
     "none" | "minimal" | "low" | "medium" | "high" | "max" | ""
   >("");
   const abortRef = useRef<(() => void) | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    el.style.overflowY = el.scrollHeight > 160 ? "auto" : "hidden";
+  }, [content]);
 
   const streamingEnabled =
     typeof window !== "undefined" &&
@@ -568,34 +578,8 @@ export default function ChatComposer({
         </div>
       )}
 
-      {/* Input + send */}
-      <div className={styles.composerRow}>
-        <textarea
-          className={styles.composerInput}
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-          disabled={sending}
-          rows={1}
-        />
-        <button
-          className={styles.sendBtn}
-          onClick={handleSend}
-          disabled={
-            sending ||
-            !content.trim() ||
-            !selectedProvider ||
-            !selectedModelId ||
-            !selectedReasoning
-          }
-        >
-          {sending ? "..." : "Send"}
-        </button>
-      </div>
-
       {/* Provider / model / reasoning */}
-      <div className={styles.composerControls}>
+      <div className={styles.composerControlBar}>
         <select
           className={styles.modelSelect}
           value={selectedProvider}
@@ -648,6 +632,33 @@ export default function ChatComposer({
             </option>
           ))}
         </select>
+      </div>
+
+      {/* Input + send */}
+      <div className={styles.composerInputWrapper}>
+        <textarea
+          ref={textareaRef}
+          className={styles.composerInput}
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Ask anything..."
+          disabled={sending}
+          rows={1}
+        />
+        <button
+          className={styles.sendBtn}
+          onClick={handleSend}
+          disabled={
+            sending ||
+            !content.trim() ||
+            !selectedProvider ||
+            !selectedModelId ||
+            !selectedReasoning
+          }
+        >
+          <ArrowUp size={18} />
+        </button>
       </div>
     </div>
   );

@@ -8,6 +8,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { AlertCircle } from "lucide-react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ContextItem } from "@/lib/api/sse";
 import {
@@ -17,7 +18,11 @@ import {
 } from "@/lib/conversations/attachedContext";
 import { hydrateContextItems } from "@/lib/conversations/hydrateContextItems";
 import ChatComposer from "@/components/ChatComposer";
-import HighlightSnippet from "@/components/ui/HighlightSnippet";
+import InlineCitations from "@/components/ui/InlineCitations";
+import {
+  MarkdownMessage,
+  StreamingMarkdownMessage,
+} from "@/components/ui/MarkdownMessage";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import StateMessage from "@/components/ui/StateMessage";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -288,7 +293,7 @@ function ChatView({
   });
 
   // --------------------------------------------------------------------------
-  // Streaming message handlers
+  // Streaming message handlers (rAF-buffered deltas)
   // --------------------------------------------------------------------------
 
   const handleOptimisticMessages = useCallback(
@@ -312,22 +317,59 @@ function ChatView({
     []
   );
 
-  const handleDelta = useCallback((assistantId: string, delta: string) => {
+  // rAF-buffered delta handler — batches tokens arriving within one frame
+  const deltaBufferRef = useRef<Map<string, string>>(new Map());
+  const rafRef = useRef<number | null>(null);
+
+  const flushDeltas = useCallback(() => {
+    rafRef.current = null;
+    const buffer = deltaBufferRef.current;
+    if (buffer.size === 0) return;
+    const snapshot = new Map(buffer);
+    buffer.clear();
     setMessages((prev) =>
-      prev.map((m) =>
-        m.id === assistantId ? { ...m, content: m.content + delta } : m
-      )
+      prev.map((m) => {
+        const delta = snapshot.get(m.id);
+        return delta ? { ...m, content: m.content + delta } : m;
+      })
     );
+  }, []);
+
+  const handleDelta = useCallback((assistantId: string, delta: string) => {
+    const buffer = deltaBufferRef.current;
+    buffer.set(assistantId, (buffer.get(assistantId) ?? "") + delta);
+    if (rafRef.current === null) {
+      rafRef.current = requestAnimationFrame(flushDeltas);
+    }
+  }, [flushDeltas]);
+
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
   }, []);
 
   const handleDone = useCallback(
     (assistantId: string, status: "complete" | "error", errorCode: string | null) => {
+      // Flush any remaining buffered deltas before marking done
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      const buffer = deltaBufferRef.current;
+      const remaining = buffer.get(assistantId);
+      buffer.delete(assistantId);
+
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId
-            ? { ...m, status, error_code: errorCode }
-            : m
-        )
+        prev.map((m) => {
+          if (m.id !== assistantId) return m;
+          return {
+            ...m,
+            content: remaining ? m.content + remaining : m.content,
+            status,
+            error_code: errorCode,
+          };
+        })
       );
     },
     []
@@ -391,7 +433,7 @@ function ChatView({
                 )}
 
                 {messages.map((msg) => (
-                  <MessageBubble key={msg.id} message={msg} />
+                  <MessageRow key={msg.id} message={msg} />
                 ))}
               </div>
 
@@ -469,72 +511,50 @@ function ChatView({
 }
 
 // ============================================================================
-// MessageBubble
+// MessageRow
 // ============================================================================
 
-function MessageBubble({ message }: { message: Message }) {
-  const messageContexts = message.contexts ?? [];
-  const roleClass =
-    message.role === "user"
-      ? styles.user
-      : message.role === "assistant"
-        ? styles.assistant
-        : styles.system;
-
-  const statusClass =
-    message.status === "error"
-      ? styles.error
-      : message.status === "pending"
-        ? styles.pending
-        : "";
-
-  return (
-    <div className={`${styles.messageBubble} ${roleClass} ${statusClass}`}>
-      {message.role === "user" && messageContexts.length > 0 && (
-        <div className={styles.messageContextBlock}>
-          {messageContexts.map((contextItem, index) => {
-            const meta = formatMessageMeta(contextItem);
-            const text = contextItem.exact || contextItem.preview;
-            return (
-              <div
-                key={`${message.id}-${contextItem.type}-${contextItem.id}-${index}`}
-                className={styles.messageContextItem}
-              >
-                <div className={styles.messageContextTitleRow}>
-                  {contextItem.color ? (
-                    <span
-                      className={`${styles.linkedItemsColorSwatch} ${styles[`swatch-${contextItem.color}`]}`}
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                  <span className={styles.messageContextTitle}>
-                    {text
-                      ? <HighlightSnippet exact={text} color={contextItem.color ?? "neutral"} compact />
-                      : contextItem.type === "highlight" ? "Highlight" : contextItem.type === "annotation" ? "Annotation" : "Media"}
-                  </span>
-                </div>
-                {meta ? <div className={styles.messageContextMeta}>{meta}</div> : null}
-                {contextItem.annotation_body ? (
-                  <div className={styles.linkedItemsAnnotation}>{contextItem.annotation_body}</div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {message.content || (message.status === "pending" ? "..." : "")}
-      {message.status === "error" && message.error_code && (
-        <div className={styles.retryBtn}>
-          Error: {message.error_code}
-        </div>
-      )}
-    </div>
-  );
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const now = Date.now();
+  const diffSec = Math.floor((now - d.getTime()) / 1000);
+  if (diffSec < 60) return "just now";
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function formatMessageMeta(item: MessageContextSnapshot): string | undefined {
-  const parts: string[] = [];
-  if (item.media_title) parts.push(item.media_title);
-  if (item.media_kind) parts.push(item.media_kind);
-  return parts.length > 0 ? parts.join(" - ") : undefined;
+function MessageRow({ message }: { message: Message }) {
+  const roleClass = styles[message.role] ?? "";
+  const statusClass = message.status !== "complete" ? (styles[message.status] ?? "") : "";
+
+  return (
+    <div className={`${styles.message} ${roleClass} ${statusClass}`}>
+      {message.role === "user" && message.contexts && message.contexts.length > 0 && (
+        <InlineCitations contexts={message.contexts} />
+      )}
+
+      {message.role === "assistant" ? (
+        message.status === "pending" ? (
+          <StreamingMarkdownMessage content={message.content} />
+        ) : (
+          <MarkdownMessage content={message.content} />
+        )
+      ) : (
+        <span>{message.content || (message.status === "pending" ? "..." : "")}</span>
+      )}
+
+      {message.status === "error" && message.error_code && (
+        <span className={styles.messageError}>
+          <AlertCircle size={14} />
+          {message.error_code}
+        </span>
+      )}
+
+      <span className={styles.messageTimestamp}>
+        {formatTime(message.created_at)}
+      </span>
+    </div>
+  );
 }

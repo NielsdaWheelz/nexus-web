@@ -2,9 +2,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  max-width: var(--content-max-width);
+  margin: 0 auto;
   padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--color-border-subtle);
-  background: var(--color-bg);
 }
 
 .composerError {
@@ -25,43 +25,29 @@
 .contextChip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1) var(--space-2);
+  gap: 3px;
+  padding: 2px 6px;
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 4px;
-  font-size: var(--font-size-xs);
+  font-size: 11px;
   color: var(--color-text-secondary);
-  max-width: 280px;
+  max-width: 220px;
 }
 
 .chipSwatch {
   display: inline-block;
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 2px;
   flex-shrink: 0;
 }
 
-.chipSwatchYellow {
-  background: rgba(255, 235, 59, 0.8);
-}
-
-.chipSwatchGreen {
-  background: rgba(76, 175, 80, 0.7);
-}
-
-.chipSwatchBlue {
-  background: rgba(33, 150, 243, 0.7);
-}
-
-.chipSwatchPink {
-  background: rgba(233, 30, 99, 0.7);
-}
-
-.chipSwatchPurple {
-  background: rgba(156, 39, 176, 0.7);
-}
+.chipSwatchYellow { background: var(--highlight-yellow); }
+.chipSwatchGreen { background: var(--highlight-green); }
+.chipSwatchBlue { background: var(--highlight-blue); }
+.chipSwatchPink { background: var(--highlight-pink); }
+.chipSwatchPurple { background: var(--highlight-purple); }
 
 .chipText {
   overflow: hidden;
@@ -73,15 +59,15 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   padding: 0;
   background: none;
   border: none;
   border-radius: 2px;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: var(--font-size-xs);
+  font-size: 11px;
   line-height: 1;
   flex-shrink: 0;
 }
@@ -91,28 +77,70 @@
   color: var(--color-text);
 }
 
-.composerRow {
+/* Control bar — 3 pill dropdowns */
+.composerControlBar {
   display: flex;
+  align-items: center;
   gap: var(--space-2);
-  align-items: flex-end;
+}
+
+.modelSelect {
+  padding: 3px var(--space-2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: var(--space-4);
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23565f89' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+}
+
+.modelSelect:hover {
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.modelSelect:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Input wrapper with embedded send button */
+.composerInputWrapper {
+  position: relative;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  transition: border-color var(--transition-fast);
+}
+
+.composerInputWrapper:focus-within {
+  border-color: var(--color-accent);
 }
 
 .composerInput {
-  flex: 1;
+  display: block;
+  width: 100%;
   resize: none;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
+  padding: var(--space-2) 48px var(--space-2) var(--space-3);
+  border: none;
+  border-radius: 12px;
+  background: transparent;
   color: var(--color-text);
   font-family: inherit;
   font-size: var(--font-size-sm);
   line-height: 1.5;
+  overflow-y: hidden;
 }
 
 .composerInput:focus {
   outline: none;
-  border-color: var(--color-accent);
 }
 
 .composerInput:disabled {
@@ -121,16 +149,20 @@
 }
 
 .sendBtn {
-  padding: var(--space-2) var(--space-3);
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
   background: var(--color-accent);
   color: var(--color-bg);
   border: none;
   border-radius: 8px;
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
   cursor: pointer;
-  white-space: nowrap;
+  transition: opacity var(--transition-fast);
 }
 
 .sendBtn:hover:not(:disabled) {
@@ -138,28 +170,6 @@
 }
 
 .sendBtn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.composerControls {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.modelSelect {
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.modelSelect:disabled {
-  opacity: 0.6;
+  opacity: 0.3;
   cursor: not-allowed;
 }
