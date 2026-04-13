@@ -18,8 +18,7 @@ import { type Highlight } from "@/components/HighlightEditor";
 import { useToast } from "@/components/Toast";
 import { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import {
-  applyHighlightsToHtmlMemoized,
-  clearHighlightCache,
+  applyHighlightsToHtml,
   type HighlightInput,
 } from "@/lib/highlights/applySegments";
 import {
@@ -197,6 +196,8 @@ export default function useMediaViewState(id: string) {
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
   const urlHighlightAppliedRef = useRef<string | null>(null);
   const pdfDocumentHighlightIdsRef = useRef<Set<string>>(new Set());
+  const mismatchToastFragmentRef = useRef<string | null>(null);
+  const mismatchLoggedFragmentRef = useRef<string | null>(null);
 
   // Selection state for creating highlights
   const [selection, setSelection] = useState<SelectionState | null>(null);
@@ -1097,7 +1098,7 @@ export default function useMediaViewState(id: string) {
   const renderedHtml = useMemo(
     () =>
       activeContent
-        ? applyHighlightsToHtmlMemoized(
+        ? applyHighlightsToHtml(
             activeContent.htmlSanitized,
             activeContent.canonicalText,
             activeContent.fragmentId,
@@ -1112,7 +1113,16 @@ export default function useMediaViewState(id: string) {
   // ==========================================================================
 
   useEffect(() => {
-    if (!activeContent || !contentRef.current) return;
+    if (!activeContent) {
+      cursorRef.current = null;
+      setIsMismatchDisabled(false);
+      return;
+    }
+    if (!contentRef.current) {
+      cursorRef.current = null;
+      setIsMismatchDisabled(false);
+      return;
+    }
 
     const cursor = buildCanonicalCursor(contentRef.current);
     const isValid = validateCanonicalText(
@@ -1123,8 +1133,21 @@ export default function useMediaViewState(id: string) {
 
     cursorRef.current = cursor;
     setIsMismatchDisabled(!isValid);
+    if (!isValid && mismatchLoggedFragmentRef.current !== activeContent.fragmentId) {
+      mismatchLoggedFragmentRef.current = activeContent.fragmentId;
+      console.error("highlight_canonical_mismatch_defect", {
+        fragmentId: activeContent.fragmentId,
+        emittedLength: cursor.length,
+        expectedLength: [...activeContent.canonicalText].length,
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuild when rendered content changes
   }, [activeContent?.fragmentId, activeContent?.canonicalText, renderedHtml]);
+
+  useEffect(() => {
+    mismatchToastFragmentRef.current = null;
+    mismatchLoggedFragmentRef.current = null;
+  }, [activeContent?.fragmentId]);
 
   // ==========================================================================
   // Focus Sync
@@ -1303,13 +1326,17 @@ export default function useMediaViewState(id: string) {
 
     if (isMismatchDisabled) {
       setSelection(null);
-      toast({ variant: "warning", message: "Highlights disabled due to content mismatch." });
+      const mismatchKey = activeContent?.fragmentId ?? "__unknown__";
+      if (mismatchToastFragmentRef.current !== mismatchKey) {
+        mismatchToastFragmentRef.current = mismatchKey;
+        toast({ variant: "warning", message: "Highlights disabled due to content mismatch." });
+      }
       return;
     }
 
     const rect = range.getBoundingClientRect();
     setSelection({ range: range.cloneRange(), rect });
-  }, [isMismatchDisabled, isPdf, toast]);
+  }, [activeContent?.fragmentId, isMismatchDisabled, isPdf, toast]);
 
   useEffect(() => {
     document.addEventListener("selectionchange", handleSelectionChange);
@@ -1355,38 +1382,48 @@ export default function useMediaViewState(id: string) {
       setIsCreating(true);
 
       try {
-        await createHighlight(
+        const requestVersion = ++highlightVersionRef.current;
+        const createdHighlight = await createHighlight(
           activeContent.fragmentId,
           result.startOffset,
           result.endOffset,
           color
         );
-
-        const newHighlights = await fetchHighlights(activeContent.fragmentId);
-        setHighlights(newHighlights);
-        setHighlightsVersion((v) => v + 1);
-        clearHighlightCache();
-        scheduleMediaHighlightsRefresh();
-
-        const newHighlight = newHighlights.find(
-          (h) =>
-            h.start_offset === result.startOffset &&
-            h.end_offset === result.endOffset
-        );
-        if (newHighlight) {
-          focusHighlight(newHighlight.id);
+        if (requestVersion !== highlightVersionRef.current) {
+          return null;
         }
 
+        setHighlights((prev) =>
+          [...prev.filter((h) => h.id !== createdHighlight.id), createdHighlight].sort((a, b) => {
+            if (a.start_offset !== b.start_offset) return a.start_offset - b.start_offset;
+            if (a.end_offset !== b.end_offset) return a.end_offset - b.end_offset;
+            if (a.created_at !== b.created_at) return a.created_at.localeCompare(b.created_at);
+            return a.id.localeCompare(b.id);
+          })
+        );
+        setHighlightsVersion((v) => v + 1);
+        scheduleMediaHighlightsRefresh();
+        focusHighlight(createdHighlight.id);
         setSelection(null);
         window.getSelection()?.removeAllRanges();
-        return newHighlight?.id ?? null;
+
+        const newHighlights = await fetchHighlights(activeContent.fragmentId);
+        if (requestVersion !== highlightVersionRef.current) {
+          return createdHighlight.id;
+        }
+        setHighlights(newHighlights);
+        setHighlightsVersion((v) => v + 1);
+        return createdHighlight.id;
       } catch (err) {
         if (isApiError(err) && err.code === "E_HIGHLIGHT_CONFLICT") {
           try {
+            const requestVersion = ++highlightVersionRef.current;
             const newHighlights = await fetchHighlights(activeContent.fragmentId);
+            if (requestVersion !== highlightVersionRef.current) {
+              return null;
+            }
             setHighlights(newHighlights);
             setHighlightsVersion((v) => v + 1);
-            clearHighlightCache();
             scheduleMediaHighlightsRefresh();
 
             const existing = newHighlights.find(
@@ -1562,15 +1599,19 @@ export default function useMediaViewState(id: string) {
 
     const updateBounds = async () => {
       try {
+        const requestVersion = ++highlightVersionRef.current;
         await updateHighlight(focusedHighlight.id, {
           start_offset: result.startOffset,
           end_offset: result.endOffset,
         });
 
         const newHighlights = await fetchHighlights(activeContent.fragmentId);
+        if (requestVersion !== highlightVersionRef.current) {
+          return;
+        }
         setHighlights(newHighlights);
         setHighlightsVersion((v) => v + 1);
-        clearHighlightCache();
+        scheduleMediaHighlightsRefresh();
 
         const newIds = new Set(newHighlights.map((h) => h.id));
         const reconciledFocus = reconcileFocusAfterRefetch(
@@ -1601,6 +1642,7 @@ export default function useMediaViewState(id: string) {
     highlights,
     focusHighlight,
     cancelEditBounds,
+    scheduleMediaHighlightsRefresh,
     toast,
   ]);
 
@@ -1617,11 +1659,14 @@ export default function useMediaViewState(id: string) {
         return;
       }
       if (!activeContent) return;
+      const requestVersion = ++highlightVersionRef.current;
       await updateHighlight(highlightId, { color });
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
+      if (requestVersion !== highlightVersionRef.current) {
+        return;
+      }
       setHighlights(newHighlights);
       setHighlightsVersion((v) => v + 1);
-      clearHighlightCache();
       scheduleMediaHighlightsRefresh();
     },
     [activeContent, isPdf, scheduleMediaHighlightsRefresh]
@@ -1637,11 +1682,14 @@ export default function useMediaViewState(id: string) {
         return;
       }
       if (!activeContent) return;
+      const requestVersion = ++highlightVersionRef.current;
       await deleteHighlight(highlightId);
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
+      if (requestVersion !== highlightVersionRef.current) {
+        return;
+      }
       setHighlights(newHighlights);
       setHighlightsVersion((v) => v + 1);
-      clearHighlightCache();
       scheduleMediaHighlightsRefresh();
       clearFocus();
     },
@@ -1656,8 +1704,12 @@ export default function useMediaViewState(id: string) {
         return;
       }
       if (!activeContent) return;
+      const requestVersion = ++highlightVersionRef.current;
       await saveAnnotation(highlightId, body);
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
+      if (requestVersion !== highlightVersionRef.current) {
+        return;
+      }
       setHighlights(newHighlights);
       setHighlightsVersion((v) => v + 1);
       scheduleMediaHighlightsRefresh();
@@ -1673,8 +1725,12 @@ export default function useMediaViewState(id: string) {
         return;
       }
       if (!activeContent) return;
+      const requestVersion = ++highlightVersionRef.current;
       await deleteAnnotation(highlightId);
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
+      if (requestVersion !== highlightVersionRef.current) {
+        return;
+      }
       setHighlights(newHighlights);
       setHighlightsVersion((v) => v + 1);
       scheduleMediaHighlightsRefresh();

@@ -251,7 +251,8 @@ export function scrollToCanonicalTextAnchor(
 
 export async function fetchHighlights(fragmentId: string): Promise<Highlight[]> {
   const response = await apiFetch<{ data: { highlights: Highlight[] } }>(
-    `/api/fragments/${fragmentId}/highlights`
+    `/api/fragments/${fragmentId}/highlights`,
+    { cache: "no-store" }
   );
   return response.data.highlights;
 }

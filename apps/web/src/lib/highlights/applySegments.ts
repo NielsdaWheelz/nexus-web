@@ -85,17 +85,6 @@ const COLOR_CLASSES: Record<HighlightColor, string> = {
 // =============================================================================
 
 /**
- * Compute a stable hash of highlights for memoization.
- * Per spec §10.2, this should be cheap and stable.
- */
-export function computeHighlightsHash(highlights: NormalizedHighlight[]): string {
-  return highlights
-    .map((h) => `${h.id}:${h.start}:${h.end}:${h.color}:${h.created_at_ms}`)
-    .sort()
-    .join("|");
-}
-
-/**
  * Normalize highlight input from API to the format expected by segmenter.
  */
 export function normalizeHighlights(
@@ -503,57 +492,4 @@ export function applyHighlightsToHtml(
     failedIds,
     validationPassed: true,
   };
-}
-
-/**
- * Memoized version of applyHighlightsToHtml.
- *
- * Caches results by (fragmentId, highlightsHash) to avoid recomputation.
- * This is important for performance when highlights don't change.
- */
-const highlightCache = new Map<string, ApplyHighlightsResult>();
-const MAX_CACHE_SIZE = 50;
-
-export function applyHighlightsToHtmlMemoized(
-  htmlSanitized: string,
-  canonicalText: string,
-  fragmentId: string,
-  highlights: HighlightInput[]
-): ApplyHighlightsResult {
-  const normalized = normalizeHighlights(highlights);
-  const highlightsHash = computeHighlightsHash(normalized);
-  const cacheKey = `${fragmentId}:${highlightsHash}`;
-
-  const cached = highlightCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  const result = applyHighlightsToHtml(
-    htmlSanitized,
-    canonicalText,
-    fragmentId,
-    highlights
-  );
-
-  // Simple LRU-ish cache management
-  if (highlightCache.size >= MAX_CACHE_SIZE) {
-    // Delete oldest entry
-    const firstKey = highlightCache.keys().next().value;
-    if (firstKey) {
-      highlightCache.delete(firstKey);
-    }
-  }
-
-  highlightCache.set(cacheKey, result);
-
-  return result;
-}
-
-/**
- * Clear the highlight cache.
- * Useful for testing or when fragment content changes.
- */
-export function clearHighlightCache(): void {
-  highlightCache.clear();
 }

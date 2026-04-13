@@ -22,12 +22,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   applyHighlightsToHtml,
-  applyHighlightsToHtmlMemoized,
-  clearHighlightCache,
-  computeHighlightsHash,
   normalizeHighlights,
   type HighlightInput,
 } from "./applySegments";
+import { buildCanonicalCursor, validateCanonicalText } from "./canonicalCursor";
 
 // =============================================================================
 // Helpers
@@ -71,7 +69,6 @@ describe("applyHighlightsToHtml", () => {
 
   beforeEach(() => {
     consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    clearHighlightCache();
   });
 
   afterEach(() => {
@@ -368,6 +365,22 @@ describe("applyHighlightsToHtml", () => {
       expect(result.html).toContain('data-active-highlight-ids="h1"');
     });
 
+    it("keeps canonical validation stable when highlights split whitespace runs", () => {
+      const html = "<p>a   b</p>";
+      const canonical = "a b";
+      const highlights = [
+        h("h1", 0, 2), // "a "
+        h("h2", 2, 3), // "b"
+      ];
+
+      const result = applyHighlightsToHtml(html, canonical, "frag-1", highlights);
+      const parsed = parseHtml(result.html);
+      const cursor = buildCanonicalCursor(parsed);
+
+      expect(result.validationPassed).toBe(true);
+      expect(validateCanonicalText(cursor, canonical, "frag-1")).toBe(true);
+    });
+
     it("handles highlight color classes correctly", () => {
       const html = "<p>Test</p>";
       const canonical = "Test";
@@ -390,84 +403,6 @@ describe("applyHighlightsToHtml", () => {
         expect(result.html).toContain(`hl-${color}`);
       }
     });
-  });
-});
-
-describe("applyHighlightsToHtmlMemoized", () => {
-  beforeEach(() => {
-    clearHighlightCache();
-  });
-
-  it("returns cached result for same input", () => {
-    const html = "<p>Hello</p>";
-    const canonical = "Hello";
-    const highlights = [h("h1", 0, 5)];
-
-    const result1 = applyHighlightsToHtmlMemoized(html, canonical, "frag-1", highlights);
-    const result2 = applyHighlightsToHtmlMemoized(html, canonical, "frag-1", highlights);
-
-    // Should be the exact same object (cached)
-    expect(result1).toBe(result2);
-  });
-
-  it("computes new result for different highlights", () => {
-    const html = "<p>Hello</p>";
-    const canonical = "Hello";
-
-    const result1 = applyHighlightsToHtmlMemoized(
-      html,
-      canonical,
-      "frag-1",
-      [h("h1", 0, 5, "yellow")]
-    );
-    const result2 = applyHighlightsToHtmlMemoized(
-      html,
-      canonical,
-      "frag-1",
-      [h("h1", 0, 5, "green")] // Different color
-    );
-
-    // Should be different objects
-    expect(result1).not.toBe(result2);
-    expect(result1.html).not.toBe(result2.html);
-  });
-
-  it("computes new result for different fragment", () => {
-    const html = "<p>Hello</p>";
-    const canonical = "Hello";
-    const highlights = [h("h1", 0, 5)];
-
-    const result1 = applyHighlightsToHtmlMemoized(html, canonical, "frag-1", highlights);
-    const result2 = applyHighlightsToHtmlMemoized(html, canonical, "frag-2", highlights);
-
-    // Should be different objects (different cache keys)
-    expect(result1).not.toBe(result2);
-  });
-});
-
-describe("computeHighlightsHash", () => {
-  it("returns empty string for empty array", () => {
-    expect(computeHighlightsHash([])).toBe("");
-  });
-
-  it("produces same hash regardless of input order", () => {
-    const h1 = { id: "a", start: 0, end: 5, color: "yellow" as const, created_at_ms: 1000 };
-    const h2 = { id: "b", start: 5, end: 10, color: "green" as const, created_at_ms: 2000 };
-
-    const hash1 = computeHighlightsHash([h1, h2]);
-    const hash2 = computeHighlightsHash([h2, h1]);
-
-    expect(hash1).toBe(hash2);
-  });
-
-  it("produces different hash for different highlights", () => {
-    const h1 = { id: "a", start: 0, end: 5, color: "yellow" as const, created_at_ms: 1000 };
-    const h2 = { id: "a", start: 0, end: 6, color: "yellow" as const, created_at_ms: 1000 };
-
-    const hash1 = computeHighlightsHash([h1]);
-    const hash2 = computeHighlightsHash([h2]);
-
-    expect(hash1).not.toBe(hash2);
   });
 });
 

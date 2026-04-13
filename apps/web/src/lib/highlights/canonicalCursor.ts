@@ -104,9 +104,9 @@ function isHidden(element: Element): boolean {
  */
 function normalizeWhitespace(text: string): string {
   if (!text) return "";
-  // \u0085 (NEL) is in Python's \s but not JavaScript's — must be explicit
+  // Python's \s includes U+001C..U+001F and U+0085; JavaScript's \s does not.
   // to match backend canonicalize.py exactly.
-  return text.replace(/[\s\u00a0\u0085]+/g, " ");
+  return text.replace(/[\s\u00a0\u0085\u001c-\u001f]+/g, " ");
 }
 
 /**
@@ -122,7 +122,7 @@ export function codepointLength(str: string): number {
  * Must match the regex used in normalizeWhitespace: /[\s\u00a0\u0085]+/g
  */
 function isWsCp(cp: string): boolean {
-  return /[\s\u00a0\u0085]/.test(cp);
+  return /[\s\u00a0\u0085\u001c-\u001f]/.test(cp);
 }
 
 /**
@@ -183,25 +183,37 @@ export function canonicalCpToRawCp(
   trimLeadCp: number
 ): number {
   const rawCps = [...rawText];
-  // Target in normalized (pre-trim) space
   const targetNormalized = canonicalCpOffset + trimLeadCp;
-  let normalizedCp = 0;
-  let inWhitespace = false;
+  if (targetNormalized <= 0) return 0;
 
-  for (let i = 0; i < rawCps.length; i++) {
-    if (normalizedCp >= targetNormalized) return i;
+  let normalizedCp = 0;
+  let i = 0;
+  while (i < rawCps.length) {
+    if (normalizedCp === targetNormalized) {
+      return i;
+    }
 
     if (isWsCp(rawCps[i])) {
-      if (!inWhitespace) {
-        normalizedCp++;
-        inWhitespace = true;
+      const runStart = i;
+      while (i < rawCps.length && isWsCp(rawCps[i])) {
+        i += 1;
       }
-    } else {
-      normalizedCp++;
-      inWhitespace = false;
+      normalizedCp += 1;
+      if (normalizedCp === targetNormalized) {
+        return i;
+      }
+      if (normalizedCp > targetNormalized) {
+        return runStart;
+      }
+      continue;
+    }
+
+    i += 1;
+    normalizedCp += 1;
+    if (normalizedCp === targetNormalized) {
+      return i;
     }
   }
-
   return rawCps.length;
 }
 
@@ -318,122 +330,124 @@ function collectParts(root: Element): Part[] {
  * ```
  */
 export function buildCanonicalCursor(root: Element): CanonicalCursorResult {
-  // Step 1: Collect parts (matches backend walk)
   const parts = collectParts(root);
-
-  // Step 2: Join parts
-  let text = parts.map((p) => p.text).join("");
-
-  // Step 3: NFC normalize the whole string
-  text = normalizeNFC(text);
-
-  // Step 4: Collapse multiple consecutive blank lines to single blank line
-  // Backend: MULTI_NEWLINE_RE.sub("\n\n", text) where MULTI_NEWLINE_RE = r"\n\s*\n+"
-  text = text.replace(/\n\s*\n+/g, "\n\n");
-
-  // Step 5: Trim each line
-  const lines = text.split("\n");
-  const trimmedLines = lines.map((line) => line.trim());
-  text = trimmedLines.join("\n");
-
-  // Step 6: Remove leading/trailing whitespace
-  text = text.trim();
-
-  // Now we need to build the node mapping.
-  // This is tricky because the post-processing (trimming, collapsing) can
-  // change character positions. We need to track each text node's content
-  // through these transformations.
-  //
-  // Approach: Since the sanitized HTML from the backend is already "clean",
-  // and we're using the same algorithm, the transformations should be minimal.
-  // We'll rebuild the mapping by finding each text node's normalized content
-  // in the final emitted string.
-
-  const nodes = buildNodeMapping(root, text);
-
-  return {
-    nodes,
-    emitted: text,
-    length: codepointLength(text),
+  type Token = {
+    ch: string;
+    node: Text | null;
+    nodeCpIdx: number;
   };
-}
 
-/**
- * Build node mapping by finding each text node's content in the final text.
- *
- * We walk the DOM in the same order as the backend and find each node's
- * trimmed content in the final string. This accounts for the fact that
- * trimming can remove leading/trailing whitespace.
- */
-function buildNodeMapping(root: Element, emitted: string): CanonicalNode[] {
-  const nodes: CanonicalNode[] = [];
-  const emittedCodepoints = [...emitted];
-  let searchStart = 0;
-
-  function walkElement(element: Element): void {
-    const tagName = element.tagName.toLowerCase();
-
-    if (isHidden(element)) return;
-    if (SKIP_ELEMENTS.has(tagName)) return;
-    if (tagName === "br") return;
-
-    for (const child of Array.from(element.childNodes)) {
-      if (child.nodeType === Node.TEXT_NODE) {
-        const textNode = child as Text;
-        const rawText = textNode.textContent || "";
-        const normalized = normalizeNFC(normalizeWhitespace(rawText));
-
-        // The normalized text might have leading/trailing spaces that got
-        // trimmed in the final emitted string. Find the trimmed content.
-        const trimmed = normalized.trim();
-        if (!trimmed) continue;
-
-        // Compute leading whitespace codepoints stripped by trim
-        const normalizedCps = [...normalized];
-        let leadCp = 0;
-        while (leadCp < normalizedCps.length && /[\s\u00a0]/.test(normalizedCps[leadCp])) {
-          leadCp++;
-        }
-
-        const trimmedCodepoints = [...trimmed];
-        const len = trimmedCodepoints.length;
-
-        // Search for this text in the emitted string
-        let foundIndex = -1;
-        for (let i = searchStart; i <= emittedCodepoints.length - len; i++) {
-          let match = true;
-          for (let j = 0; j < len; j++) {
-            if (emittedCodepoints[i + j] !== trimmedCodepoints[j]) {
-              match = false;
-              break;
-            }
-          }
-          if (match) {
-            foundIndex = i;
-            break;
-          }
-        }
-
-        if (foundIndex >= 0) {
-          nodes.push({
-            node: textNode,
-            start: foundIndex,
-            end: foundIndex + len,
-            trimLeadCp: leadCp,
-          });
-          searchStart = foundIndex + len;
-        }
-        // If not found, the node's content was completely removed (edge case)
-        // We skip it - the validation gate will catch any mismatch
-      } else if (child.nodeType === Node.ELEMENT_NODE) {
-        walkElement(child as Element);
+  const joinedTokens: Token[] = [];
+  for (const part of parts) {
+    const normalizedPart = normalizeNFC(part.text);
+    if (!normalizedPart) {
+      continue;
+    }
+    if (!part.sourceNode) {
+      for (const ch of [...normalizedPart]) {
+        joinedTokens.push({ ch, node: null, nodeCpIdx: -1 });
       }
+      continue;
+    }
+    let nodeCpIdx = 0;
+    for (const ch of [...normalizedPart]) {
+      joinedTokens.push({ ch, node: part.sourceNode, nodeCpIdx });
+      nodeCpIdx += 1;
     }
   }
 
-  walkElement(root);
+  const collapsedTokens: Token[] = [];
+  for (let i = 0; i < joinedTokens.length;) {
+    const token = joinedTokens[i];
+    if (token.ch !== "\n") {
+      collapsedTokens.push(token);
+      i += 1;
+      continue;
+    }
 
-  return nodes;
+    let j = i + 1;
+    let newlineCount = 1;
+    while (j < joinedTokens.length && isWsCp(joinedTokens[j].ch)) {
+      if (joinedTokens[j].ch === "\n") {
+        newlineCount += 1;
+      }
+      j += 1;
+    }
+    if (newlineCount >= 2) {
+      collapsedTokens.push({ ch: "\n", node: null, nodeCpIdx: -1 });
+      collapsedTokens.push({ ch: "\n", node: null, nodeCpIdx: -1 });
+      i = j;
+      continue;
+    }
+
+    collapsedTokens.push(token);
+    i += 1;
+  }
+
+  const lineTrimmedTokens: Token[] = [];
+  let lineStart = 0;
+  for (let i = 0; i <= collapsedTokens.length; i++) {
+    const atLineBreak = i === collapsedTokens.length || collapsedTokens[i].ch === "\n";
+    if (!atLineBreak) {
+      continue;
+    }
+
+    let first = lineStart;
+    while (first < i && isWsCp(collapsedTokens[first].ch)) {
+      first += 1;
+    }
+    let last = i - 1;
+    while (last >= first && isWsCp(collapsedTokens[last].ch)) {
+      last -= 1;
+    }
+    for (let j = first; j <= last; j++) {
+      lineTrimmedTokens.push(collapsedTokens[j]);
+    }
+    if (i < collapsedTokens.length) {
+      lineTrimmedTokens.push({ ch: "\n", node: null, nodeCpIdx: -1 });
+    }
+    lineStart = i + 1;
+  }
+
+  let start = 0;
+  while (start < lineTrimmedTokens.length && isWsCp(lineTrimmedTokens[start].ch)) {
+    start += 1;
+  }
+  let end = lineTrimmedTokens.length - 1;
+  while (end >= start && isWsCp(lineTrimmedTokens[end].ch)) {
+    end -= 1;
+  }
+  const finalTokens = start <= end ? lineTrimmedTokens.slice(start, end + 1) : [];
+
+  const emitted = finalTokens.map((token) => token.ch).join("");
+
+  const nodes: CanonicalNode[] = [];
+  const nodeMap = new Map<Text, CanonicalNode>();
+  for (let i = 0; i < finalTokens.length; i++) {
+    const token = finalTokens[i];
+    if (!token.node) {
+      continue;
+    }
+    const existing = nodeMap.get(token.node);
+    if (!existing) {
+      const nodeEntry: CanonicalNode = {
+        node: token.node,
+        start: i,
+        end: i + 1,
+        trimLeadCp: token.nodeCpIdx,
+      };
+      nodeMap.set(token.node, nodeEntry);
+      nodes.push(nodeEntry);
+      continue;
+    }
+    existing.end = i + 1;
+  }
+
+  return {
+    nodes,
+    emitted,
+    length: codepointLength(emitted),
+  };
 }
 
 /**

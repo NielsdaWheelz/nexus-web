@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   buildCanonicalCursor,
+  canonicalCpToRawCp,
   validateCanonicalText,
   codepointLength,
   BLOCK_ELEMENTS,
@@ -341,6 +342,14 @@ describe("buildCanonicalCursor", () => {
 
       expect(result.emitted).toBe("Before  after");
       verifyNodeOffsets(result);
+    });
+
+    it("maps canonical offsets to run boundaries, not interior whitespace", () => {
+      const rawText = "a   b";
+      expect(canonicalCpToRawCp(rawText, 0, 0)).toBe(0);
+      expect(canonicalCpToRawCp(rawText, 1, 0)).toBe(1);
+      expect(canonicalCpToRawCp(rawText, 2, 0)).toBe(4);
+      expect(canonicalCpToRawCp(rawText, 3, 0)).toBe(5);
     });
   });
 
