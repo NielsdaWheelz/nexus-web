@@ -528,11 +528,15 @@ function formatTime(iso: string): string {
 function MessageRow({ message }: { message: Message }) {
   const roleClass = styles[message.role] ?? "";
   const statusClass = message.status !== "complete" ? (styles[message.status] ?? "") : "";
+  const contexts = message.contexts ?? [];
 
   return (
     <div className={`${styles.message} ${roleClass} ${statusClass}`}>
-      {message.role === "user" && message.contexts && message.contexts.length > 0 && (
-        <InlineCitations contexts={message.contexts} />
+      {message.role === "user" && contexts.length === 1 && (
+        <ReplyBar context={contexts[0]} />
+      )}
+      {message.role === "user" && contexts.length > 1 && (
+        <InlineCitations contexts={contexts} />
       )}
 
       {message.role === "assistant" ? (
@@ -555,6 +559,25 @@ function MessageRow({ message }: { message: Message }) {
       <span className={styles.messageTimestamp}>
         {formatTime(message.created_at)}
       </span>
+    </div>
+  );
+}
+
+function ReplyBar({ context }: { context: MessageContextSnapshot }) {
+  const text = context.exact || context.preview;
+  const colorClass = styles[`replyBar-${context.color ?? ""}`] ?? "";
+
+  return (
+    <div className={`${styles.replyBar} ${colorClass}`}>
+      {text && (
+        <div>{text.length > 140 ? text.slice(0, 140) + "..." : text}</div>
+      )}
+      {context.annotation_body && (
+        <div className={styles.replyBarAnnotation}>{context.annotation_body}</div>
+      )}
+      {!text && !context.annotation_body && context.media_title && (
+        <div>{context.media_title}</div>
+      )}
     </div>
   );
 }

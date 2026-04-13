@@ -58,6 +58,29 @@
   white-space: pre-wrap;
 }
 
+/* Single-highlight reply bar (inside user bubble) */
+.replyBar {
+  margin-bottom: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-left: 3px solid var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+  white-space: normal;
+}
+
+.replyBar-yellow { border-left-color: var(--highlight-yellow); }
+.replyBar-green { border-left-color: var(--highlight-green); }
+.replyBar-blue { border-left-color: var(--highlight-blue); }
+.replyBar-pink { border-left-color: var(--highlight-pink); }
+.replyBar-purple { border-left-color: var(--highlight-purple); }
+
+.replyBarAnnotation {
+  margin-top: 2px;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
 .message.assistant {
   color: var(--color-text);
 }
