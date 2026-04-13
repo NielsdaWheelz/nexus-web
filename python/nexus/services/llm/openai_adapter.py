@@ -1,39 +1,26 @@
-"""OpenAI LLM adapter implementation.
+"""OpenAI LLM adapter implementation via Responses API.
 
-Per PR-04 spec section 4.1:
-- Endpoint: POST https://api.openai.com/v1/chat/completions
-- Headers: Authorization: Bearer <key>, Content-Type: application/json
-- Streaming: Server-Sent Events with data: {...} format
-- Terminal event: data: [DONE]
-- Usage may appear in final chunk (OpenAI returns it in stream if requested)
+Endpoint:
+- POST https://api.openai.com/v1/responses
 
-Request body (minimal required fields):
+Request body:
 {
   "model": "<model_name>",
-  "messages": [
-    {"role": "system", "content": "..."},
-    {"role": "user", "content": "..."},
-    {"role": "assistant", "content": "..."}
+  "input": [
+    {
+      "role": "system" | "user" | "assistant",
+      "content": [{"type": "input_text", "text": "..."}]
+    }
   ],
-  "max_tokens": 1024,
-  "temperature": 0.7,
+  "max_output_tokens": 4096,
+  "reasoning": {"effort": "low" | "medium" | "high" | "xhigh"},
   "stream": false
 }
 
-Response (non-stream) - extract:
-{
-  "id": "chatcmpl-...",
-  "choices": [{"message": {"content": "<output_text>"}}],
-  "usage": {
-    "prompt_tokens": 100,
-    "completion_tokens": 50,
-    "total_tokens": 150
-  }
-}
-
-- text = choices[0].message.content
-- usage = direct mapping
-- provider_request_id = response header x-request-id or body id
+Response (non-stream):
+- text: extracted from output[*].content[*].text where type=output_text
+- usage: usage.input_tokens / usage.output_tokens / usage.total_tokens
+- provider_request_id: x-request-id header or response id
 """
 
 import json
@@ -41,33 +28,15 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from nexus.logging import get_logger
 from nexus.services.llm.adapter import LLMAdapter
 from nexus.services.llm.errors import LLMError, LLMErrorClass
-from nexus.services.llm.types import LLMChunk, LLMRequest, LLMResponse, LLMUsage, Turn
+from nexus.services.llm.types import LLMChunk, LLMRequest, LLMResponse, LLMUsage
 
-logger = get_logger(__name__)
-
-OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 
 class OpenAIAdapter(LLMAdapter):
-    """OpenAI-compatible API adapter for chat completions.
-
-    Works with any provider that implements the OpenAI chat completions
-    wire format (OpenAI, DeepSeek, xAI, Mistral, Groq, etc.).
-    """
-
-    def __init__(
-        self,
-        client: httpx.AsyncClient,
-        *,
-        chat_url: str = OPENAI_CHAT_URL,
-        provider_name: str = "openai",
-    ):
-        super().__init__(client)
-        self._chat_url = chat_url
-        self._provider_name = provider_name
+    """OpenAI Responses API adapter."""
 
     async def generate(
         self,
@@ -76,12 +45,11 @@ class OpenAIAdapter(LLMAdapter):
         api_key: str,
         timeout_s: int,
     ) -> LLMResponse:
-        """Non-streaming chat completion."""
         headers = self._build_headers(api_key)
         body = self._build_request_body(req, stream=False)
 
         response = await self._client.post(
-            self._chat_url,
+            OPENAI_RESPONSES_URL,
             headers=headers,
             json=body,
             timeout=httpx.Timeout(timeout_s, connect=10.0),
@@ -98,13 +66,12 @@ class OpenAIAdapter(LLMAdapter):
         api_key: str,
         timeout_s: int,
     ) -> AsyncIterator[LLMChunk]:
-        """Streaming chat completion using Server-Sent Events."""
         headers = self._build_headers(api_key)
         body = self._build_request_body(req, stream=True)
 
         async with self._client.stream(
             "POST",
-            self._chat_url,
+            OPENAI_RESPONSES_URL,
             headers=headers,
             json=body,
             timeout=httpx.Timeout(timeout_s, connect=10.0),
@@ -112,31 +79,23 @@ class OpenAIAdapter(LLMAdapter):
             response.raise_for_status()
 
             provider_request_id = response.headers.get("x-request-id")
-            received_done = False
-
-            # PR-08 §4.1: Accumulate usage into local vars during stream.
-            # Non-terminal chunks MUST have usage=None (frozen dataclass enforces this).
-            # Only the terminal chunk ([DONE]) carries accumulated usage.
             accumulated_usage: LLMUsage | None = None
+            emitted_terminal = False
 
             async for line in response.aiter_lines():
-                if not line:
+                if not line or not line.startswith("data: "):
                     continue
 
-                # OpenAI SSE format: "data: {...}" or "data: [DONE]"
-                if not line.startswith("data: "):
-                    continue
-
-                data_str = line[6:]  # Remove "data: " prefix
-
+                data_str = line[6:]
                 if data_str == "[DONE]":
-                    received_done = True
-                    yield LLMChunk(
-                        delta_text="",
-                        done=True,
-                        usage=accumulated_usage,
-                        provider_request_id=provider_request_id,
-                    )
+                    if not emitted_terminal:
+                        yield LLMChunk(
+                            delta_text="",
+                            done=True,
+                            usage=accumulated_usage,
+                            provider_request_id=provider_request_id,
+                        )
+                    emitted_terminal = True
                     break
 
                 try:
@@ -144,114 +103,110 @@ class OpenAIAdapter(LLMAdapter):
                 except json.JSONDecodeError:
                     continue
 
-                # Extract delta content
-                choices = data.get("choices", [])
-                if not choices:
-                    # May be a usage-only chunk (no choices) — accumulate and skip
-                    if "usage" in data:
-                        usage_data = data["usage"]
-                        accumulated_usage = LLMUsage(
-                            prompt_tokens=usage_data.get("prompt_tokens"),
-                            completion_tokens=usage_data.get("completion_tokens"),
-                            total_tokens=usage_data.get("total_tokens"),
-                        )
+                event_type = data.get("type")
+
+                if event_type == "response.output_text.delta":
+                    delta_text = data.get("delta", "")
+                    if delta_text:
+                        yield LLMChunk(delta_text=delta_text, done=False)
                     continue
 
-                delta = choices[0].get("delta", {})
-                delta_text = delta.get("content", "")
+                if event_type == "response.created":
+                    event_response = data.get("response") or {}
+                    if provider_request_id is None:
+                        provider_request_id = event_response.get("id")
+                    continue
 
-                # Check for finish_reason
-                finish_reason = choices[0].get("finish_reason")
+                if event_type in ("response.completed", "response.incomplete"):
+                    event_response = data.get("response") or {}
+                    if provider_request_id is None:
+                        provider_request_id = event_response.get("id")
 
-                # Accumulate usage if present (OpenAI may include in stream chunks)
-                if "usage" in data:
-                    usage_data = data["usage"]
-                    accumulated_usage = LLMUsage(
-                        prompt_tokens=usage_data.get("prompt_tokens"),
-                        completion_tokens=usage_data.get("completion_tokens"),
-                        total_tokens=usage_data.get("total_tokens"),
-                    )
+                    usage_data = event_response.get("usage") or data.get("usage")
+                    if usage_data:
+                        accumulated_usage = LLMUsage(
+                            prompt_tokens=usage_data.get("input_tokens"),
+                            completion_tokens=usage_data.get("output_tokens"),
+                            total_tokens=usage_data.get("total_tokens"),
+                        )
 
-                # Non-terminal chunks: usage=None (invariant)
-                if finish_reason:
-                    if delta_text:
-                        yield LLMChunk(delta_text=delta_text, done=False, usage=None)
-                else:
-                    if delta_text:
-                        yield LLMChunk(delta_text=delta_text, done=False, usage=None)
+                    if not emitted_terminal:
+                        emitted_terminal = True
+                        yield LLMChunk(
+                            delta_text="",
+                            done=True,
+                            usage=accumulated_usage,
+                            provider_request_id=provider_request_id,
+                        )
+                    break
 
-            if not received_done:
+            if not emitted_terminal:
                 raise LLMError(
                     LLMErrorClass.PROVIDER_DOWN,
-                    f"{self._provider_name} stream ended without [DONE] marker",
-                    provider=self._provider_name,
+                    "openai stream ended without terminal event",
+                    provider="openai",
                 )
 
     def _build_headers(self, api_key: str) -> dict[str, str]:
-        """Build request headers."""
         return {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
     def _build_request_body(self, req: LLMRequest, stream: bool) -> dict:
-        """Build request body from LLMRequest."""
         body: dict = {
             "model": req.model_name,
-            "messages": [self._turn_to_message(turn) for turn in req.messages],
-            "max_tokens": req.max_tokens,
+            "input": [
+                {
+                    "role": turn.role,
+                    "content": [{"type": "input_text", "text": turn.content}],
+                }
+                for turn in req.messages
+            ],
+            "max_output_tokens": req.max_tokens,
             "stream": stream,
         }
 
         if req.temperature is not None:
             body["temperature"] = req.temperature
 
-        if self._provider_name == "openai" and req.reasoning_effort != "none":
-            if req.reasoning_effort == "max":
-                body["reasoning_effort"] = "xhigh"
-            else:
-                body["reasoning_effort"] = req.reasoning_effort
+        if req.reasoning_effort == "none":
+            pass
+        elif req.reasoning_effort == "low":
+            body["reasoning"] = {"effort": "low"}
+        elif req.reasoning_effort == "medium":
+            body["reasoning"] = {"effort": "medium"}
+        elif req.reasoning_effort == "high":
+            body["reasoning"] = {"effort": "high"}
+        elif req.reasoning_effort == "max":
+            body["reasoning"] = {"effort": "xhigh"}
+        else:
+            raise ValueError(f"Unknown reasoning_effort: {req.reasoning_effort}")
 
         return body
 
-    def _turn_to_message(self, turn: Turn) -> dict[str, str]:
-        """Convert Turn to OpenAI message format.
-
-        OpenAI uses the same role names as our Turn type.
-        """
-        return {
-            "role": turn.role,
-            "content": turn.content,
-        }
-
     def _parse_response(self, data: dict, headers: httpx.Headers) -> LLMResponse:
-        """Parse non-streaming response."""
-        # Extract text from choices[0].message.content
-        choices = data.get("choices", [])
-        if not choices:
-            raise LLMError(
-                LLMErrorClass.PROVIDER_DOWN,
-                f"{self._provider_name} response missing choices",
-                provider=self._provider_name,
-            )
+        text_parts: list[str] = []
+        for item in data.get("output", []):
+            if item.get("type") != "message":
+                continue
+            for content_item in item.get("content", []):
+                if content_item.get("type") == "output_text":
+                    text_parts.append(content_item.get("text", ""))
 
-        text = choices[0].get("message", {}).get("content", "")
-
-        # Extract usage
         usage = None
         usage_data = data.get("usage")
         if usage_data:
             usage = LLMUsage(
-                prompt_tokens=usage_data.get("prompt_tokens"),
-                completion_tokens=usage_data.get("completion_tokens"),
+                prompt_tokens=usage_data.get("input_tokens"),
+                completion_tokens=usage_data.get("output_tokens"),
                 total_tokens=usage_data.get("total_tokens"),
             )
 
-        # Extract request ID from header or body
         provider_request_id = headers.get("x-request-id") or data.get("id")
 
         return LLMResponse(
-            text=text,
+            text="".join(text_parts),
             usage=usage,
             provider_request_id=provider_request_id,
         )

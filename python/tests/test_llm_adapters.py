@@ -43,6 +43,7 @@ from nexus.services.llm import (
     validate_prompt_size,
 )
 from nexus.services.llm.anthropic_adapter import AnthropicAdapter
+from nexus.services.llm.deepseek_adapter import DeepSeekAdapter
 from nexus.services.llm.errors import classify_provider_error
 from nexus.services.llm.gemini_adapter import GeminiAdapter
 from nexus.services.llm.openai_adapter import OpenAIAdapter
@@ -107,7 +108,7 @@ class TestOpenAIAdapter:
     async def test_openai_nonstream_success(self, httpx_client, llm_request):
         """Happy path non-streaming generation."""
         fixture = load_fixture("openai", "success_nonstream.json")
-        respx.post("https://api.openai.com/v1/chat/completions").respond(
+        respx.post("https://api.openai.com/v1/responses").respond(
             200, json=fixture, headers={"x-request-id": "req-test-123"}
         )
 
@@ -128,7 +129,7 @@ class TestOpenAIAdapter:
         stream_content = load_fixture("openai", "success_stream_chunks.txt")
         assert isinstance(stream_content, str)
 
-        respx.post("https://api.openai.com/v1/chat/completions").respond(
+        respx.post("https://api.openai.com/v1/responses").respond(
             200,
             content=stream_content,
             headers={"x-request-id": "req-test-123", "content-type": "text/event-stream"},
@@ -159,9 +160,7 @@ class TestOpenAIAdapter:
         stream_content = load_fixture("openai", "success_stream_chunks.txt")
         assert isinstance(stream_content, str)
 
-        respx.post("https://api.openai.com/v1/chat/completions").respond(
-            200, content=stream_content
-        )
+        respx.post("https://api.openai.com/v1/responses").respond(200, content=stream_content)
 
         adapter = OpenAIAdapter(httpx_client)
         chunks: list[LLMChunk] = []
@@ -177,7 +176,7 @@ class TestOpenAIAdapter:
     async def test_openai_invalid_key_401(self, httpx_client, llm_request):
         """401 response should raise HTTPStatusError."""
         fixture = load_fixture("openai", "error_401.json")
-        respx.post("https://api.openai.com/v1/chat/completions").respond(401, json=fixture)
+        respx.post("https://api.openai.com/v1/responses").respond(401, json=fixture)
 
         adapter = OpenAIAdapter(httpx_client)
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
@@ -190,7 +189,7 @@ class TestOpenAIAdapter:
     async def test_openai_rate_limit_429(self, httpx_client, llm_request):
         """429 response should raise HTTPStatusError."""
         fixture = load_fixture("openai", "error_429.json")
-        respx.post("https://api.openai.com/v1/chat/completions").respond(429, json=fixture)
+        respx.post("https://api.openai.com/v1/responses").respond(429, json=fixture)
 
         adapter = OpenAIAdapter(httpx_client)
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
@@ -203,7 +202,7 @@ class TestOpenAIAdapter:
     async def test_openai_context_too_large(self, httpx_client, llm_request):
         """Context too large error."""
         fixture = load_fixture("openai", "error_context_too_large.json")
-        respx.post("https://api.openai.com/v1/chat/completions").respond(400, json=fixture)
+        respx.post("https://api.openai.com/v1/responses").respond(400, json=fixture)
 
         adapter = OpenAIAdapter(httpx_client)
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
@@ -216,7 +215,7 @@ class TestOpenAIAdapter:
     async def test_openai_provider_down_500(self, httpx_client, llm_request):
         """500 response should raise HTTPStatusError."""
         fixture = load_fixture("openai", "error_500.json")
-        respx.post("https://api.openai.com/v1/chat/completions").respond(500, json=fixture)
+        respx.post("https://api.openai.com/v1/responses").respond(500, json=fixture)
 
         adapter = OpenAIAdapter(httpx_client)
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
@@ -228,7 +227,7 @@ class TestOpenAIAdapter:
     @respx.mock
     async def test_openai_timeout(self, httpx_client, llm_request):
         """Timeout should raise TimeoutException."""
-        respx.post("https://api.openai.com/v1/chat/completions").mock(
+        respx.post("https://api.openai.com/v1/responses").mock(
             side_effect=httpx.ReadTimeout("Read timed out")
         )
 
@@ -650,7 +649,7 @@ class TestLLMRouter:
     @respx.mock
     async def test_router_generate_normalizes_timeout(self, httpx_client, llm_request):
         """Router should normalize timeout to LLMError."""
-        respx.post("https://api.openai.com/v1/chat/completions").mock(
+        respx.post("https://api.openai.com/v1/responses").mock(
             side_effect=httpx.ReadTimeout("Read timed out")
         )
 
@@ -666,7 +665,7 @@ class TestLLMRouter:
     async def test_router_generate_normalizes_http_error(self, httpx_client, llm_request):
         """Router should normalize HTTP errors to LLMError."""
         fixture = load_fixture("openai", "error_401.json")
-        respx.post("https://api.openai.com/v1/chat/completions").respond(401, json=fixture)
+        respx.post("https://api.openai.com/v1/responses").respond(401, json=fixture)
 
         router = LLMRouter(httpx_client)
 
@@ -680,7 +679,7 @@ class TestLLMRouter:
     async def test_router_generate_success(self, httpx_client, llm_request):
         """Router should return LLMResponse on success."""
         fixture = load_fixture("openai", "success_nonstream.json")
-        respx.post("https://api.openai.com/v1/chat/completions").respond(200, json=fixture)
+        respx.post("https://api.openai.com/v1/responses").respond(200, json=fixture)
 
         router = LLMRouter(httpx_client)
         response = await router.generate("openai", llm_request, api_key="sk-test")
@@ -857,7 +856,7 @@ class TestTurnConversion:
         )
 
         body = adapter._build_request_body(req, stream=False)
-        assert body["reasoning_effort"] == "xhigh"
+        assert body["reasoning"]["effort"] == "xhigh"
 
     def test_reasoning_anthropic_none_disables_thinking(self, httpx_client):
         adapter = AnthropicAdapter(httpx_client)
@@ -882,6 +881,18 @@ class TestTurnConversion:
 
         body = adapter._build_request_body(req)
         assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "high"
+
+    def test_reasoning_deepseek_chat_enables_thinking(self, httpx_client):
+        adapter = DeepSeekAdapter(httpx_client)
+        req = LLMRequest(
+            model_name="deepseek-chat",
+            messages=[Turn(role="user", content="Hello")],
+            max_tokens=100,
+            reasoning_effort="high",
+        )
+
+        body = adapter._build_request_body(req, stream=False)
+        assert body["thinking"] == {"type": "enabled"}
 
     def test_turn_conversion_anthropic_system(self, httpx_client):
         """Anthropic should extract system turn to separate field."""

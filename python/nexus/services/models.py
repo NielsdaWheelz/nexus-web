@@ -30,14 +30,14 @@ def get_model_catalog_metadata(
                 "OpenAI",
                 "GPT-5.4",
                 "sota",
-                ["none", "minimal", "low", "medium", "high", "max"],
+                ["none", "low", "medium", "high", "max"],
             )
         if model_name == "gpt-5.4-mini":
             return (
                 "OpenAI",
                 "GPT-5.4 Mini",
                 "light",
-                ["none", "minimal", "low", "medium", "high", "max"],
+                ["none", "low", "medium", "high", "max"],
             )
         return None
 
@@ -47,21 +47,21 @@ def get_model_catalog_metadata(
                 "Anthropic",
                 "Opus 4.6",
                 "sota",
-                ["none", "minimal", "low", "medium", "high", "max"],
+                ["none", "low", "medium", "high", "max"],
             )
         if model_name == "claude-sonnet-4-6":
             return (
                 "Anthropic",
                 "Sonnet 4.6",
                 "sota",
-                ["none", "minimal", "low", "medium", "high", "max"],
+                ["none", "low", "medium", "high", "max"],
             )
         if model_name.startswith("claude-haiku-4-5"):
             return (
                 "Anthropic",
                 "Haiku 4.5",
                 "light",
-                ["none", "minimal", "low", "medium", "high", "max"],
+                ["none", "low", "medium", "high"],
             )
         return None
 
@@ -71,14 +71,14 @@ def get_model_catalog_metadata(
                 "Google",
                 "Gemini 3.1 Pro",
                 "sota",
-                ["minimal", "low", "medium", "high", "max"],
+                ["low", "high"],
             )
         if model_name.startswith("gemini-3-flash"):
             return (
                 "Google",
                 "Gemini 3 Flash",
                 "light",
-                ["none", "minimal", "low", "medium", "high", "max"],
+                ["minimal", "low", "medium", "high"],
             )
         return None
 
@@ -88,14 +88,14 @@ def get_model_catalog_metadata(
                 "DeepSeek",
                 "DeepSeek-V3.2 (Reasoner)",
                 "sota",
-                ["minimal", "low", "medium", "high", "max"],
+                ["high"],
             )
         if model_name == "deepseek-chat":
             return (
                 "DeepSeek",
                 "DeepSeek-V3.2 (Chat)",
                 "light",
-                ["none"],
+                ["none", "high"],
             )
         return None
 

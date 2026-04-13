@@ -215,28 +215,45 @@ class AnthropicAdapter(LLMAdapter):
 
         if req.reasoning_effort == "none":
             body["thinking"] = {"type": "disabled"}
-        else:
-            if req.reasoning_effort == "minimal":
-                budget_tokens = 1024
-            elif req.reasoning_effort == "low":
-                budget_tokens = 1536
+            return body
+
+        if req.model_name in ("claude-opus-4-6", "claude-sonnet-4-6"):
+            if req.reasoning_effort == "minimal" or req.reasoning_effort == "low":
+                effort = "low"
             elif req.reasoning_effort == "medium":
-                budget_tokens = 2048
+                effort = "medium"
             elif req.reasoning_effort == "high":
-                budget_tokens = 3072
+                effort = "high"
             elif req.reasoning_effort == "max":
-                budget_tokens = 4000
+                effort = "max"
             else:
                 raise ValueError(f"Unknown reasoning_effort: {req.reasoning_effort}")
 
-            max_allowed_budget = req.max_tokens - 1
-            if max_allowed_budget < 1024:
-                body["thinking"] = {"type": "disabled"}
-            else:
-                body["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": min(budget_tokens, max_allowed_budget),
-                }
+            body["thinking"] = {"type": "adaptive"}
+            body["output_config"] = {"effort": effort}
+            return body
+
+        if req.reasoning_effort == "minimal":
+            budget_tokens = 1024
+        elif req.reasoning_effort == "low":
+            budget_tokens = 1536
+        elif req.reasoning_effort == "medium":
+            budget_tokens = 2048
+        elif req.reasoning_effort == "high":
+            budget_tokens = 3072
+        elif req.reasoning_effort == "max":
+            budget_tokens = 4000
+        else:
+            raise ValueError(f"Unknown reasoning_effort: {req.reasoning_effort}")
+
+        max_allowed_budget = req.max_tokens - 1
+        if max_allowed_budget < 1024:
+            body["thinking"] = {"type": "disabled"}
+        else:
+            body["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": min(budget_tokens, max_allowed_budget),
+            }
 
         return body
 

@@ -28,6 +28,7 @@ import httpx
 from nexus.logging import get_logger
 from nexus.services.llm.adapter import LLMAdapter
 from nexus.services.llm.anthropic_adapter import AnthropicAdapter
+from nexus.services.llm.deepseek_adapter import DeepSeekAdapter
 from nexus.services.llm.errors import LLMError, LLMErrorClass, classify_provider_error
 from nexus.services.llm.gemini_adapter import GeminiAdapter
 from nexus.services.llm.openai_adapter import OpenAIAdapter
@@ -109,11 +110,7 @@ class LLMRouter:
             "openai": OpenAIAdapter(client),
             "anthropic": AnthropicAdapter(client),
             "gemini": GeminiAdapter(client),
-            "deepseek": OpenAIAdapter(
-                client,
-                chat_url="https://api.deepseek.com/chat/completions",
-                provider_name="deepseek",
-            ),
+            "deepseek": DeepSeekAdapter(client),
         }
 
     def resolve_adapter(self, provider: str) -> LLMAdapter:

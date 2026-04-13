@@ -126,22 +126,28 @@ def _route_openai_completion(
     prompt_tokens=100,
     completion_tokens=50,
 ):
-    """Helper to configure a respx route for OpenAI chat completions."""
-    respx_mock.post("https://api.openai.com/v1/chat/completions").respond(
+    """Helper to configure a respx route for OpenAI Responses API."""
+    respx_mock.post("https://api.openai.com/v1/responses").respond(
         200,
         json={
-            "id": "chatcmpl-test",
-            "object": "chat.completion",
-            "choices": [
+            "id": "resp-test",
+            "object": "response",
+            "status": "completed",
+            "output": [
                 {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": response_text},
-                    "finish_reason": "stop",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": response_text,
+                        }
+                    ],
                 }
             ],
             "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
             },
             "model": "gpt-5.4-mini",
@@ -152,7 +158,7 @@ def _route_openai_completion(
 
 def _route_openai_401(respx_mock):
     """Configure respx to return 401 (invalid key) from OpenAI API."""
-    respx_mock.post("https://api.openai.com/v1/chat/completions").respond(
+    respx_mock.post("https://api.openai.com/v1/responses").respond(
         401,
         json={
             "error": {
@@ -166,7 +172,7 @@ def _route_openai_401(respx_mock):
 
 def _route_openai_500(respx_mock):
     """Configure respx to return 500 (provider down) from OpenAI API."""
-    respx_mock.post("https://api.openai.com/v1/chat/completions").respond(
+    respx_mock.post("https://api.openai.com/v1/responses").respond(
         500,
         json={
             "error": {
@@ -179,7 +185,7 @@ def _route_openai_500(respx_mock):
 
 def _route_openai_timeout(respx_mock):
     """Configure respx to simulate timeout from OpenAI API."""
-    respx_mock.post("https://api.openai.com/v1/chat/completions").mock(
+    respx_mock.post("https://api.openai.com/v1/responses").mock(
         side_effect=httpx.ReadTimeout("Read timed out")
     )
 
@@ -188,7 +194,7 @@ def _extract_openai_system_prompt(mock_openai_api) -> str:
     """Extract the outbound system prompt from the latest mocked OpenAI call."""
     assert len(mock_openai_api.calls) >= 1
     payload = json.loads(mock_openai_api.calls[-1].request.content.decode("utf-8"))
-    return payload["messages"][0]["content"]
+    return payload["input"][0]["content"][0]["text"]
 
 
 # =============================================================================

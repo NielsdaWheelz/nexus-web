@@ -1,0 +1,168 @@
+"""DeepSeek adapter using OpenAI-compatible chat completions API."""
+
+import json
+from collections.abc import AsyncIterator
+
+import httpx
+
+from nexus.services.llm.adapter import LLMAdapter
+from nexus.services.llm.errors import LLMError, LLMErrorClass
+from nexus.services.llm.types import LLMChunk, LLMRequest, LLMResponse, LLMUsage
+
+DEEPSEEK_CHAT_URL = "https://api.deepseek.com/chat/completions"
+
+
+class DeepSeekAdapter(LLMAdapter):
+    """DeepSeek chat-completions adapter."""
+
+    async def generate(
+        self,
+        req: LLMRequest,
+        *,
+        api_key: str,
+        timeout_s: int,
+    ) -> LLMResponse:
+        headers = self._build_headers(api_key)
+        body = self._build_request_body(req, stream=False)
+
+        response = await self._client.post(
+            DEEPSEEK_CHAT_URL,
+            headers=headers,
+            json=body,
+            timeout=httpx.Timeout(timeout_s, connect=10.0),
+        )
+        response.raise_for_status()
+
+        data = response.json()
+        return self._parse_response(data, response.headers)
+
+    async def generate_stream(
+        self,
+        req: LLMRequest,
+        *,
+        api_key: str,
+        timeout_s: int,
+    ) -> AsyncIterator[LLMChunk]:
+        headers = self._build_headers(api_key)
+        body = self._build_request_body(req, stream=True)
+
+        async with self._client.stream(
+            "POST",
+            DEEPSEEK_CHAT_URL,
+            headers=headers,
+            json=body,
+            timeout=httpx.Timeout(timeout_s, connect=10.0),
+        ) as response:
+            response.raise_for_status()
+
+            provider_request_id = response.headers.get("x-request-id")
+            accumulated_usage: LLMUsage | None = None
+            received_done = False
+
+            async for line in response.aiter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    received_done = True
+                    yield LLMChunk(
+                        delta_text="",
+                        done=True,
+                        usage=accumulated_usage,
+                        provider_request_id=provider_request_id,
+                    )
+                    break
+
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                choices = data.get("choices", [])
+                if not choices:
+                    if "usage" in data:
+                        usage_data = data["usage"]
+                        accumulated_usage = LLMUsage(
+                            prompt_tokens=usage_data.get("prompt_tokens"),
+                            completion_tokens=usage_data.get("completion_tokens"),
+                            total_tokens=usage_data.get("total_tokens"),
+                        )
+                    continue
+
+                delta = choices[0].get("delta", {})
+                delta_text = delta.get("content", "")
+
+                if "usage" in data:
+                    usage_data = data["usage"]
+                    accumulated_usage = LLMUsage(
+                        prompt_tokens=usage_data.get("prompt_tokens"),
+                        completion_tokens=usage_data.get("completion_tokens"),
+                        total_tokens=usage_data.get("total_tokens"),
+                    )
+
+                if delta_text:
+                    yield LLMChunk(delta_text=delta_text, done=False)
+
+            if not received_done:
+                raise LLMError(
+                    LLMErrorClass.PROVIDER_DOWN,
+                    "deepseek stream ended without [DONE] marker",
+                    provider="deepseek",
+                )
+
+    def _build_headers(self, api_key: str) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _build_request_body(self, req: LLMRequest, stream: bool) -> dict:
+        body: dict = {
+            "model": req.model_name,
+            "messages": [
+                {
+                    "role": turn.role,
+                    "content": turn.content,
+                }
+                for turn in req.messages
+            ],
+            "max_tokens": req.max_tokens,
+            "stream": stream,
+        }
+
+        if req.temperature is not None:
+            body["temperature"] = req.temperature
+
+        if req.model_name == "deepseek-chat" and req.reasoning_effort != "none":
+            body["thinking"] = {"type": "enabled"}
+
+        return body
+
+    def _parse_response(self, data: dict, headers: httpx.Headers) -> LLMResponse:
+        choices = data.get("choices", [])
+        if not choices:
+            raise LLMError(
+                LLMErrorClass.PROVIDER_DOWN,
+                "deepseek response missing choices",
+                provider="deepseek",
+            )
+
+        text = choices[0].get("message", {}).get("content", "")
+
+        usage = None
+        usage_data = data.get("usage")
+        if usage_data:
+            usage = LLMUsage(
+                prompt_tokens=usage_data.get("prompt_tokens"),
+                completion_tokens=usage_data.get("completion_tokens"),
+                total_tokens=usage_data.get("total_tokens"),
+            )
+
+        provider_request_id = headers.get("x-request-id") or data.get("id")
+
+        return LLMResponse(
+            text=text,
+            usage=usage,
+            provider_request_id=provider_request_id,
+        )

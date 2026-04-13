@@ -220,20 +220,48 @@ class GeminiAdapter(LLMAdapter):
         if req.temperature is not None:
             body["generationConfig"]["temperature"] = req.temperature
 
-        if req.reasoning_effort == "none":
-            pass
-        elif req.reasoning_effort == "minimal":
-            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "minimal"}
-        elif req.reasoning_effort == "low":
-            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
-        elif req.reasoning_effort == "medium":
-            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "medium"}
-        elif req.reasoning_effort == "high" or req.reasoning_effort == "max":
-            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "high"}
-        else:
-            raise ValueError(f"Unknown reasoning_effort: {req.reasoning_effort}")
+        if req.model_name.startswith("gemini-3.1-pro"):
+            if req.reasoning_effort == "low":
+                body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
+            elif req.reasoning_effort == "high":
+                body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "high"}
+            else:
+                raise ValueError("Gemini 3.1 Pro supports reasoning_effort values: low, high")
+            return body
 
-        return body
+        if req.model_name.startswith("gemini-3-flash"):
+            if req.reasoning_effort == "minimal":
+                body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "minimal"}
+            elif req.reasoning_effort == "low":
+                body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
+            elif req.reasoning_effort == "medium":
+                body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "medium"}
+            elif req.reasoning_effort == "high":
+                body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "high"}
+            else:
+                raise ValueError(
+                    "Gemini 3 Flash supports reasoning_effort values: minimal, low, medium, high"
+                )
+            return body
+
+        if req.reasoning_effort == "none":
+            return body
+        if req.reasoning_effort == "minimal":
+            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "minimal"}
+            return body
+        if req.reasoning_effort == "low":
+            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
+            return body
+        if req.reasoning_effort == "medium":
+            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "medium"}
+            return body
+        if req.reasoning_effort == "high":
+            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "high"}
+            return body
+        if req.reasoning_effort == "max":
+            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "high"}
+            return body
+        raise ValueError(f"Unknown reasoning_effort: {req.reasoning_effort}")
 
     def _turn_to_content(self, turn: Turn) -> dict:
         """Convert Turn to Gemini content format.

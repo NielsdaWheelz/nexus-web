@@ -1,21 +1,23 @@
 {
-  "id": "chatcmpl-test123",
-  "object": "chat.completion",
-  "created": 1700000000,
-  "model": "gpt-4",
-  "choices": [
+  "id": "resp-test123",
+  "object": "response",
+  "status": "completed",
+  "model": "gpt-5.4-mini",
+  "output": [
     {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "Hello! How can I help you today?"
-      },
-      "finish_reason": "stop"
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Hello! How can I help you today?"
+        }
+      ]
     }
   ],
   "usage": {
-    "prompt_tokens": 10,
-    "completion_tokens": 8,
+    "input_tokens": 10,
+    "output_tokens": 8,
     "total_tokens": 18
   }
 }
