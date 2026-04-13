@@ -219,10 +219,10 @@ interface PdfReaderProps {
   onHighlightsMutated?: () => void;
   onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
   onQuoteToChat?: (highlightId: string) => void;
-  /** Resume: initial page (1-based) from saved reader state */
-  initialPageNumber?: number;
-  /** Resume: initial zoom scale from saved reader state */
-  initialZoom?: number;
+  /** Resume seed: page (1-based) to open when this media loads */
+  startPageNumber?: number;
+  /** Resume seed: zoom scale to apply when this media loads */
+  startZoom?: number;
   /** Called when page or zoom changes for progress persistence */
   onResumeStateChange?: (pageNumber: number, zoom: number) => void;
 }
@@ -605,21 +605,23 @@ export default function PdfReader({
   onHighlightsMutated,
   onHighlightTap,
   onQuoteToChat,
-  initialPageNumber,
-  initialZoom,
+  startPageNumber,
+  startZoom,
   onResumeStateChange,
 }: PdfReaderProps) {
   const isMobile = useIsMobileViewport();
   const isMobileRef = useRef(isMobile);
   const initialMobileFitDoneRef = useRef(false);
+  const startPageNumberRef = useRef(startPageNumber);
+  const startZoomRef = useRef(startZoom);
 
   const [loading, setLoading] = useState(true);
   const [navigating, setNavigating] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pageNumber, setPageNumber] = useState(initialPageNumber ?? 1);
+  const [pageNumber, setPageNumber] = useState(startPageNumberRef.current ?? 1);
   const [numPages, setNumPages] = useState(0);
-  const [zoom, setZoom] = useState(initialZoom ?? 1);
+  const [zoom, setZoom] = useState(startZoomRef.current ?? 1);
   const [pageScale, setPageScale] = useState(1);
   const [pageRenderEpoch, setPageRenderEpoch] = useState(0);
   const [textLayerUsable, setTextLayerUsable] = useState(false);
@@ -645,9 +647,9 @@ export default function PdfReader({
   const signedUrlExpiryRef = useRef<number | null>(null);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
   const activePageScaleRef = useRef(1);
-  const zoomRef = useRef(initialZoom ?? 1);
+  const zoomRef = useRef(startZoomRef.current ?? 1);
   const runRef = useRef(0);
-  const pageNumberRef = useRef(initialPageNumber ?? 1);
+  const pageNumberRef = useRef(startPageNumberRef.current ?? 1);
   const pageScaleByNumberRef = useRef<Map<number, number>>(new Map());
   const pageGeometryReliabilityRef = useRef<Map<number, boolean>>(new Map());
   const pendingViewerPageRef = useRef<number | null>(null);
@@ -1690,16 +1692,16 @@ export default function PdfReader({
     const pageScaleCache = pageScaleByNumberRef.current;
     const pageGeometryReliability = pageGeometryReliabilityRef.current;
 
-    const startPage = initialPageNumber ?? 1;
-    const startZoom = initialZoom ?? 1;
+    const startPage = startPageNumberRef.current ?? 1;
+    const startZoomLevel = startZoomRef.current ?? 1;
     setLoading(true);
     setNavigating(false);
     setRecovering(false);
     setError(null);
     setPageNumber(startPage);
     setNumPages(0);
-    setZoom(startZoom);
-    setPageScale(startZoom);
+    setZoom(startZoomLevel);
+    setPageScale(startZoomLevel);
     setPageRenderEpoch(0);
     setSelection(null);
     setSelectionError(null);
@@ -1708,7 +1710,7 @@ export default function PdfReader({
     setTextGeometryReliable(true);
     setCreateTelemetry(createInitialCreateTelemetry());
     pageNumberRef.current = startPage;
-    zoomRef.current = startZoom;
+    zoomRef.current = startZoomLevel;
     pageScaleCache.clear();
     pageGeometryReliability.clear();
     pendingViewerPageRef.current = null;
@@ -1768,8 +1770,6 @@ export default function PdfReader({
     attachDocumentToViewer,
     clearSelection,
     fetchSignedUrl,
-    initialPageNumber,
-    initialZoom,
     mediaId,
     openDocument,
     replaceDocument,

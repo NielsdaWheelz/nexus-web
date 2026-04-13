@@ -323,12 +323,12 @@ export default function MediaPaneBody() {
               onControlsReady={(controls) => {
                 mv.pdfControlsRef.current = controls;
               }}
-              initialPageNumber={
+              startPageNumber={
                 mv.readerState?.locator_kind === "pdf_page"
                   ? mv.readerState.page ?? undefined
                   : undefined
               }
-              initialZoom={
+              startZoom={
                 mv.readerState?.locator_kind === "pdf_page"
                   ? mv.readerState.zoom ?? undefined
                   : undefined

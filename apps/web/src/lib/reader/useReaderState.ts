@@ -17,8 +17,13 @@ export function useReaderState(options: UseReaderStateOptions) {
   const [state, setState] = useState<ReaderState | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const stateRef = useRef<ReaderState | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef<Partial<ReaderState> | null>(null);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   const load = useCallback(async () => {
     if (!mediaId) return;
@@ -28,9 +33,11 @@ export function useReaderState(options: UseReaderStateOptions) {
       const res = await fetchFn<{ data: ReaderState }>(
         `/api/media/${mediaId}/reader-state`
       );
+      stateRef.current = res.data;
       setState(res.data);
     } catch (err) {
       if (isApiError(err) && err.status === 404) {
+        stateRef.current = null;
         setState(null);
       } else {
         setError(
@@ -50,7 +57,22 @@ export function useReaderState(options: UseReaderStateOptions) {
     (updates: Partial<ReaderState>) => {
       if (!mediaId) return;
 
-      pendingRef.current = { ...pendingRef.current, ...updates };
+      const nextPending = { ...pendingRef.current, ...updates };
+      const baseline = pendingRef.current ?? stateRef.current;
+      let changed = baseline === null;
+
+      for (const key of Object.keys(nextPending) as Array<keyof ReaderState>) {
+        if (baseline?.[key] !== nextPending[key]) {
+          changed = true;
+          break;
+        }
+      }
+
+      if (!changed) {
+        return;
+      }
+
+      pendingRef.current = nextPending;
 
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
@@ -70,6 +92,7 @@ export function useReaderState(options: UseReaderStateOptions) {
               body: JSON.stringify(payload),
             }
           );
+          stateRef.current = res.data;
           setState(res.data);
         } catch (err) {
           console.error("Failed to save reader state:", err);

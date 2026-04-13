@@ -206,4 +206,46 @@ test.describe("reader settings + resume", () => {
     await expect(pageIndicator(page, 3, expectedPageCount)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("125%")).toBeVisible();
   });
+
+  test("pdf page changes persist without reopening the document", async ({ page }) => {
+    const seed = readReaderResumeSeed();
+    const mediaId = seed.pdf_media_id;
+    const expectedPageCount = seed.pdf_page_count;
+    let fileRequestCount = 0;
+
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === `/api/media/${mediaId}/file`) {
+        fileRequestCount += 1;
+      }
+    });
+
+    await patchReaderState(page.request, mediaId, {
+      locator_kind: "pdf_page",
+      page: 1,
+      zoom: 1,
+      fragment_id: null,
+      offset: null,
+      section_id: null,
+    });
+
+    await page.goto(`/media/${mediaId}`);
+    await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
+    await expect
+      .poll(() => fileRequestCount)
+      .toBe(1);
+
+    await page.getByRole("button", { name: "Next page" }).click();
+    await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible({ timeout: 10_000 });
+
+    await expect
+      .poll(async () => {
+        const state = await fetchReaderState(page.request, mediaId);
+        return state.locator_kind === "pdf_page" ? state.page : null;
+      })
+      .toBe(2);
+
+    await page.waitForTimeout(900);
+    expect(fileRequestCount).toBe(1);
+  });
 });

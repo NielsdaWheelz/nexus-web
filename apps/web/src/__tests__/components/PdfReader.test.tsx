@@ -869,6 +869,55 @@ describe("PdfReader", () => {
     });
   });
 
+  it("treats start page and zoom as open-time seeds instead of live control props", async () => {
+    const signedUrl = "https://storage.example/signed-seed-contract";
+    const doc = createFakeDocument(3, {
+      1: createFakePage({ textItems: ["page one"] }),
+      2: createFakePage({ textItems: ["page two"] }),
+      3: createFakePage({ textItems: ["page three"] }),
+    });
+    const { deps, getDocumentMock } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: [], 2: [], 3: [] },
+    });
+
+    const { rerender } = render(
+      <PdfReader
+        mediaId="media-seed-contract"
+        deps={deps}
+        startPageNumber={2}
+        startZoom={1.25}
+      />
+    );
+
+    expect(await screen.findByText("Page 2 of 3")).toBeInTheDocument();
+    expect(screen.getByText("125%")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(getDocumentMock).toHaveBeenCalledTimes(1);
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /next page/i }));
+    expect(await screen.findByText("Page 3 of 3")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /zoom in/i }));
+    expect(screen.getByText("150%")).toBeInTheDocument();
+
+    rerender(
+      <PdfReader
+        mediaId="media-seed-contract"
+        deps={deps}
+        startPageNumber={1}
+        startZoom={1}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Page 3 of 3")).toBeInTheDocument();
+      expect(screen.getByText("150%")).toBeInTheDocument();
+      expect(getDocumentMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("navigates to a requested highlight using projected PDF quad geometry", async () => {
     const signedUrl = "https://storage.example/signed-navigate-highlight";
     const doc = createFakeDocument(2, {
