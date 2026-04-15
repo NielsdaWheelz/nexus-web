@@ -29,7 +29,7 @@ from nexus.schemas.media import (
     TranscriptRequestResponse,
     UploadInitRequest,
 )
-from nexus.schemas.reader import ReaderMediaStatePatch
+from nexus.schemas.reader import ReaderResumeStatePatch
 from nexus.services import epub_lifecycle, epub_read, image_proxy
 from nexus.services import media as media_service
 from nexus.services import podcasts as podcast_service
@@ -201,20 +201,20 @@ def get_reader_state(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get effective reader state for media (profile defaults + media overrides)."""
-    result = reader_service.get_reader_media_state(db, viewer.user_id, media_id)
+    """Get per-media reader resume state."""
+    result = reader_service.get_reader_resume_state(db, viewer.user_id, media_id)
     return success_response(result.model_dump(mode="json"))
 
 
 @router.patch("/media/{media_id}/reader-state")
 def patch_reader_state(
     media_id: UUID,
-    body: ReaderMediaStatePatch,
+    body: ReaderResumeStatePatch,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Update reader state for media (partial)."""
-    result = reader_service.patch_reader_media_state(db, viewer.user_id, media_id, body)
+    """Update per-media reader resume state (partial)."""
+    result = reader_service.patch_reader_resume_state(db, viewer.user_id, media_id, body)
     return success_response(result.model_dump(mode="json"))
 
 

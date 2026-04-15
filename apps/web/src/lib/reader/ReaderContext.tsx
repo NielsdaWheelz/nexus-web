@@ -7,12 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useReaderProfile } from "./useReaderProfile";
-import type {
-  ReaderFontFamily,
-  ReaderProfile,
-  ReaderTheme,
-  ReaderViewMode,
-} from "./types";
+import type { ReaderFontFamily, ReaderProfile, ReaderTheme } from "./types";
 import { DEFAULT_READER_PROFILE } from "./types";
 
 interface ReaderContextValue {
@@ -26,7 +21,6 @@ interface ReaderContextValue {
   updateLineHeight: (lineHeight: number) => void;
   updateColumnWidth: (columnWidthCh: number) => void;
   updateFocusMode: (focusMode: boolean) => void;
-  updateDefaultViewMode: (viewMode: ReaderViewMode) => void;
 }
 
 const ReaderContext = createContext<ReaderContextValue | null>(null);
@@ -45,7 +39,6 @@ export function ReaderProvider({ children }: { children: ReactNode }) {
     updateLineHeight,
     updateColumnWidth,
     updateFocusMode,
-    updateDefaultViewMode,
   } = useReaderProfile();
 
   const value = useMemo<ReaderContextValue>(
@@ -60,7 +53,6 @@ export function ReaderProvider({ children }: { children: ReactNode }) {
       updateLineHeight,
       updateColumnWidth,
       updateFocusMode,
-      updateDefaultViewMode,
     }),
     [
       profile,
@@ -73,7 +65,6 @@ export function ReaderProvider({ children }: { children: ReactNode }) {
       updateLineHeight,
       updateColumnWidth,
       updateFocusMode,
-      updateDefaultViewMode,
     ]
   );
 
@@ -96,7 +87,6 @@ export function useReaderContext(): ReaderContextValue {
       updateLineHeight: NOOP,
       updateColumnWidth: NOOP,
       updateFocusMode: NOOP,
-      updateDefaultViewMode: NOOP,
     };
   }
   return ctx;

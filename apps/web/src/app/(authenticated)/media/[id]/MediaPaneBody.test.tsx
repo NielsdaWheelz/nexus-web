@@ -35,7 +35,7 @@ vi.mock("@/components/ReaderContentArea", () => ({
   default: (
     props: {
       children: ReactNode;
-      profileOverride?: Record<string, unknown> | null;
+      contentClassName?: string;
     }
   ) => mockReaderContentArea(props),
 }));
@@ -159,10 +159,9 @@ function buildViewState(overrides: Record<string, unknown> = {}): Record<string,
     handleTranscriptSegmentSelect: vi.fn(),
     handleContentClick: vi.fn(),
     fragments: [{ id: "fragment-1" }],
-    readerProfileOverride: null,
-    readerStateLoading: false,
-    readerState: null,
-    saveReaderState: vi.fn(),
+    readerResumeState: null,
+    readerResumeStateLoading: false,
+    saveReaderResumeState: vi.fn(),
     pdfRefreshToken: 0,
     handlePdfPageHighlightsChange: vi.fn(),
     pdfNavigationTarget: null,
@@ -347,19 +346,8 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
   });
 
   it("keeps reflowable readers on the ReaderContentArea path and leaves transcript/pdf outside it", () => {
-    const webArticleProfileOverride = {
-      theme: "sepia",
-      font_family: "serif",
-      font_size_px: 18,
-      line_height: 1.6,
-      column_width_ch: 70,
-      focus_mode: false,
-      default_view_mode: "scroll",
-    };
-
     currentViewState = buildViewState({
       fragments: [{ id: "fragment-1" }],
-      readerProfileOverride: webArticleProfileOverride,
     });
     mockUseMediaViewState.mockImplementation(() => currentViewState);
 
@@ -367,7 +355,7 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
 
     expect(mockReaderContentArea).toHaveBeenCalledTimes(1);
     expect(mockReaderContentArea.mock.calls.at(-1)?.[0]).toMatchObject({
-      profileOverride: webArticleProfileOverride,
+      children: expect.anything(),
     });
     expect(screen.getByTestId("html-renderer")).toBeInTheDocument();
 

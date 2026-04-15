@@ -1,4 +1,4 @@
-"""Reader profile and per-media reader state schemas."""
+"""Reader profile and per-media reader resume schemas."""
 
 from datetime import datetime
 from typing import Literal
@@ -6,9 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-ThemeValue = Literal["light", "dark", "sepia"]
+ThemeValue = Literal["light", "dark"]
 FontFamilyValue = Literal["serif", "sans"]
-ViewModeValue = Literal["scroll", "paged"]
 LocatorKindValue = Literal["fragment_offset", "epub_section", "pdf_page"]
 
 
@@ -26,7 +25,6 @@ class ReaderProfileOut(BaseModel):
     font_family: FontFamilyValue
     column_width_ch: int = Field(ge=40, le=120)
     focus_mode: bool
-    default_view_mode: ViewModeValue
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -41,7 +39,6 @@ class ReaderProfilePatch(BaseModel):
     font_family: FontFamilyValue | None = None
     column_width_ch: int | None = Field(default=None, ge=40, le=120)
     focus_mode: bool | None = None
-    default_view_mode: ViewModeValue | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -55,7 +52,6 @@ class ReaderProfilePatch(BaseModel):
             "font_family",
             "column_width_ch",
             "focus_mode",
-            "default_view_mode",
         ):
             if field_name in self.model_fields_set and getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null")
@@ -63,20 +59,13 @@ class ReaderProfilePatch(BaseModel):
 
 
 # =============================================================================
-# Reader Media State (per user + media)
+# Reader Media Resume State (per user + media)
 # =============================================================================
 
 
-class ReaderMediaStateOut(BaseModel):
-    """Response schema for effective reader state (profile + media overrides)."""
+class ReaderResumeStateOut(BaseModel):
+    """Response schema for per-media reader resume state."""
 
-    theme: ThemeValue
-    font_size_px: int = Field(ge=12, le=28)
-    line_height: float = Field(ge=1.2, le=2.2)
-    font_family: FontFamilyValue
-    column_width_ch: int = Field(ge=40, le=120)
-    focus_mode: bool
-    view_mode: ViewModeValue
     locator_kind: LocatorKindValue | None = None
     fragment_id: UUID | None = None
     offset: int | None = None
@@ -88,16 +77,9 @@ class ReaderMediaStateOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ReaderMediaStatePatch(BaseModel):
-    """PATCH body for reader media state (partial update)."""
+class ReaderResumeStatePatch(BaseModel):
+    """PATCH body for per-media reader resume state."""
 
-    theme: ThemeValue | None = None
-    font_size_px: int | None = Field(default=None, ge=12, le=28)
-    line_height: float | None = Field(default=None, ge=1.2, le=2.2)
-    font_family: FontFamilyValue | None = None
-    column_width_ch: int | None = Field(default=None, ge=40, le=120)
-    focus_mode: bool | None = None
-    view_mode: ViewModeValue | None = None
     locator_kind: LocatorKindValue | None = None
     fragment_id: UUID | None = None
     offset: int | None = Field(default=None, ge=0)
@@ -108,15 +90,12 @@ class ReaderMediaStatePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
-    def validate_locator_payload(self) -> "ReaderMediaStatePatch":
+    def validate_locator_payload(self) -> "ReaderResumeStatePatch":
         """Ensure locator payloads are internally consistent."""
         locator_fields = {"fragment_id", "offset", "section_id", "page", "zoom"}
         kind_set = "locator_kind" in self.model_fields_set
         has_locator_fields = any(field in self.model_fields_set for field in locator_fields)
         kind = self.locator_kind
-
-        if "view_mode" in self.model_fields_set and self.view_mode is None:
-            raise ValueError("view_mode cannot be null")
 
         if not kind_set and not has_locator_fields:
             return self

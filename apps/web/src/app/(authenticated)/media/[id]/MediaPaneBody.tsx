@@ -299,7 +299,7 @@ export default function MediaPaneBody() {
             )}
           </div>
         ) : mv.isPdf ? (
-          mv.readerStateLoading ? (
+          mv.readerResumeStateLoading ? (
             <div className={styles.notReady}>
               <p>Loading reader state...</p>
             </div>
@@ -324,17 +324,17 @@ export default function MediaPaneBody() {
                 mv.pdfControlsRef.current = controls;
               }}
               startPageNumber={
-                mv.readerState?.locator_kind === "pdf_page"
-                  ? mv.readerState.page ?? undefined
+                mv.readerResumeState?.locator_kind === "pdf_page"
+                  ? mv.readerResumeState.page ?? undefined
                   : undefined
               }
               startZoom={
-                mv.readerState?.locator_kind === "pdf_page"
-                  ? mv.readerState.zoom ?? undefined
+                mv.readerResumeState?.locator_kind === "pdf_page"
+                  ? mv.readerResumeState.zoom ?? undefined
                   : undefined
               }
               onResumeStateChange={(pageNumber, zoom) =>
-                mv.saveReaderState({
+                mv.saveReaderResumeState({
                   locator_kind: "pdf_page",
                   page: pageNumber,
                   zoom,
@@ -347,7 +347,7 @@ export default function MediaPaneBody() {
           )
         ) : mv.isEpub ? (
           <DocumentViewport>
-            <ReaderContentArea profileOverride={mv.readerProfileOverride}>
+            <ReaderContentArea>
               <EpubContentPane
                 sections={mv.epubSections}
                 activeChapter={mv.activeChapter}
@@ -370,7 +370,7 @@ export default function MediaPaneBody() {
           </div>
         ) : (
           <DocumentViewport>
-            <ReaderContentArea profileOverride={mv.readerProfileOverride}>
+            <ReaderContentArea>
               <div
                 ref={mv.contentRef}
                 className={styles.fragments}

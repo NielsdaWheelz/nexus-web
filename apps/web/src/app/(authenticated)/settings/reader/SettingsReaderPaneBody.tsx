@@ -5,7 +5,6 @@ import {
   DEFAULT_READER_PROFILE,
   type ReaderFontFamily,
   type ReaderTheme,
-  type ReaderViewMode,
 } from "@/lib/reader/types";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
@@ -23,7 +22,6 @@ export default function SettingsReaderPaneBody() {
     updateLineHeight,
     updateColumnWidth,
     updateFocusMode,
-    updateDefaultViewMode,
   } = useReaderContext();
 
   const p = profile ?? DEFAULT_READER_PROFILE;
@@ -49,7 +47,6 @@ export default function SettingsReaderPaneBody() {
               >
                 <option value="light">Light</option>
                 <option value="dark">Dark</option>
-                <option value="sepia">Sepia</option>
               </select>
             </div>
 
@@ -134,24 +131,6 @@ export default function SettingsReaderPaneBody() {
           </div>
 
           <div className={styles.formRow}>
-            <div className={styles.formField}>
-              <label className={styles.formLabel} htmlFor="viewMode">
-                Default view
-              </label>
-              <select
-                id="viewMode"
-                className={styles.select}
-                value={p.default_view_mode}
-                onChange={(e) =>
-                  updateDefaultViewMode(e.target.value as ReaderViewMode)
-                }
-                disabled={saving}
-              >
-                <option value="scroll">Scroll</option>
-                <option value="paged">Paged</option>
-              </select>
-            </div>
-
             <div className={styles.formField}>
               <label className={styles.checkboxLabel}>
                 <input

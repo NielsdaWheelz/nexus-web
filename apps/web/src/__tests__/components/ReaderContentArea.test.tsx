@@ -13,10 +13,6 @@ const THEME_SENTINELS = {
     "--reader-bg": "#1e1e2e",
     "--reader-text": "#cdd6f4",
   },
-  sepia: {
-    "--reader-bg": "#f4ecd8",
-    "--reader-text": "#5c4b37",
-  },
 } as const;
 
 vi.mock("@/lib/reader", async (importOriginal) => {
@@ -27,7 +23,7 @@ vi.mock("@/lib/reader", async (importOriginal) => {
   };
 });
 
-function buildReaderContext(theme: "light" | "dark" | "sepia" = "light") {
+function buildReaderContext(theme: "light" | "dark" = "light") {
   return {
     profile: { ...DEFAULT_READER_PROFILE, theme },
     loading: false,
@@ -39,7 +35,6 @@ function buildReaderContext(theme: "light" | "dark" | "sepia" = "light") {
     updateLineHeight: vi.fn(),
     updateColumnWidth: vi.fn(),
     updateFocusMode: vi.fn(),
-    updateDefaultViewMode: vi.fn(),
   };
 }
 
@@ -73,7 +68,7 @@ describe("ReaderContentArea", () => {
     expect(root).toBeInTheDocument();
   });
 
-  it.each(["light", "dark", "sepia"] as const)(
+  it.each(["light", "dark"] as const)(
     "defines full reader token set for %s theme",
     (theme) => {
       vi.mocked(useReaderContext).mockReturnValue(buildReaderContext(theme));

@@ -2753,7 +2753,7 @@ class FragmentBlock(Base):
 
 
 class ReaderProfile(Base):
-    """Per-user reader defaults (theme, font, layout)."""
+    """Per-user reader defaults."""
 
     __tablename__ = "reader_profiles"
 
@@ -2768,7 +2768,6 @@ class ReaderProfile(Base):
     font_family: Mapped[str] = mapped_column(Text, nullable=False, server_default="serif")
     column_width_ch: Mapped[int] = mapped_column(Integer, nullable=False, server_default="65")
     focus_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    default_view_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="scroll")
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -2777,7 +2776,7 @@ class ReaderProfile(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "theme IN ('light', 'dark', 'sepia')",
+            "theme IN ('light', 'dark')",
             name="ck_reader_profiles_theme",
         ),
         CheckConstraint(
@@ -2796,10 +2795,6 @@ class ReaderProfile(Base):
             "column_width_ch BETWEEN 40 AND 120",
             name="ck_reader_profiles_column_width_ch",
         ),
-        CheckConstraint(
-            "default_view_mode IN ('scroll', 'paged')",
-            name="ck_reader_profiles_default_view_mode",
-        ),
     )
 
     # Relationships
@@ -2807,7 +2802,7 @@ class ReaderProfile(Base):
 
 
 class ReaderMediaState(Base):
-    """Per user + media reader state (overrides and progress)."""
+    """Per user + media reader resume state."""
 
     __tablename__ = "reader_media_state"
 
@@ -2821,13 +2816,6 @@ class ReaderMediaState(Base):
         ForeignKey("media.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    theme: Mapped[str | None] = mapped_column(Text, nullable=True)
-    font_size_px: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    line_height: Mapped[float | None] = mapped_column(Numeric(3, 2), nullable=True)
-    font_family: Mapped[str | None] = mapped_column(Text, nullable=True)
-    column_width_ch: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    focus_mode: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    view_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="scroll")
     locator_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
     fragment_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -2845,30 +2833,6 @@ class ReaderMediaState(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "theme IS NULL OR theme IN ('light', 'dark', 'sepia')",
-            name="ck_reader_media_state_theme",
-        ),
-        CheckConstraint(
-            "font_size_px IS NULL OR (font_size_px BETWEEN 12 AND 28)",
-            name="ck_reader_media_state_font_size_px",
-        ),
-        CheckConstraint(
-            "line_height IS NULL OR (line_height BETWEEN 1.2 AND 2.2)",
-            name="ck_reader_media_state_line_height",
-        ),
-        CheckConstraint(
-            "font_family IS NULL OR font_family IN ('serif', 'sans')",
-            name="ck_reader_media_state_font_family",
-        ),
-        CheckConstraint(
-            "column_width_ch IS NULL OR (column_width_ch BETWEEN 40 AND 120)",
-            name="ck_reader_media_state_column_width_ch",
-        ),
-        CheckConstraint(
-            "view_mode IN ('scroll', 'paged')",
-            name="ck_reader_media_state_view_mode",
-        ),
         CheckConstraint(
             "locator_kind IS NULL OR locator_kind IN ('fragment_offset', 'epub_section', 'pdf_page')",
             name="ck_reader_media_state_locator_kind",

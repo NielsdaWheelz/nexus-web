@@ -1,4 +1,4 @@
-"""Integration tests for reader profile and per-media reader state.
+"""Integration tests for reader profile and per-media reader resume state.
 
 Tests cover:
 - GET /me/reader-profile
@@ -6,7 +6,7 @@ Tests cover:
 - GET /media/{media_id}/reader-state
 - PATCH /media/{media_id}/reader-state
 - Media visibility enforcement (404 masking for unreadable media)
-- Effective settings merge: media overrides over profile defaults
+- Resume-only media state and locator reset behavior
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy.sql.dml import Insert
 
 from nexus.db.models import ReaderMediaState
-from nexus.schemas.reader import ReaderMediaStatePatch
+from nexus.schemas.reader import ReaderResumeStatePatch
 from nexus.services import reader as reader_service
 from tests.factories import create_ready_epub_with_chapters
 from tests.helpers import auth_headers, create_test_user_id
@@ -60,7 +60,7 @@ class TestGetReaderProfile:
         assert "font_family" in data
         assert "column_width_ch" in data
         assert "focus_mode" in data
-        assert data["theme"] in ("light", "dark", "sepia")
+        assert data["theme"] == "light"
         assert 12 <= data["font_size_px"] <= 28
         assert 1.2 <= data["line_height"] <= 2.2
         assert data["font_family"] in ("serif", "sans")
@@ -73,14 +73,14 @@ class TestGetReaderProfile:
 
         auth_client.patch(
             "/me/reader-profile",
-            json={"theme": "sepia", "font_size_px": 18, "focus_mode": True},
+            json={"theme": "dark", "font_size_px": 18, "focus_mode": True},
             headers=auth_headers(user_id),
         )
 
         resp = auth_client.get("/me/reader-profile", headers=auth_headers(user_id))
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["theme"] == "sepia"
+        assert data["theme"] == "dark"
         assert data["font_size_px"] == 18
         assert data["focus_mode"] is True
 
@@ -140,7 +140,7 @@ class TestPatchReaderProfile:
 
         resp = auth_client.patch(
             "/me/reader-profile",
-            json={"view_mode": "paged"},
+            json={"bogus": "paged"},
             headers=auth_headers(user_id),
         )
 
@@ -166,7 +166,7 @@ class TestPatchReaderProfile:
 
         auth_client.patch(
             "/me/reader-profile",
-            json={"theme": "sepia"},
+            json={"theme": "dark"},
             headers=auth_headers(user_id),
         )
 
@@ -178,7 +178,7 @@ class TestPatchReaderProfile:
 
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["theme"] == "sepia"
+        assert data["theme"] == "dark"
         assert data["font_size_px"] == 20
 
 
@@ -190,10 +190,10 @@ class TestPatchReaderProfile:
 class TestGetMediaReaderState:
     """Tests for GET /media/{media_id}/reader-state."""
 
-    def test_get_reader_state_returns_effective_settings(
+    def test_get_reader_state_returns_resume_shape(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """GET /media/{media_id}/reader-state returns effective settings (profile + media overrides)."""
+        """GET /media/{media_id}/reader-state returns resume-only fields."""
         user_id = create_test_user_id()
         with direct_db.session() as session:
             media_id, _ = create_ready_epub_with_chapters(session, num_chapters=2)
@@ -212,29 +212,20 @@ class TestGetMediaReaderState:
 
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert "theme" in data
-        assert "font_size_px" in data
-        assert "line_height" in data
-        assert "font_family" in data
-        assert "column_width_ch" in data
-        assert "focus_mode" in data
-        assert "view_mode" in data
-        assert data["view_mode"] in ("scroll", "paged")
+        assert "locator_kind" in data
+        assert data["locator_kind"] is None
+        assert data["fragment_id"] is None
+        assert data["offset"] is None
+        assert data["section_id"] is None
+        assert data["page"] is None
+        assert data["zoom"] is None
         assert "updated_at" in data
 
-    def test_get_reader_state_media_overrides_profile(
+    def test_get_reader_state_returns_saved_locator(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """GET /media/{media_id}/reader-state returns media overrides over profile defaults."""
+        """GET /media/{media_id}/reader-state returns saved resume state."""
         user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-
-        auth_client.patch(
-            "/me/reader-profile",
-            json={"theme": "light", "default_view_mode": "scroll"},
-            headers=auth_headers(user_id),
-        )
-
         with direct_db.session() as session:
             media_id, _ = create_ready_epub_with_chapters(session, num_chapters=2)
 
@@ -248,7 +239,10 @@ class TestGetMediaReaderState:
 
         auth_client.patch(
             f"/media/{media_id}/reader-state",
-            json={"theme": "dark", "view_mode": "paged"},
+            json={
+                "locator_kind": "epub_section",
+                "section_id": "ch01",
+            },
             headers=auth_headers(user_id),
         )
 
@@ -259,45 +253,12 @@ class TestGetMediaReaderState:
 
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["theme"] == "dark"
-        assert data["view_mode"] == "paged"
-
-    def test_get_reader_state_uses_profile_default_view_mode(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """GET /media/{media_id}/reader-state uses profile default_view_mode when no media override exists."""
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-
-        profile_resp = auth_client.patch(
-            "/me/reader-profile",
-            json={"default_view_mode": "paged"},
-            headers=auth_headers(user_id),
-        )
-        assert profile_resp.status_code == 200, (
-            f"Expected 200 but got {profile_resp.status_code}: {profile_resp.json()}"
-        )
-
-        with direct_db.session() as session:
-            media_id, _ = create_ready_epub_with_chapters(session, num_chapters=2)
-
-        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
-        direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        resp = auth_client.get(
-            f"/media/{media_id}/reader-state",
-            headers=auth_headers(user_id),
-        )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["view_mode"] == "paged", (
-            f"Expected profile default_view_mode 'paged' but got {data['view_mode']}. "
-            f"Full response: {data}"
-        )
+        assert data["locator_kind"] == "epub_section"
+        assert data["section_id"] == "ch01"
+        assert data["fragment_id"] is None
+        assert data["offset"] is None
+        assert data["page"] is None
+        assert data["zoom"] is None
 
     def test_get_reader_state_unreadable_media_returns_404(
         self, auth_client, direct_db: DirectSessionManager
@@ -338,10 +299,10 @@ class TestPatchMediaReaderState:
     def test_patch_reader_state_accepts_valid_fields(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """PATCH /media/{media_id}/reader-state accepts view_mode, progress locator, etc."""
+        """PATCH /media/{media_id}/reader-state accepts resume locator fields."""
         user_id = create_test_user_id()
         with direct_db.session() as session:
-            media_id, frag_ids = create_ready_epub_with_chapters(session, num_chapters=2)
+            media_id, _frag_ids = create_ready_epub_with_chapters(session, num_chapters=2)
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
@@ -353,7 +314,6 @@ class TestPatchMediaReaderState:
         resp = auth_client.patch(
             f"/media/{media_id}/reader-state",
             json={
-                "view_mode": "paged",
                 "locator_kind": "epub_section",
                 "section_id": "ch01",
             },
@@ -362,9 +322,49 @@ class TestPatchMediaReaderState:
 
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["view_mode"] == "paged"
         assert data.get("locator_kind") == "epub_section"
         assert data.get("section_id") == "ch01"
+        assert data.get("fragment_id") is None
+        assert data.get("offset") is None
+        assert data.get("page") is None
+        assert data.get("zoom") is None
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"theme": "dark"},
+            {"font_size_px": 18},
+            {"line_height": 1.5},
+            {"font_family": "serif"},
+            {"column_width_ch": 65},
+            {"focus_mode": True},
+        ],
+    )
+    def test_patch_reader_state_rejects_removed_appearance_fields(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        payload: dict,
+    ):
+        """PATCH /media/{media_id}/reader-state rejects removed appearance fields."""
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, _ = create_ready_epub_with_chapters(session, num_chapters=2)
+
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.patch(
+            f"/media/{media_id}/reader-state",
+            json=payload,
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
 
     def test_patch_reader_state_unreadable_media_returns_404(
         self, auth_client, direct_db: DirectSessionManager
@@ -386,7 +386,7 @@ class TestPatchMediaReaderState:
 
         resp = auth_client.patch(
             f"/media/{media_id}/reader-state",
-            json={"view_mode": "paged"},
+            json={"locator_kind": "epub_section"},
             headers=auth_headers(user_b),
         )
 
@@ -423,44 +423,6 @@ class TestPatchMediaReaderState:
         assert data.get("locator_kind") == "fragment_offset"
         assert data.get("fragment_id") == str(frag_ids[0])
         assert data.get("offset") == 42
-
-    def test_patch_reader_state_allows_clearing_media_override_with_null(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """PATCH /media/{media_id}/reader-state allows explicit null to clear nullable override fields."""
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        auth_client.patch(
-            "/me/reader-profile",
-            json={"font_size_px": 17},
-            headers=auth_headers(user_id),
-        )
-
-        with direct_db.session() as session:
-            media_id, _ = create_ready_epub_with_chapters(session, num_chapters=2)
-
-        direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
-        direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        set_override = auth_client.patch(
-            f"/media/{media_id}/reader-state",
-            json={"font_size_px": 22},
-            headers=auth_headers(user_id),
-        )
-        assert set_override.status_code == 200
-        assert set_override.json()["data"]["font_size_px"] == 22
-
-        clear_override = auth_client.patch(
-            f"/media/{media_id}/reader-state",
-            json={"font_size_px": None},
-            headers=auth_headers(user_id),
-        )
-        assert clear_override.status_code == 200
-        assert clear_override.json()["data"]["font_size_px"] == 17
 
     def test_patch_reader_state_allows_clearing_locator_with_null_kind(
         self, auth_client, direct_db: DirectSessionManager
@@ -591,11 +553,7 @@ class TestPatchMediaReaderState:
         # Scope this test to service-layer race behavior by bypassing visibility checks.
         monkeypatch.setattr(reader_service, "can_read_media", lambda *_args, **_kwargs: True)
 
-        payload = ReaderMediaStatePatch(
-            view_mode="paged",
-            locator_kind="epub_section",
-            section_id="ch01",
-        )
+        payload = ReaderResumeStatePatch(locator_kind="epub_section", section_id="ch01")
         sync_insert_barrier = Barrier(2)
         sessions = [direct_db.session(), direct_db.session()]
 
@@ -620,13 +578,13 @@ class TestPatchMediaReaderState:
 
         def run_patch(session):
             try:
-                result = reader_service.patch_reader_media_state(
+                result = reader_service.patch_reader_resume_state(
                     db=session,
                     viewer_id=user_id,
                     media_id=media_id,
                     patch=payload,
                 )
-                return ("ok", result.view_mode, result.section_id)
+                return ("ok", result.locator_kind, result.section_id)
             except Exception as exc:  # pragma: no cover - exercised by red phase
                 return ("error", repr(exc))
             finally:
@@ -637,7 +595,7 @@ class TestPatchMediaReaderState:
 
         errors = [outcome for outcome in outcomes if outcome[0] == "error"]
         assert not errors, (
-            "Expected concurrent patch_reader_media_state first writes to avoid duplicate-key "
+            "Expected concurrent patch_reader_resume_state first writes to avoid duplicate-key "
             f"failures, but saw errors: {errors}"
         )
 
@@ -655,5 +613,5 @@ class TestPatchMediaReaderState:
             "Expected exactly one reader_media_state row for concurrent first write, "
             f"found {len(rows)} rows."
         )
-        assert rows[0].view_mode == "paged"
+        assert rows[0].locator_kind == "epub_section"
         assert rows[0].section_id == "ch01"

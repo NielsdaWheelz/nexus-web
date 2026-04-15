@@ -2,24 +2,24 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import type { ReaderState } from "./types";
+import type { ReaderResumeState } from "./types";
 
 type ApiFetchFn = typeof apiFetch;
 
-interface UseReaderStateOptions {
+interface UseReaderResumeStateOptions {
   mediaId: string | null;
   apiFetch?: ApiFetchFn;
   debounceMs?: number;
 }
 
-export function useReaderState(options: UseReaderStateOptions) {
+export function useReaderResumeState(options: UseReaderResumeStateOptions) {
   const { mediaId, apiFetch: fetchFn = apiFetch, debounceMs = 500 } = options;
-  const [state, setState] = useState<ReaderState | null>(null);
+  const [state, setState] = useState<ReaderResumeState | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const stateRef = useRef<ReaderState | null>(null);
+  const stateRef = useRef<ReaderResumeState | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRef = useRef<Partial<ReaderState> | null>(null);
+  const pendingRef = useRef<Partial<ReaderResumeState> | null>(null);
 
   useEffect(() => {
     stateRef.current = state;
@@ -30,7 +30,7 @@ export function useReaderState(options: UseReaderStateOptions) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchFn<{ data: ReaderState }>(
+      const res = await fetchFn<{ data: ReaderResumeState }>(
         `/api/media/${mediaId}/reader-state`
       );
       stateRef.current = res.data;
@@ -41,7 +41,7 @@ export function useReaderState(options: UseReaderStateOptions) {
         setState(null);
       } else {
         setError(
-          isApiError(err) ? err.message : "Failed to load reader state"
+          isApiError(err) ? err.message : "Failed to load reader resume state"
         );
       }
     } finally {
@@ -54,14 +54,14 @@ export function useReaderState(options: UseReaderStateOptions) {
   }, [load]);
 
   const save = useCallback(
-    (updates: Partial<ReaderState>) => {
+    (updates: Partial<ReaderResumeState>) => {
       if (!mediaId) return;
 
       const nextPending = { ...pendingRef.current, ...updates };
       const baseline = pendingRef.current ?? stateRef.current;
       let changed = baseline === null;
 
-      for (const key of Object.keys(nextPending) as Array<keyof ReaderState>) {
+      for (const key of Object.keys(nextPending) as Array<keyof ReaderResumeState>) {
         if (baseline?.[key] !== nextPending[key]) {
           changed = true;
           break;
@@ -85,7 +85,7 @@ export function useReaderState(options: UseReaderStateOptions) {
         if (!payload) return;
 
         try {
-          const res = await fetchFn<{ data: ReaderState }>(
+          const res = await fetchFn<{ data: ReaderResumeState }>(
             `/api/media/${mediaId}/reader-state`,
             {
               method: "PATCH",
@@ -95,7 +95,7 @@ export function useReaderState(options: UseReaderStateOptions) {
           stateRef.current = res.data;
           setState(res.data);
         } catch (err) {
-          console.error("Failed to save reader state:", err);
+          console.error("Failed to save reader resume state:", err);
         }
       }, debounceMs);
     },

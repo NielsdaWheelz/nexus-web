@@ -1,78 +1,67 @@
 # reader implementation status
 
-this translates the reader research into concrete engineering constraints and records what is currently shipped, including the epub/web reader theme quick-switch v1.
+this records the current reader model and the constraints we actively ship.
 
 ## constraints we enforce
 
 - line length target: 50-75 chars on desktop
 - base font around 16px, with larger user-adjustable options
 - line height around 1.4-1.6
-- theme support: light, dark, sepia
-- scroll and paged reading modes
+- theme support: light and dark
 - mobile-safe reader layout and controls
-- resume that survives reflow changes where possible
+- resume that survives reflow where possible
 
 ## architecture
 
-### mobile reader shell contract
+### reader settings
 
-- mobile has no bottom nav or tab bar; navigation and tab switching are handled through pane chrome + command palette
-- only the active workspace group is visible on mobile to keep one primary pane in view
-- split surfaces hide secondary panes behind a right-side drawer toggled from pane chrome actions
-- pane/page chrome remains at the top but auto-hides on downward scroll and restores on upward scroll
-- tapping a highlight on mobile focuses that highlight and opens the linked-items drawer
-- highlight editing on mobile uses a sheet-style editor with annotation support
-- text selection actions support both highlight creation and immediate quote-to-chat
-- pdf viewer on mobile uses `page-width` auto-fit for the initial scale instead of the persisted numeric zoom (user can still manually zoom after load); the viewport uses `dvh` units with a `vh` fallback for correct height under mobile browser chrome
+- `reader_profile` stores the global reader preferences for a user
+- shipped fields are `theme`, `font_family`, `font_size_px`,
+  `line_height`, `column_width_ch`, and `focus_mode`
+- the settings page and the media header quick-switch both write the same
+  global reader profile
+- theme is global reader theme only; there are no per-media theme overrides
 
-### desktop reader shell contract
+### per-media resume
 
-- media reader uses a side-by-side split with a resizable linked-items column
-- linked-items column can be hidden and restored from a pane chrome action
-
-### reader theme quick-switch v1
-
-- the media header dropdown now exposes a quick-switch for reader theme
-- available theme values are light, dark, and sepia, using the existing reader profile state
-- v1 is scoped to epub and web article readers only
-- transcript and pdf readers keep their existing theme behavior and do not surface this quick-switch yet
-- the switch updates the same persisted reader preference that already drives reader-content rendering
-
-### reader state split
-
-- `reader_profile`: per-user defaults (theme, font, line height, column width, focus mode, default view mode)
-- `reader_media_state`: per-media overrides + location state (locator + payload)
-
-### locator contract
-
-- `fragment_offset` for web article/transcript resume
-- `epub_section` for epub section/anchor resume
-- `pdf_page` for pdf page + zoom resume
-
-validation and storage hardening:
-
+- `reader_media_state` stores resume only
+- locator kinds are:
+  - `fragment_offset` for web article/transcript resume
+  - `epub_section` for epub section/anchor resume
+  - `pdf_page` for pdf page + zoom resume
+- `locator_kind: null` clears the stored resume state for that media
 - patch schemas reject unknown fields
-- null-handling is explicit for clearable overrides
 - db constraints enforce safe locator bounds (`offset`, `page`, `zoom`)
+
+### reader theme quick-switch
+
+- the media header dropdown exposes a reader theme quick-switch
+- available theme values are light and dark
+- it is shown for epub and web article readers
+- transcript and pdf readers keep their existing appearance behavior and do
+  not surface this quick-switch
+- the switch updates the global reader profile that already drives
+  reflowable reader rendering
 
 ### web text-anchor resume
 
-web article resume now stores canonical text offsets instead of raw viewport scroll offsets.
+web article resume stores canonical text offsets instead of raw viewport
+scroll offsets.
 
 flow:
 
 - map dom text to canonical codepoint offsets
-- persist first visible canonical offset while reading
+- persist the first visible canonical offset while reading
 - map canonical offset back to dom location on restore
 
-this keeps resume robust when typography changes (font size, line height, column width).
+this keeps resume robust when typography changes.
 
 ## regression coverage
 
-required e2e coverage now includes:
+required e2e coverage includes:
 
-- reader settings persistence (`default_view_mode`)
-- web text-anchor resume after reflow
+- reader settings persistence
+- web text-anchor resume after reflow from profile typography changes
 - epub chapter resume after reload
 - pdf page + zoom resume after reload
 
@@ -80,7 +69,8 @@ supporting test infra:
 
 - e2e global setup applies migrations before seed
 - seed includes dedicated reader-resume fixtures for web/epub/pdf
-- flaky pdf reload path hardened by deterministic post-reload page normalization
+- flaky pdf reload path is hardened by deterministic post-reload page
+  normalization
 
 ## validation commands
 

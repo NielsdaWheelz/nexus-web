@@ -49,8 +49,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { stripAttachParams } from "@/lib/conversations/attachedContext";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { useReaderContext, useReaderState } from "@/lib/reader";
-import type { ReaderTheme } from "@/lib/reader/types";
+import { useReaderContext, useReaderResumeState } from "@/lib/reader";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import {
   fetchAllEpubChapterSummaries,
@@ -71,7 +70,6 @@ import {
   useIntervalPoll,
 } from "./transcriptPolling";
 import ResponsiveToolbar, { type ToolbarItem } from "@/components/ui/ResponsiveToolbar";
-import { buildMediaHeaderOptions } from "./mediaActionMenuOptions";
 import {
   type Media,
   type Fragment,
@@ -123,10 +121,10 @@ export default function useMediaViewState(id: string) {
   const isMobileViewport = useIsMobileViewport();
   const { profile: readerProfile, updateTheme } = useReaderContext();
   const {
-    state: readerState,
-    loading: readerStateLoading,
-    save: saveReaderState,
-  } = useReaderState({
+    state: readerResumeState,
+    loading: readerResumeStateLoading,
+    save: saveReaderResumeState,
+  } = useReaderResumeState({
     mediaId: id,
     debounceMs: 500,
   });
@@ -230,21 +228,7 @@ export default function useMediaViewState(id: string) {
       ? (media.capabilities?.can_read ?? isReadableStatus(media.processing_status))
       : isReadableStatus(media.processing_status)
     : false;
-  const readerProfileOverride = useMemo(() => {
-    if (!readerState) {
-      return null;
-    }
-    return {
-      theme: readerState.theme,
-      font_family: readerState.font_family,
-      font_size_px: readerState.font_size_px,
-      line_height: readerState.line_height,
-      column_width_ch: readerState.column_width_ch,
-      focus_mode: readerState.focus_mode,
-      default_view_mode: readerState.view_mode,
-    };
-  }, [readerState]);
-  const focusModeEnabled = Boolean(readerState?.focus_mode ?? readerProfile.focus_mode);
+  const focusModeEnabled = Boolean(readerProfile.focus_mode);
   const showHighlightsPane = canRead && !focusModeEnabled;
   const canPlay = media?.capabilities?.can_play ?? false;
   const playbackSource = media?.playback_source ?? null;
@@ -700,7 +684,7 @@ export default function useMediaViewState(id: string) {
         }
         setEpubSections(sections);
 
-        const locParam = searchParams.get("loc") ?? readerState?.section_id ?? null;
+        const locParam = searchParams.get("loc") ?? readerResumeState?.section_id ?? null;
         const chapterParam = searchParams.get("chapter");
         const resolvedSectionId = resolveInitialEpubSectionId(sections, locParam, chapterParam);
 
@@ -792,7 +776,7 @@ export default function useMediaViewState(id: string) {
   // EPUB: persist section for resume
   useEffect(() => {
     if (!isEpub || !activeSectionId) return;
-    saveReaderState({
+    saveReaderResumeState({
       locator_kind: "epub_section",
       section_id: activeSectionId,
       fragment_id: null,
@@ -800,7 +784,7 @@ export default function useMediaViewState(id: string) {
       page: null,
       zoom: null,
     });
-  }, [isEpub, activeSectionId, saveReaderState]);
+  }, [isEpub, activeSectionId, saveReaderResumeState]);
 
   useEffect(() => {
     scrollRestoreAppliedRef.current = false;
@@ -813,9 +797,9 @@ export default function useMediaViewState(id: string) {
       isPdf ||
       isEpub ||
       !activeContent ||
-      !readerState ||
-      readerState.locator_kind !== "fragment_offset" ||
-      readerState.offset === null ||
+      !readerResumeState ||
+      readerResumeState.locator_kind !== "fragment_offset" ||
+      readerResumeState.offset === null ||
       scrollRestoreAppliedRef.current
     ) {
       return;
@@ -823,7 +807,7 @@ export default function useMediaViewState(id: string) {
     if (isMismatchDisabled) {
       return;
     }
-    const resumeOffset = readerState.offset;
+    const resumeOffset = readerResumeState.offset;
 
     const container = getPaneScrollContainer(contentRef.current);
     if (!container) {
@@ -866,9 +850,9 @@ export default function useMediaViewState(id: string) {
     isPdf,
     isEpub,
     activeContent,
-    readerState,
-    readerState?.locator_kind,
-    readerState?.offset,
+    readerResumeState,
+    readerResumeState?.locator_kind,
+    readerResumeState?.offset,
     isMismatchDisabled,
   ]);
 
@@ -900,7 +884,7 @@ export default function useMediaViewState(id: string) {
           return;
         }
         lastSavedTextAnchorOffsetRef.current = anchorOffset;
-        saveReaderState({
+        saveReaderResumeState({
           locator_kind: "fragment_offset",
           fragment_id: activeContent.fragmentId,
           offset: anchorOffset,
@@ -918,7 +902,7 @@ export default function useMediaViewState(id: string) {
         window.cancelAnimationFrame(rafId);
       }
     };
-  }, [isPdf, isEpub, activeContent, saveReaderState, isMismatchDisabled]);
+  }, [isPdf, isEpub, activeContent, saveReaderResumeState, isMismatchDisabled]);
 
   // Scroll to anchor target after chapter content loads.
   useEffect(() => {
@@ -2131,25 +2115,54 @@ export default function useMediaViewState(id: string) {
       />
     ) : null;
 
-  const mediaHeaderOptions = buildMediaHeaderOptions({
-    canonicalSourceUrl: media?.canonical_source_url ?? null,
-    defaultLibraryId,
-    inDefaultLibrary: mediaInDefaultLibrary,
-    libraryBusy: libraryMembershipBusy,
-    showThemeOptions: isReflowableReader,
-    currentTheme: readerState?.theme ?? readerProfile.theme,
-    isEpub,
-    hasEpubToc: hasEpubToc || tocWarning,
-    epubTocExpanded,
-    onAddToLibrary: () => {
-      void handleAddToDefaultLibrary();
-    },
-    onRemoveFromLibrary: () => {
-      void handleRemoveFromDefaultLibrary();
-    },
-    onToggleEpubToc: () => setEpubTocExpanded((value) => !value),
-    onSelectTheme: (theme: ReaderTheme) => updateTheme(theme),
-  });
+  const mediaHeaderOptions: ActionMenuOption[] = [];
+
+  if (defaultLibraryId) {
+    mediaHeaderOptions.push({
+      id: mediaInDefaultLibrary ? "remove-from-library" : "add-to-library",
+      label: mediaInDefaultLibrary ? "Remove from library" : "Add to library",
+      disabled: libraryMembershipBusy,
+      onSelect: mediaInDefaultLibrary
+        ? () => {
+            void handleRemoveFromDefaultLibrary();
+          }
+        : () => {
+            void handleAddToDefaultLibrary();
+          },
+    });
+  }
+
+  if (media?.canonical_source_url) {
+    mediaHeaderOptions.push({
+      id: "open-source",
+      label: "Open source",
+      href: media.canonical_source_url,
+    });
+  }
+
+  if (isEpub && (hasEpubToc || tocWarning)) {
+    mediaHeaderOptions.push({
+      id: "toggle-toc",
+      label: epubTocExpanded ? "Hide table of contents" : "Show table of contents",
+      onSelect: () => setEpubTocExpanded((value) => !value),
+    });
+  }
+
+  if (isReflowableReader) {
+    const currentTheme = readerProfile.theme;
+    mediaHeaderOptions.push({
+      id: "theme-light",
+      label: currentTheme === "light" ? "Light theme (current)" : "Light theme",
+      disabled: currentTheme === "light",
+      onSelect: () => updateTheme("light"),
+    });
+    mediaHeaderOptions.push({
+      id: "theme-dark",
+      label: currentTheme === "dark" ? "Dark theme (current)" : "Dark theme",
+      disabled: currentTheme === "dark",
+      onSelect: () => updateTheme("dark"),
+    });
+  }
 
   return {
     // Core data
@@ -2173,10 +2186,9 @@ export default function useMediaViewState(id: string) {
     showHighlightsPane,
 
     // Reader
-    readerProfileOverride,
-    readerState,
-    readerStateLoading,
-    saveReaderState,
+    readerResumeState,
+    readerResumeStateLoading,
+    saveReaderResumeState,
 
     // Library
     defaultLibraryId,

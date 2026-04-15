@@ -24,11 +24,10 @@ describe("ReaderSettingsPage", () => {
       updateLineHeight: vi.fn(),
       updateColumnWidth: vi.fn(),
       updateFocusMode: vi.fn(),
-      updateDefaultViewMode: vi.fn(),
     });
   });
 
-  it("renders reader settings page with theme and font controls", async () => {
+  it("renders reader settings page with theme, font, and focus controls", async () => {
     render(<ReaderSettingsPage />);
 
     expect(screen.getByRole("heading", { name: /appearance/i })).toBeInTheDocument();
@@ -37,6 +36,7 @@ describe("ReaderSettingsPage", () => {
     expect(screen.getByLabelText(/font size \(\d+px\)/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/line height \(\d+\.?\d*\)/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/column width \(\d+ ch\)/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/focus mode/i)).toBeInTheDocument();
   });
 
   it("calls updateTheme when theme select changes", async () => {
@@ -50,7 +50,7 @@ describe("ReaderSettingsPage", () => {
     });
   });
 
-  it("shows backend-supported font and view mode options only", () => {
+  it("shows backend-supported font and theme options only", () => {
     render(<ReaderSettingsPage />);
 
     const fontSelect = screen.getByLabelText(/^font$/i);
@@ -59,10 +59,10 @@ describe("ReaderSettingsPage", () => {
     ).map((opt) => opt.getAttribute("value"));
     expect(fontOptionValues).toEqual(["serif", "sans"]);
 
-    const viewSelect = screen.getByLabelText(/default view/i);
-    const viewOptionValues = Array.from(
-      viewSelect.querySelectorAll("option")
+    const themeSelect = screen.getByLabelText(/^theme$/i);
+    const themeOptionValues = Array.from(
+      themeSelect.querySelectorAll("option")
     ).map((opt) => opt.getAttribute("value"));
-    expect(viewOptionValues).toEqual(["scroll", "paged"]);
+    expect(themeOptionValues).toEqual(["light", "dark"]);
   });
 });

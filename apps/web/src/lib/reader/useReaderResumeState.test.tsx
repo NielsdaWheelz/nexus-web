@@ -1,16 +1,9 @@
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { useReaderState } from "./useReaderState";
-import type { ReaderState } from "./types";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { useReaderResumeState } from "./useReaderResumeState";
+import type { ReaderResumeState } from "./types";
 
-const READER_STATE: ReaderState = {
-  theme: "light",
-  font_family: "serif",
-  font_size_px: 16,
-  line_height: 1.5,
-  column_width_ch: 65,
-  focus_mode: false,
-  view_mode: "scroll",
+const READER_RESUME_STATE: ReaderResumeState = {
   locator_kind: "pdf_page",
   fragment_id: null,
   offset: null,
@@ -19,21 +12,25 @@ const READER_STATE: ReaderState = {
   zoom: 1.25,
 };
 
-describe("useReaderState", () => {
+describe("useReaderResumeState", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("does not patch when the next save matches the current state", async () => {
     const apiFetchImpl = async <T,>(path: string, init?: RequestInit): Promise<T> => {
       if (path === "/api/media/media-1/reader-state" && !init) {
-        return { data: READER_STATE } as T;
+        return { data: READER_RESUME_STATE } as T;
       }
       if (path === "/api/media/media-1/reader-state" && init?.method === "PATCH") {
-        return { data: READER_STATE } as T;
+        return { data: READER_RESUME_STATE } as T;
       }
       throw new Error(`Unexpected request: ${path}`);
     };
     const apiFetch = vi.fn(apiFetchImpl);
 
     const { result } = renderHook(() =>
-      useReaderState({
+      useReaderResumeState({
         mediaId: "media-1",
         apiFetch: apiFetch as typeof apiFetchImpl,
         debounceMs: 500,
@@ -41,7 +38,7 @@ describe("useReaderState", () => {
     );
 
     await waitFor(() => {
-      expect(result.current.state).toEqual(READER_STATE);
+      expect(result.current.state).toEqual(READER_RESUME_STATE);
     });
 
     vi.useFakeTimers();
@@ -64,6 +61,5 @@ describe("useReaderState", () => {
     expect(apiFetch).toHaveBeenCalledTimes(1);
     expect(apiFetch).toHaveBeenCalledWith("/api/media/media-1/reader-state");
 
-    vi.useRealTimers();
   });
 });

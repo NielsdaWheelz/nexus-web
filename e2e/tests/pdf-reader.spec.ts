@@ -328,7 +328,6 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
       data: {
-        view_mode: "scroll",
         locator_kind: "pdf_page",
         page: 1,
         zoom: 1,

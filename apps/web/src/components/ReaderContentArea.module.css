@@ -49,22 +49,6 @@
   color: var(--reader-text);
 }
 
-/* Sepia theme */
-.themeSepia {
-  --reader-bg: #f4ecd8;
-  --reader-bg-secondary: #ebe3cf;
-  --reader-surface: #dfd6c2;
-  --reader-text: #5c4b37;
-  --reader-text-secondary: #6d5a45;
-  --reader-text-muted: #8b7355;
-  --reader-border: #c4b99a;
-  --reader-border-subtle: #d4cab0;
-  --reader-accent: #8b6914;
-  --reader-accent-hover: #734f0f;
-  background-color: var(--reader-bg);
-  color: var(--reader-text);
-}
-
 /* Highlight readability across themes - override in theme scope */
 .themeDark [data-active-highlight-ids],
 .themeDark .hl-yellow { background: rgba(249, 226, 175, 0.4); }
@@ -72,10 +56,3 @@
 .themeDark .hl-blue { background: rgba(137, 180, 250, 0.35); }
 .themeDark .hl-pink { background: rgba(243, 139, 168, 0.35); }
 .themeDark .hl-purple { background: rgba(203, 166, 247, 0.35); }
-
-.themeSepia [data-active-highlight-ids],
-.themeSepia .hl-yellow { background: rgba(180, 140, 60, 0.35); }
-.themeSepia .hl-green { background: rgba(100, 140, 80, 0.3); }
-.themeSepia .hl-blue { background: rgba(80, 100, 160, 0.3); }
-.themeSepia .hl-pink { background: rgba(160, 90, 110, 0.3); }
-.themeSepia .hl-purple { background: rgba(120, 80, 140, 0.3); }

@@ -2,12 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import type {
-  ReaderFontFamily,
-  ReaderProfile,
-  ReaderTheme,
-  ReaderViewMode,
-} from "./types";
+import type { ReaderFontFamily, ReaderProfile, ReaderTheme } from "./types";
 import { DEFAULT_READER_PROFILE } from "./types";
 
 type ApiFetchFn = typeof apiFetch;
@@ -114,10 +109,6 @@ export function useReaderProfile(options: UseReaderProfileOptions = {}) {
     (focus_mode: boolean) => save({ focus_mode }),
     [save]
   );
-  const updateDefaultViewMode = useCallback(
-    (default_view_mode: ReaderViewMode) => save({ default_view_mode }),
-    [save]
-  );
 
   useEffect(() => {
     return () => {
@@ -140,6 +131,5 @@ export function useReaderProfile(options: UseReaderProfileOptions = {}) {
     updateLineHeight,
     updateColumnWidth,
     updateFocusMode,
-    updateDefaultViewMode,
   };
 }

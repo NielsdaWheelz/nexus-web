@@ -161,7 +161,6 @@ async function resetEpubReaderState(
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
       data: {
-        view_mode: "scroll",
         locator_kind: null,
         fragment_id: null,
         offset: null,
