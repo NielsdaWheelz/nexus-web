@@ -2272,6 +2272,46 @@ class UserApiKey(Base):
     user: Mapped["User"] = relationship("User")
 
 
+class ExtensionSession(Base):
+    """ExtensionSession model - opaque bearer token for browser capture."""
+
+    __tablename__ = "extension_sessions"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(token_hash) = 64", name="ck_extension_sessions_token_hash_len"
+        ),
+        UniqueConstraint("token_hash", name="uix_extension_sessions_token_hash"),
+        Index(
+            "idx_extension_sessions_user_active",
+            "user_id",
+            "created_at",
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+    user: Mapped["User"] = relationship("User")
+
+
 class IdempotencyKey(Base):
     """IdempotencyKey model - request deduplication for message sends."""
 

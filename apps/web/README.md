@@ -10,11 +10,13 @@ This app owns:
 - Next.js `/api/*` BFF proxy routes
 - Session-aware request forwarding to FastAPI
 - Stream token flow for direct SSE to FastAPI
+- Browser extension capture routes for article, PDF/EPUB, and supported video ingestion
 
 ## Request Topology
 
 - Default: Browser -> Next.js (`/api/*`) -> FastAPI.
 - Streaming: Browser -> FastAPI `/stream/*` with short-lived stream token minted via BFF.
+- Extension capture: Browser extension -> Next.js `/api/media/capture/*` -> FastAPI with scoped, revocable extension auth.
 
 BFF routes are transport-only. Business logic lives in FastAPI services.
 
@@ -46,6 +48,7 @@ Primary variables for this app:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `AUTH_ALLOWED_REDIRECT_ORIGINS`
+- `NEXUS_EXTENSION_REDIRECT_ORIGINS`
 - `NEXUS_INTERNAL_SECRET` (required outside local/test)
 - `NEXT_PUBLIC_ENABLE_STREAMING` (optional)
 
@@ -64,6 +67,8 @@ Full variable definitions live in root `.env.example`.
 
 - Browser does not hold access tokens in `localStorage`/`sessionStorage`.
 - Route handlers should stay thin and delegate to backend endpoints.
+- Extension capture must use a scoped, revocable token and must not reuse the standard app session cookie flow.
+- Extension BFF routes must stay transport-only; article parsing, file validation, URL classification, and lifecycle dispatch belong to FastAPI.
 - Only `HtmlRenderer` may use `dangerouslySetInnerHTML`.
 
 Repository-wide rule owners:

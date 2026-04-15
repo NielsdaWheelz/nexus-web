@@ -29,11 +29,20 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
 from nexus.config import get_settings
-from nexus.db.models import Media, MediaFile, MediaKind, PodcastListeningState, ProcessingStatus
+from nexus.db.models import (
+    Fragment,
+    Media,
+    MediaAuthor,
+    MediaFile,
+    MediaKind,
+    PodcastListeningState,
+    ProcessingStatus,
+)
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.media import (
+    ArticleCaptureResponse,
     FragmentOut,
     FromUrlResponse,
     ListeningStateBatchUpsertRequest,
@@ -43,9 +52,11 @@ from nexus.schemas.media import (
     MediaOut,
     PodcastEpisodeChapterOut,
 )
+from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
+from nexus.services.sanitize_html import sanitize_html
 from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
@@ -62,6 +73,7 @@ _REMOTE_FILE_CHUNK_BYTES = 1024 * 1024
 _REMOTE_FILE_REDIRECT_LIMIT = 3
 _REMOTE_FILE_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 _REMOTE_FILE_USER_AGENT = "Nexus Media Ingestion/1.0"
+_CAPTURED_ARTICLE_HTML_MAX_BYTES = 2 * 1024 * 1024
 
 _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "m.id",
@@ -944,6 +956,222 @@ def _create_file_media_from_remote_url(
         request_id=request_id,
     )
 
+    return FromUrlResponse(
+        media_id=UUID(result["media_id"]),
+        idempotency_outcome="reused" if result["duplicate"] else "created",
+        processing_status=str(result["processing_status"]),
+        ingest_enqueued=bool(result["ingest_enqueued"]),
+    )
+
+
+def create_captured_web_article(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    url: str,
+    content_html: str,
+    title: str | None = None,
+    byline: str | None = None,
+    excerpt: str | None = None,
+    site_name: str | None = None,
+    published_time: str | None = None,
+) -> ArticleCaptureResponse:
+    """Persist a browser-rendered article capture as readable media."""
+    from nexus.services.upload import _ensure_in_default_library
+
+    validate_requested_url(url)
+
+    if len(content_html.encode("utf-8")) > _CAPTURED_ARTICLE_HTML_MAX_BYTES:
+        raise InvalidRequestError(
+            ApiErrorCode.E_CAPTURE_TOO_LARGE,
+            "Captured article HTML is too large",
+        )
+
+    try:
+        html_sanitized = sanitize_html(content_html, url)
+        canonical_text = generate_canonical_text(html_sanitized)
+    except Exception as exc:
+        raise ApiError(
+            ApiErrorCode.E_SANITIZATION_FAILED,
+            "Captured article could not be sanitized",
+        ) from exc
+
+    if not canonical_text.strip():
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Captured article has no readable text",
+        )
+
+    now = datetime.now(UTC)
+    media = Media(
+        kind=MediaKind.web_article.value,
+        title=(title or url).strip()[:255] or "Untitled",
+        requested_url=url,
+        canonical_url=None,
+        canonical_source_url=normalize_url_for_display(url),
+        processing_status=ProcessingStatus.ready_for_reading,
+        processing_completed_at=now,
+        created_by_user_id=viewer_id,
+        created_at=now,
+        updated_at=now,
+        description=excerpt.strip()[:2000] if excerpt and excerpt.strip() else None,
+        publisher=site_name.strip()[:255] if site_name and site_name.strip() else None,
+        published_date=published_time.strip()[:64]
+        if published_time and published_time.strip()
+        else None,
+    )
+
+    try:
+        db.add(media)
+        db.flush()
+        db.add(
+            Fragment(
+                media_id=media.id,
+                idx=0,
+                html_sanitized=html_sanitized,
+                canonical_text=canonical_text,
+            )
+        )
+
+        if byline and byline.strip():
+            clean_byline = re.sub(r"^by\s+", "", byline.strip(), flags=re.IGNORECASE)
+            for sort_order, name in enumerate(
+                re.split(r"\s*[,;]\s*|\s+and\s+", clean_byline, flags=re.IGNORECASE)
+            ):
+                if name.strip():
+                    db.add(
+                        MediaAuthor(
+                            media_id=media.id,
+                            name=name.strip()[:255],
+                            role="author",
+                            sort_order=sort_order,
+                        )
+                    )
+
+        _ensure_in_default_library(db, viewer_id, media.id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return ArticleCaptureResponse(
+        media_id=media.id,
+        processing_status=ProcessingStatus.ready_for_reading.value,
+    )
+
+
+def create_captured_file(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    payload: bytes,
+    filename: str,
+    content_type: str,
+    source_url: str | None = None,
+    request_id: str | None = None,
+) -> FromUrlResponse:
+    """Persist a browser-fetched PDF/EPUB and run the existing file ingest lifecycle."""
+    from nexus.services.epub_lifecycle import confirm_ingest_for_viewer
+    from nexus.services.upload import (
+        _ensure_in_default_library,
+        _validate_magic_bytes,
+        _validate_upload_request,
+    )
+
+    cleaned_filename = (filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
+    normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
+    lower_filename = cleaned_filename.lower()
+
+    if normalized_content_type == "application/pdf":
+        kind = MediaKind.pdf.value
+    elif normalized_content_type == "application/epub+zip":
+        kind = MediaKind.epub.value
+    elif lower_filename.endswith(".pdf"):
+        kind = MediaKind.pdf.value
+        normalized_content_type = "application/pdf"
+    elif lower_filename.endswith(".epub"):
+        kind = MediaKind.epub.value
+        normalized_content_type = "application/epub+zip"
+    else:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_CONTENT_TYPE,
+            "Captured files must be PDF or EPUB.",
+        )
+
+    if not payload:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Captured file is empty.")
+
+    _validate_upload_request(kind, normalized_content_type, len(payload))
+    if not _validate_magic_bytes(payload, kind):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_FILE_TYPE,
+            f"Captured file is not a valid {kind.upper()}.",
+        )
+
+    clean_source_url = source_url.strip() if source_url and source_url.strip() else None
+    if clean_source_url is not None:
+        validate_requested_url(clean_source_url)
+
+    media_id = uuid4()
+    storage_path = build_storage_path(media_id, get_file_extension(kind))
+    storage_client = get_storage_client()
+    try:
+        storage_client.put_object(storage_path, payload, normalized_content_type)
+    except StorageError as exc:
+        raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Failed to store captured file.") from exc
+
+    title = cleaned_filename
+    if not title and clean_source_url is not None:
+        title = _remote_file_name(clean_source_url, kind)
+    if not title:
+        title = f"capture.{get_file_extension(kind)}"
+
+    now = datetime.now(UTC)
+    media = Media(
+        id=media_id,
+        kind=kind,
+        title=title[:255],
+        requested_url=clean_source_url,
+        canonical_source_url=(
+            normalize_url_for_display(clean_source_url) if clean_source_url is not None else None
+        ),
+        processing_status=ProcessingStatus.pending,
+        created_by_user_id=viewer_id,
+        created_at=now,
+        updated_at=now,
+    )
+    media_file = MediaFile(
+        media_id=media_id,
+        storage_path=storage_path,
+        content_type=normalized_content_type,
+        size_bytes=len(payload),
+    )
+
+    try:
+        db.add(media)
+        db.add(media_file)
+        db.flush()
+        _ensure_in_default_library(db, viewer_id, media_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            storage_client.delete_object(storage_path)
+        except Exception as cleanup_error:
+            logger.warning(
+                "captured_file_cleanup_failed media_id=%s storage_path=%s error=%s",
+                media_id,
+                storage_path,
+                cleanup_error,
+            )
+        raise
+
+    result = confirm_ingest_for_viewer(
+        db=db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        request_id=request_id,
+    )
     return FromUrlResponse(
         media_id=UUID(result["media_id"]),
         idempotency_outcome="reused" if result["duplicate"] else "created",

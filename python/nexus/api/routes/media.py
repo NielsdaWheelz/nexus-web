@@ -16,9 +16,11 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
+from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.media import (
+    ArticleCaptureRequest,
     FromUrlRequest,
     ListeningStateBatchUpsertRequest,
     ListeningStateUpsertRequest,
@@ -161,6 +163,60 @@ def create_from_url(
         viewer_id=viewer.user_id,
         url=request_body.url,
         request_id=request_id,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.post("/media/capture/article", status_code=201)
+def create_captured_article(
+    request_body: ArticleCaptureRequest,
+    viewer: Annotated[Viewer, Depends(get_extension_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = media_service.create_captured_web_article(
+        db=db,
+        viewer_id=viewer.user_id,
+        url=request_body.url,
+        title=request_body.title,
+        byline=request_body.byline,
+        excerpt=request_body.excerpt,
+        site_name=request_body.site_name,
+        published_time=request_body.published_time,
+        content_html=request_body.content_html,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.post("/media/capture/file", status_code=202)
+async def create_captured_file(
+    request: Request,
+    viewer: Annotated[Viewer, Depends(get_extension_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = media_service.create_captured_file(
+        db=db,
+        viewer_id=viewer.user_id,
+        payload=await request.body(),
+        filename=request.headers.get("x-nexus-filename") or "",
+        content_type=request.headers.get("content-type") or "",
+        source_url=request.headers.get("x-nexus-source-url"),
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.post("/media/capture/url", status_code=202)
+def create_captured_url(
+    request_body: FromUrlRequest,
+    viewer: Annotated[Viewer, Depends(get_extension_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+) -> dict:
+    result = media_service.enqueue_media_from_url(
+        db=db,
+        viewer_id=viewer.user_id,
+        url=request_body.url,
+        request_id=getattr(request.state, "request_id", None),
     )
     return success_response(result.model_dump(mode="json"))
 

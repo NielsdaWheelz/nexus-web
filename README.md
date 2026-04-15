@@ -67,6 +67,7 @@ make verify
 ## Repository Map
 
 - `apps/web/` -> frontend + BFF: see `apps/web/README.md`
+- `apps/extension/` -> browser extension for article, PDF/EPUB, and supported video capture
 - `python/` -> backend package + tests: see `python/README.md`
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`

@@ -11,6 +11,7 @@ Shared Python package for the API server and worker runtime.
 - Auth verification and authorization predicates
 - Database models and migrations integration
 - Background job handlers used by the worker
+- Browser extension ingestion services for captured article HTML, browser-fetched PDF/EPUB files, and supported video URLs
 
 ## Local Run
 
@@ -63,6 +64,10 @@ make verify
 - JWT verification is based on Supabase JWKS.
 - Request tracing uses `X-Request-ID` across BFF, API, and worker logs.
 - Job kind/retry/lease policy source of truth is `nexus/jobs/registry.py`.
+- Captured web articles become `ready_for_reading` in the request path, with `canonical_url` left null for private captures.
+- Browser-fetched PDF/EPUB captures reuse the existing upload confirm and document extraction lifecycle.
+- Extension URL captures reuse existing URL classification and supported video ingestion.
+- Extension auth is scoped and revocable, and it resolves server-side like other authority tokens.
 
 ## Environment
 

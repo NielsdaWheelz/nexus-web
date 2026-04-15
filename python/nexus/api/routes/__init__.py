@@ -8,6 +8,7 @@ variables to be configured upfront.
 from fastapi import APIRouter
 
 from nexus.api.routes.conversations import router as conversations_router
+from nexus.api.routes.extension_sessions import router as extension_sessions_router
 from nexus.api.routes.health import router as health_router
 from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.internal_ingest import router as internal_ingest_router
@@ -37,6 +38,7 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router = APIRouter()
     api_router.include_router(health_router, tags=["health"])
     api_router.include_router(me_router, tags=["user"])
+    api_router.include_router(extension_sessions_router, tags=["auth"])
     api_router.include_router(libraries_router, tags=["libraries"])
     api_router.include_router(media_router, tags=["media"])
     api_router.include_router(highlights_router, tags=["highlights"])

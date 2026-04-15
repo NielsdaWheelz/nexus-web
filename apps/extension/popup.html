@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nexus Capture</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <label for="base-url">Nexus base URL</label>
+      <input id="base-url" type="url" autocomplete="off" spellcheck="false" />
+
+      <div class="actions">
+        <button id="connect" type="button" class="secondary">Connect</button>
+        <button id="capture" type="button">Capture current tab</button>
+      </div>
+
+      <button id="forget" type="button" class="ghost">Forget token</button>
+      <div id="status" class="status" aria-live="polite"></div>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

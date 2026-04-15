@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Nexus Capture",
+  "version": "0.1.0",
+  "description": "Save articles, PDF/EPUB files, and supported videos to Nexus.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Nexus Capture"
+  },
+  "permissions": ["activeTab", "identity", "scripting", "storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "capture@nexus.local"
+    }
+  }
+}

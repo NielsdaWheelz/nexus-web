@@ -29,6 +29,12 @@ INTERNAL_HEADER = "x-nexus-internal"
 
 # Paths that don't require authentication
 PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
+EXTENSION_AUTH_PATHS = {
+    "/auth/extension-sessions/current",
+    "/media/capture/article",
+    "/media/capture/file",
+    "/media/capture/url",
+}
 
 
 @dataclass
@@ -138,6 +144,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             error_response_obj = self._verify_internal_header(request)
             if error_response_obj:
                 return error_response_obj
+
+        if request.url.path in EXTENSION_AUTH_PATHS:
+            return await call_next(request)
 
         # Step 2: Extract bearer token
         token, error_response_obj = self._extract_bearer_token(request)

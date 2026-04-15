@@ -155,6 +155,25 @@ class IngestResponse(BaseModel):
     ingest_enqueued: bool = False
 
 
+class ArticleCaptureRequest(BaseModel):
+    """Request schema for browser-captured web articles."""
+
+    url: str = Field(min_length=1, max_length=2048)
+    content_html: str = Field(min_length=1)
+    title: str | None = Field(default=None, max_length=1024)
+    byline: str | None = Field(default=None, max_length=1024)
+    excerpt: str | None = Field(default=None, max_length=4000)
+    site_name: str | None = Field(default=None, max_length=1024)
+    published_time: str | None = Field(default=None, max_length=128)
+
+
+class ArticleCaptureResponse(BaseModel):
+    """Response schema for browser-captured web articles."""
+
+    media_id: UUID
+    processing_status: str
+
+
 class RetryResponse(BaseModel):
     """Response schema for POST /media/{id}/retry."""
 

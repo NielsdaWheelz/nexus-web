@@ -56,6 +56,16 @@ flow:
 
 this keeps resume robust when typography changes.
 
+### browser extension ingestion
+
+- extension-captured web articles enter `ready_for_reading` immediately
+- the server still sanitizes captured article HTML and generates canonical text before persist
+- captured private article pages keep `canonical_url: null`
+- captured private article pages do not use global canonical-url dedupe
+- browser-fetched PDF/EPUB files reuse the existing upload confirm, dedupe, and extraction lifecycle
+- extension URL capture reuses existing URL classification, including supported video ingestion
+- extension auth is scoped, revocable, and only covers capture
+
 ## regression coverage
 
 required e2e coverage includes:
