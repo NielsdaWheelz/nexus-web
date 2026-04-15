@@ -63,6 +63,7 @@ this keeps resume robust when typography changes.
 - captured private article pages keep `canonical_url: null`
 - captured private article pages do not use global canonical-url dedupe
 - browser-fetched PDF/EPUB files reuse the existing upload confirm, dedupe, and extraction lifecycle
+- pasted public X/Twitter post URLs use official oEmbed HTML and enter `ready_for_reading` immediately as single-post web articles
 - extension URL capture reuses existing URL classification, including supported video ingestion
 - extension auth is scoped, revocable, and only covers capture
 

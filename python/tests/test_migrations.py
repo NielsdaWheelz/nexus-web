@@ -471,6 +471,80 @@ class TestS1SchemaConstraints:
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
 
+    def test_x_provider_identity_uniqueness(self, migrated_engine):
+        """Partial unique index enforces one media row per X post ID."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, processing_status, created_by_user_id,
+                        provider, provider_id
+                    )
+                    VALUES (
+                        :id, 'web_article', 'First X Post', 'ready_for_reading', :user_id,
+                        'x', '1234567890'
+                    )
+                """),
+                {"id": uuid4(), "user_id": user_id},
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO media (
+                            id, kind, title, processing_status, created_by_user_id,
+                            provider, provider_id
+                        )
+                        VALUES (
+                            :id, 'web_article', 'Second X Post', 'ready_for_reading', :user_id,
+                            'x', '1234567890'
+                        )
+                    """),
+                    {"id": uuid4(), "user_id": user_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "uix_media_x_provider_id" in str(exc_info.value)
+
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, processing_status, created_by_user_id,
+                        provider, provider_id
+                    )
+                    VALUES (
+                        :id, 'video', 'YouTube Fixture', 'ready_for_reading', :user_id,
+                        'youtube', '1234567890'
+                    )
+                """),
+                {"id": uuid4(), "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, processing_status, created_by_user_id,
+                        provider, provider_id
+                    )
+                    VALUES (
+                        :id, 'video', 'Second YouTube Fixture', 'ready_for_reading', :user_id,
+                        'youtube', '1234567890'
+                    )
+                """),
+                {"id": uuid4(), "user_id": user_id},
+            )
+            session.commit()
+
+            session.execute(
+                text("DELETE FROM media WHERE created_by_user_id = :user_id"), {"user_id": user_id}
+            )
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
     def test_file_sha256_uniqueness_per_user(self, migrated_engine):
         """Partial unique index on (user, kind, sha256) enforced for pdf/epub."""
         with Session(migrated_engine) as session:

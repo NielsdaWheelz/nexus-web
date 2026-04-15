@@ -128,6 +128,40 @@ def _expect_remote_redirect(remote_http, url: str, target_url: str, *, status: i
     remote_http.get(url).mock(return_value=httpx.Response(status, headers={"Location": target_url}))
 
 
+def _expect_x_oembed(remote_http, post_id: str, *, status: int = 200):
+    url = str(
+        httpx.URL(
+            "https://publish.x.com/oembed",
+            params={
+                "url": f"https://x.com/i/status/{post_id}",
+                "omit_script": "1",
+                "dnt": "1",
+                "hide_thread": "1",
+            },
+        )
+    )
+    return remote_http.get(url).mock(
+        return_value=httpx.Response(
+            status,
+            json={
+                "type": "rich",
+                "version": "1.0",
+                "provider_name": "X",
+                "author_name": "Ada Lovelace",
+                "author_url": "https://x.com/ada",
+                "html": (
+                    "<blockquote class='twitter-tweet'>"
+                    "<p>Hello from X.</p>"
+                    "<script>bad()</script>"
+                    f"<a href='https://x.com/ada/status/{post_id}'>April 15, 2026</a>"
+                    "</blockquote>"
+                ),
+                "url": f"https://x.com/ada/status/{post_id}",
+            },
+        )
+    )
+
+
 def _install_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
     """Force background_jobs inserts to fail until teardown is called."""
     with direct_db.session() as session:
@@ -850,6 +884,189 @@ class TestFromUrlSuccess:
         assert job_count == 0, (
             f"Expected no ingest_youtube_video job rows for failed request, but found {job_count}."
         )
+
+
+class TestFromUrlXPost:
+    """Tests for official oEmbed-backed X post ingestion."""
+
+    def test_x_post_url_creates_ready_web_article(
+        self, auth_client, direct_db: DirectSessionManager, remote_http
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _expect_x_oembed(remote_http, "1234567890")
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://x.com/ada/status/1234567890?s=20"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 202
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media_authors", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        assert data["idempotency_outcome"] == "created"
+        assert data["processing_status"] == "ready_for_reading"
+        assert data["ingest_enqueued"] is False
+
+        with direct_db.session() as session:
+            media = session.execute(
+                text("""
+                    SELECT kind, title, requested_url, canonical_url, canonical_source_url,
+                           provider, provider_id, processing_status, publisher, description
+                    FROM media
+                    WHERE id = :media_id
+                """),
+                {"media_id": media_id},
+            ).fetchone()
+            fragment = session.execute(
+                text("""
+                    SELECT f.html_sanitized, f.canonical_text, COUNT(fb.id)
+                    FROM fragments f
+                    LEFT JOIN fragment_blocks fb ON fb.fragment_id = f.id
+                    WHERE f.media_id = :media_id
+                    GROUP BY f.id
+                """),
+                {"media_id": media_id},
+            ).fetchone()
+            job_count = session.execute(
+                text("""
+                    SELECT COUNT(*)
+                    FROM background_jobs
+                    WHERE payload->>'media_id' = :media_id
+                """),
+                {"media_id": str(media_id)},
+            ).scalar_one()
+
+        assert media is not None
+        assert media[0] == "web_article"
+        assert media[1] == "X post by Ada Lovelace"
+        assert media[2] == "https://x.com/ada/status/1234567890?s=20"
+        assert media[3] == "https://x.com/i/status/1234567890"
+        assert media[4] == "https://x.com/i/status/1234567890"
+        assert media[5] == "x"
+        assert media[6] == "1234567890"
+        assert media[7] == "ready_for_reading"
+        assert media[8] == "X"
+        assert "Hello from X." in media[9]
+        assert fragment is not None
+        assert "<script" not in fragment[0]
+        assert "Hello from X." in fragment[1]
+        assert fragment[2] >= 1
+        assert job_count == 0
+
+    def test_x_post_reuse_is_global_across_users(
+        self, auth_client, direct_db: DirectSessionManager, remote_http
+    ):
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+        default_library_a = UUID(
+            auth_client.get("/me", headers=auth_headers(user_a)).json()["data"][
+                "default_library_id"
+            ]
+        )
+        default_library_b = UUID(
+            auth_client.get("/me", headers=auth_headers(user_b)).json()["data"][
+                "default_library_id"
+            ]
+        )
+        route = _expect_x_oembed(remote_http, "2222222222")
+
+        first_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://x.com/ada/status/2222222222"},
+            headers=auth_headers(user_a),
+        )
+        assert first_response.status_code == 202
+        first_data = first_response.json()["data"]
+        media_id = UUID(first_data["media_id"])
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media_authors", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        second_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://mobile.twitter.com/ada/statuses/2222222222?ref=copy"},
+            headers=auth_headers(user_b),
+        )
+        assert second_response.status_code == 202
+        second_data = second_response.json()["data"]
+
+        assert first_data["idempotency_outcome"] == "created"
+        assert second_data["idempotency_outcome"] == "reused"
+        assert UUID(second_data["media_id"]) == media_id
+        assert route.call_count == 1
+
+        with direct_db.session() as session:
+            attachments = session.execute(
+                text("""
+                    SELECT library_id
+                    FROM library_media
+                    WHERE media_id = :media_id
+                """),
+                {"media_id": media_id},
+            ).fetchall()
+
+        attached_library_ids = {row[0] for row in attachments}
+        assert default_library_a in attached_library_ids
+        assert default_library_b in attached_library_ids
+
+    def test_x_oembed_failure_does_not_fall_back_to_generic_article(
+        self, auth_client, direct_db: DirectSessionManager, remote_http
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _expect_x_oembed(remote_http, "3333333333", status=404)
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://x.com/ada/status/3333333333"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 502
+        assert response.json()["error"]["code"] == "E_INGEST_FAILED"
+
+        with direct_db.session() as session:
+            media_count = session.execute(
+                text("""
+                    SELECT COUNT(*)
+                    FROM media
+                    WHERE provider_id = '3333333333'
+                       OR requested_url = 'https://x.com/ada/status/3333333333'
+                """)
+            ).scalar_one()
+            job_count = session.execute(
+                text("""
+                    SELECT COUNT(*)
+                    FROM background_jobs
+                    WHERE kind = 'ingest_web_article'
+                      AND payload->>'actor_user_id' = :user_id
+                """),
+                {"user_id": str(user_id)},
+            ).scalar_one()
+
+        assert media_count == 0
+        assert job_count == 0
+
+    def test_x_url_without_post_id_is_rejected(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://x.com/home"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
 
 class TestFromUrlRemoteFiles:

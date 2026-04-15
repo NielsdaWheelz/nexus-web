@@ -371,6 +371,13 @@ class Media(Base):
             "page_count IS NULL OR page_count >= 1",
             name="ck_media_page_count_positive",
         ),
+        Index(
+            "uix_media_x_provider_id",
+            "provider",
+            "provider_id",
+            unique=True,
+            postgresql_where=text("provider = 'x' AND provider_id IS NOT NULL"),
+        ),
     )
 
     # Relationships

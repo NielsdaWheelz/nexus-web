@@ -54,11 +54,13 @@ from nexus.schemas.media import (
 )
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.capabilities import derive_capabilities
+from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.sanitize_html import sanitize_html
 from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
+from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
 from nexus.storage import build_storage_path, get_file_extension, get_storage_client
 from nexus.storage.client import StorageError
@@ -74,6 +76,7 @@ _REMOTE_FILE_REDIRECT_LIMIT = 3
 _REMOTE_FILE_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 _REMOTE_FILE_USER_AGENT = "Nexus Media Ingestion/1.0"
 _CAPTURED_ARTICLE_HTML_MAX_BYTES = 2 * 1024 * 1024
+_X_OEMBED_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "m.id",
@@ -1294,6 +1297,19 @@ def enqueue_media_from_url(
             "YouTube URL must include a valid video ID",
         )
 
+    x_identity = classify_x_url(url)
+    if x_identity is not None:
+        return create_or_reuse_x_oembed_article(
+            db=db,
+            viewer_id=viewer_id,
+            url=url,
+        )
+    if is_x_url(url):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "X URL must include a valid post ID",
+        )
+
     remote_file_kind = _remote_file_kind_from_url(url)
     if remote_file_kind is not None:
         return _create_file_media_from_remote_url(
@@ -1310,6 +1326,159 @@ def enqueue_media_from_url(
         url,
         enqueue_task=True,
         request_id=request_id,
+    )
+
+
+def create_or_reuse_x_oembed_article(
+    db: Session,
+    viewer_id: UUID,
+    url: str,
+) -> FromUrlResponse:
+    """Create-or-reuse a public X post from official oEmbed HTML."""
+    from nexus.services.upload import _ensure_in_default_library
+
+    validate_requested_url(url)
+    identity = classify_x_url(url)
+    if identity is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "URL is not a supported X post URL",
+        )
+
+    media = (
+        db.query(Media)
+        .filter(Media.provider == identity.provider, Media.provider_id == identity.provider_id)
+        .limit(1)
+        .one_or_none()
+    )
+    if media is not None:
+        _ensure_in_default_library(db, viewer_id, media.id)
+        db.commit()
+        processing_status = (
+            media.processing_status.value
+            if hasattr(media.processing_status, "value")
+            else str(media.processing_status)
+        )
+        return FromUrlResponse(
+            media_id=media.id,
+            idempotency_outcome="reused",
+            processing_status=processing_status,
+            ingest_enqueued=False,
+        )
+
+    try:
+        with httpx.Client(timeout=_X_OEMBED_TIMEOUT, trust_env=False) as client:
+            response = client.get(
+                "https://publish.x.com/oembed",
+                params={
+                    "url": identity.canonical_url,
+                    "omit_script": "1",
+                    "dnt": "1",
+                    "hide_thread": "1",
+                },
+                headers={"User-Agent": "Nexus Media Ingestion/1.0"},
+            )
+    except httpx.TimeoutException as exc:
+        raise ApiError(ApiErrorCode.E_INGEST_TIMEOUT, "X oEmbed fetch timed out.") from exc
+    except httpx.RequestError as exc:
+        raise ApiError(ApiErrorCode.E_INGEST_FAILED, "Failed to fetch X oEmbed.") from exc
+
+    if response.status_code < 200 or response.status_code >= 300:
+        raise ApiError(
+            ApiErrorCode.E_INGEST_FAILED,
+            f"X oEmbed returned status {response.status_code}.",
+        )
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise ApiError(ApiErrorCode.E_INGEST_FAILED, "X oEmbed returned invalid JSON.") from exc
+
+    content_html = data.get("html")
+    if not isinstance(content_html, str) or not content_html.strip():
+        raise ApiError(ApiErrorCode.E_INGEST_FAILED, "X oEmbed returned no readable HTML.")
+    if len(content_html.encode("utf-8")) > _CAPTURED_ARTICLE_HTML_MAX_BYTES:
+        raise InvalidRequestError(ApiErrorCode.E_CAPTURE_TOO_LARGE, "X oEmbed HTML is too large")
+
+    try:
+        html_sanitized = sanitize_html(content_html, identity.canonical_url)
+        canonical_text = generate_canonical_text(html_sanitized)
+    except Exception as exc:
+        raise ApiError(ApiErrorCode.E_SANITIZATION_FAILED, "X post could not be sanitized") from exc
+
+    if not canonical_text.strip():
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "X post has no readable text")
+
+    author_name = data.get("author_name")
+    author_name = author_name.strip() if isinstance(author_name, str) else ""
+    provider_name = data.get("provider_name")
+    provider_name = provider_name.strip() if isinstance(provider_name, str) else "X"
+    now = datetime.now(UTC)
+    media = Media(
+        kind=MediaKind.web_article.value,
+        title=f"X post by {author_name}" if author_name else f"X post {identity.provider_id}",
+        requested_url=url,
+        canonical_url=identity.canonical_url,
+        canonical_source_url=identity.canonical_url,
+        provider=identity.provider,
+        provider_id=identity.provider_id,
+        processing_status=ProcessingStatus.ready_for_reading,
+        processing_completed_at=now,
+        created_by_user_id=viewer_id,
+        created_at=now,
+        updated_at=now,
+        publisher=provider_name or "X",
+        description=canonical_text[:2000],
+    )
+
+    created = False
+    try:
+        db.add(media)
+        db.flush()
+        created = True
+
+        fragment = Fragment(
+            media_id=media.id,
+            idx=0,
+            html_sanitized=html_sanitized,
+            canonical_text=canonical_text,
+            created_at=now,
+        )
+        db.add(fragment)
+        db.flush()
+        insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(canonical_text))
+
+        if author_name:
+            db.add(
+                MediaAuthor(media_id=media.id, name=author_name[:255], role="author", sort_order=0)
+            )
+
+        _ensure_in_default_library(db, viewer_id, media.id)
+        db.commit()
+    except IntegrityError as exc:
+        if not _is_media_provider_conflict(exc):
+            db.rollback()
+            raise
+        db.rollback()
+        media = (
+            db.query(Media)
+            .filter(Media.provider == identity.provider, Media.provider_id == identity.provider_id)
+            .limit(1)
+            .one_or_none()
+        )
+        if media is None:
+            raise ApiError(ApiErrorCode.E_INTERNAL, "Unable to resolve canonical X post") from exc
+        _ensure_in_default_library(db, viewer_id, media.id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return FromUrlResponse(
+        media_id=media.id,
+        idempotency_outcome="created" if created else "reused",
+        processing_status=ProcessingStatus.ready_for_reading.value,
+        ingest_enqueued=False,
     )
 
 
@@ -1516,6 +1685,15 @@ def _is_media_canonical_url_conflict(exc: IntegrityError) -> bool:
     if constraint_name:
         return constraint_name == "uix_media_canonical_url"
     return "uix_media_canonical_url" in str(exc)
+
+
+def _is_media_provider_conflict(exc: IntegrityError) -> bool:
+    """Return True when IntegrityError is media provider uniqueness conflict."""
+    orig = getattr(exc, "orig", None)
+    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    if constraint_name:
+        return constraint_name == "uix_media_x_provider_id"
+    return "uix_media_x_provider_id" in str(exc)
 
 
 def list_fragments_for_viewer(

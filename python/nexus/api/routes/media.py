@@ -144,6 +144,7 @@ def create_from_url(
 
     Kind classification happens in the service layer:
     - YouTube URLs -> canonical `video` identity with create-or-reuse semantics
+    - X/Twitter post URLs -> canonical `web_article` from official oEmbed
     - PDF/EPUB URLs -> file-backed `pdf`/`epub` media
     - Other URLs -> provisional `web_article`
 
