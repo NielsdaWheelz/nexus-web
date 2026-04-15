@@ -97,10 +97,6 @@
   gap: var(--space-6);
 }
 
-.fragment {
-  /* Fragment styling inherits from HtmlRenderer */
-}
-
 .transcriptPane {
   display: flex;
   flex-direction: column;
@@ -409,12 +405,6 @@
 
 .inlineChapterTimestamp {
   font-size: var(--font-size-xs);
-}
-
-.transcriptActiveFragment {
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  padding: var(--space-3);
 }
 
 /* =============================================================================

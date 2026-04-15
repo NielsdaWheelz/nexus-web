@@ -237,51 +237,135 @@ export default function useMediaViewState(id: string) {
     media?.processing_status === "failed" &&
     media?.last_error_code === "E_TRANSCRIPT_UNAVAILABLE" &&
     canPlay;
-  const isReflowableReader = canRead && !isPdf && !isTranscriptMedia;
+  const isReflowableReader = canRead && !isPdf;
 
   const activeTranscriptFragment = useMemo(() => {
     if (!isTranscriptMedia || fragments.length === 0) {
       return null;
     }
-    return (
-      fragments.find((fragment) => fragment.id === activeTranscriptFragmentId) ??
-      fragments[0]
-    );
-  }, [activeTranscriptFragmentId, fragments, isTranscriptMedia]);
-
-  useEffect(() => {
-    if (!isTranscriptMedia || !requestedFragmentId || fragments.length === 0) {
-      return;
+    if (activeTranscriptFragmentId) {
+      const selectedFragment = fragments.find(
+        (fragment) => fragment.id === activeTranscriptFragmentId
+      );
+      if (selectedFragment) {
+        return selectedFragment;
+      }
     }
-    const target = fragments.find((fragment) => fragment.id === requestedFragmentId);
-    if (!target) {
-      return;
+    if (requestedFragmentId) {
+      const requestedFragment = fragments.find(
+        (fragment) => fragment.id === requestedFragmentId
+      );
+      if (requestedFragment) {
+        return requestedFragment;
+      }
     }
-    if (activeTranscriptFragmentId !== target.id) {
-      setActiveTranscriptFragmentId(target.id);
-    }
-  }, [isTranscriptMedia, requestedFragmentId, fragments, activeTranscriptFragmentId]);
-
-  useEffect(() => {
-    if (!isTranscriptMedia || requestedStartMs == null || fragments.length === 0) {
-      return;
-    }
-
-    const containing = fragments.find((fragment) => {
-      if (fragment.t_start_ms == null || fragment.t_end_ms == null) return false;
-      return requestedStartMs >= fragment.t_start_ms && requestedStartMs <= fragment.t_end_ms;
-    });
-    const nearest =
-      containing ??
-      [...fragments].sort((lhs, rhs) => {
+    if (requestedStartMs != null) {
+      const containing = fragments.find((fragment) => {
+        if (fragment.t_start_ms == null || fragment.t_end_ms == null) {
+          return false;
+        }
+        return requestedStartMs >= fragment.t_start_ms && requestedStartMs <= fragment.t_end_ms;
+      });
+      if (containing) {
+        return containing;
+      }
+      const nearest = [...fragments].sort((lhs, rhs) => {
         const lhsStart = lhs.t_start_ms ?? Number.MAX_SAFE_INTEGER;
         const rhsStart = rhs.t_start_ms ?? Number.MAX_SAFE_INTEGER;
         return Math.abs(lhsStart - requestedStartMs) - Math.abs(rhsStart - requestedStartMs);
       })[0];
-    if (nearest && activeTranscriptFragmentId !== nearest.id) {
-      setActiveTranscriptFragmentId(nearest.id);
+      if (nearest) {
+        return nearest;
+      }
     }
-  }, [isTranscriptMedia, requestedStartMs, fragments, activeTranscriptFragmentId]);
+    if (
+      activeTranscriptFragmentId === null &&
+      !requestedFragmentId &&
+      requestedStartMs == null &&
+      readerResumeStateLoading
+    ) {
+      return null;
+    }
+    if (
+      readerResumeState?.locator_kind === "fragment_offset" &&
+      readerResumeState.fragment_id
+    ) {
+      const resumedFragment = fragments.find(
+        (fragment) => fragment.id === readerResumeState.fragment_id
+      );
+      if (resumedFragment) {
+        return resumedFragment;
+      }
+    }
+    return fragments[0];
+  }, [
+    activeTranscriptFragmentId,
+    fragments,
+    isTranscriptMedia,
+    readerResumeState?.fragment_id,
+    readerResumeState?.locator_kind,
+    readerResumeStateLoading,
+    requestedFragmentId,
+    requestedStartMs,
+  ]);
+
+  useEffect(() => {
+    if (!isTranscriptMedia || fragments.length === 0) {
+      return;
+    }
+
+    if (!requestedFragmentId && requestedStartMs == null && readerResumeStateLoading) {
+      return;
+    }
+
+    let nextFragment: Fragment | null = null;
+
+    if (requestedFragmentId) {
+      nextFragment = fragments.find((fragment) => fragment.id === requestedFragmentId) ?? null;
+    }
+
+    if (!nextFragment && requestedStartMs != null) {
+      const containing = fragments.find((fragment) => {
+        if (fragment.t_start_ms == null || fragment.t_end_ms == null) {
+          return false;
+        }
+        return requestedStartMs >= fragment.t_start_ms && requestedStartMs <= fragment.t_end_ms;
+      });
+      nextFragment =
+        containing ??
+        [...fragments].sort((lhs, rhs) => {
+          const lhsStart = lhs.t_start_ms ?? Number.MAX_SAFE_INTEGER;
+          const rhsStart = rhs.t_start_ms ?? Number.MAX_SAFE_INTEGER;
+          return Math.abs(lhsStart - requestedStartMs) - Math.abs(rhsStart - requestedStartMs);
+        })[0] ??
+        null;
+    }
+
+    if (
+      !nextFragment &&
+      readerResumeState?.locator_kind === "fragment_offset" &&
+      readerResumeState.fragment_id
+    ) {
+      nextFragment = fragments.find((fragment) => fragment.id === readerResumeState.fragment_id) ?? null;
+    }
+
+    if (!nextFragment) {
+      nextFragment = fragments[0] ?? null;
+    }
+
+    if (nextFragment && activeTranscriptFragmentId !== nextFragment.id) {
+      setActiveTranscriptFragmentId(nextFragment.id);
+    }
+  }, [
+    activeTranscriptFragmentId,
+    fragments,
+    isTranscriptMedia,
+    readerResumeState?.fragment_id,
+    readerResumeState?.locator_kind,
+    readerResumeStateLoading,
+    requestedFragmentId,
+    requestedStartMs,
+  ]);
 
   useEffect(() => {
     focusedHighlightIdRef.current = focusState.focusedId;
@@ -380,7 +464,7 @@ export default function useMediaViewState(id: string) {
           );
           if (cancelled) return;
           setFragments(fragmentsResp.data);
-          setActiveTranscriptFragmentId(fragmentsResp.data[0]?.id ?? null);
+          setActiveTranscriptFragmentId(null);
         }
 
         setError(null);
@@ -527,7 +611,7 @@ export default function useMediaViewState(id: string) {
     setActiveTranscriptFragmentId((prev) =>
       fragmentsResp.data.some((fragment) => fragment.id === prev)
         ? prev
-        : fragmentsResp.data[0]?.id ?? null
+        : null
     );
   }, [isTranscriptMedia, media?.id]);
 

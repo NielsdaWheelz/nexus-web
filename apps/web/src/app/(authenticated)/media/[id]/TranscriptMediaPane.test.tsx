@@ -1,4 +1,4 @@
-import { createRef, useState } from "react";
+import { createRef, useState, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -13,6 +13,9 @@ const mockSetTrack = vi.fn();
 const mockSeekToMs = vi.fn();
 const mockPlay = vi.fn();
 let mockCurrentTimeSeconds = 0;
+const mockReaderContentArea = vi.fn(
+  ({ children }: { children: ReactNode }) => children
+);
 const mockAddToQueue = vi.fn(
   async (mediaId: string, insertPosition: "next" | "last") => {
     const response = await fetch("/api/playback/queue/items", {
@@ -56,10 +59,23 @@ vi.mock("@/lib/player/globalPlayer", () => ({
   }),
 }));
 
+vi.mock("@/components/ReaderContentArea", () => ({
+  default: (
+    props: {
+      children: ReactNode;
+      contentClassName?: string;
+    }
+  ) => mockReaderContentArea(props),
+}));
+
 beforeEach(() => {
   mockSetTrack.mockReset();
   mockSeekToMs.mockReset();
   mockPlay.mockReset();
+  mockReaderContentArea.mockReset();
+  mockReaderContentArea.mockImplementation(
+    ({ children }: { children: ReactNode }) => children
+  );
   mockAddToQueue.mockClear();
   mockCurrentTimeSeconds = 0;
 });
@@ -563,6 +579,17 @@ describe("TranscriptMediaPane podcast playback", () => {
 
     await user.click(screen.getByRole("button", { name: "Seek to 12:30" }));
     expect(mockSeekToMs).toHaveBeenCalledWith(750_000);
+  });
+
+  it("renders active transcript html through the shared reader surface", () => {
+    renderStatefulPodcastPane({
+      canRead: true,
+      fragments: FRAGMENTS,
+      chapters: [],
+    });
+
+    expect(mockReaderContentArea).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("active transcript html")).toBeVisible();
   });
 
   it("falls back to plain text show notes when html is absent", () => {

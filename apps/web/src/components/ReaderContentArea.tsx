@@ -11,8 +11,9 @@ interface ReaderContentAreaProps {
 }
 
 /**
- * Wraps reader content (web article, epub) with typography and theme from the
- * global reader profile. Does not mutate global app styles.
+ * Wraps reflowable reader content (web article, transcript, epub) with
+ * typography and theme from the global reader profile. Does not mutate global
+ * app styles.
  */
 export default function ReaderContentArea({
   children,

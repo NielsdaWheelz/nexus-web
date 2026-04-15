@@ -8,6 +8,7 @@ import {
   type MouseEvent,
   type RefObject,
 } from "react";
+import ReaderContentArea from "@/components/ReaderContentArea";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Image from "next/image";
 import {
@@ -808,13 +809,11 @@ export default function TranscriptMediaPane({
               </div>
 
               {activeFragment && (
-                <div
-                  ref={contentRef}
-                  className={styles.transcriptActiveFragment}
-                  onClick={onContentClick}
-                >
-                  <HtmlRenderer htmlSanitized={renderedHtml} className={styles.fragment} />
-                </div>
+                <ReaderContentArea>
+                  <div ref={contentRef} onClick={onContentClick}>
+                    <HtmlRenderer htmlSanitized={renderedHtml} />
+                  </div>
+                </ReaderContentArea>
               )}
             </div>
           )}

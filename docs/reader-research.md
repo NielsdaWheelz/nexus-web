@@ -7,7 +7,7 @@ system shape they imply.
 
 - improve long-form reading comfort on desktop and mobile
 - preserve comprehension under reflow
-- keep resume deterministic across web, epub, and pdf
+- keep resume deterministic across web, transcript, epub, and pdf
 - keep the reader system small enough to understand quickly
 
 ## distilled constraints
@@ -32,6 +32,7 @@ intentionally stays with two reader themes: light and dark.
 - shipped fields are `theme`, `font_family`, `font_size_px`,
   `line_height`, `column_width_ch`, and `focus_mode`
 - all reflowable reader appearance comes from this single source of truth
+  across web article, transcript, and epub readers
 
 ### per-media resume
 

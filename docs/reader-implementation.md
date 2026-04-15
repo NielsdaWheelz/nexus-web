@@ -37,9 +37,9 @@ this records the current reader model and the constraints we actively ship.
 
 - the media header dropdown exposes a reader theme quick-switch
 - available theme values are light and dark
-- it is shown for epub and web article readers
-- transcript and pdf readers keep their existing appearance behavior and do
-  not surface this quick-switch
+- it is shown for epub, web article, and transcript readers
+- pdf readers keep their existing appearance behavior and do not surface
+  this quick-switch
 - the switch updates the global reader profile that already drives
   reflowable reader rendering
 

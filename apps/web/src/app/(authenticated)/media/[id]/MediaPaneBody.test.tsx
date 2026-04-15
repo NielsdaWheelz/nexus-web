@@ -8,7 +8,7 @@ const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 const mockUseMediaViewState = vi.fn<(id: string) => Record<string, unknown>>();
 const mockUsePaneChromeOverride = vi.fn<(overrides: Record<string, unknown>) => void>();
 const mockReaderContentArea = vi.fn(
-  ({ children }: { children: ReactNode }) => <>{children}</>
+  ({ children }: { children: ReactNode }) => children
 );
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
@@ -213,7 +213,7 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     mockUsePaneChromeOverride.mockReset();
     mockReaderContentArea.mockReset();
     mockReaderContentArea.mockImplementation(
-      ({ children }: { children: ReactNode }) => <>{children}</>
+      ({ children }: { children: ReactNode }) => children
     );
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "id" ? "media-1" : null
@@ -345,7 +345,7 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     expect(screen.getByRole("dialog", { name: "Linked items" })).toBeInTheDocument();
   });
 
-  it("keeps reflowable readers on the ReaderContentArea path and leaves transcript/pdf outside it", () => {
+  it("keeps transcript in the transcript shell while web and epub stay on the ReaderContentArea path", () => {
     currentViewState = buildViewState({
       fragments: [{ id: "fragment-1" }],
     });
