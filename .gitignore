@@ -41,6 +41,8 @@ ENV/
 htmlcov/
 .tox/
 .nox/
+coverage/
+.vitest-attachments/
 
 # Linting
 .ruff_cache/
@@ -48,12 +50,13 @@ htmlcov/
 
 # Environment
 /.env
-/.env.local
-/.env.*.local
 /.env.prod
+.env.local
+.env.*.local
 
-# macOS
+# OS
 .DS_Store
+Thumbs.db
 .AppleDouble
 .LSOverride
 
@@ -71,10 +74,11 @@ yarn-error.log*
 # Build outputs
 *.js.map
 *.d.ts
+*.tsbuildinfo
+next-env.d.ts
 !apps/web/src/css.d.ts
 
 # Local development
-/apps/web/.env.local
 .turbo/
 .dev-ports
 
