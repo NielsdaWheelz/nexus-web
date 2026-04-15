@@ -9,6 +9,7 @@ from nexus.config import get_settings
 from nexus.db.models import Model
 from nexus.logging import get_logger
 from nexus.schemas.keys import ModelOut
+from nexus.services.billing import get_entitlements
 from nexus.services.user_keys import get_usable_key_providers
 
 logger = get_logger(__name__)
@@ -133,14 +134,15 @@ def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
         enabled_providers.add("deepseek")
 
     platform_providers: set[str] = set()
-    if settings.openai_api_key:
-        platform_providers.add("openai")
-    if settings.anthropic_api_key:
-        platform_providers.add("anthropic")
-    if settings.gemini_api_key:
-        platform_providers.add("gemini")
-    if settings.deepseek_api_key:
-        platform_providers.add("deepseek")
+    if get_entitlements(db, user_id).can_use_platform_llm:
+        if settings.openai_api_key:
+            platform_providers.add("openai")
+        if settings.anthropic_api_key:
+            platform_providers.add("anthropic")
+        if settings.gemini_api_key:
+            platform_providers.add("gemini")
+        if settings.deepseek_api_key:
+            platform_providers.add("deepseek")
 
     user_providers = get_usable_key_providers(db, user_id)
 

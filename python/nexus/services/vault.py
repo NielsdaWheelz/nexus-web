@@ -54,8 +54,9 @@ def export_vault(
     (vault_dir / "Highlights").mkdir(exist_ok=True)
     (vault_dir / "Pages").mkdir(exist_ok=True)
 
-    media_rows = db.execute(
-        text(f"""
+    media_rows = (
+        db.execute(
+            text(f"""
             WITH visible_media AS (
                 {visible_media_ids_cte_sql()}
             )
@@ -67,8 +68,11 @@ def export_vault(
             WHERE m.kind IN ('web_article', 'epub', 'pdf')
             ORDER BY lower(m.title), m.id
         """),
-        {"viewer_id": viewer_id},
-    ).mappings().all()
+            {"viewer_id": viewer_id},
+        )
+        .mappings()
+        .all()
+    )
 
     library_lines = ["# Library", ""]
     highlight_rows = _load_vault_highlights(db, viewer_id)
@@ -558,9 +562,8 @@ def _resolve_fragment_selector(
             if idx == -1:
                 break
             end = idx + len(exact)
-            if (
-                (not prefix or fragment.canonical_text[:idx].endswith(prefix))
-                and (not suffix or fragment.canonical_text[end:].startswith(suffix))
+            if (not prefix or fragment.canonical_text[:idx].endswith(prefix)) and (
+                not suffix or fragment.canonical_text[end:].startswith(suffix)
             ):
                 matches.append((fragment.id, idx, end))
             start = idx + 1
@@ -765,9 +768,7 @@ def _page_hash(metadata: dict[str, object], body: str) -> str:
 
 def _stable_hash(metadata: dict[str, object], body: str) -> str:
     return hashlib.sha256(
-        (json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n" + body).encode(
-            "utf-8"
-        )
+        (json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n" + body).encode("utf-8")
     ).hexdigest()
 
 

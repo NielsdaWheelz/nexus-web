@@ -5,6 +5,7 @@ import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 
 const SETTINGS_HREFS = [
   "/settings",
+  "/settings/billing",
   "/settings/reader",
   "/settings/keys",
   "/settings/identities",
@@ -19,6 +20,7 @@ const LIBRARY_DETAIL_HREFS = ["/libraries/lib-123"] as const;
 
 const SETTINGS_ROUTE_FILES = [
   "src/app/(authenticated)/settings/page.tsx",
+  "src/app/(authenticated)/settings/billing/page.tsx",
   "src/app/(authenticated)/settings/reader/page.tsx",
   "src/app/(authenticated)/settings/keys/page.tsx",
   "src/app/(authenticated)/settings/identities/page.tsx",
@@ -66,6 +68,7 @@ describe("workspace pane cutover contract (settings slice)", () => {
       "utf-8"
     );
     expect(registrySource.includes('"/settings/page"')).toBe(false);
+    expect(registrySource.includes('"/settings/billing/page"')).toBe(false);
     expect(registrySource.includes('"/settings/reader/page"')).toBe(false);
     expect(registrySource.includes('"/settings/keys/page"')).toBe(false);
     expect(registrySource.includes('"/settings/identities/page"')).toBe(false);

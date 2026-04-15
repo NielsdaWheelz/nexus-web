@@ -36,6 +36,7 @@ from nexus.config import clear_settings_cache
 from nexus.db.session import create_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.middleware.stream_cors import StreamCORSMiddleware
+from nexus.schemas.billing import BillingEntitlementsOut
 from nexus.services.api_key_resolver import ResolvedKey
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.llm.types import LLMChunk, LLMUsage
@@ -321,17 +322,17 @@ class TestBudgetReservation:
     """Test token budget pre-reservation."""
 
     def test_reserve_fails_closed_without_runtime_state_backend(self):
-        limiter = RateLimiter(session_factory=None, token_budget=100_000)
+        limiter = RateLimiter(session_factory=None)
         with pytest.raises(ApiError) as exc:
             limiter.reserve_token_budget(uuid4(), uuid4(), 5000)
         assert exc.value.code == ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE
 
     def test_commit_is_noop_without_runtime_state_backend(self):
-        limiter = RateLimiter(session_factory=None, token_budget=100_000)
+        limiter = RateLimiter(session_factory=None)
         limiter.commit_token_budget(uuid4(), uuid4(), 3000)
 
     def test_release_is_noop_without_runtime_state_backend(self):
-        limiter = RateLimiter(session_factory=None, token_budget=100_000)
+        limiter = RateLimiter(session_factory=None)
         limiter.release_token_budget(uuid4(), uuid4())
 
 
@@ -369,6 +370,16 @@ class TestPdfQuoteBlockingStream:
     ):
         """Meta may emit first, but quote-blocking errors must emit done(error) before delta."""
         monkeypatch.setenv("OPENAI_API_KEY", "test-platform-key")
+        monkeypatch.setattr(
+            "nexus.services.api_key_resolver.get_entitlements",
+            lambda db, user_id: BillingEntitlementsOut(
+                plan_tier="ai_plus",
+                can_share=True,
+                can_use_platform_llm=True,
+                platform_token_limit_monthly=1_000_000,
+                transcription_minutes_limit_monthly=300,
+            ),
+        )
         clear_settings_cache()
         set_rate_limiter(NoOpRateLimiter())
 

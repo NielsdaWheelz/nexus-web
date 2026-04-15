@@ -9,6 +9,7 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
@@ -42,6 +43,13 @@ type EpisodeTranscriptState =
   | "partial"
   | null;
 type EpisodeTranscriptCoverage = "none" | "partial" | "full" | null;
+
+function planLabel(planTier: string): string {
+  if (planTier === "plus") return "Plus";
+  if (planTier === "ai_plus") return "AI Plus";
+  if (planTier === "ai_pro") return "AI Pro";
+  return "Free";
+}
 
 interface PodcastDetailItem {
   id: string;
@@ -372,6 +380,7 @@ export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
   const paneRouter = usePaneRouter();
   const paneSearchParams = usePaneSearchParams();
+  const { account: billingAccount } = useBillingAccount();
   const { addToQueue, queueItems } = useGlobalPlayer();
   const [detail, setDetail] = useState<PodcastDetailResponse | null>(null);
   const [episodes, setEpisodes] = useState<PodcastEpisodeMedia[]>([]);
@@ -428,6 +437,7 @@ export default function PodcastDetailPaneBody() {
   const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
   const [settingsCategoryId, setSettingsCategoryId] = useState<string>("");
   const [categories, setCategories] = useState<PodcastSubscriptionCategory[]>([]);
+  const transcriptionAllowed = (billingAccount?.transcription_usage.limit ?? 0) > 0;
 
   useSetPaneTitle(detail?.podcast.title ?? "Podcast");
 
@@ -914,11 +924,12 @@ export default function PodcastDetailPaneBody() {
       episodes.filter((episode) => {
         const episodeState = deriveEpisodeState(episode);
         return (
+          transcriptionAllowed &&
           (episodeState === "unplayed" || episodeState === "in_progress") &&
           canRequestTranscriptForEpisode(episode)
         );
       }),
-    [episodes]
+    [episodes, transcriptionAllowed]
   );
 
   const toggleEpisodeShowNotesExpansion = useCallback((mediaId: string) => {
@@ -1003,7 +1014,7 @@ export default function PodcastDetailPaneBody() {
     const confirmationMessage = [
       `Eligible episodes: ${batchTranscriptCandidateEpisodes.length}`,
       `Estimated minutes: ${requiredMinutes}`,
-      `Remaining quota: ${remainingQuota == null ? "unlimited" : remainingQuota}`,
+      `Remaining quota: ${remainingQuota ?? 0}`,
       `Fits budget: ${fitsBudget ? "yes" : "no"}`,
       "",
       "Submit batch transcript request?",
@@ -1525,7 +1536,8 @@ export default function PodcastDetailPaneBody() {
               const busy = busyMediaIds.has(episode.id);
               const episodeState = deriveEpisodeState(episode);
               const episodeProgressPercent = getEpisodeProgressPercent(episode);
-              const canRequestTranscript = canRequestTranscriptForEpisode(episode);
+              const canRequestTranscript =
+                transcriptionAllowed && canRequestTranscriptForEpisode(episode);
               const transcriptProvisioningInProgress =
                 shouldPollTranscriptProvisioningForEpisode(episode);
               const transcriptReason = transcriptReasonByMediaId[episode.id] ?? "search";
@@ -1719,12 +1731,18 @@ export default function PodcastDetailPaneBody() {
                           {forecastForSelectedReason &&
                             !forecastForSelectedReason.fits_budget && (
                               <span className={styles.transcriptQuotaWarning}>
-                                Not enough daily quota for this request.
+                                Not enough monthly transcription quota for this request.
                               </span>
                             )}
                         </>
                       )}
-                      {!canRequestTranscript && (
+                      {!canRequestTranscript && !transcriptionAllowed && (
+                        <span className={styles.transcriptQuotaWarning}>
+                          Transcription is included with {planLabel("ai_plus")} and{" "}
+                          {planLabel("ai_pro")}.
+                        </span>
+                      )}
+                      {!canRequestTranscript && transcriptionAllowed && (
                         <span className={styles.transcriptStatus}>
                           {episode.transcript_state === "ready"
                             ? "Transcript ready"
@@ -1734,7 +1752,7 @@ export default function PodcastDetailPaneBody() {
                                 ? "Transcript request in progress"
                                 : episode.transcript_state === "unavailable"
                                   ? "Transcript unavailable"
-                                  : "Transcript state unavailable"}
+                                : "Transcript state unavailable"}
                         </span>
                       )}
                     </div>

@@ -10,7 +10,7 @@ Model availability rule:
 - model.is_available = true
 - model.provider is enabled by feature flag
 - AND (
-    platform key exists for model.provider
+    user has AI-tier access to a platform key for model.provider
     OR user has API key with status ∈ {'untested', 'valid'}
   )
 
@@ -42,7 +42,7 @@ def list_models(
     A model is included iff:
     - model.is_available = true
     - model.provider is enabled by feature flag
-    - AND (platform key exists for model.provider OR user has usable BYOK)
+    - AND (AI-tier platform key access exists for model.provider OR user has usable BYOK)
 
     Keys with status='invalid' or status='revoked' do NOT enable models.
     Empty list is valid if no models are available.

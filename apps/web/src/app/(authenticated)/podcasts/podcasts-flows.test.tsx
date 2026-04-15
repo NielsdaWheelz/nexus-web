@@ -16,6 +16,38 @@ vi.mock("@/lib/panes/paneRuntime", () => ({
   useSetPaneTitle: () => {},
 }));
 
+vi.mock("@/lib/billing/useBillingAccount", () => ({
+  useBillingAccount: () => ({
+    account: {
+      plan_tier: "ai_plus",
+      subscription_status: "active",
+      can_share: true,
+      can_use_platform_llm: true,
+      current_period_start: "2026-03-01T00:00:00Z",
+      current_period_end: "2026-04-01T00:00:00Z",
+      ai_token_usage: {
+        used: 0,
+        reserved: 0,
+        limit: 1_000_000,
+        remaining: 1_000_000,
+        period_start: "2026-03-01T00:00:00Z",
+        period_end: "2026-04-01T00:00:00Z",
+      },
+      transcription_usage: {
+        used: 0,
+        reserved: 0,
+        limit: 1_200,
+        remaining: 1_200,
+        period_start: "2026-03-01T00:00:00Z",
+        period_end: "2026-04-01T00:00:00Z",
+      },
+    },
+    loading: false,
+    error: null,
+    reload: async () => {},
+  }),
+}));
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -224,24 +256,6 @@ describe("podcasts product flows", () => {
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (input, init) => {
         const url = new URL(String(input), "http://localhost");
-        if (url.pathname === "/api/podcasts/plan") {
-          return jsonResponse({
-            data: {
-              plan: {
-                plan_tier: "free",
-                daily_transcription_minutes: 60,
-                initial_episode_window: 3,
-              },
-              usage: {
-                usage_date: "2026-03-06",
-                used_minutes: 12,
-                reserved_minutes: 3,
-                total_minutes: 15,
-                remaining_minutes: 45,
-              },
-            },
-          });
-        }
         if (url.pathname === "/api/podcasts/categories") {
           return jsonResponse({ data: [] });
         }
@@ -317,11 +331,6 @@ describe("podcasts product flows", () => {
     expect(await screen.findByText("Systems Podcast 0")).toBeInTheDocument();
     expect(await screen.findByText(/E_SYNC_PROVIDER_TIMEOUT/)).toBeInTheDocument();
     expect(await screen.findByText(/Provider timeout while fetching episodes/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save plan" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Plan tier")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Daily transcription minutes")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Initial episode window")).not.toBeInTheDocument();
-
     await user.click(screen.getAllByRole("button", { name: "Actions" })[0]!);
     await user.click(await screen.findByRole("menuitem", { name: "Refresh sync" }));
     await user.selectOptions(screen.getByLabelText("Unsubscribe behavior"), "3");
@@ -360,12 +369,6 @@ describe("podcasts product flows", () => {
           );
         })
       ).toBe(true);
-      expect(
-        fetchMock.mock.calls.some(([url, init]) => {
-          const parsed = new URL(String(url), "http://localhost");
-          return parsed.pathname === "/api/podcasts/plan" && init?.method === "PUT";
-        })
-      ).toBe(false);
     });
   });
 
@@ -376,24 +379,6 @@ describe("podcasts product flows", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/podcasts/plan") {
-        return jsonResponse({
-          data: {
-            plan: {
-              plan_tier: "free",
-              daily_transcription_minutes: 60,
-              initial_episode_window: 3,
-            },
-            usage: {
-              usage_date: "2026-03-06",
-              used_minutes: 12,
-              reserved_minutes: 3,
-              total_minutes: 15,
-              remaining_minutes: 45,
-            },
-          },
-        });
-      }
       if (url.pathname === "/api/podcasts/categories") {
         return jsonResponse({ data: [] });
       }
@@ -1135,24 +1120,6 @@ describe("podcasts product flows", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/podcasts/plan") {
-        return jsonResponse({
-          data: {
-            plan: {
-              plan_tier: "free",
-              daily_transcription_minutes: 60,
-              initial_episode_window: 3,
-            },
-            usage: {
-              usage_date: "2026-03-06",
-              used_minutes: 12,
-              reserved_minutes: 3,
-              total_minutes: 15,
-              remaining_minutes: 45,
-            },
-          },
-        });
-      }
       if (url.pathname === "/api/podcasts/categories") {
         return jsonResponse({ data: [] });
       }
@@ -1229,24 +1196,6 @@ describe("podcasts product flows", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/podcasts/plan") {
-        return jsonResponse({
-          data: {
-            plan: {
-              plan_tier: "free",
-              daily_transcription_minutes: 60,
-              initial_episode_window: 3,
-            },
-            usage: {
-              usage_date: "2026-03-06",
-              used_minutes: 12,
-              reserved_minutes: 3,
-              total_minutes: 15,
-              remaining_minutes: 45,
-            },
-          },
-        });
-      }
       if (url.pathname === "/api/podcasts/categories" && (init?.method ?? "GET") === "GET") {
         return jsonResponse({ data: categories });
       }
@@ -1593,24 +1542,6 @@ describe("podcasts product flows", () => {
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (input, init) => {
         const url = new URL(String(input), "http://localhost");
-        if (url.pathname === "/api/podcasts/plan") {
-          return jsonResponse({
-            data: {
-              plan: {
-                plan_tier: "free",
-                daily_transcription_minutes: 60,
-                initial_episode_window: 3,
-              },
-              usage: {
-                usage_date: "2026-03-06",
-                used_minutes: 12,
-                reserved_minutes: 3,
-                total_minutes: 15,
-                remaining_minutes: 45,
-              },
-            },
-          });
-        }
         if (url.pathname === "/api/podcasts/categories") {
           return jsonResponse({ data: [] });
         }

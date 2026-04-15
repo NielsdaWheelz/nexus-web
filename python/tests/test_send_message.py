@@ -23,6 +23,7 @@ from sqlalchemy import text
 
 from nexus.config import clear_settings_cache
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.schemas.billing import BillingEntitlementsOut
 from nexus.services.crypto import MASTER_KEY_SIZE, clear_master_key_cache, encrypt_api_key
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 from tests.factories import (
@@ -108,6 +109,16 @@ def setup_test_master_key(monkeypatch):
 def platform_key_env(monkeypatch):
     """Set platform API key so resolve_api_key finds it without mocking."""
     monkeypatch.setenv("OPENAI_API_KEY", "test-platform-key")
+    monkeypatch.setattr(
+        "nexus.services.api_key_resolver.get_entitlements",
+        lambda db, user_id: BillingEntitlementsOut(
+            plan_tier="ai_plus",
+            can_share=True,
+            can_use_platform_llm=True,
+            platform_token_limit_monthly=1_000_000,
+            transcription_minutes_limit_monthly=300,
+        ),
+    )
     clear_settings_cache()
     yield
     clear_settings_cache()
@@ -1415,14 +1426,14 @@ class TestSendMessageKeyModes:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_LLM_NO_KEY"
 
-    def test_platform_only_without_platform_key_returns_400(
+    def test_platform_only_without_ai_tier_returns_402(
         self,
         auth_client,
         direct_db: DirectSessionManager,
         mock_rate_limiter,
         monkeypatch,
     ):
-        """key_mode=platform_only without platform key returns 400."""
+        """key_mode=platform_only without AI-tier billing returns 402."""
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         clear_settings_cache()
 
@@ -1432,8 +1443,6 @@ class TestSendMessageKeyModes:
         with direct_db.session() as session:
             model_id = create_test_model(session)
 
-        # Model from migration seed - don't cleanup
-        # No platform key; resolve_api_key raises for platform_only
         response = auth_client.post(
             "/conversations/messages",
             headers=auth_headers(user_id),
@@ -1445,8 +1454,8 @@ class TestSendMessageKeyModes:
             },
         )
 
-        assert response.status_code == 400
-        assert response.json()["error"]["code"] == "E_LLM_NO_KEY"
+        assert response.status_code == 402
+        assert response.json()["error"]["code"] == "E_BILLING_REQUIRED"
 
 
 # =============================================================================

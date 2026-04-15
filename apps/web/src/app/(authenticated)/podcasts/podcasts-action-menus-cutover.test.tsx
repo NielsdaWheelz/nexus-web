@@ -16,6 +16,38 @@ vi.mock("@/lib/panes/paneRuntime", () => ({
   useSetPaneTitle: () => {},
 }));
 
+vi.mock("@/lib/billing/useBillingAccount", () => ({
+  useBillingAccount: () => ({
+    account: {
+      plan_tier: "ai_plus",
+      subscription_status: "active",
+      can_share: true,
+      can_use_platform_llm: true,
+      current_period_start: "2026-03-01T00:00:00Z",
+      current_period_end: "2026-04-01T00:00:00Z",
+      ai_token_usage: {
+        used: 0,
+        reserved: 0,
+        limit: 1_000_000,
+        remaining: 1_000_000,
+        period_start: "2026-03-01T00:00:00Z",
+        period_end: "2026-04-01T00:00:00Z",
+      },
+      transcription_usage: {
+        used: 0,
+        reserved: 0,
+        limit: 1_200,
+        remaining: 1_200,
+        period_start: "2026-03-01T00:00:00Z",
+        period_end: "2026-04-01T00:00:00Z",
+      },
+    },
+    loading: false,
+    error: null,
+    reload: async () => {},
+  }),
+}));
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -210,24 +242,6 @@ describe("podcast ui action menu cutover", () => {
     const user = userEvent.setup();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/podcasts/plan") {
-        return jsonResponse({
-          data: {
-            plan: {
-              plan_tier: "free",
-              daily_transcription_minutes: 60,
-              initial_episode_window: 3,
-            },
-            usage: {
-              usage_date: "2026-03-06",
-              used_minutes: 12,
-              reserved_minutes: 3,
-              total_minutes: 15,
-              remaining_minutes: 45,
-            },
-          },
-        });
-      }
       if (url.pathname === "/api/podcasts/categories") {
         return jsonResponse({
           data: [

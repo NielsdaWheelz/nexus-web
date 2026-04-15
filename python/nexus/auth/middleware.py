@@ -28,7 +28,7 @@ AUTHORIZATION_HEADER = "authorization"
 INTERNAL_HEADER = "x-nexus-internal"
 
 # Paths that don't require authentication
-PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
+PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json", "/billing/stripe/webhook"}
 EXTENSION_AUTH_PATHS = {
     "/auth/extension-sessions/current",
     "/media/capture/article",

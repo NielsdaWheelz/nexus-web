@@ -83,21 +83,6 @@ interface PodcastSubscriptionSyncRefreshResult {
   sync_enqueued: boolean;
 }
 
-interface PodcastPlanSnapshot {
-  plan: {
-    plan_tier: "free" | "paid";
-    daily_transcription_minutes: number | null;
-    initial_episode_window: number;
-  };
-  usage: {
-    usage_date: string;
-    used_minutes: number;
-    reserved_minutes: number;
-    total_minutes: number;
-    remaining_minutes: number | null;
-  };
-}
-
 interface PodcastOpmlImportResult {
   total: number;
   imported: number;
@@ -116,7 +101,6 @@ export default function PodcastSubscriptionsPaneBody() {
   const [hasMore, setHasMore] = useState(false);
   const [nextOffset, setNextOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [planError, setPlanError] = useState<string | null>(null);
   const [busyPodcastIds, setBusyPodcastIds] = useState<Set<string>>(new Set());
   const [refreshingPodcastIds, setRefreshingPodcastIds] = useState<Set<string>>(new Set());
   const [subscriptionSort, setSubscriptionSort] = useState<SubscriptionSort>("recent_episode");
@@ -132,8 +116,6 @@ export default function PodcastSubscriptionsPaneBody() {
   const [categoryNameInput, setCategoryNameInput] = useState("");
   const [categoryColorInput, setCategoryColorInput] = useState("");
   const [unsubscribeMode, setUnsubscribeMode] = useState<1 | 2 | 3>(1);
-  const [plan, setPlan] = useState<PodcastPlanSnapshot | null>(null);
-  const [planLoading, setPlanLoading] = useState(true);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importBusy, setImportBusy] = useState(false);
@@ -186,23 +168,6 @@ export default function PodcastSubscriptionsPaneBody() {
     }
   }, [activeCategoryFilter, subscriptionSort]);
 
-  const loadPlanSnapshot = useCallback(async () => {
-    setPlanLoading(true);
-    setPlanError(null);
-    try {
-      const response = await apiFetch<{ data: PodcastPlanSnapshot }>("/api/podcasts/plan");
-      setPlan(response.data);
-    } catch (loadError) {
-      if (isApiError(loadError)) {
-        setPlanError(loadError.message);
-      } else {
-        setPlanError("Failed to load plan and quota snapshot");
-      }
-    } finally {
-      setPlanLoading(false);
-    }
-  }, []);
-
   const loadCategories = useCallback(async () => {
     setCategoriesLoading(true);
     setCategoriesError(null);
@@ -229,9 +194,8 @@ export default function PodcastSubscriptionsPaneBody() {
 
   useEffect(() => {
     void loadSubscriptions();
-    void loadPlanSnapshot();
     void loadCategories();
-  }, [loadCategories, loadPlanSnapshot, loadSubscriptions]);
+  }, [loadCategories, loadSubscriptions]);
 
   const handleUnsubscribe = useCallback(async (podcastId: string) => {
     setBusyPodcastIds((prev) => new Set(prev).add(podcastId));
@@ -616,19 +580,6 @@ export default function PodcastSubscriptionsPaneBody() {
     <>
       <SectionCard>
         <div className={styles.content}>
-          {planLoading && <StateMessage variant="loading">Loading plan snapshot...</StateMessage>}
-          {planError && <StateMessage variant="error">{planError}</StateMessage>}
-          {plan && (
-            <p className={styles.planSummary}>
-              Plan <strong>{plan.plan.plan_tier}</strong> - window{" "}
-              <strong>{plan.plan.initial_episode_window}</strong> episodes - used{" "}
-              <strong>{plan.usage.total_minutes}</strong> minutes today
-              {plan.usage.remaining_minutes === null
-                ? " (unlimited remaining)"
-                : ` (${plan.usage.remaining_minutes} remaining)`}
-            </p>
-          )}
-
           <div className={styles.sectionActions}>
             <button
               type="button"

@@ -146,14 +146,6 @@ describe("podcast BFF proxy routes", () => {
     );
   });
 
-  it("GET /api/podcasts/plan proxies to /podcasts/plan", async () => {
-    const { GET } = await import("./plan/route");
-    const req = new Request("http://localhost/api/podcasts/plan");
-    await GET(req);
-    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
-    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/plan");
-  });
-
   it("POST /api/podcasts/import/opml proxies to /podcasts/import/opml", async () => {
     const { POST } = await import("./import/opml/route");
     const body = new FormData();
@@ -173,10 +165,5 @@ describe("podcast BFF proxy routes", () => {
     await GET(req);
     expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/export/opml");
-  });
-
-  it("PUT /api/podcasts/plan is not exposed", async () => {
-    const routeModule = await import("./plan/route");
-    expect("PUT" in routeModule).toBe(false);
   });
 });

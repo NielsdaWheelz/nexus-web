@@ -26,6 +26,9 @@ class ApiErrorCode(str, Enum):
         "E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN"
     )
 
+    # Billing entitlement errors (402)
+    E_BILLING_REQUIRED = "E_BILLING_REQUIRED"
+
     # Not found errors (404)
     E_NOT_FOUND = "E_NOT_FOUND"
     E_LIBRARY_NOT_FOUND = "E_LIBRARY_NOT_FOUND"
@@ -45,6 +48,7 @@ class ApiErrorCode(str, Enum):
     E_INVALID_FILE_TYPE = "E_INVALID_FILE_TYPE"
     E_STORAGE_MISSING = "E_STORAGE_MISSING"
     E_INVALID_CURSOR = "E_INVALID_CURSOR"
+    E_STRIPE_WEBHOOK_INVALID = "E_STRIPE_WEBHOOK_INVALID"
 
     # Conflict errors (409)
     E_SHARE_REQUIRED = "E_SHARE_REQUIRED"
@@ -90,7 +94,9 @@ class ApiErrorCode(str, Enum):
     E_STREAM_TOKEN_EXPIRED = "E_STREAM_TOKEN_EXPIRED"  # 401 token past expiry
     E_STREAM_TOKEN_REPLAYED = "E_STREAM_TOKEN_REPLAYED"  # 401 jti already used
     E_STREAM_TOKEN_INVALID = "E_STREAM_TOKEN_INVALID"  # 401 signature or claims failed
-    E_PODCAST_QUOTA_EXCEEDED = "E_PODCAST_QUOTA_EXCEEDED"  # 429 free-tier daily quota exceeded
+    E_PODCAST_QUOTA_EXCEEDED = (
+        "E_PODCAST_QUOTA_EXCEEDED"  # 429 monthly transcription quota exceeded
+    )
 
     # S5 EPUB errors (400/404/409)
     E_RETRY_INVALID_STATE = "E_RETRY_INVALID_STATE"  # 409
@@ -124,6 +130,7 @@ class ApiErrorCode(str, Enum):
     E_SIGN_DOWNLOAD_FAILED = "E_SIGN_DOWNLOAD_FAILED"  # 500
     E_STORAGE_ERROR = "E_STORAGE_ERROR"  # 500
     E_SANITIZATION_FAILED = "E_SANITIZATION_FAILED"  # 500
+    E_BILLING_NOT_CONFIGURED = "E_BILLING_NOT_CONFIGURED"  # 500
 
 
 # Error code to HTTP status mapping
@@ -138,6 +145,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_OWNER_REQUIRED: 403,
     ApiErrorCode.E_OWNER_EXIT_FORBIDDEN: 403,
     ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN: 403,
+    ApiErrorCode.E_BILLING_REQUIRED: 402,
     # Not found errors
     ApiErrorCode.E_NOT_FOUND: 404,
     ApiErrorCode.E_LIBRARY_NOT_FOUND: 404,
@@ -156,6 +164,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_INVALID_FILE_TYPE: 400,
     ApiErrorCode.E_STORAGE_MISSING: 400,
     ApiErrorCode.E_INVALID_CURSOR: 400,
+    ApiErrorCode.E_STRIPE_WEBHOOK_INVALID: 400,
     # Conflict errors
     ApiErrorCode.E_SHARE_REQUIRED: 409,
     ApiErrorCode.E_SHARES_NOT_ALLOWED: 409,
@@ -222,6 +231,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_SIGN_DOWNLOAD_FAILED: 500,
     ApiErrorCode.E_STORAGE_ERROR: 500,
     ApiErrorCode.E_SANITIZATION_FAILED: 500,
+    ApiErrorCode.E_BILLING_NOT_CONFIGURED: 500,
 }
 
 

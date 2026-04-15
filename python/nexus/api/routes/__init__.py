@@ -7,13 +7,13 @@ variables to be configured upfront.
 
 from fastapi import APIRouter
 
+from nexus.api.routes.billing import router as billing_router
 from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
 from nexus.api.routes.health import router as health_router
 from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.internal_ingest import router as internal_ingest_router
 from nexus.api.routes.internal_libraries import router as internal_libraries_router
-from nexus.api.routes.internal_podcasts import router as internal_podcasts_router
 from nexus.api.routes.keys import router as keys_router
 from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.me import router as me_router
@@ -42,6 +42,7 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router.include_router(libraries_router, tags=["libraries"])
     api_router.include_router(media_router, tags=["media"])
     api_router.include_router(highlights_router, tags=["highlights"])
+    api_router.include_router(billing_router, tags=["billing"])
     api_router.include_router(conversations_router, tags=["conversations"])
     api_router.include_router(models_router, tags=["models"])
     api_router.include_router(keys_router, tags=["keys"])
@@ -51,7 +52,6 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     if settings.podcasts_enabled:
         api_router.include_router(playback_router, tags=["playback"])
         api_router.include_router(podcasts_router, tags=["podcasts"])
-        api_router.include_router(internal_podcasts_router, tags=["internal"])
     api_router.include_router(internal_libraries_router, tags=["internal"])
     api_router.include_router(internal_ingest_router, tags=["internal"])
 

@@ -30,14 +30,16 @@ def test_vault_exports_and_syncs_existing_highlight_note_and_color(
 
     media_handle = f"med_{media_id.hex}"
     highlight_handle = f"hl_{highlight_id.hex}"
-    assert (tmp_path / "Sources" / media_handle / "article.md").read_text(
-        encoding="utf-8"
-    ).startswith("# Local Article")
+    assert (
+        (tmp_path / "Sources" / media_handle / "article.md")
+        .read_text(encoding="utf-8")
+        .startswith("# Local Article")
+    )
 
     highlight_path = tmp_path / "Highlights" / f"{highlight_handle}.md"
     text = highlight_path.read_text(encoding="utf-8")
     assert "Original note" in text
-    text = text.replace("color: \"yellow\"", "color: \"green\"")
+    text = text.replace('color: "yellow"', 'color: "green"')
     text = text.replace("Original note", "Edited note")
     highlight_path.write_text(text, encoding="utf-8")
 
@@ -54,9 +56,7 @@ def test_vault_exports_and_syncs_existing_highlight_note_and_color(
 def test_vault_creates_fragment_highlight_from_text_quote(
     db_session: Session, bootstrapped_user: UUID, tmp_path
 ) -> None:
-    media_id, _fragment_id, _highlight_id = _seed_article_highlight(
-        db_session, bootstrapped_user
-    )
+    media_id, _fragment_id, _highlight_id = _seed_article_highlight(db_session, bootstrapped_user)
     export_vault(db_session, bootstrapped_user, tmp_path)
 
     (tmp_path / "Highlights" / "new-local.md").write_text(

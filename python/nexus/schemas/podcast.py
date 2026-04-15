@@ -1,6 +1,6 @@
 """Pydantic schemas for podcast discovery, subscription, and plan policy."""
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -127,20 +127,6 @@ class PodcastOpmlImportOut(BaseModel):
     errors: list[PodcastOpmlImportErrorOut] = Field(default_factory=list)
 
 
-class PodcastPlanUpdateRequest(BaseModel):
-    plan_tier: Literal["free", "paid"]
-    daily_transcription_minutes: int | None = Field(default=None, ge=0)
-    initial_episode_window: int = Field(ge=1)
-
-
-class PodcastPlanOut(BaseModel):
-    user_id: UUID
-    plan_tier: str
-    daily_transcription_minutes: int | None
-    initial_episode_window: int
-    updated_at: datetime
-
-
 class PodcastSubscriptionStatusOut(BaseModel):
     user_id: UUID
     podcast_id: UUID
@@ -204,22 +190,3 @@ class PodcastSubscriptionSyncRefreshOut(BaseModel):
     sync_error_message: str | None = None
     sync_attempts: int
     sync_enqueued: bool
-
-
-class PodcastEffectivePlanOut(BaseModel):
-    plan_tier: str
-    daily_transcription_minutes: int | None
-    initial_episode_window: int
-
-
-class PodcastPlanUsageOut(BaseModel):
-    usage_date: date
-    used_minutes: int
-    reserved_minutes: int
-    total_minutes: int
-    remaining_minutes: int | None
-
-
-class PodcastPlanSnapshotOut(BaseModel):
-    plan: PodcastEffectivePlanOut
-    usage: PodcastPlanUsageOut

@@ -36,14 +36,9 @@ from nexus.schemas.media import MediaOut
 from nexus.schemas.podcast import (
     PodcastDetailOut,
     PodcastDiscoveryOut,
-    PodcastEffectivePlanOut,
     PodcastListItemOut,
     PodcastOpmlImportErrorOut,
     PodcastOpmlImportOut,
-    PodcastPlanOut,
-    PodcastPlanSnapshotOut,
-    PodcastPlanUpdateRequest,
-    PodcastPlanUsageOut,
     PodcastSubscribeOut,
     PodcastSubscribeRequest,
     PodcastSubscriptionCategoryCreateRequest,
@@ -57,6 +52,7 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionSyncRefreshOut,
 )
 from nexus.services import playback_queue as playback_queue_service
+from nexus.services.billing import get_entitlements, get_transcription_usage
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.sanitize_html import sanitize_html
 from nexus.services.search import visible_media_ids_cte_sql
@@ -570,7 +566,6 @@ def subscribe_to_podcast(
 ) -> PodcastSubscribeOut:
     normalized_feed_url = _validate_and_normalize_feed_url(body.feed_url)
     normalized_body = body.model_copy(update={"feed_url": normalized_feed_url})
-    plan = _get_effective_plan(db, viewer_id)
     now = datetime.now(UTC)
 
     with transaction(db):
@@ -601,7 +596,7 @@ def subscribe_to_podcast(
         sync_error_message=snapshot["sync_error_message"],
         sync_attempts=snapshot["sync_attempts"],
         last_synced_at=snapshot["last_synced_at"],
-        window_size=plan["initial_episode_window"],
+        window_size=get_settings().podcast_initial_episode_window,
     )
 
 
@@ -1713,16 +1708,27 @@ def request_podcast_transcript_for_viewer(
             transcript_coverage = "none"
 
     required_minutes = _episode_minutes({"duration_seconds": duration_seconds})
-    plan = _get_effective_plan(db, viewer_id)
-    daily_limit_minutes = plan["daily_transcription_minutes"]
-    usage_snapshot = _get_usage_snapshot(db, viewer_id=viewer_id, usage_date=usage_date)
-    consumed_minutes = usage_snapshot["total"]
-    remaining_minutes = (
-        None
-        if daily_limit_minutes is None
-        else max(0, int(daily_limit_minutes) - int(consumed_minutes))
+    entitlements = get_entitlements(db, viewer_id)
+    monthly_limit_minutes = entitlements.transcription_minutes_limit_monthly
+    if entitlements.current_period_start and entitlements.current_period_end:
+        usage_start_date = entitlements.current_period_start.date()
+        usage_end_date = entitlements.current_period_end.date()
+    else:
+        usage_start_date = date(usage_date.year, usage_date.month, 1)
+        usage_end_date = (
+            date(usage_date.year + 1, 1, 1)
+            if usage_date.month == 12
+            else date(usage_date.year, usage_date.month + 1, 1)
+        )
+    usage_snapshot = get_transcription_usage(
+        db,
+        viewer_id,
+        usage_start_date,
+        usage_end_date,
     )
-    fits_budget = remaining_minutes is None or required_minutes <= remaining_minutes
+    consumed_minutes = int(usage_snapshot["used"]) + int(usage_snapshot["reserved"])
+    remaining_minutes = max(0, int(monthly_limit_minutes) - consumed_minutes)
+    fits_budget = required_minutes <= remaining_minutes
 
     already_ready = transcript_state in {"ready", "partial"} and transcript_coverage in {
         "partial",
@@ -1866,21 +1872,22 @@ def request_podcast_transcript_for_viewer(
         db.commit()
         raise ApiError(
             ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
-            "Daily podcast transcription quota exceeded",
+            "Monthly transcription quota exceeded",
         )
 
     usage_snapshot_after = _reserve_usage_minutes_or_raise(
         db,
         user_id=viewer_id,
         usage_date=usage_date,
+        usage_start_date=usage_start_date,
+        usage_end_date=usage_end_date,
         required_minutes=required_minutes,
-        daily_limit_minutes=daily_limit_minutes,
+        monthly_limit_minutes=monthly_limit_minutes,
         now=now,
     )
-    remaining_minutes_after = (
-        None
-        if daily_limit_minutes is None
-        else max(0, int(daily_limit_minutes) - int(usage_snapshot_after["total"]))
+    remaining_minutes_after = max(
+        0,
+        int(monthly_limit_minutes) - int(usage_snapshot_after["total"]),
     )
 
     db.execute(
@@ -2066,7 +2073,7 @@ def request_podcast_transcripts_batch_for_viewer(
                     "status": "rejected_quota",
                     "required_minutes": None,
                     "remaining_minutes": quota_remaining_after_exhaustion,
-                    "error": "Daily podcast transcription quota exceeded",
+                    "error": "Monthly transcription quota exceeded",
                 }
             )
             continue
@@ -2948,8 +2955,7 @@ def run_podcast_subscription_sync_now(
         }
 
     try:
-        plan = _get_effective_plan(db, user_id)
-        window_size = plan["initial_episode_window"]
+        window_size = settings.podcast_initial_episode_window
         prefetch_limit = max(window_size, settings.podcast_ingest_prefetch_limit)
 
         podcast = _get_podcast_sync_metadata(db, podcast_id)
@@ -2996,7 +3002,6 @@ def run_podcast_subscription_sync_now(
                 podcast_id=podcast_id,
                 feed_url=podcast["feed_url"],
                 selected_episodes=selected_episodes,
-                plan=plan,
                 now=sync_now,
             )
             _mark_subscription_sync_completed(
@@ -3052,7 +3057,6 @@ def _sync_subscription_ingest(
     podcast_id: UUID,
     feed_url: str,
     selected_episodes: list[dict[str, Any]],
-    plan: dict[str, Any],
     now: datetime,
 ) -> tuple[int, int]:
     ingested_episode_count = 0
@@ -3548,94 +3552,6 @@ def _normalize_chapter_rows_for_persistence(
         seen_keys.add(dedupe_key)
         deduped.append(row)
     return deduped
-
-
-def update_user_plan(
-    db: Session,
-    target_user_id: UUID,
-    body: PodcastPlanUpdateRequest,
-) -> PodcastPlanOut:
-    settings = get_settings()
-    defaults = _plan_defaults(settings, body.plan_tier)
-    now = datetime.now(UTC)
-
-    daily_minutes = (
-        body.daily_transcription_minutes
-        if body.daily_transcription_minutes is not None
-        else defaults["daily_transcription_minutes"]
-    )
-
-    row = db.execute(
-        text(
-            """
-            INSERT INTO podcast_user_plans (
-                user_id,
-                plan_tier,
-                daily_transcription_minutes,
-                initial_episode_window,
-                updated_at
-            )
-            VALUES (
-                :user_id,
-                :plan_tier,
-                :daily_transcription_minutes,
-                :initial_episode_window,
-                :updated_at
-            )
-            ON CONFLICT (user_id)
-            DO UPDATE SET
-                plan_tier = EXCLUDED.plan_tier,
-                daily_transcription_minutes = EXCLUDED.daily_transcription_minutes,
-                initial_episode_window = EXCLUDED.initial_episode_window,
-                updated_at = EXCLUDED.updated_at
-            RETURNING user_id, plan_tier, daily_transcription_minutes, initial_episode_window, updated_at
-            """
-        ),
-        {
-            "user_id": target_user_id,
-            "plan_tier": body.plan_tier,
-            "daily_transcription_minutes": daily_minutes,
-            "initial_episode_window": body.initial_episode_window,
-            "updated_at": now,
-        },
-    ).fetchone()
-    db.commit()
-
-    return PodcastPlanOut(
-        user_id=row[0],
-        plan_tier=row[1],
-        daily_transcription_minutes=row[2],
-        initial_episode_window=row[3],
-        updated_at=row[4],
-    )
-
-
-def get_user_plan_snapshot(db: Session, user_id: UUID) -> PodcastPlanSnapshotOut:
-    usage_date = datetime.now(UTC).date()
-    effective_plan = _get_effective_plan(db, user_id)
-    usage_snapshot = _get_usage_snapshot(db, viewer_id=user_id, usage_date=usage_date)
-
-    daily_limit_minutes = effective_plan["daily_transcription_minutes"]
-    remaining_minutes = (
-        None
-        if daily_limit_minutes is None
-        else max(0, int(daily_limit_minutes) - int(usage_snapshot["total"]))
-    )
-
-    return PodcastPlanSnapshotOut(
-        plan=PodcastEffectivePlanOut(
-            plan_tier=effective_plan["plan_tier"],
-            daily_transcription_minutes=daily_limit_minutes,
-            initial_episode_window=effective_plan["initial_episode_window"],
-        ),
-        usage=PodcastPlanUsageOut(
-            usage_date=usage_date,
-            used_minutes=usage_snapshot["used"],
-            reserved_minutes=usage_snapshot["reserved"],
-            total_minutes=usage_snapshot["total"],
-            remaining_minutes=remaining_minutes,
-        ),
-    )
 
 
 def refresh_subscription_sync_for_viewer(
@@ -5493,45 +5409,6 @@ def _insert_transcript_chunks_for_version(
         )
 
 
-def _get_effective_plan(db: Session, user_id: UUID) -> dict[str, Any]:
-    row = db.execute(
-        text(
-            """
-            SELECT plan_tier, daily_transcription_minutes, initial_episode_window
-            FROM podcast_user_plans
-            WHERE user_id = :user_id
-            """
-        ),
-        {"user_id": user_id},
-    ).fetchone()
-    if row is not None:
-        return {
-            "plan_tier": row[0],
-            "daily_transcription_minutes": row[1],
-            "initial_episode_window": row[2],
-        }
-
-    settings = get_settings()
-    defaults = _plan_defaults(settings, "free")
-    return {
-        "plan_tier": "free",
-        "daily_transcription_minutes": defaults["daily_transcription_minutes"],
-        "initial_episode_window": defaults["initial_episode_window"],
-    }
-
-
-def _plan_defaults(settings, plan_tier: str) -> dict[str, Any]:
-    if plan_tier == "paid":
-        return {
-            "daily_transcription_minutes": settings.podcast_paid_daily_transcription_minutes,
-            "initial_episode_window": settings.podcast_paid_initial_episode_window,
-        }
-    return {
-        "daily_transcription_minutes": settings.podcast_free_daily_transcription_minutes,
-        "initial_episode_window": settings.podcast_free_initial_episode_window,
-    }
-
-
 def _get_usage_snapshot(
     db: Session,
     *,
@@ -5562,90 +5439,77 @@ def _reserve_usage_minutes_or_raise(
     *,
     user_id: UUID,
     usage_date: date,
+    usage_start_date: date,
+    usage_end_date: date,
     required_minutes: int,
-    daily_limit_minutes: int | None,
+    monthly_limit_minutes: int,
     now: datetime,
 ) -> dict[str, int]:
     if required_minutes <= 0:
-        return _get_usage_snapshot(db, viewer_id=user_id, usage_date=usage_date)
+        usage_snapshot = get_transcription_usage(db, user_id, usage_start_date, usage_end_date)
+        return {
+            "used": usage_snapshot["used"],
+            "reserved": usage_snapshot["reserved"],
+            "total": usage_snapshot["used"] + usage_snapshot["reserved"],
+        }
 
-    if daily_limit_minutes is None:
-        row = db.execute(
-            text(
-                """
-                INSERT INTO podcast_transcription_usage_daily (
-                    user_id,
-                    usage_date,
-                    minutes_used,
-                    minutes_reserved,
-                    updated_at
-                )
-                VALUES (
-                    :user_id,
-                    :usage_date,
-                    0,
-                    :minutes_reserved,
-                    :updated_at
-                )
-                ON CONFLICT (user_id, usage_date)
-                DO UPDATE SET
-                    minutes_reserved = (
-                        podcast_transcription_usage_daily.minutes_reserved
-                        + EXCLUDED.minutes_reserved
-                    ),
-                    updated_at = EXCLUDED.updated_at
-                RETURNING minutes_used, minutes_reserved
-                """
-            ),
-            {
-                "user_id": user_id,
-                "usage_date": usage_date,
-                "minutes_reserved": required_minutes,
-                "updated_at": now,
-            },
-        ).fetchone()
-    else:
-        row = db.execute(
-            text(
-                """
-                INSERT INTO podcast_transcription_usage_daily (
-                    user_id,
-                    usage_date,
-                    minutes_used,
-                    minutes_reserved,
-                    updated_at
-                )
-                SELECT
-                    :user_id,
-                    :usage_date,
-                    0,
-                    :minutes_reserved,
-                    :updated_at
-                WHERE :minutes_reserved <= :daily_limit_minutes
-                ON CONFLICT (user_id, usage_date)
-                DO UPDATE SET
-                    minutes_reserved = (
-                        podcast_transcription_usage_daily.minutes_reserved
-                        + EXCLUDED.minutes_reserved
-                    ),
-                    updated_at = EXCLUDED.updated_at
-                WHERE (
-                    podcast_transcription_usage_daily.minutes_used
-                    + podcast_transcription_usage_daily.minutes_reserved
+    usage_before = get_transcription_usage(db, user_id, usage_start_date, usage_end_date)
+    if usage_before["used"] + usage_before["reserved"] + required_minutes > monthly_limit_minutes:
+        logger.warning(
+            "podcast_quota_exceeded",
+            viewer_id=str(user_id),
+            usage_date=usage_date.isoformat(),
+            used_minutes=usage_before["used"],
+            reserved_minutes=usage_before["reserved"],
+            required_minutes=required_minutes,
+            monthly_limit_minutes=monthly_limit_minutes,
+        )
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
+            "Monthly transcription quota exceeded",
+        )
+
+    row = db.execute(
+        text(
+            """
+            INSERT INTO podcast_transcription_usage_daily (
+                user_id,
+                usage_date,
+                minutes_used,
+                minutes_reserved,
+                updated_at
+            )
+            SELECT
+                :user_id,
+                :usage_date,
+                0,
+                :minutes_reserved,
+                :updated_at
+            WHERE :minutes_reserved <= :monthly_limit_minutes
+            ON CONFLICT (user_id, usage_date)
+            DO UPDATE SET
+                minutes_reserved = (
+                    podcast_transcription_usage_daily.minutes_reserved
                     + EXCLUDED.minutes_reserved
-                    <= :daily_limit_minutes
-                )
-                RETURNING minutes_used, minutes_reserved
-                """
-            ),
-            {
-                "user_id": user_id,
-                "usage_date": usage_date,
-                "minutes_reserved": required_minutes,
-                "daily_limit_minutes": daily_limit_minutes,
-                "updated_at": now,
-            },
-        ).fetchone()
+                ),
+                updated_at = EXCLUDED.updated_at
+            WHERE (
+                podcast_transcription_usage_daily.minutes_used
+                + podcast_transcription_usage_daily.minutes_reserved
+                + EXCLUDED.minutes_reserved
+                <= :monthly_limit_minutes
+            )
+            RETURNING minutes_used, minutes_reserved
+            """
+        ),
+        {
+            "user_id": user_id,
+            "usage_date": usage_date,
+            "minutes_reserved": required_minutes,
+            "monthly_limit_minutes": monthly_limit_minutes,
+            "updated_at": now,
+        },
+    ).fetchone()
 
     if row is None:
         usage_snapshot = _get_usage_snapshot(db, viewer_id=user_id, usage_date=usage_date)
@@ -5656,14 +5520,15 @@ def _reserve_usage_minutes_or_raise(
             used_minutes=usage_snapshot["used"],
             reserved_minutes=usage_snapshot["reserved"],
             required_minutes=required_minutes,
-            daily_limit_minutes=daily_limit_minutes,
+            monthly_limit_minutes=monthly_limit_minutes,
         )
         raise ApiError(
             ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
-            "Daily podcast transcription quota exceeded",
+            "Monthly transcription quota exceeded",
         )
-    used_after = int(row[0] or 0)
-    reserved_after = int(row[1] or 0)
+    usage_after = get_transcription_usage(db, user_id, usage_start_date, usage_end_date)
+    used_after = int(usage_after["used"] or 0)
+    reserved_after = int(usage_after["reserved"] or 0)
     return {
         "used": used_after,
         "reserved": reserved_after,

@@ -16,6 +16,12 @@ def _make_settings(**overrides) -> Settings:
         "SUPABASE_JWKS_URL": "http://localhost:54321/auth/v1/.well-known/jwks.json",
         "SUPABASE_ISSUER": "http://localhost:54321/auth/v1",
         "SUPABASE_AUDIENCES": "authenticated",
+        "APP_PUBLIC_URL": "http://localhost:3000",
+        "STRIPE_SECRET_KEY": "sk_test",
+        "STRIPE_WEBHOOK_SECRET": "whsec_test",
+        "STRIPE_PLUS_PRICE_ID": "price_plus",
+        "STRIPE_AI_PLUS_PRICE_ID": "price_ai_plus",
+        "STRIPE_AI_PRO_PRICE_ID": "price_ai_pro",
         "PODCASTS_ENABLED": True,
         "PODCAST_INDEX_API_KEY": "test-key",
         "PODCAST_INDEX_API_SECRET": "test-secret",
@@ -123,20 +129,23 @@ class TestTranscriptEmbeddingConfiguration:
             _make_settings(TRANSCRIPT_EMBEDDING_DIMENSIONS=384)
 
 
-class TestPodcastPlanAdminPrincipalConfiguration:
-    def test_defaults_include_billing_admin_roles(self):
+class TestBillingConfiguration:
+    def test_defaults_include_billing_limits(self):
         settings = _make_settings()
-        assert settings.podcast_plan_admin_role_set == {"podcast_plan_admin", "billing_admin"}
+        assert settings.app_public_url == "http://localhost:3000"
+        assert settings.billing_ai_plus_platform_token_limit_monthly == 1_000_000
+        assert settings.billing_ai_pro_platform_token_limit_monthly == 3_000_000
+        assert settings.billing_ai_plus_transcription_minutes_monthly == 300
+        assert settings.billing_ai_pro_transcription_minutes_monthly == 1200
 
-    def test_email_allowlist_is_normalized(self):
-        settings = _make_settings(
-            PODCAST_PLAN_ADMIN_EMAILS=" Billing@Example.com,ops@example.com ",
-        )
-        assert settings.podcast_plan_admin_email_set == {
-            "billing@example.com",
-            "ops@example.com",
-        }
-
-    def test_invalid_admin_user_id_list_is_rejected(self):
-        with pytest.raises(ValidationError, match="PODCAST_PLAN_ADMIN_USER_IDS"):
-            _make_settings(PODCAST_PLAN_ADMIN_USER_IDS="not-a-uuid")
+    def test_staging_requires_stripe_settings(self):
+        with pytest.raises(ValidationError, match="STRIPE_SECRET_KEY"):
+            _make_settings(
+                NEXUS_ENV="staging",
+                NEXUS_INTERNAL_SECRET="secret",
+                STRIPE_SECRET_KEY="",
+                STRIPE_WEBHOOK_SECRET="",
+                STRIPE_PLUS_PRICE_ID="",
+                STRIPE_AI_PLUS_PRICE_ID="",
+                STRIPE_AI_PRO_PRICE_ID="",
+            )

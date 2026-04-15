@@ -9,10 +9,9 @@ from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import success_response
 from nexus.schemas.podcast import (
-    PodcastPlanUpdateRequest,
     PodcastSubscribeRequest,
     PodcastSubscriptionCategoryCreateRequest,
     PodcastSubscriptionCategoryOrderRequest,
@@ -236,30 +235,6 @@ def unsubscribe_from_podcast(
         mode=mode,
     )
     return success_response(out.model_dump(mode="json"))
-
-
-@router.get("/podcasts/plan")
-def get_podcast_plan_snapshot(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Read the viewer's effective podcast plan and today's quota usage."""
-    out = podcast_service.get_user_plan_snapshot(db, viewer.user_id)
-    return success_response(out.model_dump(mode="json"))
-
-
-@router.put("/podcasts/plan")
-def update_self_podcast_plan(
-    body: PodcastPlanUpdateRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Public plan writes are disabled; entitlement updates are internal-only."""
-    _ = body, viewer, db
-    raise ForbiddenError(
-        ApiErrorCode.E_FORBIDDEN,
-        "Podcast plan changes are managed by internal billing controls.",
-    )
 
 
 @router.get("/podcasts/{podcast_id}")

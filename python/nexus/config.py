@@ -17,7 +17,6 @@ Local/test environments use Supabase local, staging/prod use cloud.
 from enum import Enum
 from functools import lru_cache
 from typing import Annotated
-from uuid import UUID
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
@@ -82,30 +81,7 @@ class Settings(BaseSettings):
     podcast_transcription_timeout_seconds: float = Field(
         default=90.0, alias="PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS"
     )
-    podcast_free_daily_transcription_minutes: int = Field(
-        default=60, alias="PODCAST_FREE_DAILY_TRANSCRIPTION_MINUTES"
-    )
-    podcast_free_initial_episode_window: int = Field(
-        default=3, alias="PODCAST_FREE_INITIAL_EPISODE_WINDOW"
-    )
-    podcast_paid_daily_transcription_minutes: int | None = Field(
-        default=None, alias="PODCAST_PAID_DAILY_TRANSCRIPTION_MINUTES"
-    )
-    podcast_paid_initial_episode_window: int = Field(
-        default=10, alias="PODCAST_PAID_INITIAL_EPISODE_WINDOW"
-    )
-    podcast_plan_admin_roles: str = Field(
-        default="podcast_plan_admin,billing_admin",
-        alias="PODCAST_PLAN_ADMIN_ROLES",
-    )
-    podcast_plan_admin_user_ids: str | None = Field(
-        default=None,
-        alias="PODCAST_PLAN_ADMIN_USER_IDS",
-    )
-    podcast_plan_admin_emails: str | None = Field(
-        default=None,
-        alias="PODCAST_PLAN_ADMIN_EMAILS",
-    )
+    podcast_initial_episode_window: int = Field(default=3, alias="PODCAST_INITIAL_EPISODE_WINDOW")
     podcast_ingest_prefetch_limit: int = Field(default=50, alias="PODCAST_INGEST_PREFETCH_LIMIT")
     podcast_active_poll_schedule_seconds: int = Field(
         default=300, alias="PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS"
@@ -116,6 +92,30 @@ class Settings(BaseSettings):
     )
     podcast_sync_running_lease_seconds: int = Field(
         default=1800, alias="PODCAST_SYNC_RUNNING_LEASE_SECONDS"
+    )
+
+    # Billing / Stripe settings
+    app_public_url: str = Field(default="http://localhost:3000", alias="APP_PUBLIC_URL")
+    stripe_secret_key: str | None = Field(default=None, alias="STRIPE_SECRET_KEY")
+    stripe_webhook_secret: str | None = Field(default=None, alias="STRIPE_WEBHOOK_SECRET")
+    stripe_plus_price_id: str | None = Field(default=None, alias="STRIPE_PLUS_PRICE_ID")
+    stripe_ai_plus_price_id: str | None = Field(default=None, alias="STRIPE_AI_PLUS_PRICE_ID")
+    stripe_ai_pro_price_id: str | None = Field(default=None, alias="STRIPE_AI_PRO_PRICE_ID")
+    billing_ai_plus_platform_token_limit_monthly: int = Field(
+        default=1_000_000,
+        alias="BILLING_AI_PLUS_PLATFORM_TOKEN_LIMIT_MONTHLY",
+    )
+    billing_ai_pro_platform_token_limit_monthly: int = Field(
+        default=3_000_000,
+        alias="BILLING_AI_PRO_PLATFORM_TOKEN_LIMIT_MONTHLY",
+    )
+    billing_ai_plus_transcription_minutes_monthly: int = Field(
+        default=300,
+        alias="BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY",
+    )
+    billing_ai_pro_transcription_minutes_monthly: int = Field(
+        default=1200,
+        alias="BILLING_AI_PRO_TRANSCRIPTION_MINUTES_MONTHLY",
     )
 
     # Ingest recovery guardrails
@@ -173,10 +173,6 @@ class Settings(BaseSettings):
     # PR-05: Rate limiting settings
     rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute
     rate_limit_concurrent: int = Field(default=3, alias="RATE_LIMIT_CONCURRENT")  # Max concurrent
-    token_budget_daily: int = Field(
-        default=100000, alias="TOKEN_BUDGET_DAILY"
-    )  # Daily platform tokens
-
     # PR-05: Streaming settings
     enable_streaming: bool = Field(default=False, alias="ENABLE_STREAMING")  # Feature flag
 
@@ -276,22 +272,16 @@ class Settings(BaseSettings):
             if value < 1:
                 raise ValueError(f"{field_name.upper()}={value} must be >= 1.")
 
-        if self.podcast_free_daily_transcription_minutes < 0:
-            raise ValueError("PODCAST_FREE_DAILY_TRANSCRIPTION_MINUTES must be >= 0.")
-        if self.podcast_paid_daily_transcription_minutes is not None:
-            if self.podcast_paid_daily_transcription_minutes < 0:
-                raise ValueError("PODCAST_PAID_DAILY_TRANSCRIPTION_MINUTES must be >= 0.")
-        if self.podcast_free_initial_episode_window < 1:
-            raise ValueError("PODCAST_FREE_INITIAL_EPISODE_WINDOW must be >= 1.")
-        if self.podcast_paid_initial_episode_window < 1:
-            raise ValueError("PODCAST_PAID_INITIAL_EPISODE_WINDOW must be >= 1.")
-        for raw_user_id in self._parse_csv_values(self.podcast_plan_admin_user_ids):
-            try:
-                UUID(raw_user_id)
-            except ValueError as exc:
-                raise ValueError(
-                    "PODCAST_PLAN_ADMIN_USER_IDS must contain only valid UUID values."
-                ) from exc
+        if self.podcast_initial_episode_window < 1:
+            raise ValueError("PODCAST_INITIAL_EPISODE_WINDOW must be >= 1.")
+        if self.billing_ai_plus_platform_token_limit_monthly < 0:
+            raise ValueError("BILLING_AI_PLUS_PLATFORM_TOKEN_LIMIT_MONTHLY must be >= 0.")
+        if self.billing_ai_pro_platform_token_limit_monthly < 0:
+            raise ValueError("BILLING_AI_PRO_PLATFORM_TOKEN_LIMIT_MONTHLY must be >= 0.")
+        if self.billing_ai_plus_transcription_minutes_monthly < 0:
+            raise ValueError("BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY must be >= 0.")
+        if self.billing_ai_pro_transcription_minutes_monthly < 0:
+            raise ValueError("BILLING_AI_PRO_TRANSCRIPTION_MINUTES_MONTHLY must be >= 0.")
         if self.transcript_embedding_dimensions != TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS:
             raise ValueError(
                 "TRANSCRIPT_EMBEDDING_DIMENSIONS must equal "
@@ -311,6 +301,23 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_SYNC_RUNNING_LEASE_SECONDS must be >= 1.")
         if self.podcast_transcription_timeout_seconds <= 0:
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
+        if self.nexus_env in (Environment.STAGING, Environment.PROD):
+            missing_billing: list[str] = []
+            if not self.stripe_secret_key:
+                missing_billing.append("STRIPE_SECRET_KEY")
+            if not self.stripe_webhook_secret:
+                missing_billing.append("STRIPE_WEBHOOK_SECRET")
+            if not self.stripe_plus_price_id:
+                missing_billing.append("STRIPE_PLUS_PRICE_ID")
+            if not self.stripe_ai_plus_price_id:
+                missing_billing.append("STRIPE_AI_PLUS_PRICE_ID")
+            if not self.stripe_ai_pro_price_id:
+                missing_billing.append("STRIPE_AI_PRO_PRICE_ID")
+            if missing_billing:
+                raise ValueError(
+                    "Billing is enabled but required Stripe settings are missing: "
+                    f"{', '.join(missing_billing)}"
+                )
         if self.podcasts_enabled:
             missing_podcast_provider_settings: list[str] = []
             if not self.podcast_index_api_key:
@@ -349,35 +356,6 @@ class Settings(BaseSettings):
     def requires_internal_header(self) -> bool:
         """Whether requests must include the internal secret header."""
         return self.nexus_env in (Environment.STAGING, Environment.PROD)
-
-    @staticmethod
-    def _parse_csv_values(raw_value: str | None) -> list[str]:
-        if not raw_value:
-            return []
-        return [value.strip() for value in raw_value.split(",") if value.strip()]
-
-    @property
-    def podcast_plan_admin_role_set(self) -> set[str]:
-        """Return normalized role names that may mutate podcast plans."""
-        return {
-            role.lower()
-            for role in self._parse_csv_values(self.podcast_plan_admin_roles)
-            if role.strip()
-        }
-
-    @property
-    def podcast_plan_admin_user_id_set(self) -> set[UUID]:
-        """Return explicit user IDs that may mutate podcast plans."""
-        return {UUID(raw_id) for raw_id in self._parse_csv_values(self.podcast_plan_admin_user_ids)}
-
-    @property
-    def podcast_plan_admin_email_set(self) -> set[str]:
-        """Return normalized operator emails that may mutate podcast plans."""
-        return {
-            email.lower()
-            for email in self._parse_csv_values(self.podcast_plan_admin_emails)
-            if email.strip()
-        }
 
     @property
     def audience_list(self) -> list[str]:

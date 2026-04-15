@@ -15,6 +15,7 @@ import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/Po
 import VideosPaneBody from "@/app/(authenticated)/videos/VideosPaneBody";
 import SearchPaneBody from "@/app/(authenticated)/search/SearchPaneBody";
 import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
+import SettingsBillingPaneBody from "@/app/(authenticated)/settings/billing/SettingsBillingPaneBody";
 import SettingsReaderPaneBody from "@/app/(authenticated)/settings/reader/SettingsReaderPaneBody";
 import SettingsKeysPaneBody from "@/app/(authenticated)/settings/keys/SettingsKeysPaneBody";
 import SettingsIdentitiesPaneBody from "@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody";
@@ -52,6 +53,7 @@ export type PaneRouteId =
   | "videos"
   | "search"
   | "settings"
+  | "settingsBilling"
   | "settingsReader"
   | "settingsKeys"
   | "settingsIdentities"
@@ -279,6 +281,20 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     getChrome: () => ({
       title: "Settings",
       subtitle: "Account-level controls and integration configuration.",
+    }),
+  },
+  {
+    id: "settingsBilling",
+    pattern: ["settings", "billing"],
+    staticTitle: "Billing",
+    render: () => <SettingsBillingPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Billing",
+      subtitle: "Plan, usage, and Stripe subscription management.",
     }),
   },
   {

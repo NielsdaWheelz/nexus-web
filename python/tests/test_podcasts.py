@@ -1,5 +1,6 @@
 """Integration tests for S7 PR-01 podcast backend foundation."""
 
+import os
 import threading
 import time
 from datetime import UTC, date, datetime, timedelta
@@ -10,7 +11,7 @@ import pytest
 from lxml import etree
 from sqlalchemy import text
 
-from nexus.config import clear_settings_cache
+from nexus.config import clear_settings_cache, get_settings
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -74,6 +75,14 @@ class TestPodcastUxHardening:
     ):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
+            initial_episode_window=3,
+        )
 
         provider_podcast_id = f"episodes-offset-{uuid4()}"
         episodes = [
@@ -231,141 +240,6 @@ class TestPodcastUxHardening:
             f"before={before_dispatch_count} after={after_dispatch_count}"
         )
 
-    def test_get_plan_route_surfaces_user_plan_and_usage(self, auth_client, direct_db):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        _set_plan(
-            auth_client,
-            user_id,
-            user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=120,
-            initial_episode_window=8,
-        )
-
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcast_transcription_usage_daily (
-                        user_id,
-                        usage_date,
-                        minutes_used,
-                        minutes_reserved,
-                        updated_at
-                    )
-                    VALUES (
-                        :user_id,
-                        :usage_date,
-                        :minutes_used,
-                        :minutes_reserved,
-                        :updated_at
-                    )
-                    ON CONFLICT (user_id, usage_date)
-                    DO UPDATE SET
-                        minutes_used = EXCLUDED.minutes_used,
-                        minutes_reserved = EXCLUDED.minutes_reserved,
-                        updated_at = EXCLUDED.updated_at
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "usage_date": datetime.now(UTC).date(),
-                    "minutes_used": 35,
-                    "minutes_reserved": 15,
-                    "updated_at": datetime.now(UTC),
-                },
-            )
-            session.commit()
-
-        get_response = auth_client.get(
-            "/podcasts/plan",
-            headers=auth_headers(user_id),
-        )
-        assert get_response.status_code == 200, (
-            f"expected plan snapshot route to succeed, got {get_response.status_code}: {get_response.text}"
-        )
-        get_payload = get_response.json()["data"]
-        assert get_payload["plan"]["plan_tier"] == "paid"
-        assert get_payload["plan"]["daily_transcription_minutes"] == 120
-        assert get_payload["usage"]["used_minutes"] == 35
-        assert get_payload["usage"]["reserved_minutes"] == 15
-        assert get_payload["usage"]["total_minutes"] == 50
-        assert get_payload["usage"]["remaining_minutes"] == 70
-
-    def test_put_plan_route_rejects_self_serve_plan_override(self, auth_client):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        put_response = auth_client.put(
-            "/podcasts/plan",
-            json={
-                "plan_tier": "paid",
-                "daily_transcription_minutes": 120,
-                "initial_episode_window": 8,
-            },
-            headers=auth_headers(user_id),
-        )
-        assert put_response.status_code == 403, (
-            "public self-serve plan edits must be forbidden to prevent quota/billing bypass, "
-            f"got {put_response.status_code}: {put_response.text}"
-        )
-        error_payload = put_response.json()["error"]
-        assert error_payload["code"] == "E_FORBIDDEN", (
-            "public /podcasts/plan writes must return E_FORBIDDEN for explicit policy rejection, "
-            f"got {error_payload}"
-        )
-
-    def test_internal_plan_route_rejects_non_billing_principal_even_for_self(self, auth_client):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        response = auth_client.put(
-            f"/internal/podcasts/users/{user_id}/plan",
-            json={
-                "plan_tier": "paid",
-                "daily_transcription_minutes": 120,
-                "initial_episode_window": 8,
-            },
-            headers=auth_headers(user_id),
-        )
-        assert response.status_code == 403, (
-            "internal plan writes must require an explicit billing/admin principal; "
-            f"self identity alone is insufficient. got {response.status_code}: {response.text}"
-        )
-        error_payload = response.json()["error"]
-        assert error_payload["code"] == "E_FORBIDDEN", (
-            f"missing billing/admin principal must return E_FORBIDDEN, got {error_payload}"
-        )
-
-    def test_internal_plan_route_allows_billing_admin_for_other_user(self, auth_client):
-        billing_actor_id = create_test_user_id()
-        target_user_id = create_test_user_id()
-        _bootstrap_user(auth_client, billing_actor_id)
-        _bootstrap_user(auth_client, target_user_id)
-
-        response = auth_client.put(
-            f"/internal/podcasts/users/{target_user_id}/plan",
-            json={
-                "plan_tier": "paid",
-                "daily_transcription_minutes": 120,
-                "initial_episode_window": 8,
-            },
-            headers=auth_headers(
-                billing_actor_id,
-                nexus_roles=["podcast_plan_admin"],
-            ),
-        )
-        assert response.status_code == 200, (
-            "billing/admin principals must be able to write entitlements for target users; "
-            f"got {response.status_code}: {response.text}"
-        )
-        payload = response.json()["data"]
-        assert payload["user_id"] == str(target_user_id), (
-            f"plan override should target the requested user, got payload={payload}"
-        )
-
 
 def _bootstrap_user(auth_client, user_id: UUID) -> UUID:
     response = auth_client.get("/me", headers=auth_headers(user_id))
@@ -381,21 +255,86 @@ def _set_plan(
     target_user_id: UUID,
     *,
     plan_tier: str,
-    daily_transcription_minutes: int | None,
+    transcription_minutes_limit_monthly: int | None,
     initial_episode_window: int,
 ) -> None:
-    response = auth_client.put(
-        f"/internal/podcasts/users/{target_user_id}/plan",
-        json={
+    _ = actor_user_id, initial_episode_window
+    if plan_tier == "ai_plus":
+        os.environ["BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY"] = str(
+            transcription_minutes_limit_monthly or 300
+        )
+        clear_settings_cache()
+    elif plan_tier == "ai_pro":
+        os.environ["BILLING_AI_PRO_TRANSCRIPTION_MINUTES_MONTHLY"] = str(
+            transcription_minutes_limit_monthly or 1200
+        )
+        clear_settings_cache()
+
+    from nexus.api.deps import get_db
+
+    db_override = auth_client.app.dependency_overrides[get_db]
+    db_iter = db_override()
+    db = next(db_iter)
+    try:
+        now = datetime.now(UTC)
+        account = db.execute(
+            text("SELECT id FROM billing_accounts WHERE user_id = :user_id"),
+            {"user_id": target_user_id},
+        ).fetchone()
+        values = {
+            "user_id": target_user_id,
             "plan_tier": plan_tier,
-            "daily_transcription_minutes": daily_transcription_minutes,
-            "initial_episode_window": initial_episode_window,
-        },
-        headers=auth_headers(actor_user_id, nexus_roles=["podcast_plan_admin"]),
-    )
-    assert response.status_code == 200, (
-        f"expected plan update to succeed, got {response.status_code}: {response.text}"
-    )
+            "subscription_status": "active" if plan_tier != "free" else None,
+            "current_period_start": now - timedelta(days=1) if plan_tier != "free" else None,
+            "current_period_end": now + timedelta(days=30) if plan_tier != "free" else None,
+            "updated_at": now,
+        }
+        if account is None:
+            db.execute(
+                text(
+                    """
+                    INSERT INTO billing_accounts (
+                        id,
+                        user_id,
+                        plan_tier,
+                        subscription_status,
+                        current_period_start,
+                        current_period_end,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        :id,
+                        :user_id,
+                        :plan_tier,
+                        :subscription_status,
+                        :current_period_start,
+                        :current_period_end,
+                        :updated_at,
+                        :updated_at
+                    )
+                    """
+                ),
+                {"id": uuid4(), **values},
+            )
+        else:
+            db.execute(
+                text(
+                    """
+                    UPDATE billing_accounts
+                    SET plan_tier = :plan_tier,
+                        subscription_status = :subscription_status,
+                        current_period_start = :current_period_start,
+                        current_period_end = :current_period_end,
+                        updated_at = :updated_at
+                    WHERE user_id = :user_id
+                    """
+                ),
+                values,
+            )
+        db.commit()
+    finally:
+        db_iter.close()
 
 
 def _mock_podcast_index(
@@ -629,10 +568,12 @@ class TestPodcastSubscriptionSyncLifecycle:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=500,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=2,
         )
+        monkeypatch.setenv("PODCAST_INITIAL_EPISODE_WINDOW", "2")
+        clear_settings_cache()
 
         provider_podcast_id = f"control-plane-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Control Plane Podcast")
@@ -705,10 +646,12 @@ class TestPodcastSubscriptionSyncLifecycle:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=500,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=2,
         )
+        monkeypatch.setenv("PODCAST_INITIAL_EPISODE_WINDOW", "2")
+        clear_settings_cache()
 
         provider_podcast_id = f"sync-complete-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Sync Complete Podcast")
@@ -808,8 +751,8 @@ class TestPodcastSubscriptionSyncLifecycle:
                 auth_client,
                 user_id,
                 user_id,
-                plan_tier="free",
-                daily_transcription_minutes=500,
+                plan_tier="ai_plus",
+                transcription_minutes_limit_monthly=None,
                 initial_episode_window=2,
             )
 
@@ -915,8 +858,8 @@ class TestPodcastSubscriptionSyncLifecycle:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=500,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -1001,8 +944,8 @@ class TestPodcastSubscribeIngest:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=500,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -1058,10 +1001,12 @@ class TestPodcastSubscribeIngest:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=500,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=2,
         )
+        monkeypatch.setenv("PODCAST_INITIAL_EPISODE_WINDOW", "2")
+        clear_settings_cache()
 
         monkeypatch.setenv("PODCAST_INGEST_PREFETCH_LIMIT", "150")
         clear_settings_cache()
@@ -1169,10 +1114,12 @@ class TestPodcastSubscribeIngest:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=500,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=2,
         )
+        monkeypatch.setenv("PODCAST_INITIAL_EPISODE_WINDOW", "2")
+        clear_settings_cache()
 
         provider_podcast_id = f"window-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Windowed Podcast")
@@ -1249,8 +1196,8 @@ class TestPodcastSubscribeIngest:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=500,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -1305,8 +1252,8 @@ class TestPodcastSubscribeIngest:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=500,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -1377,16 +1324,16 @@ class TestPodcastSubscribeIngest:
             auth_client,
             user_a,
             user_a,
-            plan_tier="free",
-            daily_transcription_minutes=500,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
         _set_plan(
             auth_client,
             user_b,
             user_b,
-            plan_tier="free",
-            daily_transcription_minutes=500,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -1460,8 +1407,8 @@ class TestPodcastSubscribeIngest:
         assert job_count == 1, f"expected one transcription job globally, got {job_count}"
 
 
-class TestPodcastQuotaAndPlans:
-    def test_free_tier_over_quota_fails_with_stable_error_and_enqueues_nothing(
+class TestPodcastBillingQuota:
+    def test_free_tier_without_ai_fails_with_stable_error_and_enqueues_nothing(
         self, auth_client, monkeypatch, direct_db
     ):
         user_id = create_test_user_id()
@@ -1471,7 +1418,7 @@ class TestPodcastQuotaAndPlans:
             user_id,
             user_id,
             plan_tier="free",
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -1484,7 +1431,7 @@ class TestPodcastQuotaAndPlans:
                 "title": "Too Long Episode",
                 "audio_url": "https://cdn.example.com/long.mp3",
                 "published_at": "2026-03-02T03:00:00Z",
-                "duration_seconds": 600,  # 10 minutes
+                "duration_seconds": 600,
                 "transcript_segments": [
                     {"t_start_ms": 0, "t_end_ms": 1000, "text": "long"},
                 ],
@@ -1559,7 +1506,7 @@ class TestPodcastQuotaAndPlans:
             user_id,
             user_id,
             plan_tier="free",
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -1572,7 +1519,7 @@ class TestPodcastQuotaAndPlans:
                 "title": "Paid Plan Unlock",
                 "audio_url": "https://cdn.example.com/paid.mp3",
                 "published_at": "2026-03-02T04:00:00Z",
-                "duration_seconds": 600,  # exceeds free 5m quota
+                "duration_seconds": 600,
                 "transcript_segments": [
                     {"t_start_ms": 0, "t_end_ms": 1000, "text": "paid"},
                 ],
@@ -1625,8 +1572,8 @@ class TestPodcastQuotaAndPlans:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -1640,19 +1587,20 @@ class TestPodcastQuotaAndPlans:
             f"got {allowed_request.status_code}: {allowed_request.text}"
         )
 
-    def test_quota_usage_resets_at_utc_day_boundary(self, auth_client, monkeypatch, direct_db):
+    def test_monthly_quota_counts_previous_day_usage(self, auth_client, monkeypatch, direct_db):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
         _set_plan(
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=5,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
         yesterday = date.today() - timedelta(days=1)
+        monthly_limit = get_settings().billing_ai_plus_transcription_minutes_monthly
         with direct_db.session() as session:
             session.execute(
                 text(
@@ -1669,7 +1617,7 @@ class TestPodcastQuotaAndPlans:
                 {
                     "user_id": user_id,
                     "usage_date": yesterday,
-                    "minutes_used": 5,
+                    "minutes_used": monthly_limit,
                     "updated_at": datetime.now(UTC),
                 },
             )
@@ -1702,12 +1650,37 @@ class TestPodcastQuotaAndPlans:
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
-            "expected quota to reset on UTC day boundary; "
+            "expected metadata sync to stay available even when monthly transcription is spent; "
             f"got {response.status_code}: {response.text}"
         )
         data = response.json()["data"]
-        sync_result = _run_subscription_sync(direct_db, user_id, UUID(data["podcast_id"]))
+        sync_result = _run_subscription_sync(
+            direct_db,
+            user_id,
+            UUID(data["podcast_id"]),
+            run_transcription_jobs=False,
+        )
         assert sync_result["sync_status"] == "complete"
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text(
+                    """
+                    SELECT pe.media_id
+                    FROM podcast_episodes pe
+                    JOIN podcasts p ON p.id = pe.podcast_id
+                    WHERE p.provider_podcast_id = :provider_podcast_id
+                    """
+                ),
+                {"provider_podcast_id": provider_podcast_id},
+            ).scalar_one()
+
+        blocked = auth_client.post(
+            f"/media/{media_id}/transcript/request",
+            json={"reason": "episode_open"},
+            headers=auth_headers(user_id),
+        )
+        assert blocked.status_code == 429
+        assert blocked.json()["error"]["code"] == "E_PODCAST_QUOTA_EXCEEDED"
 
     def test_quota_usage_ledger_uses_utc_sync_time_not_local_date_today(
         self, auth_client, monkeypatch, direct_db
@@ -1718,8 +1691,8 @@ class TestPodcastQuotaAndPlans:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=10,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -1789,7 +1762,7 @@ class TestPodcastTranscriptRequestAdmission:
         auth_client,
         monkeypatch,
         direct_db,
-        daily_transcription_minutes: int | None,
+        transcription_minutes_limit_monthly: int | None,
         duration_seconds: int,
     ) -> dict[str, UUID]:
         user_id = create_test_user_id()
@@ -1798,8 +1771,8 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=daily_transcription_minutes,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=transcription_minutes_limit_monthly,
             initial_episode_window=1,
         )
 
@@ -2000,7 +1973,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=1,
+            transcription_minutes_limit_monthly=1,
             duration_seconds=600,
         )
         user_id = seeded["user_id"]
@@ -2045,7 +2018,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=5,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2092,7 +2065,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=5,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2148,7 +2121,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=5,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2217,7 +2190,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=5,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2295,7 +2268,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=5,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2343,7 +2316,7 @@ class TestPodcastTranscriptRequestAdmission:
             ).scalar()
 
         assert used_after_failure in {None, 0}, (
-            "failed transcriptions must not burn the user's daily quota budget"
+            "failed transcriptions must not burn the user's monthly quota budget"
         )
 
     def test_transcript_request_response_exposes_transcript_state_and_coverage(
@@ -2353,7 +2326,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=5,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2386,7 +2359,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=5,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2474,7 +2447,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=5,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2542,7 +2515,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=5,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2626,7 +2599,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=5,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2711,7 +2684,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=5,
+            transcription_minutes_limit_monthly=5,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2736,8 +2709,8 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -2811,7 +2784,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=3,
+            transcription_minutes_limit_monthly=3,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2843,6 +2816,7 @@ class TestPodcastTranscriptRequestAdmission:
             session.commit()
         assert result["status"] == "failed"
 
+        monthly_limit = get_settings().billing_ai_plus_transcription_minutes_monthly
         with direct_db.session() as session:
             session.execute(
                 text(
@@ -2856,7 +2830,7 @@ class TestPodcastTranscriptRequestAdmission:
                     VALUES (
                         :user_id,
                         :usage_date,
-                        3,
+                        :minutes_used,
                         :updated_at
                     )
                     ON CONFLICT (user_id, usage_date)
@@ -2868,6 +2842,7 @@ class TestPodcastTranscriptRequestAdmission:
                 {
                     "user_id": user_id,
                     "usage_date": datetime.now(UTC).date(),
+                    "minutes_used": monthly_limit,
                     "updated_at": datetime.now(UTC),
                 },
             )
@@ -2904,7 +2879,7 @@ class TestPodcastTranscriptRequestAdmission:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=2,
+            transcription_minutes_limit_monthly=2,
             duration_seconds=180,
         )
         user_id = seeded["user_id"]
@@ -2956,8 +2931,8 @@ class TestPodcastTranscriptPersistence:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -3045,8 +3020,8 @@ class TestPodcastTranscriptPersistence:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -3127,8 +3102,8 @@ class TestPodcastTranscriptPersistence:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -3190,8 +3165,8 @@ class TestPodcastTranscriptPersistence:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -3283,8 +3258,8 @@ class TestPodcastTranscriptPersistence:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -3366,8 +3341,8 @@ class TestPodcastTranscriptPersistence:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -3516,8 +3491,8 @@ class TestPodcastMediaDetailContract:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -3620,7 +3595,7 @@ class TestPodcastPollingOrchestration:
             user_id,
             user_id,
             plan_tier="free",
-            daily_transcription_minutes=1,
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -3813,8 +3788,8 @@ class TestPodcastPollingOrchestration:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -3894,16 +3869,16 @@ class TestPodcastPollingOrchestration:
             auth_client,
             user_a,
             user_a,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
         _set_plan(
             auth_client,
             user_b,
             user_b,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -3975,8 +3950,8 @@ class TestPodcastSubscriptionLifecycleClosure:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=3,
         )
         payload = _podcast_payload(provider_podcast_id, title)
@@ -4028,8 +4003,8 @@ class TestPodcastSubscriptionLifecycleClosure:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=2,
         )
         payload = _podcast_payload(provider_podcast_id, "Mode 1 Podcast")
@@ -4279,8 +4254,8 @@ class TestPodcastSubscriptionLifecycleClosure:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=2,
         )
 
@@ -4358,8 +4333,8 @@ class TestPodcastApiSurface:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=5,
         )
         payload = _podcast_payload(provider_podcast_id, title)
@@ -4894,7 +4869,7 @@ class TestPodcastApiSurface:
             user_id,
             user_id,
             plan_tier="free",
-            daily_transcription_minutes=1,
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -5057,7 +5032,7 @@ class TestPodcastApiSurface:
             user_id,
             user_id,
             plan_tier="free",
-            daily_transcription_minutes=1,
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -6204,8 +6179,8 @@ class TestPodcastTranscriptionAsyncLifecycle:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=None,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 
@@ -6764,7 +6739,7 @@ class TestPodcastShowNotesAndBatchCutover:
         provider_podcast_id: str,
         feed_xml: str,
         duration_seconds: int = 180,
-        daily_transcription_minutes: int | None = 60,
+        transcription_minutes_limit_monthly: int | None = 60,
     ) -> tuple[UUID, UUID]:
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
@@ -6772,8 +6747,8 @@ class TestPodcastShowNotesAndBatchCutover:
             auth_client,
             user_id,
             user_id,
-            plan_tier="paid",
-            daily_transcription_minutes=daily_transcription_minutes,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=transcription_minutes_limit_monthly,
             initial_episode_window=5,
         )
         payload = _podcast_payload(provider_podcast_id, "Show Notes Podcast")
@@ -6974,10 +6949,12 @@ class TestPodcastShowNotesAndBatchCutover:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=1,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=1,
             initial_episode_window=5,
         )
+        monkeypatch.setenv("PODCAST_INITIAL_EPISODE_WINDOW", "5")
+        clear_settings_cache()
         provider_podcast_id = f"batch-request-{uuid4()}"
         payload = _podcast_payload(provider_podcast_id, "Batch Transcript Podcast")
         episodes = []
@@ -7148,7 +7125,7 @@ class TestPodcastShowNotesAndBatchCutover:
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
-            daily_transcription_minutes=None,
+            transcription_minutes_limit_monthly=None,
             duration_seconds=120,
         )
         user_id = seeded["user_id"]
@@ -7205,8 +7182,8 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             auth_client,
             user_id,
             user_id,
-            plan_tier="free",
-            daily_transcription_minutes=60,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
             initial_episode_window=1,
         )
 

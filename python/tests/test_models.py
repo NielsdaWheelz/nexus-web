@@ -1,13 +1,13 @@
 """Integration tests for models registry routes and service.
 
 Tests cover PR-03 requirements:
-- Model filtering based on key availability (platform keys and BYOK)
+- Model filtering based on billing-entitled platform keys and BYOK
 - Auth tests: endpoint requires authentication
 
 Per PR-03 spec, a model is available to a user iff:
 - model.is_available = true
 - model.provider is enabled by feature flag
-- AND (platform key exists for model.provider OR user has BYOK with status ∈ {untested, valid})
+- AND (user has AI-tier access to a platform key for model.provider OR user has BYOK with status ∈ {untested, valid})
 
 Keys with status='invalid' or status='revoked' do NOT enable models.
 """
@@ -61,6 +61,36 @@ def setup_test_master_key(monkeypatch):
 # =============================================================================
 
 
+def _seed_ai_plus_billing(direct_db: DirectSessionManager, user_id) -> None:
+    with direct_db.session() as session:
+        session.execute(
+            text("""
+                INSERT INTO billing_accounts (
+                    id,
+                    user_id,
+                    plan_tier,
+                    subscription_status,
+                    current_period_start,
+                    current_period_end,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    gen_random_uuid(),
+                    :user_id,
+                    'ai_plus',
+                    'active',
+                    now(),
+                    now() + interval '30 days',
+                    now(),
+                    now()
+                )
+            """),
+            {"user_id": user_id},
+        )
+        session.commit()
+
+
 class TestModelFiltering:
     """Tests for model availability filtering based on key status."""
 
@@ -82,6 +112,7 @@ class TestModelFiltering:
 
         # Bootstrap user
         auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
 
         response = auth_client.get("/models", headers=auth_headers(user_id))
 
@@ -106,6 +137,7 @@ class TestModelFiltering:
 
         # Bootstrap user
         auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
 
         response = auth_client.get("/models", headers=auth_headers(user_id))
 
@@ -131,6 +163,7 @@ class TestModelFiltering:
             seed_test_models(session)
 
         auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
         response = auth_client.get("/models", headers=auth_headers(user_id))
 
         assert response.status_code == 200
@@ -162,6 +195,7 @@ class TestModelFiltering:
             session.commit()
 
         auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
         response = auth_client.get("/models", headers=auth_headers(user_id))
 
         assert response.status_code == 200
@@ -339,6 +373,7 @@ class TestModelFiltering:
             json={"provider": "gemini", "api_key": "AIzaSy-test-key-1234567890abcdef"},
             headers=auth_headers(user_id),
         )
+        _seed_ai_plus_billing(direct_db, user_id)
 
         response = auth_client.get("/models", headers=auth_headers(user_id))
 
@@ -374,6 +409,7 @@ class TestModelResponseFormat:
 
         # Bootstrap user
         auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
 
         response = auth_client.get("/models", headers=auth_headers(user_id))
 

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType } from "react";
-import { ArrowRight, BookOpen, KeyRound, Link2 } from "lucide-react";
+import { ArrowRight, BookOpen, CreditCard, KeyRound, Link2 } from "lucide-react";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
@@ -12,6 +12,12 @@ const SETTINGS_ITEMS: {
   description: string;
   Icon: ComponentType<{ size?: number }>;
 }[] = [
+  {
+    href: "/settings/billing",
+    title: "Billing",
+    description: "Manage your plan, usage, and Stripe subscription.",
+    Icon: CreditCard,
+  },
   {
     href: "/settings/keys",
     title: "API Keys",

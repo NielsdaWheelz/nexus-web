@@ -1134,41 +1134,6 @@ class PodcastTranscriptionJob(Base):
     media: Mapped["Media"] = relationship("Media", back_populates="podcast_transcription_job")
 
 
-class PodcastUserPlan(Base):
-    """Manual plan overrides used for podcast quota and ingest-window policy."""
-
-    __tablename__ = "podcast_user_plans"
-
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    plan_tier: Mapped[str] = mapped_column(Text, nullable=False)
-    daily_transcription_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    initial_episode_window: Mapped[int] = mapped_column(Integer, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "plan_tier IN ('free', 'paid')",
-            name="ck_podcast_user_plans_plan_tier",
-        ),
-        CheckConstraint(
-            "daily_transcription_minutes IS NULL OR daily_transcription_minutes >= 0",
-            name="ck_podcast_user_plans_daily_minutes_non_negative",
-        ),
-        CheckConstraint(
-            "initial_episode_window >= 1",
-            name="ck_podcast_user_plans_initial_episode_window_positive",
-        ),
-    )
-
-
 class PodcastTranscriptionUsageDaily(Base):
     """Per-user UTC-day transcription usage ledger."""
 
@@ -1930,15 +1895,12 @@ class HighlightPdfTextAnchor(Base):
     __table_args__ = (
         CheckConstraint("page_number >= 1", name="ck_hpta_page_number"),
         CheckConstraint(
-            "plain_text_start_offset >= 0 "
-            "AND plain_text_end_offset > plain_text_start_offset",
+            "plain_text_start_offset >= 0 AND plain_text_end_offset > plain_text_start_offset",
             name="ck_hpta_offsets_valid",
         ),
     )
 
-    highlight: Mapped["Highlight"] = relationship(
-        "Highlight", back_populates="pdf_text_anchor"
-    )
+    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="pdf_text_anchor")
     media: Mapped["Media"] = relationship("Media")
 
 
@@ -2356,6 +2318,107 @@ class UserApiKey(Base):
 
     # Relationships
     user: Mapped["User"] = relationship("User")
+
+
+class BillingAccount(Base):
+    """Current Stripe subscription snapshot for one user."""
+
+    __tablename__ = "billing_accounts"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    stripe_customer_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stripe_price_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    plan_tier: Mapped[str] = mapped_column(Text, nullable=False, server_default="free")
+    subscription_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    current_period_start: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    current_period_end: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    cancel_at_period_end: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "plan_tier IN ('free', 'plus', 'ai_plus', 'ai_pro')",
+            name="ck_billing_accounts_plan_tier",
+        ),
+        CheckConstraint(
+            """
+            subscription_status IS NULL OR subscription_status IN (
+                'incomplete',
+                'incomplete_expired',
+                'trialing',
+                'active',
+                'past_due',
+                'canceled',
+                'unpaid',
+                'paused'
+            )
+            """,
+            name="ck_billing_accounts_subscription_status",
+        ),
+        UniqueConstraint("user_id", name="uq_billing_accounts_user_id"),
+        UniqueConstraint("stripe_customer_id", name="uq_billing_accounts_stripe_customer_id"),
+        UniqueConstraint(
+            "stripe_subscription_id",
+            name="uq_billing_accounts_stripe_subscription_id",
+        ),
+    )
+
+
+class StripeWebhookEvent(Base):
+    """Processed Stripe webhook event id for idempotency."""
+
+    __tablename__ = "stripe_webhook_events"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    stripe_event_id: Mapped[str] = mapped_column(Text, nullable=False)
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    processed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("stripe_event_id", name="uq_stripe_webhook_events_stripe_event_id"),
+    )
 
 
 class ExtensionSession(Base):

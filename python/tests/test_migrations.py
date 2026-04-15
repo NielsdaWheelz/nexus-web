@@ -210,6 +210,49 @@ class TestSchemaConstraints:
             session.rollback()
             assert "ck_memberships_role" in str(exc_info.value)
 
+    def test_billing_plan_tier_constraint_rejected(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO billing_accounts (id, user_id, plan_tier, created_at, updated_at)
+                        VALUES (:id, :user_id, 'legacy_paid', now(), now())
+                    """),
+                    {"id": uuid4(), "user_id": user_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_billing_accounts_plan_tier" in str(exc_info.value)
+
+    def test_billing_account_user_unique_constraint_rejected(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO billing_accounts (id, user_id, plan_tier, created_at, updated_at)
+                    VALUES (:id, :user_id, 'free', now(), now())
+                """),
+                {"id": uuid4(), "user_id": user_id},
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO billing_accounts (id, user_id, plan_tier, created_at, updated_at)
+                        VALUES (:id, :user_id, 'plus', now(), now())
+                    """),
+                    {"id": uuid4(), "user_id": user_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "uq_billing_accounts_user_id" in str(exc_info.value)
+
     def test_pages_title_length_constraint_rejected(self, migrated_engine):
         with Session(migrated_engine) as session:
             user_id = uuid4()
@@ -265,6 +308,43 @@ class TestSchemaConstraints:
             )
             session.flush()
             session.rollback()
+
+    def test_billing_webhook_event_duplicate_rejected(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            event_id = "evt_test_1"
+            session.execute(
+                text("""
+                    INSERT INTO stripe_webhook_events (
+                        id,
+                        stripe_event_id,
+                        event_type,
+                        processed_at,
+                        created_at
+                    )
+                    VALUES (:id, :stripe_event_id, 'checkout.session.completed', now(), now())
+                """),
+                {"id": uuid4(), "stripe_event_id": event_id},
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO stripe_webhook_events (
+                            id,
+                            stripe_event_id,
+                            event_type,
+                            processed_at,
+                            created_at
+                        )
+                        VALUES (:id, :stripe_event_id, 'checkout.session.completed', now(), now())
+                    """),
+                    {"id": uuid4(), "stripe_event_id": event_id},
+                )
+                session.commit()
+
+            session.rollback()
+            assert "uq_stripe_webhook_events_stripe_event_id" in str(exc_info.value)
 
     def test_invalid_media_kind_rejected(self, migrated_engine):
         """Check constraint prevents invalid media kind values."""

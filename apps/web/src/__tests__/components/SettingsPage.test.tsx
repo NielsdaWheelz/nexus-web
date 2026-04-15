@@ -6,6 +6,11 @@ describe("SettingsPage", () => {
   it("includes linked identities management entrypoint", () => {
     render(<SettingsPage />);
 
+    const billingLink = screen.getByRole("link", {
+      name: /billing/i,
+    });
+    expect(billingLink).toHaveAttribute("href", "/settings/billing");
+
     const linkedIdentitiesLink = screen.getByRole("link", {
       name: /linked identities/i,
     });

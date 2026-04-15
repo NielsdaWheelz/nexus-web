@@ -42,6 +42,7 @@ def user_with_library(db_session: Session) -> tuple:
     """
     user_id = uuid4()
     default_library_id = ensure_user_and_default_library(db_session, user_id)
+    _seed_plus_billing(db_session, user_id)
     return user_id, default_library_id
 
 
@@ -99,6 +100,40 @@ def extra_library(db_session: Session, user_with_library: tuple):
 # =============================================================================
 # Share Invariant Tests
 # =============================================================================
+
+
+def _seed_plus_billing(session: Session, user_id: UUID) -> None:
+    existing = session.execute(
+        text("SELECT id FROM billing_accounts WHERE user_id = :user_id"),
+        {"user_id": user_id},
+    ).fetchone()
+    if existing is not None:
+        return
+    session.execute(
+        text("""
+            INSERT INTO billing_accounts (
+                id,
+                user_id,
+                plan_tier,
+                subscription_status,
+                current_period_start,
+                current_period_end,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                :id,
+                :user_id,
+                'plus',
+                'active',
+                now(),
+                now() + interval '30 days',
+                now(),
+                now()
+            )
+        """),
+        {"id": uuid4(), "user_id": user_id},
+    )
 
 
 class TestSharingInvariants:
@@ -555,6 +590,7 @@ class TestShareEndpoints:
         shares_auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
+            _seed_plus_billing(session, user_id)
             conv_id = _create_conversation(session, user_id)
             lib_id = _create_non_default_library(session, user_id)
 
@@ -582,6 +618,7 @@ class TestShareEndpoints:
         shares_auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
+            _seed_plus_billing(session, user_id)
             conv_id = _create_conversation(session, user_id)
             default_lib_id = _get_default_library_id(session, user_id)
 
@@ -603,6 +640,7 @@ class TestShareEndpoints:
         shares_auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
+            _seed_plus_billing(session, user_id)
             conv_id = _create_conversation(session, user_id)
             lib_id = _create_non_default_library(session, user_id)
 
@@ -627,6 +665,7 @@ class TestShareEndpoints:
         shares_auth_client.get("/me", headers=auth_headers(user_a))
 
         with direct_db.session() as session:
+            _seed_plus_billing(session, user_a)
             conv_id = _create_conversation(session, user_a)
             good_lib = _create_non_default_library(session, user_a)
 

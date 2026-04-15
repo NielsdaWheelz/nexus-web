@@ -15,6 +15,7 @@ import {
   useGlobalPlayer,
   type GlobalPlayerChapter,
 } from "@/lib/player/globalPlayer";
+import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillingAccount";
 import styles from "./page.module.css";
 
 const YOUTUBE_EMBED_HOST_ALLOWLIST = new Set([
@@ -22,6 +23,13 @@ const YOUTUBE_EMBED_HOST_ALLOWLIST = new Set([
   "www.youtube-nocookie.com",
 ]);
 const SHOW_NOTES_TIMESTAMP_REGEX = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
+
+function planLabel(planTier: BillingPlanTier): string {
+  if (planTier === "plus") return "Plus";
+  if (planTier === "ai_plus") return "AI Plus";
+  if (planTier === "ai_pro") return "AI Pro";
+  return "Free";
+}
 
 export interface TranscriptPlaybackSource {
   kind: "external_audio" | "external_video";
@@ -352,6 +360,7 @@ export default function TranscriptMediaPane({
   onSegmentSelect,
   onContentClick,
 }: TranscriptMediaPaneProps) {
+  const { account: billingAccount } = useBillingAccount();
   const { setTrack, seekToMs, play, addToQueue, queueItems, currentTimeSeconds } =
     useGlobalPlayer();
   const [seekTargetMs, setSeekTargetMs] = useState<number | null>(null);
@@ -450,6 +459,9 @@ export default function TranscriptMediaPane({
     (transcriptRequestForecast ? !transcriptRequestForecast.fitsBudget : false);
   const isReadablePartialTranscript =
     canRead && (transcriptState === "partial" || transcriptCoverage === "partial");
+  const transcriptionLocked =
+    billingAccount != null &&
+    (billingAccount.plan_tier === "free" || billingAccount.plan_tier === "plus");
   const isInQueue = queueItems.some((item) => item.media_id === mediaId);
   const showNotesHtml = useMemo(() => {
     if (mediaKind !== "podcast_episode") {
@@ -696,6 +708,12 @@ export default function TranscriptMediaPane({
           <p>Transcript unavailable for this episode.</p>
           <p>Error: E_TRANSCRIPT_UNAVAILABLE</p>
         </div>
+      ) : !canRead && transcriptionLocked ? (
+        <div className={styles.notReady}>
+          <p>Transcription is included with AI Plus and AI Pro.</p>
+          <p>Current plan: {billingAccount ? planLabel(billingAccount.plan_tier) : "Free"}.</p>
+          <p>Upgrade in Settings, then come back here to request this transcript.</p>
+        </div>
       ) : !canRead ? (
         <div className={styles.notReady}>
           {transcriptState === "not_requested" ||
@@ -706,14 +724,14 @@ export default function TranscriptMediaPane({
                 {transcriptState === "failed_provider"
                   ? "Previous transcription failed. You can retry on demand."
                   : transcriptState === "failed_quota"
-                    ? "Daily transcript quota was exceeded for this episode."
+                    ? "Monthly transcription quota was exceeded for this episode."
                     : "Transcript has not been requested yet."}
               </p>
               {transcriptRequestForecast && (
                 <>
                   <p>Estimated cost: {transcriptRequestForecast.requiredMinutes} min</p>
                   <p>
-                    Remaining today:{" "}
+                    Remaining this month:{" "}
                     {transcriptRequestForecast.remainingMinutes == null
                       ? "unlimited"
                       : `${transcriptRequestForecast.remainingMinutes} min`}
@@ -729,7 +747,7 @@ export default function TranscriptMediaPane({
                 {transcriptRequestInFlight ? "Requesting..." : "Transcribe this episode"}
               </button>
               {transcriptRequestForecast && !transcriptRequestForecast.fitsBudget && (
-                <p>Not enough daily quota for this request.</p>
+                <p>Not enough monthly transcription quota for this request.</p>
               )}
             </>
           ) : transcriptState === "queued" || transcriptState === "running" ? (

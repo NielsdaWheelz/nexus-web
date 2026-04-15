@@ -21,7 +21,9 @@ from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.models import Model, UserApiKey
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.services.billing import get_entitlements
 from nexus.services.crypto import decrypt_api_key
 from nexus.services.llm.errors import LLMError, LLMErrorClass
 
@@ -106,6 +108,8 @@ def resolve_api_key(
             )
             user_key = None
 
+    can_use_platform_key = get_entitlements(db, user_id).can_use_platform_llm
+
     # Resolve based on mode
     if key_mode == "byok_only":
         if user_key:
@@ -121,6 +125,11 @@ def resolve_api_key(
         )
 
     elif key_mode == "platform_only":
+        if not can_use_platform_key:
+            raise ApiError(
+                ApiErrorCode.E_BILLING_REQUIRED,
+                "Platform LLM access requires an AI tier.",
+            )
         if platform_key:
             return ResolvedKey(
                 api_key=platform_key,
@@ -142,6 +151,11 @@ def resolve_api_key(
                 user_key_id=user_key_id,
             )
         # Fall back to platform
+        if not can_use_platform_key:
+            raise ApiError(
+                ApiErrorCode.E_BILLING_REQUIRED,
+                "Platform LLM access requires an AI tier.",
+            )
         if platform_key:
             return ResolvedKey(
                 api_key=platform_key,

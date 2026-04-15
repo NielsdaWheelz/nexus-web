@@ -13,6 +13,37 @@ const mockSetTrack = vi.fn();
 const mockSeekToMs = vi.fn();
 const mockPlay = vi.fn();
 let mockCurrentTimeSeconds = 0;
+const mockBillingState = vi.hoisted(() => ({
+  account: null as
+    | {
+        plan_tier: "free" | "plus" | "ai_plus" | "ai_pro";
+        subscription_status: string;
+        can_share: boolean;
+        can_use_platform_llm: boolean;
+        current_period_start: string | null;
+        current_period_end: string | null;
+        ai_token_usage: {
+          used: number;
+          reserved: number;
+          limit: number;
+          remaining: number;
+          period_start: string;
+          period_end: string;
+        };
+        transcription_usage: {
+          used: number;
+          reserved: number;
+          limit: number;
+          remaining: number;
+          period_start: string;
+          period_end: string;
+        };
+      }
+    | null,
+  loading: false,
+  error: null as string | null,
+  reload: vi.fn(),
+}));
 const mockReaderContentArea = vi.fn(
   ({ children }: { children: ReactNode }) => children
 );
@@ -68,6 +99,10 @@ vi.mock("@/components/ReaderContentArea", () => ({
   ) => mockReaderContentArea(props),
 }));
 
+vi.mock("@/lib/billing/useBillingAccount", () => ({
+  useBillingAccount: () => mockBillingState,
+}));
+
 beforeEach(() => {
   mockSetTrack.mockReset();
   mockSeekToMs.mockReset();
@@ -78,6 +113,7 @@ beforeEach(() => {
   );
   mockAddToQueue.mockClear();
   mockCurrentTimeSeconds = 0;
+  mockBillingState.account = null;
 });
 
 const VIDEO_PLAYBACK_SOURCE: TranscriptPlaybackSource = {
@@ -500,7 +536,7 @@ describe("TranscriptMediaPane podcast playback", () => {
 
     expect(screen.getByRole("button", { name: /transcribe this episode/i })).toBeVisible();
     expect(screen.getByText("Estimated cost: 3 min")).toBeVisible();
-    expect(screen.getByText("Remaining today: 7 min")).toBeVisible();
+    expect(screen.getByText("Remaining this month: 7 min")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: /transcribe this episode/i }));
     expect(onRequestTranscript).toHaveBeenCalledTimes(1);
@@ -672,8 +708,8 @@ describe("TranscriptMediaPane transcript states", () => {
       },
     });
 
-    expect(screen.getByText("Daily transcript quota was exceeded for this episode.")).toBeVisible();
-    expect(screen.getByText("Not enough daily quota for this request.")).toBeVisible();
+    expect(screen.getByText("Monthly transcription quota was exceeded for this episode.")).toBeVisible();
+    expect(screen.getByText("Not enough monthly transcription quota for this request.")).toBeVisible();
     expect(screen.getByRole("button", { name: /transcribe this episode/i })).toBeDisabled();
   });
 
@@ -688,5 +724,46 @@ describe("TranscriptMediaPane transcript states", () => {
 
     expect(screen.getByText("Transcript unavailable for this episode.")).toBeVisible();
     expect(screen.getByText("Error: E_TRANSCRIPT_UNAVAILABLE")).toBeVisible();
+  });
+
+  it("shows the AI plan upgrade copy when transcription is billing-gated", () => {
+    mockBillingState.account = {
+      plan_tier: "plus",
+      subscription_status: "active",
+      can_share: true,
+      can_use_platform_llm: false,
+      current_period_start: "2026-04-01T00:00:00Z",
+      current_period_end: "2026-05-01T00:00:00Z",
+      ai_token_usage: {
+        used: 0,
+        reserved: 0,
+        limit: 0,
+        remaining: 0,
+        period_start: "2026-04-01T00:00:00Z",
+        period_end: "2026-05-01T00:00:00Z",
+      },
+      transcription_usage: {
+        used: 0,
+        reserved: 0,
+        limit: 0,
+        remaining: 0,
+        period_start: "2026-04-01T00:00:00Z",
+        period_end: "2026-05-01T00:00:00Z",
+      },
+    };
+
+    renderStatefulPodcastPane({
+      canRead: false,
+      transcriptState: "not_requested",
+      transcriptCoverage: "none",
+      processingStatus: "pending",
+      fragments: [],
+    });
+
+    expect(
+      screen.getByText("Transcription is included with AI Plus and AI Pro.")
+    ).toBeVisible();
+    expect(screen.getByText("Current plan: Plus.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /transcribe this episode/i })).not.toBeInTheDocument();
   });
 });

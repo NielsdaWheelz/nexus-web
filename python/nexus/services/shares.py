@@ -25,6 +25,7 @@ from nexus.schemas.conversation import (
     ConversationSharesOut,
     ConversationShareTargetOut,
 )
+from nexus.services.billing import get_entitlements
 
 logger = get_logger(__name__)
 
@@ -111,6 +112,8 @@ def set_sharing_mode(
         return conversation
 
     elif sharing == "library":
+        if not get_entitlements(db, conversation.owner_user_id).can_share:
+            raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Sharing requires Plus.")
         if not library_ids:
             raise ApiError(
                 ApiErrorCode.E_SHARE_REQUIRED, "At least one library is required for sharing"
@@ -172,6 +175,8 @@ def add_share(db: Session, conversation_id: UUID, library_id: UUID) -> Conversat
         ApiError(E_FORBIDDEN): If owner is not a member of the library.
     """
     conversation = get_conversation_or_404(db, conversation_id)
+    if not get_entitlements(db, conversation.owner_user_id).can_share:
+        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Sharing requires Plus.")
 
     # Cannot add share to private conversation
     if conversation.sharing == "private":
@@ -287,6 +292,8 @@ def set_shares(db: Session, conversation_id: UUID, library_ids: list[UUID]) -> C
         ApiError(E_FORBIDDEN): If owner is not a member of a library.
     """
     conversation = get_conversation_or_404(db, conversation_id)
+    if library_ids and not get_entitlements(db, conversation.owner_user_id).can_share:
+        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Sharing requires Plus.")
 
     # Validate owner is member of all new libraries; reject default-library targets (S4)
     owner_id = conversation.owner_user_id
@@ -435,6 +442,8 @@ def set_conversation_shares_for_owner(
         ApiError(E_FORBIDDEN): Owner not member of target library.
     """
     conversation = _verify_conversation_owner_for_shares(db, viewer_id, conversation_id)
+    if library_ids and not get_entitlements(db, viewer_id).can_share:
+        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Sharing requires Plus.")
 
     # Dedupe
     unique_ids = list(dict.fromkeys(library_ids))
