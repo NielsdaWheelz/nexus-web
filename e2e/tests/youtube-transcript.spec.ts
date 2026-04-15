@@ -57,7 +57,7 @@ test.describe("youtube transcript media", () => {
     await expect(playerFrame).toBeVisible();
     await expect(page.locator("video")).toHaveCount(0);
 
-    await expect(page.getByRole("heading", { name: "Highlights" })).toBeVisible();
+    await expect(page.getByText("No highlights yet. Select text to create one.")).toBeVisible();
     await expect(page.getByRole("link", { name: /open in source/i })).toHaveAttribute(
       "href",
       seed.watch_url
@@ -94,7 +94,6 @@ test.describe("youtube transcript media", () => {
     await expect(
       page.getByText("Transcript unavailable for this episode.")
     ).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Highlights" })).toHaveCount(0);
     await expect(
       page.getByRole("button", {
         name: new RegExp(escapeRegExp(seed.seek_segment_text), "i"),

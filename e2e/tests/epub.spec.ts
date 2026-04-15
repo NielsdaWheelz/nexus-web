@@ -234,9 +234,12 @@ test.describe("epub", () => {
 
   test("upload EPUB", async ({ page }) => {
     await page.goto("/libraries");
+    await page.getByRole("button", { name: "Add content" }).click();
+    const addContentDialog = page.getByRole("dialog", { name: "Add content" });
+    await expect(addContentDialog).toBeVisible();
     // Verify the file upload mechanism is available
-    const fileInput = page.locator("input[type='file']");
-    const uploadButton = page.getByRole("button", { name: /upload file/i });
+    const fileInput = addContentDialog.locator("input[type='file']");
+    const uploadButton = addContentDialog.getByRole("button", { name: /upload file/i });
     await expect(fileInput.or(uploadButton).first()).toBeAttached();
   });
 

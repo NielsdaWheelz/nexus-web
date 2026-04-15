@@ -217,7 +217,14 @@ describe("ConversationPaneBody", () => {
     renderConversationPane("/conversations/conv-1");
 
     expect(await screen.findByText("Persisted quote")).toBeInTheDocument();
-    expect(screen.getByText("Source - pdf")).toBeInTheDocument();
+
+    const linkedContextButton = screen.queryByRole("button", { name: "Linked context" });
+    if (linkedContextButton) {
+      await userEvent.setup().click(linkedContextButton);
+    }
+
+    const contextPane = await screen.findByTestId("conversation-context-pane");
+    expect(within(contextPane).getByText(/Source - pdf - Message #1/)).toBeInTheDocument();
     expect(screen.getByText("What does this mean?")).toBeInTheDocument();
   });
 

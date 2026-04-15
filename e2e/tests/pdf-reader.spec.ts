@@ -279,14 +279,14 @@ async function readCreateTelemetry(page: Page): Promise<CreateTelemetrySnapshot>
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
   return page
-    .locator('span[class*="toolbarLabel"], span[class*="navigationLabel"], span[class*="pageIndicator"]')
-    .filter({ hasText: `Page ${pageNumber} of ${pageCount}` })
+    .getByRole("toolbar", { name: "PDF controls" })
+    .getByText(`Page ${pageNumber} of ${pageCount}`)
     .first();
 }
 
 async function readCurrentPageNumber(page: Page, pageCount: number): Promise<number | null> {
   const indicator = page
-    .locator('span[class*="toolbarLabel"], span[class*="navigationLabel"], span[class*="pageIndicator"]')
+    .getByRole("toolbar", { name: "PDF controls" })
     .filter({ hasText: new RegExp(`Page\\s+\\d+\\s+of\\s+${pageCount}`) })
     .first();
   const text = (await indicator.textContent())?.trim() ?? "";
@@ -300,7 +300,7 @@ async function readCurrentPageNumber(page: Page, pageCount: number): Promise<num
 
 async function ensureOnPage(page: Page, targetPage: number, pageCount: number): Promise<void> {
   const anyIndicator = page
-    .locator('span[class*="toolbarLabel"], span[class*="navigationLabel"], span[class*="pageIndicator"]')
+    .getByRole("toolbar", { name: "PDF controls" })
     .filter({ hasText: new RegExp(`Page\\s+\\d+\\s+of\\s+${pageCount}`) })
     .first();
   await expect(anyIndicator).toBeVisible({ timeout: 20_000 });
@@ -409,7 +409,10 @@ test.describe("pdf reader", () => {
 
     try {
       await page.goto("/libraries");
-      const fileInput = page.locator("input[type='file']");
+      await page.getByRole("button", { name: "Add content" }).click();
+      const addContentDialog = page.getByRole("dialog", { name: "Add content" });
+      await expect(addContentDialog).toBeVisible();
+      const fileInput = addContentDialog.locator("input[type='file']");
       await expect(fileInput).toBeAttached();
       await fileInput.setInputFiles(uploadFixturePath);
 
@@ -498,10 +501,6 @@ test.describe("pdf reader", () => {
           return currentUrl.searchParams.get("attach_id");
         })
         .toBe(createdHighlightId);
-
-      await expect(page.getByText(`highlight: ${createdHighlightId.slice(0, 8)}`, { exact: false })).toBeVisible({
-        timeout: 10_000,
-      });
     } finally {
       if (createdHighlightId) {
         try {

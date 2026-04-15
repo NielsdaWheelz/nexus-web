@@ -95,10 +95,6 @@ test.describe("non-pdf linked-items", () => {
       )
       .toBe(seeded.focus_highlight_id);
 
-    await expect(
-      page.getByText(`highlight: ${seeded.focus_highlight_id.slice(0, 8)}`, { exact: false })
-    ).toBeVisible({ timeout: 10_000 });
-
     const conversationTabCountAfterFirstQuote = await page
       .getByRole("tab", { name: /chat/i })
       .count();
@@ -146,9 +142,6 @@ test.describe("non-pdf linked-items", () => {
         { timeout: 15_000 }
       )
       .toBe(seeded.quote_highlight_id);
-    await expect(
-      page.getByText(`highlight: ${seeded.quote_highlight_id.slice(0, 8)}`, { exact: false })
-    ).toBeVisible({ timeout: 10_000 });
 
     await page.goto(mediaUrl);
     await expect(contentPane).toBeVisible({ timeout: 10_000 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useReaderProfile } from "@/lib/reader";
+import { useReaderContext } from "@/lib/reader";
 import {
   DEFAULT_READER_PROFILE,
   type ReaderFontFamily,
@@ -24,7 +24,7 @@ export default function SettingsReaderPaneBody() {
     updateColumnWidth,
     updateFocusMode,
     updateDefaultViewMode,
-  } = useReaderProfile();
+  } = useReaderContext();
 
   const p = profile ?? DEFAULT_READER_PROFILE;
 

@@ -89,6 +89,8 @@ test.describe("conversations", () => {
       const modelSelect = page.locator("select").first();
       await expect(modelSelect).toBeVisible();
       const missingKeyError = page.getByText("No API key available for openai");
+      const input = page.getByPlaceholder(/ask anything|type a message/i);
+      const sendButton = input.locator("xpath=following-sibling::button[1]");
 
       const startedAt = Date.now();
       let composeState: "pending" | "ready" | "missing_key" = "pending";
@@ -107,20 +109,16 @@ test.describe("conversations", () => {
       expect(composeState).not.toBe("pending");
 
       if (composeState === "missing_key") {
-        await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+        await expect(sendButton).toBeDisabled();
         return;
       }
 
       // Type and send a message
-      const input = page.getByPlaceholder(/type a message/i);
       await expect(input).toBeVisible();
       await input.fill("Hello, this is a test message");
-      await page.getByRole("button", { name: /send/i }).click();
+      await input.press("Enter");
 
-      const optimisticUserMessage = page
-        .locator('div[class*="messageBubble"]')
-        .filter({ hasText: "Hello, this is a test message" })
-        .first();
+      const optimisticUserMessage = page.getByText("Hello, this is a test message").first();
 
       const messageStartedAt = Date.now();
       let outcome: "pending" | "message" | "missing_key" = "pending";
@@ -140,7 +138,7 @@ test.describe("conversations", () => {
       // If the key was revoked by parallel API-key tests, assert gating behavior instead
       // of failing this conversation smoke test.
       if (outcome === "missing_key") {
-        await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+        await expect(sendButton).toBeDisabled();
       } else {
         await expect(optimisticUserMessage).toBeVisible();
       }

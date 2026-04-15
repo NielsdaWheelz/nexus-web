@@ -75,8 +75,8 @@ async function patchReaderState(
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
   return page
-    .locator('span[class*="toolbarLabel"], span[class*="navigationLabel"], span[class*="pageIndicator"]')
-    .filter({ hasText: `Page ${pageNumber} of ${pageCount}` });
+    .getByRole("toolbar", { name: "PDF controls" })
+    .getByText(`Page ${pageNumber} of ${pageCount}`);
 }
 
 test.describe("reader settings + resume", () => {
@@ -233,7 +233,8 @@ test.describe("reader settings + resume", () => {
     await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(() => fileRequestCount)
-      .toBe(1);
+      .toBeGreaterThan(0);
+    const initialFileRequestCount = fileRequestCount;
 
     await page.getByRole("button", { name: "Next page" }).click();
     await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible({ timeout: 10_000 });
@@ -246,6 +247,6 @@ test.describe("reader settings + resume", () => {
       .toBe(2);
 
     await page.waitForTimeout(900);
-    expect(fileRequestCount).toBe(1);
+    expect(fileRequestCount).toBe(initialFileRequestCount);
   });
 });

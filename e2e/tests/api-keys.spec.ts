@@ -11,10 +11,7 @@ test.describe("api keys", () => {
 
   test("list keys", async ({ page }) => {
     await page.goto("/settings/keys");
-    // Wait for the "Your Keys" section heading
-    await expect(
-      page.getByRole("heading", { name: "Your Keys" })
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "API keys" })).toBeVisible();
     // The seeded API key should appear once loading completes
     await expect(page.getByText("...0000")).toBeVisible({ timeout: 10_000 });
   });

@@ -16,28 +16,26 @@ function readSeededNonPdfMedia(): SeededNonPdfMedia {
   return JSON.parse(readFileSync(seedPath, "utf-8"));
 }
 
+async function openAddContentDialog(page: Parameters<typeof test>[0]["page"]) {
+  await page.getByRole("button", { name: "Add content" }).click();
+  return page.getByRole("dialog", { name: "Add content" });
+}
+
 test.describe("web articles", () => {
   test("add article from URL", async ({ page }) => {
     await page.goto("/libraries");
-    const urlInput = page.getByPlaceholder("Paste a URL...");
+    const addContentDialog = await openAddContentDialog(page);
+    const urlInput = addContentDialog.getByPlaceholder("Paste a URL...");
     await expect(urlInput).toBeVisible();
     await urlInput.fill("https://example.com");
-    await page.getByRole("button", { name: "Add" }).click();
-    await expect
-      .poll(
-        async () => {
-          if (/\/media\/[0-9a-f-]+$/i.test(page.url())) {
-            return "redirected";
-          }
-          const hasStatus = await page
-            .getByText(/added|processing/i)
-            .isVisible()
-            .catch(() => false);
-          return hasStatus ? "status" : null;
-        },
-        { timeout: 15_000 }
-      )
-      .not.toBeNull();
+    await addContentDialog.getByRole("button", { name: "Add" }).click();
+    await expect(page.getByRole("tab", { name: "https://example.com" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByRole("heading", { name: "https://example.com" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(/processing|pending/i)).toBeVisible({ timeout: 15_000 });
   });
 
   test("open and view seeded web article", async ({ page }) => {

@@ -7,6 +7,9 @@ import MediaPaneBody from "./MediaPaneBody";
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 const mockUseMediaViewState = vi.fn<(id: string) => Record<string, unknown>>();
 const mockUsePaneChromeOverride = vi.fn<(overrides: Record<string, unknown>) => void>();
+const mockReaderContentArea = vi.fn(
+  ({ children }: { children: ReactNode }) => <>{children}</>
+);
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
@@ -29,7 +32,12 @@ vi.mock("@/components/Toast", () => ({
 }));
 
 vi.mock("@/components/ReaderContentArea", () => ({
-  default: ({ children }: { children: ReactNode }) => <>{children}</>,
+  default: (
+    props: {
+      children: ReactNode;
+      profileOverride?: Record<string, unknown> | null;
+    }
+  ) => mockReaderContentArea(props),
 }));
 
 vi.mock("@/components/HtmlRenderer", () => ({
@@ -204,6 +212,10 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     mockUsePaneParam.mockReset();
     mockUseMediaViewState.mockReset();
     mockUsePaneChromeOverride.mockReset();
+    mockReaderContentArea.mockReset();
+    mockReaderContentArea.mockImplementation(
+      ({ children }: { children: ReactNode }) => <>{children}</>
+    );
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "id" ? "media-1" : null
     );
@@ -332,5 +344,106 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     expect(dismissEditPopover).toHaveBeenCalledTimes(1);
     expect(focusHighlight).toHaveBeenCalledWith("pdf-highlight-1");
     expect(screen.getByRole("dialog", { name: "Linked items" })).toBeInTheDocument();
+  });
+
+  it("keeps reflowable readers on the ReaderContentArea path and leaves transcript/pdf outside it", () => {
+    const webArticleProfileOverride = {
+      theme: "sepia",
+      font_family: "serif",
+      font_size_px: 18,
+      line_height: 1.6,
+      column_width_ch: 70,
+      focus_mode: false,
+      default_view_mode: "scroll",
+    };
+
+    currentViewState = buildViewState({
+      fragments: [{ id: "fragment-1" }],
+      readerProfileOverride: webArticleProfileOverride,
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    const { rerender } = render(<MediaPaneBody />);
+
+    expect(mockReaderContentArea).toHaveBeenCalledTimes(1);
+    expect(mockReaderContentArea.mock.calls.at(-1)?.[0]).toMatchObject({
+      profileOverride: webArticleProfileOverride,
+    });
+    expect(screen.getByTestId("html-renderer")).toBeInTheDocument();
+
+    mockReaderContentArea.mockClear();
+    currentViewState = buildViewState({
+      isEpub: true,
+      media: {
+        id: "media-1",
+        kind: "epub",
+        title: "Example EPUB",
+        processing_status: "ready_for_reading",
+        canonical_source_url: null,
+        podcast_title: null,
+        podcast_image_url: null,
+        chapters: [],
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        last_error_code: null,
+      },
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+    rerender(<MediaPaneBody />);
+
+    expect(mockReaderContentArea).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("epub-content-pane")).toBeInTheDocument();
+
+    mockReaderContentArea.mockClear();
+    currentViewState = buildViewState({
+      isTranscriptMedia: true,
+      media: {
+        id: "media-1",
+        kind: "podcast_episode",
+        title: "Example transcript",
+        processing_status: "ready_for_reading",
+        canonical_source_url: null,
+        podcast_title: "Example podcast",
+        podcast_image_url: null,
+        chapters: [],
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        last_error_code: null,
+      },
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+    rerender(<MediaPaneBody />);
+
+    expect(mockReaderContentArea).not.toHaveBeenCalled();
+    expect(screen.getByTestId("transcript-media-pane")).toBeInTheDocument();
+
+    mockReaderContentArea.mockClear();
+    currentViewState = buildViewState({
+      isPdf: true,
+      media: {
+        id: "media-1",
+        kind: "pdf",
+        title: "Example PDF",
+        processing_status: "ready_for_reading",
+        canonical_source_url: null,
+        podcast_title: null,
+        podcast_image_url: null,
+        chapters: [],
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        last_error_code: null,
+      },
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+    rerender(<MediaPaneBody />);
+
+    expect(mockReaderContentArea).not.toHaveBeenCalled();
+    expect(screen.getByTestId("pdf-reader")).toBeInTheDocument();
   });
 });

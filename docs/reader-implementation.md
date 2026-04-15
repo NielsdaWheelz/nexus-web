@@ -1,6 +1,6 @@
 # reader implementation status
 
-this translates the reader research into concrete engineering constraints and records what is currently shipped.
+this translates the reader research into concrete engineering constraints and records what is currently shipped, including the epub/web reader theme quick-switch v1.
 
 ## constraints we enforce
 
@@ -29,6 +29,14 @@ this translates the reader research into concrete engineering constraints and re
 
 - media reader uses a side-by-side split with a resizable linked-items column
 - linked-items column can be hidden and restored from a pane chrome action
+
+### reader theme quick-switch v1
+
+- the media header dropdown now exposes a quick-switch for reader theme
+- available theme values are light, dark, and sepia, using the existing reader profile state
+- v1 is scoped to epub and web article readers only
+- transcript and pdf readers keep their existing theme behavior and do not surface this quick-switch yet
+- the switch updates the same persisted reader preference that already drives reader-content rendering
 
 ### reader state split
 

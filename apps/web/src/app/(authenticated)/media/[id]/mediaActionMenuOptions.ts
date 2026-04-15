@@ -1,16 +1,20 @@
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
+import type { ReaderTheme } from "@/lib/reader/types";
 
 interface BuildMediaHeaderOptionsInput {
   canonicalSourceUrl: string | null;
   defaultLibraryId: string | null;
   inDefaultLibrary: boolean;
   libraryBusy: boolean;
+  showThemeOptions: boolean;
+  currentTheme: ReaderTheme;
   isEpub: boolean;
   hasEpubToc: boolean;
   epubTocExpanded: boolean;
   onAddToLibrary: () => void;
   onRemoveFromLibrary: () => void;
   onToggleEpubToc: () => void;
+  onSelectTheme: (theme: ReaderTheme) => void;
 }
 
 export function buildMediaHeaderOptions({
@@ -18,12 +22,15 @@ export function buildMediaHeaderOptions({
   defaultLibraryId,
   inDefaultLibrary,
   libraryBusy,
+  showThemeOptions,
+  currentTheme,
   isEpub,
   hasEpubToc,
   epubTocExpanded,
   onAddToLibrary,
   onRemoveFromLibrary,
   onToggleEpubToc,
+  onSelectTheme,
 }: BuildMediaHeaderOptionsInput): ActionMenuOption[] {
   const options: ActionMenuOption[] = [];
 
@@ -50,6 +57,27 @@ export function buildMediaHeaderOptions({
       label: epubTocExpanded ? "Hide table of contents" : "Show table of contents",
       onSelect: onToggleEpubToc,
     });
+  }
+
+  if (showThemeOptions) {
+    const themeLabels: Record<ReaderTheme, string> = {
+      light: "Light theme",
+      dark: "Dark theme",
+      sepia: "Sepia theme",
+    };
+    const themeOrder: ReaderTheme[] = ["light", "dark", "sepia"];
+
+    for (const theme of themeOrder) {
+      const isCurrent = theme === currentTheme;
+      options.push({
+        id: `theme-${theme}`,
+        label: isCurrent
+          ? `${themeLabels[theme]} (current)`
+          : themeLabels[theme],
+        disabled: isCurrent,
+        onSelect: () => onSelectTheme(theme),
+      });
+    }
   }
 
   return options;

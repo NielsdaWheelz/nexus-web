@@ -27,13 +27,25 @@ vi.mock("@/lib/reader", async (importOriginal) => {
   };
 });
 
+function buildReaderContext(theme: "light" | "dark" | "sepia" = "light") {
+  return {
+    profile: { ...DEFAULT_READER_PROFILE, theme },
+    loading: false,
+    error: null,
+    saving: false,
+    updateTheme: vi.fn(),
+    updateFontFamily: vi.fn(),
+    updateFontSize: vi.fn(),
+    updateLineHeight: vi.fn(),
+    updateColumnWidth: vi.fn(),
+    updateFocusMode: vi.fn(),
+    updateDefaultViewMode: vi.fn(),
+  };
+}
+
 describe("ReaderContentArea", () => {
   beforeEach(() => {
-    vi.mocked(useReaderContext).mockReturnValue({
-      profile: { ...DEFAULT_READER_PROFILE, theme: "light" },
-      loading: false,
-      error: null,
-    });
+    vi.mocked(useReaderContext).mockReturnValue(buildReaderContext());
   });
 
   it("applies reader theme data attribute", () => {
@@ -49,11 +61,7 @@ describe("ReaderContentArea", () => {
   });
 
   it("applies dark theme class when profile theme is dark", () => {
-    vi.mocked(useReaderContext).mockReturnValue({
-      profile: { ...DEFAULT_READER_PROFILE, theme: "dark" },
-      loading: false,
-      error: null,
-    });
+    vi.mocked(useReaderContext).mockReturnValue(buildReaderContext("dark"));
 
     render(
       <ReaderContentArea>
@@ -68,11 +76,7 @@ describe("ReaderContentArea", () => {
   it.each(["light", "dark", "sepia"] as const)(
     "defines full reader token set for %s theme",
     (theme) => {
-      vi.mocked(useReaderContext).mockReturnValue({
-        profile: { ...DEFAULT_READER_PROFILE, theme },
-        loading: false,
-        error: null,
-      });
+      vi.mocked(useReaderContext).mockReturnValue(buildReaderContext(theme));
 
       render(
         <ReaderContentArea>

@@ -2,25 +2,22 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ReaderSettingsPage from "@/app/(authenticated)/settings/reader/page";
-import { useReaderProfile } from "@/lib/reader";
+import { useReaderContext } from "@/lib/reader";
 import { DEFAULT_READER_PROFILE } from "@/lib/reader/types";
 
 vi.mock("@/lib/reader", () => ({
-  useReaderProfile: vi.fn(),
+  useReaderContext: vi.fn(),
 }));
 
 describe("ReaderSettingsPage", () => {
-  const mockSave = vi.fn();
   const mockUpdateTheme = vi.fn();
 
   beforeEach(() => {
-    vi.mocked(useReaderProfile).mockReturnValue({
+    vi.mocked(useReaderContext).mockReturnValue({
       profile: DEFAULT_READER_PROFILE,
       loading: false,
       error: null,
       saving: false,
-      load: vi.fn(),
-      save: mockSave,
       updateTheme: mockUpdateTheme,
       updateFontFamily: vi.fn(),
       updateFontSize: vi.fn(),

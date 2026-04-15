@@ -50,6 +50,7 @@ import {
 import { stripAttachParams } from "@/lib/conversations/attachedContext";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useReaderContext, useReaderState } from "@/lib/reader";
+import type { ReaderTheme } from "@/lib/reader/types";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import {
   fetchAllEpubChapterSummaries,
@@ -120,7 +121,7 @@ export default function useMediaViewState(id: string) {
   })();
   const { toast } = useToast();
   const isMobileViewport = useIsMobileViewport();
-  const { profile: readerProfile } = useReaderContext();
+  const { profile: readerProfile, updateTheme } = useReaderContext();
   const {
     state: readerState,
     loading: readerStateLoading,
@@ -252,6 +253,7 @@ export default function useMediaViewState(id: string) {
     media?.processing_status === "failed" &&
     media?.last_error_code === "E_TRANSCRIPT_UNAVAILABLE" &&
     canPlay;
+  const isReflowableReader = canRead && !isPdf && !isTranscriptMedia;
 
   const activeTranscriptFragment = useMemo(() => {
     if (!isTranscriptMedia || fragments.length === 0) {
@@ -2134,6 +2136,8 @@ export default function useMediaViewState(id: string) {
     defaultLibraryId,
     inDefaultLibrary: mediaInDefaultLibrary,
     libraryBusy: libraryMembershipBusy,
+    showThemeOptions: isReflowableReader,
+    currentTheme: readerState?.theme ?? readerProfile.theme,
     isEpub,
     hasEpubToc: hasEpubToc || tocWarning,
     epubTocExpanded,
@@ -2144,6 +2148,7 @@ export default function useMediaViewState(id: string) {
       void handleRemoveFromDefaultLibrary();
     },
     onToggleEpubToc: () => setEpubTocExpanded((value) => !value),
+    onSelectTheme: (theme: ReaderTheme) => updateTheme(theme),
   });
 
   return {
