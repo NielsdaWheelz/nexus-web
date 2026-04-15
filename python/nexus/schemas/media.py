@@ -288,13 +288,14 @@ class FromUrlRequest(BaseModel):
 
     Creates media from URL with service-layer classification:
     - supported YouTube variants -> canonical `video` identity (create-or-reuse)
-    - all other URLs -> provisional `web_article`
+    - PDF/EPUB URLs -> file-backed `pdf`/`epub` media
+    - other URLs -> provisional `web_article`
     URL validation (length, scheme, host, etc.) happens in the service layer.
     """
 
     url: str = Field(
         min_length=1,
-        description="The URL to ingest. Must be an absolute http/https URL.",
+        description="The URL to ingest. Must be an absolute http/https URL, including PDF, EPUB, article, or video URLs.",
     )
 
 
@@ -302,11 +303,9 @@ class FromUrlResponse(BaseModel):
     """Response schema for POST /media/from_url.
 
     `idempotency_outcome` is the source-of-truth contract for create-vs-reuse.
-    `duplicate` remains as a compatibility shim.
     """
 
     media_id: UUID
-    duplicate: bool
     idempotency_outcome: Literal["created", "reused"]
     processing_status: str
     ingest_enqueued: bool

@@ -330,7 +330,7 @@ export default function IngestionTray() {
         <header className={styles.header}>
           <div>
             <h2>Add content</h2>
-            <p>Upload PDFs and EPUBs, or paste article and video URLs.</p>
+            <p>Upload PDFs and EPUBs, or paste PDF, EPUB, article, or video URLs.</p>
           </div>
           <button type="button" className={styles.iconButton} onClick={() => setOpen(false)} aria-label="Close">
             <X size={16} aria-hidden="true" />
@@ -365,11 +365,11 @@ export default function IngestionTray() {
                 setUrlText(event.target.value);
                 setUrlError(null);
               }}
-              placeholder="Paste a URL..."
+              placeholder="Paste a PDF, EPUB, article, or video URL..."
               rows={3}
             />
             <div className={styles.urlActions}>
-              <span>{urlError ?? "One per line, or paste a block of text containing links."}</span>
+              <span>{urlError ?? "One per line, or paste a block of text containing PDF, EPUB, article, or video links."}</span>
               <button type="submit" disabled={!urlText.trim()}>
                 Add
               </button>
@@ -436,7 +436,7 @@ export default function IngestionTray() {
           <div>
             <Plus size={28} aria-hidden="true" />
             <strong>Drop to add to Nexus</strong>
-            <span>PDFs, EPUBs, and links are supported.</span>
+            <span>Drop PDFs, EPUBs, or PDF, EPUB, article, and video links.</span>
           </div>
         </div>
       )}

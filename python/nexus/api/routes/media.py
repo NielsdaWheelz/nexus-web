@@ -142,16 +142,16 @@ def create_from_url(
 
     Kind classification happens in the service layer:
     - YouTube URLs -> canonical `video` identity with create-or-reuse semantics
+    - PDF/EPUB URLs -> file-backed `pdf`/`epub` media
     - Other URLs -> provisional `web_article`
 
     Returns 202 Accepted with:
-        - media_id: UUID of the created media
-        - duplicate: Compatibility flag (`True` iff canonical media was reused)
+        - media_id: UUID of the created or reused media
         - idempotency_outcome: `created` or `reused`
         - processing_status: current lifecycle snapshot (`pending`, `ready_for_reading`, etc.)
         - ingest_enqueued: True if task was enqueued
 
-    Clients should poll GET /media/{id} for status updates.
+    Clients should poll GET /media/{id} for status updates after submitting a PDF, EPUB, article, or video URL.
     """
     # Get request_id from state if available (set by request-id middleware)
     request_id = getattr(request.state, "request_id", None)

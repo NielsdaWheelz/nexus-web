@@ -23,7 +23,7 @@ interface IngestResponse {
 interface FromUrlResponse {
   data: {
     media_id: string;
-    duplicate: boolean;
+    idempotency_outcome: "created" | "reused";
   };
 }
 
@@ -107,6 +107,6 @@ export async function addMediaFromUrl(url: string): Promise<{
 
   return {
     mediaId: response.data.media_id,
-    duplicate: response.data.duplicate,
+    duplicate: response.data.idempotency_outcome === "reused",
   };
 }

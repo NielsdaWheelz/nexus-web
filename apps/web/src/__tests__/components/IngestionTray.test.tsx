@@ -144,6 +144,18 @@ describe("IngestionTray", () => {
     });
   });
 
+  it("shows explicit PDF and EPUB URL support in tray copy", async () => {
+    render(<IngestionTray />);
+
+    openTray();
+
+    await screen.findByLabelText("Add content");
+    expect(screen.getByText("Upload PDFs and EPUBs, or paste PDF, EPUB, article, or video URLs.")).toBeInTheDocument();
+    expect(
+      screen.getByText("One per line, or paste a block of text containing PDF, EPUB, article, or video links.")
+    ).toBeInTheDocument();
+  });
+
   it("locks body scroll on mobile while open", async () => {
     const user = userEvent.setup();
     mockViewportState.isMobile = true;

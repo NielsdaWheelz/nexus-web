@@ -924,7 +924,17 @@ def _create_file_media_from_remote_url(
         db.commit()
     except Exception:
         db.rollback()
-        storage_client.delete_object(storage_path)
+        try:
+            storage_client.delete_object(storage_path)
+        except Exception as cleanup_error:
+            # justify-ignore-error: remote upload cleanup is best-effort; preserving
+            # the original DB failure gives the caller the actionable error.
+            logger.warning(
+                "remote_file_cleanup_failed media_id=%s storage_path=%s error=%s",
+                media_id,
+                storage_path,
+                cleanup_error,
+            )
         raise
 
     result = confirm_ingest_for_viewer(
@@ -936,7 +946,6 @@ def _create_file_media_from_remote_url(
 
     return FromUrlResponse(
         media_id=UUID(result["media_id"]),
-        duplicate=bool(result["duplicate"]),
         idempotency_outcome="reused" if result["duplicate"] else "created",
         processing_status=str(result["processing_status"]),
         ingest_enqueued=bool(result["ingest_enqueued"]),
@@ -971,8 +980,8 @@ def create_provisional_web_article(
         request_id: Optional request ID for task correlation.
 
     Returns:
-        FromUrlResponse with media_id, duplicate=False, processing_status='pending',
-        and ingest_enqueued reflecting whether task was enqueued.
+        FromUrlResponse with media_id, processing_status='pending', and
+        ingest_enqueued reflecting whether task was enqueued.
 
     Raises:
         InvalidRequestError: If URL validation fails.
@@ -1021,7 +1030,6 @@ def create_provisional_web_article(
 
     return FromUrlResponse(
         media_id=media.id,
-        duplicate=False,  # Always false at creation; dedup happens during ingestion
         idempotency_outcome="created",
         processing_status=ProcessingStatus.pending.value,
         ingest_enqueued=ingest_enqueued,
@@ -1138,7 +1146,7 @@ def create_or_reuse_youtube_video(
             raise InvalidRequestError(
                 ApiErrorCode.E_INTERNAL, "Unable to resolve canonical video row"
             ) from exc
-        # Compatibility/backfill safety for pre-identity rows.
+        # Keep canonical identity columns populated when an existing row is reused.
         media.provider = identity.provider
         media.provider_id = identity.provider_video_id
         if not media.external_playback_url:
@@ -1165,7 +1173,6 @@ def create_or_reuse_youtube_video(
     )
     return FromUrlResponse(
         media_id=media.id,
-        duplicate=not created,
         idempotency_outcome="created" if created else "reused",
         processing_status=processing_status,
         ingest_enqueued=ingest_enqueued,

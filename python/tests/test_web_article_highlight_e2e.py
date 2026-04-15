@@ -145,7 +145,8 @@ class TestWebArticleHighlightE2E:
         create_data = create_response.json()["data"]
         media_id = UUID(create_data["media_id"])
         assert create_data["processing_status"] == "pending"
-        assert create_data["duplicate"] is False
+        assert "duplicate" not in create_data
+        assert create_data["idempotency_outcome"] == "created"
 
         # Register cleanup for data created by this test (reverse order of dependencies)
         # Note: highlights are cleaned via cascade when fragments are deleted

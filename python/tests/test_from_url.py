@@ -1,35 +1,131 @@
 """Integration tests for POST /media/from_url endpoint.
 
-Tests cover PR-04 requirements:
-- Creating provisional web_article media from URL
+Tests cover URL-based media creation:
+- Creating provisional web_article media from article URLs
+- Creating file-backed PDF/EPUB media from direct document URLs
 - URL validation (scheme, length, userinfo, localhost)
 - Default library attachment
 - Visibility enforcement
 - Response envelope and status codes
 
-Per s2_pr04.md spec:
+Contract:
 - Returns 202 Accepted (not 201) and enqueues ingestion
-- duplicate is always False at creation time
-- processing_status is 'pending'
+- processing_status reflects the created media lifecycle
 - ingest_enqueued reflects whether task was enqueued
-- canonical_url is NULL (set during ingestion after redirect resolution)
+- web_article canonical_url is NULL until ingestion resolves redirects
 - requested_url is stored exactly as provided
 - canonical_source_url is normalized
 """
 
+import io
+import socket
+import zipfile
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
+import respx
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
-from nexus.storage.client import FakeStorageClient
+from nexus.storage import build_storage_path
+from nexus.storage.client import FakeStorageClient, StorageError
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
 
 PDF_CONTENT = b"%PDF-1.4\nremote pdf bytes"
-EPUB_CONTENT = b"PK\x03\x04remote epub bytes"
+
+
+def _epub_content() -> bytes:
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr("META-INF/container.xml", "<container />")
+    return data.getvalue()
+
+
+EPUB_CONTENT = _epub_content()
+REMOTE_FILE_LIMIT_BYTES = 512
+
+
+class _TrackingStorageClient(FakeStorageClient):
+    """Fake storage client that records delete calls for cleanup assertions."""
+
+    def __init__(self):
+        super().__init__()
+        self.put_paths: list[str] = []
+        self.deleted_paths: list[str] = []
+
+    def put_object(self, path: str, content: bytes, content_type: str = "application/pdf") -> None:
+        self.put_paths.append(path)
+        super().put_object(path, content, content_type)
+
+    def delete_object(self, path: str) -> None:
+        self.deleted_paths.append(path)
+        super().delete_object(path)
+
+
+class _FailingPutStorageClient(_TrackingStorageClient):
+    """Fake storage client that fails on put_object after fetch succeeds."""
+
+    def put_object(self, path: str, content: bytes, content_type: str = "application/pdf") -> None:
+        self.put_paths.append(path)
+        raise StorageError("forced storage put failure", code="E_STORAGE_ERROR")
+
+
+def _bootstrap_user(auth_client, user_id):
+    auth_client.get("/me", headers=auth_headers(user_id))
+
+
+@pytest.fixture
+def remote_http(monkeypatch):
+    """Mock the remote HTTP boundary while preserving real URL/SSRF validation."""
+
+    def _getaddrinfo(host: str, port: int | str | None, *args, **kwargs):
+        if host == "private.test":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.0.0.1", int(port or 80)))]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", int(port or 80)))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", _getaddrinfo)
+    with respx.mock(assert_all_called=False) as mock:
+        yield mock
+
+
+def _patch_remote_file_limits(monkeypatch, *, limit_bytes: int = REMOTE_FILE_LIMIT_BYTES) -> None:
+    settings = SimpleNamespace(max_pdf_bytes=limit_bytes, max_epub_bytes=limit_bytes)
+    monkeypatch.setattr("nexus.services.media.get_settings", lambda: settings)
+    monkeypatch.setattr("nexus.services.upload.get_settings", lambda: settings)
+
+
+def _patch_remote_storage(monkeypatch, storage_client) -> None:
+    monkeypatch.setattr("nexus.services.media.get_storage_client", lambda: storage_client)
+    monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: storage_client)
+    monkeypatch.setattr("nexus.services.epub_lifecycle.get_storage_client", lambda: storage_client)
+
+
+def _expect_remote_file(
+    remote_http,
+    url: str,
+    body: bytes | str,
+    *,
+    content_type: str,
+    status: int = 200,
+    headers: dict[str, str] | None = None,
+):
+    remote_http.get(url).mock(
+        return_value=httpx.Response(
+            status,
+            content=body,
+            headers={"Content-Type": content_type, **(headers or {})},
+        )
+    )
+
+
+def _expect_remote_redirect(remote_http, url: str, target_url: str, *, status: int = 302):
+    remote_http.get(url).mock(return_value=httpx.Response(status, headers={"Location": target_url}))
 
 
 def _install_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
@@ -84,6 +180,58 @@ def _remove_background_job_insert_failure(direct_db: DirectSessionManager) -> No
         session.commit()
 
 
+def _install_library_media_insert_failure(direct_db: DirectSessionManager) -> None:
+    """Force library_media inserts to fail until teardown is called."""
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION nexus_test_fail_library_media_insert()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    RAISE EXCEPTION 'library_media unavailable';
+                END;
+                $$;
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                DROP TRIGGER IF EXISTS nexus_test_fail_library_media_insert
+                ON library_media
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                CREATE TRIGGER nexus_test_fail_library_media_insert
+                BEFORE INSERT ON library_media
+                FOR EACH ROW
+                EXECUTE FUNCTION nexus_test_fail_library_media_insert()
+                """
+            )
+        )
+        session.commit()
+
+
+def _remove_library_media_insert_failure(direct_db: DirectSessionManager) -> None:
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                DROP TRIGGER IF EXISTS nexus_test_fail_library_media_insert
+                ON library_media
+                """
+            )
+        )
+        session.execute(text("DROP FUNCTION IF EXISTS nexus_test_fail_library_media_insert()"))
+        session.commit()
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -116,8 +264,8 @@ class TestFromUrlSuccess:
 
         # Verify response shape
         assert "media_id" in data
+        assert "duplicate" not in data
         media_id = UUID(data["media_id"])
-        assert data["duplicate"] is False
         assert data["processing_status"] == "pending"
         # In test environment, task is not actually enqueued
         assert "ingest_enqueued" in data
@@ -190,7 +338,6 @@ class TestFromUrlSuccess:
         direct_db.register_cleanup("library_media", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        assert data["duplicate"] is False
         assert data["idempotency_outcome"] == "created"
         assert data["processing_status"] == "extracting"
         assert data["ingest_enqueued"] is True
@@ -264,7 +411,6 @@ class TestFromUrlSuccess:
         direct_db.register_cleanup("library_media", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        assert data["duplicate"] is False
         assert data["idempotency_outcome"] == "created"
         assert data["processing_status"] == "extracting"
         assert data["ingest_enqueued"] is True
@@ -454,7 +600,6 @@ class TestFromUrlSuccess:
         direct_db.register_cleanup("media", "id", media_id)
 
         assert first_data["idempotency_outcome"] == "created"
-        assert first_data["duplicate"] is False
 
         second_response = auth_client.post(
             "/media/from_url",
@@ -468,8 +613,8 @@ class TestFromUrlSuccess:
         second_data = second_response.json()["data"]
 
         assert UUID(second_data["media_id"]) == media_id
+        assert "duplicate" not in second_data
         assert second_data["idempotency_outcome"] == "reused"
-        assert second_data["duplicate"] is True
 
         with direct_db.session() as session:
             row = session.execute(
@@ -705,6 +850,492 @@ class TestFromUrlSuccess:
         assert job_count == 0, (
             f"Expected no ingest_youtube_video job rows for failed request, but found {job_count}."
         )
+
+
+class TestFromUrlRemoteFiles:
+    """Tests for file-backed from_url ingestion through the remote HTTP boundary."""
+
+    def test_create_remote_pdf_url_success_via_http_fetch(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        storage = _TrackingStorageClient()
+        _patch_remote_storage(monkeypatch, storage)
+        _patch_remote_file_limits(monkeypatch)
+
+        url = "http://example.com/report.pdf"
+        _expect_remote_file(remote_http, url, PDF_CONTENT, content_type="application/pdf")
+
+        response = auth_client.post(
+            "/media/from_url", json={"url": url}, headers=auth_headers(user_id)
+        )
+        assert response.status_code == 202
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        assert data["idempotency_outcome"] == "created"
+        assert data["processing_status"] == "extracting"
+        assert data["ingest_enqueued"] is True
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("""
+                    SELECT m.kind, m.title, m.requested_url, m.canonical_source_url,
+                           m.processing_status, mf.content_type, mf.size_bytes
+                    FROM media m
+                    JOIN media_file mf ON mf.media_id = m.id
+                    WHERE m.id = :media_id
+                """),
+                {"media_id": media_id},
+            ).fetchone()
+
+        assert row is not None
+        assert row[0] == "pdf"
+        assert row[1] == "report.pdf"
+        assert row[2] == url
+        assert row[3] == url
+        assert row[4] == "extracting"
+        assert row[5] == "application/pdf"
+        assert row[6] == len(PDF_CONTENT)
+
+    def test_create_remote_epub_url_success_via_http_fetch(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        storage = _TrackingStorageClient()
+        _patch_remote_storage(monkeypatch, storage)
+        _patch_remote_file_limits(monkeypatch)
+
+        url = "http://example.com/book.epub"
+        _expect_remote_file(remote_http, url, EPUB_CONTENT, content_type="application/epub+zip")
+
+        response = auth_client.post(
+            "/media/from_url", json={"url": url}, headers=auth_headers(user_id)
+        )
+        assert response.status_code == 202
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        assert data["idempotency_outcome"] == "created"
+        assert data["processing_status"] == "extracting"
+        assert data["ingest_enqueued"] is True
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("""
+                    SELECT m.kind, m.title, mf.content_type, mf.size_bytes
+                    FROM media m
+                    JOIN media_file mf ON mf.media_id = m.id
+                    WHERE m.id = :media_id
+                """),
+                {"media_id": media_id},
+            ).fetchone()
+
+        assert row is not None
+        assert row[0] == "epub"
+        assert row[1] == "book.epub"
+        assert row[2] == "application/epub+zip"
+        assert row[3] == len(EPUB_CONTENT)
+
+    def test_remote_pdf_redirect_is_followed_to_final_bytes(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        storage = _TrackingStorageClient()
+        _patch_remote_storage(monkeypatch, storage)
+        _patch_remote_file_limits(monkeypatch)
+
+        _expect_remote_redirect(
+            remote_http,
+            "http://example.com/old.pdf",
+            "http://cdn.example.com/final.pdf",
+        )
+        _expect_remote_file(
+            remote_http,
+            "http://cdn.example.com/final.pdf",
+            PDF_CONTENT,
+            content_type="application/pdf",
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "http://example.com/old.pdf"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 202
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        assert data["processing_status"] == "extracting"
+        assert data["ingest_enqueued"] is True
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("""
+                    SELECT mf.size_bytes, mf.content_type
+                    FROM media_file mf
+                    WHERE mf.media_id = :media_id
+                """),
+                {"media_id": media_id},
+            ).fetchone()
+
+        assert row is not None
+        assert row[0] == len(PDF_CONTENT)
+        assert row[1] == "application/pdf"
+
+    def test_remote_redirect_to_private_ip_is_blocked(
+        self,
+        auth_client,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _patch_remote_file_limits(monkeypatch)
+
+        _expect_remote_redirect(
+            remote_http,
+            "http://example.com/old.pdf",
+            "http://private.test/final.pdf",
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "http://example.com/old.pdf"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "E_SSRF_BLOCKED"
+
+    def test_remote_file_too_many_redirects_is_rejected(
+        self,
+        auth_client,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _patch_remote_file_limits(monkeypatch)
+
+        _expect_remote_redirect(
+            remote_http, "http://example.com/r1.pdf", "http://example.com/r2.pdf"
+        )
+        _expect_remote_redirect(
+            remote_http, "http://example.com/r2.pdf", "http://example.com/r3.pdf"
+        )
+        _expect_remote_redirect(
+            remote_http, "http://example.com/r3.pdf", "http://example.com/r4.pdf"
+        )
+        _expect_remote_redirect(
+            remote_http, "http://example.com/r4.pdf", "http://example.com/r5.pdf"
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "http://example.com/r1.pdf"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 502
+        assert response.json()["error"]["code"] == "E_INGEST_FAILED"
+
+    def test_remote_file_non_2xx_is_rejected(
+        self,
+        auth_client,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _patch_remote_file_limits(monkeypatch)
+
+        url = "http://example.com/missing.pdf"
+        _expect_remote_file(remote_http, url, "Not Found", content_type="text/plain", status=404)
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": url},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 502
+        assert response.json()["error"]["code"] == "E_INGEST_FAILED"
+
+    def test_remote_file_timeout_is_rejected(
+        self,
+        auth_client,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _patch_remote_file_limits(monkeypatch)
+        monkeypatch.setattr("nexus.services.media._REMOTE_FILE_TIMEOUT", httpx.Timeout(0.05))
+
+        remote_http.get("http://example.com/slow.pdf").mock(
+            side_effect=httpx.ReadTimeout("timed out")
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "http://example.com/slow.pdf"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 504
+        assert response.json()["error"]["code"] == "E_INGEST_TIMEOUT"
+
+    def test_remote_file_invalid_magic_bytes_are_rejected(
+        self,
+        auth_client,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _patch_remote_file_limits(monkeypatch)
+
+        _expect_remote_file(
+            remote_http,
+            "http://example.com/bad.pdf",
+            b"<html><body>not a pdf</body></html>",
+            content_type="application/pdf",
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "http://example.com/bad.pdf"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_FILE_TYPE"
+
+    def test_remote_file_content_length_over_limit_is_rejected(
+        self,
+        auth_client,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _patch_remote_file_limits(monkeypatch)
+
+        _expect_remote_file(
+            remote_http,
+            "http://example.com/too-large.pdf",
+            PDF_CONTENT,
+            content_type="application/pdf",
+            headers={"Content-Length": str(REMOTE_FILE_LIMIT_BYTES + 1)},
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "http://example.com/too-large.pdf"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_FILE_TOO_LARGE"
+
+    def test_remote_file_streamed_body_over_limit_is_rejected(
+        self,
+        auth_client,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _patch_remote_file_limits(monkeypatch)
+
+        over_limit_body = b"%PDF-1.4\n" + (b"a" * (REMOTE_FILE_LIMIT_BYTES + 1))
+        _expect_remote_file(
+            remote_http,
+            "http://example.com/stream-too-large.pdf",
+            over_limit_body,
+            content_type="application/pdf",
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "http://example.com/stream-too-large.pdf"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_FILE_TOO_LARGE"
+
+    def test_remote_file_storage_put_failure_returns_storage_error(
+        self,
+        auth_client,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        storage = _FailingPutStorageClient()
+        _patch_remote_storage(monkeypatch, storage)
+        _patch_remote_file_limits(monkeypatch)
+
+        _expect_remote_file(
+            remote_http,
+            "http://example.com/storage-fail.pdf",
+            PDF_CONTENT,
+            content_type="application/pdf",
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "http://example.com/storage-fail.pdf"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 500
+        assert response.json()["error"]["code"] == "E_STORAGE_ERROR"
+
+    def test_remote_file_db_failure_after_storage_write_cleans_up_storage(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        storage = _TrackingStorageClient()
+        _patch_remote_storage(monkeypatch, storage)
+        _patch_remote_file_limits(monkeypatch)
+
+        media_uuid = UUID("11111111-1111-1111-1111-111111111111")
+        monkeypatch.setattr("nexus.services.media.uuid4", lambda: media_uuid)
+        storage_path = build_storage_path(media_uuid, "pdf")
+
+        _install_library_media_insert_failure(direct_db)
+        try:
+            _expect_remote_file(
+                remote_http,
+                "http://example.com/db-fail.pdf",
+                PDF_CONTENT,
+                content_type="application/pdf",
+            )
+
+            with pytest.raises(ProgrammingError):
+                auth_client.post(
+                    "/media/from_url",
+                    json={"url": "http://example.com/db-fail.pdf"},
+                    headers=auth_headers(user_id),
+                )
+        finally:
+            _remove_library_media_insert_failure(direct_db)
+
+        assert storage.put_paths == [storage_path]
+        assert storage.get_object(storage_path) is None
+        assert storage.deleted_paths == [storage_path]
+
+    def test_duplicate_remote_pdf_url_reuses_existing_media(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        remote_http,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        storage = _TrackingStorageClient()
+        _patch_remote_storage(monkeypatch, storage)
+        _patch_remote_file_limits(monkeypatch)
+
+        _expect_remote_file(
+            remote_http,
+            "http://example.com/dup-a.pdf",
+            PDF_CONTENT,
+            content_type="application/pdf",
+        )
+        _expect_remote_file(
+            remote_http,
+            "http://example.com/dup-b.pdf",
+            PDF_CONTENT,
+            content_type="application/pdf",
+        )
+
+        first_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "http://example.com/dup-a.pdf"},
+            headers=auth_headers(user_id),
+        )
+        assert first_response.status_code == 202
+        first_data = first_response.json()["data"]
+        media_id = UUID(first_data["media_id"])
+
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        second_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "http://example.com/dup-b.pdf"},
+            headers=auth_headers(user_id),
+        )
+        assert second_response.status_code == 202
+        second_data = second_response.json()["data"]
+
+        assert UUID(second_data["media_id"]) == media_id
+        assert "duplicate" not in second_data
+        assert second_data["idempotency_outcome"] == "reused"
+
+        with direct_db.session() as session:
+            count = session.execute(
+                text("""
+                    SELECT COUNT(*)
+                    FROM media
+                    WHERE created_by_user_id = :user_id
+                      AND kind = 'pdf'
+                      AND file_sha256 IS NOT NULL
+                """),
+                {"user_id": user_id},
+            ).scalar_one()
+
+        assert count == 1
+        assert len(storage.deleted_paths) == 1
 
 
 # =============================================================================
