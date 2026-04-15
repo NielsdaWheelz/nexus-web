@@ -54,22 +54,6 @@ function parseSupabaseStatus(rawStatus) {
   }
 }
 
-function canonicalizeLoopbackUrl(rawUrl) {
-  if (!rawUrl) {
-    return rawUrl;
-  }
-
-  try {
-    const parsed = new URL(rawUrl);
-    if (parsed.hostname === "127.0.0.1") {
-      parsed.hostname = "localhost";
-    }
-    return parsed.toString().replace(/\/$/, "");
-  } catch {
-    return rawUrl;
-  }
-}
-
 function readLiveSupabaseStatus(cwd) {
   try {
     const rawStatus = execSync("supabase status --output json", {
@@ -125,7 +109,7 @@ export function resolveSupabaseEnv(rootDir, env = process.env) {
 
   return {
     ...fileEnv,
-    supabaseUrl: canonicalizeLoopbackUrl(supabaseUrl),
+    supabaseUrl,
     anonKey,
     adminKey,
   };
