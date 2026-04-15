@@ -386,7 +386,7 @@ class TestPatchMediaReaderState:
 
         resp = auth_client.patch(
             f"/media/{media_id}/reader-state",
-            json={"locator_kind": "epub_section"},
+            json={"locator_kind": "epub_section", "section_id": "ch01"},
             headers=auth_headers(user_b),
         )
 

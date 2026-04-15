@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within, act } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const {
@@ -47,14 +47,6 @@ vi.mock("next/navigation", () => ({
   }),
   useSearchParams: () => new URLSearchParams(),
   useParams: () => ({}),
-}));
-
-// Mock heavy child components used in the mobile upload sheet
-vi.mock("@/components/FileUpload", () => ({
-  default: () => <div data-testid="file-upload">FileUpload</div>,
-}));
-vi.mock("@/components/AddFromUrl", () => ({
-  default: () => <div data-testid="add-from-url">AddFromUrl</div>,
 }));
 
 import Navbar from "@/components/Navbar";
@@ -105,72 +97,23 @@ describe("Navbar", () => {
     expect(librariesLink.className).toMatch(/active/i);
   });
 
-  it("renders nothing on mobile by default", () => {
-    vi.stubGlobal("innerWidth", 390);
-    window.dispatchEvent(new Event("resize"));
-
-    const { container } = render(<Navbar />);
-
-    expect(container.innerHTML).toBe("");
-  });
-
-  it("opens an Add content sheet on mobile when upload event fires", async () => {
-    vi.stubGlobal("innerWidth", 390);
-    window.dispatchEvent(new Event("resize"));
-
+  it("exposes an Add content button without rendering an upload sheet", () => {
     render(<Navbar />);
 
-    act(() => {
-      window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
-    });
-
-    const dialog = screen.getByRole("dialog", { name: "Add content" });
-    expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getByText("Add content")).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Close" })).toBeInTheDocument();
-  });
-
-  it("closes the mobile upload sheet via the close button", async () => {
-    vi.stubGlobal("innerWidth", 390);
-    window.dispatchEvent(new Event("resize"));
-    const user = userEvent.setup();
-
-    render(<Navbar />);
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
-    });
-
-    expect(screen.getByRole("dialog", { name: "Add content" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Close" }));
-
+    expect(screen.getByLabelText("Add content")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Add content" })).not.toBeInTheDocument();
   });
 
-  it("locks body scroll while the mobile upload sheet is open", async () => {
-    vi.stubGlobal("innerWidth", 390);
-    window.dispatchEvent(new Event("resize"));
+  it("dispatches the upload event when Add content is clicked", async () => {
     const user = userEvent.setup();
+    const onOpenUpload = vi.fn();
+    window.addEventListener(OPEN_UPLOAD_EVENT, onOpenUpload as EventListener);
 
-    const { unmount } = render(<Navbar />);
+    render(<Navbar />);
 
-    expect(document.body.style.overflow).toBe("");
+    await user.click(screen.getByLabelText("Add content"));
 
-    act(() => {
-      window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
-    });
-    expect(document.body.style.overflow).toBe("hidden");
-
-    await user.click(screen.getByRole("button", { name: "Close" }));
-    expect(document.body.style.overflow).toBe("");
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
-    });
-    expect(document.body.style.overflow).toBe("hidden");
-
-    unmount();
-    expect(document.body.style.overflow).toBe("");
+    expect(onOpenUpload).toHaveBeenCalledTimes(1);
+    window.removeEventListener(OPEN_UPLOAD_EVENT, onOpenUpload as EventListener);
   });
 });

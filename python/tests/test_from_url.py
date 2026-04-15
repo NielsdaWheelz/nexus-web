@@ -22,10 +22,14 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 
+from nexus.storage.client import FakeStorageClient
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+PDF_CONTENT = b"%PDF-1.4\nremote pdf bytes"
+EPUB_CONTENT = b"PK\x03\x04remote epub bytes"
 
 
 def _install_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
@@ -142,6 +146,145 @@ class TestFromUrlSuccess:
             assert row[4] == "https://example.com/article"  # canonical_source_url (normalized)
             assert row[5] == "pending"  # processing_status
             assert row[6] == user_id  # created_by_user_id
+
+    def test_create_remote_pdf_url_success(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch,
+    ):
+        """A .pdf URL creates file-backed PDF media through the upload lifecycle."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        fake_storage = FakeStorageClient()
+        monkeypatch.setattr("nexus.services.media.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr(
+            "nexus.services.media._download_remote_file",
+            lambda url, kind: (PDF_CONTENT, "application/pdf"),
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://example.com/report.pdf"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 202
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+
+        with direct_db.session() as session:
+            job_id = session.execute(
+                text("""
+                    SELECT id FROM background_jobs
+                    WHERE payload->>'media_id' = :media_id
+                """),
+                {"media_id": str(media_id)},
+            ).scalar()
+            if job_id is not None:
+                direct_db.register_cleanup("background_jobs", "id", job_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        assert data["duplicate"] is False
+        assert data["idempotency_outcome"] == "created"
+        assert data["processing_status"] == "extracting"
+        assert data["ingest_enqueued"] is True
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("""
+                    SELECT m.kind, m.title, m.requested_url, m.canonical_source_url,
+                           m.processing_status, mf.content_type, mf.size_bytes
+                    FROM media m
+                    JOIN media_file mf ON mf.media_id = m.id
+                    WHERE m.id = :media_id
+                """),
+                {"media_id": media_id},
+            ).fetchone()
+
+            assert row is not None
+            assert row[0] == "pdf"
+            assert row[1] == "report.pdf"
+            assert row[2] == "https://example.com/report.pdf"
+            assert row[3] == "https://example.com/report.pdf"
+            assert row[4] == "extracting"
+            assert row[5] == "application/pdf"
+            assert row[6] == len(PDF_CONTENT)
+
+    def test_create_remote_epub_url_success(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch,
+    ):
+        """A .epub URL creates file-backed EPUB media through the upload lifecycle."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        fake_storage = FakeStorageClient()
+        monkeypatch.setattr("nexus.services.media.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr(
+            "nexus.services.epub_lifecycle.get_storage_client",
+            lambda: fake_storage,
+        )
+        monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
+        monkeypatch.setattr(
+            "nexus.services.media._download_remote_file",
+            lambda url, kind: (EPUB_CONTENT, "application/epub+zip"),
+        )
+
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://example.com/books/book.epub?download=1"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 202
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+
+        with direct_db.session() as session:
+            job_id = session.execute(
+                text("""
+                    SELECT id FROM background_jobs
+                    WHERE payload->>'media_id' = :media_id
+                """),
+                {"media_id": str(media_id)},
+            ).scalar()
+            if job_id is not None:
+                direct_db.register_cleanup("background_jobs", "id", job_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        assert data["duplicate"] is False
+        assert data["idempotency_outcome"] == "created"
+        assert data["processing_status"] == "extracting"
+        assert data["ingest_enqueued"] is True
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("""
+                    SELECT m.kind, m.title, mf.content_type, mf.size_bytes
+                    FROM media m
+                    JOIN media_file mf ON mf.media_id = m.id
+                    WHERE m.id = :media_id
+                """),
+                {"media_id": media_id},
+            ).fetchone()
+
+            assert row is not None
+            assert row[0] == "epub"
+            assert row[1] == "book.epub"
+            assert row[2] == "application/epub+zip"
+            assert row[3] == len(EPUB_CONTENT)
 
     def test_media_attached_to_default_library(self, auth_client, direct_db: DirectSessionManager):
         """Test that created media is attached to viewer's default library."""

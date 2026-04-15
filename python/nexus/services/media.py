@@ -14,7 +14,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from uuid import UUID
+from urllib.parse import unquote, urljoin, urlparse
+from uuid import UUID, uuid4
+
+import httpx
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
@@ -25,7 +28,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
-from nexus.db.models import Media, MediaKind, PodcastListeningState, ProcessingStatus
+from nexus.config import get_settings
+from nexus.db.models import Media, MediaFile, MediaKind, PodcastListeningState, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
@@ -45,8 +49,19 @@ from nexus.services.playback_source import derive_playback_source
 from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
+from nexus.storage import build_storage_path, get_file_extension, get_storage_client
+from nexus.storage.client import StorageError
 
 logger = get_logger(__name__)
+
+_REMOTE_FILE_CONTENT_TYPES = {
+    "pdf": "application/pdf",
+    "epub": "application/epub+zip",
+}
+_REMOTE_FILE_CHUNK_BYTES = 1024 * 1024
+_REMOTE_FILE_REDIRECT_LIMIT = 3
+_REMOTE_FILE_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+_REMOTE_FILE_USER_AGENT = "Nexus Media Ingestion/1.0"
 
 _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "m.id",
@@ -755,6 +770,179 @@ def get_media_for_viewer_or_404(
     return db.get(Media, media_id)
 
 
+def _remote_file_kind_from_url(url: str) -> str | None:
+    path = urlparse(url).path.lower()
+    if path.endswith(".pdf"):
+        return "pdf"
+    if path.endswith(".epub"):
+        return "epub"
+    return None
+
+
+def _remote_file_name(url: str, kind: str) -> str:
+    name = unquote(posixpath.basename(urlparse(url).path)).strip()
+    return name or f"download.{get_file_extension(kind)}"
+
+
+def _download_remote_file(url: str, kind: str) -> tuple[bytes, str]:
+    from nexus.services.image_proxy import (
+        check_hostname_denylist,
+        validate_dns_resolution,
+        validate_url,
+    )
+    from nexus.services.upload import _validate_magic_bytes
+
+    max_bytes = get_settings().max_pdf_bytes if kind == "pdf" else get_settings().max_epub_bytes
+    current_url = url
+
+    with httpx.Client(
+        timeout=_REMOTE_FILE_TIMEOUT,
+        follow_redirects=False,
+        trust_env=False,
+    ) as client:
+        for _ in range(_REMOTE_FILE_REDIRECT_LIMIT + 1):
+            normalized_url, hostname, _ = validate_url(current_url)
+            check_hostname_denylist(hostname)
+            validate_dns_resolution(hostname)
+
+            try:
+                with client.stream(
+                    "GET",
+                    normalized_url,
+                    headers={
+                        "User-Agent": _REMOTE_FILE_USER_AGENT,
+                        "Accept": (
+                            f"{_REMOTE_FILE_CONTENT_TYPES[kind]},application/octet-stream,*/*;q=0.8"
+                        ),
+                    },
+                ) as response:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise ApiError(
+                                ApiErrorCode.E_INGEST_FAILED,
+                                "Remote file redirect did not include a Location header.",
+                            )
+                        current_url = urljoin(normalized_url, location)
+                        continue
+
+                    if response.status_code < 200 or response.status_code >= 300:
+                        raise ApiError(
+                            ApiErrorCode.E_INGEST_FAILED,
+                            f"Remote file returned status {response.status_code}.",
+                        )
+
+                    content_length = response.headers.get("content-length")
+                    if content_length and int(content_length) > max_bytes:
+                        raise InvalidRequestError(
+                            ApiErrorCode.E_FILE_TOO_LARGE,
+                            f"Remote {kind.upper()} exceeds maximum size.",
+                        )
+
+                    data = bytearray()
+                    for chunk in response.iter_bytes(chunk_size=_REMOTE_FILE_CHUNK_BYTES):
+                        data.extend(chunk)
+                        if len(data) > max_bytes:
+                            raise InvalidRequestError(
+                                ApiErrorCode.E_FILE_TOO_LARGE,
+                                f"Remote {kind.upper()} exceeds maximum size.",
+                            )
+
+                    payload = bytes(data)
+                    if not _validate_magic_bytes(payload, kind):
+                        raise InvalidRequestError(
+                            ApiErrorCode.E_INVALID_FILE_TYPE,
+                            f"Remote URL did not return a valid {kind.upper()} file.",
+                        )
+
+                    return payload, _REMOTE_FILE_CONTENT_TYPES[kind]
+            except ValueError as exc:
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST,
+                    "Invalid remote file response.",
+                ) from exc
+            except httpx.TimeoutException as exc:
+                raise ApiError(
+                    ApiErrorCode.E_INGEST_TIMEOUT, "Remote file fetch timed out."
+                ) from exc
+            except httpx.RequestError as exc:
+                raise ApiError(
+                    ApiErrorCode.E_INGEST_FAILED, "Failed to fetch remote file."
+                ) from exc
+
+    raise ApiError(ApiErrorCode.E_INGEST_FAILED, "Remote file had too many redirects.")
+
+
+def _create_file_media_from_remote_url(
+    db: Session,
+    viewer_id: UUID,
+    url: str,
+    kind: str,
+    request_id: str | None = None,
+) -> FromUrlResponse:
+    from nexus.services.epub_lifecycle import confirm_ingest_for_viewer
+    from nexus.services.upload import _ensure_in_default_library, _validate_upload_request
+
+    if kind not in _REMOTE_FILE_CONTENT_TYPES:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Remote URL must be a PDF or EPUB.")
+
+    payload, content_type = _download_remote_file(url, kind)
+    _validate_upload_request(kind, content_type, len(payload))
+
+    media_id = uuid4()
+    storage_path = build_storage_path(media_id, get_file_extension(kind))
+    storage_client = get_storage_client()
+    try:
+        storage_client.put_object(storage_path, payload, content_type)
+    except StorageError as exc:
+        raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Failed to store remote file.") from exc
+
+    now = datetime.now(UTC)
+    media = Media(
+        id=media_id,
+        kind=kind,
+        title=_remote_file_name(url, kind)[:255],
+        requested_url=url,
+        canonical_source_url=normalize_url_for_display(url),
+        processing_status=ProcessingStatus.pending,
+        created_by_user_id=viewer_id,
+        created_at=now,
+        updated_at=now,
+    )
+    media_file = MediaFile(
+        media_id=media_id,
+        storage_path=storage_path,
+        content_type=content_type,
+        size_bytes=len(payload),
+    )
+
+    try:
+        db.add(media)
+        db.add(media_file)
+        db.flush()
+        _ensure_in_default_library(db, viewer_id, media_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        storage_client.delete_object(storage_path)
+        raise
+
+    result = confirm_ingest_for_viewer(
+        db=db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        request_id=request_id,
+    )
+
+    return FromUrlResponse(
+        media_id=UUID(result["media_id"]),
+        duplicate=bool(result["duplicate"]),
+        idempotency_outcome="reused" if result["duplicate"] else "created",
+        processing_status=str(result["processing_status"]),
+        ingest_enqueued=bool(result["ingest_enqueued"]),
+    )
+
+
 def create_provisional_web_article(
     db: Session,
     viewer_id: UUID,
@@ -868,6 +1056,16 @@ def enqueue_media_from_url(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "YouTube URL must include a valid video ID",
+        )
+
+    remote_file_kind = _remote_file_kind_from_url(url)
+    if remote_file_kind is not None:
+        return _create_file_media_from_remote_url(
+            db=db,
+            viewer_id=viewer_id,
+            url=url,
+            kind=remote_file_kind,
+            request_id=request_id,
         )
 
     return create_provisional_web_article(
