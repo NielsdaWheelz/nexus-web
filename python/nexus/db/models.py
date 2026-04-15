@@ -187,6 +187,39 @@ class User(Base):
     )
 
 
+class Page(Base):
+    """User-owned Markdown page synced through the local vault."""
+
+    __tablename__ = "pages"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("char_length(title) BETWEEN 1 AND 200", name="ck_pages_title_length"),
+    )
+
+
 class Library(Base):
     """Library model - an access-control group + view over media."""
 
@@ -1581,7 +1614,8 @@ class Highlight(Base):
             name="ck_highlights_anchor_fields_paired_null",
         ),
         CheckConstraint(
-            "anchor_kind IS NULL OR anchor_kind IN ('fragment_offsets', 'pdf_page_geometry')",
+            "anchor_kind IS NULL OR anchor_kind IN "
+            "('fragment_offsets', 'pdf_page_geometry', 'pdf_text_quote')",
             name="ck_highlights_anchor_kind_valid",
         ),
         UniqueConstraint(
@@ -1624,6 +1658,12 @@ class Highlight(Base):
         uselist=False,
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    pdf_text_anchor: Mapped["HighlightPdfTextAnchor | None"] = relationship(
+        "HighlightPdfTextAnchor",
+        back_populates="highlight",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
     pdf_quads: Mapped[list["HighlightPdfQuad"]] = relationship(
         "HighlightPdfQuad",
@@ -1861,6 +1901,45 @@ class HighlightPdfQuad(Base):
     __table_args__ = (CheckConstraint("quad_idx >= 0", name="ck_hpq_quad_idx"),)
 
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="pdf_quads")
+
+
+class HighlightPdfTextAnchor(Base):
+    """Page-scoped PDF text quote anchor for local-vault highlights."""
+
+    __tablename__ = "highlight_pdf_text_anchors"
+
+    highlight_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("highlights.id"),
+        primary_key=True,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id"),
+        nullable=False,
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    plain_text_start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    plain_text_end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("page_number >= 1", name="ck_hpta_page_number"),
+        CheckConstraint(
+            "plain_text_start_offset >= 0 "
+            "AND plain_text_end_offset > plain_text_start_offset",
+            name="ck_hpta_offsets_valid",
+        ),
+    )
+
+    highlight: Mapped["Highlight"] = relationship(
+        "Highlight", back_populates="pdf_text_anchor"
+    )
+    media: Mapped["Media"] = relationship("Media")
 
 
 class PdfPageTextSpan(Base):
