@@ -98,17 +98,16 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
 
     // Sync draft from prop when not editing
     useEffect(() => {
-      if (!isEditingAnnotation) {
-        setAnnotationDraft(highlight.annotation?.body ?? "");
+      const nextDraft = highlight.annotation?.body ?? "";
+      if (!isEditingAnnotation && annotationDraft !== nextDraft) {
+        setAnnotationDraft(nextDraft);
       }
-    }, [highlight.annotation?.body, isEditingAnnotation]);
+    }, [annotationDraft, highlight.annotation?.body, isEditingAnnotation]);
 
     // Auto-focus textarea on edit start
     useEffect(() => {
       if (isEditingAnnotation) {
-        requestAnimationFrame(() => {
-          textareaRef.current?.focus();
-        });
+        textareaRef.current?.focus();
       }
     }, [isEditingAnnotation]);
 
@@ -193,6 +192,7 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
       <div
         ref={ref}
         data-highlight-id={highlight.id}
+        data-testid={`linked-item-row-${highlight.id}`}
         className={`${styles.linkedItemRow} ${isFocused ? styles.rowFocused : ""} ${
           isEditingAnnotation ? styles.annotationEditing : ""
         } ${className ?? ""}`.trim()}

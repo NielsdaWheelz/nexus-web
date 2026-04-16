@@ -50,7 +50,7 @@ describe("ReaderContentArea", () => {
       </ReaderContentArea>
     );
 
-    const root = screen.getByText("Test content").closest("[data-reader-theme]");
+    const root = screen.getByTestId("reader-content-root");
     expect(root).toHaveAttribute("data-reader-theme", "light");
     expect(screen.getByText("Test content")).toBeInTheDocument();
   });
@@ -64,8 +64,10 @@ describe("ReaderContentArea", () => {
       </ReaderContentArea>
     );
 
-    const root = screen.getByText("Dark content").closest("[data-reader-theme='dark']");
-    expect(root).toBeInTheDocument();
+    expect(screen.getByTestId("reader-content-root")).toHaveAttribute(
+      "data-reader-theme",
+      "dark"
+    );
   });
 
   it.each(["light", "dark"] as const)(
@@ -79,9 +81,7 @@ describe("ReaderContentArea", () => {
         </ReaderContentArea>
       );
 
-      const root = screen
-        .getByText("Token content")
-        .closest("[data-reader-theme]") as HTMLElement;
+      const root = screen.getByTestId("reader-content-root");
       const computed = getComputedStyle(root);
       const requiredTokens = [
         "--reader-bg",
@@ -121,10 +121,8 @@ describe("ReaderContentArea", () => {
       </div>
     );
 
-    const root = screen
-      .getByText("Wide content")
-      .closest("[data-reader-theme]") as HTMLElement;
-    const content = root.firstElementChild as HTMLElement;
+    const root = screen.getByTestId("reader-content-root");
+    const content = screen.getByTestId("reader-content");
     const rootComputed = getComputedStyle(root);
     const contentComputed = getComputedStyle(content);
     const rootWidth = root.getBoundingClientRect().width;

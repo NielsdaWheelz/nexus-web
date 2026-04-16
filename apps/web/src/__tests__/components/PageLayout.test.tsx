@@ -38,11 +38,8 @@ describe("PageLayout", () => {
       </div>
     );
 
-    const header = screen
-      .getByRole("heading", { level: 1, name: "Mobile Layout" })
-      .closest<HTMLElement>('[data-surface-header="true"]');
-    expect(header).not.toBeNull();
-    const container = header?.parentElement as HTMLElement;
+    expect(screen.getByRole("heading", { level: 1, name: "Mobile Layout" })).toBeInTheDocument();
+    const container = screen.getByTestId("page-layout-container");
     expect(container.className).toMatch(/mobileHeaderVisible/);
     Object.defineProperty(container, "scrollTop", {
       configurable: true,

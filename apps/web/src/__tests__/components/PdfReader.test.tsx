@@ -644,12 +644,7 @@ describe("PdfReader", () => {
     expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
     const textNode = await screen.findByText("lorem ipsum dolor sit amet");
     const range = document.createRange();
-    const rawText = textNode.firstChild;
-    if (!rawText) {
-      throw new Error("Expected text-layer span to include a text node");
-    }
-    range.setStart(rawText, 0);
-    range.setEnd(rawText, rawText.textContent?.length ?? 0);
+    range.selectNodeContents(textNode);
     const syntheticRect = new DOMRect(72, 120, 140, 16);
     const clientRectsSpy = vi
       .spyOn(range, "getClientRects")
@@ -1036,18 +1031,18 @@ describe("PdfReader", () => {
       expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
 
       await waitFor(() => {
-        const page = document.querySelector(".pdfViewer .page");
-        const textLayer = document.querySelector(".pdfViewer .textLayer");
-        const canvasWrapper = document.querySelector(".pdfViewer .canvasWrapper");
-        const canvas = document.querySelector(".pdfViewer .canvasWrapper canvas");
-        expect(page).not.toBeNull();
-        expect(textLayer).not.toBeNull();
-        expect(canvasWrapper).not.toBeNull();
-        expect(canvas).not.toBeNull();
-        expect(getComputedStyle(page as Element).boxSizing).toBe("content-box");
-        expect(getComputedStyle(textLayer as Element).boxSizing).toBe("content-box");
-        expect(getComputedStyle(canvasWrapper as Element).boxSizing).toBe("content-box");
-        expect(getComputedStyle(canvas as Element).boxSizing).toBe("content-box");
+        expect(getComputedStyle(screen.getByTestId("pdf-page-surface-1")).boxSizing).toBe(
+          "content-box"
+        );
+        expect(getComputedStyle(screen.getByTestId("pdf-page-text-layer-1")).boxSizing).toBe(
+          "content-box"
+        );
+        expect(getComputedStyle(screen.getByTestId("pdf-page-canvas-wrapper-1")).boxSizing).toBe(
+          "content-box"
+        );
+        expect(getComputedStyle(screen.getByTestId("pdf-page-canvas-1")).boxSizing).toBe(
+          "content-box"
+        );
       });
     } finally {
       resetStyle.remove();
@@ -1248,12 +1243,7 @@ describe("PdfReader", () => {
     expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
     const textNode = await screen.findByText("geometry drift sentinel");
     const range = document.createRange();
-    const rawText = textNode.firstChild;
-    if (!rawText) {
-      throw new Error("Expected text-layer span to include a text node");
-    }
-    range.setStart(rawText, 0);
-    range.setEnd(rawText, rawText.textContent?.length ?? 0);
+    range.selectNodeContents(textNode);
     const syntheticRect = new DOMRect(84, 160, 180, 18);
     const clientRectsSpy = vi
       .spyOn(range, "getClientRects")
@@ -1354,8 +1344,7 @@ describe("PdfReader", () => {
 
     expect(await screen.findByText("Page 1 of 3")).toBeInTheDocument();
     await waitFor(() => {
-      const renderedPages = document.querySelectorAll('[data-testid^="pdf-page-surface-"]');
-      expect(renderedPages.length).toBe(3);
+      expect(screen.getAllByTestId(/^pdf-page-surface-/)).toHaveLength(3);
     });
   });
 
@@ -1472,8 +1461,8 @@ describe("PdfReader", () => {
     render(<PdfReader mediaId="media-minw" deps={deps} />);
 
     expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
-    const a11yMarker = screen.getByRole("img", { name: "PDF page" });
-    const viewport = a11yMarker.parentElement as HTMLElement;
+    expect(screen.getByRole("img", { name: "PDF page" })).toBeInTheDocument();
+    const viewport = screen.getByTestId("pdf-viewport");
     const computedMinWidth = getComputedStyle(viewport).minWidth;
     expect(
       parseInt(computedMinWidth, 10),

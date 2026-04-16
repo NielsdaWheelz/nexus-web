@@ -107,8 +107,7 @@ describe("SurfaceHeader", () => {
       expect(header).toHaveAttribute("data-mobile", "true");
 
       // Meta and subtitle are rendered but hidden via CSS (.mobile .meta { display: none })
-      const meta = screen.getByTestId("header-meta");
-      expect(meta.closest("[class]")).not.toBeNull();
+      expect(screen.getByTestId("header-meta")).toBeInTheDocument();
     });
 
     it("sets data-mobile attribute on mobile viewport", () => {

@@ -38,8 +38,11 @@ export default function ReaderContentArea({
       className={`${styles.root} ${profile.theme === "dark" ? styles.themeDark : styles.themeLight}`}
       style={style}
       data-reader-theme={profile.theme}
+      data-testid="reader-content-root"
     >
-      <div className={contentClassName ?? styles.content}>{children}</div>
+      <div className={contentClassName ?? styles.content} data-testid="reader-content">
+        {children}
+      </div>
     </div>
   );
 }

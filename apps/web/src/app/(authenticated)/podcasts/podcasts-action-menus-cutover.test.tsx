@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PodcastsPage from "./page";
 import PodcastDetailPage from "./[podcastId]/page";
@@ -277,15 +277,13 @@ describe("podcast ui action menu cutover", () => {
 
     render(<PodcastSubscriptionsPage />);
 
-    const rowTitle = await screen.findByText("Systems Podcast 0");
-    const row = rowTitle.closest("li");
-    expect(row).not.toBeNull();
-    expect(within(row as HTMLElement).getByLabelText("Category for Systems Podcast 0")).toBeInTheDocument();
+    expect(await screen.findByText("Systems Podcast 0")).toBeInTheDocument();
+    expect(screen.getByLabelText("Category for Systems Podcast 0")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open settings for Systems Podcast 0" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Refresh sync for Systems Podcast 0" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Unsubscribe from Systems Podcast 0" })).not.toBeInTheDocument();
 
-    await user.click(within(row as HTMLElement).getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
     expect(await screen.findByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Refresh sync" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Unsubscribe" })).toBeInTheDocument();
@@ -388,21 +386,19 @@ describe("podcast ui action menu cutover", () => {
       </GlobalPlayerProvider>
     );
 
-    const rowTitle = await screen.findByText("Episode 0");
-    const row = rowTitle.closest("li");
-    expect(row).not.toBeNull();
-    expect(within(row as HTMLElement).getByRole("button", { name: "Play next for Episode 0" })).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByRole("button", { name: "Add Episode 0 to queue" })).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByRole("button", { name: "Request transcript for Episode 0" })).toBeInTheDocument();
+    expect(await screen.findByText("Episode 0")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play next for Episode 0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Episode 0 to queue" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Request transcript for Episode 0" })).toBeInTheDocument();
 
     // Expand transcript request UI
-    await user.click(within(row as HTMLElement).getByRole("button", { name: "Request transcript for Episode 0" }));
-    expect(within(row as HTMLElement).getByLabelText("Transcript request reason for Episode 0")).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByRole("button", { name: "Submit transcript request for Episode 0" })).toBeInTheDocument();
-    expect(within(row as HTMLElement).queryByRole("button", { name: "Mark as played for Episode 0" })).not.toBeInTheDocument();
-    expect(within(row as HTMLElement).queryByRole("button", { name: "Add Episode 0 to library" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Request transcript for Episode 0" }));
+    expect(screen.getByLabelText("Transcript request reason for Episode 0")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit transcript request for Episode 0" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mark as played for Episode 0" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Episode 0 to library" })).not.toBeInTheDocument();
 
-    await user.click(within(row as HTMLElement).getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
     expect(await screen.findByRole("menuitem", { name: "Mark as played" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Add to library" })).toBeInTheDocument();
 
@@ -465,16 +461,14 @@ describe("podcast ui action menu cutover", () => {
     await user.type(screen.getByPlaceholderText("Search podcasts by title or topic..."), "discovery");
     await user.click(screen.getByRole("button", { name: "Search" }));
 
-    const rowTitle = await screen.findByText("Discovery Podcast");
-    const row = rowTitle.closest("li");
-    expect(row).not.toBeNull();
-    expect(within(row as HTMLElement).getByRole("button", { name: "Subscribe" })).toBeInTheDocument();
+    expect(await screen.findByText("Discovery Podcast")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Subscribe" })).toBeInTheDocument();
 
-    await user.click(within(row as HTMLElement).getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("button", { name: "Actions" }));
     expect(await screen.findByRole("menuitem", { name: "Open website" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Open feed" })).toBeInTheDocument();
 
-    await user.click(within(row as HTMLElement).getByRole("button", { name: "Subscribe" }));
+    await user.click(screen.getByRole("button", { name: "Subscribe" }));
     await waitFor(() => {
       expect(
         fetchSpy.mock.calls.some(([url, init]) => {

@@ -148,9 +148,15 @@ export default function Pane({
       className={paneClasses}
       style={Object.keys(paneStyle).length > 0 ? paneStyle : undefined}
       data-mobile-chrome-hidden={mobileChromeHidden ? "true" : "false"}
+      data-testid="pane"
     >
       {hasChrome && (
-        <div ref={chromeRef} className={styles.chrome} data-pane-chrome="true">
+        <div
+          ref={chromeRef}
+          className={styles.chrome}
+          data-pane-chrome="true"
+          data-testid="pane-chrome"
+        >
           {header
             ? header
             : title && (
@@ -182,6 +188,7 @@ export default function Pane({
       <div
         className={`${styles.content} ${contentClassName ?? ""}`.trim()}
         data-pane-content="true"
+        data-testid="pane-content"
         onScroll={onContentScroll}
       >
         {children}

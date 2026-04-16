@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ReaderSettingsPage from "@/app/(authenticated)/settings/reader/page";
 import { useReaderContext } from "@/lib/reader";
@@ -54,15 +54,15 @@ describe("ReaderSettingsPage", () => {
     render(<ReaderSettingsPage />);
 
     const fontSelect = screen.getByLabelText(/^font$/i);
-    const fontOptionValues = Array.from(
-      fontSelect.querySelectorAll("option")
-    ).map((opt) => opt.getAttribute("value"));
+    const fontOptionValues = within(fontSelect)
+      .getAllByRole("option")
+      .map((option) => (option as HTMLOptionElement).value);
     expect(fontOptionValues).toEqual(["serif", "sans"]);
 
     const themeSelect = screen.getByLabelText(/^theme$/i);
-    const themeOptionValues = Array.from(
-      themeSelect.querySelectorAll("option")
-    ).map((opt) => opt.getAttribute("value"));
+    const themeOptionValues = within(themeSelect)
+      .getAllByRole("option")
+      .map((option) => (option as HTMLOptionElement).value);
     expect(themeOptionValues).toEqual(["light", "dark"]);
   });
 });

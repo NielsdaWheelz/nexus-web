@@ -57,9 +57,8 @@ describe("SplitSurface", () => {
     });
 
     await user.click(fab);
-    const dialog = screen.getByRole("dialog", { name: "Linked items" });
-    const backdrop = dialog.parentElement as HTMLElement;
-    await user.click(backdrop);
+    await screen.findByRole("dialog", { name: "Linked items" });
+    await user.click(screen.getByTestId("split-overlay-backdrop"));
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "Linked items" })).not.toBeInTheDocument();
       expect(document.body.style.overflow).toBe("");
@@ -89,13 +88,7 @@ describe("SplitSurface", () => {
       />
     );
 
-    const primary = screen.getByText("Primary").closest(
-      '[data-split-role="primary"]'
-    );
-    expect(
-      primary,
-      "Expected primary wrapper to have data-split-role='primary' for mobile layout CSS targeting"
-    ).not.toBeNull();
+    expect(screen.getByTestId("split-primary")).toHaveAttribute("data-split-role", "primary");
   });
 
   describe("pane header deduplication in mobile overlay", () => {
@@ -164,9 +157,7 @@ describe("SplitSurface", () => {
       // Content should still be rendered
       expect(within(dialog).getByText("Highlight items")).toBeInTheDocument();
       // Pane chrome should NOT be inside the overlay.
-      // No Testing Library query can assert absence of a data-attribute, so DOM access is needed.
-      // eslint-disable-next-line testing-library/no-node-access
-      expect(dialog.querySelector('[data-pane-chrome="true"]')).toBeNull();
+      expect(within(dialog).queryByTestId("pane-chrome")).toBeNull();
     });
 
     it("keeps only overlay heading when Pane title differs from secondaryTitle", async () => {

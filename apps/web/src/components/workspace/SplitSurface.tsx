@@ -50,7 +50,9 @@ export default function SplitSurface({
   return (
     <div className={styles.surface}>
       <div className={styles.desktopRow}>
-        <div className={styles.primary} data-split-role="primary">{primary}</div>
+        <div className={styles.primary} data-split-role="primary" data-testid="split-primary">
+          {primary}
+        </div>
         {hasSecondary && <aside className={styles.secondaryDesktop}>{secondary}</aside>}
       </div>
 
@@ -71,6 +73,7 @@ export default function SplitSurface({
       {hasSecondary && secondaryOpenMobile && (
         <div
           className={styles.mobileOverlayBackdrop}
+          data-testid="split-overlay-backdrop"
           onClick={() => setSecondaryOpenMobile(false)}
         >
           <aside

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PodcastsPage from "./page";
 import PodcastSubscriptionsPage from "./subscriptions/page";
@@ -885,11 +885,7 @@ describe("podcasts product flows", () => {
     expect(screen.getByRole("button", { name: "Played" })).toBeInTheDocument();
     expect(screen.getByLabelText("Episode sort")).toBeInTheDocument();
     expect(screen.getByLabelText("Search episodes")).toBeInTheDocument();
-    const episodeRow = screen.getByText("Interview Episode").closest("li");
-    expect(episodeRow).not.toBeNull();
-    expect(
-      within(episodeRow as HTMLElement).getByRole("button", { name: "Actions" })
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Actions" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Unplayed" }));
     await user.selectOptions(screen.getByLabelText("Episode sort"), "duration_desc");
@@ -1574,11 +1570,7 @@ describe("podcasts product flows", () => {
 
     expect(await screen.findByText("Systems Podcast 0")).toBeInTheDocument();
 
-    const subscriptionRow = screen.getByText("Systems Podcast 0").closest("li");
-    expect(subscriptionRow).not.toBeNull();
-    await user.click(
-      within(subscriptionRow as HTMLElement).getByRole("button", { name: "Actions" })
-    );
+    await user.click(screen.getByRole("button", { name: "Actions" }));
     await user.click(await screen.findByRole("menuitem", { name: "Settings" }));
     await user.selectOptions(screen.getByLabelText("Default playback speed"), "1.5");
     await user.click(screen.getByLabelText("Automatically add new episodes to my queue"));

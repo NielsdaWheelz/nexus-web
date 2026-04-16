@@ -155,8 +155,7 @@ describe("LinkedItemRow", () => {
     expect(textarea).toBeInTheDocument();
 
     await user.type(textarea, "My note");
-    // Blur triggers save
-    textarea.blur();
+    await user.tab();
 
     await waitFor(() => {
       expect(onAnnotationSave).toHaveBeenCalledWith("h-4", "My note");

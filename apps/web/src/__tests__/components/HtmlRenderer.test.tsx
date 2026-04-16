@@ -14,11 +14,9 @@ describe("HtmlRenderer", () => {
 
   it("applies custom className", () => {
     const html = "<p>Test</p>";
-    const { container } = render(
-      <HtmlRenderer htmlSanitized={html} className="custom-class" />
-    );
+    render(<HtmlRenderer htmlSanitized={html} className="custom-class" />);
 
-    expect(container.firstChild).toHaveClass("custom-class");
+    expect(screen.getByTestId("html-renderer")).toHaveClass("custom-class");
   });
 
   it("renders links with proper attributes", () => {
@@ -85,9 +83,8 @@ describe("HtmlRenderer", () => {
       </div>
     );
 
-    const bodyText = screen.getByText("Body text");
-    const renderer = bodyText.closest("div") as HTMLElement;
-    const blockquote = screen.getByText("Reader quote").closest("blockquote") as HTMLElement;
+    const renderer = screen.getByTestId("html-renderer");
+    const blockquote = screen.getByText("Reader quote");
     const inlineCode = screen.getByText("inline code");
     const link = screen.getByText("Reader link");
     const th = screen.getByText("Head");
@@ -112,10 +109,7 @@ describe("HtmlRenderer", () => {
       </div>
     );
 
-    const text = screen.getByText(longWord);
-    const renderer = text.closest("div[class]") as HTMLElement;
-    expect(renderer).not.toBeNull();
-
+    const renderer = screen.getByTestId("html-renderer");
     expect(getComputedStyle(renderer).overflowWrap).toBe("break-word");
   });
 
@@ -127,10 +121,7 @@ describe("HtmlRenderer", () => {
       </div>
     );
 
-    const text = screen.getByText("wide");
-    const renderer = text.closest("div[class]") as HTMLElement;
-    expect(renderer).not.toBeNull();
-
+    const renderer = screen.getByTestId("html-renderer");
     expect(getComputedStyle(renderer).overflowX).not.toBe("hidden");
   });
 
@@ -153,9 +144,8 @@ describe("HtmlRenderer", () => {
       </div>
     );
 
-    const bodyText = screen.getByText("Fallback body");
-    const renderer = bodyText.closest("div") as HTMLElement;
-    const blockquote = screen.getByText("Fallback quote").closest("blockquote") as HTMLElement;
+    const renderer = screen.getByTestId("html-renderer");
+    const blockquote = screen.getByText("Fallback quote");
     const link = screen.getByText("Fallback link");
 
     expect(getComputedStyle(renderer).color).toBe("rgb(11, 22, 33)");

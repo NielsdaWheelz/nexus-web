@@ -64,6 +64,7 @@ export default function PageLayout({
   return (
     <div
       className={className}
+      data-testid="page-layout-container"
       onScroll={onContentScroll}
       style={Object.keys(style).length > 0 ? style : undefined}
     >

@@ -50,34 +50,34 @@ describe("Pane", () => {
   });
 
   it("applies default width", () => {
-    const { container } = render(
+    render(
       <Pane>
         <div>Content</div>
       </Pane>
     );
 
-    const pane = container.firstChild as HTMLElement;
+    const pane = screen.getByTestId("pane");
     expect(pane.style.width).toBe("480px");
   });
 
   it("applies custom default width", () => {
-    const { container } = render(
+    render(
       <Pane defaultWidth={600}>
         <div>Content</div>
       </Pane>
     );
 
-    const pane = container.firstChild as HTMLElement;
+    const pane = screen.getByTestId("pane");
     expect(pane.style.width).toBe("600px");
   });
 
   it("supports keyboard resize from the handle", () => {
-    const { container } = render(
+    render(
       <Pane defaultWidth={500} minWidth={300} maxWidth={700}>
         <div>Content</div>
       </Pane>
     );
-    const pane = container.firstChild as HTMLElement;
+    const pane = screen.getByTestId("pane");
     const handle = screen.getByLabelText("Resize pane");
 
     expect(pane.style.width).toBe("500px");
@@ -143,31 +143,26 @@ describe("Pane", () => {
       </div>
     );
 
-    const pane = screen
-      .getByText("Long content")
-      .closest<HTMLElement>('[data-mobile-chrome-hidden]');
-    expect(pane).not.toBeNull();
-    const paneEl = pane as HTMLElement;
-    const paneContent = paneEl.querySelector<HTMLElement>('[data-pane-content="true"]');
-    expect(paneContent).not.toBeNull();
+    const paneEl = screen.getByTestId("pane");
+    const paneContent = screen.getByTestId("pane-content");
     expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
 
-    (paneContent as HTMLElement).scrollTop = 20;
-    fireEvent.scroll(paneContent as HTMLElement);
+    paneContent.scrollTop = 20;
+    fireEvent.scroll(paneContent);
     expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
 
-    (paneContent as HTMLElement).scrollTop = 27;
-    fireEvent.scroll(paneContent as HTMLElement);
+    paneContent.scrollTop = 27;
+    fireEvent.scroll(paneContent);
     expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
 
-    (paneContent as HTMLElement).scrollTop = 260;
-    fireEvent.scroll(paneContent as HTMLElement);
+    paneContent.scrollTop = 260;
+    fireEvent.scroll(paneContent);
     await waitFor(() => {
       expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "true");
     });
 
-    (paneContent as HTMLElement).scrollTop = 12;
-    fireEvent.scroll(paneContent as HTMLElement);
+    paneContent.scrollTop = 12;
+    fireEvent.scroll(paneContent);
     await waitFor(() => {
       expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
     });
@@ -197,9 +192,7 @@ describe("Pane", () => {
         </Pane>
       );
 
-      // Toolbar lives inside the chrome container
-      const chrome = screen.getByText("Reader").closest('[data-pane-chrome="true"]');
-      expect(chrome).not.toBeNull();
+      expect(screen.getByTestId("pane-chrome")).toBeInTheDocument();
 
       // Toolbar items are accessible within the pane
       expect(screen.getByRole("button", { name: "Previous" })).toBeInTheDocument();

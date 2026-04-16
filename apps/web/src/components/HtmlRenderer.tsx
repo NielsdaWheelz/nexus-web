@@ -64,6 +64,7 @@ export default memo(function HtmlRenderer({
   return (
     <div
       className={`${styles.renderer} ${className || ""}`}
+      data-testid="html-renderer"
       dangerouslySetInnerHTML={{ __html: htmlSanitized }}
     />
   );

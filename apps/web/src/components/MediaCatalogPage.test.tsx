@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import MediaCatalogPage from "./MediaCatalogPage";
 
@@ -74,12 +74,13 @@ describe("media catalog action menu cutover", () => {
       />
     );
 
-    const inLibraryRow = (await screen.findByText("In library with source")).closest("li");
-    const outsideLibraryRow = screen.getByText("Outside library").closest("li");
-    expect(inLibraryRow).not.toBeNull();
-    expect(outsideLibraryRow).not.toBeNull();
+    expect(await screen.findByText("In library with source")).toBeInTheDocument();
+    expect(screen.getByText("Outside library")).toBeInTheDocument();
 
-    await user.click(within(inLibraryRow as HTMLElement).getByRole("button", { name: "Actions" }));
+    const actionButtons = screen.getAllByRole("button", { name: "Actions" });
+    expect(actionButtons).toHaveLength(2);
+
+    await user.click(actionButtons[0]);
     expect(await screen.findByRole("menuitem", { name: "Remove from library" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Open source" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
@@ -94,7 +95,7 @@ describe("media catalog action menu cutover", () => {
       ).toBe(true);
     });
 
-    await user.click(within(outsideLibraryRow as HTMLElement).getByRole("button", { name: "Actions" }));
+    await user.click(actionButtons[1]);
     await user.click(await screen.findByRole("menuitem", { name: "Add to library" }));
     await waitFor(() => {
       expect(

@@ -466,7 +466,7 @@ export default function LinkedItemsPane({
 
   if (highlights.length === 0) {
     return (
-      <div className={styles.linkedItemsContainer}>
+      <div className={styles.linkedItemsContainer} data-testid="linked-items-container">
         <div className={styles.emptyStateMessage}>
           <StateMessage variant="empty">
             No highlights yet. Select text to create one.
@@ -481,6 +481,7 @@ export default function LinkedItemsPane({
       <div
         ref={containerRef}
         className={`${styles.linkedItemsContainer} ${styles.listMode}`}
+        data-testid="linked-items-container"
       >
         {listModeHighlights.map((highlight) => (
           <LinkedItemRow
@@ -504,7 +505,11 @@ export default function LinkedItemsPane({
   }
 
   return (
-    <div ref={containerRef} className={styles.linkedItemsContainer}>
+    <div
+      ref={containerRef}
+      className={styles.linkedItemsContainer}
+      data-testid="linked-items-container"
+    >
       {alignedRows.map((row) => {
         const highlight = highlightMap.get(row.highlight.id);
         if (!highlight) return null;

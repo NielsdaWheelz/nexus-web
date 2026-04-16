@@ -1,8 +1,10 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RefObject } from "react";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
+
+const scrollHosts: HTMLDivElement[] = [];
 
 function getRowButtons(): HTMLDivElement[] {
   return screen
@@ -24,19 +26,22 @@ function createScrollableContent(innerHtml: string): {
   contentRoot.innerHTML = innerHtml;
   host.appendChild(contentRoot);
   document.body.appendChild(host);
+  scrollHosts.push(host);
 
   const contentRef = { current: contentRoot } as RefObject<HTMLElement | null>;
   return { host, contentRoot, contentRef };
 }
 
 afterEach(() => {
-  document.querySelectorAll('[data-test-scroll-host="true"]').forEach((node) => node.remove());
+  while (scrollHosts.length > 0) {
+    scrollHosts.pop()?.remove();
+  }
 });
 
 describe("LinkedItemsPane", () => {
   it("applies cross-pane baseline offset in aligned mode", async () => {
     const { host, contentRef, contentRoot } = createScrollableContent(
-      '<p><span data-highlight-anchor="offset-h"></span>offset target</p>'
+      '<p><span data-highlight-anchor="offset-h" data-testid="offset-anchor"></span>offset target</p>'
     );
     host.setAttribute("data-test-scroll-host", "true");
 
@@ -66,14 +71,8 @@ describe("LinkedItemsPane", () => {
       expect(getRowButtons()).toHaveLength(1);
     });
 
-    const linkedItemsContainer = document.querySelector('[class*="linkedItemsContainer"]');
-    if (!(linkedItemsContainer instanceof HTMLDivElement)) {
-      throw new Error("Expected linked-items container element");
-    }
-    const anchor = contentRoot.querySelector<HTMLElement>('[data-highlight-anchor="offset-h"]');
-    if (!anchor) {
-      throw new Error("Expected highlight anchor element");
-    }
+    const linkedItemsContainer = screen.getByTestId("linked-items-container");
+    const anchor = within(contentRoot).getByTestId("offset-anchor");
 
     const hostRectSpy = vi
       .spyOn(host, "getBoundingClientRect")
@@ -98,9 +97,9 @@ describe("LinkedItemsPane", () => {
     await waitFor(() => {
       const rows = getRowButtons();
       expect(rows).toHaveLength(1);
-      const rowContainer = rows[0]?.closest("[data-highlight-id]");
-      expect(rowContainer).toBeInstanceOf(HTMLDivElement);
-      expect((rowContainer as HTMLDivElement).style.transform).toBe("translateY(160px)");
+      expect(screen.getByTestId("linked-item-row-offset-h").style.transform).toBe(
+        "translateY(160px)"
+      );
     });
 
     hostRectSpy.mockRestore();
@@ -158,13 +157,10 @@ describe("LinkedItemsPane", () => {
 
   it("scrolls to active-highlight segments when anchor marker is absent", async () => {
     const { host, contentRef, contentRoot } = createScrollableContent(
-      '<p><span data-active-highlight-ids="pdf-h1">pdf target</span></p>'
+      '<p><span data-active-highlight-ids="pdf-h1" data-testid="active-highlight-segment">pdf target</span></p>'
     );
     host.setAttribute("data-test-scroll-host", "true");
-    const segment = contentRoot.querySelector<HTMLElement>('[data-active-highlight-ids="pdf-h1"]');
-    if (!segment) {
-      throw new Error("Expected active highlight segment");
-    }
+    const segment = within(contentRoot).getByTestId("active-highlight-segment");
     const scrollIntoViewSpy = vi
       .spyOn(segment, "scrollIntoView")
       .mockImplementation(() => undefined);
@@ -311,8 +307,7 @@ describe("LinkedItemsPane", () => {
       expect(getRowButtons()).toHaveLength(1);
     });
 
-    const container = document.querySelector('[class*="linkedItemsContainer"]') as HTMLElement;
-    expect(container, "Expected linked-items container to exist").toBeTruthy();
+    const container = screen.getByTestId("linked-items-container");
     const style = window.getComputedStyle(container);
     expect(
       style.overflowY,
@@ -350,8 +345,7 @@ describe("LinkedItemsPane", () => {
       expect(getRowButtons()).toHaveLength(1);
     });
 
-    const container = document.querySelector('[class*="linkedItemsContainer"]') as HTMLElement;
-    expect(container, "Expected linked-items container to exist").toBeTruthy();
+    const container = screen.getByTestId("linked-items-container");
     const style = window.getComputedStyle(container);
     expect(
       style.overflowY,

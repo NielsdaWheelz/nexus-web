@@ -747,6 +747,15 @@ export default function PdfReader({
       const pageElement = getPageElement(targetPage);
       if (pageElement) {
         pageElement.setAttribute("data-testid", `pdf-page-surface-${targetPage}`);
+        pageElement
+          .querySelector<HTMLElement>(".textLayer")
+          ?.setAttribute("data-testid", `pdf-page-text-layer-${targetPage}`);
+        pageElement
+          .querySelector<HTMLElement>(".canvasWrapper")
+          ?.setAttribute("data-testid", `pdf-page-canvas-wrapper-${targetPage}`);
+        pageElement
+          .querySelector<HTMLElement>(".canvasWrapper canvas")
+          ?.setAttribute("data-testid", `pdf-page-canvas-${targetPage}`);
         const pageView =
           explicitPageView ??
           pdfViewerRef.current?.getPageView?.(Math.max(0, targetPage - 1));
@@ -2128,7 +2137,7 @@ export default function PdfReader({
               Loading PDF…
             </div>
           )}
-          <div className={styles.pdfViewport}>
+          <div className={styles.pdfViewport} data-testid="pdf-viewport">
             <div className={styles.viewerA11yMarker} role="img" aria-label="PDF page" />
             <div
               ref={viewerContainerRef}
