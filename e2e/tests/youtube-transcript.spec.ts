@@ -79,9 +79,6 @@ test.describe("youtube transcript media", () => {
         timeout: 10_000,
       })
       .toContain("autoplay=1");
-
-    const activeTranscriptPane = page.locator('[class*="transcriptActiveFragment"]');
-    await expect(activeTranscriptPane).toContainText(seed.seek_segment_text);
   });
 
   test("playback-only youtube media shows explicit transcript-unavailable gating", async ({

@@ -36,6 +36,8 @@ from tests.factories import (
     get_user_default_library,
 )
 
+pytestmark = pytest.mark.integration
+
 
 class TestResolverStructuredStates:
     """test_pr02_highlight_kernel_resolver_returns_structured_logical_anchor_resolution_states"""

@@ -48,15 +48,29 @@ Open `http://localhost:3000`.
 
 Use `make help` for the canonical list.
 
+Core:
+
 ```bash
+make check
+make test-unit
 make test
-make test-back
-make test-front
+make verify
+make verify-full
+make test-e2e
+make test-e2e-ui
+```
+
+Narrow tiers:
+
+```bash
+make test-back-unit
+make test-back-integration
+make test-front-unit
+make test-front-browser
 make test-migrations
 make test-supabase
-make test-e2e
-make verify-fast
-make verify
+make test-network
+make test-real
 ```
 
 ## Environment

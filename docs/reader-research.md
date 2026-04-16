@@ -73,5 +73,6 @@ required automated coverage includes:
 
 ```bash
 make verify
-make e2e
+make test-e2e
+make test-e2e-ui
 ```

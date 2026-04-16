@@ -50,13 +50,17 @@ When running locally:
 From repo root:
 
 ```bash
-make test-back
+make check
+make test-unit
+make test
+make verify
+make verify-full
+make test-back-unit
+make test-back-integration
 make test-migrations
 make test-supabase
-make lint-back
-make fmt-back
-make verify-fast
-make verify
+make test-network
+make test-real
 ```
 
 ## Runtime Contracts

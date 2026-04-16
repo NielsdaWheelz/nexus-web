@@ -8,8 +8,8 @@
     "start": "next start",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test:unit": "vitest run --project unit",
+    "test:browser": "vitest run --project browser"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

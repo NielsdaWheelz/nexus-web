@@ -24,8 +24,6 @@ from nexus.services.pdf_ingest import (
 from nexus.storage.client import FakeStorageClient
 from nexus.tasks.ingest_pdf import run_pdf_ingest_sync
 
-pytestmark = pytest.mark.integration
-
 
 def _make_simple_pdf(text_content: str = "Hello World", num_pages: int = 1) -> bytes:
     """Build a minimal valid PDF with PyMuPDF for test purposes."""
@@ -101,44 +99,35 @@ def _create_pdf_media(db: Session, storage: FakeStorageClient, pdf_bytes: bytes)
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestPdfTextNormalization:
-    @pytest.mark.unit
     def test_crlf_and_cr_normalized(self):
         assert normalize_pdf_text("a\r\nb\rc") == "a\nb\nc"
 
-    @pytest.mark.unit
     def test_form_feed_becomes_double_newline(self):
         assert normalize_pdf_text("page1\fpage2") == "page1\n\npage2"
 
-    @pytest.mark.unit
     def test_nbsp_becomes_space(self):
         assert normalize_pdf_text("hello\u00a0world") == "hello world"
 
-    @pytest.mark.unit
     def test_nul_bytes_are_removed(self):
         assert normalize_pdf_text("abc\x00def\x00ghi") == "abcdefghi"
 
-    @pytest.mark.unit
     def test_collapse_spaces_tabs(self):
         assert normalize_pdf_text("a   b\tc") == "a b c"
 
-    @pytest.mark.unit
     def test_collapse_excessive_newlines(self):
         assert normalize_pdf_text("a\n\n\n\nb") == "a\n\nb"
 
-    @pytest.mark.unit
     def test_trim_whitespace(self):
         assert normalize_pdf_text("  hello  ") == "hello"
 
-    @pytest.mark.unit
     def test_empty_string(self):
         assert normalize_pdf_text("") == ""
 
-    @pytest.mark.unit
     def test_whitespace_only(self):
         assert normalize_pdf_text("   \n\n  ") == ""
 
-    @pytest.mark.unit
     def test_pr03_s6_contract_mixed_input(self):
         raw = "Hello\r\nWorld\fPage  Two\n\n\n\nEnd"
         expected = "Hello\nWorld\n\nPage Two\n\nEnd"
@@ -150,31 +139,27 @@ class TestPdfTextNormalization:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestValidatePageSpans:
-    @pytest.mark.unit
     def test_valid_spans(self):
         spans = [PdfPageSpan(1, 0, 10), PdfPageSpan(2, 12, 20)]
         assert validate_page_spans(spans, 2, 20) is None
 
-    @pytest.mark.unit
     def test_wrong_count(self):
         spans = [PdfPageSpan(1, 0, 10)]
         err = validate_page_spans(spans, 2, 20)
         assert err is not None and "Expected 2" in err
 
-    @pytest.mark.unit
     def test_wrong_page_number(self):
         spans = [PdfPageSpan(2, 0, 10)]
         err = validate_page_spans(spans, 1, 10)
         assert err is not None and "page_number=2" in err
 
-    @pytest.mark.unit
     def test_overlapping_spans(self):
         spans = [PdfPageSpan(1, 0, 15), PdfPageSpan(2, 10, 20)]
         err = validate_page_spans(spans, 2, 20)
         assert err is not None and "overlapping" in err
 
-    @pytest.mark.unit
     def test_end_offset_exceeds_text(self):
         spans = [PdfPageSpan(1, 0, 100)]
         err = validate_page_spans(spans, 1, 50)
@@ -186,6 +171,7 @@ class TestValidatePageSpans:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 class TestPdfExtractionArtifacts:
     def test_pr03_pdf_ingest_extracts_page_count_plain_text_and_page_spans(
         self, db_session: Session

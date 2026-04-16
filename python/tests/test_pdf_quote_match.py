@@ -9,6 +9,8 @@ from nexus.services.pdf_quote_match import (
     compute_match,
 )
 
+pytestmark = pytest.mark.unit
+
 
 class TestPageScopedUniqueMatch:
     """test_pr04_pdf_quote_match_v1_page_scoped_unique_match_derives_prefix_suffix"""

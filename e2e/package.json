@@ -3,9 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "playwright test",
+    "test:e2e": "playwright test",
     "test:csp": "playwright test --config=playwright.csp.config.ts",
-    "test:ui": "playwright test --ui",
     "seed": "bunx tsx seed-e2e-user.ts"
   },
   "devDependencies": {

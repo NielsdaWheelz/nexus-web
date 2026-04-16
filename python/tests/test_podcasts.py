@@ -1599,9 +1599,18 @@ class TestPodcastBillingQuota:
             initial_episode_window=1,
         )
 
-        yesterday = date.today() - timedelta(days=1)
         monthly_limit = get_settings().billing_ai_plus_transcription_minutes_monthly
         with direct_db.session() as session:
+            usage_date = session.execute(
+                text(
+                    """
+                    SELECT current_period_start::date
+                    FROM billing_accounts
+                    WHERE user_id = :user_id
+                    """
+                ),
+                {"user_id": user_id},
+            ).scalar_one()
             session.execute(
                 text(
                     """
@@ -1616,7 +1625,7 @@ class TestPodcastBillingQuota:
                 ),
                 {
                     "user_id": user_id,
-                    "usage_date": yesterday,
+                    "usage_date": usage_date,
                     "minutes_used": monthly_limit,
                     "updated_at": datetime.now(UTC),
                 },

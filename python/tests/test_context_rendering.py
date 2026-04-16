@@ -23,6 +23,8 @@ from nexus.services.pdf_quote_match_policy import (
 )
 from nexus.services.quote_context_errors import QuoteContextBlockingError
 
+pytestmark = pytest.mark.unit
+
 
 def _make_media(plain_text: str) -> Media:
     return Media(id=uuid4(), kind="pdf", title="Test PDF", plain_text=plain_text)

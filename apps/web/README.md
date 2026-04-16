@@ -79,20 +79,21 @@ Repository-wide rule owners:
 
 ## Testing
 
-From `apps/web/`:
-
-```bash
-bun run test
-bun run typecheck
-bun run lint
-```
-
 From repo root:
 
 ```bash
-make test-front
 make test-front-unit
 make test-front-browser
+make test-e2e
+```
+
+From `apps/web/`:
+
+```bash
+bun run test:unit
+bun run test:browser
+bun run typecheck
+bun run lint
 ```
 
 ## Highlight Libraries

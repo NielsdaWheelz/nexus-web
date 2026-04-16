@@ -87,5 +87,6 @@ supporting test infra:
 
 ```bash
 make verify
-make e2e
+make test-e2e
+make test-e2e-ui
 ```

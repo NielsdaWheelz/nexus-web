@@ -6,179 +6,277 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  test:
+  check-back:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: astral-sh/setup-uv@v6
         with:
-          node-version: '22'
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Install Python dependencies
+        run: cd python && uv sync --all-extras --locked
 
-      - name: Install dependencies
-        run: |
-          cd python
-          uv sync --all-extras
+      - name: Check backend
+        run: make check-back
 
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
+  test-back-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+
+      - name: Install Python dependencies
+        run: cd python && uv sync --all-extras --locked
+
+      - name: Test backend unit
+        run: make test-back-unit
+
+  test-back-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-node-ingest-${{ hashFiles('node/ingest/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-node-ingest-
+
+      - name: Install Python dependencies
+        run: cd python && uv sync --all-extras --locked
 
       - name: Install node ingest dependencies
-        run: |
-          cd node/ingest
-          bun install --frozen-lockfile
+        run: cd node/ingest && bun ci
 
-      - name: Lint
-        run: |
-          cd python
-          uv run ruff check .
-
-      - name: Run tests
-        run: |
-          make test-back
+      - name: Test backend integration
+        run: make test-back-integration
 
   test-migrations:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
 
-      - name: Install dependencies
-        run: |
-          cd python
-          uv sync --all-extras
+      - name: Install Python dependencies
+        run: cd python && uv sync --all-extras --locked
 
-      - name: Run migration tests
-        run: |
-          make test-migrations
+      - name: Test migrations
+        run: make test-migrations
 
-  lint-frontend:
+  check-front:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
 
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@v2
 
-      - name: Install dependencies
-        run: |
-          cd apps/web
-          bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-web-${{ hashFiles('apps/web/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-web-
 
-      - name: Lint
-        run: |
-          cd apps/web
-          bun run lint
+      - name: Install frontend dependencies
+        run: cd apps/web && bun ci
 
-      - name: Type check
-        run: |
-          cd apps/web
-          bun run typecheck
+      - name: Check frontend
+        run: make check-front
 
-  test-frontend:
+  test-front-unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
 
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@v2
 
-      - name: Install dependencies
-        run: |
-          cd apps/web
-          bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-web-${{ hashFiles('apps/web/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-web-
 
-      - name: Install Playwright browsers for Vitest Browser Mode
-        run: |
-          cd apps/web
-          bunx playwright install --with-deps chromium
+      - name: Install frontend dependencies
+        run: cd apps/web && bun ci
 
-      - name: Run tests
-        run: |
-          cd apps/web
-          bun run test
+      - name: Test frontend unit
+        run: make test-front-unit
+
+  test-front-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-web-${{ hashFiles('apps/web/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-web-
+
+      - name: Install frontend dependencies
+        run: cd apps/web && bun ci
+
+      - name: Test frontend browser
+        run: make test-front-browser
+
+  build-front:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-web-${{ hashFiles('apps/web/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-web-
+
+      - uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: ${{ runner.os }}-next-${{ hashFiles('apps/web/bun.lock') }}-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-next-${{ hashFiles('apps/web/bun.lock') }}-
+
+      - name: Install frontend dependencies
+        run: cd apps/web && bun ci
+
+      - name: Build frontend
+        run: make build
 
   test-e2e:
     runs-on: ubuntu-latest
-    needs: [test, test-migrations, lint-frontend, test-frontend]
+    timeout-minutes: 60
+    needs:
+      - check-back
+      - test-back-unit
+      - test-back-integration
+      - test-migrations
+      - check-front
+      - test-front-unit
+      - test-front-browser
+      - build-front
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install Supabase CLI
-        uses: supabase/setup-cli@v1
+      - uses: astral-sh/setup-uv@v6
         with:
-          version: latest
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-e2e-${{ hashFiles('apps/web/bun.lock', 'e2e/bun.lock', 'node/ingest/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-e2e-
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.90.0
 
       - name: Start Supabase
         run: supabase start
 
-      - name: Install E2E dependencies
-        run: |
-          cd e2e
-          bun install --frozen-lockfile
-          bunx playwright install --with-deps chromium
-
       - name: Install backend dependencies
-        run: |
-          cd python
-          uv sync --all-extras
+        run: cd python && uv sync --all-extras --locked
 
       - name: Install frontend dependencies
-        run: |
-          cd apps/web
-          bun install --frozen-lockfile
+        run: cd apps/web && bun ci
 
-      - name: Run E2E tests
-        run: |
-          make test-e2e
+      - name: Install E2E dependencies
+        run: cd e2e && bun ci
+
+      - name: Install node ingest dependencies
+        run: cd node/ingest && bun ci
+
+      - name: Test E2E
+        run: make test-e2e
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4

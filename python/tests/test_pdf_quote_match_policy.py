@@ -23,6 +23,8 @@ from nexus.services.pdf_quote_match_policy import (
     match_result_to_persistence_fields,
 )
 
+pytestmark = pytest.mark.unit
+
 
 class TestRecoverableAnomaly:
     """test_pr04_pdf_quote_match_policy_maps_recoverable_anomaly_to_pending_write_outcome"""

@@ -300,7 +300,7 @@ Rule:
 - Seed through app APIs or a dedicated `e2e/` seed script
 - Avoid direct DB writes from Playwright tests
 - Prefer deterministic seed inputs and idempotent setup behavior
-- Prefer Playwright `globalSetup` for centralized seeding/bootstrap so all invocation paths (`make test-e2e`, direct `bun test`, CI) share identical setup guarantees
+- Prefer Playwright `globalSetup` for centralized seeding/bootstrap so all invocation paths (`make test-e2e`, direct `bun run test:e2e`, CI) share identical setup guarantees
 - `globalSetup` may load repo `.env`/runtime port files to mirror Makefile behavior when tests are run outside Make
 
 ### E2E Determinism and Pane-Aware Assertions
@@ -340,8 +340,7 @@ Expectations:
 
 ```text
 apps/web/
-|- vitest.workspace.ts        # unit (node) + browser (chromium)
-|- vitest.config.ts           # shared vitest config entrypoints
+|- vitest.config.ts           # unit (node) + browser (chromium) projects
 |- vitest.setup.ts            # minimal shared setup (jest-dom, cleanup)
 |- src/
 |  |- lib/                    # pure unit tests live near pure modules
@@ -408,26 +407,38 @@ test("user creates library -> library appears in sidebar")
 test("user highlights text -> highlight persists after reload")
 ```
 
-## 10. CI and Local Commands (Target State)
+## 10. CI and Local Commands
 
 Target local commands after migration:
 
 ```makefile
-make verify-fast    # static analysis + fast unit tests
-make verify         # full local verification (excluding E2E unless explicitly included)
-make test-back-unit # backend unit tests only
-make test-front-unit    # frontend unit tests only (Node)
-make test-front-browser # frontend component tests (Vitest Browser Mode / Chromium)
+make check          # static analysis + format checks
+make test-unit      # backend unit tests + frontend unit tests
+make test           # full non-E2E verification
+make verify         # check + build + non-E2E tests
+make verify-full    # verify + E2E
 make test-e2e       # Playwright E2E
 make test-e2e-ui    # Playwright UI mode
+make test-back-unit      # backend unit tests only
+make test-back-integration # backend integration tests only
+make test-front-unit     # frontend unit tests only (Node)
+make test-front-browser   # frontend component tests (Vitest Browser Mode / Chromium)
+make test-migrations     # migration/schema tests only
+make test-supabase       # Supabase-local auth/storage tests only
+make test-network        # network-dependent backend tests only
+make test-real           # real-content backend tests only
 cd e2e && bun run test:csp -- tests/youtube-transcript.csp.spec.ts --project=chromium-csp # strict CSP runtime assertions
 ```
 
 Command semantics:
 
-- `make verify-fast`: static checks + fast unit tests only (no build, no browser-mode component tests, no E2E)
-- `make verify`: full local verification for routine development (static checks + build + backend tests + frontend unit/browser tests), excluding E2E by default
+- `make check`: static checks and format checks only
+- `make test-unit`: fast unit tests only (no DB, no browser-mode component tests, no E2E)
+- `make test`: non-E2E automated tests, including backend integration and frontend browser-mode component tests
+- `make verify`: check + build + non-E2E tests for routine development
+- `make verify-full`: verify + E2E
 - `make test-e2e`: explicit real-stack Playwright run (used before merge and in CI)
+- `make test-e2e-ui`: interactive Playwright UI mode
 - `bun run test:csp` in `e2e/`: strict CSP profile for runtime policy assertions against production Next runtime
 
 Target CI shape:

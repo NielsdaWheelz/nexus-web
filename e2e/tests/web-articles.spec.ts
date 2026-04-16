@@ -25,7 +25,7 @@ test.describe("web articles", () => {
   test("add article from URL", async ({ page }) => {
     await page.goto("/libraries");
     const addContentDialog = await openAddContentDialog(page);
-    const urlInput = addContentDialog.getByPlaceholder("Paste a URL...");
+    const urlInput = addContentDialog.getByRole("textbox", { name: "URLs" });
     await expect(urlInput).toBeVisible();
     await urlInput.fill("https://example.com");
     await addContentDialog.getByRole("button", { name: "Add" }).click();

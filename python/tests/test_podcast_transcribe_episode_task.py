@@ -1,6 +1,10 @@
 from uuid import uuid4
 
+import pytest
+
 from nexus.tasks.podcast_transcribe_episode import podcast_transcribe_episode_job
+
+pytestmark = pytest.mark.unit
 
 
 def test_podcast_transcribe_episode_task_rejects_invalid_media_id(monkeypatch):

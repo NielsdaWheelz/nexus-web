@@ -29,7 +29,7 @@ from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.media import create_provisional_web_article
 from tests.helpers import auth_headers, create_test_user_id
-from tests.support.test_verifier import MockJwtVerifier
+from tests.support.mock_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration

@@ -2,7 +2,11 @@
 
 from uuid import uuid4
 
+import pytest
+
 from nexus.services.pdf_locking import derive_media_coordination_lock_key
+
+pytestmark = pytest.mark.unit
 
 
 class TestMediaCoordinationLockKey:

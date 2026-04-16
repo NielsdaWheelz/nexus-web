@@ -16,7 +16,9 @@ from jwt.algorithms import RSAAlgorithm
 
 from nexus.auth.verifier import SupabaseJwksVerifier
 from nexus.errors import ApiError, ApiErrorCode
-from tests.support.test_verifier import MockJwtVerifier
+from tests.support.mock_verifier import MockJwtVerifier
+
+pytestmark = pytest.mark.unit
 
 
 class TestSupabaseJwksVerifier:

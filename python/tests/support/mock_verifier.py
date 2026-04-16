@@ -37,7 +37,7 @@ class MockJwtVerifier:
     as the production verifier to catch config mistakes early.
 
     Usage:
-        from tests.support.test_verifier import MockJwtVerifier
+        from tests.support.mock_verifier import MockJwtVerifier
 
         verifier = MockJwtVerifier()
         claims = verifier.verify(token)

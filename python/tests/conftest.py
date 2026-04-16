@@ -49,7 +49,7 @@ from nexus.config import clear_settings_cache
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.helpers import create_test_user_id
-from tests.support.test_verifier import MockJwtVerifier
+from tests.support.mock_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager, TestDatabaseManager
 
 

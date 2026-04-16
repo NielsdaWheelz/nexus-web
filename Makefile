@@ -1,86 +1,73 @@
 # Nexus Development Makefile
-# Run `make help` for available commands
+# Run `make help` for available commands.
 
-.PHONY: help setup dev down test test-back test-front test-migrations test-supabase test-back-no-services test-migrations-no-services test-supabase-no-services test-back-and-migrations test-back-network test-back-network-no-services test-back-real test-back-real-no-services ensure-services ensure-node-ingest ensure-e2e-deps lint lint-back lint-front fmt fmt-back fmt-front fmt-check typecheck build clean api web worker migrate migrate-test migrate-down seed verify verify-fast test-back-unit test-front-unit test-front-browser test-e2e test-e2e-ui _verify-fast-static _verify-fast-tests _verify-tests logs
+.PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed \
+	check check-back check-front format format-back fix-front build \
+	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
+	test-migrations test-supabase test-network test-real test-e2e test-e2e-ui \
+	verify verify-full \
+	_ensure-node-ingest _ensure-e2e-deps _test-back-integration _test-migrations \
+	_test-supabase _test-network _test-real
 
-# Load .env file if it exists (created by setup)
 -include .env
-# Load runtime ports if services are running (overrides .env)
 -include .dev-ports
 export
 
-# Supabase local database port (fixed by supabase/config.toml)
 SUPABASE_DB_PORT ?= 54322
 SUPABASE_URL ?= http://127.0.0.1:54321
 AUTH_ALLOWED_REDIRECT_ORIGINS ?= http://localhost:3000,http://localhost:3001
 
-# Database URLs using Supabase local Postgres
 DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:$(SUPABASE_DB_PORT)/postgres
 DATABASE_URL_TEST ?= postgresql+psycopg://postgres:postgres@localhost:$(SUPABASE_DB_PORT)/nexus_test
 DATABASE_URL_TEST_MIGRATIONS ?= postgresql+psycopg://postgres:postgres@localhost:$(SUPABASE_DB_PORT)/nexus_test_migrations
 
-# Web port
 WEB_PORT ?= 3000
-# API port
 API_PORT ?= 8000
 
 help:
 	@echo "Nexus Development Commands"
 	@echo ""
-	@echo "Setup:"
-	@echo "  make setup          - Full project setup (deps + services + migrations)"
-	@echo "  make dev            - Start development services (supabase)"
-	@echo "  make down           - Stop development services"
-	@echo "  make logs           - Show supabase logs"
-	@echo "  make clean          - Clean generated files"
+	@echo "Setup and run:"
+	@echo "  make setup              - Install deps, start local services, run migrations"
+	@echo "  make dev                - Start Supabase local services"
+	@echo "  make down               - Stop Supabase local services"
+	@echo "  make api                - Start FastAPI on API_PORT (default 8000)"
+	@echo "  make web                - Start Next.js on WEB_PORT (default 3000)"
+	@echo "  make worker             - Start the Postgres queue worker"
 	@echo ""
-	@echo "Test:"
-	@echo "  make test           - Run all tests (backend + frontend)"
-	@echo "  make test-back      - Run backend tests (excludes migrations)"
-	@echo "  make test-back-network - Run backend tests requiring internet"
-	@echo "  make test-back-real - Run real-content backend extraction tests"
-	@echo "  make test-front     - Run frontend tests"
-	@echo "  make test-migrations - Run migration tests (separate database)"
-	@echo "  make test-supabase  - Run Supabase auth/storage integration tests"
+	@echo "Core verification:"
+	@echo "  make check              - Static checks only"
+	@echo "  make test-unit          - Fast backend and frontend unit tests"
+	@echo "  make test               - All non-E2E automated tests"
+	@echo "  make verify             - check + build + test"
+	@echo "  make verify-full        - verify + real-stack Playwright E2E"
 	@echo ""
-	@echo "Lint:"
-	@echo "  make lint           - Run all linters (backend + frontend)"
-	@echo "  make lint-back      - Run backend linter"
-	@echo "  make lint-front     - Run frontend linter"
+	@echo "Narrow test tiers:"
+	@echo "  make test-back-unit        - Backend unit tests only"
+	@echo "  make test-back-integration - Backend DB/API integration tests"
+	@echo "  make test-front-unit       - Frontend unit tests"
+	@echo "  make test-front-browser    - Frontend browser component tests"
+	@echo "  make test-migrations       - Alembic migration tests"
+	@echo "  make test-supabase         - Supabase auth/storage integration tests"
+	@echo "  make test-network          - Backend tests requiring internet"
+	@echo "  make test-real             - Slow real-content backend tests"
+	@echo "  make test-e2e              - Playwright E2E tests"
+	@echo "  make test-e2e-ui           - Playwright E2E in UI mode"
 	@echo ""
-	@echo "Format:"
-	@echo "  make fmt            - Format all code (backend + frontend)"
-	@echo "  make fmt-back       - Format backend code"
-	@echo "  make fmt-front      - Fix frontend lint issues"
-	@echo ""
-	@echo "Run:"
-	@echo "  make api            - Start API server (port 8000)"
-	@echo "  make web            - Start web frontend (port 3000)"
-	@echo "  make worker         - Start Postgres queue worker"
+	@echo "Formatting:"
+	@echo "  make format             - Apply backend formatting and frontend lint fixes"
+	@echo "  make format-back        - Format backend Python"
+	@echo "  make fix-front          - Apply frontend ESLint fixes"
 	@echo ""
 	@echo "Database:"
-	@echo "  make migrate        - Run migrations (dev database)"
-	@echo "  make migrate-test   - Run migrations (test database)"
-	@echo "  make migrate-down   - Rollback one migration"
-	@echo "  make seed           - Seed development data"
+	@echo "  make migrate            - Run migrations on the dev database"
+	@echo "  make migrate-test       - Run migrations on the test database"
+	@echo "  make migrate-down       - Roll back one dev migration"
+	@echo "  make seed               - Seed development data"
 	@echo ""
-	@echo "Verify:"
-	@echo "  make verify         - Full local verification (static + build + tests, no E2E)"
-	@echo "  make verify-fast    - Fast feedback (static + unit tests only)"
-	@echo ""
-	@echo "Layer targets:"
-	@echo "  make test-back-unit     - Backend unit tests only (no DB)"
-	@echo "  make test-front-unit    - Frontend unit tests (Node)"
-	@echo "  make test-front-browser - Frontend component tests (Vitest Browser Mode)"
-	@echo "  make test-e2e           - Playwright E2E tests"
-	@echo "  make test-e2e-ui        - Playwright E2E in UI mode"
-	@echo ""
-	@echo "Configuration (via environment or .env file):"
-	@echo "  WEB_PORT            - Web frontend port (default: 3000)"
-	@echo "  API_PORT            - API server port (default: 8000)"
-	@echo ""
-
-# === Setup ===
+	@echo "Maintenance:"
+	@echo "  make logs               - Show Supabase logs"
+	@echo "  make clean              - Clean generated files"
 
 setup:
 	./scripts/agency_setup.sh
@@ -102,96 +89,6 @@ logs:
 clean:
 	./scripts/agency_archive.sh
 
-# === Test ===
-
-# Ensure services are running before tests that need them
-ensure-services:
-	@if ! docker ps --format '{{.Names}}' | grep -q '^supabase_db_'; then \
-		echo "Services not running. Starting with 'make dev'..."; \
-		$(MAKE) dev; \
-	fi
-
-# Ensure Node.js ingest worker dependencies are installed (jsdom + Readability)
-ensure-node-ingest:
-	@if [ ! -d "node/ingest/node_modules" ]; then \
-		echo "Installing Node.js ingest worker dependencies..."; \
-		cd node/ingest && bun install --frozen-lockfile; \
-	fi
-
-# Ensure E2E dependencies are installed
-ensure-e2e-deps:
-	@if [ ! -d "e2e/node_modules" ]; then \
-		echo "Installing E2E dependencies..."; \
-		cd e2e && bun install; \
-	fi
-
-test: test-back-and-migrations test-front
-
-test-back-and-migrations:
-	./scripts/with_test_services.sh $(MAKE) test-back-no-services test-migrations-no-services
-
-test-back:
-	./scripts/with_test_services.sh $(MAKE) test-back-no-services
-
-test-back-no-services:
-	$(MAKE) migrate-test
-	$(MAKE) ensure-node-ingest
-	cd python && NEXUS_ENV=test uv run pytest -v --ignore=tests/test_migrations.py
-
-test-back-network:
-	./scripts/with_test_services.sh $(MAKE) test-back-network-no-services
-
-test-back-network-no-services:
-	$(MAKE) migrate-test
-	$(MAKE) ensure-node-ingest
-	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m network -o addopts=""
-
-test-back-real:
-	./scripts/with_test_services.sh $(MAKE) test-back-real-no-services
-
-test-back-real-no-services:
-	$(MAKE) migrate-test
-	$(MAKE) ensure-node-ingest
-	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m slow -o addopts=""
-
-test-front:
-	cd apps/web && bun run test -- --passWithNoTests
-
-test-migrations:
-	./scripts/with_test_services.sh $(MAKE) test-migrations-no-services
-
-test-migrations-no-services:
-	cd python && DATABASE_URL=$(DATABASE_URL_TEST_MIGRATIONS) NEXUS_ENV=test uv run pytest -v tests/test_migrations.py
-
-test-supabase:
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh $(MAKE) test-supabase-no-services
-
-test-supabase-no-services:
-	$(MAKE) migrate-test
-	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m supabase -o addopts=""
-
-# === Lint ===
-
-lint: lint-back lint-front
-
-lint-back:
-	cd python && uv run ruff check .
-
-lint-front:
-	cd apps/web && bun run lint
-
-# === Format ===
-
-fmt: fmt-back fmt-front
-
-fmt-back:
-	cd python && uv run ruff format .
-
-fmt-front:
-	cd apps/web && bun run lint -- --fix
-
-# === Run ===
-
 api:
 	cd apps/api && PYTHONPATH=$$PWD/../../python DATABASE_URL=$(DATABASE_URL) \
 		uv run --project ../../python uvicorn main:app --reload --port $(API_PORT)
@@ -206,11 +103,8 @@ web:
 		bun run dev
 
 worker:
-	cd python && PYTHONPATH=$$PWD:$$PWD/.. \
-		DATABASE_URL=$(DATABASE_URL) \
+	cd python && PYTHONPATH=$$PWD:$$PWD/.. DATABASE_URL=$(DATABASE_URL) \
 		uv run python -m apps.worker.main
-
-# === Database ===
 
 migrate:
 	cd migrations && DATABASE_URL=$(DATABASE_URL) \
@@ -230,63 +124,116 @@ seed:
 		SUPABASE_SERVICE_KEY=$(SUPABASE_SERVICE_KEY) \
 		uv run python ../scripts/seed_dev.py
 
-# === Layer Targets ===
+check: check-back check-front
+
+check-back:
+	cd python && uv run ruff check .
+	cd python && uv run ruff format --check .
+
+check-front:
+	cd apps/web && bun run lint
+	cd apps/web && bun run typecheck
+
+format: format-back fix-front
+
+format-back:
+	cd python && uv run ruff format .
+
+fix-front:
+	cd apps/web && bun run lint -- --fix
+
+build:
+	cd apps/web && bun run build
+
+test-unit: test-back-unit test-front-unit
+
+test: test-unit test-back-integration test-migrations test-front-browser
 
 test-back-unit:
 	cd python && NEXUS_ENV=test uv run pytest -v -m "unit and not integration"
 
+test-back-integration:
+	./scripts/with_test_services.sh make _test-back-integration
+
+_test-back-integration:
+	make migrate-test
+	make _ensure-node-ingest
+	cd python && NEXUS_ENV=test uv run pytest -v --tb=short \
+		-m "integration and not unit and not supabase and not network and not slow" \
+		--ignore=tests/test_migrations.py
+
 test-front-unit:
-	cd apps/web && bunx vitest run --project unit
+	cd apps/web && bun run test:unit
 
 test-front-browser:
-	@bunx playwright install chromium >/dev/null 2>&1 || bunx playwright install chromium
-	cd apps/web && bunx vitest run --project browser
+	@if [ "$${CI:-}" = "true" ]; then \
+		cd apps/web && bunx playwright install --with-deps chromium; \
+	else \
+		cd apps/web && bunx playwright install chromium; \
+	fi
+	cd apps/web && bun run test:browser
 
-test-e2e: ensure-e2e-deps
+test-migrations:
+	./scripts/with_test_services.sh make _test-migrations
+
+_test-migrations:
+	cd python && DATABASE_URL=$(DATABASE_URL_TEST_MIGRATIONS) NEXUS_ENV=test \
+		uv run pytest -v --tb=short tests/test_migrations.py
+
+test-supabase:
+	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-supabase
+
+_test-supabase:
+	make migrate-test
+	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m supabase
+
+test-network:
+	./scripts/with_test_services.sh make _test-network
+
+_test-network:
+	make migrate-test
+	make _ensure-node-ingest
+	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m network
+
+test-real:
+	./scripts/with_test_services.sh make _test-real
+
+_test-real:
+	make migrate-test
+	make _ensure-node-ingest
+	cd python && NEXUS_ENV=test uv run pytest -v --tb=short \
+		-m "slow and not network and not supabase"
+
+test-e2e: _ensure-e2e-deps
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
 	cd e2e && \
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install --with-deps chromium && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright test
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bun run test:e2e
 
-test-e2e-ui: ensure-e2e-deps
+test-e2e-ui: _ensure-e2e-deps
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e ui with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
 	cd e2e && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install chromium && \
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright test --ui
 
-# === Verify ===
+verify: check build test
+	@echo "=== verification passed ==="
 
-# Helper targets for parallel execution within verify-fast
-_verify-fast-static: lint fmt-check typecheck
+verify-full: verify test-e2e
+	@echo "=== full verification passed ==="
 
-_verify-fast-tests: test-back-unit test-front-unit
+_ensure-node-ingest:
+	@if [ ! -d "node/ingest/node_modules" ]; then \
+		echo "Installing Node.js ingest worker dependencies..."; \
+		cd node/ingest && bun install --frozen-lockfile; \
+	fi
 
-# Run with `make -j verify-fast` for parallel static + test execution.
-# Sequential by default for deterministic output.
-verify-fast: _verify-fast-static _verify-fast-tests
-	@echo "=== verify-fast passed ==="
-
-# Helper for parallel test execution within verify
-_verify-tests: test-back-and-migrations test-front-unit test-front-browser
-
-verify: lint fmt-check typecheck build _verify-tests
-	@echo "=== All verification checks passed ==="
-
-fmt-check:
-	@echo "=== Checking Backend Formatting ==="
-	cd python && uv run ruff format --check .
-	@echo "✓ Backend formatting OK"
-
-typecheck:
-	@echo "=== Running Frontend Type Check ==="
-	cd apps/web && bun run typecheck
-	@echo "✓ Frontend type check OK"
-
-build:
-	@echo "=== Running Frontend Build ==="
-	cd apps/web && bun run build
-	@echo "✓ Frontend build OK"
+_ensure-e2e-deps:
+	@if [ ! -d "e2e/node_modules" ]; then \
+		echo "Installing E2E dependencies..."; \
+		cd e2e && bun install --frozen-lockfile; \
+	fi

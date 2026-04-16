@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 import jwt
 
-from tests.support.test_verifier import MockJwtVerifier
+from tests.support.mock_verifier import MockJwtVerifier
 
 # Default test token settings
 DEFAULT_ISSUER = "test-issuer"

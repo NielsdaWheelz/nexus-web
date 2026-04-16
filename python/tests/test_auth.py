@@ -26,7 +26,7 @@ from tests.helpers import (
     mint_test_token,
     mint_token_with_bad_signature,
 )
-from tests.support.test_verifier import MockJwtVerifier
+from tests.support.mock_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration

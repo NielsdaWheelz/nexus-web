@@ -41,13 +41,12 @@ from tests.image_fixtures import (
     TINY_PNG,
 )
 
-pytestmark = pytest.mark.unit
-
 # =============================================================================
 # URL Validation Tests
 # =============================================================================
 
 
+@pytest.mark.unit
 class TestUrlNormalization:
     """Tests for URL normalization."""
 
@@ -81,6 +80,7 @@ class TestUrlNormalization:
         )
 
 
+@pytest.mark.unit
 class TestUrlValidation:
     """Tests for URL validation (SSRF protection)."""
 
@@ -152,6 +152,7 @@ class TestUrlValidation:
 # =============================================================================
 
 
+@pytest.mark.unit
 class TestHostnameDenylist:
     """Tests for hostname denylist (pre-DNS)."""
 
@@ -197,6 +198,7 @@ class TestHostnameDenylist:
 # =============================================================================
 
 
+@pytest.mark.unit
 class TestPrivateIpDetection:
     """Tests for private IP detection."""
 
@@ -246,6 +248,7 @@ class TestPrivateIpDetection:
         assert not is_private_ip(ip_address("93.184.216.34"))
 
 
+@pytest.mark.unit
 class TestDnsResolution:
     """Tests for DNS resolution validation using monkeypatch."""
 
@@ -340,6 +343,7 @@ class TestDnsResolution:
 # =============================================================================
 
 
+@pytest.mark.unit
 class TestContentTypeValidation:
     """Tests for Content-Type validation."""
 
@@ -383,6 +387,7 @@ class TestContentTypeValidation:
             validate_content_type("text/html; charset=utf-8")
 
 
+@pytest.mark.unit
 class TestMagicByteSniffing:
     """Tests for magic byte sniffing (defense in depth)."""
 
@@ -417,6 +422,7 @@ class TestMagicByteSniffing:
         sniff_magic_bytes(TINY_JPEG)
 
 
+@pytest.mark.unit
 class TestImageDecoding:
     """Tests for image decoding with Pillow."""
 
@@ -453,6 +459,7 @@ class TestImageDecoding:
 # =============================================================================
 
 
+@pytest.mark.unit
 class TestImageCache:
     """Tests for LRU cache with byte budget."""
 
@@ -532,6 +539,7 @@ class TestImageCache:
 # =============================================================================
 
 
+@pytest.mark.unit
 class TestETagHandling:
     """Tests for ETag computation and matching."""
 
@@ -574,6 +582,7 @@ class TestETagHandling:
 # =============================================================================
 
 
+@pytest.mark.unit
 class TestFetchImageIntegration:
     """Integration tests for fetch_image using respx to mock HTTP."""
 
