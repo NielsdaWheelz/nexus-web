@@ -8,6 +8,7 @@ const SETTINGS_HREFS = [
   "/settings/billing",
   "/settings/reader",
   "/settings/keys",
+  "/settings/local-vault",
   "/settings/identities",
 ] as const;
 
@@ -23,6 +24,7 @@ const SETTINGS_ROUTE_FILES = [
   "src/app/(authenticated)/settings/billing/page.tsx",
   "src/app/(authenticated)/settings/reader/page.tsx",
   "src/app/(authenticated)/settings/keys/page.tsx",
+  "src/app/(authenticated)/settings/local-vault/page.tsx",
   "src/app/(authenticated)/settings/identities/page.tsx",
 ] as const;
 
@@ -71,6 +73,7 @@ describe("workspace pane cutover contract (settings slice)", () => {
     expect(registrySource.includes('"/settings/billing/page"')).toBe(false);
     expect(registrySource.includes('"/settings/reader/page"')).toBe(false);
     expect(registrySource.includes('"/settings/keys/page"')).toBe(false);
+    expect(registrySource.includes('"/settings/local-vault/page"')).toBe(false);
     expect(registrySource.includes('"/settings/identities/page"')).toBe(false);
   });
 });

@@ -54,6 +54,126 @@ def export_vault(
     (vault_dir / "Highlights").mkdir(exist_ok=True)
     (vault_dir / "Pages").mkdir(exist_ok=True)
 
+    for file in export_vault_files(db, viewer_id):
+        target = vault_dir / file["path"]
+        if target.parent.name in {"Media", "Pages"}:
+            match = re.search(r"--((?:med|page)_[0-9a-f]{32})\.md$", target.name)
+            if match:
+                _remove_old_handle_files(target.parent, target.name, match.group(1))
+        _write_text(target, file["content"])
+
+    if storage_client is not None:
+        _write_source_files(db, viewer_id, vault_dir, storage_client)
+
+
+def sync_vault(
+    db: Session,
+    viewer_id: UUID,
+    vault_dir: Path,
+    *,
+    storage_client: StorageClientBase | None = None,
+) -> None:
+    (vault_dir / "Highlights").mkdir(parents=True, exist_ok=True)
+    (vault_dir / "Pages").mkdir(parents=True, exist_ok=True)
+    files: list[dict[str, str]] = []
+    for directory_name in ("Highlights", "Pages"):
+        for path in sorted((vault_dir / directory_name).glob("*.md")):
+            if path.name.endswith(".conflict.md"):
+                continue
+            files.append(
+                {
+                    "path": path.relative_to(vault_dir).as_posix(),
+                    "content": path.read_text(encoding="utf-8"),
+                }
+            )
+
+    result = sync_vault_files(db, viewer_id, files)
+    for delete_path in result["delete_paths"]:
+        path = vault_dir / delete_path
+        if path.exists():
+            path.unlink()
+
+    for file in result["files"]:
+        target = vault_dir / file["path"]
+        if target.parent.name in {"Media", "Pages"}:
+            match = re.search(r"--((?:med|page)_[0-9a-f]{32})\.md$", target.name)
+            if match:
+                _remove_old_handle_files(target.parent, target.name, match.group(1))
+        _write_text(target, file["content"])
+
+    for conflict in result["conflicts"]:
+        _write_text(vault_dir / conflict["path"], conflict["content"])
+
+    if storage_client is not None:
+        _write_source_files(db, viewer_id, vault_dir, storage_client)
+
+
+def export_vault_files(db: Session, viewer_id: UUID) -> list[dict[str, str]]:
+    files = _vault_file_map(db, viewer_id)
+    return [{"path": path, "content": files[path]} for path in sorted(files)]
+
+
+def sync_vault_files(
+    db: Session,
+    viewer_id: UUID,
+    local_files: list[dict[str, str]],
+) -> dict[str, list[dict[str, str]] | list[str]]:
+    delete_paths: list[str] = []
+    conflicts: list[dict[str, str]] = []
+
+    for local_file in sorted(local_files, key=lambda item: str(item.get("path", ""))):
+        path = _editable_vault_path(str(local_file.get("path", "")))
+        content = str(local_file.get("content", ""))
+        if len(content.encode("utf-8")) > 1_000_000:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Vault file is too large")
+
+        metadata, body = _read_frontmatter(content)
+        if path.startswith("Highlights/") and metadata.get("nexus_type") == "highlight":
+            changed, conflict_reason = _sync_highlight_content(db, viewer_id, metadata, body)
+        elif path.startswith("Pages/") and metadata.get("nexus_type") == "page":
+            changed, conflict_reason = _sync_page_content(
+                db, viewer_id, metadata, body, fallback_title=Path(path).stem
+            )
+        else:
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Vault uploads must be highlight or page Markdown files",
+            )
+
+        if conflict_reason is not None:
+            conflicts.append(
+                {
+                    "path": _conflict_path(path),
+                    "message": conflict_reason,
+                    "content": _conflict_markdown(content, conflict_reason),
+                }
+            )
+        elif changed:
+            delete_paths.append(path)
+
+    return {
+        "files": export_vault_files(db, viewer_id),
+        "delete_paths": delete_paths,
+        "conflicts": conflicts,
+    }
+
+
+def watch_vault(
+    db: Session,
+    viewer_id: UUID,
+    vault_dir: Path,
+    *,
+    interval_seconds: float,
+    storage_client: StorageClientBase | None = None,
+) -> None:
+    while True:
+        sync_vault(db, viewer_id, vault_dir, storage_client=storage_client)
+        time.sleep(interval_seconds)
+
+
+def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
+    files: dict[str, str] = {}
+
     media_rows = (
         db.execute(
             text(f"""
@@ -87,27 +207,25 @@ def export_vault(
         media_handle = _media_handle(media_id)
         media_title = str(row["title"])
         media_slug = _slug(media_title)
-        media_path = vault_dir / "Media" / f"{media_slug}--{media_handle}.md"
-        _remove_old_handle_files(media_path.parent, media_path.name, media_handle)
-        source_dir = vault_dir / "Sources" / media_handle
-        source_dir.mkdir(exist_ok=True)
+        media_path = f"Media/{media_slug}--{media_handle}.md"
 
         fragments = _load_fragments(db, media_id)
         if row["kind"] == "web_article":
-            _write_text(source_dir / "article.md", _web_article_markdown(media_title, fragments))
-            _write_text(source_dir / "article.html", _joined_fragment_html(fragments))
-            _write_text(source_dir / "canonical.txt", _joined_fragment_text(fragments))
+            files[f"Sources/{media_handle}/article.md"] = _web_article_markdown(
+                media_title, fragments
+            )
+            files[f"Sources/{media_handle}/article.html"] = _joined_fragment_html(fragments)
+            files[f"Sources/{media_handle}/canonical.txt"] = _joined_fragment_text(fragments)
             source_link = f"../Sources/{media_handle}/article.md"
         elif row["kind"] == "epub":
-            _write_text(source_dir / "text.md", _fragment_text_markdown(media_title, fragments))
-            _write_source_file(row, source_dir, storage_client)
+            files[f"Sources/{media_handle}/text.md"] = _fragment_text_markdown(
+                media_title, fragments
+            )
             source_link = f"../Sources/{media_handle}/text.md"
         elif row["kind"] == "pdf":
-            _write_text(
-                source_dir / "text.md",
-                _pdf_markdown(db, media_title, media_id, str(row["plain_text"] or "")),
+            files[f"Sources/{media_handle}/text.md"] = _pdf_markdown(
+                db, media_title, media_id, str(row["plain_text"] or "")
             )
-            _write_source_file(row, source_dir, storage_client)
             source_link = f"../Sources/{media_handle}/text.md"
         else:
             continue
@@ -116,64 +234,24 @@ def export_vault(
             highlights_by_media.get(media_id, []),
             key=lambda h: (_highlight_sort_key(h), str(h.id)),
         )
-        _write_text(
-            media_path,
-            _media_markdown(row, media_handle, source_link, media_highlights),
-        )
-        library_lines.append(f"- [[Media/{media_path.name[:-3]}]]")
+        files[media_path] = _media_markdown(row, media_handle, source_link, media_highlights)
+        library_lines.append(f"- [[Media/{media_path[6:-3]}]]")
 
-    _write_text(vault_dir / "Library.md", "\n".join(library_lines).rstrip() + "\n")
+    files["Library.md"] = "\n".join(library_lines).rstrip() + "\n"
 
     for highlight in highlight_rows:
         media_id = _highlight_media_id(highlight)
         if media_id is not None and can_read_media(db, viewer_id, media_id):
-            _write_highlight_file(vault_dir, highlight)
+            path, content = _highlight_file(highlight)
+            files[path] = content
 
     for page in (
         db.query(Page).filter(Page.user_id == viewer_id).order_by(Page.title.asc(), Page.id.asc())
     ):
-        _write_page_file(vault_dir, page)
+        path, content = _page_file(page)
+        files[path] = content
 
-
-def sync_vault(
-    db: Session,
-    viewer_id: UUID,
-    vault_dir: Path,
-    *,
-    storage_client: StorageClientBase | None = None,
-) -> None:
-    (vault_dir / "Highlights").mkdir(parents=True, exist_ok=True)
-    (vault_dir / "Pages").mkdir(parents=True, exist_ok=True)
-    for path in sorted((vault_dir / "Highlights").glob("*.md")):
-        if path.name.endswith(".conflict.md"):
-            continue
-        text_content = path.read_text(encoding="utf-8")
-        metadata, body = _read_frontmatter(text_content)
-        if metadata.get("nexus_type") == "highlight":
-            _sync_highlight_file(db, viewer_id, path, text_content, metadata, body)
-
-    for path in sorted((vault_dir / "Pages").glob("*.md")):
-        if path.name.endswith(".conflict.md"):
-            continue
-        text_content = path.read_text(encoding="utf-8")
-        metadata, body = _read_frontmatter(text_content)
-        if metadata.get("nexus_type") == "page":
-            _sync_page_file(db, viewer_id, path, text_content, metadata, body)
-
-    export_vault(db, viewer_id, vault_dir, storage_client=storage_client)
-
-
-def watch_vault(
-    db: Session,
-    viewer_id: UUID,
-    vault_dir: Path,
-    *,
-    interval_seconds: float,
-    storage_client: StorageClientBase | None = None,
-) -> None:
-    while True:
-        sync_vault(db, viewer_id, vault_dir, storage_client=storage_client)
-        time.sleep(interval_seconds)
+    return files
 
 
 def _sync_highlight_file(
@@ -184,50 +262,60 @@ def _sync_highlight_file(
     metadata: dict[str, object],
     body: str,
 ) -> None:
+    changed, conflict_reason = _sync_highlight_content(db, viewer_id, metadata, body)
+    if conflict_reason is not None:
+        _write_conflict(path, text_content, conflict_reason)
+    elif changed and not str(metadata.get("highlight_handle") or "") and path.exists():
+        path.unlink()
+
+
+def _sync_highlight_content(
+    db: Session,
+    viewer_id: UUID,
+    metadata: dict[str, object],
+    body: str,
+) -> tuple[bool, str | None]:
     highlight_handle = str(metadata.get("highlight_handle") or "")
     if not highlight_handle:
         try:
             _create_highlight_from_file(db, viewer_id, metadata, body)
-            path.unlink()
+            return True, None
         except ApiError as exc:
             db.rollback()
-            _write_conflict(path, text_content, exc.message)
-        return
+            return False, exc.message
 
     try:
         highlight_id = _parse_handle(highlight_handle, "hl")
     except ApiError as exc:
-        _write_conflict(path, text_content, exc.message)
-        return
+        return False, exc.message
     highlight = db.get(Highlight, highlight_id)
     if highlight is None or highlight.user_id != viewer_id:
-        _write_conflict(path, text_content, "Highlight does not exist or is not owned by this user")
-        return
+        return False, "Highlight does not exist or is not owned by this user"
 
     local_hash = _highlight_hash(metadata, body)
     if local_hash == metadata.get("last_synced_sha256"):
-        return
+        return False, None
 
     server_updated_at = _highlight_server_updated_at(highlight)
     if str(metadata.get("server_updated_at") or "") != server_updated_at:
-        _write_conflict(path, text_content, "Server highlight changed since this file was exported")
-        return
+        return False, "Server highlight changed since this file was exported"
 
     if _as_bool(metadata.get("deleted")):
         try:
             _delete_highlight(db, highlight)
             db.commit()
+            return True, None
         except ApiError as exc:
             db.rollback()
-            _write_conflict(path, text_content, exc.message)
-        return
+            return False, exc.message
 
     try:
         _apply_highlight_changes(db, viewer_id, highlight, metadata, body)
         db.commit()
+        return True, None
     except ApiError as exc:
         db.rollback()
-        _write_conflict(path, text_content, exc.message)
+        return False, exc.message
 
 
 def _create_highlight_from_file(
@@ -434,34 +522,46 @@ def _sync_page_file(
     metadata: dict[str, object],
     body: str,
 ) -> None:
+    changed, conflict_reason = _sync_page_content(
+        db, viewer_id, metadata, body, fallback_title=path.stem
+    )
+    if conflict_reason is not None:
+        _write_conflict(path, text_content, conflict_reason)
+    elif changed and not str(metadata.get("page_handle") or "") and path.exists():
+        path.unlink()
+
+
+def _sync_page_content(
+    db: Session,
+    viewer_id: UUID,
+    metadata: dict[str, object],
+    body: str,
+    *,
+    fallback_title: str,
+) -> tuple[bool, str | None]:
     page_handle = str(metadata.get("page_handle") or "")
-    title = str(metadata.get("title") or path.stem).strip()
+    title = str(metadata.get("title") or fallback_title).strip()
     if not title:
-        _write_conflict(path, text_content, "Page title is required")
-        return
+        return False, "Page title is required"
 
     if not page_handle:
         db.add(Page(user_id=viewer_id, title=title[:200], body=body))
         db.commit()
-        path.unlink()
-        return
+        return True, None
 
     try:
         page_id = _parse_handle(page_handle, "page")
     except ApiError as exc:
-        _write_conflict(path, text_content, exc.message)
-        return
+        return False, exc.message
     page = db.get(Page, page_id)
     if page is None or page.user_id != viewer_id:
-        _write_conflict(path, text_content, "Page does not exist or is not owned by this user")
-        return
+        return False, "Page does not exist or is not owned by this user"
 
     local_hash = _page_hash(metadata, body)
     if local_hash == metadata.get("last_synced_sha256"):
-        return
+        return False, None
     if str(metadata.get("server_updated_at") or "") != page.updated_at.isoformat():
-        _write_conflict(path, text_content, "Server page changed since this file was exported")
-        return
+        return False, "Server page changed since this file was exported"
     if _as_bool(metadata.get("deleted")):
         db.delete(page)
     else:
@@ -469,6 +569,7 @@ def _sync_page_file(
         page.body = body
         page.updated_at = func.now()
     db.commit()
+    return True, None
 
 
 def _load_vault_highlights(db: Session, viewer_id: UUID) -> list[Highlight]:
@@ -487,18 +588,27 @@ def _load_fragments(db: Session, media_id: UUID) -> list[Fragment]:
 
 
 def _write_highlight_file(vault_dir: Path, highlight: Highlight) -> None:
+    path, content = _highlight_file(highlight)
+    _write_text(vault_dir / path, content)
+
+
+def _highlight_file(highlight: Highlight) -> tuple[str, str]:
     metadata = _metadata_for_highlight(highlight)
     body = highlight.annotation.body if highlight.annotation else ""
     metadata["last_synced_sha256"] = _highlight_hash(metadata, body)
-    path = vault_dir / "Highlights" / f"{_highlight_handle(highlight.id)}.md"
-    _write_text(path, _write_frontmatter(metadata, body))
+    return f"Highlights/{_highlight_handle(highlight.id)}.md", _write_frontmatter(metadata, body)
 
 
 def _write_page_file(vault_dir: Path, page: Page) -> None:
+    path, content = _page_file(page)
+    target = vault_dir / path
+    _remove_old_handle_files(target.parent, target.name, _page_handle(page.id))
+    _write_text(target, content)
+
+
+def _page_file(page: Page) -> tuple[str, str]:
     page_handle = _page_handle(page.id)
     slug = _slug(page.title)
-    path = vault_dir / "Pages" / f"{slug}--{page_handle}.md"
-    _remove_old_handle_files(path.parent, path.name, page_handle)
     metadata: dict[str, object] = {
         "nexus_type": "page",
         "page_handle": page_handle,
@@ -507,7 +617,7 @@ def _write_page_file(vault_dir: Path, page: Page) -> None:
         "deleted": False,
     }
     metadata["last_synced_sha256"] = _page_hash(metadata, page.body)
-    _write_text(path, _write_frontmatter(metadata, page.body))
+    return f"Pages/{slug}--{page_handle}.md", _write_frontmatter(metadata, page.body)
 
 
 def _metadata_for_highlight(highlight: Highlight) -> dict[str, object]:
@@ -827,11 +937,62 @@ def _write_frontmatter(metadata: dict[str, object], body: str) -> str:
 
 def _write_conflict(path: Path, text_content: str, reason: str) -> None:
     conflict_path = path.with_name(path.name.removesuffix(".md") + ".conflict.md")
-    _write_text(
-        conflict_path,
+    _write_text(conflict_path, _conflict_markdown(text_content, reason))
+
+
+def _editable_vault_path(raw_path: str) -> str:
+    path = raw_path.replace("\\", "/").strip()
+    if (
+        path.startswith("/")
+        or path.endswith(".conflict.md")
+        or not re.fullmatch(r"(Highlights|Pages)/[^/]+\.md", path)
+        or ".." in path.split("/")
+    ):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Editable vault uploads must be Markdown files under Highlights/ or Pages/",
+        )
+    return path
+
+
+def _conflict_path(path: str) -> str:
+    return path.removesuffix(".md") + ".conflict.md"
+
+
+def _conflict_markdown(text_content: str, reason: str) -> str:
+    return (
         f"# Nexus Sync Conflict\n\nReason: {reason}\n\n## Local File\n\n"
-        f"```markdown\n{text_content}\n```\n",
+        f"```markdown\n{text_content}\n```\n"
     )
+
+
+def _write_source_files(
+    db: Session,
+    viewer_id: UUID,
+    vault_dir: Path,
+    storage_client: StorageClientBase,
+) -> None:
+    rows = (
+        db.execute(
+            text(f"""
+            WITH visible_media AS (
+                {visible_media_ids_cte_sql()}
+            )
+            SELECT m.id, m.kind, mf.storage_path, mf.content_type
+            FROM media m
+            JOIN visible_media vm ON vm.media_id = m.id
+            JOIN media_file mf ON mf.media_id = m.id
+            WHERE m.kind IN ('epub', 'pdf')
+            ORDER BY lower(m.title), m.id
+        """),
+            {"viewer_id": viewer_id},
+        )
+        .mappings()
+        .all()
+    )
+    for row in rows:
+        media_handle = _media_handle(UUID(str(row["id"])))
+        _write_source_file(row, vault_dir / "Sources" / media_handle, storage_client)
 
 
 def _write_text(path: Path, content: str) -> None:

@@ -7,6 +7,7 @@ import IngestionTray from "@/components/IngestionTray";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { ToastProvider } from "@/components/Toast";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { PaneRootNavigationProvider } from "@/lib/panes/paneRuntime";
 import { ReaderProvider } from "@/lib/reader";
@@ -18,6 +19,7 @@ export default function AuthenticatedLayout() {
 
   return (
     <ToastProvider>
+      <LocalVaultAutoSync />
       <ReaderProvider>
         <Suspense fallback={null}>
           <PaneRootNavigationProvider>

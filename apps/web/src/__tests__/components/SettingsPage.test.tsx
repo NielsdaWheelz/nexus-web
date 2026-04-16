@@ -15,5 +15,10 @@ describe("SettingsPage", () => {
       name: /linked identities/i,
     });
     expect(linkedIdentitiesLink).toHaveAttribute("href", "/settings/identities");
+
+    const localVaultLink = screen.getByRole("link", {
+      name: /local vault/i,
+    });
+    expect(localVaultLink).toHaveAttribute("href", "/settings/local-vault");
   });
 });

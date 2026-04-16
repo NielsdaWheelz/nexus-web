@@ -64,6 +64,9 @@ describe("pane route registry", () => {
     expect(resolvePaneRoute("/settings/billing").id).toBe("settingsBilling");
     expect(resolvePaneRoute("/settings/reader").id).toBe("settingsReader");
     expect(resolvePaneRoute("/settings/keys").id).toBe("settingsKeys");
+    expect(resolvePaneRoute("/settings/local-vault").id).toBe(
+      "settingsLocalVault"
+    );
     expect(resolvePaneRoute("/settings/identities").id).toBe(
       "settingsIdentities"
     );

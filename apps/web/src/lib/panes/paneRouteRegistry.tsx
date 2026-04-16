@@ -18,6 +18,7 @@ import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
 import SettingsBillingPaneBody from "@/app/(authenticated)/settings/billing/SettingsBillingPaneBody";
 import SettingsReaderPaneBody from "@/app/(authenticated)/settings/reader/SettingsReaderPaneBody";
 import SettingsKeysPaneBody from "@/app/(authenticated)/settings/keys/SettingsKeysPaneBody";
+import SettingsLocalVaultPaneBody from "@/app/(authenticated)/settings/local-vault/SettingsLocalVaultPaneBody";
 import SettingsIdentitiesPaneBody from "@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody";
 import KeybindingsPaneBody from "@/app/(authenticated)/settings/keybindings/KeybindingsPaneBody";
 
@@ -56,6 +57,7 @@ export type PaneRouteId =
   | "settingsBilling"
   | "settingsReader"
   | "settingsKeys"
+  | "settingsLocalVault"
   | "settingsIdentities"
   | "settingsKeybindings";
 
@@ -323,6 +325,20 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     getChrome: () => ({
       title: "API Keys",
       subtitle: "BYOK credentials for model providers. keys never leave server-side flows.",
+    }),
+  },
+  {
+    id: "settingsLocalVault",
+    pattern: ["settings", "local-vault"],
+    staticTitle: "Local vault",
+    render: () => <SettingsLocalVaultPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Local Vault",
+      subtitle: "Connect a real local folder and sync Markdown highlights and pages.",
     }),
   },
   {
