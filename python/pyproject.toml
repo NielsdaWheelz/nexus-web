@@ -29,9 +29,13 @@ dev = [
     "ruff>=0.8.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-xdist>=3.8.0",
     "httpx>=0.28.0",
     "pytest-httpserver>=1.0.0",
     "respx>=0.21.0",
+    "pyright>=1.1.390",
+    "pip-audit>=2.9.0",
+    "zizmor>=1.24.1",
 ]
 
 [project.scripts]
@@ -67,6 +71,30 @@ ignore = [
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.pyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.12"
+include = [
+    "nexus/schemas",
+    "nexus/services/canonicalize.py",
+    "nexus/services/crypto.py",
+    "nexus/services/redact.py",
+    "nexus/services/url_normalize.py",
+    "nexus/services/pdf_quote_match.py",
+    "nexus/services/pdf_quote_match_policy.py",
+    "nexus/services/pdf_highlight_geometry.py",
+    "nexus/services/pdf_locking.py",
+    "nexus/services/x_identity.py",
+    "nexus/services/youtube_identity.py",
+    "nexus/services/transcript_segments.py",
+    "nexus/services/context_window.py",
+    "nexus/services/context_rendering.py",
+    "nexus/errors.py",
+    "nexus/responses.py",
+    "nexus/logging.py",
+]
+exclude = ["tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

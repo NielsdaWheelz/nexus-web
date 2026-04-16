@@ -47,10 +47,11 @@ When running locally:
 
 ## Backend Commands
 
-From repo root:
+Use `make help` for the canonical list. From repo root:
 
 ```bash
 make check
+make type-back
 make test-unit
 make test
 make verify
@@ -62,6 +63,9 @@ make test-supabase
 make test-network
 make test-real
 ```
+
+`make test-back-unit` uses `pytest-xdist` for parallel unit execution; integration tests stay single-process.
+`make type-back` runs the enforced Pyright baseline from `python/pyproject.toml`.
 
 ## Runtime Contracts
 

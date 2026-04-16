@@ -79,7 +79,7 @@ Repository-wide rule owners:
 
 ## Testing
 
-From repo root:
+Use `make help` for the canonical list. From repo root:
 
 ```bash
 make test-front-unit
@@ -95,6 +95,8 @@ bun run test:browser
 bun run typecheck
 bun run lint
 ```
+
+CI shards Playwright E2E runs; local `make test-e2e` stays single-command.
 
 ## Highlight Libraries
 

@@ -2,7 +2,7 @@
 # Run `make help` for available commands.
 
 .PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed \
-	check check-back check-front format format-back fix-front build \
+	check check-back type-back check-front check-workflows format format-back fix-front build audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
 	test-migrations test-supabase test-network test-real test-e2e test-e2e-ui \
 	verify verify-full \
@@ -23,6 +23,7 @@ DATABASE_URL_TEST_MIGRATIONS ?= postgresql+psycopg://postgres:postgres@localhost
 
 WEB_PORT ?= 3000
 API_PORT ?= 8000
+PLAYWRIGHT_ARGS ?=
 
 help:
 	@echo "Nexus Development Commands"
@@ -37,6 +38,9 @@ help:
 	@echo ""
 	@echo "Core verification:"
 	@echo "  make check              - Static checks only"
+	@echo "  make type-back          - Backend type checking"
+	@echo "  make check-workflows    - GitHub Actions lint/security checks"
+	@echo "  make audit              - Dependency vulnerability audits"
 	@echo "  make test-unit          - Fast backend and frontend unit tests"
 	@echo "  make test               - All non-E2E automated tests"
 	@echo "  make verify             - check + build + test"
@@ -124,15 +128,22 @@ seed:
 		SUPABASE_SERVICE_KEY=$(SUPABASE_SERVICE_KEY) \
 		uv run python ../scripts/seed_dev.py
 
-check: check-back check-front
+check: check-back type-back check-front check-workflows
 
 check-back:
 	cd python && uv run ruff check .
 	cd python && uv run ruff format --check .
 
+type-back:
+	cd python && uv run pyright
+
 check-front:
 	cd apps/web && bun run lint
 	cd apps/web && bun run typecheck
+
+check-workflows:
+	actionlint .github/workflows/*.yml
+	cd python && uv run zizmor ../.github/workflows
 
 format: format-back fix-front
 
@@ -145,12 +156,19 @@ fix-front:
 build:
 	cd apps/web && bun run build
 
+audit:
+	cd python && uv sync --all-extras --locked
+	cd python && uv run pip-audit --strict
+	cd apps/web && bun audit --audit-level=high
+	cd e2e && bun audit --audit-level=high
+	cd node/ingest && bun audit --audit-level=high
+
 test-unit: test-back-unit test-front-unit
 
 test: test-unit test-back-integration test-migrations test-front-browser
 
 test-back-unit:
-	cd python && NEXUS_ENV=test uv run pytest -v -m "unit and not integration"
+	cd python && NEXUS_ENV=test uv run pytest -v -n auto -m "unit and not integration"
 
 test-back-integration:
 	./scripts/with_test_services.sh make _test-back-integration
@@ -210,7 +228,7 @@ test-e2e: _ensure-e2e-deps
 	echo "Running e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
 	cd e2e && \
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install --with-deps chromium && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bun run test:e2e
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bun run test:e2e -- $(PLAYWRIGHT_ARGS)
 
 test-e2e-ui: _ensure-e2e-deps
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \

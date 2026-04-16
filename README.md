@@ -52,6 +52,9 @@ Core:
 
 ```bash
 make check
+make type-back
+make check-workflows
+make audit
 make test-unit
 make test
 make verify

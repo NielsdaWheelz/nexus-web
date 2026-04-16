@@ -25,7 +25,19 @@ Definitions used throughout this document:
 - `external boundary`: third-party systems or APIs outside this repo (for example LLM providers, external object storage, external auth verification providers).
 - `real stack`: real running app services and dependencies used in local/CI (Next.js, FastAPI, PostgreSQL, Supabase local), not mocked equivalents.
 
-## 3. Testing Trophy (Adapted for SSR / Next.js)
+## 3. Command Surface
+
+`make help` is the canonical command list. This document only names the stable gates and how they are grouped.
+
+- `make check` covers core static analysis.
+- `make type-back` is the backend type gate. Its Pyright include list is the enforced baseline; expand it when newly touched backend modules are clean.
+- `make check-workflows` validates GitHub Actions files.
+- `make audit` is the dependency/security gate.
+- `make test-unit`, `make test`, `make verify`, and `make verify-full` are the main local quality gates.
+- `make test-back-unit` runs backend unit tests with `pytest-xdist`.
+- `make test-e2e` stays a single local command; CI shards Playwright across jobs.
+
+## 4. Testing Trophy (Adapted for SSR / Next.js)
 
 ```text
            /  E2E (Playwright)  \        <- LARGEST layer: real browser,
@@ -48,7 +60,7 @@ For server-rendered apps (Next.js App Router), E2E should be the largest test la
 
 Backend integration tests remain a separate tier (see Tier 3 below) because they validate API and DB behavior faster than E2E and provide better failure localization.
 
-## 4. Test Tiers
+## 5. Test Tiers
 
 ### Tier 0: Static Analysis
 
@@ -56,11 +68,13 @@ Backend integration tests remain a separate tier (see Tier 3 below) because they
 - Frontend: ESLint (including testing rules)
 - Backend: `ruff check`
 - Backend: `ruff format --check`
+- Backend: `type-back`
 
 Rules:
 
 - Runs on every PR and in local verification commands.
 - Treat static-analysis failures as real failures (no `|| true`).
+- Keep the backend type-check surface honest: a small passing Pyright include list is better than a broad gate full of suppressions.
 
 ### Tier 1: Unit Tests
 
@@ -122,7 +136,7 @@ Rules:
 
 - Use a real PostgreSQL test database
 - Assert through API responses (status + payload), not raw SQL table inspection, except documented schema-level exceptions
-- Mock only external boundaries (Section 6)
+- Mock only external boundaries (Section 7)
 - Use ORM-backed factories and fixtures, not raw SQL inserts in factories
 
 ### Tier 4: E2E Tests
@@ -144,8 +158,9 @@ Rules:
 - Use Playwright `storageState` for login reuse (authenticate once per worker where possible)
 - Seed data through app APIs or dedicated seed scripts, not ad hoc SQL from browser tests
 - Tests must be independent and parallelizable
+- CI shards Playwright to keep wall time down; local `make test-e2e` remains a single command.
 
-## 5. Assertion Standards
+## 6. Assertion Standards
 
 ### Backend: Assert Through the API
 
@@ -217,7 +232,7 @@ Guidelines:
 - Assert visible state, navigation outcome, or response behavior
 - Avoid testing library/framework internals
 
-## 6. Mocking Policy
+## 7. Mocking Policy
 
 ### Allowed Mocks (External Boundaries Only)
 
@@ -259,7 +274,7 @@ Short-term exceptions are allowed only when migration work is in progress and th
 - If an external boundary is only reachable through an internal accessor in current code, a temporary patch at that seam may be used during migration, but the test must still assert behavior and the exception must be called out explicitly
 - Every exception entry must name the intended replacement layer/test (or the exact follow-up test to be added)
 
-## 7. Data Setup and Fixtures
+## 8. Data Setup and Fixtures
 
 ### Backend: Factories Use ORM Models
 
@@ -314,7 +329,7 @@ Rule:
 - Prefer explicit action-menu interactions (`Actions` -> `menuitem`) over styling-dependent selectors
 - Keep single-flow E2E tests focused on one behavior; use API setup for prerequisites already covered by separate UI stress/interaction tests
 
-## 8. Test Organization
+## 9. Test Organization
 
 ### Backend Layout
 
@@ -368,7 +383,7 @@ e2e/
    `- *.spec.ts
 ```
 
-## 9. Markers and Naming
+## 10. Markers and Naming
 
 ### Pytest Markers
 
@@ -407,7 +422,7 @@ test("user creates library -> library appears in sidebar")
 test("user highlights text -> highlight persists after reload")
 ```
 
-## 10. CI and Local Commands
+## 11. CI and Local Commands
 
 Target local commands after migration:
 
@@ -448,14 +463,14 @@ Target CI shape:
 3. Run E2E after lower layers pass
 4. Upload E2E artifacts on failure (and optionally always)
 
-## 11. What Not to Test
+## 12. What Not to Test
 
 - Library internals (for example, PyNaCl internals, SQLAlchemy internals)
 - Framework behavior already guaranteed by the framework (unless you are testing your integration with it)
 - One-time migration audit assertions that are no longer part of ongoing product behavior
 - Configuration introspection via implementation details (prefer runtime behavior assertions)
 
-## 12. Migration Rules for Existing Tests
+## 13. Migration Rules for Existing Tests
 
 When modifying existing tests during cleanup:
 
