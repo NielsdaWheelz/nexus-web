@@ -71,6 +71,30 @@ function formatDateRange(start: string | null, end: string | null): string {
   return parts.join(" - ");
 }
 
+function statusSummary(account: {
+  plan_tier: BillingPlanTier;
+  subscription_status: string;
+  cancel_at_period_end: boolean;
+  current_period_end: string | null;
+}): string {
+  if (account.plan_tier === "free") {
+    return "No active subscription.";
+  }
+  if (account.subscription_status === "canceled") {
+    return account.current_period_end
+      ? `Ended ${formatDateRange(null, account.current_period_end)}`
+      : "Subscription canceled.";
+  }
+  if (account.cancel_at_period_end) {
+    return account.current_period_end
+      ? `Ends ${formatDateRange(null, account.current_period_end)}`
+      : "Scheduled to cancel at period end.";
+  }
+  return account.current_period_end
+    ? `Renews ${formatDateRange(null, account.current_period_end)}`
+    : "Billing period unavailable.";
+}
+
 function formatUsage(value: number | null, unit: string): string {
   if (value === null) {
     return "Unlimited";
@@ -97,8 +121,11 @@ export default function SettingsBillingPaneBody() {
   const canManageBilling = paidPlan !== "free";
 
   const upgradePlans = useMemo(
-    () => PLAN_SEQUENCE.filter((planTier) => activePlanIndex(planTier) > currentPlanIndex),
-    [currentPlanIndex]
+    () =>
+      paidPlan === "free"
+        ? PLAN_SEQUENCE.filter((planTier) => activePlanIndex(planTier) > currentPlanIndex)
+        : [],
+    [currentPlanIndex, paidPlan]
   );
 
   const launchCheckout = useCallback(
@@ -170,11 +197,7 @@ export default function SettingsBillingPaneBody() {
                   <StatusPill variant={statusVariant(account.subscription_status, account.plan_tier)}>
                     {statusLabel(account.subscription_status, account.plan_tier)}
                   </StatusPill>
-                  <span className={styles.summaryMeta}>
-                    {account.plan_tier === "free"
-                      ? "No active subscription."
-                      : `Renews ${formatDateRange(null, account.current_period_end)}`}
-                  </span>
+                  <span className={styles.summaryMeta}>{statusSummary(account)}</span>
                 </dd>
               </div>
 
@@ -248,6 +271,12 @@ export default function SettingsBillingPaneBody() {
                 >
                   {portalBusy ? "Opening billing..." : "Manage billing"}
                 </button>
+              )}
+
+              {canManageBilling && (
+                <span className={styles.actionHint}>
+                  Change plan, payment method, or cancellation in Stripe billing.
+                </span>
               )}
 
               {paidPlan === "free" && upgradePlans.length === 0 && (

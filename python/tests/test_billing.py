@@ -189,3 +189,85 @@ class TestStripeWebhookProcessing:
             {"user_id": user_id},
         ).scalar_one()
         assert customer_id == "cus_test_1"
+
+
+class TestCheckoutSessions:
+    def test_active_subscription_checkout_uses_billing_portal(
+        self,
+        db_session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        user_id = uuid4()
+        db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        db_session.execute(
+            text(
+                """
+                INSERT INTO billing_accounts (
+                    id,
+                    user_id,
+                    stripe_customer_id,
+                    stripe_subscription_id,
+                    stripe_price_id,
+                    plan_tier,
+                    subscription_status,
+                    current_period_start,
+                    current_period_end,
+                    cancel_at_period_end,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :id,
+                    :user_id,
+                    'cus_existing',
+                    'sub_existing',
+                    'price_plus',
+                    'plus',
+                    'active',
+                    :current_period_start,
+                    :current_period_end,
+                    false,
+                    :created_at,
+                    :updated_at
+                )
+                """
+            ),
+            {
+                "id": uuid4(),
+                "user_id": user_id,
+                "current_period_start": datetime.now(UTC),
+                "current_period_end": datetime.now(UTC) + timedelta(days=30),
+                "created_at": datetime.now(UTC),
+                "updated_at": datetime.now(UTC),
+            },
+        )
+
+        portal_calls: list[dict] = []
+        checkout_calls: list[dict] = []
+
+        monkeypatch.setattr(
+            billing_service.stripe.billing_portal.Session,
+            "create",
+            lambda **kwargs: portal_calls.append(kwargs) or {"url": "https://billing.example/portal"},
+        )
+        monkeypatch.setattr(
+            billing_service.stripe.checkout.Session,
+            "create",
+            lambda **kwargs: checkout_calls.append(kwargs) or {"url": "https://billing.example/checkout"},
+        )
+
+        url = billing_service.create_checkout_session(
+            db_session,
+            user_id,
+            email="billing@example.com",
+            plan_tier="ai_plus",
+        )
+
+        assert url == "https://billing.example/portal"
+        assert checkout_calls == []
+        assert portal_calls == [
+            {
+                "customer": "cus_existing",
+                "return_url": "http://localhost:3000/settings/billing",
+            }
+        ]

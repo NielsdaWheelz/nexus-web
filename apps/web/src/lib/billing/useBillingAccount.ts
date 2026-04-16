@@ -17,6 +17,7 @@ export interface BillingUsageSnapshot {
 export interface BillingAccount {
   plan_tier: BillingPlanTier;
   subscription_status: string;
+  cancel_at_period_end: boolean;
   can_share: boolean;
   can_use_platform_llm: boolean;
   current_period_start: string | null;

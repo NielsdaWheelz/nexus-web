@@ -117,12 +117,12 @@ def create_checkout_session(db: Session, user_id: UUID, email: str | None, plan_
 
     stripe.api_key = settings.stripe_secret_key
     account = db.scalar(select(BillingAccount).where(BillingAccount.user_id == user_id))
+    now = _db_now(db)
     if account is None or not account.stripe_customer_id:
         customer = stripe.Customer.create(
             email=email,
             metadata={"nexus_user_id": str(user_id)},
         )
-        now = _db_now(db)
         if account is None:
             account = BillingAccount(
                 user_id=user_id,
@@ -135,6 +135,18 @@ def create_checkout_session(db: Session, user_id: UUID, email: str | None, plan_
             account.stripe_customer_id = str(customer["id"])
             account.updated_at = now
         db.commit()
+
+    if (
+        account.stripe_customer_id
+        and account.stripe_subscription_id
+        and account.subscription_status in ACTIVE_SUBSCRIPTION_STATUSES
+        and (account.current_period_end is None or now < account.current_period_end)
+    ):
+        session = stripe.billing_portal.Session.create(
+            customer=account.stripe_customer_id,
+            return_url=f"{settings.app_public_url.rstrip('/')}/settings/billing",
+        )
+        return str(session["url"])
 
     session = stripe.checkout.Session.create(
         customer=account.stripe_customer_id,

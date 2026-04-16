@@ -7,6 +7,7 @@ const mockBillingState = vi.hoisted(() => ({
   account: {
     plan_tier: "free",
     subscription_status: "none",
+    cancel_at_period_end: false,
     can_share: false,
     can_use_platform_llm: false,
     current_period_start: null,
@@ -48,6 +49,13 @@ describe("SettingsBillingPaneBody", () => {
   beforeEach(() => {
     mockApiFetch.mockReset();
     mockApiFetch.mockResolvedValue({ data: { url: "https://billing.example/checkout" } });
+    mockBillingState.account.plan_tier = "free";
+    mockBillingState.account.subscription_status = "none";
+    mockBillingState.account.cancel_at_period_end = false;
+    mockBillingState.account.can_share = false;
+    mockBillingState.account.can_use_platform_llm = false;
+    mockBillingState.account.current_period_start = null;
+    mockBillingState.account.current_period_end = null;
     window.history.replaceState(null, "", "/settings/billing");
   });
 
@@ -75,5 +83,41 @@ describe("SettingsBillingPaneBody", () => {
       });
       expect(screen.getByText("Failed to start checkout")).toBeInTheDocument();
     });
+  });
+
+  it("routes paid subscribers to the billing portal instead of showing checkout upgrades", async () => {
+    const user = userEvent.setup();
+    mockBillingState.account.plan_tier = "plus";
+    mockBillingState.account.subscription_status = "active";
+    mockBillingState.account.cancel_at_period_end = false;
+    mockBillingState.account.can_share = true;
+    mockApiFetch.mockRejectedValue(new Error("portal unavailable"));
+
+    render(<SettingsBillingPaneBody />);
+
+    expect(screen.queryByRole("button", { name: "Upgrade to AI Plus" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upgrade to AI Pro" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Manage billing" }));
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/billing/portal", {
+        method: "POST",
+      });
+      expect(screen.getByText("Failed to open billing portal")).toBeInTheDocument();
+    });
+  });
+
+  it("shows scheduled cancellation instead of renewal copy", () => {
+    mockBillingState.account.plan_tier = "plus";
+    mockBillingState.account.subscription_status = "active";
+    mockBillingState.account.cancel_at_period_end = true;
+    mockBillingState.account.current_period_end = "2026-05-30T23:59:59Z";
+    mockBillingState.account.can_share = true;
+
+    render(<SettingsBillingPaneBody />);
+
+    expect(screen.getByText(/^Ends /)).toBeInTheDocument();
+    expect(screen.queryByText(/^Renews /)).not.toBeInTheDocument();
   });
 });
