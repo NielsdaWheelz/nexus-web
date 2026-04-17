@@ -1,5 +1,5 @@
 import { type ReactElement, type ReactNode } from "react";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MediaPaneBody from "./MediaPaneBody";
@@ -7,6 +7,19 @@ import MediaPaneBody from "./MediaPaneBody";
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 const mockUseMediaViewState = vi.fn<(id: string) => Record<string, unknown>>();
 const mockUsePaneChromeOverride = vi.fn<(overrides: Record<string, unknown>) => void>();
+const mockSetTrack = vi.fn();
+function renderSelectionPopover(_props: Record<string, unknown>) {
+  return <div data-testid="selection-popover" />;
+}
+const mockSelectionPopover = vi.fn<(props: Record<string, unknown>) => ReactElement>(
+  renderSelectionPopover
+);
+function renderTranscriptMediaPane(_props: Record<string, unknown>) {
+  return <div data-testid="transcript-media-pane" />;
+}
+const mockTranscriptMediaPane = vi.fn<(props: Record<string, unknown>) => ReactElement>(
+  renderTranscriptMediaPane
+);
 const mockReaderContentArea = vi.fn(
   ({ children }: { children: ReactNode }) => children
 );
@@ -47,6 +60,34 @@ vi.mock("@/components/ReaderContentArea", () => ({
   ) => mockReaderContentArea(props),
 }));
 
+vi.mock("@/lib/player/globalPlayer", () => ({
+  useGlobalPlayer: () => ({
+    track: null,
+    setTrack: mockSetTrack,
+    clearTrack: vi.fn(),
+    seekToMs: vi.fn(),
+    play: vi.fn(),
+    pause: vi.fn(),
+    isPlaying: false,
+    currentTimeSeconds: 0,
+    durationSeconds: 0,
+    bufferedSeconds: 0,
+    playbackRate: 1,
+    volume: 1,
+    queueItems: [],
+    refreshQueue: vi.fn(async () => {}),
+    addToQueue: vi.fn(async () => []),
+    removeFromQueue: vi.fn(async () => {}),
+    reorderQueue: vi.fn(async () => {}),
+    clearQueue: vi.fn(async () => {}),
+    playNextInQueue: vi.fn(async () => {}),
+    playPreviousInQueue: vi.fn(async () => {}),
+    hasNextInQueue: false,
+    hasPreviousInQueue: false,
+    bindAudioElement: vi.fn(),
+  }),
+}));
+
 vi.mock("@/components/HtmlRenderer", () => ({
   default: () => <div data-testid="html-renderer" />,
 }));
@@ -69,7 +110,7 @@ vi.mock("@/components/PdfReader", () => ({
 }));
 
 vi.mock("@/components/SelectionPopover", () => ({
-  default: () => <div data-testid="selection-popover" />,
+  default: (props: Record<string, unknown>) => mockSelectionPopover(props),
 }));
 
 vi.mock("@/components/HighlightEditPopover", () => ({
@@ -95,7 +136,7 @@ vi.mock("./MediaLinkedItemsPaneBody", () => ({
 }));
 
 vi.mock("./TranscriptMediaPane", () => ({
-  default: () => <div data-testid="transcript-media-pane" />,
+  default: (props: Record<string, unknown>) => mockTranscriptMediaPane(props),
 }));
 
 vi.mock("./EpubContentPane", () => ({
@@ -222,6 +263,26 @@ function renderLatestToolbar() {
   return render(<>{toolbar}</>);
 }
 
+function getLatestTranscriptMediaPaneProps(): Record<string, unknown> {
+  const latest = mockTranscriptMediaPane.mock.calls.at(-1)?.[0] as
+    | Record<string, unknown>
+    | undefined;
+  if (!latest) {
+    throw new Error("Expected TranscriptMediaPane to be rendered");
+  }
+  return latest;
+}
+
+function getLatestSelectionPopoverProps(): Record<string, unknown> {
+  const latest = mockSelectionPopover.mock.calls.at(-1)?.[0] as
+    | Record<string, unknown>
+    | undefined;
+  if (!latest) {
+    throw new Error("Expected SelectionPopover to be rendered");
+  }
+  return latest;
+}
+
 type ToggleActionElement = ReactElement<{
   onClick: () => void;
   "aria-label"?: string;
@@ -234,6 +295,11 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     mockUsePaneParam.mockReset();
     mockUseMediaViewState.mockReset();
     mockUsePaneChromeOverride.mockReset();
+    mockSetTrack.mockReset();
+    mockSelectionPopover.mockReset();
+    mockSelectionPopover.mockImplementation(renderSelectionPopover);
+    mockTranscriptMediaPane.mockReset();
+    mockTranscriptMediaPane.mockImplementation(renderTranscriptMediaPane);
     mockReaderContentArea.mockReset();
     mockReaderContentArea.mockImplementation(
       ({ children }: { children: ReactNode }) => children
@@ -329,6 +395,27 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
 
     expect(handleContentClick).toHaveBeenCalled();
     expect(screen.getByRole("dialog", { name: "Linked items" })).toBeInTheDocument();
+  });
+
+  it("passes selection line rects into the reflowable selection popup", () => {
+    const lineRects = [new DOMRect(96, 180, 120, 18), new DOMRect(102, 206, 102, 18)];
+    const selectionRect = new DOMRect(96, 180, 120, 44);
+    currentViewState = buildViewState({
+      selection: {
+        range: document.createRange(),
+        rect: selectionRect,
+        lineRects,
+      },
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+
+    expect(screen.getByTestId("selection-popover")).toBeInTheDocument();
+    expect(getLatestSelectionPopoverProps()).toMatchObject({
+      selectionRect,
+      selectionLineRects: lineRects,
+    });
   });
 
   it("opens the mobile linked-items drawer when tapping a PDF highlight", async () => {
@@ -487,6 +574,150 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
         expect.objectContaining({ id: "theme-dark" }),
       ])
     );
+  });
+
+  it("hydrates saved podcast listening state into the global player for transcript audio", async () => {
+    currentViewState = buildViewState({
+      isTranscriptMedia: true,
+      playbackSource: {
+        kind: "external_audio",
+        stream_url: "https://cdn.example.com/podcast.mp3",
+        source_url: "https://example.com/episodes/1",
+      },
+      media: {
+        id: "media-1",
+        kind: "podcast_episode",
+        title: "Example transcript",
+        processing_status: "ready_for_reading",
+        canonical_source_url: "https://example.com/episodes/1",
+        podcast_title: "Example podcast",
+        podcast_image_url: "https://cdn.example.com/cover.jpg",
+        chapters: [
+          {
+            chapter_idx: 0,
+            title: "Intro",
+            t_start_ms: 0,
+            t_end_ms: 120000,
+            url: null,
+            image_url: null,
+          },
+        ],
+        description_html: null,
+        description_text: null,
+        listening_state: {
+          position_ms: 12000,
+          playback_speed: 1.5,
+        },
+        subscription_default_playback_speed: 2,
+        last_error_code: null,
+      },
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+
+    await waitFor(() => {
+      expect(mockSetTrack).toHaveBeenCalledWith(
+        expect.objectContaining({
+          media_id: "media-1",
+          title: "Example transcript",
+          stream_url: "https://cdn.example.com/podcast.mp3",
+          source_url: "https://example.com/episodes/1",
+          podcast_title: "Example podcast",
+          image_url: "https://cdn.example.com/cover.jpg",
+        }),
+        {
+          autoplay: false,
+          seek_seconds: 12,
+          playback_rate: 1.5,
+        }
+      );
+    });
+  });
+
+  it("falls back to the subscription default speed when transcript audio has no saved progress", async () => {
+    currentViewState = buildViewState({
+      isTranscriptMedia: true,
+      playbackSource: {
+        kind: "external_audio",
+        stream_url: "https://cdn.example.com/podcast.mp3",
+        source_url: "https://example.com/episodes/1",
+      },
+      media: {
+        id: "media-1",
+        kind: "podcast_episode",
+        title: "Example transcript",
+        processing_status: "ready_for_reading",
+        canonical_source_url: "https://example.com/episodes/1",
+        podcast_title: "Example podcast",
+        podcast_image_url: "https://cdn.example.com/cover.jpg",
+        chapters: [],
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: 1.75,
+        last_error_code: null,
+      },
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+
+    await waitFor(() => {
+      expect(mockSetTrack).toHaveBeenCalledWith(
+        expect.objectContaining({
+          media_id: "media-1",
+          title: "Example transcript",
+          stream_url: "https://cdn.example.com/podcast.mp3",
+          source_url: "https://example.com/episodes/1",
+        }),
+        {
+          autoplay: false,
+          playback_rate: 1.75,
+        }
+      );
+    });
+  });
+
+  it("does not hydrate the global player for transcript videos", () => {
+    currentViewState = buildViewState({
+      isTranscriptMedia: true,
+      playbackSource: {
+        kind: "external_video",
+        stream_url: "https://www.youtube.com/watch?v=abc123",
+        source_url: "https://www.youtube.com/watch?v=abc123",
+        provider: "youtube",
+        provider_video_id: "abc123",
+        watch_url: "https://www.youtube.com/watch?v=abc123",
+        embed_url: "https://www.youtube.com/embed/abc123",
+      },
+      media: {
+        id: "media-1",
+        kind: "video",
+        title: "Example transcript video",
+        processing_status: "ready_for_reading",
+        canonical_source_url: "https://www.youtube.com/watch?v=abc123",
+        podcast_title: null,
+        podcast_image_url: null,
+        chapters: [],
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        last_error_code: null,
+      },
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+
+    expect(mockSetTrack).not.toHaveBeenCalled();
+    expect(getLatestTranscriptMediaPaneProps()).toMatchObject({
+      mediaKind: "video",
+      playbackSource: expect.objectContaining({
+        kind: "external_video",
+      }),
+    });
   });
 
   it("keeps transcript in the transcript shell while web and epub stay on the ReaderContentArea path", () => {

@@ -24,9 +24,10 @@ import DocumentViewport from "@/components/workspace/DocumentViewport";
 import { usePaneParam } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { useReaderContext } from "@/lib/reader";
+import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import TranscriptMediaPane from "./TranscriptMediaPane";
 import EpubContentPane from "./EpubContentPane";
-import { formatResumeTime } from "./mediaHelpers";
+import { formatResumeTime, normalizeTranscriptChapters } from "./mediaHelpers";
 import useMediaViewState from "./useMediaViewState";
 import { PanelRight } from "lucide-react";
 import styles from "./page.module.css";
@@ -40,6 +41,7 @@ export default function MediaPaneBody() {
   const mv = useMediaViewState(id);
   const { toast } = useToast();
   const { profile: readerProfile, updateTheme } = useReaderContext();
+  const { setTrack } = useGlobalPlayer();
 
   // ==========================================================================
   // Linked-items column state
@@ -50,6 +52,8 @@ export default function MediaPaneBody() {
   const [desktopLinkedCollapsed, setDesktopLinkedCollapsed] = useState(false);
   const splitRef = useRef<HTMLDivElement>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const resumeNoticeMediaIdRef = useRef<string | null>(null);
+  const seededPodcastTrackRef = useRef<string | null>(null);
 
   const handleContentClick = useCallback(
     (e: React.MouseEvent) => {
@@ -330,6 +334,89 @@ export default function MediaPaneBody() {
     }
   }, [linkedDrawerOpen, mv.isMobileViewport, mv.showHighlightsPane]);
 
+  useEffect(() => {
+    if (!mv.media || !mv.isTranscriptMedia) {
+      seededPodcastTrackRef.current = null;
+      return;
+    }
+    if (mv.media.kind !== "podcast_episode" || mv.playbackSource?.kind !== "external_audio") {
+      seededPodcastTrackRef.current = null;
+      return;
+    }
+
+    const listeningState = mv.media.listening_state;
+    const seededTrackKey = JSON.stringify({
+      mediaId: mv.media.id,
+      streamUrl: mv.playbackSource.stream_url,
+      sourceUrl: mv.playbackSource.source_url,
+      podcastTitle: mv.media.podcast_title ?? null,
+      imageUrl: mv.media.podcast_image_url ?? null,
+      chapters: mv.media.chapters ?? [],
+      positionMs: listeningState?.position_ms ?? null,
+      playbackSpeed:
+        listeningState?.playback_speed ?? mv.media.subscription_default_playback_speed ?? null,
+    });
+    if (seededPodcastTrackRef.current === seededTrackKey) {
+      return;
+    }
+    seededPodcastTrackRef.current = seededTrackKey;
+
+    const trackOptions: {
+      autoplay: false;
+      seek_seconds?: number;
+      playback_rate?: number;
+    } = { autoplay: false };
+
+    if (listeningState) {
+      trackOptions.seek_seconds = Math.max(0, Math.floor(listeningState.position_ms / 1000));
+      trackOptions.playback_rate = listeningState.playback_speed;
+    } else if (mv.media.subscription_default_playback_speed != null) {
+      trackOptions.playback_rate = mv.media.subscription_default_playback_speed;
+    }
+
+    setTrack(
+      {
+        media_id: mv.media.id,
+        title: mv.media.title,
+        stream_url: mv.playbackSource.stream_url,
+        source_url: mv.playbackSource.source_url,
+        podcast_title: mv.media.podcast_title ?? undefined,
+        image_url: mv.media.podcast_image_url ?? undefined,
+        chapters: normalizeTranscriptChapters(mv.media.chapters),
+      },
+      trackOptions
+    );
+
+    if (!listeningState || listeningState.position_ms <= 0) {
+      return;
+    }
+    if (resumeNoticeMediaIdRef.current === mv.media.id) {
+      return;
+    }
+
+    resumeNoticeMediaIdRef.current = mv.media.id;
+    toast({
+      variant: "info",
+      message: `Resuming from ${formatResumeTime(listeningState.position_ms)}`,
+    });
+  }, [
+    mv.isTranscriptMedia,
+    mv.media,
+    mv.media?.chapters,
+    mv.media?.id,
+    mv.media?.kind,
+    mv.media?.listening_state,
+    mv.media?.podcast_image_url,
+    mv.media?.podcast_title,
+    mv.media?.subscription_default_playback_speed,
+    mv.media?.title,
+    mv.playbackSource?.kind,
+    mv.playbackSource?.source_url,
+    mv.playbackSource?.stream_url,
+    setTrack,
+    toast,
+  ]);
+
   const handleDividerMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (e.button !== 0 || !splitRef.current) return;
@@ -449,9 +536,6 @@ export default function MediaPaneBody() {
           <DocumentViewport>
             <TranscriptMediaPane
               mediaId={mv.media.id}
-              mediaTitle={mv.media.title}
-              mediaPodcastTitle={mv.media.podcast_title ?? null}
-              mediaPodcastImageUrl={mv.media.podcast_image_url ?? null}
               mediaKind={mv.media.kind === "video" ? "video" : "podcast_episode"}
               playbackSource={mv.playbackSource}
               canonicalSourceUrl={mv.media.canonical_source_url}
@@ -465,14 +549,6 @@ export default function MediaPaneBody() {
               chapters={mv.media.chapters ?? []}
               descriptionHtml={mv.media.description_html ?? null}
               descriptionText={mv.media.description_text ?? null}
-              listeningState={mv.media.listening_state ?? null}
-              subscriptionDefaultPlaybackSpeed={mv.media.subscription_default_playback_speed ?? null}
-              onResumeFromSavedPosition={(positionMs) =>
-                toast({
-                  variant: "info",
-                  message: `Resuming from ${formatResumeTime(positionMs)}`,
-                })
-              }
               onRequestTranscript={mv.handleRequestTranscript}
               fragments={mv.fragments}
               activeFragment={mv.activeTranscriptFragment}

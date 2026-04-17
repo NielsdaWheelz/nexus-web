@@ -7,6 +7,7 @@ import { codepointToUtf16 } from "@/lib/highlights/selectionToOffsets";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { type Highlight } from "@/components/HighlightEditor";
 import { type PdfHighlightOut } from "@/components/PdfReader";
+import { type GlobalPlayerChapter } from "@/lib/player/globalPlayer";
 import {
   type EpubChapter,
   type EpubChapterSummary,
@@ -16,6 +17,33 @@ import {
 // =============================================================================
 // Types
 // =============================================================================
+
+export interface TranscriptPlaybackSource {
+  kind: "external_audio" | "external_video";
+  stream_url: string;
+  source_url: string;
+  provider?: string | null;
+  provider_video_id?: string | null;
+  watch_url?: string | null;
+  embed_url?: string | null;
+}
+
+export interface TranscriptFragment {
+  id: string;
+  canonical_text: string;
+  t_start_ms?: number | null;
+  t_end_ms?: number | null;
+  speaker_label?: string | null;
+}
+
+export interface TranscriptChapter {
+  chapter_idx: number;
+  title: string;
+  t_start_ms: number;
+  t_end_ms?: number | null;
+  url?: string | null;
+  image_url?: string | null;
+}
 
 export interface Media {
   id: string;
@@ -44,8 +72,8 @@ export interface Media {
     can_play: boolean;
     can_download_file: boolean;
   };
-  playback_source?: import("./TranscriptMediaPane").TranscriptPlaybackSource | null;
-  chapters?: import("./TranscriptMediaPane").TranscriptChapter[];
+  playback_source?: TranscriptPlaybackSource | null;
+  chapters?: TranscriptChapter[];
   listening_state?: {
     position_ms: number;
     playback_speed: number;
@@ -160,6 +188,41 @@ export function formatResumeTime(positionMs: number): string {
     return `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   }
   return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+export function normalizeTranscriptChapters(
+  chapters: TranscriptChapter[] | null | undefined
+): GlobalPlayerChapter[] {
+  if (!Array.isArray(chapters)) {
+    return [];
+  }
+
+  return chapters
+    .filter(
+      (chapter) =>
+        chapter != null &&
+        Number.isFinite(chapter.chapter_idx) &&
+        typeof chapter.title === "string" &&
+        chapter.title.trim().length > 0 &&
+        Number.isFinite(chapter.t_start_ms) &&
+        chapter.t_start_ms >= 0
+    )
+    .map((chapter) => ({
+      chapter_idx: Math.max(0, Math.floor(chapter.chapter_idx)),
+      title: chapter.title.trim(),
+      t_start_ms: Math.max(0, Math.floor(chapter.t_start_ms)),
+      t_end_ms:
+        typeof chapter.t_end_ms === "number" && Number.isFinite(chapter.t_end_ms)
+          ? Math.max(0, Math.floor(chapter.t_end_ms))
+          : null,
+      url: chapter.url ?? null,
+      image_url: chapter.image_url ?? null,
+    }))
+    .sort((lhs, rhs) =>
+      lhs.t_start_ms === rhs.t_start_ms
+        ? lhs.chapter_idx - rhs.chapter_idx
+        : lhs.t_start_ms - rhs.t_start_ms
+    );
 }
 
 export function findFirstVisibleCanonicalOffset(
