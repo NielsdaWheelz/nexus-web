@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/CommandPalette";
 import PaneShell, { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import DocumentViewport from "@/components/workspace/DocumentViewport";
 
@@ -210,6 +212,35 @@ describe("PaneShell", () => {
     expect(screen.queryByText("Override action")).not.toBeInTheDocument();
     expect(screen.queryByText("Override meta")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Options" })).not.toBeInTheDocument();
+  });
+
+  it("renders a visible Commands trigger on mobile and dispatches the open event", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen as EventListener);
+
+    render(
+      <PaneShell
+        paneId="pane-a"
+        title="Libraries"
+        widthPx={560}
+        minWidthPx={320}
+        maxWidthPx={1400}
+        bodyMode="standard"
+        onResizePane={() => {}}
+        isMobile
+      >
+        <div>Body content</div>
+      </PaneShell>
+    );
+
+    const trigger = screen.getByRole("button", { name: "Commands" });
+    expect(trigger).toHaveTextContent("Commands");
+
+    await user.click(trigger);
+
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen as EventListener);
   });
 });
 

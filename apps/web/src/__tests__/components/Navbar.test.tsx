@@ -70,6 +70,15 @@ describe("Navbar", () => {
     expect(screen.getByText("Libraries")).toBeInTheDocument();
   });
 
+  it("keeps Search as the explicit desktop search destination", () => {
+    render(<Navbar />);
+
+    expect(screen.getByRole("link", { name: "Search", hidden: true })).toHaveAttribute(
+      "href",
+      "/search"
+    );
+  });
+
   it("toggles collapsed state", () => {
     const onToggle = vi.fn();
     render(<Navbar onToggle={onToggle} />);

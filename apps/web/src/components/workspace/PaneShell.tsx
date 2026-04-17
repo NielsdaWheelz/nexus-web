@@ -10,7 +10,6 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { Search } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/CommandPalette";
 import SurfaceHeader, { type SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
@@ -224,8 +223,9 @@ export default function PaneShell({
                   className={styles.commandPaletteButton}
                   onClick={() => window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT))}
                   aria-label="Commands"
+                  aria-haspopup="dialog"
                 >
-                  <Search size={18} strokeWidth={2} />
+                  Commands
                 </button>
               </>
             ) : (

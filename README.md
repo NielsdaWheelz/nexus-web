@@ -90,6 +90,7 @@ make test-real
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
 - `docs/sdlc/` -> planning and execution workflow: `docs/sdlc/README.md`
 - `docs/reader-implementation.md` -> current reader behavior contract
+- `docs/mobile-command-palette.md` -> mobile command launcher behavior contract
 
 ## Documentation Rules
 

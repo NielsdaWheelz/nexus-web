@@ -189,7 +189,7 @@ export default function CommandPalette() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [keybindings, recentIds]);
 
-  // External open trigger (mobile Search button)
+  // External open trigger (mobile Commands button)
   useEffect(() => {
     const handler = () => {
       setQuery("");
@@ -465,7 +465,7 @@ export default function CommandPalette() {
       ref={inputRef}
       type="text"
       className={styles.input}
-      placeholder="Type a command..."
+      placeholder="Search or run a command..."
       value={query}
       onChange={(e) => setQuery(e.target.value)}
       aria-label="Filter commands"
