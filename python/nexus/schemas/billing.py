@@ -37,6 +37,7 @@ class BillingUsageBucketOut(BaseModel):
 
 
 class BillingAccountOut(BaseModel):
+    billing_enabled: bool
     plan_tier: BillingPlanTier
     subscription_status: str
     current_period_start: datetime | None

@@ -10,17 +10,21 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.config import clear_settings_cache
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.services import billing as billing_service
+from tests.helpers import auth_headers
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture(autouse=True)
 def billing_env(monkeypatch):
+    monkeypatch.setenv("BILLING_ENABLED", "true")
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_billing")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_billing")
     monkeypatch.setenv("STRIPE_PLUS_PRICE_ID", "price_plus")
@@ -39,6 +43,14 @@ def _stripe_signature(payload: bytes, secret: str, timestamp: int | None = None)
 
 
 class TestBillingEntitlements:
+    def test_billing_account_reports_billing_enabled(self, db_session: Session):
+        user_id = uuid4()
+        db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+        account = billing_service.get_billing_account(db_session, user_id)
+        assert account.billing_enabled is True
+        assert account.plan_tier == "free"
+
     def test_ai_plus_entitlements_are_active_and_bounded(self, db_session: Session):
         user_id = uuid4()
         db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
@@ -142,6 +154,22 @@ class TestBillingEntitlements:
 
 
 class TestStripeWebhookProcessing:
+    def test_disabled_billing_webhook_is_a_no_op(
+        self,
+        db_session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv("BILLING_ENABLED", "false")
+        clear_settings_cache()
+
+        result = billing_service.process_stripe_webhook(
+            db_session,
+            raw_body=b"{}",
+            signature=None,
+        )
+
+        assert result == {"processed": False}
+
     def test_duplicate_event_is_idempotent(self, db_session: Session):
         user_id = uuid4()
         db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
@@ -192,6 +220,24 @@ class TestStripeWebhookProcessing:
 
 
 class TestCheckoutSessions:
+    def test_checkout_fails_when_billing_disabled(
+        self,
+        db_session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv("BILLING_ENABLED", "false")
+        clear_settings_cache()
+
+        with pytest.raises(ApiError) as exc_info:
+            billing_service.create_checkout_session(
+                db_session,
+                uuid4(),
+                email="billing@example.com",
+                plan_tier="plus",
+            )
+
+        assert exc_info.value.code == ApiErrorCode.E_BILLING_DISABLED
+
     def test_active_subscription_checkout_uses_billing_portal(
         self,
         db_session: Session,
@@ -273,3 +319,79 @@ class TestCheckoutSessions:
                 "return_url": "http://localhost:3000/settings/billing",
             }
         ]
+
+    def test_customer_portal_fails_when_billing_disabled(
+        self,
+        db_session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv("BILLING_ENABLED", "false")
+        clear_settings_cache()
+
+        with pytest.raises(ApiError) as exc_info:
+            billing_service.create_customer_portal_session(db_session, uuid4())
+
+        assert exc_info.value.code == ApiErrorCode.E_BILLING_DISABLED
+
+
+class TestBillingRoutes:
+    def test_account_route_includes_billing_enabled(
+        self,
+        authenticated_client: TestClient,
+    ):
+        response = authenticated_client.get("/billing/account", headers=auth_headers(uuid4()))
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["billing_enabled"] is True
+        assert data["plan_tier"] == "free"
+
+    def test_disabled_checkout_route_returns_503(
+        self,
+        authenticated_client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv("BILLING_ENABLED", "false")
+        clear_settings_cache()
+
+        response = authenticated_client.post(
+            "/billing/checkout",
+            json={"plan_tier": "plus"},
+            headers=auth_headers(uuid4()),
+        )
+
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "E_BILLING_DISABLED"
+
+    def test_disabled_portal_route_returns_503(
+        self,
+        authenticated_client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv("BILLING_ENABLED", "false")
+        clear_settings_cache()
+
+        response = authenticated_client.post(
+            "/billing/portal",
+            headers=auth_headers(uuid4()),
+        )
+
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "E_BILLING_DISABLED"
+
+    def test_disabled_webhook_route_returns_processed_false(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv("BILLING_ENABLED", "false")
+        clear_settings_cache()
+
+        response = client.post(
+            "/billing/stripe/webhook",
+            content=b"{}",
+            headers={"content-type": "application/json"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"] == {"processed": False}

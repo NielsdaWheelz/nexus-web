@@ -96,6 +96,7 @@ class Settings(BaseSettings):
 
     # Billing / Stripe settings
     app_public_url: str = Field(default="http://localhost:3000", alias="APP_PUBLIC_URL")
+    billing_enabled: bool = Field(default=True, alias="BILLING_ENABLED")
     stripe_secret_key: str | None = Field(default=None, alias="STRIPE_SECRET_KEY")
     stripe_webhook_secret: str | None = Field(default=None, alias="STRIPE_WEBHOOK_SECRET")
     stripe_plus_price_id: str | None = Field(default=None, alias="STRIPE_PLUS_PRICE_ID")
@@ -301,7 +302,7 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_SYNC_RUNNING_LEASE_SECONDS must be >= 1.")
         if self.podcast_transcription_timeout_seconds <= 0:
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
-        if self.nexus_env in (Environment.STAGING, Environment.PROD):
+        if self.nexus_env in (Environment.STAGING, Environment.PROD) and self.billing_enabled:
             missing_billing: list[str] = []
             if not self.stripe_secret_key:
                 missing_billing.append("STRIPE_SECRET_KEY")

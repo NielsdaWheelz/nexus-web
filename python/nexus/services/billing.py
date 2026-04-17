@@ -61,6 +61,7 @@ def get_entitlements(db: Session, user_id: UUID) -> BillingEntitlementsOut:
 
 
 def get_billing_account(db: Session, user_id: UUID) -> BillingAccountOut:
+    settings = get_settings()
     account = db.scalar(select(BillingAccount).where(BillingAccount.user_id == user_id))
     entitlements = get_entitlements(db, user_id)
     period_start, period_end = _usage_period(db, entitlements)
@@ -70,6 +71,7 @@ def get_billing_account(db: Session, user_id: UUID) -> BillingAccountOut:
     )
 
     return BillingAccountOut(
+        billing_enabled=settings.billing_enabled,
         plan_tier=entitlements.plan_tier,
         subscription_status=account.subscription_status if account is not None else "free",
         current_period_start=entitlements.current_period_start,
@@ -108,6 +110,8 @@ def get_billing_account(db: Session, user_id: UUID) -> BillingAccountOut:
 
 def create_checkout_session(db: Session, user_id: UUID, email: str | None, plan_tier: str) -> str:
     settings = get_settings()
+    if not settings.billing_enabled:
+        raise ApiError(ApiErrorCode.E_BILLING_DISABLED, "Billing is currently disabled")
     if not settings.stripe_secret_key:
         raise ApiError(ApiErrorCode.E_BILLING_NOT_CONFIGURED, "Stripe is not configured")
 
@@ -162,6 +166,8 @@ def create_checkout_session(db: Session, user_id: UUID, email: str | None, plan_
 
 def create_customer_portal_session(db: Session, user_id: UUID) -> str:
     settings = get_settings()
+    if not settings.billing_enabled:
+        raise ApiError(ApiErrorCode.E_BILLING_DISABLED, "Billing is currently disabled")
     if not settings.stripe_secret_key:
         raise ApiError(ApiErrorCode.E_BILLING_NOT_CONFIGURED, "Stripe is not configured")
 
@@ -179,6 +185,8 @@ def create_customer_portal_session(db: Session, user_id: UUID) -> str:
 
 def process_stripe_webhook(db: Session, raw_body: bytes, signature: str | None) -> dict[str, bool]:
     settings = get_settings()
+    if not settings.billing_enabled:
+        return {"processed": False}
     if not settings.stripe_webhook_secret:
         raise ApiError(ApiErrorCode.E_BILLING_NOT_CONFIGURED, "Stripe webhooks are not configured")
     if not signature:

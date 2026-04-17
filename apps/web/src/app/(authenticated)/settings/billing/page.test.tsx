@@ -5,6 +5,7 @@ import SettingsBillingPaneBody from "./SettingsBillingPaneBody";
 
 const mockBillingState = vi.hoisted(() => ({
   account: {
+    billing_enabled: true,
     plan_tier: "free",
     subscription_status: "none",
     cancel_at_period_end: false,
@@ -49,6 +50,7 @@ describe("SettingsBillingPaneBody", () => {
   beforeEach(() => {
     mockApiFetch.mockReset();
     mockApiFetch.mockResolvedValue({ data: { url: "https://billing.example/checkout" } });
+    mockBillingState.account.billing_enabled = true;
     mockBillingState.account.plan_tier = "free";
     mockBillingState.account.subscription_status = "none";
     mockBillingState.account.cancel_at_period_end = false;
@@ -106,6 +108,24 @@ describe("SettingsBillingPaneBody", () => {
       });
       expect(screen.getByText("Failed to open billing portal")).toBeInTheDocument();
     });
+  });
+
+  it("shows disabled billing copy and hides Stripe actions when billing is disabled", () => {
+    mockBillingState.account.billing_enabled = false;
+    mockBillingState.account.plan_tier = "plus";
+    mockBillingState.account.subscription_status = "active";
+    mockBillingState.account.can_share = true;
+
+    render(<SettingsBillingPaneBody />);
+
+    expect(
+      screen.getByText(
+        "Billing is currently disabled. Plan changes and billing management are unavailable right now."
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Upgrade to / })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Manage billing" })).not.toBeInTheDocument();
+    expect(mockApiFetch).not.toHaveBeenCalled();
   });
 
   it("shows scheduled cancellation instead of renewal copy", () => {

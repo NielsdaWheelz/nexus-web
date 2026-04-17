@@ -15,6 +15,7 @@ export interface BillingUsageSnapshot {
 }
 
 export interface BillingAccount {
+  billing_enabled: boolean;
   plan_tier: BillingPlanTier;
   subscription_status: string;
   cancel_at_period_end: boolean;

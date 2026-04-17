@@ -132,6 +132,7 @@ class TestTranscriptEmbeddingConfiguration:
 class TestBillingConfiguration:
     def test_defaults_include_billing_limits(self):
         settings = _make_settings()
+        assert settings.billing_enabled is True
         assert settings.app_public_url == "http://localhost:3000"
         assert settings.billing_ai_plus_platform_token_limit_monthly == 1_000_000
         assert settings.billing_ai_pro_platform_token_limit_monthly == 3_000_000
@@ -149,3 +150,16 @@ class TestBillingConfiguration:
                 STRIPE_AI_PLUS_PRICE_ID="",
                 STRIPE_AI_PRO_PRICE_ID="",
             )
+
+    def test_staging_allows_missing_stripe_settings_when_billing_disabled(self):
+        settings = _make_settings(
+            NEXUS_ENV="staging",
+            NEXUS_INTERNAL_SECRET="secret",
+            BILLING_ENABLED=False,
+            STRIPE_SECRET_KEY="",
+            STRIPE_WEBHOOK_SECRET="",
+            STRIPE_PLUS_PRICE_ID="",
+            STRIPE_AI_PLUS_PRICE_ID="",
+            STRIPE_AI_PRO_PRICE_ID="",
+        )
+        assert settings.billing_enabled is False

@@ -29,6 +29,9 @@ class ApiErrorCode(str, Enum):
     # Billing entitlement errors (402)
     E_BILLING_REQUIRED = "E_BILLING_REQUIRED"
 
+    # Billing availability errors (503)
+    E_BILLING_DISABLED = "E_BILLING_DISABLED"
+
     # Not found errors (404)
     E_NOT_FOUND = "E_NOT_FOUND"
     E_LIBRARY_NOT_FOUND = "E_LIBRARY_NOT_FOUND"
@@ -146,6 +149,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_OWNER_EXIT_FORBIDDEN: 403,
     ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN: 403,
     ApiErrorCode.E_BILLING_REQUIRED: 402,
+    ApiErrorCode.E_BILLING_DISABLED: 503,
     # Not found errors
     ApiErrorCode.E_NOT_FOUND: 404,
     ApiErrorCode.E_LIBRARY_NOT_FOUND: 404,

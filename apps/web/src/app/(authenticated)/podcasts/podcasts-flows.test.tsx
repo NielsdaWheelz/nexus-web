@@ -19,6 +19,7 @@ vi.mock("@/lib/panes/paneRuntime", () => ({
 vi.mock("@/lib/billing/useBillingAccount", () => ({
   useBillingAccount: () => ({
     account: {
+      billing_enabled: true,
       plan_tier: "ai_plus",
       subscription_status: "active",
       can_share: true,

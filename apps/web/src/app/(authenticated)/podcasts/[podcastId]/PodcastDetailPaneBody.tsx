@@ -437,6 +437,7 @@ export default function PodcastDetailPaneBody() {
   const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
   const [settingsCategoryId, setSettingsCategoryId] = useState<string>("");
   const [categories, setCategories] = useState<PodcastSubscriptionCategory[]>([]);
+  const billingDisabled = billingAccount?.billing_enabled === false;
   const transcriptionAllowed = (billingAccount?.transcription_usage.limit ?? 0) > 0;
 
   useSetPaneTitle(detail?.podcast.title ?? "Podcast");
@@ -1738,8 +1739,9 @@ export default function PodcastDetailPaneBody() {
                       )}
                       {!canRequestTranscript && !transcriptionAllowed && (
                         <span className={styles.transcriptQuotaWarning}>
-                          Transcription is included with {planLabel("ai_plus")} and{" "}
-                          {planLabel("ai_pro")}.
+                          {billingDisabled
+                            ? "Billing is temporarily unavailable, so transcription upgrades are unavailable right now."
+                            : `Transcription is included with ${planLabel("ai_plus")} and ${planLabel("ai_pro")}.`}
                         </span>
                       )}
                       {!canRequestTranscript && transcriptionAllowed && (

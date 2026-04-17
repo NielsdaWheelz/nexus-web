@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
@@ -15,6 +15,8 @@ interface CheckoutResponse {
 }
 
 const PLAN_SEQUENCE: BillingPlanTier[] = ["free", "plus", "ai_plus", "ai_pro"];
+const BILLING_DISABLED_MESSAGE =
+  "Billing is currently disabled. Plan changes and billing management are unavailable right now.";
 
 function planLabel(planTier: BillingPlanTier): string {
   if (planTier === "plus") return "Plus";
@@ -117,19 +119,33 @@ export default function SettingsBillingPaneBody() {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const paidPlan = account?.plan_tier ?? "free";
+  const billingEnabled = account?.billing_enabled ?? false;
   const currentPlanIndex = activePlanIndex(paidPlan);
-  const canManageBilling = paidPlan !== "free";
+  const hasPaidPlan = paidPlan !== "free";
+  const showManageBillingAction = billingEnabled && hasPaidPlan;
 
-  const upgradePlans = useMemo(
-    () =>
-      paidPlan === "free"
-        ? PLAN_SEQUENCE.filter((planTier) => activePlanIndex(planTier) > currentPlanIndex)
-        : [],
-    [currentPlanIndex, paidPlan]
-  );
+  let upgradePlans: BillingPlanTier[] = [];
+  if (billingEnabled && paidPlan === "free") {
+    upgradePlans = PLAN_SEQUENCE.filter(
+      (planTier) => activePlanIndex(planTier) > currentPlanIndex
+    );
+  }
+
+  const showUpgradeActions = upgradePlans.length > 0;
+
+  let actionHint: string | null = null;
+  if (showManageBillingAction) {
+    actionHint = "Change plan, payment method, or cancellation in Stripe billing.";
+  } else if (billingEnabled && paidPlan === "free" && upgradePlans.length === 0) {
+    actionHint = "No subscription is active.";
+  }
 
   const launchCheckout = useCallback(
     async (planTier: BillingPlanTier) => {
+      if (!billingEnabled) {
+        setActionError(BILLING_DISABLED_MESSAGE);
+        return;
+      }
       setCheckoutBusy(planTier);
       setActionError(null);
       try {
@@ -148,10 +164,14 @@ export default function SettingsBillingPaneBody() {
         setCheckoutBusy(null);
       }
     },
-    []
+    [billingEnabled]
   );
 
   const launchBillingPortal = useCallback(async () => {
+    if (!billingEnabled) {
+      setActionError(BILLING_DISABLED_MESSAGE);
+      return;
+    }
     setPortalBusy(true);
     setActionError(null);
     try {
@@ -168,7 +188,7 @@ export default function SettingsBillingPaneBody() {
     } finally {
       setPortalBusy(false);
     }
-  }, []);
+  }, [billingEnabled]);
 
   return (
     <SectionCard
@@ -179,6 +199,9 @@ export default function SettingsBillingPaneBody() {
         {loading && <StateMessage variant="loading">Loading billing account...</StateMessage>}
         {error && <StateMessage variant="error">{error}</StateMessage>}
         {actionError && <StateMessage variant="error">{actionError}</StateMessage>}
+        {!loading && account && !billingEnabled && (
+          <StateMessage variant="info">{BILLING_DISABLED_MESSAGE}</StateMessage>
+        )}
 
         {!loading && account && (
           <>
@@ -245,44 +268,41 @@ export default function SettingsBillingPaneBody() {
               <span>Transcription: {yesNo(account.transcription_usage.limit > 0)}</span>
             </div>
 
-            <div className={styles.actionRow}>
-              {upgradePlans.map((planTier) => (
-                <button
-                  key={planTier}
-                  type="button"
-                  className={styles.upgradeButton}
-                  disabled={checkoutBusy !== null || portalBusy}
-                  onClick={() => {
-                    void launchCheckout(planTier);
-                  }}
-                >
-                  {checkoutBusy === planTier ? `Opening ${planLabel(planTier)}...` : `Upgrade to ${planLabel(planTier)}`}
-                </button>
-              ))}
+            {(showUpgradeActions || showManageBillingAction || actionHint) && (
+              <div className={styles.actionRow}>
+                {showUpgradeActions &&
+                  upgradePlans.map((planTier) => (
+                    <button
+                      key={planTier}
+                      type="button"
+                      className={styles.upgradeButton}
+                      disabled={checkoutBusy !== null || portalBusy}
+                      onClick={() => {
+                        void launchCheckout(planTier);
+                      }}
+                    >
+                      {checkoutBusy === planTier
+                        ? `Opening ${planLabel(planTier)}...`
+                        : `Upgrade to ${planLabel(planTier)}`}
+                    </button>
+                  ))}
 
-              {canManageBilling && (
-                <button
-                  type="button"
-                  className={styles.manageButton}
-                  disabled={checkoutBusy !== null || portalBusy}
-                  onClick={() => {
-                    void launchBillingPortal();
-                  }}
-                >
-                  {portalBusy ? "Opening billing..." : "Manage billing"}
-                </button>
-              )}
+                {showManageBillingAction && (
+                  <button
+                    type="button"
+                    className={styles.manageButton}
+                    disabled={checkoutBusy !== null || portalBusy}
+                    onClick={() => {
+                      void launchBillingPortal();
+                    }}
+                  >
+                    {portalBusy ? "Opening billing..." : "Manage billing"}
+                  </button>
+                )}
 
-              {canManageBilling && (
-                <span className={styles.actionHint}>
-                  Change plan, payment method, or cancellation in Stripe billing.
-                </span>
-              )}
-
-              {paidPlan === "free" && upgradePlans.length === 0 && (
-                <span className={styles.actionHint}>No subscription is active.</span>
-              )}
-            </div>
+                {actionHint && <span className={styles.actionHint}>{actionHint}</span>}
+              </div>
+            )}
           </>
         )}
       </div>
