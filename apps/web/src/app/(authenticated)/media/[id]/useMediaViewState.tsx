@@ -62,9 +62,6 @@ import {
   type NormalizedNavigationTocNode,
 } from "@/lib/media/epubReader";
 import {
-  type TranscriptFragment,
-} from "./TranscriptMediaPane";
-import {
   shouldPollDocumentProcessing,
   shouldPollTranscriptProvisioning,
   useIntervalPoll,
@@ -72,6 +69,7 @@ import {
 import {
   type Media,
   type Fragment,
+  type TranscriptFragment,
   type TranscriptRequestForecast,
   type MeResponse,
   type LibraryMediaSummary,
@@ -98,6 +96,23 @@ import {
   buildManifestFallbackSections,
   resolveSectionAnchorId,
 } from "./mediaHelpers";
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
+
+function buildSelectionSnapshotKey(selection: SelectionState): string {
+  const { left, top, width, height } = selection.rect;
+  return [
+    selection.range.toString().trim(),
+    left.toFixed(1),
+    top.toFixed(1),
+    width.toFixed(1),
+    height.toFixed(1),
+  ].join("::");
+}
 
 // =============================================================================
 // Hook
@@ -200,11 +215,51 @@ export default function useMediaViewState(id: string) {
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
+  const selectionSnapshotRef = useRef<SelectionState | null>(null);
+  const selectionSnapshotKeyRef = useRef<string | null>(null);
+  const selectionVisibleRef = useRef(false);
+  const mobileSelectionTimerRef = useRef<number | null>(null);
 
   const contentRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
   const [highlightsVersion, setHighlightsVersion] = useState(0);
+
+  const clearPendingMobileSelectionPublish = useCallback(() => {
+    if (mobileSelectionTimerRef.current == null) {
+      return;
+    }
+    window.clearTimeout(mobileSelectionTimerRef.current);
+    mobileSelectionTimerRef.current = null;
+  }, []);
+
+  const publishSelection = useCallback((nextSelection: SelectionState | null) => {
+    selectionVisibleRef.current = nextSelection !== null;
+    setSelection(nextSelection);
+  }, []);
+
+  const clearRetainedSelection = useCallback(
+    (removeLiveSelection: boolean) => {
+      clearPendingMobileSelectionPublish();
+      selectionSnapshotRef.current = null;
+      selectionSnapshotKeyRef.current = null;
+      publishSelection(null);
+      if (removeLiveSelection) {
+        window.getSelection()?.removeAllRanges();
+      }
+    },
+    [clearPendingMobileSelectionPublish, publishSelection]
+  );
+
+  useEffect(() => {
+    selectionVisibleRef.current = selection !== null;
+  }, [selection]);
+
+  useEffect(() => {
+    return () => {
+      clearPendingMobileSelectionPublish();
+    };
+  }, [clearPendingMobileSelectionPublish]);
 
   // ---- Derived state ----
   const isEpub = media?.kind === "epub";
@@ -818,7 +873,7 @@ export default function useMediaViewState(id: string) {
     clearFocus();
     setHighlights([]);
     setHighlightsVersion((v) => v + 1);
-    setSelection(null);
+    clearRetainedSelection(false);
 
     const load = async () => {
       try {
@@ -1375,23 +1430,33 @@ export default function useMediaViewState(id: string) {
 
   const handleSelectionChange = useCallback(() => {
     if (isPdf) {
-      setSelection(null);
+      clearRetainedSelection(false);
       return;
     }
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !contentRef.current) {
-      setSelection(null);
+      clearPendingMobileSelectionPublish();
+      if (!isMobileViewport || !selectionVisibleRef.current || focusState.editingBounds) {
+        selectionSnapshotRef.current = null;
+        selectionSnapshotKeyRef.current = null;
+        publishSelection(null);
+      }
       return;
     }
 
     const range = sel.getRangeAt(0);
     if (!contentRef.current.contains(range.commonAncestorContainer)) {
-      setSelection(null);
+      clearPendingMobileSelectionPublish();
+      if (!isMobileViewport || !selectionVisibleRef.current || focusState.editingBounds) {
+        selectionSnapshotRef.current = null;
+        selectionSnapshotKeyRef.current = null;
+        publishSelection(null);
+      }
       return;
     }
 
     if (isMismatchDisabled) {
-      setSelection(null);
+      clearRetainedSelection(false);
       const mismatchKey = activeContent?.fragmentId ?? "__unknown__";
       if (mismatchToastFragmentRef.current !== mismatchKey) {
         mismatchToastFragmentRef.current = mismatchKey;
@@ -1401,8 +1466,55 @@ export default function useMediaViewState(id: string) {
     }
 
     const rect = range.getBoundingClientRect();
-    setSelection({ range: range.cloneRange(), rect });
-  }, [activeContent?.fragmentId, isMismatchDisabled, isPdf, toast]);
+    const lineRects = Array.from(range.getClientRects()).filter(
+      (clientRect) => clientRect.width > 0 && clientRect.height > 0
+    );
+    const nextSelection = {
+      range: range.cloneRange(),
+      rect,
+      lineRects: lineRects.length > 0 ? lineRects : [rect],
+    };
+    const nextSelectionKey = buildSelectionSnapshotKey(nextSelection);
+    const previousSelectionKey = selectionSnapshotKeyRef.current;
+    selectionSnapshotRef.current = nextSelection;
+    selectionSnapshotKeyRef.current = nextSelectionKey;
+
+    if (!isMobileViewport || focusState.editingBounds) {
+      clearPendingMobileSelectionPublish();
+      publishSelection(nextSelection);
+      return;
+    }
+
+    if (
+      previousSelectionKey === nextSelectionKey &&
+      (selectionVisibleRef.current || mobileSelectionTimerRef.current != null)
+    ) {
+      return;
+    }
+
+    clearPendingMobileSelectionPublish();
+    publishSelection(null);
+    mobileSelectionTimerRef.current = window.setTimeout(() => {
+      mobileSelectionTimerRef.current = null;
+      if (
+        selectionSnapshotKeyRef.current !== nextSelectionKey ||
+        selectionSnapshotRef.current == null
+      ) {
+        return;
+      }
+      publishSelection(selectionSnapshotRef.current);
+    }, MOBILE_SELECTION_STABILIZATION_DELAY_MS);
+  }, [
+    activeContent?.fragmentId,
+    clearPendingMobileSelectionPublish,
+    clearRetainedSelection,
+    focusState.editingBounds,
+    isMismatchDisabled,
+    isMobileViewport,
+    isPdf,
+    publishSelection,
+    toast,
+  ]);
 
   useEffect(() => {
     document.addEventListener("selectionchange", handleSelectionChange);
@@ -1417,10 +1529,11 @@ export default function useMediaViewState(id: string) {
 
   const handleCreateHighlight = useCallback(
     async (color: HighlightColor): Promise<string | null> => {
-      if (!selection || !activeContent || !cursorRef.current || isCreating) return null;
+      const activeSelection = selection ?? selectionSnapshotRef.current;
+      if (!activeSelection || !activeContent || !cursorRef.current || isCreating) return null;
 
       const result = selectionToOffsets(
-        selection.range,
+        activeSelection.range,
         cursorRef.current,
         activeContent.canonicalText,
         isMismatchDisabled
@@ -1428,7 +1541,7 @@ export default function useMediaViewState(id: string) {
 
       if (!result.success) {
         toast({ variant: "error", message: result.message });
-        setSelection(null);
+        clearRetainedSelection(false);
         return null;
       }
 
@@ -1440,8 +1553,7 @@ export default function useMediaViewState(id: string) {
 
       if (duplicateId) {
         focusHighlight(duplicateId);
-        setSelection(null);
-        window.getSelection()?.removeAllRanges();
+        clearRetainedSelection(true);
         return duplicateId;
       }
 
@@ -1470,8 +1582,7 @@ export default function useMediaViewState(id: string) {
         setHighlightsVersion((v) => v + 1);
         scheduleMediaHighlightsRefresh();
         focusHighlight(createdHighlight.id);
-        setSelection(null);
-        window.getSelection()?.removeAllRanges();
+        clearRetainedSelection(true);
 
         const newHighlights = await fetchHighlights(activeContent.fragmentId);
         if (requestVersion !== highlightVersionRef.current) {
@@ -1501,8 +1612,7 @@ export default function useMediaViewState(id: string) {
               focusHighlight(existing.id);
             }
 
-            setSelection(null);
-            window.getSelection()?.removeAllRanges();
+            clearRetainedSelection(true);
             return existing?.id ?? null;
           } catch (refreshErr) {
             console.error("Failed to refresh highlights after conflict:", refreshErr);
@@ -1522,6 +1632,7 @@ export default function useMediaViewState(id: string) {
     [
       selection,
       activeContent,
+      clearRetainedSelection,
       isCreating,
       isMismatchDisabled,
       highlights,
@@ -1532,8 +1643,8 @@ export default function useMediaViewState(id: string) {
   );
 
   const handleDismissPopover = useCallback(() => {
-    setSelection(null);
-  }, []);
+    clearRetainedSelection(false);
+  }, [clearRetainedSelection]);
 
   const handleRequestTranscript = useCallback(async () => {
     if (!media || transcriptRequestInFlight) return;
@@ -1597,9 +1708,9 @@ export default function useMediaViewState(id: string) {
       clearFocus();
       setHighlights([]);
       setHighlightsVersion((v) => v + 1);
-      setSelection(null);
+      clearRetainedSelection(false);
     },
-    [clearFocus]
+    [clearFocus, clearRetainedSelection]
   );
 
   // ==========================================================================
@@ -1689,8 +1800,7 @@ export default function useMediaViewState(id: string) {
         }
 
         cancelEditBounds();
-        setSelection(null);
-        window.getSelection()?.removeAllRanges();
+        clearRetainedSelection(true);
       } catch (err) {
         console.error("Failed to update bounds:", err);
         toast({ variant: "error", message: "Failed to update highlight bounds" });
@@ -1706,6 +1816,7 @@ export default function useMediaViewState(id: string) {
     activeContent,
     isMismatchDisabled,
     highlights,
+    clearRetainedSelection,
     focusHighlight,
     cancelEditBounds,
     scheduleMediaHighlightsRefresh,

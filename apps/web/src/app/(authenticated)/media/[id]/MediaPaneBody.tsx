@@ -640,6 +640,7 @@ export default function MediaPaneBody() {
       {!mv.isPdf && mv.selection && !mv.focusState.editingBounds && mv.contentRef.current && (
         <SelectionPopover
           selectionRect={mv.selection.rect}
+          selectionLineRects={mv.selection.lineRects}
           containerRef={mv.contentRef}
           onCreateHighlight={mv.handleCreateHighlight}
           onQuoteToChat={

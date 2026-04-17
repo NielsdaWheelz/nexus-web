@@ -229,6 +229,7 @@ interface PdfReaderProps {
 interface SelectionState {
   range: Range;
   rect: DOMRect;
+  lineRects: DOMRect[];
   pageNumber: number;
 }
 
@@ -280,6 +281,7 @@ const PDF_VIEWER_TEXT_LAYER_MODE_ENABLE = 1;
 const PDF_LINK_TARGET_BLANK = 2;
 const PDF_GEOMETRY_ALIGNMENT_DELTA_THRESHOLD = 0.02;
 const PDF_HIGHLIGHT_SCROLL_TARGET_FRACTION = 0.35;
+const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
   yellow: "rgba(255, 235, 59, 0.35)",
   green: "rgba(76, 175, 80, 0.3)",
@@ -439,13 +441,29 @@ function toSelectionSnapshot(
   pageNumber: number
 ): SelectionState {
   const rect = range.getBoundingClientRect();
+  const lineRects = Array.from(range.getClientRects()).filter(
+    (clientRect) => clientRect.width > 0 && clientRect.height > 0
+  );
   const effectiveRect =
     rect.width > 0 && rect.height > 0 ? rect : textLayerRoot?.getBoundingClientRect() ?? rect;
   return {
     range: range.cloneRange(),
     rect: effectiveRect,
+    lineRects: lineRects.length > 0 ? lineRects : [effectiveRect],
     pageNumber,
   };
+}
+
+function buildSelectionSnapshotKey(selection: SelectionState): string {
+  const { left, top, width, height } = selection.rect;
+  return [
+    String(selection.pageNumber),
+    selection.range.toString().trim(),
+    left.toFixed(1),
+    top.toFixed(1),
+    width.toFixed(1),
+    height.toFixed(1),
+  ].join("::");
 }
 
 function createInitialCreateTelemetry(): CreateTelemetryState {
@@ -657,6 +675,9 @@ export default function PdfReader({
   const onPageHighlightsChangeRef = useRef(onPageHighlightsChange);
   const onHighlightTapRef = useRef(onHighlightTap);
   const hasHighlightTapHandler = Boolean(onHighlightTap);
+  const selectionSnapshotKeyRef = useRef<string | null>(null);
+  const selectionVisibleRef = useRef(false);
+  const mobileSelectionTimerRef = useRef<number | null>(null);
 
   const apiFetchDep = deps?.apiFetch ?? apiFetch;
   const loadPdfJsDep = deps?.loadPdfJs ?? defaultLoadPdfJs;
@@ -837,11 +858,30 @@ export default function PdfReader({
   );
 
   const clearSelection = useCallback(() => {
+    if (mobileSelectionTimerRef.current != null) {
+      window.clearTimeout(mobileSelectionTimerRef.current);
+      mobileSelectionTimerRef.current = null;
+    }
+    selectionSnapshotKeyRef.current = null;
+    selectionVisibleRef.current = false;
     setSelection(null);
     selectionSnapshotRef.current = null;
     setSelectionError(null);
     getSelectionDep()?.removeAllRanges();
   }, [getSelectionDep]);
+
+  useEffect(() => {
+    selectionVisibleRef.current = selection !== null;
+  }, [selection]);
+
+  useEffect(() => {
+    return () => {
+      if (mobileSelectionTimerRef.current != null) {
+        window.clearTimeout(mobileSelectionTimerRef.current);
+        mobileSelectionTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const updateCreateTelemetry = useCallback(
     (updater: (prev: CreateTelemetryState) => CreateTelemetryState) => {
@@ -1267,11 +1307,13 @@ export default function PdfReader({
     if (!selectionContext) {
       return;
     }
-    selectionSnapshotRef.current = toSelectionSnapshot(
+    const snapshot = toSelectionSnapshot(
       range,
       selectionContext.textLayerRoot,
       selectionContext.pageNumber
     );
+    selectionSnapshotRef.current = snapshot;
+    selectionSnapshotKeyRef.current = buildSelectionSnapshotKey(snapshot);
   }, [getSelectionDep, resolveTextLayerRootFromRange]);
 
   const buildSelectionQuads = useCallback(
@@ -1361,33 +1403,75 @@ export default function PdfReader({
 
   const syncSelectionFromWindow = useCallback(() => {
     if (!textLayerUsable) {
+      if (mobileSelectionTimerRef.current != null) {
+        window.clearTimeout(mobileSelectionTimerRef.current);
+        mobileSelectionTimerRef.current = null;
+      }
+      selectionVisibleRef.current = false;
       setSelection(null);
       selectionSnapshotRef.current = null;
+      selectionSnapshotKeyRef.current = null;
       return;
     }
 
     const sel = getSelectionDep();
     if (!sel || sel.rangeCount === 0) {
-      setSelection(null);
+      if (mobileSelectionTimerRef.current != null) {
+        window.clearTimeout(mobileSelectionTimerRef.current);
+        mobileSelectionTimerRef.current = null;
+      }
+      if (!isMobileRef.current || !selectionVisibleRef.current) {
+        selectionSnapshotRef.current = null;
+        selectionSnapshotKeyRef.current = null;
+        selectionVisibleRef.current = false;
+        setSelection(null);
+      }
       return;
     }
     const selectedTextFromSelection = sel.toString().trim();
     if (sel.isCollapsed && selectedTextFromSelection.length === 0) {
-      setSelection(null);
+      if (mobileSelectionTimerRef.current != null) {
+        window.clearTimeout(mobileSelectionTimerRef.current);
+        mobileSelectionTimerRef.current = null;
+      }
+      if (!isMobileRef.current || !selectionVisibleRef.current) {
+        selectionSnapshotRef.current = null;
+        selectionSnapshotKeyRef.current = null;
+        selectionVisibleRef.current = false;
+        setSelection(null);
+      }
       return;
     }
 
     const range = sel.getRangeAt(0);
     const selectionContext = resolveTextLayerRootFromRange(range);
     if (!selectionContext) {
-      setSelection(null);
+      if (mobileSelectionTimerRef.current != null) {
+        window.clearTimeout(mobileSelectionTimerRef.current);
+        mobileSelectionTimerRef.current = null;
+      }
+      if (!isMobileRef.current || !selectionVisibleRef.current) {
+        selectionSnapshotRef.current = null;
+        selectionSnapshotKeyRef.current = null;
+        selectionVisibleRef.current = false;
+        setSelection(null);
+      }
       return;
     }
 
     const selectionText =
       selectedTextFromSelection.length > 0 ? selectedTextFromSelection : range.toString().trim();
     if (selectionText.length === 0) {
-      setSelection(null);
+      if (mobileSelectionTimerRef.current != null) {
+        window.clearTimeout(mobileSelectionTimerRef.current);
+        mobileSelectionTimerRef.current = null;
+      }
+      if (!isMobileRef.current || !selectionVisibleRef.current) {
+        selectionSnapshotRef.current = null;
+        selectionSnapshotKeyRef.current = null;
+        selectionVisibleRef.current = false;
+        setSelection(null);
+      }
       return;
     }
 
@@ -1396,9 +1480,38 @@ export default function PdfReader({
       selectionContext.textLayerRoot,
       selectionContext.pageNumber
     );
+    const nextSelectionKey = buildSelectionSnapshotKey(snapshot);
+    const previousSelectionKey = selectionSnapshotKeyRef.current;
     selectionSnapshotRef.current = snapshot;
-    setSelection(snapshot);
+    selectionSnapshotKeyRef.current = nextSelectionKey;
     setSelectionError(null);
+    if (!isMobileRef.current) {
+      selectionVisibleRef.current = true;
+      setSelection(snapshot);
+      return;
+    }
+    if (
+      previousSelectionKey === nextSelectionKey &&
+      (selectionVisibleRef.current || mobileSelectionTimerRef.current != null)
+    ) {
+      return;
+    }
+    if (mobileSelectionTimerRef.current != null) {
+      window.clearTimeout(mobileSelectionTimerRef.current);
+    }
+    selectionVisibleRef.current = false;
+    setSelection(null);
+    mobileSelectionTimerRef.current = window.setTimeout(() => {
+      mobileSelectionTimerRef.current = null;
+      if (
+        selectionSnapshotKeyRef.current !== nextSelectionKey ||
+        selectionSnapshotRef.current == null
+      ) {
+        return;
+      }
+      selectionVisibleRef.current = true;
+      setSelection(selectionSnapshotRef.current);
+    }, MOBILE_SELECTION_STABILIZATION_DELAY_MS);
   }, [getSelectionDep, resolveTextLayerRootFromRange, textLayerUsable]);
 
   const handleCreateHighlight = useCallback(
@@ -2102,6 +2215,7 @@ export default function PdfReader({
       {selection && viewerContainerRef.current && (
         <SelectionPopover
           selectionRect={selection.rect}
+          selectionLineRects={selection.lineRects}
           containerRef={viewerContainerRef}
           onCreateHighlight={handleCreateHighlight}
           onQuoteToChat={onQuoteToChat ? handleQuoteToChat : undefined}

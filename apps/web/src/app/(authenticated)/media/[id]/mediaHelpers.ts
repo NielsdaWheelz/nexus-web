@@ -89,6 +89,7 @@ export interface LibraryMediaSummary {
 export interface SelectionState {
   range: Range;
   rect: DOMRect;
+  lineRects: DOMRect[];
 }
 
 /** Active content state used by both paths */

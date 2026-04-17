@@ -761,6 +761,170 @@ describe("PdfReader", () => {
     boundingRectSpy.mockRestore();
   });
 
+  it("waits for mobile selection stabilization before showing the selection popover", async () => {
+    const originalInnerWidth = window.innerWidth;
+    vi.stubGlobal("innerWidth", 390);
+    window.dispatchEvent(new Event("resize"));
+
+    const signedUrl = "https://storage.example/signed-mobile-selection-delay";
+    const doc = createFakeDocument(1, {
+      1: createFakePage({ textItems: ["mobile popup selection target"] }),
+    });
+    let selectionForDeps: Selection | null = null;
+    const { deps } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: [] },
+      getSelection: () => selectionForDeps,
+    });
+
+    try {
+      const { stateEvents } = renderPdfReaderWithControls({
+        mediaId: "media-mobile-selection-delay",
+        deps,
+      });
+
+      await expectLatestControlsState(stateEvents, {
+        pageNumber: 1,
+        numPages: 1,
+        canCreateHighlight: true,
+      });
+
+      const textNode = await screen.findByText("mobile popup selection target");
+      const range = document.createRange();
+      range.selectNodeContents(textNode);
+      const syntheticRect = new DOMRect(72, 180, 180, 18);
+      const clientRectsSpy = vi
+        .spyOn(range, "getClientRects")
+        .mockReturnValue([syntheticRect] as unknown as DOMRectList);
+      const boundingRectSpy = vi
+        .spyOn(range, "getBoundingClientRect")
+        .mockReturnValue(syntheticRect);
+      selectionForDeps = {
+        rangeCount: 1,
+        isCollapsed: false,
+        toString: () => "mobile popup selection target",
+        getRangeAt: () => range,
+        removeAllRanges: () => undefined,
+        addRange: () => undefined,
+      } as unknown as Selection;
+
+      try {
+        fireEvent(document, new Event("selectionchange"));
+        expect(
+          screen.queryByRole("dialog", { name: /highlight actions/i })
+        ).not.toBeInTheDocument();
+
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
+        expect(
+          screen.queryByRole("dialog", { name: /highlight actions/i })
+        ).not.toBeInTheDocument();
+
+        await waitFor(() => {
+          expect(
+            screen.getByRole("dialog", { name: /highlight actions/i })
+          ).toBeInTheDocument();
+        });
+      } finally {
+        clientRectsSpy.mockRestore();
+        boundingRectSpy.mockRestore();
+      }
+    } finally {
+      vi.stubGlobal("innerWidth", originalInnerWidth);
+      window.dispatchEvent(new Event("resize"));
+    }
+  });
+
+  it("creates a mobile highlight from the retained snapshot after the live selection collapses", async () => {
+    const originalInnerWidth = window.innerWidth;
+    vi.stubGlobal("innerWidth", 390);
+    window.dispatchEvent(new Event("resize"));
+
+    const signedUrl = "https://storage.example/signed-mobile-selection-retained";
+    const doc = createFakeDocument(1, {
+      1: createFakePage({ textItems: ["retained mobile selection"] }),
+    });
+    let selectionForDeps: Selection | null = null;
+    const { deps, apiFetchMock } = createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: [] },
+      getSelection: () => selectionForDeps,
+    });
+
+    try {
+      const { stateEvents } = renderPdfReaderWithControls({
+        mediaId: "media-mobile-selection-retained",
+        deps,
+      });
+
+      await expectLatestControlsState(stateEvents, {
+        pageNumber: 1,
+        numPages: 1,
+        canCreateHighlight: true,
+      });
+
+      const textNode = await screen.findByText("retained mobile selection");
+      const range = document.createRange();
+      range.selectNodeContents(textNode);
+      const syntheticRect = new DOMRect(84, 210, 170, 20);
+      const clientRectsSpy = vi
+        .spyOn(range, "getClientRects")
+        .mockReturnValue([syntheticRect] as unknown as DOMRectList);
+      const boundingRectSpy = vi
+        .spyOn(range, "getBoundingClientRect")
+        .mockReturnValue(syntheticRect);
+      selectionForDeps = {
+        rangeCount: 1,
+        isCollapsed: false,
+        toString: () => "retained mobile selection",
+        getRangeAt: () => range,
+        removeAllRanges: () => undefined,
+        addRange: () => undefined,
+      } as unknown as Selection;
+
+      try {
+        fireEvent(document, new Event("selectionchange"));
+
+        const popover = await screen.findByRole("dialog", {
+          name: /highlight actions/i,
+        });
+        expect(popover).toBeInTheDocument();
+
+        selectionForDeps = {
+          rangeCount: 0,
+          isCollapsed: true,
+          toString: () => "",
+          getRangeAt: () => range,
+          removeAllRanges: () => undefined,
+          addRange: () => undefined,
+        } as unknown as Selection;
+        fireEvent(document, new Event("selectionchange"));
+
+        expect(
+          screen.getByRole("dialog", { name: /highlight actions/i })
+        ).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: /^Yellow/i }));
+
+        await waitFor(() => {
+          const hasPostCall = apiFetchMock.mock.calls.some(
+            ([path, init]) =>
+              path === "/api/media/media-mobile-selection-retained/pdf-highlights" &&
+              (init as RequestInit | undefined)?.method === "POST"
+          );
+          expect(hasPostCall).toBe(true);
+        });
+      } finally {
+        clientRectsSpy.mockRestore();
+        boundingRectSpy.mockRestore();
+      }
+    } finally {
+      vi.stubGlobal("innerWidth", originalInnerWidth);
+      window.dispatchEvent(new Event("resize"));
+    }
+  });
+
   it("reprojects overlays on zoom and refreshes when active page changes", async () => {
     const signedUrl = "https://storage.example/signed-reproject";
     const doc = createFakeDocument(2, {
