@@ -158,29 +158,40 @@ async function resetEpubReaderState(
   let lastStatus: number | null = null;
   let lastBody = "";
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
-      data: {
-        locator_kind: null,
-        fragment_id: null,
-        offset: null,
-        section_id: null,
-        page: null,
-        zoom: null,
-      },
-    });
-    if (response.ok()) {
-      return;
-    }
+  try {
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
+            data: {
+              locator_kind: null,
+              fragment_id: null,
+              offset: null,
+              section_id: null,
+              page: null,
+              zoom: null,
+            },
+          });
+          if (response.ok()) {
+            return true;
+          }
 
-    lastStatus = response.status();
-    lastBody = await response.text();
-    await page.waitForTimeout(200 * (attempt + 1));
+          lastStatus = response.status();
+          lastBody = await response.text();
+          return false;
+        },
+        {
+          timeout: 4_000,
+          intervals: [100, 200, 400, 800],
+        },
+      )
+      .toBe(true);
+    return;
+  } catch (error) {
+    throw new Error(
+      `Failed to reset EPUB reader state for ${mediaId}. Last status=${lastStatus}, body=${lastBody}, cause=${error instanceof Error ? error.message : String(error)}`
+    );
   }
-
-  throw new Error(
-    `Failed to reset EPUB reader state for ${mediaId}. Last status=${lastStatus}, body=${lastBody}`
-  );
 }
 
 async function selectChapterByLabel(
@@ -300,7 +311,12 @@ test.describe("epub", () => {
       (await anchorLeaf.count()) === 0 ||
       !(await anchorLeaf.first().isVisible().catch(() => false))
     ) {
-      await clickToolbarAction(page, /show toc|expand table of contents/i);
+      const optionsButton = page.getByRole("button", { name: "Options" });
+      await expect(optionsButton).toBeVisible();
+      await optionsButton.click();
+      const showToc = page.getByRole("menuitem", { name: "Show table of contents" });
+      await expect(showToc).toBeVisible();
+      await showToc.click();
     }
 
     await expect(anchorLeaf).toBeVisible();

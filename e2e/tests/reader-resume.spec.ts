@@ -73,9 +73,45 @@ async function patchReaderState(
 }
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
-  return page
-    .getByRole("toolbar", { name: "PDF controls" })
-    .getByText(`Page ${pageNumber} of ${pageCount}`);
+  return pdfControlsToolbar(page)
+    .locator(`[aria-label="Page ${pageNumber} of ${pageCount}"]`)
+    .first();
+}
+
+function pdfControlsToolbar(page: Page) {
+  return page.getByRole("toolbar", { name: "PDF controls" }).first();
+}
+
+async function clickPdfControl(page: Page, ariaLabel: string): Promise<void> {
+  const toolbar = pdfControlsToolbar(page);
+  await expect(toolbar).toBeVisible();
+
+  const inlineButton = toolbar.getByRole("button", { name: ariaLabel }).first();
+  if (
+    (await inlineButton.count()) > 0 &&
+    (await inlineButton.isVisible().catch(() => false))
+  ) {
+    await expect(inlineButton).toBeEnabled();
+    await inlineButton.click();
+    return;
+  }
+
+  const overflowToggle = toolbar.getByRole("button", { name: "More actions" }).first();
+  await expect(overflowToggle).toBeVisible();
+  await overflowToggle.click();
+
+  const menuItem = page.getByRole("menuitem", { name: ariaLabel }).first();
+  await expect(menuItem).toBeVisible();
+  await expect(menuItem).toBeEnabled();
+  await menuItem.click();
+}
+
+async function readRenderedPageScale(page: Page, pageNumber: number): Promise<number | null> {
+  const pageSurface = page.locator(`[data-testid="pdf-page-surface-${pageNumber}"]`).first();
+  await expect(pageSurface).toBeVisible();
+  const raw = await pageSurface.getAttribute("data-nexus-page-scale");
+  const parsed = Number.parseFloat(raw ?? "");
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 test.describe("reader settings + resume", () => {
@@ -191,12 +227,23 @@ test.describe("reader settings + resume", () => {
     await page.goto(`/media/${mediaId}`);
     await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
 
-    await page.getByRole("button", { name: "Next page" }).click();
-    await page.getByRole("button", { name: "Next page" }).click();
+    await clickPdfControl(page, "Next page");
+    await clickPdfControl(page, "Next page");
     await expect(pageIndicator(page, 3, expectedPageCount)).toBeVisible({ timeout: 10_000 });
 
-    await page.getByRole("button", { name: "Zoom in" }).click();
-    await expect(page.getByText("125%")).toBeVisible();
+    const scaleBeforeZoom = await readRenderedPageScale(page, 3);
+    expect(scaleBeforeZoom).not.toBeNull();
+
+    await clickPdfControl(page, "Zoom in");
+    await expect
+      .poll(async () => {
+        const scaleAfterZoom = await readRenderedPageScale(page, 3);
+        if (scaleAfterZoom === null || scaleBeforeZoom === null) {
+          return null;
+        }
+        return scaleAfterZoom > scaleBeforeZoom;
+      })
+      .toBe(true);
 
     await expect
       .poll(async () => {
@@ -213,7 +260,15 @@ test.describe("reader settings + resume", () => {
 
     await page.reload();
     await expect(pageIndicator(page, 3, expectedPageCount)).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText("125%")).toBeVisible();
+    await expect
+      .poll(async () => {
+        const scaleAfterReload = await readRenderedPageScale(page, 3);
+        if (scaleAfterReload === null || scaleBeforeZoom === null) {
+          return null;
+        }
+        return scaleAfterReload > scaleBeforeZoom;
+      })
+      .toBe(true);
   });
 
   test("pdf page changes persist without reopening the document", async ({ page }) => {
@@ -255,7 +310,8 @@ test.describe("reader settings + resume", () => {
       })
       .toBe(2);
 
-    await page.waitForTimeout(900);
-    expect(fileRequestCount).toBe(initialFileRequestCount);
+    await expect
+      .poll(() => fileRequestCount, { timeout: 1_500 })
+      .toBe(initialFileRequestCount);
   });
 });

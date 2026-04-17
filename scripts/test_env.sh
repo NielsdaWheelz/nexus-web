@@ -13,13 +13,64 @@ test_env_require_tool() {
 }
 
 test_env_resolve_ports() {
-    if [ -n "${TEST_POSTGRES_PORT:-}" ]; then
-        POSTGRES_PORT="$TEST_POSTGRES_PORT"
-    else
-        POSTGRES_PORT="$("$TEST_ENV_SCRIPT_DIR/find_port.sh" 5432 postgres)"
+    local preferred_port
+    local port
+    local max_port
+    local lock_root
+    local lock_dir
+    local owner_pid
+
+    if [ -n "${POSTGRES_PORT:-}" ]; then
+        export POSTGRES_PORT
+        return
     fi
 
-    export POSTGRES_PORT
+    test_env_require_tool lsof
+
+    preferred_port=5432
+    if [ -n "${TEST_POSTGRES_PORT:-}" ]; then
+        preferred_port="$TEST_POSTGRES_PORT"
+    fi
+
+    lock_root="${TMPDIR:-/tmp}/nexus-test-port-locks"
+    mkdir -p "$lock_root"
+
+    port="$preferred_port"
+    max_port=$((preferred_port + 100))
+
+    while [ "$port" -le "$max_port" ]; do
+        lock_dir="$lock_root/$port"
+
+        if mkdir "$lock_dir" 2>/dev/null; then
+            printf '%s\n' "$$" > "$lock_dir/pid"
+
+            if ! lsof -i ":$port" >/dev/null 2>&1; then
+                POSTGRES_PORT="$port"
+                TEST_POSTGRES_PORT_LOCK_DIR="$lock_dir"
+                export POSTGRES_PORT TEST_POSTGRES_PORT_LOCK_DIR
+                if [ "$port" -ne "$preferred_port" ]; then
+                    echo "Note: postgres port $preferred_port in use, using $port instead" >&2
+                fi
+                return
+            fi
+
+            rm -rf "$lock_dir"
+        else
+            owner_pid=""
+            if [ -f "$lock_dir/pid" ]; then
+                owner_pid=$(cat "$lock_dir/pid" 2>/dev/null || true)
+            fi
+            if [ -z "$owner_pid" ] || ! kill -0 "$owner_pid" 2>/dev/null; then
+                rm -rf "$lock_dir"
+                continue
+            fi
+        fi
+
+        port=$((port + 1))
+    done
+
+    echo "Error: Could not find available port for postgres starting from $preferred_port" >&2
+    exit 1
 }
 
 test_env_export_db_urls() {

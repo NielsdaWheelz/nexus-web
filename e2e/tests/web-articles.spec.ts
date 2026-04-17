@@ -62,9 +62,6 @@ test.describe("web articles", () => {
     const seed = readSeededNonPdfMedia();
     await page.goto(`/media/${seed.media_id}`);
 
-    const paragraph = page.locator('[class*="fragments"] p').first();
-    await expect(paragraph).toBeVisible({ timeout: 10_000 });
-
     const beforeCount = await page.locator("[data-active-highlight-ids]").count();
 
     const existingResponse = await page.request.get(
@@ -78,18 +75,39 @@ test.describe("web articles", () => {
       existingPayload.data.highlights.map((highlight) => highlight.exact)
     );
 
-    const paragraphText = (await paragraph.innerText()).trim();
-    let selectionLength = Math.min(24, paragraphText.length);
-    for (let len = 12; len <= Math.min(paragraphText.length, 64); len += 4) {
-      const candidate = paragraphText.slice(0, len).trim();
-      if (candidate.length >= 2 && !existingExacts.has(candidate)) {
-        selectionLength = len;
+    const paragraphs = page.locator('[class*="fragments"] p');
+    await expect(paragraphs.first()).toBeVisible({ timeout: 10_000 });
+
+    const paragraphCount = await paragraphs.count();
+    let paragraphIndex = -1;
+    let selectionLength = 0;
+    let selectedExact = "";
+
+    for (let index = 0; index < paragraphCount; index += 1) {
+      const paragraph = paragraphs.nth(index);
+      if ((await paragraph.locator("[data-active-highlight-ids]").count()) > 0) {
+        continue;
+      }
+
+      const paragraphText = (await paragraph.innerText()).trim();
+      for (let len = 12; len <= Math.min(paragraphText.length, 64); len += 4) {
+        const candidate = paragraphText.slice(0, len).trim();
+        if (candidate.length >= 2 && !existingExacts.has(candidate)) {
+          paragraphIndex = index;
+          selectionLength = len;
+          selectedExact = candidate;
+          break;
+        }
+      }
+
+      if (paragraphIndex >= 0) {
         break;
       }
     }
+    expect(paragraphIndex).toBeGreaterThanOrEqual(0);
 
-    const selectionApplied = await page.evaluate((len) => {
-      const paragraphNode = document.querySelector('[class*="fragments"] p');
+    const selectionApplied = await page.evaluate(({ index, len }) => {
+      const paragraphNode = document.querySelectorAll('[class*="fragments"] p')[index];
       if (!(paragraphNode instanceof HTMLParagraphElement)) {
         return false;
       }
@@ -115,23 +133,33 @@ test.describe("web articles", () => {
       selection.addRange(range);
       document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
       return selection.toString().trim().length >= 2;
-    }, selectionLength);
+    }, { index: paragraphIndex, len: selectionLength });
     expect(selectionApplied).toBe(true);
 
     await expect(
       page.getByRole("dialog", { name: /highlight actions/i })
     ).toBeVisible({ timeout: 5_000 });
 
-    const createResponsePromise = page.waitForResponse(
-      (response) =>
-        response.request().method() === "POST" &&
-        response.url().includes(`/api/fragments/${seed.fragment_id}/highlights`),
-      { timeout: 10_000 }
-    );
-
+    await expect(page.getByRole("button", { name: /^Green/ })).toBeEnabled();
     await page.getByRole("button", { name: /^Green/ }).click();
-    const createResponse = await createResponsePromise;
-    expect([201, 409]).toContain(createResponse.status());
+
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.get(
+            `/api/fragments/${seed.fragment_id}/highlights`
+          );
+          expect(response.ok()).toBeTruthy();
+          const payload = (await response.json()) as {
+            data: { highlights: Array<{ exact: string }> };
+          };
+          return payload.data.highlights.some(
+            (highlight) => highlight.exact === selectedExact
+          );
+        },
+        { timeout: 10_000 }
+      )
+      .toBe(true);
 
     await expect(
       page.getByText("Selection start is outside rendered content.")
@@ -141,6 +169,6 @@ test.describe("web articles", () => {
       .poll(async () => page.locator("[data-active-highlight-ids]").count(), {
         timeout: 10_000,
       })
-      .toBeGreaterThanOrEqual(beforeCount);
+      .toBeGreaterThan(beforeCount);
   });
 });

@@ -1,6 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // `make check` owns lint and type verification. `make build` only verifies buildability.
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+
   // Ensure all routes run in Node.js runtime (not Edge)
   experimental: {
     // Enable server actions for form handling

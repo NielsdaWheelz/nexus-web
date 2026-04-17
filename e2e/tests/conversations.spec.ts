@@ -92,51 +92,54 @@ test.describe("conversations", () => {
       const input = page.getByPlaceholder(/ask anything|type a message/i);
       const sendButton = input.locator("xpath=following-sibling::button[1]");
 
-      const startedAt = Date.now();
       let composeState: "pending" | "ready" | "missing_key" = "pending";
-      while (Date.now() - startedAt < 10_000) {
-        if (await missingKeyError.isVisible().catch(() => false)) {
-          composeState = "missing_key";
-          break;
-        }
-        const modelValue = await modelSelect.inputValue().catch(() => "");
-        if (modelValue) {
-          composeState = "ready";
-          break;
-        }
-        await page.waitForTimeout(200);
-      }
-      expect(composeState).not.toBe("pending");
+      await expect
+        .poll(async () => {
+          if (await missingKeyError.isVisible().catch(() => false)) {
+            composeState = "missing_key";
+            return composeState;
+          }
+
+          const modelValue = await modelSelect.inputValue().catch(() => "");
+          if (modelValue) {
+            composeState = "ready";
+            return composeState;
+          }
+
+          composeState = "pending";
+          return composeState;
+        }, { timeout: 10_000 })
+        .not.toBe("pending");
 
       if (composeState === "missing_key") {
         await expect(sendButton).toBeDisabled();
         return;
       }
 
-      // Type and send a message
       await expect(input).toBeVisible();
       await input.fill("Hello, this is a test message");
       await input.press("Enter");
 
       const optimisticUserMessage = page.getByText("Hello, this is a test message").first();
 
-      const messageStartedAt = Date.now();
       let outcome: "pending" | "message" | "missing_key" = "pending";
-      while (Date.now() - messageStartedAt < 10_000) {
-        if (await optimisticUserMessage.isVisible().catch(() => false)) {
-          outcome = "message";
-          break;
-        }
-        if (await missingKeyError.isVisible().catch(() => false)) {
-          outcome = "missing_key";
-          break;
-        }
-        await page.waitForTimeout(200);
-      }
-      expect(outcome).not.toBe("pending");
+      await expect
+        .poll(async () => {
+          if (await optimisticUserMessage.isVisible().catch(() => false)) {
+            outcome = "message";
+            return outcome;
+          }
 
-      // If the key was revoked by parallel API-key tests, assert gating behavior instead
-      // of failing this conversation smoke test.
+          if (await missingKeyError.isVisible().catch(() => false)) {
+            outcome = "missing_key";
+            return outcome;
+          }
+
+          outcome = "pending";
+          return outcome;
+        }, { timeout: 10_000 })
+        .not.toBe("pending");
+
       if (outcome === "missing_key") {
         await expect(sendButton).toBeDisabled();
       } else {

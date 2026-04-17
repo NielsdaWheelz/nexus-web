@@ -6,8 +6,9 @@
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
 	test-migrations test-supabase test-network test-real test-e2e test-e2e-ui \
 	verify verify-full \
-	_ensure-node-ingest _ensure-e2e-deps _test-back-integration _test-migrations \
-	_test-supabase _test-network _test-real
+	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
+	_test-back-integration-raw _test-migrations-raw \
+	_test-supabase-raw _test-network-raw _test-real-raw
 
 -include .env
 -include .dev-ports
@@ -128,7 +129,11 @@ seed:
 		SUPABASE_SERVICE_KEY=$(SUPABASE_SERVICE_KEY) \
 		uv run python ../scripts/seed_dev.py
 
-check: check-back type-back check-front check-workflows
+check:
+	make check-back
+	make type-back
+	make check-front
+	make check-workflows
 
 check-back:
 	cd python && uv run ruff check .
@@ -145,7 +150,9 @@ check-workflows:
 	actionlint .github/workflows/*.yml
 	cd python && uv run zizmor ../.github/workflows
 
-format: format-back fix-front
+format:
+	make format-back
+	make fix-front
 
 format-back:
 	cd python && uv run ruff format .
@@ -163,18 +170,25 @@ audit:
 	cd e2e && bun audit --audit-level=high
 	cd node/ingest && bun audit --audit-level=high
 
-test-unit: test-back-unit test-front-unit
+test-unit:
+	make test-back-unit
+	make test-front-unit
 
-test: test-unit test-back-integration test-migrations test-front-browser
+test:
+	make test-unit
+	./scripts/with_test_services.sh make _test-back-db-ready _test-back-integration-raw _test-migrations-raw
+	make test-front-browser
 
 test-back-unit:
 	cd python && NEXUS_ENV=test uv run pytest -v -n auto -m "unit and not integration"
 
 test-back-integration:
-	./scripts/with_test_services.sh make _test-back-integration
+	./scripts/with_test_services.sh make _test-back-db-ready _test-back-integration-raw
 
-_test-back-integration:
+_test-back-db-ready:
 	make migrate-test
+
+_test-back-integration-raw:
 	make _ensure-node-ingest
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short \
 		-m "integration and not unit and not supabase and not network and not slow" \
@@ -192,32 +206,29 @@ test-front-browser:
 	cd apps/web && bun run test:browser
 
 test-migrations:
-	./scripts/with_test_services.sh make _test-migrations
+	./scripts/with_test_services.sh make _test-migrations-raw
 
-_test-migrations:
+_test-migrations-raw:
 	cd python && DATABASE_URL=$(DATABASE_URL_TEST_MIGRATIONS) NEXUS_ENV=test \
 		uv run pytest -v --tb=short tests/test_migrations.py
 
 test-supabase:
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-supabase
+	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-supabase-raw
 
-_test-supabase:
-	make migrate-test
+_test-supabase-raw:
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m supabase
 
 test-network:
-	./scripts/with_test_services.sh make _test-network
+	./scripts/with_test_services.sh make _test-back-db-ready _test-network-raw
 
-_test-network:
-	make migrate-test
+_test-network-raw:
 	make _ensure-node-ingest
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m network
 
 test-real:
-	./scripts/with_test_services.sh make _test-real
+	./scripts/with_test_services.sh make _test-back-db-ready _test-real-raw
 
-_test-real:
-	make migrate-test
+_test-real-raw:
 	make _ensure-node-ingest
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short \
 		-m "slow and not network and not supabase"
@@ -238,10 +249,15 @@ test-e2e-ui: _ensure-e2e-deps
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install chromium && \
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright test --ui
 
-verify: check build test
+verify:
+	make check
+	make build
+	make test
 	@echo "=== verification passed ==="
 
-verify-full: verify test-e2e
+verify-full:
+	make verify
+	make test-e2e
 	@echo "=== full verification passed ==="
 
 _ensure-node-ingest:

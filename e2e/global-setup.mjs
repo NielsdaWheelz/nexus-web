@@ -18,6 +18,7 @@ const NON_PDF_SEED = path.join(E2E_DIR, ".seed", "non-pdf-media.json");
 const EPUB_SEED = path.join(E2E_DIR, ".seed", "epub-media.json");
 const YOUTUBE_SEED = path.join(E2E_DIR, ".seed", "youtube-media.json");
 const READER_RESUME_SEED = path.join(E2E_DIR, ".seed", "reader-resume-media.json");
+const SEED_FILES = [PDF_SEED, NON_PDF_SEED, EPUB_SEED, YOUTUBE_SEED, READER_RESUME_SEED];
 
 function loadEnvFile(filePath) {
   if (!existsSync(filePath)) {
@@ -63,28 +64,95 @@ function run(label, command, cwd, envOverrides) {
   }
 }
 
+function readJson(filePath) {
+  return JSON.parse(readFileSync(filePath, "utf-8"));
+}
+
+function seedArtifactsExist() {
+  return SEED_FILES.every((filePath) => existsSync(filePath));
+}
+
+function readSeededMediaIds() {
+  const pdf = readJson(PDF_SEED);
+  const nonPdf = readJson(NON_PDF_SEED);
+  const epub = readJson(EPUB_SEED);
+  const youtube = readJson(YOUTUBE_SEED);
+  const readerResume = readJson(READER_RESUME_SEED);
+
+  return Array.from(
+    new Set(
+      [
+        pdf.media_id,
+        pdf.password_media_id,
+        nonPdf.media_id,
+        epub.media_id,
+        youtube.media_id,
+        youtube.playback_only_media_id,
+        readerResume.web_media_id,
+        readerResume.epub_media_id,
+        readerResume.pdf_media_id,
+      ].filter((value) => typeof value === "string" && value.length > 0),
+    ),
+  );
+}
+
+function databaseHasSeededMedia(dbUrl) {
+  if (!seedArtifactsExist()) {
+    return false;
+  }
+
+  const probeDatabaseUrl = dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
+  const mediaIds = readSeededMediaIds();
+  if (mediaIds.length === 0) {
+    return false;
+  }
+
+  const command =
+    "uv run --project python python -c " +
+    JSON.stringify(
+      "import json, os, psycopg;" +
+        "ids=json.loads(os.environ['NEXUS_E2E_MEDIA_IDS']);" +
+        "conn=psycopg.connect(os.environ['DATABASE_URL']);" +
+        "cur=conn.cursor();" +
+        "cur.execute('select count(*) from media where id = any(%s::uuid[])', (ids,));" +
+        "row=cur.fetchone();" +
+        "print(row[0] if row else 0);" +
+        "cur.close();" +
+        "conn.close()",
+    );
+
+  try {
+    const raw = execSync(command, {
+      cwd: ROOT,
+      stdio: ["ignore", "pipe", "inherit"],
+      env: {
+        ...process.env,
+        DATABASE_URL: probeDatabaseUrl,
+        NEXUS_E2E_MEDIA_IDS: JSON.stringify(mediaIds),
+      },
+    })
+      .toString()
+      .trim();
+    const count = Number.parseInt(raw, 10);
+    return Number.isFinite(count) && count === mediaIds.length;
+  } catch (error) {
+    throw new Error(
+      "[global-setup] Seed readiness probe failed.\n" +
+        `  Command: ${command}\n` +
+        `  CWD:     ${ROOT}\n` +
+        `  Cause:   ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 export default function globalSetup() {
   // Mirror Makefile behavior so direct `bun test` runs work too.
   loadEnvFile(path.join(ROOT, ".env"));
   loadEnvFile(path.join(ROOT, ".dev-ports"));
   applyResolvedSupabaseEnv(ROOT, process.env);
 
-  // Always ensure auth bootstrap user exists, even on SKIP_SEED reruns.
+  // Always ensure the auth bootstrap user exists before setup-project login runs.
   run("Seed E2E user", "bunx tsx seed-e2e-user.ts", E2E_DIR);
-
-  // Skip seeding if all artifacts exist and SKIP_SEED is set.
-  // Useful for rapid local re-runs where the DB hasn't changed.
-  if (
-    process.env.SKIP_SEED &&
-    existsSync(PDF_SEED) &&
-    existsSync(NON_PDF_SEED) &&
-    existsSync(EPUB_SEED) &&
-    existsSync(YOUTUBE_SEED) &&
-    existsSync(READER_RESUME_SEED)
-  ) {
-    console.log("[global-setup] SKIP_SEED set and fixture artifacts exist — skipping.");
-    return;
-  }
 
   // Step 1: Ensure schema is up-to-date for feature E2E coverage.
   const dbUrl = process.env.DATABASE_URL;
@@ -103,6 +171,12 @@ export default function globalSetup() {
       NEXUS_ENV: process.env.NEXUS_ENV ?? "test",
     },
   );
+
+  if (databaseHasSeededMedia(dbUrl)) {
+    console.log("[global-setup] Seed data already matches the database — skipping reseed.");
+    return;
+  }
+
   // Step 2: Seed PDF, web, EPUB, and reader-resume fixtures.
   run(
     "Seed E2E data",
@@ -115,33 +189,10 @@ export default function globalSetup() {
   );
 
   // Step 3: Verify all seed artifacts were created.
-  if (!existsSync(PDF_SEED)) {
+  const missingSeedFile = SEED_FILES.find((filePath) => !existsSync(filePath));
+  if (missingSeedFile) {
     throw new Error(
-      `[global-setup] Seed script succeeded but ${PDF_SEED} was not created.\n` +
-        "  This indicates a bug in python/scripts/seed_e2e_data.py.",
-    );
-  }
-  if (!existsSync(NON_PDF_SEED)) {
-    throw new Error(
-      `[global-setup] Seed script succeeded but ${NON_PDF_SEED} was not created.\n` +
-        "  This indicates a bug in python/scripts/seed_e2e_data.py.",
-    );
-  }
-  if (!existsSync(EPUB_SEED)) {
-    throw new Error(
-      `[global-setup] Seed script succeeded but ${EPUB_SEED} was not created.\n` +
-        "  This indicates a bug in python/scripts/seed_e2e_data.py.",
-    );
-  }
-  if (!existsSync(YOUTUBE_SEED)) {
-    throw new Error(
-      `[global-setup] Seed script succeeded but ${YOUTUBE_SEED} was not created.\n` +
-        "  This indicates a bug in python/scripts/seed_e2e_data.py.",
-    );
-  }
-  if (!existsSync(READER_RESUME_SEED)) {
-    throw new Error(
-      `[global-setup] Seed script succeeded but ${READER_RESUME_SEED} was not created.\n` +
+      `[global-setup] Seed script succeeded but ${missingSeedFile} was not created.\n` +
         "  This indicates a bug in python/scripts/seed_e2e_data.py.",
     );
   }

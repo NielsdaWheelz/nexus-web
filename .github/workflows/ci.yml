@@ -14,9 +14,9 @@ permissions:
   contents: read
 
 jobs:
-  check-workflows:
+  static-checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -31,10 +31,22 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
         with:
           enable-cache: true
           cache-dependency-glob: python/uv.lock
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-web-${{ hashFiles('apps/web/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-web-
 
       - name: Install actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
@@ -42,32 +54,11 @@ jobs:
       - name: Install Python dependencies
         run: cd python && uv sync --all-extras --locked
 
-      - name: Check workflows
-        run: PATH="$(go env GOPATH)/bin:$PATH" make check-workflows
+      - name: Install frontend dependencies
+        run: cd apps/web && bun ci
 
-  type-back:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
-        with:
-          enable-cache: true
-          cache-dependency-glob: python/uv.lock
-
-      - name: Install Python dependencies
-        run: cd python && uv sync --all-extras --locked
-
-      - name: Type-check backend
-        run: make type-back
+      - name: Run static checks
+        run: PATH="$(go env GOPATH)/bin:$PATH" make check
 
   audit:
     runs-on: ubuntu-latest
@@ -95,33 +86,10 @@ jobs:
       - name: Audit dependencies
         run: make audit
 
-  check-back:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
-        with:
-          enable-cache: true
-          cache-dependency-glob: python/uv.lock
-
-      - name: Install Python dependencies
-        run: cd python && uv sync --all-extras --locked
-
-      - name: Check backend
-        run: make check-back
-
   test-back-unit:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: static-checks
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -143,9 +111,10 @@ jobs:
       - name: Test backend unit
         run: make test-back-unit
 
-  test-back-integration:
+  test-back-db:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
+    needs: static-checks
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -175,63 +144,13 @@ jobs:
       - name: Install node ingest dependencies
         run: cd node/ingest && bun ci
 
-      - name: Test backend integration
-        run: make test-back-integration
+      - name: Test backend DB tiers
+        run: ./scripts/with_test_services.sh make _test-back-db-ready _test-back-integration-raw _test-migrations-raw
 
-  test-migrations:
+  test-front:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
-        with:
-          enable-cache: true
-          cache-dependency-glob: python/uv.lock
-
-      - name: Install Python dependencies
-        run: cd python && uv sync --all-extras --locked
-
-      - name: Test migrations
-        run: make test-migrations
-
-  check-front:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "22"
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-web-${{ hashFiles('apps/web/bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-web-
-
-      - name: Install frontend dependencies
-        run: cd apps/web && bun ci
-
-      - name: Check frontend
-        run: make check-front
-
-  test-front-unit:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+    needs: static-checks
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -256,36 +175,13 @@ jobs:
       - name: Test frontend unit
         run: make test-front-unit
 
-  test-front-browser:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "22"
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-web-${{ hashFiles('apps/web/bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-web-
-
-      - name: Install frontend dependencies
-        run: cd apps/web && bun ci
-
       - name: Test frontend browser
         run: make test-front-browser
 
   build-front:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: static-checks
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -324,17 +220,9 @@ jobs:
       matrix:
         shard: [1, 2]
     needs:
-      - check-workflows
-      - type-back
-      - audit
-      - check-back
       - test-back-unit
-      - test-back-integration
-      - test-migrations
-      - check-front
-      - test-front-unit
-      - test-front-browser
-      - build-front
+      - test-back-db
+      - test-front
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

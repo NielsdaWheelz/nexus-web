@@ -11,14 +11,26 @@ if [ $# -lt 1 ]; then
     exit 1
 fi
 
+if [ "${TEST_RUNTIME_ACTIVE:-}" = "1" ]; then
+    test_env_export_db_urls
+    test_env_export_makeflags
+
+    status=0
+    "$@" || status=$?
+    exit $status
+fi
+
 test_env_resolve_ports
 
 COMPOSE_PROJECT_NAME="nexus-test-$(date +%s)-$$"
-export COMPOSE_PROJECT_NAME POSTGRES_PORT
+export COMPOSE_PROJECT_NAME POSTGRES_PORT TEST_RUNTIME_ACTIVE=1
 
 cleanup() {
     set +e
     docker compose -f "$COMPOSE_FILE" down -v >/dev/null
+    if [ -n "${TEST_POSTGRES_PORT_LOCK_DIR:-}" ]; then
+        rm -rf "$TEST_POSTGRES_PORT_LOCK_DIR"
+    fi
 }
 trap cleanup EXIT
 

@@ -74,151 +74,27 @@ async function waitForNewVisibleHighlightId(
   knownIds: ReadonlySet<string>,
   timeoutMs = 10_000,
 ): Promise<string> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const ids = await listVisibleHighlightIds(page);
-    const created = ids.find((id) => !knownIds.has(id));
-    if (created) {
-      return created;
-    }
-    await page.waitForTimeout(100);
-  }
-  const lastIds = await listVisibleHighlightIds(page);
-  throw new Error(
-    `Timed out waiting for a newly-created highlight. Known ids: ${JSON.stringify(Array.from(knownIds))}; visible ids: ${JSON.stringify(lastIds)}`,
-  );
-}
+  let createdHighlightId: string | null = null;
+  let visibleIds: string[] = [];
 
-async function selectTextLayerSnippet(
-  page: Page,
-  targetPageNumber?: number,
-  spanOffset = 0,
-): Promise<boolean> {
-  const targetedTextLayer =
-    typeof targetPageNumber === "number"
-      ? page
-          .locator(`.pdfViewer .page[data-page-number="${targetPageNumber}"] .textLayer`)
-          .last()
-      : activeTextLayer(page);
-  const selectedTextLayer =
-    (typeof targetPageNumber === "number" && (await targetedTextLayer.count()) > 0)
-      ? targetedTextLayer
-      : activeTextLayer(page);
-  await expect(selectedTextLayer).toBeVisible();
-  const candidateSpans = selectedTextLayer.locator("span").filter({ hasText: /\S/ });
-  const candidateCount = await candidateSpans.count();
-  if (candidateCount === 0) {
-    return false;
-  }
-  const candidateSpan = candidateSpans.nth(Math.min(spanOffset, candidateCount - 1));
-  await expect(candidateSpan).toBeVisible();
+  await expect
+    .poll(
+      async () => {
+        visibleIds = await listVisibleHighlightIds(page);
+        createdHighlightId = visibleIds.find((id) => !knownIds.has(id)) ?? null;
+        return createdHighlightId;
+      },
+      { timeout: timeoutMs },
+    )
+    .not.toBeNull();
 
-  const box = await candidateSpan.boundingBox();
-  if (box && box.width > 8 && box.height > 4) {
-    const y = box.y + box.height / 2;
-    const xStart = box.x + 2;
-    const xEnd = Math.min(box.x + box.width - 2, box.x + 60);
-    await page.mouse.move(xStart, y);
-    await page.mouse.down();
-    await page.mouse.move(xEnd, y);
-    await page.mouse.up();
-  } else {
-    await candidateSpan.dblclick();
+  if (!createdHighlightId) {
+    throw new Error(
+      `Timed out waiting for a newly-created highlight. Known ids: ${JSON.stringify(Array.from(knownIds))}; visible ids: ${JSON.stringify(visibleIds)}`,
+    );
   }
 
-  const selectedByUserGesture = await page.evaluate(() => {
-    const sel = window.getSelection();
-    return Boolean(sel && sel.toString().trim().length > 0);
-  });
-  if (selectedByUserGesture) {
-    await page.evaluate((targetPage) => {
-      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
-      const selection = window.getSelection();
-      const anchorNode = selection?.anchorNode ?? null;
-      const anchorElement =
-        anchorNode?.nodeType === Node.ELEMENT_NODE
-          ? (anchorNode as Element)
-          : anchorNode?.parentElement ?? null;
-      const anchorLayer = anchorElement?.closest(".textLayer");
-      if (anchorLayer instanceof HTMLElement) {
-        anchorLayer.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-        return;
-      }
-      const targetedLayer =
-        typeof targetPage === "number"
-          ? document.querySelector<HTMLElement>(
-              `.pdfViewer .page[data-page-number="${targetPage}"] .textLayer`,
-            )
-          : null;
-      if (targetedLayer) {
-        targetedLayer.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-        return;
-      }
-      const layers = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          '.pdfViewer .page .textLayer, [class*="pageLayer"] [class*="textLayer"]',
-        ),
-      );
-      layers.at(-1)?.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    }, targetPageNumber);
-    return true;
-  }
-
-  return page.evaluate((targetPage) => {
-    const textLayer = (() => {
-      if (typeof targetPage === "number") {
-        const targeted = document.querySelector<HTMLElement>(
-          `.pdfViewer .page[data-page-number="${targetPage}"] .textLayer`,
-        );
-        if (targeted) {
-          return targeted;
-        }
-      }
-      const layers = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          '.pdfViewer .page .textLayer, [class*="pageLayer"] [class*="textLayer"]',
-        ),
-      );
-      return (
-        layers.at(-1) ??
-        document.querySelector<HTMLElement>(
-          '.pdfViewer .page .textLayer, [class*="pageLayer"] [class*="textLayer"]',
-        )
-      );
-    })();
-    if (!textLayer) {
-      return false;
-    }
-
-    const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) {
-      const textNode = walker.currentNode as Text;
-      const raw = textNode.textContent ?? "";
-      const firstNonWhitespace = raw.search(/\S/);
-      if (firstNonWhitespace < 0) {
-        continue;
-      }
-      const trimmedLength = raw.trim().length;
-      if (trimmedLength < 8) {
-        continue;
-      }
-
-      const range = document.createRange();
-      range.setStart(textNode, firstNonWhitespace);
-      range.setEnd(textNode, Math.min(raw.length, firstNonWhitespace + Math.min(24, trimmedLength)));
-      const selection = window.getSelection();
-      if (!selection) {
-        return false;
-      }
-      selection.removeAllRanges();
-      selection.addRange(range);
-      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
-      textLayer.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-      return true;
-    }
-
-    return false;
-  }, targetPageNumber);
+  return createdHighlightId;
 }
 
 function activeTextLayer(page: Page) {
@@ -283,6 +159,31 @@ async function readCreateTelemetry(page: Page): Promise<CreateTelemetrySnapshot>
   });
 }
 
+async function createHighlightFromCurrentSelection(page: Page): Promise<void> {
+  const toolbarButton = pdfControlsToolbar(page)
+    .getByRole("button", { name: "Highlight selection" })
+    .first();
+  const actionsDialog = page.getByRole("dialog", { name: "Highlight actions" }).first();
+  const greenColorButton = actionsDialog.getByRole("button", { name: /^Green/ }).first();
+
+  if (
+    (await greenColorButton.count()) > 0 &&
+    (await greenColorButton.isVisible().catch(() => false)) &&
+    (await greenColorButton.isEnabled().catch(() => false))
+  ) {
+    await greenColorButton.dispatchEvent("click");
+    return;
+  }
+
+  if (
+    (await toolbarButton.count()) > 0 &&
+    (await toolbarButton.isVisible().catch(() => false)) &&
+    (await toolbarButton.isEnabled().catch(() => false))
+  ) {
+    await toolbarButton.click();
+  }
+}
+
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
   return pdfControlsToolbar(page)
     .locator(`[aria-label="Page ${pageNumber} of ${pageCount}"]`)
@@ -317,13 +218,26 @@ async function ensureOnPage(page: Page, targetPage: number, pageCount: number): 
   await expect(anyIndicator).toBeVisible({ timeout: 20_000 });
 
   for (let step = 0; step < pageCount + 2; step += 1) {
-    const current = await readCurrentPageNumber(page, pageCount);
+    let current = await readCurrentPageNumber(page, pageCount);
     if (current === targetPage) {
       return;
     }
     if (current === null) {
-      await page.waitForTimeout(100);
-      continue;
+      await expect
+        .poll(
+          async () => {
+            current = await readCurrentPageNumber(page, pageCount);
+            return current;
+          },
+          { timeout: 1_000 },
+        )
+        .not.toBeNull();
+      if (current === targetPage) {
+        return;
+      }
+      if (current === null) {
+        continue;
+      }
     }
     await clickToolbarButtonByAriaLabel(
       page,
@@ -336,27 +250,40 @@ async function ensureOnPage(page: Page, targetPage: number, pageCount: number): 
 async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
   let lastStatus: number | null = null;
   let lastBody = "";
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
-      data: {
-        locator_kind: "pdf_page",
-        page: 1,
-        zoom: 1,
-        fragment_id: null,
-        offset: null,
-        section_id: null,
-      },
-    });
-    if (response.ok()) {
-      return;
-    }
-    lastStatus = response.status();
-    lastBody = await response.text();
-    await page.waitForTimeout(200 * (attempt + 1));
+
+  try {
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
+            data: {
+              locator_kind: "pdf_page",
+              page: 1,
+              zoom: 1,
+              fragment_id: null,
+              offset: null,
+              section_id: null,
+            },
+          });
+          if (response.ok()) {
+            return true;
+          }
+          lastStatus = response.status();
+          lastBody = await response.text();
+          return false;
+        },
+        {
+          timeout: 4_000,
+          intervals: [100, 200, 400, 800],
+        },
+      )
+      .toBe(true);
+    return;
+  } catch (error) {
+    throw new Error(
+      `Failed to reset PDF reader state for ${mediaId}. Last status=${lastStatus}, body=${lastBody}, cause=${error instanceof Error ? error.message : String(error)}`,
+    );
   }
-  throw new Error(
-    `Failed to reset PDF reader state for ${mediaId}. Last status=${lastStatus}, body=${lastBody}`,
-  );
 }
 
 async function readLayerAlignmentForPage(
@@ -627,6 +554,13 @@ test.describe("pdf reader", () => {
     const expectedPageCount = seeded.page_count;
     const fileEndpointPath = `/api/media/${mediaId}/file`;
     let fileEndpointRequests = 0;
+    const initialFileResponsePromise = page.waitForResponse((response) => {
+      if (response.request().method() !== "GET") {
+        return false;
+      }
+      const url = new URL(response.url());
+      return url.pathname === fileEndpointPath;
+    });
 
     page.on("request", (request) => {
       if (request.method() !== "GET") {
@@ -647,8 +581,18 @@ test.describe("pdf reader", () => {
 
     const requestsBeforeNavigation = fileEndpointRequests;
 
-    // Wait for the short-lived signed URL (8s in playwright config) to expire.
-    await page.waitForTimeout(10_000);
+    const initialFileResponse = await initialFileResponsePromise;
+    expect(initialFileResponse.ok()).toBe(true);
+    const signedUrlPayload = (await initialFileResponse.json()) as {
+      data?: { expires_at?: string };
+    };
+    const expiresAt = Date.parse(signedUrlPayload.data?.expires_at ?? "");
+    expect(Number.isFinite(expiresAt)).toBe(true);
+    const waitForExpiryMs = Math.max(expiresAt - Date.now() + 500, 0);
+    if (waitForExpiryMs > 0) {
+      await page.waitForTimeout(waitForExpiryMs);
+    }
+
     const maxProbePage = Math.min(expectedPageCount, 30);
     for (let targetPage = 2; targetPage <= maxProbePage; targetPage += 1) {
       await page.getByRole("button", { name: /next page/i }).click();
@@ -671,6 +615,7 @@ test.describe("pdf reader", () => {
     const seeded = readSeededPdfMedia();
     const mediaId = seeded.media_id;
     const expectedPageCount = seeded.page_count;
+    const highlightStressPage = Math.min(expectedPageCount, 10);
     const highlightEndpointPath = `/api/media/${mediaId}/pdf-highlights`;
     let highlightPostRequests = 0;
     let highlightPostResponsesOk = 0;
@@ -702,15 +647,33 @@ test.describe("pdf reader", () => {
     await expect(page.getByRole("img", { name: "PDF page" })).toBeVisible();
     await expect(activeTextLayer(page)).toBeVisible();
 
-    for (const [zoomLabel, scaleDirection] of [
-      ["Zoom in", "increase"],
-      ["Zoom out", "decrease"],
+    const targetPageHighlightsPath = `/api/media/${mediaId}/pdf-highlights?page_number=${highlightStressPage}`;
+    await expect
+      .poll(async () => {
+        const existingHighlightsResponse = await page.request.get(targetPageHighlightsPath);
+        if (!existingHighlightsResponse.ok()) {
+          return -1;
+        }
+        const existingHighlights = (await existingHighlightsResponse.json()) as {
+          data: { highlights: Array<{ id: string }> };
+        };
+        for (const highlight of existingHighlights.data.highlights) {
+          await page.request.delete(`/api/highlights/${highlight.id}`).catch(() => undefined);
+        }
+        return existingHighlights.data.highlights.length;
+      })
+      .toBe(0);
+
+    for (const [zoomLabel, scaleDirection, selectionNeedle] of [
+      ["Zoom in", "increase", "E2E PDF signed-url expiry seed"],
+      ["Zoom out", "decrease", "This file is generated by python/scripts/seed_e2e_data.py"],
     ]) {
-      const scaleBefore = await readRenderedPageScale(page, 1);
+      await ensureOnPage(page, highlightStressPage, expectedPageCount);
+      const scaleBefore = await readRenderedPageScale(page, highlightStressPage);
       await clickToolbarButtonByAriaLabel(page, zoomLabel);
       await expect
         .poll(async () => {
-          const scaleAfter = await readRenderedPageScale(page, 1);
+          const scaleAfter = await readRenderedPageScale(page, highlightStressPage);
           if (scaleAfter === null || scaleBefore === null) {
             return null;
           }
@@ -719,10 +682,12 @@ test.describe("pdf reader", () => {
             : scaleAfter < scaleBefore;
         })
         .toBe(true);
-      await page.waitForTimeout(150);
 
-      await ensureOnPage(page, 1, expectedPageCount);
       await expect(activeTextLayer(page)).toBeVisible();
+      const targetTextLayer = page
+        .locator(`.pdfViewer .page[data-page-number="${highlightStressPage}"] .textLayer`)
+        .last();
+      await expect(targetTextLayer).toBeVisible();
       const knownIds = new Set(await listVisibleHighlightIds(page));
       const postRequestsBefore = highlightPostRequests;
       const postResponsesOkBefore = highlightPostResponsesOk;
@@ -730,16 +695,46 @@ test.describe("pdf reader", () => {
       let createdHighlightId: string | null = null;
       const attemptNotes: string[] = [];
       for (let retry = 0; retry < 8; retry += 1) {
-        const selectionReady = await selectTextLayerSnippet(page, 1, retry);
+        await page.keyboard.press("Escape").catch(() => undefined);
+        await page
+          .getByRole("dialog", { name: "Highlight actions" })
+          .first()
+          .waitFor({ state: "hidden", timeout: 1_000 })
+          .catch(() => undefined);
+        const selectionReady = await targetTextLayer.evaluate((textLayer, needle) => {
+          const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
+          while (walker.nextNode()) {
+            const textNode = walker.currentNode as Text;
+            const raw = textNode.textContent ?? "";
+            const matchIndex = raw.indexOf(needle);
+            if (matchIndex < 0) {
+              continue;
+            }
+
+            const selection = window.getSelection();
+            if (!selection) {
+              return false;
+            }
+
+            const range = document.createRange();
+            range.setStart(textNode, matchIndex);
+            range.setEnd(textNode, Math.min(raw.length, matchIndex + needle.length));
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+            textLayer.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+            return selection.toString().trim() === needle;
+          }
+          return false;
+        }, selectionNeedle);
         if (!selectionReady) {
           attemptNotes.push(`retry=${retry}:selection_unavailable`);
           await page.waitForTimeout(120);
           continue;
         }
-        await expect(page.locator('button[aria-label="Highlight selection"]')).toBeEnabled();
         const attemptRequestsBefore = highlightPostRequests;
         const attemptResponsesOkBefore = highlightPostResponsesOk;
-        await clickToolbarButtonByAriaLabel(page, "Highlight selection");
+        await createHighlightFromCurrentSelection(page);
 
         let postIssued = false;
         try {

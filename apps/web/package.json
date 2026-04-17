@@ -9,7 +9,7 @@
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run --project unit",
-    "test:browser": "vitest run --project browser"
+    "test:browser": "vitest run --project browser --project browser-serial"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
