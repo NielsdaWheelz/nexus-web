@@ -19,9 +19,11 @@ import { DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX } from "@/lib/panes/paneRouteRegistr
 import MediaLinkedItemsPaneBody from "./MediaLinkedItemsPaneBody";
 import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
+import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import DocumentViewport from "@/components/workspace/DocumentViewport";
 import { usePaneParam } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { useReaderContext } from "@/lib/reader";
 import TranscriptMediaPane from "./TranscriptMediaPane";
 import EpubContentPane from "./EpubContentPane";
 import { formatResumeTime } from "./mediaHelpers";
@@ -37,6 +39,7 @@ export default function MediaPaneBody() {
 
   const mv = useMediaViewState(id);
   const { toast } = useToast();
+  const { profile: readerProfile, updateTheme } = useReaderContext();
 
   // ==========================================================================
   // Linked-items column state
@@ -71,14 +74,213 @@ export default function MediaPaneBody() {
     [mv.dismissEditPopover, mv.focusHighlight, mv.isMobileViewport, mv.showHighlightsPane]
   );
 
+  const isReflowableReader = mv.canRead && !mv.isPdf;
+  const mediaHeaderMeta = (
+    <div className={styles.metadata}>
+      <span className={styles.kind}>{mv.media?.kind}</span>
+      {mv.media?.canonical_source_url ? (
+        <a
+          href={mv.media.canonical_source_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={styles.sourceLink}
+        >
+          View Source ↗
+        </a>
+      ) : null}
+    </div>
+  );
+
+  const mediaHeaderOptions: ActionMenuOption[] = [];
+
+  if (mv.defaultLibraryId) {
+    mediaHeaderOptions.push({
+      id: mv.mediaInDefaultLibrary ? "remove-from-library" : "add-to-library",
+      label: mv.mediaInDefaultLibrary ? "Remove from library" : "Add to library",
+      disabled: mv.libraryMembershipBusy,
+      onSelect: mv.mediaInDefaultLibrary
+        ? () => {
+            void mv.handleRemoveFromDefaultLibrary();
+          }
+        : () => {
+            void mv.handleAddToDefaultLibrary();
+          },
+    });
+  }
+
+  if (mv.media?.canonical_source_url) {
+    mediaHeaderOptions.push({
+      id: "open-source",
+      label: "Open source",
+      href: mv.media.canonical_source_url,
+    });
+  }
+
+  if (mv.isEpub && mv.canRead && (mv.hasEpubToc || mv.tocWarning)) {
+    mediaHeaderOptions.push({
+      id: "toggle-toc",
+      label: mv.epubTocExpanded ? "Hide table of contents" : "Show table of contents",
+      onSelect: () => mv.setEpubTocExpanded((value) => !value),
+    });
+  }
+
+  if (isReflowableReader) {
+    mediaHeaderOptions.push({
+      id: "theme-light",
+      label:
+        readerProfile.theme === "light" ? "Light theme (current)" : "Light theme",
+      disabled: readerProfile.theme === "light",
+      onSelect: () => updateTheme("light"),
+    });
+    mediaHeaderOptions.push({
+      id: "theme-dark",
+      label: readerProfile.theme === "dark" ? "Dark theme (current)" : "Dark theme",
+      disabled: readerProfile.theme === "dark",
+      onSelect: () => updateTheme("dark"),
+    });
+  }
+
+  const mediaToolbar =
+    mv.isPdf && mv.canRead && mv.pdfControlsState ? (
+      <div className={styles.mediaToolbar} role="toolbar" aria-label="PDF controls">
+        <div className={styles.mediaToolbarRow}>
+          <button
+            type="button"
+            className={styles.mediaToolbarButton}
+            onClick={() => mv.pdfControlsRef.current?.goToPreviousPage()}
+            disabled={!mv.pdfControlsState.canGoPrev}
+            aria-label="Previous page"
+          >
+            Prev
+          </button>
+          <span
+            className={styles.mediaToolbarStatus}
+            aria-label={`Page ${mv.pdfControlsState.pageNumber} of ${
+              mv.pdfControlsState.numPages || 0
+            }`}
+          >
+            {mv.pdfControlsState.pageNumber} / {mv.pdfControlsState.numPages || 0}
+          </span>
+          <button
+            type="button"
+            className={styles.mediaToolbarButton}
+            onClick={() => mv.pdfControlsRef.current?.goToNextPage()}
+            disabled={!mv.pdfControlsState.canGoNext}
+            aria-label="Next page"
+          >
+            Next
+          </button>
+          <button
+            type="button"
+            className={styles.mediaToolbarButton}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              mv.pdfControlsRef.current?.captureSelectionSnapshot();
+            }}
+            onClick={() => mv.pdfControlsRef.current?.createHighlight("yellow")}
+            disabled={!mv.pdfControlsState.canCreateHighlight || mv.pdfControlsState.isCreating}
+            aria-label="Highlight selection"
+            data-create-attempts={mv.pdfControlsState.createTelemetry.attempts}
+            data-create-post-requests={mv.pdfControlsState.createTelemetry.postRequests}
+            data-create-patch-requests={mv.pdfControlsState.createTelemetry.patchRequests}
+            data-create-successes={mv.pdfControlsState.createTelemetry.successes}
+            data-create-errors={mv.pdfControlsState.createTelemetry.errors}
+            data-create-last-outcome={mv.pdfControlsState.createTelemetry.lastOutcome}
+            data-page-render-epoch={mv.pdfControlsState.pageRenderEpoch}
+            data-selection-popover-ignore-outside="true"
+          >
+            Highlight
+          </button>
+          <ActionMenu
+            label="More actions"
+            options={[
+              {
+                id: "zoom-out",
+                label: "Zoom out",
+                disabled: !mv.pdfControlsState.canZoomOut,
+                onSelect: () => mv.pdfControlsRef.current?.zoomOut(),
+              },
+              {
+                id: "zoom-in",
+                label: "Zoom in",
+                disabled: !mv.pdfControlsState.canZoomIn,
+                onSelect: () => mv.pdfControlsRef.current?.zoomIn(),
+              },
+            ]}
+          />
+        </div>
+      </div>
+    ) : mv.isEpub && mv.canRead ? (
+      <div className={styles.mediaToolbar} role="toolbar" aria-label="EPUB controls">
+        <div className={styles.mediaToolbarRow}>
+          <button
+            type="button"
+            className={styles.mediaToolbarButton}
+            onClick={() => {
+              if (mv.prevSection) {
+                mv.navigateToSection(mv.prevSection.section_id);
+              }
+            }}
+            disabled={!mv.prevSection}
+            aria-label="Previous chapter"
+          >
+            Prev
+          </button>
+          {mv.activeSectionPosition >= 0 && mv.epubSections ? (
+            <span
+              className={styles.mediaToolbarStatus}
+              aria-label={`Section ${mv.activeSectionPosition + 1} of ${
+                mv.epubSections.length
+              }`}
+            >
+              {mv.activeSectionPosition + 1} / {mv.epubSections.length}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            className={styles.mediaToolbarButton}
+            onClick={() => {
+              if (mv.nextSection) {
+                mv.navigateToSection(mv.nextSection.section_id);
+              }
+            }}
+            disabled={!mv.nextSection}
+            aria-label="Next chapter"
+          >
+            Next
+          </button>
+        </div>
+        {mv.epubSections ? (
+          <div className={styles.mediaToolbarRow}>
+            <select
+              value={mv.activeSectionId ?? ""}
+              onChange={(event) => {
+                if (event.target.value) {
+                  mv.navigateToSection(event.target.value);
+                }
+              }}
+              className={styles.mediaToolbarSelect}
+              aria-label="Select chapter"
+            >
+              {mv.epubSections.map((section) => (
+                <option key={section.section_id} value={section.section_id}>
+                  {section.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+      </div>
+    ) : null;
+
   // ==========================================================================
   // Chrome override — push toolbar/options/meta/actions into PaneShell
   // ==========================================================================
 
   usePaneChromeOverride({
-    toolbar: mv.mediaToolbar,
-    options: mv.mediaHeaderOptions,
-    meta: mv.mediaHeaderMeta,
+    toolbar: mediaToolbar,
+    options: mediaHeaderOptions,
+    meta: mediaHeaderMeta,
     actions: mv.showHighlightsPane ? (
       mv.isMobileViewport ? (
         <button
@@ -318,7 +520,6 @@ export default function MediaPaneBody() {
               onHighlightsMutated={mv.schedulePdfHighlightsRefresh}
               onHighlightTap={mv.isMobileViewport ? handlePdfHighlightTap : undefined}
               onQuoteToChat={mv.media.capabilities?.can_quote ? mv.handleSendToChat : undefined}
-              showToolbar={false}
               onControlsStateChange={mv.setPdfControlsState}
               onControlsReady={(controls) => {
                 mv.pdfControlsRef.current = controls;

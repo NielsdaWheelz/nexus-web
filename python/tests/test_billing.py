@@ -248,12 +248,14 @@ class TestCheckoutSessions:
         monkeypatch.setattr(
             billing_service.stripe.billing_portal.Session,
             "create",
-            lambda **kwargs: portal_calls.append(kwargs) or {"url": "https://billing.example/portal"},
+            lambda **kwargs: portal_calls.append(kwargs)
+            or {"url": "https://billing.example/portal"},
         )
         monkeypatch.setattr(
             billing_service.stripe.checkout.Session,
             "create",
-            lambda **kwargs: checkout_calls.append(kwargs) or {"url": "https://billing.example/checkout"},
+            lambda **kwargs: checkout_calls.append(kwargs)
+            or {"url": "https://billing.example/checkout"},
         )
 
         url = billing_service.create_checkout_session(

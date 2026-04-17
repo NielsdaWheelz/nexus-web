@@ -31,6 +31,13 @@ vi.mock("@/components/Toast", () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
 
+vi.mock("@/lib/reader", () => ({
+  useReaderContext: () => ({
+    profile: { theme: "light" },
+    updateTheme: vi.fn(),
+  }),
+}));
+
 vi.mock("@/components/ReaderContentArea", () => ({
   default: (
     props: {
@@ -97,9 +104,6 @@ vi.mock("./EpubContentPane", () => ({
 
 function buildViewState(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    mediaToolbar: null,
-    mediaHeaderOptions: [],
-    mediaHeaderMeta: null,
     loading: false,
     error: null,
     media: {
@@ -162,6 +166,11 @@ function buildViewState(overrides: Record<string, unknown> = {}): Record<string,
     readerResumeState: null,
     readerResumeStateLoading: false,
     saveReaderResumeState: vi.fn(),
+    defaultLibraryId: null,
+    mediaInDefaultLibrary: false,
+    libraryMembershipBusy: false,
+    handleAddToDefaultLibrary: vi.fn(),
+    handleRemoveFromDefaultLibrary: vi.fn(),
     pdfRefreshToken: 0,
     handlePdfPageHighlightsChange: vi.fn(),
     pdfNavigationTarget: null,
@@ -169,6 +178,7 @@ function buildViewState(overrides: Record<string, unknown> = {}): Record<string,
     schedulePdfHighlightsRefresh: vi.fn(),
     setPdfControlsState: vi.fn(),
     pdfControlsRef: { current: null },
+    pdfControlsState: null,
     selection: null,
     isCreating: false,
     handleCreateHighlight: vi.fn(),
@@ -186,7 +196,12 @@ function buildViewState(overrides: Record<string, unknown> = {}): Record<string,
     epubToc: null,
     tocWarning: false,
     epubTocExpanded: false,
+    setEpubTocExpanded: vi.fn(),
     navigateToSection: vi.fn(),
+    activeSectionPosition: -1,
+    prevSection: null,
+    nextSection: null,
+    hasEpubToc: false,
     ...overrides,
   };
 }
@@ -197,6 +212,14 @@ function getLatestChromeOverride(): Record<string, unknown> {
     throw new Error("Expected usePaneChromeOverride to be called");
   }
   return latest;
+}
+
+function renderLatestToolbar() {
+  const toolbar = getLatestChromeOverride().toolbar as ReactNode;
+  if (!toolbar) {
+    throw new Error("Expected toolbar override to be present");
+  }
+  return render(<>{toolbar}</>);
 }
 
 type ToggleActionElement = ReactElement<{
@@ -343,6 +366,127 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     expect(dismissEditPopover).toHaveBeenCalledTimes(1);
     expect(focusHighlight).toHaveBeenCalledWith("pdf-highlight-1");
     expect(screen.getByRole("dialog", { name: "Linked items" })).toBeInTheDocument();
+  });
+
+  it("publishes compact PDF controls into pane chrome", () => {
+    const goToPreviousPage = vi.fn();
+    const goToNextPage = vi.fn();
+    const createHighlight = vi.fn();
+    const zoomOut = vi.fn();
+    const zoomIn = vi.fn();
+    currentViewState = buildViewState({
+      isPdf: true,
+      media: {
+        id: "media-1",
+        kind: "pdf",
+        title: "Example PDF",
+        processing_status: "ready_for_reading",
+        canonical_source_url: null,
+        podcast_title: null,
+        podcast_image_url: null,
+        chapters: [],
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        last_error_code: null,
+      },
+      pdfControlsState: {
+        pageNumber: 3,
+        numPages: 12,
+        zoomPercent: 125,
+        canGoPrev: true,
+        canGoNext: true,
+        canZoomIn: true,
+        canZoomOut: true,
+        canCreateHighlight: true,
+        highlightLabel: "Highlight selection",
+        isCreating: false,
+        createTelemetry: {
+          attempts: 0,
+          postRequests: 0,
+          patchRequests: 0,
+          successes: 0,
+          errors: 0,
+          lastOutcome: "idle",
+        },
+        pageRenderEpoch: 1,
+        isBusy: false,
+      },
+      pdfControlsRef: {
+        current: {
+          goToPreviousPage,
+          goToNextPage,
+          createHighlight,
+          captureSelectionSnapshot: vi.fn(),
+          zoomOut,
+          zoomIn,
+        },
+      },
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+    renderLatestToolbar();
+
+    expect(screen.getByRole("toolbar", { name: "PDF controls" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous page" })).toHaveTextContent("Prev");
+    expect(screen.getByRole("button", { name: "Next page" })).toHaveTextContent("Next");
+    expect(screen.getByRole("button", { name: "Highlight selection" })).toHaveTextContent(
+      "Highlight"
+    );
+    expect(screen.getByText("3 / 12")).toHaveAttribute("aria-label", "Page 3 of 12");
+    expect(screen.getByRole("button", { name: "More actions" })).toBeInTheDocument();
+  });
+
+  it("publishes EPUB controls and reader options into pane chrome", () => {
+    currentViewState = buildViewState({
+      isEpub: true,
+      media: {
+        id: "media-1",
+        kind: "epub",
+        title: "Example EPUB",
+        processing_status: "ready_for_reading",
+        canonical_source_url: "https://example.com/book.epub",
+        podcast_title: null,
+        podcast_image_url: null,
+        chapters: [],
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        last_error_code: null,
+      },
+      epubSections: [
+        { section_id: "section-1", label: "Chapter 1" },
+        { section_id: "section-2", label: "Chapter 2" },
+      ],
+      activeSectionId: "section-1",
+      activeSectionPosition: 0,
+      prevSection: null,
+      nextSection: { section_id: "section-2", label: "Chapter 2" },
+      hasEpubToc: true,
+      tocWarning: false,
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+    renderLatestToolbar();
+
+    expect(screen.getByRole("toolbar", { name: "EPUB controls" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous chapter" })).toHaveTextContent("Prev");
+    expect(screen.getByRole("button", { name: "Next chapter" })).toHaveTextContent("Next");
+    expect(screen.getByText("1 / 2")).toHaveAttribute("aria-label", "Section 1 of 2");
+    expect(screen.getByRole("combobox", { name: "Select chapter" })).toBeInTheDocument();
+
+    expect(getLatestChromeOverride().options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "open-source", label: "Open source" }),
+        expect.objectContaining({ id: "toggle-toc" }),
+        expect.objectContaining({ id: "theme-light" }),
+        expect.objectContaining({ id: "theme-dark" }),
+      ])
+    );
   });
 
   it("keeps transcript in the transcript shell while web and epub stay on the ReaderContentArea path", () => {

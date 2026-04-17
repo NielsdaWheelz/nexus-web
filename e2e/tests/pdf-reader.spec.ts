@@ -227,8 +227,15 @@ function activeTextLayer(page: Page) {
     .last();
 }
 
+function pdfControlsToolbar(page: Page) {
+  return page.getByRole("toolbar", { name: "PDF controls" }).first();
+}
+
 async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Promise<void> {
-  const inlineButton = page.getByRole("button", { name: ariaLabel }).first();
+  const toolbar = pdfControlsToolbar(page);
+  await expect(toolbar).toBeVisible();
+
+  const inlineButton = toolbar.getByRole("button", { name: ariaLabel }).first();
   if (
     (await inlineButton.count()) > 0 &&
     (await inlineButton.isVisible().catch(() => false))
@@ -238,7 +245,7 @@ async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Pro
     return;
   }
 
-  const overflowToggle = page.getByRole("button", { name: "More actions" }).first();
+  const overflowToggle = toolbar.getByRole("button", { name: "More actions" }).first();
   if (
     (await overflowToggle.count()) > 0 &&
     (await overflowToggle.isVisible().catch(() => false))
@@ -251,14 +258,13 @@ async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Pro
     return;
   }
 
-  const legacyButton = page.locator(`button[aria-label="${ariaLabel}"]`).first();
-  await expect(legacyButton).toBeVisible();
-  await expect(legacyButton).toBeEnabled();
-  await legacyButton.click();
+  throw new Error(`Missing PDF controls action: ${ariaLabel}`);
 }
 
 async function readCreateTelemetry(page: Page): Promise<CreateTelemetrySnapshot> {
-  const button = page.locator('button[aria-label="Highlight selection"]');
+  const button = pdfControlsToolbar(page)
+    .getByRole("button", { name: "Highlight selection" })
+    .first();
   await expect(button).toBeVisible();
   return button.evaluate((element) => {
     const readNumber = (name: string): number => {
@@ -278,19 +284,25 @@ async function readCreateTelemetry(page: Page): Promise<CreateTelemetrySnapshot>
 }
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
-  return page
-    .getByRole("toolbar", { name: "PDF controls" })
-    .getByText(`Page ${pageNumber} of ${pageCount}`)
+  return pdfControlsToolbar(page)
+    .locator(`[aria-label="Page ${pageNumber} of ${pageCount}"]`)
     .first();
 }
 
+async function readRenderedPageScale(page: Page, pageNumber: number): Promise<number | null> {
+  const pageSurface = page.locator(`[data-testid="pdf-page-surface-${pageNumber}"]`).first();
+  await expect(pageSurface).toBeVisible();
+  const raw = await pageSurface.getAttribute("data-nexus-page-scale");
+  const parsed = Number.parseFloat(raw ?? "");
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 async function readCurrentPageNumber(page: Page, pageCount: number): Promise<number | null> {
-  const indicator = page
-    .getByRole("toolbar", { name: "PDF controls" })
-    .filter({ hasText: new RegExp(`Page\\s+\\d+\\s+of\\s+${pageCount}`) })
+  const indicator = pdfControlsToolbar(page)
+    .locator(`[aria-label^="Page "][aria-label$=" of ${pageCount}"]`)
     .first();
-  const text = (await indicator.textContent())?.trim() ?? "";
-  const match = text.match(/Page\s+(\d+)\s+of\s+\d+/i);
+  const label = (await indicator.getAttribute("aria-label")) ?? "";
+  const match = label.match(/Page\s+(\d+)\s+of\s+\d+/i);
   if (!match) {
     return null;
   }
@@ -299,9 +311,8 @@ async function readCurrentPageNumber(page: Page, pageCount: number): Promise<num
 }
 
 async function ensureOnPage(page: Page, targetPage: number, pageCount: number): Promise<void> {
-  const anyIndicator = page
-    .getByRole("toolbar", { name: "PDF controls" })
-    .filter({ hasText: new RegExp(`Page\\s+\\d+\\s+of\\s+${pageCount}`) })
+  const anyIndicator = pdfControlsToolbar(page)
+    .locator(`[aria-label^="Page "][aria-label$=" of ${pageCount}"]`)
     .first();
   await expect(anyIndicator).toBeVisible({ timeout: 20_000 });
 
@@ -691,12 +702,23 @@ test.describe("pdf reader", () => {
     await expect(page.getByRole("img", { name: "PDF page" })).toBeVisible();
     await expect(activeTextLayer(page)).toBeVisible();
 
-    for (const [zoomLabel, expectedZoom] of [
-      ["Zoom in", "125%"],
-      ["Zoom out", "100%"],
+    for (const [zoomLabel, scaleDirection] of [
+      ["Zoom in", "increase"],
+      ["Zoom out", "decrease"],
     ]) {
+      const scaleBefore = await readRenderedPageScale(page, 1);
       await clickToolbarButtonByAriaLabel(page, zoomLabel);
-      await expect(page.getByText(expectedZoom)).toBeVisible();
+      await expect
+        .poll(async () => {
+          const scaleAfter = await readRenderedPageScale(page, 1);
+          if (scaleAfter === null || scaleBefore === null) {
+            return null;
+          }
+          return scaleDirection === "increase"
+            ? scaleAfter > scaleBefore
+            : scaleAfter < scaleBefore;
+        })
+        .toBe(true);
       await page.waitForTimeout(150);
 
       await ensureOnPage(page, 1, expectedPageCount);

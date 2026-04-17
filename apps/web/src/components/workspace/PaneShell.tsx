@@ -30,6 +30,8 @@ interface PaneChromeOverrides {
   meta?: React.ReactNode;
 }
 
+const EMPTY_PANE_CHROME_OVERRIDES: PaneChromeOverrides = {};
+
 const PaneChromeOverrideContext = createContext<
   ((overrides: PaneChromeOverrides) => void) | null
 >(null);
@@ -42,8 +44,14 @@ const PaneChromeOverrideContext = createContext<
 export function usePaneChromeOverride(overrides: PaneChromeOverrides): void {
   const setOverrides = useContext(PaneChromeOverrideContext);
   useLayoutEffect(() => {
-    setOverrides?.(overrides);
-  });
+    if (!setOverrides) {
+      return;
+    }
+    setOverrides(overrides);
+    return () => {
+      setOverrides(EMPTY_PANE_CHROME_OVERRIDES);
+    };
+  }, [overrides, setOverrides]);
 }
 
 type PaneShellStyle = CSSProperties & {
@@ -96,7 +104,9 @@ export default function PaneShell({
   const lastScrollTopRef = useRef(0);
   const [mobileChromeHidden, setMobileChromeHidden] = useState(false);
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
-  const [chromeOverrides, setChromeOverrides] = useState<PaneChromeOverrides>({});
+  const [chromeOverrides, setChromeOverrides] = useState<PaneChromeOverrides>(
+    EMPTY_PANE_CHROME_OVERRIDES
+  );
 
   const effectiveToolbar = chromeOverrides.toolbar ?? toolbar;
   const effectiveActions = chromeOverrides.actions ?? actions;

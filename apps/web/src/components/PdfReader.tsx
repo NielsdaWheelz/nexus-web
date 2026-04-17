@@ -207,7 +207,6 @@ interface PdfReaderProps {
   mediaId: string;
   deps?: Partial<PdfReaderDeps>;
   contentRef?: MutableRefObject<HTMLDivElement | null>;
-  showToolbar?: boolean;
   onControlsStateChange?: (state: PdfReaderControlsState) => void;
   onControlsReady?: (actions: PdfReaderControlActions | null) => void;
   focusedHighlightId?: string | null;
@@ -593,7 +592,6 @@ export default function PdfReader({
   mediaId,
   deps,
   contentRef,
-  showToolbar = true,
   onControlsStateChange,
   onControlsReady,
   focusedHighlightId = null,
@@ -2056,74 +2054,6 @@ export default function PdfReader({
 
   return (
     <div className={styles.viewer}>
-      {showToolbar && (
-        <div className={styles.toolbar}>
-          <button
-            type="button"
-            className={styles.navButton}
-            onClick={goToPreviousPage}
-            disabled={showBusy || !canGoPrev}
-            aria-label="Previous page"
-          >
-            Previous page
-          </button>
-          <span className={styles.pageIndicator}>
-            Page {pageNumber} of {numPages || 0}
-          </span>
-          <button
-            type="button"
-            className={styles.navButton}
-            onClick={goToNextPage}
-            disabled={showBusy || !canGoNext}
-            aria-label="Next page"
-          >
-            Next page
-          </button>
-          <button
-            type="button"
-            className={styles.navButton}
-            onMouseDown={(event) => {
-              event.preventDefault();
-              captureSelectionSnapshotFromWindow();
-            }}
-            onClick={() => void handleCreateHighlight("yellow")}
-            disabled={showBusy || !canCreateHighlight || isCreating}
-            aria-label="Highlight selection"
-            data-create-attempts={createTelemetry.attempts}
-            data-create-post-requests={createTelemetry.postRequests}
-            data-create-patch-requests={createTelemetry.patchRequests}
-            data-create-successes={createTelemetry.successes}
-            data-create-errors={createTelemetry.errors}
-            data-create-last-outcome={createTelemetry.lastOutcome}
-            data-page-render-epoch={pageRenderEpoch}
-            data-selection-popover-ignore-outside="true"
-          >
-            {usingAreaHighlightFallback ? "Highlight area" : "Highlight selection"}
-          </button>
-          <div className={styles.zoomControls}>
-            <button
-              type="button"
-              className={styles.navButton}
-              onClick={zoomOut}
-              disabled={showBusy || !canZoomOut}
-              aria-label="Zoom out"
-            >
-              Zoom out
-            </button>
-            <span className={styles.zoomLabel}>{zoomPercent}%</span>
-            <button
-              type="button"
-              className={styles.navButton}
-              onClick={zoomIn}
-              disabled={showBusy || !canZoomIn}
-              aria-label="Zoom in"
-            >
-              Zoom in
-            </button>
-          </div>
-        </div>
-      )}
-
       {recovering && <div className={styles.notice}>Refreshing secure file access…</div>}
 
       {error ? (
@@ -2132,6 +2062,9 @@ export default function PdfReader({
         </div>
       ) : (
         <div className={styles.canvasWrap}>
+          <p className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">
+            Page {pageNumber} of {numPages}
+          </p>
           {(loading || navigating) && (
             <div className={styles.loading} role="status">
               Loading PDF…

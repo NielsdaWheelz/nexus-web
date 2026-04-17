@@ -14,9 +14,9 @@ import {
   type PdfReaderControlActions,
   type PdfReaderControlsState,
 } from "@/components/PdfReader";
+import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import { type Highlight } from "@/components/HighlightEditor";
 import { useToast } from "@/components/Toast";
-import { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import {
   applyHighlightsToHtml,
   type HighlightInput,
@@ -69,7 +69,6 @@ import {
   shouldPollTranscriptProvisioning,
   useIntervalPoll,
 } from "./transcriptPolling";
-import ResponsiveToolbar, { type ToolbarItem } from "@/components/ui/ResponsiveToolbar";
 import {
   type Media,
   type Fragment,
@@ -99,7 +98,6 @@ import {
   buildManifestFallbackSections,
   resolveSectionAnchorId,
 } from "./mediaHelpers";
-import styles from "./page.module.css";
 
 // =============================================================================
 // Hook
@@ -119,7 +117,7 @@ export default function useMediaViewState(id: string) {
   })();
   const { toast } = useToast();
   const isMobileViewport = useIsMobileViewport();
-  const { profile: readerProfile, updateTheme } = useReaderContext();
+  const { profile: readerProfile } = useReaderContext();
   const {
     state: readerResumeState,
     loading: readerResumeStateLoading,
@@ -237,8 +235,6 @@ export default function useMediaViewState(id: string) {
     media?.processing_status === "failed" &&
     media?.last_error_code === "E_TRANSCRIPT_UNAVAILABLE" &&
     canPlay;
-  const isReflowableReader = canRead && !isPdf;
-
   const activeTranscriptFragment = useMemo(() => {
     if (!isTranscriptMedia || fragments.length === 0) {
       return null;
@@ -2028,226 +2024,6 @@ export default function useMediaViewState(id: string) {
     [handleDelete, focusHighlight, isPdf]
   );
 
-  const mediaHeaderMeta = (
-    <div className={styles.metadata}>
-      <span className={styles.kind}>{media?.kind}</span>
-      {media?.canonical_source_url && (
-        <a
-          href={media.canonical_source_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={styles.sourceLink}
-        >
-          View Source ↗
-        </a>
-      )}
-    </div>
-  );
-
-  // ---------- PDF toolbar items ----------
-  const pdfToolbarItems: ToolbarItem[] =
-    isPdf && canRead && pdfControlsState
-      ? [
-          {
-            id: "prev-page",
-            label: "Previous page",
-            icon: <span aria-hidden="true">‹</span>,
-            onClick: () => pdfControlsRef.current?.goToPreviousPage(),
-            disabled: !pdfControlsState.canGoPrev,
-            priority: "primary",
-          },
-          {
-            id: "next-page",
-            label: "Next page",
-            icon: <span aria-hidden="true">›</span>,
-            onClick: () => pdfControlsRef.current?.goToNextPage(),
-            disabled: !pdfControlsState.canGoNext,
-            priority: "primary",
-          },
-          {
-            id: "zoom-out",
-            label: "Zoom out",
-            icon: <span aria-hidden="true">−</span>,
-            onClick: () => pdfControlsRef.current?.zoomOut(),
-            disabled: !pdfControlsState.canZoomOut,
-            priority: "secondary",
-          },
-          {
-            id: "zoom-in",
-            label: "Zoom in",
-            icon: <span aria-hidden="true">+</span>,
-            onClick: () => pdfControlsRef.current?.zoomIn(),
-            disabled: !pdfControlsState.canZoomIn,
-            priority: "secondary",
-          },
-        ]
-      : [];
-
-  const pdfToolbarDisplays =
-    isPdf && canRead && pdfControlsState ? (
-      <>
-        <span className={styles.toolbarLabel}>
-          Page {pdfControlsState.pageNumber} of {pdfControlsState.numPages || 0}
-        </span>
-        <button
-          type="button"
-          className={styles.toolbarBtn}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            pdfControlsRef.current?.captureSelectionSnapshot();
-          }}
-          onClick={() => pdfControlsRef.current?.createHighlight("yellow")}
-          disabled={!pdfControlsState.canCreateHighlight || pdfControlsState.isCreating}
-          aria-label="Highlight selection"
-          data-create-attempts={pdfControlsState.createTelemetry.attempts}
-          data-create-post-requests={pdfControlsState.createTelemetry.postRequests}
-          data-create-patch-requests={pdfControlsState.createTelemetry.patchRequests}
-          data-create-successes={pdfControlsState.createTelemetry.successes}
-          data-create-errors={pdfControlsState.createTelemetry.errors}
-          data-create-last-outcome={pdfControlsState.createTelemetry.lastOutcome}
-          data-page-render-epoch={pdfControlsState.pageRenderEpoch}
-          data-selection-popover-ignore-outside="true"
-        >
-          {pdfControlsState.highlightLabel}
-        </button>
-        {!isMobileViewport && (
-          <span className={styles.zoomLabel}>{pdfControlsState.zoomPercent}%</span>
-        )}
-      </>
-    ) : null;
-
-  // ---------- EPUB toolbar items ----------
-  const epubToolbarItems: ToolbarItem[] =
-    isEpub && canRead
-      ? [
-          {
-            id: "prev-chapter",
-            label: "Previous chapter",
-            icon: <span aria-hidden="true">‹</span>,
-            onClick: () => {
-              if (prevSection) navigateToSection(prevSection.section_id);
-            },
-            disabled: !prevSection,
-            priority: "primary",
-          },
-          {
-            id: "next-chapter",
-            label: "Next chapter",
-            icon: <span aria-hidden="true">›</span>,
-            onClick: () => {
-              if (nextSection) navigateToSection(nextSection.section_id);
-            },
-            disabled: !nextSection,
-            priority: "primary",
-          },
-          ...((hasEpubToc || tocWarning)
-            ? [
-                {
-                  id: "toggle-toc",
-                  label: epubTocExpanded ? "Hide TOC" : "Show TOC",
-                  icon: <span aria-hidden="true">☰</span>,
-                  onClick: () => setEpubTocExpanded((value) => !value),
-                  priority: "secondary" as const,
-                },
-              ]
-            : []),
-        ]
-      : [];
-
-  const epubToolbarDisplays =
-    isEpub && canRead ? (
-      <>
-        {activeSectionPosition >= 0 && epubSections && (
-          <span className={styles.toolbarLabel}>
-            {activeSectionPosition + 1} / {epubSections.length}
-          </span>
-        )}
-        {epubSections && (
-          <select
-            value={activeSectionId ?? ""}
-            onChange={(event) => {
-              if (event.target.value) {
-                navigateToSection(event.target.value);
-              }
-            }}
-            className={styles.toolbarSelect}
-            aria-label="Select chapter"
-          >
-            {epubSections.map((section) => (
-              <option key={section.section_id} value={section.section_id}>
-                {section.label}
-              </option>
-            ))}
-          </select>
-        )}
-      </>
-    ) : null;
-
-  // ---------- Combined media toolbar ----------
-  const mediaToolbar =
-    isPdf && canRead && pdfControlsState ? (
-      <ResponsiveToolbar
-        items={pdfToolbarItems}
-        displays={pdfToolbarDisplays}
-        ariaLabel="PDF controls"
-      />
-    ) : isEpub && canRead ? (
-      <ResponsiveToolbar
-        items={epubToolbarItems}
-        displays={epubToolbarDisplays}
-        ariaLabel="EPUB controls"
-      />
-    ) : null;
-
-  const mediaHeaderOptions: ActionMenuOption[] = [];
-
-  if (defaultLibraryId) {
-    mediaHeaderOptions.push({
-      id: mediaInDefaultLibrary ? "remove-from-library" : "add-to-library",
-      label: mediaInDefaultLibrary ? "Remove from library" : "Add to library",
-      disabled: libraryMembershipBusy,
-      onSelect: mediaInDefaultLibrary
-        ? () => {
-            void handleRemoveFromDefaultLibrary();
-          }
-        : () => {
-            void handleAddToDefaultLibrary();
-          },
-    });
-  }
-
-  if (media?.canonical_source_url) {
-    mediaHeaderOptions.push({
-      id: "open-source",
-      label: "Open source",
-      href: media.canonical_source_url,
-    });
-  }
-
-  if (isEpub && (hasEpubToc || tocWarning)) {
-    mediaHeaderOptions.push({
-      id: "toggle-toc",
-      label: epubTocExpanded ? "Hide table of contents" : "Show table of contents",
-      onSelect: () => setEpubTocExpanded((value) => !value),
-    });
-  }
-
-  if (isReflowableReader) {
-    const currentTheme = readerProfile.theme;
-    mediaHeaderOptions.push({
-      id: "theme-light",
-      label: currentTheme === "light" ? "Light theme (current)" : "Light theme",
-      disabled: currentTheme === "light",
-      onSelect: () => updateTheme("light"),
-    });
-    mediaHeaderOptions.push({
-      id: "theme-dark",
-      label: currentTheme === "dark" ? "Dark theme (current)" : "Dark theme",
-      disabled: currentTheme === "dark",
-      onSelect: () => updateTheme("dark"),
-    });
-  }
-
   return {
     // Core data
     media,
@@ -2370,12 +2146,6 @@ export default function useMediaViewState(id: string) {
 
     // Row options
     buildRowOptions,
-
-    // Toolbar & header
-    mediaHeaderMeta,
-    mediaToolbar,
-    mediaHeaderOptions,
-
     // Viewport
     isMobileViewport,
   };

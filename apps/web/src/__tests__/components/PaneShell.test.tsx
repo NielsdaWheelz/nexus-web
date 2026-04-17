@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import PaneShell from "@/components/workspace/PaneShell";
+import PaneShell, { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import DocumentViewport from "@/components/workspace/DocumentViewport";
 
 describe("PaneShell", () => {
@@ -119,4 +119,117 @@ describe("PaneShell", () => {
     expect(viewport).toHaveAttribute("data-pane-content", "true");
     expect(viewport).toHaveStyle({ overflow: "auto" });
   });
+
+  it("clears chrome overrides when an overriding child unmounts", () => {
+    const { rerender } = render(
+      <PaneShell
+        paneId="pane-a"
+        title="Libraries"
+        toolbar={<div>Default toolbar</div>}
+        actions={<button type="button">Default action</button>}
+        widthPx={560}
+        minWidthPx={320}
+        maxWidthPx={1400}
+        bodyMode="standard"
+        onResizePane={() => {}}
+      >
+        <ChromeOverrideProbe shouldOverride />
+      </PaneShell>
+    );
+
+    expect(screen.getByText("Override toolbar")).toBeInTheDocument();
+    expect(screen.getByText("Override action")).toBeInTheDocument();
+    expect(screen.getByText("Override meta")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Options" })).toBeInTheDocument();
+
+    rerender(
+      <PaneShell
+        paneId="pane-a"
+        title="Libraries"
+        toolbar={<div>Default toolbar</div>}
+        actions={<button type="button">Default action</button>}
+        widthPx={560}
+        minWidthPx={320}
+        maxWidthPx={1400}
+        bodyMode="standard"
+        onResizePane={() => {}}
+      >
+        <div>Replacement body</div>
+      </PaneShell>
+    );
+
+    expect(screen.getByText("Default toolbar")).toBeInTheDocument();
+    expect(screen.getByText("Default action")).toBeInTheDocument();
+    expect(screen.queryByText("Override toolbar")).not.toBeInTheDocument();
+    expect(screen.queryByText("Override action")).not.toBeInTheDocument();
+    expect(screen.queryByText("Override meta")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Options" })).not.toBeInTheDocument();
+  });
+
+  it("clears chrome overrides when a mounted child stops overriding", () => {
+    const { rerender } = render(
+      <PaneShell
+        paneId="pane-a"
+        title="Libraries"
+        toolbar={<div>Default toolbar</div>}
+        actions={<button type="button">Default action</button>}
+        widthPx={560}
+        minWidthPx={320}
+        maxWidthPx={1400}
+        bodyMode="standard"
+        onResizePane={() => {}}
+      >
+        <ChromeOverrideProbe shouldOverride />
+      </PaneShell>
+    );
+
+    expect(screen.getByText("Override toolbar")).toBeInTheDocument();
+    expect(screen.getByText("Override action")).toBeInTheDocument();
+    expect(screen.getByText("Override meta")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Options" })).toBeInTheDocument();
+
+    rerender(
+      <PaneShell
+        paneId="pane-a"
+        title="Libraries"
+        toolbar={<div>Default toolbar</div>}
+        actions={<button type="button">Default action</button>}
+        widthPx={560}
+        minWidthPx={320}
+        maxWidthPx={1400}
+        bodyMode="standard"
+        onResizePane={() => {}}
+      >
+        <ChromeOverrideProbe shouldOverride={false} />
+      </PaneShell>
+    );
+
+    expect(screen.getByText("Default toolbar")).toBeInTheDocument();
+    expect(screen.getByText("Default action")).toBeInTheDocument();
+    expect(screen.queryByText("Override toolbar")).not.toBeInTheDocument();
+    expect(screen.queryByText("Override action")).not.toBeInTheDocument();
+    expect(screen.queryByText("Override meta")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Options" })).not.toBeInTheDocument();
+  });
 });
+
+function ChromeOverrideProbe({ shouldOverride }: { shouldOverride: boolean }) {
+  usePaneChromeOverride(
+    shouldOverride
+      ? {
+          toolbar: <div>Override toolbar</div>,
+          actions: <button type="button">Override action</button>,
+          meta: <div>Override meta</div>,
+          options: [
+            {
+              id: "override-option",
+              label: "Override option",
+              onSelect: () => {},
+            },
+          ],
+        }
+      : {}
+  );
+
+  return <div>Override body</div>;
+}

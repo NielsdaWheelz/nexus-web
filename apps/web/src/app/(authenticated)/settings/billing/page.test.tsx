@@ -10,8 +10,8 @@ const mockBillingState = vi.hoisted(() => ({
     cancel_at_period_end: false,
     can_share: false,
     can_use_platform_llm: false,
-    current_period_start: null,
-    current_period_end: null,
+    current_period_start: null as string | null,
+    current_period_end: null as string | null,
     ai_token_usage: {
       used: 1200,
       reserved: 0,

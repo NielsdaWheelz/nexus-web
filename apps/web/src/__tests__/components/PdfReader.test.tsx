@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import PdfReader, { type PdfReaderDeps } from "@/components/PdfReader";
+import PdfReader, {
+  type PdfReaderControlActions,
+  type PdfReaderControlsState,
+  type PdfReaderDeps,
+} from "@/components/PdfReader";
 import "pdfjs-dist/web/pdf_viewer.css";
 
 type HighlightColor = "yellow" | "green" | "blue" | "pink" | "purple";
@@ -436,6 +440,45 @@ function createDeps(options: {
   return { deps, apiFetchMock, getDocumentMock };
 }
 
+function renderPdfReaderWithControls(props: Parameters<typeof PdfReader>[0]) {
+  const stateEvents: PdfReaderControlsState[] = [];
+  const actionsRef: { current: PdfReaderControlActions | null } = { current: null };
+
+  const renderWithControls = (nextProps: Parameters<typeof PdfReader>[0]) => (
+    <PdfReader
+      {...nextProps}
+      onControlsStateChange={(state) => {
+        stateEvents.push(state);
+        nextProps.onControlsStateChange?.(state);
+      }}
+      onControlsReady={(actions) => {
+        actionsRef.current = actions;
+        nextProps.onControlsReady?.(actions);
+      }}
+    />
+  );
+
+  const view = render(renderWithControls(props));
+
+  return {
+    ...view,
+    actionsRef,
+    stateEvents,
+    rerenderWithControls(nextProps: Parameters<typeof PdfReader>[0]) {
+      view.rerender(renderWithControls(nextProps));
+    },
+  };
+}
+
+async function expectLatestControlsState(
+  stateEvents: PdfReaderControlsState[],
+  expected: Partial<PdfReaderControlsState>
+) {
+  await waitFor(() => {
+    expect(stateEvents.at(-1)).toMatchObject(expected);
+  });
+}
+
 describe("PdfReader", () => {
   it("loads via canonical file endpoint and renders canvas viewer without iframe", async () => {
     const url = "https://storage.example/signed-1";
@@ -445,9 +488,16 @@ describe("PdfReader", () => {
       docsByUrl: { [url]: doc },
     });
 
-    render(<PdfReader mediaId="media-1" deps={deps} />);
+    const { stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-1",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 3")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 3,
+      zoomPercent: 100,
+    });
     expect(apiFetchMock).toHaveBeenCalledWith("/api/media/media-1/file");
     expect(getDocumentMock).toHaveBeenCalledWith(
       expect.objectContaining({ url })
@@ -483,12 +533,22 @@ describe("PdfReader", () => {
       },
     });
 
-    render(<PdfReader mediaId="media-2" deps={deps} />);
+    const { actionsRef, stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-2",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 2")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /next page/i }));
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 2,
+    });
+    expect(actionsRef.current).not.toBeNull();
+    actionsRef.current?.goToNextPage();
 
-    expect(await screen.findByText("Page 2 of 2")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 2,
+      numPages: 2,
+    });
     const fileCalls = apiFetchMock.mock.calls.filter(
       ([path]) => path === "/api/media/media-2/file"
     );
@@ -545,9 +605,15 @@ describe("PdfReader", () => {
       highlightsByPage: { 1: pageOneHighlights },
     });
 
-    render(<PdfReader mediaId="media-4" deps={deps} />);
+    const { stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-4",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 2")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 2,
+    });
     await waitFor(() => {
       const pageOneHighlightGets = apiFetchMock.mock.calls.filter(
         ([path, init]) =>
@@ -639,9 +705,16 @@ describe("PdfReader", () => {
       getSelection: () => selectionForDeps,
     });
 
-    render(<PdfReader mediaId="media-5" deps={deps} />);
+    const { actionsRef, stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-5",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 1,
+      canCreateHighlight: true,
+    });
     const textNode = await screen.findByText("lorem ipsum dolor sit amet");
     const range = document.createRange();
     range.selectNodeContents(textNode);
@@ -661,7 +734,8 @@ describe("PdfReader", () => {
       addRange: () => undefined,
     } as unknown as Selection;
 
-    await userEvent.click(await screen.findByRole("button", { name: /yellow/i }));
+    actionsRef.current?.captureSelectionSnapshot();
+    actionsRef.current?.createHighlight("yellow");
 
     await waitFor(() => {
       const hasPostCall = apiFetchMock.mock.calls.some(
@@ -711,13 +785,20 @@ describe("PdfReader", () => {
       },
     });
 
-    render(<PdfReader mediaId="media-6" deps={deps} />);
+    const { actionsRef, stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-6",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 2")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 2,
+      zoomPercent: 100,
+    });
     const page1Overlay = await screen.findByTestId("pdf-highlight-h-page-1-0");
     const widthBeforeZoom = (page1Overlay as HTMLElement).style.width;
 
-    await userEvent.click(screen.getByRole("button", { name: /zoom in/i }));
+    actionsRef.current?.zoomIn();
 
     await waitFor(() => {
       const widthAfterZoom = (
@@ -726,8 +807,11 @@ describe("PdfReader", () => {
       expect(widthAfterZoom).not.toBe(widthBeforeZoom);
     });
 
-    await userEvent.click(screen.getByRole("button", { name: /next page/i }));
-    expect(await screen.findByText("Page 2 of 2")).toBeInTheDocument();
+    actionsRef.current?.goToNextPage();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 2,
+      numPages: 2,
+    });
     await waitFor(() => {
       const pageTwoHighlightGets = apiFetchMock.mock.calls.filter(
         ([path, init]) =>
@@ -764,15 +848,16 @@ describe("PdfReader", () => {
       },
     });
 
-    render(
-      <PdfReader
-        mediaId="media-8"
-        deps={deps}
-        onPageHighlightsChange={onPageHighlightsChange}
-      />
-    );
+    const { actionsRef, stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-8",
+      deps,
+      onPageHighlightsChange,
+    });
 
-    expect(await screen.findByText("Page 1 of 2")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 2,
+    });
     await waitFor(() => {
       const calls = onPageHighlightsChange.mock.calls as Array<
         [number, Array<ReturnType<typeof makePdfHighlight>>]
@@ -786,8 +871,11 @@ describe("PdfReader", () => {
       expect(sawPageOneSnapshot).toBe(true);
     });
 
-    await userEvent.click(screen.getByRole("button", { name: /next page/i }));
-    expect(await screen.findByText("Page 2 of 2")).toBeInTheDocument();
+    actionsRef.current?.goToNextPage();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 2,
+      numPages: 2,
+    });
 
     await waitFor(() => {
       const calls = onPageHighlightsChange.mock.calls as Array<
@@ -837,29 +925,28 @@ describe("PdfReader", () => {
       },
     });
 
-    const { rerender } = render(
-      <PdfReader
-        mediaId="media-stable-callback"
-        deps={deps}
-        onPageHighlightsChange={firstHandler}
-      />
-    );
+    const { rerenderWithControls, stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-stable-callback",
+      deps,
+      onPageHighlightsChange: firstHandler,
+    });
 
-    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 1,
+    });
     await waitFor(() => {
       expect(getDocumentMock).toHaveBeenCalledTimes(1);
     });
 
-    rerender(
-      <PdfReader
-        mediaId="media-stable-callback"
-        deps={deps}
-        onPageHighlightsChange={secondHandler}
-      />
-    );
+    rerenderWithControls({
+      mediaId: "media-stable-callback",
+      deps,
+      onPageHighlightsChange: secondHandler,
+    });
 
     await waitFor(() => {
-      expect(screen.getByText("Page 1 of 1")).toBeInTheDocument();
+      expect(stateEvents.at(-1)).toMatchObject({ pageNumber: 1, numPages: 1 });
       expect(getDocumentMock).toHaveBeenCalledTimes(1);
     });
   });
@@ -877,38 +964,47 @@ describe("PdfReader", () => {
       highlightsByPage: { 1: [], 2: [], 3: [] },
     });
 
-    const { rerender } = render(
-      <PdfReader
-        mediaId="media-seed-contract"
-        deps={deps}
-        startPageNumber={2}
-        startZoom={1.25}
-      />
-    );
+    const { actionsRef, rerenderWithControls, stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-seed-contract",
+      deps,
+      startPageNumber: 2,
+      startZoom: 1.25,
+    });
 
-    expect(await screen.findByText("Page 2 of 3")).toBeInTheDocument();
-    expect(screen.getByText("125%")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 2,
+      numPages: 3,
+      zoomPercent: 125,
+    });
     await waitFor(() => {
       expect(getDocumentMock).toHaveBeenCalledTimes(1);
     });
 
-    await userEvent.click(screen.getByRole("button", { name: /next page/i }));
-    expect(await screen.findByText("Page 3 of 3")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /zoom in/i }));
-    expect(screen.getByText("150%")).toBeInTheDocument();
+    actionsRef.current?.goToNextPage();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 3,
+      numPages: 3,
+    });
+    actionsRef.current?.zoomIn();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 3,
+      numPages: 3,
+      zoomPercent: 150,
+    });
 
-    rerender(
-      <PdfReader
-        mediaId="media-seed-contract"
-        deps={deps}
-        startPageNumber={1}
-        startZoom={1}
-      />
-    );
+    rerenderWithControls({
+      mediaId: "media-seed-contract",
+      deps,
+      startPageNumber: 1,
+      startZoom: 1,
+    });
 
     await waitFor(() => {
-      expect(screen.getByText("Page 3 of 3")).toBeInTheDocument();
-      expect(screen.getByText("150%")).toBeInTheDocument();
+      expect(stateEvents.at(-1)).toMatchObject({
+        pageNumber: 3,
+        numPages: 3,
+        zoomPercent: 150,
+      });
       expect(getDocumentMock).toHaveBeenCalledTimes(1);
     });
   });
@@ -939,30 +1035,33 @@ describe("PdfReader", () => {
       },
     });
 
-    const { rerender } = render(
-      <PdfReader mediaId="media-nav" deps={deps} navigateToHighlight={null} />
-    );
+    const { rerenderWithControls, stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-nav",
+      deps,
+      navigateToHighlight: null,
+    });
 
-    expect(await screen.findByText("Page 1 of 2")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 2,
+    });
     const viewerContainer = screen.getByLabelText("PDF document");
     expect(viewerContainer).toBeInstanceOf(HTMLDivElement);
 
-    rerender(
-      <PdfReader
-        mediaId="media-nav"
-        deps={deps}
-        navigateToHighlight={{
-          highlightId: "h-target",
-          pageNumber: 2,
-          quads: [targetQuad],
-        }}
-      />
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
+    rerenderWithControls({
+      mediaId: "media-nav",
+      deps,
+      navigateToHighlight: {
+        highlightId: "h-target",
+        pageNumber: 2,
+        quads: [targetQuad],
+      },
     });
 
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 2,
+      numPages: 2,
+    });
     await waitFor(() => {
       expect((viewerContainer as HTMLDivElement).scrollTop).toBeGreaterThan(1100);
     });
@@ -980,9 +1079,16 @@ describe("PdfReader", () => {
       highlightsByPage: { 1: [] },
     });
 
-    render(<PdfReader mediaId="media-7" deps={deps} />);
+    const { stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-7",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 1,
+      canCreateHighlight: false,
+    });
     expect(
       await screen.findByText(/text selection is unavailable on this page/i)
     ).toBeInTheDocument();
@@ -1002,9 +1108,15 @@ describe("PdfReader", () => {
       highlightsByPage: { 1: [] },
     });
 
-    render(<PdfReader mediaId="media-9" deps={deps} />);
+    const { stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-9",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 1,
+    });
     const textSpan = await screen.findByText("positioned text layer");
     const computed = getComputedStyle(textSpan);
     expect(computed.position).toBe("absolute");
@@ -1027,8 +1139,14 @@ describe("PdfReader", () => {
         highlightsByPage: { 1: [] },
       });
 
-      render(<PdfReader mediaId="media-12" deps={deps} />);
-      expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+      const { stateEvents } = renderPdfReaderWithControls({
+        mediaId: "media-12",
+        deps,
+      });
+      await expectLatestControlsState(stateEvents, {
+        pageNumber: 1,
+        numPages: 1,
+      });
 
       await waitFor(() => {
         expect(getComputedStyle(screen.getByTestId("pdf-page-surface-1")).boxSizing).toBe(
@@ -1061,14 +1179,21 @@ describe("PdfReader", () => {
       highlightsByPage: { 1: [] },
     });
 
-    render(<PdfReader mediaId="media-13" deps={deps} />);
-    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    const { actionsRef, stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-13",
+      deps,
+    });
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 1,
+      zoomPercent: 100,
+    });
     await waitFor(() => {
       expect(FakePDFViewer.getUpdateCallCount()).toBeGreaterThan(0);
     });
 
     const updateCallsBeforeZoom = FakePDFViewer.getUpdateCallCount();
-    await userEvent.click(screen.getByRole("button", { name: /zoom in/i }));
+    actionsRef.current?.zoomIn();
     await waitFor(() => {
       expect(FakePDFViewer.getUpdateCallCount()).toBeGreaterThan(updateCallsBeforeZoom);
     });
@@ -1152,9 +1277,15 @@ describe("PdfReader", () => {
       highlightsByPage: { 1: [] },
     });
 
-    render(<PdfReader mediaId="media-16" deps={deps} />);
+    const { stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-16",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 1,
+    });
     expect(await screen.findByText("refreshed annotation layer")).toBeInTheDocument();
     await waitFor(() => {
       const fileCalls = apiFetchMock.mock.calls.filter(([path]) => path === "/api/media/media-16/file");
@@ -1184,9 +1315,15 @@ describe("PdfReader", () => {
     });
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      render(<PdfReader mediaId="media-17" deps={deps} />);
+      const { stateEvents } = renderPdfReaderWithControls({
+        mediaId: "media-17",
+        deps,
+      });
 
-      expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+      await expectLatestControlsState(stateEvents, {
+        pageNumber: 1,
+        numPages: 1,
+      });
       await waitFor(() => {
         expect(consoleErrorSpy).toHaveBeenCalledWith(
           "PDF annotation layer render failed:",
@@ -1215,9 +1352,15 @@ describe("PdfReader", () => {
       highlightsByPage: { 1: [] },
     });
 
-    render(<PdfReader mediaId="media-18" deps={deps} />);
+    const { stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-18",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 1,
+    });
     expect(FakePDFViewer.getLastInitOptions()?.enableAutoLinking).toBe(false);
   });
 
@@ -1238,9 +1381,16 @@ describe("PdfReader", () => {
       getSelection: () => selectionForDeps,
     });
 
-    render(<PdfReader mediaId="media-15" deps={deps} />);
+    const { actionsRef, stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-15",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 1,
+      canCreateHighlight: true,
+    });
     const textNode = await screen.findByText("geometry drift sentinel");
     const range = document.createRange();
     range.selectNodeContents(textNode);
@@ -1261,7 +1411,8 @@ describe("PdfReader", () => {
     } as unknown as Selection;
 
     try {
-      await userEvent.click(await screen.findByRole("button", { name: /yellow/i }));
+      actionsRef.current?.captureSelectionSnapshot();
+      actionsRef.current?.createHighlight("yellow");
 
       await waitFor(() => {
         const hasPostCall = apiFetchMock.mock.calls.some(
@@ -1316,9 +1467,15 @@ describe("PdfReader", () => {
       highlightsByPage: { 1: [] },
     });
 
-    render(<PdfReader mediaId="media-10" deps={deps} />);
+    const { stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-10",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 2")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 2,
+    });
     expect(
       screen.getByRole("link", { name: /internal destination: page 2/i })
     ).toBeInTheDocument();
@@ -1340,15 +1497,21 @@ describe("PdfReader", () => {
       highlightsByPage: { 1: [] },
     });
 
-    render(<PdfReader mediaId="media-11" deps={deps} />);
+    const { stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-11",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 3")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 3,
+    });
     await waitFor(() => {
       expect(screen.getAllByTestId(/^pdf-page-surface-/)).toHaveLength(3);
     });
   });
 
-  it("supports external header controls when toolbar is hidden", async () => {
+  it("exposes external header controls through callbacks with no inline toolbar", async () => {
     const signedUrl = "https://storage.example/signed-external-controls";
     const doc = createFakeDocument(2, {
       1: createFakePage({ textItems: ["external controls page one"] }),
@@ -1383,7 +1546,6 @@ describe("PdfReader", () => {
       <PdfReader
         mediaId="media-12"
         deps={deps}
-        showToolbar={false}
         onControlsStateChange={(state) => stateEvents.push(state)}
         onControlsReady={(next) => {
           actionsRef.current = next;
@@ -1437,9 +1599,15 @@ describe("PdfReader", () => {
       docsByUrl: { [url]: doc },
     });
 
-    render(<PdfReader mediaId="media-mobile-fit" deps={deps} />);
+    const { stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-mobile-fit",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 1,
+    });
     const scaleHistory = FakePDFViewer.getScaleHistory();
     expect(
       scaleHistory.some((v) => v === "page-width"),
@@ -1458,9 +1626,15 @@ describe("PdfReader", () => {
       docsByUrl: { [url]: doc },
     });
 
-    render(<PdfReader mediaId="media-minw" deps={deps} />);
+    const { stateEvents } = renderPdfReaderWithControls({
+      mediaId: "media-minw",
+      deps,
+    });
 
-    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    await expectLatestControlsState(stateEvents, {
+      pageNumber: 1,
+      numPages: 1,
+    });
     expect(screen.getByRole("img", { name: "PDF page" })).toBeInTheDocument();
     const viewport = screen.getByTestId("pdf-viewport");
     const computedMinWidth = getComputedStyle(viewport).minWidth;

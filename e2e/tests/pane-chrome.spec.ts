@@ -43,6 +43,28 @@ async function readHeaderTopPosition(page: Page): Promise<number> {
   return header.evaluate((element) => Math.round(element.getBoundingClientRect().top));
 }
 
+async function expectToolbarToFitPaneChrome(
+  page: Page,
+  toolbarLabel: "PDF controls" | "EPUB controls",
+): Promise<void> {
+  const toolbar = page.getByRole("toolbar", { name: toolbarLabel });
+  await expect(toolbar).toBeVisible();
+  const fits = await toolbar.evaluate((element) => {
+    const chrome = element.closest<HTMLElement>('[data-testid="pane-shell-chrome"]');
+    if (!chrome) {
+      return false;
+    }
+    const toolbarRect = element.getBoundingClientRect();
+    const chromeRect = chrome.getBoundingClientRect();
+    return (
+      element.scrollWidth <= chrome.clientWidth + 1 &&
+      toolbarRect.left >= chromeRect.left - 1 &&
+      toolbarRect.right <= chromeRect.right + 1
+    );
+  });
+  expect(fits).toBe(true);
+}
+
 test.describe("pane chrome", () => {
   test("pane header stays visible after content scroll in media and library detail panes", async ({
     page,
@@ -75,7 +97,9 @@ test.describe("pane chrome", () => {
     await page.goto(`/media/${pdfSeed.media_id}`);
     await expect(page.getByRole("button", { name: "Previous page" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Next page" })).toBeVisible();
-    await expect(page.getByText(/^Page \d+ of \d+$/)).toBeVisible();
+    await expect(
+      page.locator('[aria-label^="Page "][aria-label*=" of "]').first()
+    ).toBeVisible();
 
     await page.goto(`/media/${epubSeed.media_id}`);
     await expect(page.getByRole("button", { name: "Previous chapter" })).toBeVisible();
@@ -88,5 +112,32 @@ test.describe("pane chrome", () => {
     await expect(page.getByRole("button", { name: "Next page" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Previous chapter" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Next chapter" })).toHaveCount(0);
+  });
+
+  test("clears reader toolbar when same-pane navigation leaves media", async ({ page }) => {
+    const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
+
+    await page.goto(`/media/${pdfSeed.media_id}`);
+    await expect(page.getByRole("toolbar", { name: "PDF controls" })).toBeVisible();
+
+    await page.getByRole("link", { name: "Search" }).click();
+
+    await expect(page).toHaveURL(/\/search/);
+    await expect(page.getByRole("toolbar", { name: "PDF controls" })).toHaveCount(0);
+  });
+
+  test("keeps reader toolbar inside a narrow pane", async ({ page }) => {
+    const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
+
+    await page.goto(`/media/${pdfSeed.media_id}`);
+    const paneResizeHandle = page.getByRole("separator", { name: /^Resize pane / }).first();
+    await paneResizeHandle.focus();
+    await paneResizeHandle.press("End");
+
+    await expect(page.getByRole("button", { name: "Previous page" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Next page" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Highlight selection" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "More actions" })).toBeVisible();
+    await expectToolbarToFitPaneChrome(page, "PDF controls");
   });
 });
