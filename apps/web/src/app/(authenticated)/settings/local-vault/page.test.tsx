@@ -65,6 +65,7 @@ describe("SettingsLocalVaultPage", () => {
     const user = userEvent.setup();
     render(<SettingsLocalVaultPage />);
 
+    expect(screen.queryByRole("heading", { name: "Local Vault" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: /connect folder/i }));
     expect(mockPickVaultDirectory).toHaveBeenCalledOnce();
     expect(mockSaveVaultDirectoryHandle).toHaveBeenCalledOnce();

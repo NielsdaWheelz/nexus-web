@@ -259,7 +259,7 @@ export default function LibrariesPaneBody() {
 
   return (
     <>
-      <SectionCard title="Libraries" description="Mixed collections for podcasts and media.">
+      <SectionCard>
         <div className={styles.content}>
           <form className={styles.createForm} onSubmit={handleCreateLibrary}>
             <input

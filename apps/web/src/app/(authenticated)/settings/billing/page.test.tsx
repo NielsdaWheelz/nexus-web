@@ -67,7 +67,7 @@ describe("SettingsBillingPaneBody", () => {
 
     render(<SettingsBillingPaneBody />);
 
-    expect(screen.getByText("Billing")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Billing" })).not.toBeInTheDocument();
     expect(screen.getAllByText("Free")).toHaveLength(2);
     expect(screen.getByText("AI tokens")).toBeInTheDocument();
     expect(screen.getByText("Transcription")).toBeInTheDocument();

@@ -171,7 +171,7 @@ export default function SettingsLocalVaultPaneBody() {
 
   if (!supported) {
     return (
-      <SectionCard title="Local Vault">
+      <SectionCard>
         <StateMessage variant="error">
           This browser cannot connect a writable local folder. Use a supported desktop browser.
         </StateMessage>
@@ -180,10 +180,7 @@ export default function SettingsLocalVaultPaneBody() {
   }
 
   return (
-    <SectionCard
-      title="Local Vault"
-      description="Connect a real local folder. Nexus exports Markdown there and refreshes it from your library."
-    >
+    <SectionCard>
       <div className={styles.content}>
         <div className={styles.statusRow}>
           <StatusPill variant={statusVariant(status)}>{statusLabel(status)}</StatusPill>

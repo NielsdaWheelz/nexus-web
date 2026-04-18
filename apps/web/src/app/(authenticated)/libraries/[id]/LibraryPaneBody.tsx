@@ -14,6 +14,7 @@ import type {
   LibraryInvite,
   UserSearchResult,
 } from "@/components/LibraryEditDialog";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { usePaneParam, usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
@@ -323,15 +324,7 @@ export default function LibraryPaneBody() {
       });
   };
 
-  if (loading) {
-    return <StateMessage variant="loading">Loading library...</StateMessage>;
-  }
-
-  if (!library) {
-    return <StateMessage variant="error">{error || "Library not found"}</StateMessage>;
-  }
-
-  const paneOptions = library.is_default
+  const paneOptions = !library || library.is_default
     ? []
     : [
         {
@@ -339,7 +332,7 @@ export default function LibraryPaneBody() {
           label: "Edit library",
           onSelect: () => void openEditDialog(),
         },
-        ...(library.role === "admin"
+        ...(library?.role === "admin"
           ? [
               {
                 id: "delete-library",
@@ -353,6 +346,16 @@ export default function LibraryPaneBody() {
           : []),
       ];
 
+  usePaneChromeOverride({ options: paneOptions });
+
+  if (loading) {
+    return <StateMessage variant="loading">Loading library...</StateMessage>;
+  }
+
+  if (!library) {
+    return <StateMessage variant="error">{error || "Library not found"}</StateMessage>;
+  }
+
   const editLibraryForDialog: LibraryForEdit = {
     id: library.id,
     name: library.name,
@@ -363,14 +366,7 @@ export default function LibraryPaneBody() {
 
   return (
     <>
-      <SectionCard
-        title={library.name}
-        actions={
-          paneOptions.length > 0 ? (
-            <ActionMenu options={paneOptions} label="Library options" />
-          ) : null
-        }
-      >
+      <SectionCard>
         <div className={styles.content}>
           {error && <StateMessage variant="error">{error}</StateMessage>}
 

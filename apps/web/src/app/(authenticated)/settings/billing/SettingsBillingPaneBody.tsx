@@ -191,10 +191,7 @@ export default function SettingsBillingPaneBody() {
   }, [billingEnabled]);
 
   return (
-    <SectionCard
-      title="Billing"
-      description="Plan, subscription state, and included AI usage."
-    >
+    <SectionCard>
       <div className={styles.content}>
         {loading && <StateMessage variant="loading">Loading billing account...</StateMessage>}
         {error && <StateMessage variant="error">{error}</StateMessage>}
