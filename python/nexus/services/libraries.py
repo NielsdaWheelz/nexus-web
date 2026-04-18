@@ -24,6 +24,7 @@ from nexus.schemas.library import (
     AcceptLibraryInviteResponse,
     DeclineLibraryInviteResponse,
     InviteAcceptMembershipOut,
+    ItemLibraryMembershipOut,
     LibraryEntryOrderRequest,
     LibraryEntryOut,
     LibraryInvitationOut,
@@ -35,6 +36,7 @@ from nexus.schemas.library import (
     LibraryRole,
 )
 from nexus.schemas.media import MediaAuthorOut, MediaOut
+from nexus.auth.permissions import can_read_media
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
@@ -426,6 +428,60 @@ def add_media_to_library(
     return _hydrate_library_entries(db, viewer_id, [row])[0]
 
 
+def ensure_writable_non_default_library(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+) -> None:
+    row = _fetch_library_with_membership(db, viewer_id, library_id)
+    _require_admin(row[6])
+    _require_non_default(row[1])
+
+
+def list_media_item_libraries(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+) -> list[ItemLibraryMembershipOut]:
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    rows = db.execute(
+        text("""
+            SELECT
+                l.id,
+                l.name,
+                l.color,
+                EXISTS(
+                    SELECT 1
+                    FROM library_entries le
+                    WHERE le.library_id = l.id
+                      AND le.media_id = :media_id
+                ) AS in_library,
+                m.role
+            FROM libraries l
+            JOIN memberships m
+              ON m.library_id = l.id
+             AND m.user_id = :viewer_id
+            WHERE l.is_default = false
+            ORDER BY l.created_at ASC, l.id ASC
+        """),
+        {"viewer_id": viewer_id, "media_id": media_id},
+    ).fetchall()
+
+    return [
+        ItemLibraryMembershipOut(
+            id=row[0],
+            name=row[1],
+            color=row[2],
+            is_in_library=bool(row[3]),
+            can_add=row[4] == "admin" and not bool(row[3]),
+            can_remove=row[4] == "admin" and bool(row[3]),
+        )
+        for row in rows
+    ]
+
+
 def remove_media_from_library(
     db: Session,
     viewer_id: UUID,
@@ -585,6 +641,54 @@ def add_podcast_to_library(
             ).fetchone()
 
     return _hydrate_library_entries(db, viewer_id, [row])[0]
+
+
+def list_podcast_item_libraries(
+    db: Session,
+    viewer_id: UUID,
+    podcast_id: UUID,
+) -> list[ItemLibraryMembershipOut]:
+    podcast_exists = db.execute(
+        text("SELECT 1 FROM podcasts WHERE id = :podcast_id"),
+        {"podcast_id": podcast_id},
+    ).fetchone()
+    if podcast_exists is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+
+    rows = db.execute(
+        text("""
+            SELECT
+                l.id,
+                l.name,
+                l.color,
+                EXISTS(
+                    SELECT 1
+                    FROM library_entries le
+                    WHERE le.library_id = l.id
+                      AND le.podcast_id = :podcast_id
+                ) AS in_library,
+                m.role
+            FROM libraries l
+            JOIN memberships m
+              ON m.library_id = l.id
+             AND m.user_id = :viewer_id
+            WHERE l.is_default = false
+            ORDER BY l.created_at ASC, l.id ASC
+        """),
+        {"viewer_id": viewer_id, "podcast_id": podcast_id},
+    ).fetchall()
+
+    return [
+        ItemLibraryMembershipOut(
+            id=row[0],
+            name=row[1],
+            color=row[2],
+            is_in_library=bool(row[3]),
+            can_add=row[4] == "admin" and not bool(row[3]),
+            can_remove=row[4] == "admin" and bool(row[3]),
+        )
+        for row in rows
+    ]
 
 
 def remove_podcast_from_library(

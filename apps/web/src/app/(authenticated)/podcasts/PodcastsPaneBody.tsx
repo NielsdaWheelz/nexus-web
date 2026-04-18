@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import MediaCatalogPage from "@/components/MediaCatalogPage";
+import LibraryTargetPicker, {
+  type LibraryTargetPickerItem,
+} from "@/components/LibraryTargetPicker";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
@@ -15,13 +18,7 @@ interface LibrarySummary {
   id: string;
   name: string;
   is_default: boolean;
-}
-
-interface LibraryEntrySummary {
-  kind: "media" | "podcast";
-  podcast?: {
-    id: string;
-  } | null;
+  color?: string | null;
 }
 
 interface PodcastDiscoveryItem {
@@ -38,7 +35,13 @@ interface PodcastDiscoveryItem {
 interface PodcastSubscribeResult {
   podcast_id: string;
   subscription_created: boolean;
-  sync_status: "pending" | "running" | "partial" | "complete" | "source_limited" | "failed";
+  sync_status:
+    | "pending"
+    | "running"
+    | "partial"
+    | "complete"
+    | "source_limited"
+    | "failed";
   sync_enqueued: boolean;
   sync_error_code: string | null;
   sync_error_message: string | null;
@@ -70,10 +73,23 @@ export default function PodcastsPaneBody() {
     Record<string, SubscriptionSnapshot>
   >({});
   const [subscriptionsHydrated, setSubscriptionsHydrated] = useState(false);
-  const [subscribingProviderIds, setSubscribingProviderIds] = useState<Set<string>>(new Set());
-  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
-  const [libraryIdsByPodcastId, setLibraryIdsByPodcastId] = useState<Record<string, string[]>>({});
-  const [busyLibraryMembershipKeys, setBusyLibraryMembershipKeys] = useState<Set<string>>(new Set());
+  const [subscribingProviderIds, setSubscribingProviderIds] = useState<Set<string>>(
+    new Set()
+  );
+  const [availableLibraries, setAvailableLibraries] = useState<
+    LibraryTargetPickerItem[]
+  >([]);
+  const [availableLibrariesLoading, setAvailableLibrariesLoading] = useState(false);
+  const [availableLibrariesLoaded, setAvailableLibrariesLoaded] = useState(false);
+  const [librariesByPodcastId, setLibrariesByPodcastId] = useState<
+    Record<string, LibraryTargetPickerItem[]>
+  >({});
+  const [loadingLibraryPodcastIds, setLoadingLibraryPodcastIds] = useState<Set<string>>(
+    new Set()
+  );
+  const [busyLibraryMembershipKeys, setBusyLibraryMembershipKeys] = useState<Set<string>>(
+    new Set()
+  );
 
   const hydrateSubscriptions = useCallback(async () => {
     if (subscriptionsHydrated) {
@@ -102,42 +118,83 @@ export default function PodcastsPaneBody() {
     setSubscriptionsHydrated(true);
   }, [subscriptionsHydrated]);
 
-  const loadLibraryMemberships = useCallback(async () => {
+  const loadAvailableLibraries = useCallback(async () => {
+    if (availableLibrariesLoading || availableLibrariesLoaded) {
+      return;
+    }
+    setAvailableLibrariesLoading(true);
     try {
-      const librariesResponse = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
-      const nextLibraries = librariesResponse.data.filter((library) => !library.is_default);
-      setLibraries(nextLibraries);
-      if (nextLibraries.length === 0) {
-        setLibraryIdsByPodcastId({});
-        return;
-      }
-      const entryResponses = await Promise.all(
-        nextLibraries.map((library) =>
-          apiFetch<{ data: LibraryEntrySummary[] }>(`/api/libraries/${library.id}/entries`)
-        )
+      const response = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
+      setAvailableLibraries(
+        response.data
+          .filter((library) => !library.is_default)
+          .map((library) => ({
+            id: library.id,
+            name: library.name,
+            color: library.color ?? null,
+            isInLibrary: false,
+            canAdd: true,
+            canRemove: false,
+          }))
       );
-      const nextLibraryIdsByPodcastId: Record<string, string[]> = {};
-      for (let index = 0; index < nextLibraries.length; index += 1) {
-        const library = nextLibraries[index];
-        for (const entry of entryResponses[index].data) {
-          if (entry.kind !== "podcast" || !entry.podcast) {
-            continue;
-          }
-          const existingLibraryIds = nextLibraryIdsByPodcastId[entry.podcast.id] ?? [];
-          nextLibraryIdsByPodcastId[entry.podcast.id] = [...existingLibraryIds, library.id];
-        }
-      }
-      setLibraryIdsByPodcastId(nextLibraryIdsByPodcastId);
+      setAvailableLibrariesLoaded(true);
     } catch (error) {
       if (isApiError(error)) {
         setDiscoverError(error.message);
       } else {
-        setDiscoverError("Failed to load library memberships");
+        setDiscoverError("Failed to load libraries");
       }
-      setLibraries([]);
-      setLibraryIdsByPodcastId({});
+      setAvailableLibraries([]);
+    } finally {
+      setAvailableLibrariesLoading(false);
     }
-  }, []);
+  }, [availableLibrariesLoaded, availableLibrariesLoading]);
+
+  const loadPodcastLibraries = useCallback(
+    async (podcastId: string) => {
+      if (loadingLibraryPodcastIds.has(podcastId) || librariesByPodcastId[podcastId]) {
+        return;
+      }
+      setLoadingLibraryPodcastIds((prev) => new Set(prev).add(podcastId));
+      setDiscoverError(null);
+      try {
+        const response = await apiFetch<{
+          data: Array<{
+            id: string;
+            name: string;
+            color: string | null;
+            is_in_library: boolean;
+            can_add: boolean;
+            can_remove: boolean;
+          }>;
+        }>(`/api/podcasts/${podcastId}/libraries`);
+        setLibrariesByPodcastId((prev) => ({
+          ...prev,
+          [podcastId]: response.data.map((library) => ({
+            id: library.id,
+            name: library.name,
+            color: library.color,
+            isInLibrary: library.is_in_library,
+            canAdd: library.can_add,
+            canRemove: library.can_remove,
+          })),
+        }));
+      } catch (error) {
+        if (isApiError(error)) {
+          setDiscoverError(error.message);
+        } else {
+          setDiscoverError("Failed to load podcast libraries");
+        }
+      } finally {
+        setLoadingLibraryPodcastIds((prev) => {
+          const next = new Set(prev);
+          next.delete(podcastId);
+          return next;
+        });
+      }
+    },
+    [librariesByPodcastId, loadingLibraryPodcastIds]
+  );
 
   useEffect(() => {
     void hydrateSubscriptions().catch((error: unknown) => {
@@ -147,8 +204,8 @@ export default function PodcastsPaneBody() {
         setDiscoverError("Failed to load existing subscriptions");
       }
     });
-    void loadLibraryMemberships();
-  }, [hydrateSubscriptions, loadLibraryMemberships]);
+    void loadAvailableLibraries();
+  }, [hydrateSubscriptions, loadAvailableLibraries]);
 
   const handleDiscover = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -179,51 +236,73 @@ export default function PodcastsPaneBody() {
     }
   };
 
-  const handleSubscribe = async (item: PodcastDiscoveryItem) => {
-    const providerPodcastId = item.provider_podcast_id;
-    setSubscribingProviderIds((prev) => new Set(prev).add(providerPodcastId));
-    setDiscoverError(null);
-    try {
-      const response = await apiFetch<{ data: PodcastSubscribeResult }>("/api/podcasts/subscriptions", {
-        method: "POST",
-        body: JSON.stringify({
-          provider_podcast_id: item.provider_podcast_id,
-          title: item.title,
-          author: item.author,
-          feed_url: item.feed_url,
-          website_url: item.website_url,
-          image_url: item.image_url,
-          description: item.description,
-        }),
-      });
-      setSubscriptionByProviderId((prev) => ({
-        ...prev,
-        [providerPodcastId]: {
-          podcast_id: response.data.podcast_id,
-          sync_status: response.data.sync_status,
-        },
-      }));
-      setDiscoverResults((prev) =>
-        prev.map((result) =>
-          result.provider_podcast_id === providerPodcastId
-            ? { ...result, podcast_id: response.data.podcast_id }
-            : result
-        )
-      );
-    } catch (error) {
-      if (isApiError(error)) {
-        setDiscoverError(error.message);
-      } else {
-        setDiscoverError("Podcast subscription failed");
+  const handleSubscribe = useCallback(
+    async (item: PodcastDiscoveryItem, libraryId: string | null = null) => {
+      const providerPodcastId = item.provider_podcast_id;
+      setSubscribingProviderIds((prev) => new Set(prev).add(providerPodcastId));
+      setDiscoverError(null);
+      try {
+        const response = await apiFetch<{ data: PodcastSubscribeResult }>(
+          "/api/podcasts/subscriptions",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              provider_podcast_id: item.provider_podcast_id,
+              title: item.title,
+              author: item.author,
+              feed_url: item.feed_url,
+              website_url: item.website_url,
+              image_url: item.image_url,
+              description: item.description,
+              library_id: libraryId,
+            }),
+          }
+        );
+        setSubscriptionByProviderId((prev) => ({
+          ...prev,
+          [providerPodcastId]: {
+            podcast_id: response.data.podcast_id,
+            sync_status: response.data.sync_status,
+          },
+        }));
+        setDiscoverResults((prev) =>
+          prev.map((result) =>
+            result.provider_podcast_id === providerPodcastId
+              ? { ...result, podcast_id: response.data.podcast_id }
+              : result
+          )
+        );
+        if (libraryId) {
+          setLibrariesByPodcastId((prev) => ({
+            ...prev,
+            [response.data.podcast_id]: availableLibraries.map((library) =>
+              library.id === libraryId
+                ? {
+                    ...library,
+                    isInLibrary: true,
+                    canAdd: false,
+                    canRemove: true,
+                  }
+                : library
+            ),
+          }));
+        }
+      } catch (error) {
+        if (isApiError(error)) {
+          setDiscoverError(error.message);
+        } else {
+          setDiscoverError("Podcast subscription failed");
+        }
+      } finally {
+        setSubscribingProviderIds((prev) => {
+          const next = new Set(prev);
+          next.delete(providerPodcastId);
+          return next;
+        });
       }
-    } finally {
-      setSubscribingProviderIds((prev) => {
-        const next = new Set(prev);
-        next.delete(providerPodcastId);
-        return next;
-      });
-    }
-  };
+    },
+    [availableLibraries]
+  );
 
   const handleAddPodcastToLibrary = useCallback(async (podcastId: string, libraryId: string) => {
     const busyKey = `${libraryId}:${podcastId}`;
@@ -234,13 +313,19 @@ export default function PodcastsPaneBody() {
         method: "POST",
         body: JSON.stringify({ podcast_id: podcastId }),
       });
-      setLibraryIdsByPodcastId((prev) => {
-        const next = { ...prev };
-        const nextIds = new Set(next[podcastId] ?? []);
-        nextIds.add(libraryId);
-        next[podcastId] = [...nextIds];
-        return next;
-      });
+      setLibrariesByPodcastId((prev) => ({
+        ...prev,
+        [podcastId]: (prev[podcastId] ?? []).map((library) =>
+          library.id === libraryId
+            ? {
+                ...library,
+                isInLibrary: true,
+                canAdd: false,
+                canRemove: true,
+              }
+            : library
+        ),
+      }));
     } catch (error) {
       if (isApiError(error)) {
         setDiscoverError(error.message);
@@ -256,39 +341,44 @@ export default function PodcastsPaneBody() {
     }
   }, []);
 
-  const handleRemovePodcastFromLibrary = useCallback(async (podcastId: string, libraryId: string) => {
-    const busyKey = `${libraryId}:${podcastId}`;
-    setBusyLibraryMembershipKeys((prev) => new Set(prev).add(busyKey));
-    setDiscoverError(null);
-    try {
-      await apiFetch(`/api/libraries/${libraryId}/podcasts/${podcastId}`, {
-        method: "DELETE",
-      });
-      setLibraryIdsByPodcastId((prev) => {
-        const next = { ...prev };
-        const nextIds = new Set(next[podcastId] ?? []);
-        nextIds.delete(libraryId);
-        if (nextIds.size === 0) {
-          delete next[podcastId];
+  const handleRemovePodcastFromLibrary = useCallback(
+    async (podcastId: string, libraryId: string) => {
+      const busyKey = `${libraryId}:${podcastId}`;
+      setBusyLibraryMembershipKeys((prev) => new Set(prev).add(busyKey));
+      setDiscoverError(null);
+      try {
+        await apiFetch(`/api/libraries/${libraryId}/podcasts/${podcastId}`, {
+          method: "DELETE",
+        });
+        setLibrariesByPodcastId((prev) => ({
+          ...prev,
+          [podcastId]: (prev[podcastId] ?? []).map((library) =>
+            library.id === libraryId
+              ? {
+                  ...library,
+                  isInLibrary: false,
+                  canAdd: true,
+                  canRemove: false,
+                }
+              : library
+          ),
+        }));
+      } catch (error) {
+        if (isApiError(error)) {
+          setDiscoverError(error.message);
         } else {
-          next[podcastId] = [...nextIds];
+          setDiscoverError("Failed to remove podcast from library");
         }
-        return next;
-      });
-    } catch (error) {
-      if (isApiError(error)) {
-        setDiscoverError(error.message);
-      } else {
-        setDiscoverError("Failed to remove podcast from library");
+      } finally {
+        setBusyLibraryMembershipKeys((prev) => {
+          const next = new Set(prev);
+          next.delete(busyKey);
+          return next;
+        });
       }
-    } finally {
-      setBusyLibraryMembershipKeys((prev) => {
-        const next = new Set(prev);
-        next.delete(busyKey);
-        return next;
-      });
-    }
-  }, []);
+    },
+    []
+  );
 
   return (
     <MediaCatalogPage
@@ -334,29 +424,28 @@ export default function PodcastsPaneBody() {
                 const subscription = subscriptionByProviderId[result.provider_podcast_id];
                 const podcastId = subscription?.podcast_id ?? result.podcast_id;
                 const isSubscribing = subscribingProviderIds.has(result.provider_podcast_id);
-                const currentLibraryIds = new Set(podcastId ? libraryIdsByPodcastId[podcastId] ?? [] : []);
-                const libraryOptions =
-                  podcastId && subscription
-                    ? libraries.map((library) => {
-                        const inLibrary = currentLibraryIds.has(library.id);
-                        const busyKey = `${library.id}:${podcastId}`;
-                        return {
-                          id: `${inLibrary ? "remove" : "add"}-${library.id}`,
-                          label: `${inLibrary ? "Remove from" : "Add to"} ${library.name}`,
-                          disabled: busyLibraryMembershipKeys.has(busyKey),
-                          onSelect: () => {
-                            void (inLibrary
-                              ? handleRemovePodcastFromLibrary(podcastId, library.id)
-                              : handleAddPodcastToLibrary(podcastId, library.id));
-                          },
-                        };
-                      })
-                    : [];
+                const pickerLibraries = podcastId
+                  ? (librariesByPodcastId[podcastId] ?? []).map((library) => {
+                      const busyKey = `${library.id}:${podcastId}`;
+                      if (!busyLibraryMembershipKeys.has(busyKey)) {
+                        return library;
+                      }
+                      return {
+                        ...library,
+                        canAdd: false,
+                        canRemove: false,
+                      };
+                    })
+                  : [];
 
                 return (
                   <AppListItem
                     key={result.provider_podcast_id}
-                    href={podcastId ? `/podcasts/${podcastId}` : result.website_url || result.feed_url}
+                    href={
+                      podcastId
+                        ? `/podcasts/${podcastId}`
+                        : result.website_url || result.feed_url
+                    }
                     target={podcastId ? undefined : "_blank"}
                     rel={podcastId ? undefined : "noopener noreferrer"}
                     icon={<span className={styles.thumbnailFallback}>POD</span>}
@@ -365,27 +454,63 @@ export default function PodcastsPaneBody() {
                     meta={result.feed_url}
                     trailing={
                       subscription ? (
-                        <span className={styles.subscriptionState}>{subscription.sync_status}</span>
+                        <span className={styles.subscriptionState}>
+                          {subscription.sync_status}
+                        </span>
                       ) : undefined
                     }
                     actions={
                       subscription && podcastId ? (
-                        <Link href={`/podcasts/${podcastId}`} className={styles.viewPodcastLink}>
-                          View podcast
-                        </Link>
+                        <>
+                          <Link
+                            href={`/podcasts/${podcastId}`}
+                            className={styles.viewPodcastLink}
+                          >
+                            View podcast
+                          </Link>
+                          <LibraryTargetPicker
+                            label="Libraries"
+                            libraries={pickerLibraries}
+                            loading={loadingLibraryPodcastIds.has(podcastId)}
+                            onOpen={() => {
+                              void loadPodcastLibraries(podcastId);
+                            }}
+                            onAddToLibrary={(libraryId) => {
+                              void handleAddPodcastToLibrary(podcastId, libraryId);
+                            }}
+                            onRemoveFromLibrary={(libraryId) => {
+                              void handleRemovePodcastFromLibrary(podcastId, libraryId);
+                            }}
+                            emptyMessage="No non-default libraries available."
+                          />
+                        </>
                       ) : (
-                        <button
-                          type="button"
-                          className={styles.subscribeButton}
-                          disabled={isSubscribing}
-                          onClick={() => void handleSubscribe(result)}
-                        >
-                          {isSubscribing ? "Subscribing..." : "Subscribe"}
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className={styles.subscribeButton}
+                            disabled={isSubscribing}
+                            onClick={() => void handleSubscribe(result)}
+                          >
+                            {isSubscribing ? "Subscribing..." : "Subscribe"}
+                          </button>
+                          <LibraryTargetPicker
+                            label="Add to library"
+                            libraries={availableLibraries}
+                            loading={availableLibrariesLoading}
+                            disabled={isSubscribing}
+                            onOpen={() => {
+                              void loadAvailableLibraries();
+                            }}
+                            onSelectLibrary={(libraryId) => {
+                              void handleSubscribe(result, libraryId);
+                            }}
+                            emptyMessage="No non-default libraries available."
+                          />
+                        </>
                       )
                     }
                     options={[
-                      ...libraryOptions,
                       ...(result.website_url
                         ? [
                             {

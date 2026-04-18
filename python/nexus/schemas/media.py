@@ -130,6 +130,7 @@ class UploadInitRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_type: str
     size_bytes: int = Field(gt=0)
+    library_id: UUID | None = None
 
 
 class UploadInitResponse(BaseModel):
@@ -317,6 +318,7 @@ class FromUrlRequest(BaseModel):
         min_length=1,
         description="The URL to ingest. Must be an absolute http/https URL, including PDF, EPUB, article, or video URLs.",
     )
+    library_id: UUID | None = None
 
 
 class FromUrlResponse(BaseModel):

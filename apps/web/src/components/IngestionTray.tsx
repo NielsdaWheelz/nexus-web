@@ -21,12 +21,18 @@ import {
   getFileUploadError,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
+import LibraryTargetPicker, {
+  type LibraryTargetPickerItem,
+} from "@/components/LibraryTargetPicker";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import styles from "./IngestionTray.module.css";
 
 type QueueItem = {
   id: number;
   source: "file" | "url";
   label: string;
+  libraryId: string | null;
+  libraryName: string | null;
   file?: File;
   url?: string;
   status: "queued" | "working" | "success" | "error";
@@ -37,6 +43,13 @@ type QueueItem = {
 };
 
 const MAX_ACTIVE_UPLOADS = 2;
+
+interface LibrarySummary {
+  id: string;
+  name: string;
+  is_default: boolean;
+  color?: string | null;
+}
 
 function extractUrls(text: string): string[] {
   const found = text.match(/https?:\/\/[^\s<>"']+/g) ?? [];
@@ -76,6 +89,11 @@ export default function IngestionTray() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [urlText, setUrlText] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);
+  const [librariesLoading, setLibrariesLoading] = useState(false);
+  const [librariesLoaded, setLibrariesLoaded] = useState(false);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
   const nextIdRef = useRef(1);
   const activeIdsRef = useRef<Set<number>>(new Set());
   const dragDepthRef = useRef(0);
@@ -83,41 +101,88 @@ export default function IngestionTray() {
   const trayRef = useRef<HTMLElement>(null);
   const isMobile = useIsMobileViewport();
 
-  const enqueueFiles = useCallback((files: File[], autoOpenSingle: boolean) => {
-    if (files.length === 0) return;
-    setOpen(true);
-    setQueue((current) => [
-      ...current,
-      ...files.map((file) => {
-        const error = getFileUploadError(file);
-        return {
-          id: nextIdRef.current++,
-          source: "file" as const,
-          label: file.name,
-          file,
-          status: error ? ("error" as const) : ("queued" as const),
-          error: error ?? undefined,
-          autoOpen: autoOpenSingle && files.length === 1,
-        };
-      }),
-    ]);
-  }, []);
+  const loadLibraries = useCallback(async () => {
+    if (librariesLoading || librariesLoaded) {
+      return;
+    }
+    setLibrariesLoading(true);
+    setLibraryError(null);
+    try {
+      const response = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
+      setLibraries(
+        response.data
+          .filter((library) => !library.is_default)
+          .map((library) => ({
+            id: library.id,
+            name: library.name,
+            color: library.color ?? null,
+            isInLibrary: false,
+            canAdd: true,
+            canRemove: false,
+          }))
+      );
+      setLibrariesLoaded(true);
+    } catch (error) {
+      if (isApiError(error)) {
+        setLibraryError(error.message);
+      } else {
+        setLibraryError("Failed to load libraries");
+      }
+      setLibraries([]);
+    } finally {
+      setLibrariesLoading(false);
+    }
+  }, [librariesLoaded, librariesLoading]);
 
-  const enqueueUrls = useCallback((urls: string[], autoOpenSingle: boolean) => {
-    if (urls.length === 0) return;
-    setOpen(true);
-    setQueue((current) => [
-      ...current,
-      ...urls.map((url) => ({
-        id: nextIdRef.current++,
-        source: "url" as const,
-        label: url,
-        url,
-        status: "queued" as const,
-        autoOpen: autoOpenSingle && urls.length === 1,
-      })),
-    ]);
-  }, []);
+  const enqueueFiles = useCallback(
+    (files: File[], autoOpenSingle: boolean) => {
+      if (files.length === 0) return;
+      const selectedLibraryName =
+        libraries.find((library) => library.id === selectedLibraryId)?.name ?? null;
+      setOpen(true);
+      setQueue((current) => [
+        ...current,
+        ...files.map((file) => {
+          const error = getFileUploadError(file);
+          return {
+            id: nextIdRef.current++,
+            source: "file" as const,
+            label: file.name,
+            libraryId: selectedLibraryId,
+            libraryName: selectedLibraryName,
+            file,
+            status: error ? ("error" as const) : ("queued" as const),
+            error: error ?? undefined,
+            autoOpen: autoOpenSingle && files.length === 1,
+          };
+        }),
+      ]);
+    },
+    [libraries, selectedLibraryId]
+  );
+
+  const enqueueUrls = useCallback(
+    (urls: string[], autoOpenSingle: boolean) => {
+      if (urls.length === 0) return;
+      const selectedLibraryName =
+        libraries.find((library) => library.id === selectedLibraryId)?.name ?? null;
+      setOpen(true);
+      setQueue((current) => [
+        ...current,
+        ...urls.map((url) => ({
+          id: nextIdRef.current++,
+          source: "url" as const,
+          label: url,
+          libraryId: selectedLibraryId,
+          libraryName: selectedLibraryName,
+          url,
+          status: "queued" as const,
+          autoOpen: autoOpenSingle && urls.length === 1,
+        })),
+      ]);
+    },
+    [libraries, selectedLibraryId]
+  );
 
   const startItem = useCallback((item: QueueItem) => {
     if (activeIdsRef.current.has(item.id)) return;
@@ -131,10 +196,16 @@ export default function IngestionTray() {
         let result: { mediaId: string; duplicate: boolean };
         if (item.source === "file") {
           if (!item.file) throw new Error("Missing file.");
-          result = await uploadIngestFile(item.file);
+          result = await uploadIngestFile({
+            file: item.file,
+            libraryId: item.libraryId,
+          });
         } else {
           if (!item.url) throw new Error("Missing URL.");
-          result = await addMediaFromUrl(item.url);
+          result = await addMediaFromUrl({
+            url: item.url,
+            libraryId: item.libraryId,
+          });
         }
 
         setQueue((current) =>
@@ -187,6 +258,13 @@ export default function IngestionTray() {
     window.addEventListener(OPEN_UPLOAD_EVENT, openHandler);
     return () => window.removeEventListener(OPEN_UPLOAD_EVENT, openHandler);
   }, []);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    void loadLibraries();
+  }, [loadLibraries, open]);
 
   useEffect(() => {
     const onDragEnter = (event: DragEvent) => {
@@ -338,6 +416,26 @@ export default function IngestionTray() {
         </header>
 
         <div className={styles.body}>
+          <div className={styles.libraryField}>
+            <label className={styles.libraryLabel}>Library</label>
+            <LibraryTargetPicker
+              label="Choose library"
+              libraries={libraries}
+              loading={librariesLoading}
+              allowNoLibrary
+              noLibraryLabel="No library"
+              selectedLibraryId={selectedLibraryId}
+              onOpen={() => {
+                void loadLibraries();
+              }}
+              onSelectLibrary={setSelectedLibraryId}
+              emptyMessage="No non-default libraries available."
+            />
+            <small className={styles.libraryHelp}>
+              {libraryError ?? "Pick one library to target new uploads, or leave it empty."}
+            </small>
+          </div>
+
           <button type="button" className={styles.dropzone} onClick={() => fileInputRef.current?.click()}>
             <Upload size={22} aria-hidden="true" />
             <span>Upload file</span>
@@ -392,6 +490,9 @@ export default function IngestionTray() {
                     <div className={styles.itemText}>
                       <span title={item.label}>{item.label}</span>
                       <small>
+                        {item.libraryName
+                          ? `Library: ${item.libraryName} · `
+                          : "No library · "}
                         {item.status === "queued" && "Queued"}
                         {item.status === "working" && (item.source === "file" ? "Uploading..." : "Adding...")}
                         {item.status === "success" && (item.duplicate ? "Already in your library" : "Added")}

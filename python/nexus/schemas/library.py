@@ -27,6 +27,7 @@ __all__ = [
     "DeclineLibraryInviteResponse",
     "DefaultLibraryBackfillJobOut",
     "InviteAcceptMembershipOut",
+    "ItemLibraryMembershipOut",
     "LibraryEntryKind",
     "LibraryEntryOrderRequest",
     "LibraryEntryOut",
@@ -60,6 +61,15 @@ class AddMediaRequest(BaseModel):
 
 class AddPodcastRequest(BaseModel):
     podcast_id: UUID = Field(..., description="ID of the podcast to add")
+
+
+class ItemLibraryMembershipOut(BaseModel):
+    id: UUID
+    name: str
+    color: str | None = None
+    is_in_library: bool
+    can_add: bool
+    can_remove: bool
 
 
 class LibraryEntryOrderRequest(BaseModel):

@@ -56,7 +56,13 @@ export function getFileUploadError(file: File): string | null {
   return null;
 }
 
-export async function uploadIngestFile(file: File): Promise<{
+export async function uploadIngestFile({
+  file,
+  libraryId = null,
+}: {
+  file: File;
+  libraryId?: string | null;
+}): Promise<{
   mediaId: string;
   duplicate: boolean;
 }> {
@@ -72,6 +78,7 @@ export async function uploadIngestFile(file: File): Promise<{
       filename: file.name,
       content_type: contentTypeFor(kind),
       size_bytes: file.size,
+      library_id: libraryId,
     }),
   });
 
@@ -96,13 +103,19 @@ export async function uploadIngestFile(file: File): Promise<{
   };
 }
 
-export async function addMediaFromUrl(url: string): Promise<{
+export async function addMediaFromUrl({
+  url,
+  libraryId = null,
+}: {
+  url: string;
+  libraryId?: string | null;
+}): Promise<{
   mediaId: string;
   duplicate: boolean;
 }> {
   const response = await apiFetch<FromUrlResponse>("/api/media/from-url", {
     method: "POST",
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, library_id: libraryId }),
   });
 
   return {

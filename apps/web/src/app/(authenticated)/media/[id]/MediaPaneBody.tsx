@@ -20,6 +20,7 @@ import MediaLinkedItemsPaneBody from "./MediaLinkedItemsPaneBody";
 import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import LibraryTargetPicker from "@/components/LibraryTargetPicker";
 import DocumentViewport from "@/components/workspace/DocumentViewport";
 import { usePaneParam } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
@@ -96,21 +97,6 @@ export default function MediaPaneBody() {
   );
 
   const mediaHeaderOptions: ActionMenuOption[] = [];
-
-  if (mv.defaultLibraryId) {
-    mediaHeaderOptions.push({
-      id: mv.mediaInDefaultLibrary ? "remove-from-library" : "add-to-library",
-      label: mv.mediaInDefaultLibrary ? "Remove from library" : "Add to library",
-      disabled: mv.libraryMembershipBusy,
-      onSelect: mv.mediaInDefaultLibrary
-        ? () => {
-            void mv.handleRemoveFromDefaultLibrary();
-          }
-        : () => {
-            void mv.handleAddToDefaultLibrary();
-          },
-    });
-  }
 
   if (mv.media?.canonical_source_url) {
     mediaHeaderOptions.push({
@@ -285,31 +271,50 @@ export default function MediaPaneBody() {
     toolbar: mediaToolbar,
     options: mediaHeaderOptions,
     meta: mediaHeaderMeta,
-    actions: mv.showHighlightsPane ? (
-      mv.isMobileViewport ? (
-        <button
-          type="button"
-          className={styles.paneActionButton}
-          onClick={() => setLinkedDrawerOpen((v) => !v)}
-          aria-label="Linked items"
-          aria-expanded={linkedDrawerOpen}
-        >
-          <PanelRight size={18} />
-        </button>
-      ) : (
-        <button
-          type="button"
-          className={styles.paneActionButton}
-          onClick={() => {
-            resizeCleanupRef.current?.();
-            setDesktopLinkedCollapsed((value) => !value);
-          }}
-          aria-label={desktopLinkedCollapsed ? "Show highlights pane" : "Hide highlights pane"}
-        >
-          {desktopLinkedCollapsed ? "Show highlights" : "Hide highlights"}
-        </button>
-      )
-    ) : undefined,
+    actions: (
+      <div className={styles.paneActionGroup}>
+        {mv.media ? (
+          <LibraryTargetPicker
+            label="Libraries"
+            libraries={mv.libraryPickerLibraries}
+            loading={mv.libraryPickerLoading}
+            disabled={mv.libraryMembershipBusy}
+            onAddToLibrary={(libraryId) => {
+              void mv.handleAddToLibrary(libraryId);
+            }}
+            onRemoveFromLibrary={(libraryId) => {
+              void mv.handleRemoveFromLibrary(libraryId);
+            }}
+            emptyMessage="No non-default libraries available."
+          />
+        ) : null}
+        {mv.showHighlightsPane ? (
+          mv.isMobileViewport ? (
+            <button
+              type="button"
+              className={styles.paneActionButton}
+              onClick={() => setLinkedDrawerOpen((v) => !v)}
+              aria-label="Linked items"
+              aria-expanded={linkedDrawerOpen}
+            >
+              <PanelRight size={18} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={styles.paneActionButton}
+              onClick={() => {
+                resizeCleanupRef.current?.();
+                setDesktopLinkedCollapsed((value) => !value);
+              }}
+              aria-label={desktopLinkedCollapsed ? "Show highlights pane" : "Hide highlights pane"}
+            >
+              {desktopLinkedCollapsed ? "Show highlights" : "Hide highlights"}
+            </button>
+          )
+        ) : null}
+      </div>
+    ),
   });
 
   useEffect(() => () => { resizeCleanupRef.current?.(); }, []);

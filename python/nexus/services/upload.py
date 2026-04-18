@@ -29,6 +29,7 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
+from nexus.services import libraries as libraries_service
 from nexus.storage import build_storage_path, get_file_extension, get_storage_client
 from nexus.storage.client import StorageError
 
@@ -107,6 +108,7 @@ def init_upload(
     filename: str,
     content_type: str,
     size_bytes: int,
+    library_id: UUID | None = None,
 ) -> dict:
     """Initialize a file upload.
 
@@ -132,6 +134,8 @@ def init_upload(
 
     # Validate request
     _validate_upload_request(kind, content_type, size_bytes)
+    if library_id is not None:
+        libraries_service.ensure_writable_non_default_library(db, viewer_id, library_id)
 
     # Get file extension
     ext = get_file_extension(kind)
@@ -189,6 +193,9 @@ def init_upload(
     _ensure_in_default_library(db, viewer_id, media_id)
 
     db.commit()
+
+    if library_id is not None:
+        libraries_service.add_media_to_library(db, viewer_id, library_id, media_id)
 
     return {
         "media_id": str(media_id),

@@ -4,6 +4,96 @@
   font-weight: 600;
 }
 
+.splitLayout {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+}
+
+.primaryColumn {
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.primaryScroll {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.episodesColumn {
+  flex: 0 0 380px;
+  width: 380px;
+  min-width: 0;
+  border-left: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-secondary);
+  display: flex;
+  flex-direction: column;
+}
+
+.episodesColumnHeader {
+  padding: 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.episodesColumnHeader h2 {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+}
+
+.episodesColumnBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.episodePaneContent {
+  display: flex;
+  flex-direction: column;
+}
+
+.episodePaneHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.paneActionButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.headerButtons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .unsubscribeButton {
   border: 1px solid var(--color-border);
   background: var(--color-bg-panel);
@@ -191,6 +281,45 @@
   justify-content: center;
   padding: 16px;
   z-index: 1000;
+}
+
+.episodesBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.episodesDrawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(92vw, 400px);
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  z-index: 201;
+}
+
+.episodesDrawerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.episodesDrawerHeader h2 {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+}
+
+.episodesDrawerBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
 }
 
 .modalCard {

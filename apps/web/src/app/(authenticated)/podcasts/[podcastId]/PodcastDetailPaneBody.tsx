@@ -9,6 +9,7 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
@@ -16,10 +17,14 @@ import {
   formatPlaybackSpeedLabel,
   formatSubscriptionPlaybackSummary,
 } from "@/lib/player/subscriptionPlaybackSpeed";
+import LibraryTargetPicker, {
+  type LibraryTargetPickerItem,
+} from "@/components/LibraryTargetPicker";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { AppList, AppListItem } from "@/components/ui/AppList";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import styles from "./page.module.css";
 
 const EPISODES_PAGE_SIZE = 100;
@@ -163,17 +168,7 @@ interface LibrarySummary {
   id: string;
   name: string;
   is_default: boolean;
-  role: string;
-}
-
-interface LibraryEntrySummary {
-  kind: "media" | "podcast";
-  media?: {
-    id: string;
-  } | null;
-  podcast?: {
-    id: string;
-  } | null;
+  color?: string | null;
 }
 
 interface TranscriptRequestResult {
@@ -380,6 +375,7 @@ export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
   const paneRouter = usePaneRouter();
   const paneSearchParams = usePaneSearchParams();
+  const isMobileViewport = useIsMobileViewport();
   const { account: billingAccount } = useBillingAccount();
   const { addToQueue, queueItems } = useGlobalPlayer();
   const [detail, setDetail] = useState<PodcastDetailResponse | null>(null);
@@ -406,9 +402,17 @@ export default function PodcastDetailPaneBody() {
   const [episodeSearchQuery, setEpisodeSearchQuery] = useState(() => paneSearchParams.get("q") ?? "");
   const [hasMoreEpisodes, setHasMoreEpisodes] = useState(false);
   const [loadingMoreEpisodes, setLoadingMoreEpisodes] = useState(false);
-  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
-  const [podcastLibraryIds, setPodcastLibraryIds] = useState<string[]>([]);
-  const [libraryIdsByEpisodeId, setLibraryIdsByEpisodeId] = useState<Record<string, string[]>>({});
+  const [availableLibraries, setAvailableLibraries] = useState<LibraryTargetPickerItem[]>([]);
+  const [availableLibrariesLoading, setAvailableLibrariesLoading] = useState(false);
+  const [availableLibrariesLoaded, setAvailableLibrariesLoaded] = useState(false);
+  const [podcastLibraries, setPodcastLibraries] = useState<LibraryTargetPickerItem[]>([]);
+  const [podcastLibrariesLoading, setPodcastLibrariesLoading] = useState(false);
+  const [episodeLibrariesById, setEpisodeLibrariesById] = useState<
+    Record<string, LibraryTargetPickerItem[]>
+  >({});
+  const [loadingEpisodeLibraryMediaIds, setLoadingEpisodeLibraryMediaIds] = useState<
+    Set<string>
+  >(new Set());
   const [busyMediaIds, setBusyMediaIds] = useState<Set<string>>(new Set());
   const [busyPodcastLibraryKeys, setBusyPodcastLibraryKeys] = useState<Set<string>>(new Set());
   const [markingEpisodeIds, setMarkingEpisodeIds] = useState<Set<string>>(new Set());
@@ -437,47 +441,151 @@ export default function PodcastDetailPaneBody() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsDefaultSpeed, setSettingsDefaultSpeed] = useState<string>("default");
   const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
+  const [episodesDrawerOpen, setEpisodesDrawerOpen] = useState(false);
   const billingDisabled = billingAccount?.billing_enabled === false;
   const transcriptionAllowed = (billingAccount?.transcription_usage.limit ?? 0) > 0;
 
   useSetPaneTitle(detail?.podcast.title ?? "Podcast");
 
-  const loadLibraryMemberships = useCallback(async () => {
-    const librariesResponse = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
-    const nextLibraries = librariesResponse.data.filter((library) => !library.is_default);
-    if (nextLibraries.length === 0) {
-      return {
-        libraries: [] as LibrarySummary[],
-        podcastLibraryIds: [] as string[],
-        libraryIdsByEpisodeId: {} as Record<string, string[]>,
-      };
+  usePaneChromeOverride({
+    actions: isMobileViewport ? (
+      <button
+        type="button"
+        className={styles.paneActionButton}
+        onClick={() => setEpisodesDrawerOpen((open) => !open)}
+        aria-label="Episodes"
+        aria-expanded={episodesDrawerOpen}
+      >
+        Episodes
+      </button>
+    ) : undefined,
+  });
+
+  const loadAvailableLibraries = useCallback(async () => {
+    if (availableLibrariesLoading || availableLibrariesLoaded) {
+      return;
     }
-    const entryResponses = await Promise.all(
-      nextLibraries.map((library) =>
-        apiFetch<{ data: LibraryEntrySummary[] }>(`/api/libraries/${library.id}/entries`)
-      )
-    );
-    const nextPodcastLibraryIds = new Set<string>();
-    const nextLibraryIdsByEpisodeId: Record<string, string[]> = {};
-    for (let index = 0; index < nextLibraries.length; index += 1) {
-      const library = nextLibraries[index];
-      for (const entry of entryResponses[index].data) {
-        if (entry.kind === "podcast" && entry.podcast?.id === podcastId) {
-          nextPodcastLibraryIds.add(library.id);
-          continue;
-        }
-        if (entry.kind === "media" && entry.media) {
-          const existingLibraryIds = nextLibraryIdsByEpisodeId[entry.media.id] ?? [];
-          nextLibraryIdsByEpisodeId[entry.media.id] = [...existingLibraryIds, library.id];
-        }
+    setAvailableLibrariesLoading(true);
+    try {
+      const response = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
+      setAvailableLibraries(
+        response.data
+          .filter((library) => !library.is_default)
+          .map((library) => ({
+            id: library.id,
+            name: library.name,
+            color: library.color ?? null,
+            isInLibrary: false,
+            canAdd: true,
+            canRemove: false,
+          }))
+      );
+      setAvailableLibrariesLoaded(true);
+    } catch (loadError) {
+      if (isApiError(loadError)) {
+        setError(loadError.message);
+      } else {
+        setError("Failed to load libraries");
       }
+      setAvailableLibraries([]);
+    } finally {
+      setAvailableLibrariesLoading(false);
     }
-    return {
-      libraries: nextLibraries,
-      podcastLibraryIds: [...nextPodcastLibraryIds],
-      libraryIdsByEpisodeId: nextLibraryIdsByEpisodeId,
-    };
-  }, [podcastId]);
+  }, [availableLibrariesLoaded, availableLibrariesLoading]);
+
+  const loadPodcastLibraries = useCallback(
+    async (force = false) => {
+      if (!podcastId) {
+        return [] as LibraryTargetPickerItem[];
+      }
+      if (!force && podcastLibrariesLoading) {
+        return podcastLibraries;
+      }
+      if (!force && podcastLibraries.length > 0) {
+        return podcastLibraries;
+      }
+
+      setPodcastLibrariesLoading(true);
+      try {
+        const response = await apiFetch<{
+          data: Array<{
+            id: string;
+            name: string;
+            color: string | null;
+            is_in_library: boolean;
+            can_add: boolean;
+            can_remove: boolean;
+          }>;
+        }>(`/api/podcasts/${podcastId}/libraries`);
+        const nextLibraries = response.data.map((library) => ({
+          id: library.id,
+          name: library.name,
+          color: library.color,
+          isInLibrary: library.is_in_library,
+          canAdd: library.can_add,
+          canRemove: library.can_remove,
+        }));
+        setPodcastLibraries(nextLibraries);
+        return nextLibraries;
+      } catch (loadError) {
+        if (isApiError(loadError)) {
+          setError(loadError.message);
+        } else {
+          setError("Failed to load podcast libraries");
+        }
+        setPodcastLibraries([]);
+        return [];
+      } finally {
+        setPodcastLibrariesLoading(false);
+      }
+    },
+    [podcastId, podcastLibraries, podcastLibrariesLoading]
+  );
+
+  const loadEpisodeLibraries = useCallback(
+    async (mediaId: string) => {
+      if (loadingEpisodeLibraryMediaIds.has(mediaId) || episodeLibrariesById[mediaId]) {
+        return;
+      }
+      setLoadingEpisodeLibraryMediaIds((prev) => new Set(prev).add(mediaId));
+      try {
+        const response = await apiFetch<{
+          data: Array<{
+            id: string;
+            name: string;
+            color: string | null;
+            is_in_library: boolean;
+            can_add: boolean;
+            can_remove: boolean;
+          }>;
+        }>(`/api/media/${mediaId}/libraries`);
+        setEpisodeLibrariesById((prev) => ({
+          ...prev,
+          [mediaId]: response.data.map((library) => ({
+            id: library.id,
+            name: library.name,
+            color: library.color,
+            isInLibrary: library.is_in_library,
+            canAdd: library.can_add,
+            canRemove: library.can_remove,
+          })),
+        }));
+      } catch (loadError) {
+        if (isApiError(loadError)) {
+          setError(loadError.message);
+        } else {
+          setError("Failed to load episode libraries");
+        }
+      } finally {
+        setLoadingEpisodeLibraryMediaIds((prev) => {
+          const next = new Set(prev);
+          next.delete(mediaId);
+          return next;
+        });
+      }
+    },
+    [episodeLibrariesById, loadingEpisodeLibraryMediaIds]
+  );
 
   const load = useCallback(async () => {
     if (!podcastId) {
@@ -518,14 +626,36 @@ export default function PodcastDetailPaneBody() {
       setSettingsModalOpen(false);
       setSettingsError(null);
       try {
-        const membershipState = await loadLibraryMemberships();
-        setLibraries(membershipState.libraries);
-        setPodcastLibraryIds(membershipState.podcastLibraryIds);
-        setLibraryIdsByEpisodeId(membershipState.libraryIdsByEpisodeId);
+        if (detailResp.data.subscription) {
+          const podcastLibrariesResponse = await apiFetch<{
+            data: Array<{
+              id: string;
+              name: string;
+              color: string | null;
+              is_in_library: boolean;
+              can_add: boolean;
+              can_remove: boolean;
+            }>;
+          }>(`/api/podcasts/${podcastId}/libraries`);
+          setPodcastLibraries(
+            podcastLibrariesResponse.data.map((library) => ({
+              id: library.id,
+              name: library.name,
+              color: library.color,
+              isInLibrary: library.is_in_library,
+              canAdd: library.can_add,
+              canRemove: library.can_remove,
+            }))
+          );
+        } else {
+          setPodcastLibraries([]);
+        }
+        setEpisodeLibrariesById({});
+        setLoadingEpisodeLibraryMediaIds(new Set());
       } catch {
-        setLibraries([]);
-        setPodcastLibraryIds([]);
-        setLibraryIdsByEpisodeId({});
+        setPodcastLibraries([]);
+        setEpisodeLibrariesById({});
+        setLoadingEpisodeLibraryMediaIds(new Set());
       }
     } catch (loadError) {
       if (isApiError(loadError)) {
@@ -536,11 +666,20 @@ export default function PodcastDetailPaneBody() {
     } finally {
       setLoading(false);
     }
-  }, [episodeSearchQuery, episodeSort, episodeStateFilter, loadLibraryMemberships, podcastId]);
+  }, [
+    episodeSearchQuery,
+    episodeSort,
+    episodeStateFilter,
+    podcastId,
+  ]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void loadAvailableLibraries();
+  }, [loadAvailableLibraries]);
 
   useEffect(() => {
     const debounceTimer = setTimeout(() => {
@@ -564,6 +703,30 @@ export default function PodcastDetailPaneBody() {
     paneRouter.replace(`/podcasts/${podcastId}?${params.toString()}`);
   }, [episodeSearchQuery, episodeSort, episodeStateFilter, paneRouter, podcastId]);
 
+  useEffect(() => {
+    if (!episodesDrawerOpen) {
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setEpisodesDrawerOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [episodesDrawerOpen]);
+
+  useEffect(() => {
+    if (episodesDrawerOpen && !isMobileViewport) {
+      setEpisodesDrawerOpen(false);
+    }
+  }, [episodesDrawerOpen, isMobileViewport]);
+
   const handleAddToLibrary = useCallback(
     async (mediaId: string, libraryId: string) => {
       setBusyMediaIds((prev) => new Set(prev).add(mediaId));
@@ -573,13 +736,19 @@ export default function PodcastDetailPaneBody() {
           method: "POST",
           body: JSON.stringify({ media_id: mediaId }),
         });
-        setLibraryIdsByEpisodeId((prev) => {
-          const next = { ...prev };
-          const nextLibraryIds = new Set(next[mediaId] ?? []);
-          nextLibraryIds.add(libraryId);
-          next[mediaId] = [...nextLibraryIds];
-          return next;
-        });
+        setEpisodeLibrariesById((prev) => ({
+          ...prev,
+          [mediaId]: (prev[mediaId] ?? []).map((library) =>
+            library.id === libraryId
+              ? {
+                  ...library,
+                  isInLibrary: true,
+                  canAdd: false,
+                  canRemove: true,
+                }
+              : library
+          ),
+        }));
       } catch (mutationError) {
         if (isApiError(mutationError)) {
           setError(mutationError.message);
@@ -605,17 +774,19 @@ export default function PodcastDetailPaneBody() {
         await apiFetch(`/api/libraries/${libraryId}/media/${mediaId}`, {
           method: "DELETE",
         });
-        setLibraryIdsByEpisodeId((prev) => {
-          const next = { ...prev };
-          const nextLibraryIds = new Set(next[mediaId] ?? []);
-          nextLibraryIds.delete(libraryId);
-          if (nextLibraryIds.size === 0) {
-            delete next[mediaId];
-          } else {
-            next[mediaId] = [...nextLibraryIds];
-          }
-          return next;
-        });
+        setEpisodeLibrariesById((prev) => ({
+          ...prev,
+          [mediaId]: (prev[mediaId] ?? []).map((library) =>
+            library.id === libraryId
+              ? {
+                  ...library,
+                  isInLibrary: false,
+                  canAdd: true,
+                  canRemove: false,
+                }
+              : library
+          ),
+        }));
       } catch (mutationError) {
         if (isApiError(mutationError)) {
           setError(mutationError.message);
@@ -673,7 +844,7 @@ export default function PodcastDetailPaneBody() {
     podcastId,
   ]);
 
-  const handleSubscribe = useCallback(async () => {
+  const handleSubscribe = useCallback(async (libraryId: string | null = null) => {
     if (!detail) {
       return;
     }
@@ -690,6 +861,7 @@ export default function PodcastDetailPaneBody() {
           website_url: detail.podcast.website_url,
           image_url: detail.podcast.image_url,
           description: detail.podcast.description,
+          library_id: libraryId,
         }),
       });
       await load();
@@ -716,7 +888,18 @@ export default function PodcastDetailPaneBody() {
         method: "POST",
         body: JSON.stringify({ podcast_id: podcastId }),
       });
-      setPodcastLibraryIds((prev) => [...new Set([...prev, libraryId])]);
+      setPodcastLibraries((prev) =>
+        prev.map((library) =>
+          library.id === libraryId
+            ? {
+                ...library,
+                isInLibrary: true,
+                canAdd: false,
+                canRemove: true,
+              }
+            : library
+        )
+      );
     } catch (mutationError) {
       if (isApiError(mutationError)) {
         setError(mutationError.message);
@@ -743,7 +926,18 @@ export default function PodcastDetailPaneBody() {
       await apiFetch(`/api/libraries/${libraryId}/podcasts/${podcastId}`, {
         method: "DELETE",
       });
-      setPodcastLibraryIds((prev) => prev.filter((candidate) => candidate !== libraryId));
+      setPodcastLibraries((prev) =>
+        prev.map((library) =>
+          library.id === libraryId
+            ? {
+                ...library,
+                isInLibrary: false,
+                canAdd: true,
+                canRemove: false,
+              }
+            : library
+        )
+      );
     } catch (mutationError) {
       if (isApiError(mutationError)) {
         setError(mutationError.message);
@@ -806,12 +1000,12 @@ export default function PodcastDetailPaneBody() {
     if (!detail?.subscription) {
       return;
     }
-    const currentLibraryIds = new Set(podcastLibraryIds);
-    const removableLibraries = libraries.filter(
-      (library) => currentLibraryIds.has(library.id) && library.role === "admin"
+    const currentLibraries = await loadPodcastLibraries(true);
+    const removableLibraries = currentLibraries.filter(
+      (library) => library.isInLibrary && library.canRemove
     );
-    const retainedLibraries = libraries.filter(
-      (library) => currentLibraryIds.has(library.id) && library.role !== "admin"
+    const retainedLibraries = currentLibraries.filter(
+      (library) => library.isInLibrary && !library.canRemove
     );
     const confirmationLines = [
       `Unsubscribe from "${detail.podcast.title}"?`,
@@ -834,7 +1028,7 @@ export default function PodcastDetailPaneBody() {
         method: "DELETE",
       });
       setDetail((prev) => (prev ? { ...prev, subscription: null } : prev));
-      setPodcastLibraryIds(retainedLibraries.map((library) => library.id));
+      setPodcastLibraries(retainedLibraries);
     } catch (unsubscribeError) {
       if (isApiError(unsubscribeError)) {
         setError(unsubscribeError.message);
@@ -844,7 +1038,7 @@ export default function PodcastDetailPaneBody() {
     } finally {
       setUnsubscribeBusy(false);
     }
-  }, [detail, libraries, podcastId, podcastLibraryIds]);
+  }, [detail, loadPodcastLibraries, podcastId]);
 
   const openSettingsModal = useCallback(() => {
     if (!detail?.subscription) {
@@ -1396,23 +1590,356 @@ export default function PodcastDetailPaneBody() {
     return new Set(queueItems.map((item) => item.media_id));
   }, [queueItems]);
   const activeSubscription = detail?.subscription ?? null;
-  const podcastLibraryOptions =
-    podcastId && activeSubscription && libraries.length > 0
-      ? libraries.map((library) => {
-          const inLibrary = podcastLibraryIds.includes(library.id);
-          const busyKey = `${library.id}:${podcastId}`;
-          return {
-            id: `${inLibrary ? "remove" : "add"}-${library.id}`,
-            label: `${inLibrary ? "Remove from" : "Add to"} ${library.name}`,
-            disabled: busyPodcastLibraryKeys.has(busyKey),
-            onSelect: () => {
-              void (inLibrary
-                ? handleRemovePodcastFromLibrary(library.id)
-                : handleAddPodcastToLibrary(library.id));
+  const podcastLibraryCount = podcastLibraries.filter((library) => library.isInLibrary).length;
+  const podcastPickerLibraries = podcastLibraries.map((library) => {
+    const busyKey = `${library.id}:${podcastId}`;
+    if (!busyPodcastLibraryKeys.has(busyKey)) {
+      return library;
+    }
+    return {
+      ...library,
+      canAdd: false,
+      canRemove: false,
+    };
+  });
+  const episodePaneContent = (
+    <div className={styles.episodePaneContent}>
+      <div className={styles.episodePaneHeaderRow}>
+        <div className={styles.episodeHeaderActions}>
+          <span>{activeEpisodeCount} episodes</span>
+        </div>
+        <ActionMenu
+          label="Episode actions"
+          options={[
+            {
+              id: "transcribe-unplayed",
+              label: batchTranscriptBusy ? "Transcribing..." : "Transcribe unplayed",
+              disabled: batchTranscriptBusy || batchTranscriptCandidateEpisodes.length === 0,
+              onSelect: () => void handleBatchTranscriptRequest(),
             },
-          };
-        })
-      : [];
+            {
+              id: "mark-all-played",
+              label: markAllAsPlayedBusy ? "Marking..." : "Mark all as played",
+              disabled: markAllAsPlayedBusy || visibleUnplayedEpisodeIds.length === 0,
+              onSelect: () => void handleMarkAllVisibleUnplayedAsPlayed(),
+            },
+          ]}
+        />
+      </div>
+
+      {!loading && episodes.length === 0 && !error && (
+        <StateMessage variant="empty">No episodes found for this podcast.</StateMessage>
+      )}
+
+      <div className={styles.episodeFilterBar}>
+        <div className={styles.episodeFilterPills}>
+          {([
+            ["all", "All"],
+            ["unplayed", "Unplayed"],
+            ["in_progress", "In Progress"],
+            ["played", "Played"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={styles.episodeFilterPill}
+              aria-pressed={episodeStateFilter === value}
+              onClick={() => setEpisodeStateFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <label className={styles.episodeSortLabel}>
+          Episode sort
+          <select
+            aria-label="Episode sort"
+            value={episodeSort}
+            onChange={(event) => setEpisodeSort(event.target.value as EpisodeSort)}
+            className={styles.episodeSortSelect}
+          >
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="duration_asc">Shortest</option>
+            <option value="duration_desc">Longest</option>
+          </select>
+        </label>
+        <label className={styles.episodeSearchLabel}>
+          Search episodes
+          <input
+            type="search"
+            aria-label="Search episodes"
+            className={styles.episodeSearchInput}
+            placeholder="Search titles..."
+            value={episodeSearchInput}
+            onChange={(event) => setEpisodeSearchInput(event.target.value)}
+          />
+        </label>
+      </div>
+
+      {batchTranscriptSummary && (
+        <p className={styles.batchTranscriptSummary}>{batchTranscriptSummary}</p>
+      )}
+
+      {episodes.length > 0 && (
+        <AppList>
+          {episodes.map((episode) => {
+            const busy = busyMediaIds.has(episode.id);
+            const pickerLibraries = (episodeLibrariesById[episode.id] ?? []).map((library) => {
+              if (!busy) {
+                return library;
+              }
+              return {
+                ...library,
+                canAdd: false,
+                canRemove: false,
+              };
+            });
+            const episodeState = deriveEpisodeState(episode);
+            const episodeProgressPercent = getEpisodeProgressPercent(episode);
+            const canRequestTranscript =
+              transcriptionAllowed && canRequestTranscriptForEpisode(episode);
+            const transcriptProvisioningInProgress =
+              shouldPollTranscriptProvisioningForEpisode(episode);
+            const transcriptReason = transcriptReasonByMediaId[episode.id] ?? "search";
+            const transcriptRequestForecast = transcriptRequestForecastByMediaId[episode.id];
+            const forecastForSelectedReason =
+              transcriptRequestForecast && transcriptRequestForecast.reason === transcriptReason
+                ? transcriptRequestForecast
+                : null;
+            const transcriptRequestDisabled =
+              requestingTranscriptMediaIds.has(episode.id) ||
+              (forecastForSelectedReason ? !forecastForSelectedReason.fits_budget : false);
+            const inQueue = queueMediaIds.has(episode.id);
+            const showNotesText = episode.description_text?.trim() ?? "";
+            const showNotesExpanded = expandedShowNotesMediaIds.has(episode.id);
+            const rowOptions = [
+              {
+                id: "toggle-played",
+                label: episodeState === "played" ? "Mark as unplayed" : "Mark as played",
+                disabled: markingEpisodeIds.has(episode.id),
+                onSelect: () => {
+                  void handleMarkEpisodeCompletion(episode, episodeState !== "played");
+                },
+              },
+            ];
+            return (
+              <AppListItem
+                key={episode.id}
+                href={`/media/${episode.id}`}
+                title={
+                  <span className={styles.episodeTitle}>
+                    {episodeState === "unplayed" && (
+                      <span className={styles.unplayedDot} aria-hidden="true" />
+                    )}
+                    <span
+                      className={
+                        episodeState === "played" ? styles.playedEpisodeTitleText : undefined
+                      }
+                    >
+                      {episode.title}
+                    </span>
+                  </span>
+                }
+                description={
+                  <span className={styles.episodeDescription}>
+                    <span>{episode.capabilities.can_play ? "Playable episode" : "Processing"}</span>
+                    {episodeState === "in_progress" && (
+                      <span
+                        className={styles.inProgressBar}
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={episodeProgressPercent}
+                      >
+                        <span
+                          className={styles.inProgressBarFill}
+                          style={{ width: `${episodeProgressPercent}%` }}
+                        />
+                      </span>
+                    )}
+                    {showNotesText && !showNotesExpanded && (
+                      <button
+                        type="button"
+                        className={styles.showNotesToggleButton}
+                        aria-label={`Show notes for ${episode.title}`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          toggleEpisodeShowNotesExpansion(episode.id);
+                        }}
+                      >
+                        Show notes
+                      </button>
+                    )}
+                    {showNotesText && showNotesExpanded && (
+                      <span className={styles.episodeShowNotes}>
+                        <span className={styles.episodeShowNotesPreview} data-expanded="true">
+                          {showNotesText}
+                        </span>
+                        <button
+                          type="button"
+                          className={styles.showNotesToggleButton}
+                          aria-label={`Hide notes for ${episode.title}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            toggleEpisodeShowNotesExpansion(episode.id);
+                          }}
+                        >
+                          Hide notes
+                        </button>
+                      </span>
+                    )}
+                  </span>
+                }
+                meta={`${episode.processing_status} · ${formatEpisodeTranscriptMeta(episode)} · ${formatEpisodeStateLabel(episodeState)}`}
+                actions={
+                  <div className={styles.episodeActions}>
+                    <button
+                      type="button"
+                      className={styles.queueButton}
+                      aria-label={`Play next for ${episode.title}`}
+                      onClick={() => {
+                        void addToQueue(episode.id, "next");
+                      }}
+                    >
+                      Play next
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.queueButton}
+                      aria-label={`Add ${episode.title} to queue`}
+                      onClick={() => {
+                        void addToQueue(episode.id, "last");
+                      }}
+                    >
+                      Add to queue
+                    </button>
+                    <LibraryTargetPicker
+                      label="Libraries"
+                      libraries={pickerLibraries}
+                      loading={loadingEpisodeLibraryMediaIds.has(episode.id)}
+                      disabled={busy}
+                      onOpen={() => {
+                        void loadEpisodeLibraries(episode.id);
+                      }}
+                      onAddToLibrary={(libraryId) => {
+                        void handleAddToLibrary(episode.id, libraryId);
+                      }}
+                      onRemoveFromLibrary={(libraryId) => {
+                        void handleRemoveFromLibrary(episode.id, libraryId);
+                      }}
+                      emptyMessage="No non-default libraries available."
+                    />
+                    {inQueue && <span className={styles.queueBadge}>In Queue</span>}
+                    {canRequestTranscript && !expandedTranscriptMediaIds.has(episode.id) && (
+                      <button
+                        type="button"
+                        className={styles.requestButton}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setExpandedTranscriptMediaIds((prev) => new Set(prev).add(episode.id));
+                        }}
+                        aria-label={`Request transcript for ${episode.title}`}
+                      >
+                        Request transcript...
+                      </button>
+                    )}
+                    {canRequestTranscript && expandedTranscriptMediaIds.has(episode.id) && (
+                      <>
+                        <label className={styles.reasonLabel}>
+                          Transcript reason
+                          <select
+                            value={transcriptReason}
+                            onChange={(event) =>
+                              setTranscriptReasonByMediaId((prev) => ({
+                                ...prev,
+                                [episode.id]: event.target.value as TranscriptRequestReason,
+                              }))
+                            }
+                            aria-label={`Transcript request reason for ${episode.title}`}
+                            className={styles.reasonSelect}
+                          >
+                            <option value="search">search</option>
+                            <option value="highlight">highlight</option>
+                            <option value="quote">quote</option>
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          className={styles.requestButton}
+                          aria-label={`Submit transcript request for ${episode.title}`}
+                          disabled={transcriptRequestDisabled}
+                          onClick={() => void handleRequestTranscript(episode.id)}
+                        >
+                          {requestingTranscriptMediaIds.has(episode.id)
+                            ? "Requesting..."
+                            : "Request transcript"}
+                        </button>
+                        {forecastForSelectedReason && (
+                          <span className={styles.transcriptRequestHint}>
+                            {forecastForSelectedReason.source === "request"
+                              ? forecastForSelectedReason.request_enqueued
+                                ? "queued"
+                                : "acknowledged"
+                              : "estimate"}{" "}
+                            · {forecastForSelectedReason.required_minutes} min · remaining{" "}
+                            {forecastForSelectedReason.remaining_minutes == null
+                              ? "unlimited"
+                              : `${forecastForSelectedReason.remaining_minutes} min`}
+                          </span>
+                        )}
+                        {forecastForSelectedReason && !forecastForSelectedReason.fits_budget && (
+                          <span className={styles.transcriptQuotaWarning}>
+                            Not enough monthly transcription quota for this request.
+                          </span>
+                        )}
+                      </>
+                    )}
+                    {!canRequestTranscript && !transcriptionAllowed && (
+                      <span className={styles.transcriptQuotaWarning}>
+                        {billingDisabled
+                          ? "Billing is temporarily unavailable, so transcription upgrades are unavailable right now."
+                          : `Transcription is included with ${planLabel("ai_plus")} and ${planLabel("ai_pro")}.`}
+                      </span>
+                    )}
+                    {!canRequestTranscript && transcriptionAllowed && (
+                      <span className={styles.transcriptStatus}>
+                        {episode.transcript_state === "ready"
+                          ? "Transcript ready"
+                          : episode.transcript_state === "partial"
+                            ? "Transcript partially ready"
+                            : transcriptProvisioningInProgress
+                              ? "Transcript request in progress"
+                              : episode.transcript_state === "unavailable"
+                                ? "Transcript unavailable"
+                                : "Transcript state unavailable"}
+                      </span>
+                    )}
+                  </div>
+                }
+                options={rowOptions}
+              />
+            );
+          })}
+        </AppList>
+      )}
+
+      {!loading && hasMoreEpisodes && (
+        <button
+          type="button"
+          className={styles.loadMoreButton}
+          onClick={() => void handleLoadMoreEpisodes()}
+          disabled={loadingMoreEpisodes}
+          aria-label="Load more episodes"
+        >
+          {loadingMoreEpisodes ? "Loading..." : "Load more episodes"}
+        </button>
+      )}
+    </div>
+  );
 
   if (!podcastId) {
     return (
@@ -1424,94 +1951,137 @@ export default function PodcastDetailPaneBody() {
 
   return (
     <>
-      <div className={styles.headerActions}>
-        <Link href="/podcasts/subscriptions" className={styles.navLink}>
-          My podcasts
-        </Link>
-        <div className={styles.headerButtons}>
-          {activeSubscription ? (
-            <button
-              type="button"
-              className={styles.syncButton}
-              onClick={() => void handleRefreshSync()}
-              disabled={refreshSyncBusy}
+      <div className={styles.splitLayout}>
+        <div className={styles.primaryColumn}>
+          <div className={styles.primaryScroll}>
+            <div className={styles.headerActions}>
+              <Link href="/podcasts/subscriptions" className={styles.navLink}>
+                My podcasts
+              </Link>
+              <div className={styles.headerButtons}>
+                {activeSubscription ? (
+                  <button
+                    type="button"
+                    className={styles.syncButton}
+                    onClick={() => void handleRefreshSync()}
+                    disabled={refreshSyncBusy}
+                  >
+                    {refreshSyncBusy ? "Refreshing..." : "Refresh sync"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className={styles.syncButton}
+                    onClick={() => void handleSubscribe()}
+                    disabled={subscribeBusy || !detail}
+                  >
+                    {subscribeBusy ? "Subscribing..." : "Subscribe"}
+                  </button>
+                )}
+                {activeSubscription ? (
+                  <LibraryTargetPicker
+                    label="Libraries"
+                    libraries={podcastPickerLibraries}
+                    loading={podcastLibrariesLoading}
+                    onOpen={() => {
+                      void loadPodcastLibraries();
+                    }}
+                    onAddToLibrary={(libraryId) => {
+                      void handleAddPodcastToLibrary(libraryId);
+                    }}
+                    onRemoveFromLibrary={(libraryId) => {
+                      void handleRemovePodcastFromLibrary(libraryId);
+                    }}
+                    emptyMessage="No non-default libraries available."
+                  />
+                ) : (
+                  <LibraryTargetPicker
+                    label="Add to library"
+                    libraries={availableLibraries}
+                    loading={availableLibrariesLoading}
+                    disabled={subscribeBusy}
+                    onOpen={() => {
+                      void loadAvailableLibraries();
+                    }}
+                    onSelectLibrary={(libraryId) => {
+                      void handleSubscribe(libraryId);
+                    }}
+                    emptyMessage="No non-default libraries available."
+                  />
+                )}
+                {activeSubscription ? (
+                  <button
+                    type="button"
+                    className={styles.syncButton}
+                    onClick={openSettingsModal}
+                  >
+                    Settings
+                  </button>
+                ) : null}
+                {activeSubscription ? (
+                  <button
+                    type="button"
+                    className={styles.unsubscribeButton}
+                    onClick={() => void handleUnsubscribe()}
+                    disabled={unsubscribeBusy}
+                  >
+                    {unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <SectionCard
+              title={detail?.podcast.title ?? "Podcast"}
+              description={detail?.podcast.feed_url || "Podcast detail"}
             >
-              {refreshSyncBusy ? "Refreshing..." : "Refresh sync"}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className={styles.syncButton}
-              onClick={() => void handleSubscribe()}
-              disabled={subscribeBusy || !detail}
-            >
-              {subscribeBusy ? "Subscribing..." : "Subscribe"}
-            </button>
-          )}
-          {podcastLibraryOptions.length > 0 ? (
-            <ActionMenu label="Library actions" options={podcastLibraryOptions} />
-          ) : null}
-          {activeSubscription ? (
-            <button
-              type="button"
-              className={styles.syncButton}
-              onClick={openSettingsModal}
-            >
-              Settings
-            </button>
-          ) : null}
-          {activeSubscription ? (
-            <button
-              type="button"
-              className={styles.unsubscribeButton}
-              onClick={() => void handleUnsubscribe()}
-              disabled={unsubscribeBusy}
-            >
-              {unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe"}
-            </button>
-          ) : null}
-        </div>
-      </div>
-      <SectionCard
-        title={detail?.podcast.title ?? "Podcast"}
-        description={detail?.podcast.feed_url || "Podcast detail"}
-      >
-        {loading && <StateMessage variant="loading">Loading podcast detail...</StateMessage>}
-        {error && <StateMessage variant="error">{error}</StateMessage>}
-        {!loading && detail && (
-          <>
-            {activeSubscription ? (
-              <>
-                <p className={styles.syncState}>
-                  sync status: <strong>{activeSubscription.sync_status}</strong>
-                </p>
-                <p className={styles.settingsSummary}>
-                  {formatSubscriptionPlaybackSummary(
-                    activeSubscription.default_playback_speed,
-                    activeSubscription.auto_queue
+              {loading && <StateMessage variant="loading">Loading podcast detail...</StateMessage>}
+              {error && <StateMessage variant="error">{error}</StateMessage>}
+              {!loading && detail && (
+                <>
+                  {activeSubscription ? (
+                    <>
+                      <p className={styles.syncState}>
+                        sync status: <strong>{activeSubscription.sync_status}</strong>
+                      </p>
+                      <p className={styles.settingsSummary}>
+                        {formatSubscriptionPlaybackSummary(
+                          activeSubscription.default_playback_speed,
+                          activeSubscription.auto_queue
+                        )}
+                      </p>
+                    </>
+                  ) : (
+                    <p className={styles.unsubscribedLabel}>
+                      Not subscribed. Subscribe to save playback defaults and keep this show in your
+                      libraries.
+                    </p>
                   )}
-                </p>
-              </>
-            ) : (
-              <p className={styles.unsubscribedLabel}>
-                Not subscribed. Subscribe to save playback defaults and keep this show in your
-                libraries.
-              </p>
-            )}
-            <p className={styles.settingsSummary}>
-              In {podcastLibraryIds.length} librar{podcastLibraryIds.length === 1 ? "y" : "ies"}
-            </p>
-            {activeSubscription?.sync_error_code && (
-              <p className={styles.syncError}>
-                <strong>{activeSubscription.sync_error_code}</strong>
-                {activeSubscription.sync_error_message
-                  ? `: ${activeSubscription.sync_error_message}`
-                  : ""}
-              </p>
-            )}
-          </>
-        )}
-      </SectionCard>
+                  <p className={styles.settingsSummary}>
+                    In {podcastLibraryCount} librar{podcastLibraryCount === 1 ? "y" : "ies"}
+                  </p>
+                  {activeSubscription?.sync_error_code && (
+                    <p className={styles.syncError}>
+                      <strong>{activeSubscription.sync_error_code}</strong>
+                      {activeSubscription.sync_error_message
+                        ? `: ${activeSubscription.sync_error_message}`
+                        : ""}
+                    </p>
+                  )}
+                </>
+              )}
+            </SectionCard>
+          </div>
+        </div>
+
+        {!isMobileViewport ? (
+          <aside className={styles.episodesColumn} aria-label="Episodes">
+            <div className={styles.episodesColumnHeader}>
+              <h2>Episodes</h2>
+            </div>
+            <div className={styles.episodesColumnBody}>{episodePaneContent}</div>
+          </aside>
+        ) : null}
+      </div>
 
       {settingsModalOpen && detail && activeSubscription && (
         <div
@@ -1580,332 +2150,29 @@ export default function PodcastDetailPaneBody() {
         </div>
       )}
 
-      <SectionCard
-        title="Episodes"
-        actions={
-          <div className={styles.episodeHeaderActions}>
-            <span>{activeEpisodeCount} episodes</span>
-            <ActionMenu
-              label="Episode actions"
-              options={[
-                {
-                  id: "transcribe-unplayed",
-                  label: batchTranscriptBusy ? "Transcribing..." : "Transcribe unplayed",
-                  disabled: batchTranscriptBusy || batchTranscriptCandidateEpisodes.length === 0,
-                  onSelect: () => void handleBatchTranscriptRequest(),
-                },
-                {
-                  id: "mark-all-played",
-                  label: markAllAsPlayedBusy ? "Marking..." : "Mark all as played",
-                  disabled: markAllAsPlayedBusy || visibleUnplayedEpisodeIds.length === 0,
-                  onSelect: () => void handleMarkAllVisibleUnplayedAsPlayed(),
-                },
-              ]}
-            />
-          </div>
-        }
-      >
-        {!loading && episodes.length === 0 && !error && (
-          <StateMessage variant="empty">No episodes found for this podcast.</StateMessage>
-        )}
-
-        <div className={styles.episodeFilterBar}>
-          <div className={styles.episodeFilterPills}>
-            {([
-              ["all", "All"],
-              ["unplayed", "Unplayed"],
-              ["in_progress", "In Progress"],
-              ["played", "Played"],
-            ] as const).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                className={styles.episodeFilterPill}
-                aria-pressed={episodeStateFilter === value}
-                onClick={() => setEpisodeStateFilter(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <label className={styles.episodeSortLabel}>
-            Episode sort
-            <select
-              aria-label="Episode sort"
-              value={episodeSort}
-              onChange={(event) => setEpisodeSort(event.target.value as EpisodeSort)}
-              className={styles.episodeSortSelect}
-            >
-              <option value="newest">Newest</option>
-              <option value="oldest">Oldest</option>
-              <option value="duration_asc">Shortest</option>
-              <option value="duration_desc">Longest</option>
-            </select>
-          </label>
-          <label className={styles.episodeSearchLabel}>
-            Search episodes
-            <input
-              type="search"
-              aria-label="Search episodes"
-              className={styles.episodeSearchInput}
-              placeholder="Search titles..."
-              value={episodeSearchInput}
-              onChange={(event) => setEpisodeSearchInput(event.target.value)}
-            />
-          </label>
-        </div>
-
-        {batchTranscriptSummary && (
-          <p className={styles.batchTranscriptSummary}>{batchTranscriptSummary}</p>
-        )}
-
-        {episodes.length > 0 && (
-          <AppList>
-            {episodes.map((episode) => {
-              const busy = busyMediaIds.has(episode.id);
-              const currentLibraryIds = new Set(libraryIdsByEpisodeId[episode.id] ?? []);
-              const episodeState = deriveEpisodeState(episode);
-              const episodeProgressPercent = getEpisodeProgressPercent(episode);
-              const canRequestTranscript =
-                transcriptionAllowed && canRequestTranscriptForEpisode(episode);
-              const transcriptProvisioningInProgress =
-                shouldPollTranscriptProvisioningForEpisode(episode);
-              const transcriptReason = transcriptReasonByMediaId[episode.id] ?? "search";
-              const transcriptRequestForecast = transcriptRequestForecastByMediaId[episode.id];
-              const forecastForSelectedReason =
-                transcriptRequestForecast && transcriptRequestForecast.reason === transcriptReason
-                  ? transcriptRequestForecast
-                  : null;
-              const transcriptRequestDisabled =
-                requestingTranscriptMediaIds.has(episode.id) ||
-                (forecastForSelectedReason ? !forecastForSelectedReason.fits_budget : false);
-              const inQueue = queueMediaIds.has(episode.id);
-              const showNotesText = episode.description_text?.trim() ?? "";
-              const showNotesExpanded = expandedShowNotesMediaIds.has(episode.id);
-              const rowOptions = [
-                {
-                  id: "toggle-played",
-                  label: episodeState === "played" ? "Mark as unplayed" : "Mark as played",
-                  disabled: markingEpisodeIds.has(episode.id),
-                  onSelect: () => {
-                    void handleMarkEpisodeCompletion(episode, episodeState !== "played");
-                  },
-                },
-                ...libraries.map((library) => {
-                  const inLibrary = currentLibraryIds.has(library.id);
-                  return {
-                    id: `${inLibrary ? "remove" : "add"}-${library.id}`,
-                    label: `${inLibrary ? "Remove from" : "Add to"} ${library.name}`,
-                    disabled: busy,
-                    onSelect: () => {
-                      void (inLibrary
-                        ? handleRemoveFromLibrary(episode.id, library.id)
-                        : handleAddToLibrary(episode.id, library.id));
-                    },
-                  };
-                }),
-              ];
-              return (
-                <AppListItem
-                  key={episode.id}
-                  href={`/media/${episode.id}`}
-                  title={
-                    <span className={styles.episodeTitle}>
-                      {episodeState === "unplayed" && (
-                        <span className={styles.unplayedDot} aria-hidden="true" />
-                      )}
-                      <span
-                        className={
-                          episodeState === "played" ? styles.playedEpisodeTitleText : undefined
-                        }
-                      >
-                        {episode.title}
-                      </span>
-                    </span>
-                  }
-                  description={
-                    <span className={styles.episodeDescription}>
-                      <span>{episode.capabilities.can_play ? "Playable episode" : "Processing"}</span>
-                      {episodeState === "in_progress" && (
-                        <span
-                          className={styles.inProgressBar}
-                          role="progressbar"
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                          aria-valuenow={episodeProgressPercent}
-                        >
-                          <span
-                            className={styles.inProgressBarFill}
-                            style={{ width: `${episodeProgressPercent}%` }}
-                          />
-                        </span>
-                      )}
-                      {showNotesText && !showNotesExpanded && (
-                        <button
-                          type="button"
-                          className={styles.showNotesToggleButton}
-                          aria-label={`Show notes for ${episode.title}`}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            toggleEpisodeShowNotesExpansion(episode.id);
-                          }}
-                        >
-                          Show notes
-                        </button>
-                      )}
-                      {showNotesText && showNotesExpanded && (
-                        <span className={styles.episodeShowNotes}>
-                          <span className={styles.episodeShowNotesPreview} data-expanded="true">
-                            {showNotesText}
-                          </span>
-                          <button
-                            type="button"
-                            className={styles.showNotesToggleButton}
-                            aria-label={`Hide notes for ${episode.title}`}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              toggleEpisodeShowNotesExpansion(episode.id);
-                            }}
-                          >
-                            Hide notes
-                          </button>
-                        </span>
-                      )}
-                    </span>
-                  }
-                  meta={`${episode.processing_status} · ${formatEpisodeTranscriptMeta(episode)} · ${formatEpisodeStateLabel(episodeState)}`}
-                  actions={
-                    <div className={styles.episodeActions}>
-                      <button
-                        type="button"
-                        className={styles.queueButton}
-                        aria-label={`Play next for ${episode.title}`}
-                        onClick={() => {
-                          void addToQueue(episode.id, "next");
-                        }}
-                      >
-                        Play next
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.queueButton}
-                        aria-label={`Add ${episode.title} to queue`}
-                        onClick={() => {
-                          void addToQueue(episode.id, "last");
-                        }}
-                      >
-                        Add to queue
-                      </button>
-                      {inQueue && <span className={styles.queueBadge}>In Queue</span>}
-                      {canRequestTranscript && !expandedTranscriptMediaIds.has(episode.id) && (
-                        <button
-                          type="button"
-                          className={styles.requestButton}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            setExpandedTranscriptMediaIds((prev) => new Set(prev).add(episode.id));
-                          }}
-                          aria-label={`Request transcript for ${episode.title}`}
-                        >
-                          Request transcript...
-                        </button>
-                      )}
-                      {canRequestTranscript && expandedTranscriptMediaIds.has(episode.id) && (
-                        <>
-                          <label className={styles.reasonLabel}>
-                            Transcript reason
-                            <select
-                              value={transcriptReason}
-                              onChange={(event) =>
-                                setTranscriptReasonByMediaId((prev) => ({
-                                  ...prev,
-                                  [episode.id]: event.target.value as TranscriptRequestReason,
-                                }))
-                              }
-                              aria-label={`Transcript request reason for ${episode.title}`}
-                              className={styles.reasonSelect}
-                            >
-                              <option value="search">search</option>
-                              <option value="highlight">highlight</option>
-                              <option value="quote">quote</option>
-                            </select>
-                          </label>
-                          <button
-                            type="button"
-                            className={styles.requestButton}
-                            aria-label={`Submit transcript request for ${episode.title}`}
-                            disabled={transcriptRequestDisabled}
-                            onClick={() => void handleRequestTranscript(episode.id)}
-                          >
-                            {requestingTranscriptMediaIds.has(episode.id)
-                              ? "Requesting..."
-                              : "Request transcript"}
-                          </button>
-                          {forecastForSelectedReason && (
-                            <span className={styles.transcriptRequestHint}>
-                              {forecastForSelectedReason.source === "request"
-                                ? forecastForSelectedReason.request_enqueued
-                                  ? "queued"
-                                  : "acknowledged"
-                                : "estimate"}{" "}
-                              · {forecastForSelectedReason.required_minutes} min · remaining{" "}
-                              {forecastForSelectedReason.remaining_minutes == null
-                                ? "unlimited"
-                                : `${forecastForSelectedReason.remaining_minutes} min`}
-                            </span>
-                          )}
-                          {forecastForSelectedReason &&
-                            !forecastForSelectedReason.fits_budget && (
-                              <span className={styles.transcriptQuotaWarning}>
-                                Not enough monthly transcription quota for this request.
-                              </span>
-                            )}
-                        </>
-                      )}
-                      {!canRequestTranscript && !transcriptionAllowed && (
-                        <span className={styles.transcriptQuotaWarning}>
-                          {billingDisabled
-                            ? "Billing is temporarily unavailable, so transcription upgrades are unavailable right now."
-                            : `Transcription is included with ${planLabel("ai_plus")} and ${planLabel("ai_pro")}.`}
-                        </span>
-                      )}
-                      {!canRequestTranscript && transcriptionAllowed && (
-                        <span className={styles.transcriptStatus}>
-                          {episode.transcript_state === "ready"
-                            ? "Transcript ready"
-                            : episode.transcript_state === "partial"
-                              ? "Transcript partially ready"
-                              : transcriptProvisioningInProgress
-                                ? "Transcript request in progress"
-                                : episode.transcript_state === "unavailable"
-                                  ? "Transcript unavailable"
-                                : "Transcript state unavailable"}
-                        </span>
-                      )}
-                    </div>
-                  }
-                  options={rowOptions}
-                />
-              );
-            })}
-          </AppList>
-        )}
-
-        {!loading && hasMoreEpisodes && (
-          <button
-            type="button"
-            className={styles.loadMoreButton}
-            onClick={() => void handleLoadMoreEpisodes()}
-            disabled={loadingMoreEpisodes}
-            aria-label="Load more episodes"
+      {isMobileViewport && episodesDrawerOpen ? (
+        <div className={styles.episodesBackdrop} onClick={() => setEpisodesDrawerOpen(false)}>
+          <aside
+            className={styles.episodesDrawer}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Episodes"
+            onClick={(event) => event.stopPropagation()}
           >
-            {loadingMoreEpisodes ? "Loading..." : "Load more episodes"}
-          </button>
-        )}
-      </SectionCard>
+            <header className={styles.episodesDrawerHeader}>
+              <h2>Episodes</h2>
+              <button
+                type="button"
+                className={styles.syncButton}
+                onClick={() => setEpisodesDrawerOpen(false)}
+              >
+                Close
+              </button>
+            </header>
+            <div className={styles.episodesDrawerBody}>{episodePaneContent}</div>
+          </aside>
+        </div>
+      ) : null}
     </>
   );
 }

@@ -562,6 +562,28 @@ def subscribe_to_podcast(
     now = datetime.now(UTC)
 
     with transaction(db):
+        if body.library_id is not None:
+            target_library = db.execute(
+                text("""
+                    SELECT m.role, l.is_default
+                    FROM memberships m
+                    JOIN libraries l ON l.id = m.library_id
+                    WHERE m.library_id = :library_id
+                      AND m.user_id = :viewer_id
+                    FOR UPDATE OF l
+                """),
+                {"library_id": body.library_id, "viewer_id": viewer_id},
+            ).fetchone()
+            if target_library is None:
+                raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
+            if target_library[0] != "admin":
+                raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
+            if bool(target_library[1]):
+                raise ForbiddenError(
+                    ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN,
+                    "Podcasts cannot be added to the default library",
+                )
+
         podcast_id = _upsert_podcast(db, normalized_body, now=now)
         subscription_created = _upsert_subscription(
             db,
@@ -578,6 +600,35 @@ def subscribe_to_podcast(
         snapshot = _get_subscription_sync_snapshot(db, viewer_id, podcast_id)
         if snapshot is None:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Failed to read podcast subscription state.")
+        if body.library_id is not None:
+            existing_entry = db.execute(
+                text("""
+                    SELECT 1
+                    FROM library_entries
+                    WHERE library_id = :library_id
+                      AND podcast_id = :podcast_id
+                """),
+                {"library_id": body.library_id, "podcast_id": podcast_id},
+            ).fetchone()
+            if existing_entry is None:
+                db.execute(
+                    text("""
+                        INSERT INTO library_entries (library_id, media_id, podcast_id, position)
+                        VALUES (:library_id, NULL, :podcast_id, :position)
+                    """),
+                    {
+                        "library_id": body.library_id,
+                        "podcast_id": podcast_id,
+                        "position": db.execute(
+                            text("""
+                                SELECT COALESCE(MAX(position), -1) + 1
+                                FROM library_entries
+                                WHERE library_id = :library_id
+                            """),
+                            {"library_id": body.library_id},
+                        ).scalar_one(),
+                    },
+                )
 
     return PodcastSubscribeOut(
         podcast_id=podcast_id,

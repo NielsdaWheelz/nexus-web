@@ -533,6 +533,12 @@
   cursor: pointer;
 }
 
+.paneActionGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .paneActionButton:hover {
   border-color: var(--color-border-subtle);
   color: var(--color-text-primary);

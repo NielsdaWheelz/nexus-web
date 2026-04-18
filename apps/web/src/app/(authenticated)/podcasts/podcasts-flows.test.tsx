@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import PodcastsPage from "./page";
 import PodcastSubscriptionsPage from "./subscriptions/page";
 import PodcastDetailPage from "./[podcastId]/page";
@@ -9,12 +9,23 @@ import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 
 const mockUsePaneParam = vi.fn<(param: string) => string | null>();
 const mockPush = vi.fn<(href: string) => void>();
+const mockUsePaneChromeOverride = vi.fn<(overrides: Record<string, unknown>) => void>();
+const mockViewportState = { isMobile: false };
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
   usePaneRouter: () => ({ push: mockPush, replace: mockPush }),
   usePaneSearchParams: () => new URLSearchParams(),
   useSetPaneTitle: () => {},
+}));
+
+vi.mock("@/components/workspace/PaneShell", () => ({
+  usePaneChromeOverride: (overrides: Record<string, unknown>) =>
+    mockUsePaneChromeOverride(overrides),
+}));
+
+vi.mock("@/lib/ui/useIsMobileViewport", () => ({
+  useIsMobileViewport: () => mockViewportState.isMobile,
 }));
 
 vi.mock("@/lib/billing/useBillingAccount", () => ({
@@ -129,10 +140,28 @@ function buildEpisode(index: number, overrides: Record<string, unknown> = {}) {
   };
 }
 
+function getLatestChromeOverride(): Record<string, unknown> {
+  const latest = mockUsePaneChromeOverride.mock.calls.at(-1)?.[0];
+  if (!latest) {
+    throw new Error("Expected usePaneChromeOverride to be called");
+  }
+  return latest;
+}
+
+function renderLatestPaneActions() {
+  const actions = getLatestChromeOverride().actions as ReactNode;
+  if (!actions) {
+    throw new Error("Expected pane actions override to be present");
+  }
+  return render(<>{actions}</>);
+}
+
 describe("podcasts product flows", () => {
   beforeEach(() => {
     mockUsePaneParam.mockReset();
     mockPush.mockReset();
+    mockUsePaneChromeOverride.mockReset();
+    mockViewportState.isMobile = false;
     vi.restoreAllMocks();
   });
 
@@ -208,20 +237,87 @@ describe("podcasts product flows", () => {
     expect(await screen.findByRole("link", { name: "View podcast" })).toBeInTheDocument();
   });
 
+  it("subscribes into a specific library from discovery", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/media") {
+        return jsonResponse({ data: [], page: { next_cursor: null } });
+      }
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({
+          data: [{ id: "library-sports", name: "Sports", is_default: false, role: "admin" }],
+        });
+      }
+      if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/podcasts/discover") {
+        return jsonResponse({
+          data: [
+            {
+              podcast_id: null,
+              provider_podcast_id: "provider-1",
+              title: "Systems Podcast",
+              author: "Systems Team",
+              feed_url: "https://feeds.example.com/systems.xml",
+              website_url: "https://example.com/systems",
+              image_url: null,
+              description: "Systems thinking show",
+            },
+          ],
+        });
+      }
+      if (url.pathname === "/api/podcasts/subscriptions" && init?.method === "POST") {
+        return jsonResponse({
+          data: {
+            podcast_id: "podcast-1",
+            subscription_created: true,
+            sync_status: "pending",
+            sync_enqueued: true,
+            sync_error_code: null,
+            sync_error_message: null,
+            sync_attempts: 0,
+            last_synced_at: null,
+            window_size: 3,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(createElement(PodcastsPage));
+
+    await user.type(
+      screen.getByPlaceholderText("Search podcasts by title or topic..."),
+      "systems"
+    );
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    await user.click(await screen.findByRole("button", { name: "Add to library" }));
+    const librariesDialog = await screen.findByRole("dialog", { name: "Add to library" });
+    await user.click(within(librariesDialog).getByRole("button", { name: /Sports/i }));
+
+    await waitFor(() => {
+      expect(
+        fetchSpy.mock.calls.some(([url, init]) => {
+          const parsed = new URL(String(url), "http://localhost");
+          if (parsed.pathname !== "/api/podcasts/subscriptions" || init?.method !== "POST") {
+            return false;
+          }
+          const body = JSON.parse(String(init?.body ?? "{}"));
+          return body.library_id === "library-sports";
+        })
+      ).toBe(true);
+    });
+  });
+
   it("opens row settings in the subscriptions list and saves default speed plus auto-queue", async () => {
     const user = userEvent.setup();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
         return jsonResponse({ data: [buildSubscriptionRow(0)] });
-      }
-      if (url.pathname === "/api/libraries" && (init?.method ?? "GET") === "GET") {
-        return jsonResponse({
-          data: [{ id: "library-sports", name: "Sports", is_default: false, role: "admin" }],
-        });
-      }
-      if (url.pathname === "/api/libraries/library-sports/entries" && (init?.method ?? "GET") === "GET") {
-        return jsonResponse({ data: [] });
       }
       if (
         url.pathname === "/api/podcasts/subscriptions/podcast-0/settings" &&
@@ -308,19 +404,27 @@ describe("podcasts product flows", () => {
       if (url.pathname === "/api/podcasts/podcast-1/episodes") {
         return jsonResponse({ data: [buildEpisode(0)] });
       }
-      if (url.pathname === "/api/libraries" && (init?.method ?? "GET") === "GET") {
+      if (url.pathname === "/api/podcasts/podcast-1/libraries" && (init?.method ?? "GET") === "GET") {
         return jsonResponse({
           data: [
-            { id: "library-sports", name: "Sports", is_default: false, role: "admin" },
-            { id: "library-shared", name: "Shared", is_default: false, role: "viewer" },
+            {
+              id: "library-sports",
+              name: "Sports",
+              color: null,
+              is_in_library: true,
+              can_add: false,
+              can_remove: true,
+            },
+            {
+              id: "library-shared",
+              name: "Shared",
+              color: null,
+              is_in_library: true,
+              can_add: false,
+              can_remove: false,
+            },
           ],
         });
-      }
-      if (url.pathname === "/api/libraries/library-sports/entries" && (init?.method ?? "GET") === "GET") {
-        return jsonResponse({ data: [{ kind: "podcast", podcast: { id: "podcast-1" } }] });
-      }
-      if (url.pathname === "/api/libraries/library-shared/entries" && (init?.method ?? "GET") === "GET") {
-        return jsonResponse({ data: [{ kind: "podcast", podcast: { id: "podcast-1" } }] });
       }
       if (url.pathname === "/api/playback/queue") {
         return jsonResponse({ data: [] });
@@ -355,8 +459,7 @@ describe("podcasts product flows", () => {
       )
     );
 
-    expect(await screen.findByText("Episode 0")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Unsubscribe" }));
+    await user.click(await screen.findByRole("button", { name: "Unsubscribe" }));
 
     expect(confirmSpy).toHaveBeenCalledWith(
       'Unsubscribe from "Systems Podcast"?\n\nThis will remove the podcast from 1 library.\n\nIt will remain in 1 shared library you cannot administer.'
@@ -372,8 +475,9 @@ describe("podcasts product flows", () => {
     });
   });
 
-  it("adds and removes episode library memberships from detail row actions", async () => {
+  it("shows episode library controls from the detail drawer", async () => {
     const user = userEvent.setup();
+    mockViewportState.isMobile = true;
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "podcastId" ? "podcast-1" : null
     );
@@ -417,18 +521,13 @@ describe("podcasts product flows", () => {
         return jsonResponse({ data: [buildEpisode(0)] });
       }
       if (url.pathname === "/api/libraries") {
-        return jsonResponse({
-          data: [
-            { id: "library-sports", name: "Sports", is_default: false, role: "admin" },
-            { id: "library-history", name: "History", is_default: false, role: "admin" },
-          ],
-        });
-      }
-      if (url.pathname === "/api/libraries/library-sports/entries") {
         return jsonResponse({ data: [] });
       }
-      if (url.pathname === "/api/libraries/library-history/entries") {
-        return jsonResponse({ data: [{ kind: "media", media: { id: "media-0" } }] });
+      if (url.pathname === "/api/podcasts/podcast-1/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/media/media-0/libraries") {
+        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/playback/queue") {
         return jsonResponse({ data: [] });
@@ -449,12 +548,6 @@ describe("podcasts product flows", () => {
           ],
         });
       }
-      if (url.pathname === "/api/libraries/library-sports/media" && init?.method === "POST") {
-        return jsonResponse({ data: { ok: true } });
-      }
-      if (url.pathname === "/api/libraries/library-history/media/media-0" && init?.method === "DELETE") {
-        return jsonResponse({ data: { ok: true } });
-      }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
@@ -466,28 +559,11 @@ describe("podcasts product flows", () => {
       )
     );
 
-    expect(await screen.findByText("Episode 0")).toBeInTheDocument();
+    renderLatestPaneActions();
+    await user.click(screen.getByRole("button", { name: "Episodes" }));
 
-    await user.click(screen.getByRole("button", { name: "Actions" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Add to Sports" }));
-    await waitFor(() => {
-      expect(
-        fetchSpy.mock.calls.some(([url, init]) => {
-          const parsed = new URL(String(url), "http://localhost");
-          return parsed.pathname === "/api/libraries/library-sports/media" && init?.method === "POST";
-        })
-      ).toBe(true);
-    });
-
-    await user.click(screen.getByRole("button", { name: "Actions" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Remove from History" }));
-    await waitFor(() => {
-      expect(
-        fetchSpy.mock.calls.some(([url, init]) => {
-          const parsed = new URL(String(url), "http://localhost");
-          return parsed.pathname === "/api/libraries/library-history/media/media-0" && init?.method === "DELETE";
-        })
-      ).toBe(true);
-    });
+    const episodeDrawer = await screen.findByRole("dialog", { name: "Episodes" });
+    expect(within(episodeDrawer).getByText("Episode 0")).toBeInTheDocument();
+    expect(within(episodeDrawer).getByRole("button", { name: "Libraries" })).toBeVisible();
   });
 });

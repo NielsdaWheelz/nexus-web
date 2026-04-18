@@ -63,6 +63,14 @@ describe("podcast BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/pod-123");
   });
 
+  it("GET /api/podcasts/[podcastId]/libraries proxies to /podcasts/{podcastId}/libraries", async () => {
+    const { GET } = await import("./[podcastId]/libraries/route");
+    const req = new Request("http://localhost/api/podcasts/pod-123/libraries");
+    await GET(req, { params: Promise.resolve({ podcastId: "pod-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/pod-123/libraries");
+  });
+
   it("GET /api/podcasts/[podcastId]/episodes proxies to /podcasts/{podcastId}/episodes", async () => {
     const { GET } = await import("./[podcastId]/episodes/route");
     const req = new Request("http://localhost/api/podcasts/pod-123/episodes?limit=50");

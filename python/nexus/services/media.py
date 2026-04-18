@@ -55,6 +55,7 @@ from nexus.schemas.media import (
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services import libraries as libraries_service
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.sanitize_html import sanitize_html
@@ -1271,6 +1272,7 @@ def enqueue_media_from_url(
     db: Session,
     viewer_id: UUID,
     url: str,
+    library_id: UUID | None = None,
     request_id: str | None = None,
 ) -> FromUrlResponse:
     """Create media from URL with kind classification and enqueue ingestion.
@@ -1280,16 +1282,21 @@ def enqueue_media_from_url(
     - all other URLs -> provisional `web_article`
     """
     validate_requested_url(url)
+    if library_id is not None:
+        libraries_service.ensure_writable_non_default_library(db, viewer_id, library_id)
 
     youtube_identity = classify_youtube_url(url)
     if youtube_identity is not None:
-        return create_or_reuse_youtube_video(
+        result = create_or_reuse_youtube_video(
             db=db,
             viewer_id=viewer_id,
             url=url,
             enqueue_task=True,
             request_id=request_id,
         )
+        if library_id is not None:
+            libraries_service.add_media_to_library(db, viewer_id, library_id, result.media_id)
+        return result
 
     if is_youtube_url(url):
         raise InvalidRequestError(
@@ -1299,11 +1306,14 @@ def enqueue_media_from_url(
 
     x_identity = classify_x_url(url)
     if x_identity is not None:
-        return create_or_reuse_x_oembed_article(
+        result = create_or_reuse_x_oembed_article(
             db=db,
             viewer_id=viewer_id,
             url=url,
         )
+        if library_id is not None:
+            libraries_service.add_media_to_library(db, viewer_id, library_id, result.media_id)
+        return result
     if is_x_url(url):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -1312,21 +1322,27 @@ def enqueue_media_from_url(
 
     remote_file_kind = _remote_file_kind_from_url(url)
     if remote_file_kind is not None:
-        return _create_file_media_from_remote_url(
+        result = _create_file_media_from_remote_url(
             db=db,
             viewer_id=viewer_id,
             url=url,
             kind=remote_file_kind,
             request_id=request_id,
         )
+        if library_id is not None:
+            libraries_service.add_media_to_library(db, viewer_id, library_id, result.media_id)
+        return result
 
-    return create_provisional_web_article(
+    result = create_provisional_web_article(
         db,
         viewer_id,
         url,
         enqueue_task=True,
         request_id=request_id,
     )
+    if library_id is not None:
+        libraries_service.add_media_to_library(db, viewer_id, library_id, result.media_id)
+    return result
 
 
 def create_or_reuse_x_oembed_article(

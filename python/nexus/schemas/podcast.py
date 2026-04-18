@@ -26,6 +26,7 @@ class PodcastSubscribeRequest(BaseModel):
     image_url: str | None = None
     description: str | None = None
     auto_queue: bool = False
+    library_id: UUID | None = None
 
 
 class PodcastSubscribeOut(BaseModel):

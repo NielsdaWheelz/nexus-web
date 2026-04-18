@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import LibraryTargetPicker, {
+  type LibraryTargetPickerItem,
+} from "@/components/LibraryTargetPicker";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import { AppList, AppListItem } from "@/components/ui/AppList";
@@ -44,19 +47,6 @@ interface MediaListResponse {
   page: {
     next_cursor: string | null;
   };
-}
-
-interface LibrarySummary {
-  id: string;
-  name: string;
-  is_default: boolean;
-}
-
-interface LibraryEntrySummary {
-  kind: "media" | "podcast";
-  media?: {
-    id: string;
-  } | null;
 }
 
 interface CatalogItem {
@@ -130,8 +120,12 @@ export default function MediaCatalogPage({
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
-  const [libraryIdsByMediaId, setLibraryIdsByMediaId] = useState<Record<string, string[]>>({});
+  const [librariesByMediaId, setLibrariesByMediaId] = useState<
+    Record<string, LibraryTargetPickerItem[]>
+  >({});
+  const [loadingLibraryMediaIds, setLoadingLibraryMediaIds] = useState<Set<string>>(
+    new Set()
+  );
   const [busyMembershipKeys, setBusyMembershipKeys] = useState<Set<string>>(new Set());
   const allowedKindsKey = useMemo(
     () => [...allowedKinds].sort().join(","),
@@ -151,63 +145,34 @@ export default function MediaCatalogPage({
           kind: allowedKindsKey,
         });
         const response = await apiFetch<MediaListResponse>(`/api/media?${params.toString()}`);
-        const nextItems = response.data
-          .filter((item) => isMediaKind(item.kind))
-          .map((item) => ({
-            id: item.id,
-            kind: item.kind as MediaKind,
-            title: item.title,
-            canonical_source_url: item.canonical_source_url,
-            processing_status: item.processing_status,
-            created_at: item.created_at,
-            updated_at: item.updated_at,
-          }));
-
-        let nextLibraries: LibrarySummary[] = [];
-        let nextLibraryIdsByMediaId: Record<string, string[]> = {};
-        try {
-          const librariesResponse = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
-          nextLibraries = librariesResponse.data.filter((library) => !library.is_default);
-          if (nextLibraries.length > 0) {
-            const entryResponses = await Promise.all(
-              nextLibraries.map((library) =>
-                apiFetch<{ data: LibraryEntrySummary[] }>(`/api/libraries/${library.id}/entries`)
-              )
-            );
-            for (let index = 0; index < nextLibraries.length; index += 1) {
-              const library = nextLibraries[index];
-              const entries = entryResponses[index].data;
-              for (const entry of entries) {
-                if (entry.kind !== "media" || !entry.media) {
-                  continue;
-                }
-                const existingLibraryIds = nextLibraryIdsByMediaId[entry.media.id] ?? [];
-                nextLibraryIdsByMediaId[entry.media.id] = [
-                  ...existingLibraryIds,
-                  library.id,
-                ];
-              }
-            }
-          }
-        } catch {
-          nextLibraries = [];
-          nextLibraryIdsByMediaId = {};
+        if (cancelled) {
+          return;
         }
-
-        if (!cancelled) {
-          setItems(nextItems);
-          setNextCursor(response.page.next_cursor);
-          setLibraries(nextLibraries);
-          setLibraryIdsByMediaId(nextLibraryIdsByMediaId);
-          setBusyMembershipKeys(new Set());
-        }
+        setItems(
+          response.data
+            .filter((item) => isMediaKind(item.kind))
+            .map((item) => ({
+              id: item.id,
+              kind: item.kind as MediaKind,
+              title: item.title,
+              canonical_source_url: item.canonical_source_url,
+              processing_status: item.processing_status,
+              created_at: item.created_at,
+              updated_at: item.updated_at,
+            }))
+        );
+        setNextCursor(response.page.next_cursor);
+        setLibrariesByMediaId({});
+        setLoadingLibraryMediaIds(new Set());
+        setBusyMembershipKeys(new Set());
       } catch (loadError) {
-        if (!cancelled) {
-          if (isApiError(loadError)) {
-            setError(loadError.message);
-          } else {
-            setError(`Failed to load ${title.toLowerCase()}`);
-          }
+        if (cancelled) {
+          return;
+        }
+        if (isApiError(loadError)) {
+          setError(loadError.message);
+        } else {
+          setError(`Failed to load ${title.toLowerCase()}`);
         }
       } finally {
         if (!cancelled) {
@@ -237,18 +202,20 @@ export default function MediaCatalogPage({
         cursor: nextCursor,
       });
       const response = await apiFetch<MediaListResponse>(`/api/media?${params.toString()}`);
-      const nextItems = response.data
-        .filter((item) => isMediaKind(item.kind))
-        .map((item) => ({
-          id: item.id,
-          kind: item.kind as MediaKind,
-          title: item.title,
-          canonical_source_url: item.canonical_source_url,
-          processing_status: item.processing_status,
-          created_at: item.created_at,
-          updated_at: item.updated_at,
-        }));
-      setItems((prev) => [...prev, ...nextItems]);
+      setItems((prev) => [
+        ...prev,
+        ...response.data
+          .filter((item) => isMediaKind(item.kind))
+          .map((item) => ({
+            id: item.id,
+            kind: item.kind as MediaKind,
+            title: item.title,
+            canonical_source_url: item.canonical_source_url,
+            processing_status: item.processing_status,
+            created_at: item.created_at,
+            updated_at: item.updated_at,
+          })),
+      ]);
       setNextCursor(response.page.next_cursor);
     } catch (loadError) {
       if (isApiError(loadError)) {
@@ -269,10 +236,59 @@ export default function MediaCatalogPage({
 
     return items.filter((item) => {
       const inTitle = item.title.toLowerCase().includes(normalizedQuery);
-      const inSource = (item.canonical_source_url ?? "").toLowerCase().includes(normalizedQuery);
+      const inSource = (item.canonical_source_url ?? "")
+        .toLowerCase()
+        .includes(normalizedQuery);
       return inTitle || inSource;
     });
   }, [items, query]);
+
+  const loadLibrariesForMedia = useCallback(
+    async (mediaId: string) => {
+      if (loadingLibraryMediaIds.has(mediaId) || librariesByMediaId[mediaId]) {
+        return;
+      }
+
+      setLoadingLibraryMediaIds((prev) => new Set(prev).add(mediaId));
+      setError(null);
+      try {
+        const response = await apiFetch<{
+          data: Array<{
+            id: string;
+            name: string;
+            color: string | null;
+            is_in_library: boolean;
+            can_add: boolean;
+            can_remove: boolean;
+          }>;
+        }>(`/api/media/${mediaId}/libraries`);
+        setLibrariesByMediaId((prev) => ({
+          ...prev,
+          [mediaId]: response.data.map((library) => ({
+            id: library.id,
+            name: library.name,
+            color: library.color,
+            isInLibrary: library.is_in_library,
+            canAdd: library.can_add,
+            canRemove: library.can_remove,
+          })),
+        }));
+      } catch (loadError) {
+        if (isApiError(loadError)) {
+          setError(loadError.message);
+        } else {
+          setError(`Failed to load ${title.toLowerCase()} libraries`);
+        }
+      } finally {
+        setLoadingLibraryMediaIds((prev) => {
+          const next = new Set(prev);
+          next.delete(mediaId);
+          return next;
+        });
+      }
+    },
+    [librariesByMediaId, loadingLibraryMediaIds, title]
+  );
 
   const handleAddToLibrary = useCallback(
     async (mediaId: string, libraryId: string) => {
@@ -284,13 +300,19 @@ export default function MediaCatalogPage({
           method: "POST",
           body: JSON.stringify({ media_id: mediaId }),
         });
-        setLibraryIdsByMediaId((prev) => {
-          const next = { ...prev };
-          const nextIds = new Set(next[mediaId] ?? []);
-          nextIds.add(libraryId);
-          next[mediaId] = [...nextIds];
-          return next;
-        });
+        setLibrariesByMediaId((prev) => ({
+          ...prev,
+          [mediaId]: (prev[mediaId] ?? []).map((library) =>
+            library.id === libraryId
+              ? {
+                  ...library,
+                  isInLibrary: true,
+                  canAdd: false,
+                  canRemove: true,
+                }
+              : library
+          ),
+        }));
       } catch (mutationError) {
         if (isApiError(mutationError)) {
           setError(mutationError.message);
@@ -317,17 +339,19 @@ export default function MediaCatalogPage({
         await apiFetch(`/api/libraries/${libraryId}/media/${mediaId}`, {
           method: "DELETE",
         });
-        setLibraryIdsByMediaId((prev) => {
-          const next = { ...prev };
-          const nextIds = new Set(next[mediaId] ?? []);
-          nextIds.delete(libraryId);
-          if (nextIds.size === 0) {
-            delete next[mediaId];
-          } else {
-            next[mediaId] = [...nextIds];
-          }
-          return next;
-        });
+        setLibrariesByMediaId((prev) => ({
+          ...prev,
+          [mediaId]: (prev[mediaId] ?? []).map((library) =>
+            library.id === libraryId
+              ? {
+                  ...library,
+                  isInLibrary: false,
+                  canAdd: true,
+                  canRemove: false,
+                }
+              : library
+          ),
+        }));
       } catch (mutationError) {
         if (isApiError(mutationError)) {
           setError(mutationError.message);
@@ -372,32 +396,17 @@ export default function MediaCatalogPage({
         ) : (
           <AppList>
             {filteredItems.map((item) => {
-              const libraryIds = new Set(libraryIdsByMediaId[item.id] ?? []);
-              const options = [
-                ...libraries.map((library) => {
-                  const inLibrary = libraryIds.has(library.id);
-                  const busyKey = `${library.id}:${item.id}`;
-                  return {
-                    id: `${inLibrary ? "remove" : "add"}-${library.id}`,
-                    label: `${inLibrary ? "Remove from" : "Add to"} ${library.name}`,
-                    disabled: busyMembershipKeys.has(busyKey),
-                    onSelect: () => {
-                      void (inLibrary
-                        ? handleRemoveFromLibrary(item.id, library.id)
-                        : handleAddToLibrary(item.id, library.id));
-                    },
-                  };
-                }),
-                ...(item.canonical_source_url
-                  ? [
-                      {
-                        id: "open-source",
-                        label: "Open source",
-                        href: item.canonical_source_url,
-                      },
-                    ]
-                  : []),
-              ];
+              const pickerLibraries = (librariesByMediaId[item.id] ?? []).map((library) => {
+                const busyKey = `${library.id}:${item.id}`;
+                if (!busyMembershipKeys.has(busyKey)) {
+                  return library;
+                }
+                return {
+                  ...library,
+                  canAdd: false,
+                  canRemove: false,
+                };
+              });
 
               return (
                 <AppListItem
@@ -409,8 +418,37 @@ export default function MediaCatalogPage({
                   })()}
                   title={item.title}
                   status={statusVariant(item.processing_status)}
-                  meta={[KIND_LABEL[item.kind], `Updated ${formatDate(item.updated_at)}`].join(" · ")}
-                  options={options.length > 0 ? options : undefined}
+                  meta={[KIND_LABEL[item.kind], `Updated ${formatDate(item.updated_at)}`].join(
+                    " · "
+                  )}
+                  actions={
+                    <LibraryTargetPicker
+                      label="Libraries"
+                      libraries={pickerLibraries}
+                      loading={loadingLibraryMediaIds.has(item.id)}
+                      onOpen={() => {
+                        void loadLibrariesForMedia(item.id);
+                      }}
+                      onAddToLibrary={(libraryId) => {
+                        void handleAddToLibrary(item.id, libraryId);
+                      }}
+                      onRemoveFromLibrary={(libraryId) => {
+                        void handleRemoveFromLibrary(item.id, libraryId);
+                      }}
+                      emptyMessage="No non-default libraries available."
+                    />
+                  }
+                  options={
+                    item.canonical_source_url
+                      ? [
+                          {
+                            id: "open-source",
+                            label: "Open source",
+                            href: item.canonical_source_url,
+                          },
+                        ]
+                      : undefined
+                  }
                 />
               );
             })}

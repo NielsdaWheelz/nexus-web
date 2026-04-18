@@ -14,6 +14,7 @@ import {
   type PdfReaderControlActions,
   type PdfReaderControlsState,
 } from "@/components/PdfReader";
+import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import { type Highlight } from "@/components/HighlightEditor";
 import { useToast } from "@/components/Toast";
@@ -71,7 +72,6 @@ import {
   type Fragment,
   type TranscriptFragment,
   type TranscriptRequestForecast,
-  type MeResponse,
   type SelectionState,
   type ActiveContent,
   type PdfDocumentHighlight,
@@ -79,7 +79,6 @@ import {
   type NavigationTocNodeLike,
   TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
   DOCUMENT_PROCESSING_POLL_INTERVAL_MS,
-  LIBRARY_ENTRY_PAGE_SIZE,
   escapeAttrValue,
   getPaneScrollContainer,
   findFirstVisibleCanonicalOffset,
@@ -147,8 +146,10 @@ export default function useMediaViewState(id: string) {
   const [media, setMedia] = useState<Media | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [defaultLibraryId, setDefaultLibraryId] = useState<string | null>(null);
-  const [mediaInDefaultLibrary, setMediaInDefaultLibrary] = useState(false);
+  const [libraryPickerLibraries, setLibraryPickerLibraries] = useState<
+    LibraryTargetPickerItem[]
+  >([]);
+  const [libraryPickerLoading, setLibraryPickerLoading] = useState(false);
   const [libraryMembershipBusy, setLibraryMembershipBusy] = useState(false);
   useSetPaneTitle(media?.title ?? "Media");
 
@@ -540,111 +541,125 @@ export default function useMediaViewState(id: string) {
 
   useEffect(() => {
     if (!media?.id) {
-      setDefaultLibraryId(null);
-      setMediaInDefaultLibrary(false);
+      setLibraryPickerLibraries([]);
       return;
     }
 
     let cancelled = false;
-    const loadDefaultLibraryMembership = async () => {
+    const loadLibraryMemberships = async () => {
+      setLibraryPickerLoading(true);
       try {
-        const meResponse = await apiFetch<{ data: MeResponse }>("/api/me");
+        const response = await apiFetch<{
+          data: Array<{
+            id: string;
+            name: string;
+            color: string | null;
+            is_in_library: boolean;
+            can_add: boolean;
+            can_remove: boolean;
+          }>;
+        }>(`/api/media/${media.id}/libraries`);
         if (cancelled) {
           return;
         }
-        const libraryId = meResponse.data.default_library_id;
-        setDefaultLibraryId(libraryId);
-        if (!libraryId) {
-          setMediaInDefaultLibrary(false);
-          return;
-        }
-
-        let offset = 0;
-        let found = false;
-        while (true) {
-          const page = await apiFetch<{
-            data: Array<{
-              kind: "media" | "podcast";
-              media?: { id: string } | null;
-            }>;
-          }>(
-            `/api/libraries/${libraryId}/entries?limit=${LIBRARY_ENTRY_PAGE_SIZE}&offset=${offset}`
-          );
-          if (cancelled) {
-            return;
-          }
-          for (const item of page.data) {
-            if (item.kind === "media" && item.media?.id === media.id) {
-              found = true;
-              break;
-            }
-          }
-          if (found || page.data.length < LIBRARY_ENTRY_PAGE_SIZE) {
-            break;
-          }
-          offset += LIBRARY_ENTRY_PAGE_SIZE;
-        }
+        setLibraryPickerLibraries(
+          response.data.map((library) => ({
+            id: library.id,
+            name: library.name,
+            color: library.color,
+            isInLibrary: library.is_in_library,
+            canAdd: library.can_add,
+            canRemove: library.can_remove,
+          }))
+        );
+      } catch (libraryError) {
         if (!cancelled) {
-          setMediaInDefaultLibrary(found);
+          if (isApiError(libraryError)) {
+            setError(libraryError.message);
+          } else {
+            setError("Failed to load libraries");
+          }
+          setLibraryPickerLibraries([]);
         }
-      } catch {
+      } finally {
         if (!cancelled) {
-          setDefaultLibraryId(null);
-          setMediaInDefaultLibrary(false);
+          setLibraryPickerLoading(false);
         }
       }
     };
 
-    void loadDefaultLibraryMembership();
+    void loadLibraryMemberships();
     return () => {
       cancelled = true;
     };
   }, [media?.id]);
 
-  const handleAddToDefaultLibrary = useCallback(async () => {
-    if (!media?.id || !defaultLibraryId || libraryMembershipBusy) {
+  const handleAddToLibrary = useCallback(async (libraryId: string) => {
+    if (!media?.id || libraryMembershipBusy) {
       return;
     }
     setLibraryMembershipBusy(true);
     setError(null);
     try {
-      await apiFetch(`/api/libraries/${defaultLibraryId}/media`, {
+      await apiFetch(`/api/libraries/${libraryId}/media`, {
         method: "POST",
         body: JSON.stringify({ media_id: media.id }),
       });
-      setMediaInDefaultLibrary(true);
+      setLibraryPickerLibraries((current) =>
+        current.map((library) =>
+          library.id === libraryId
+            ? {
+                ...library,
+                isInLibrary: true,
+                canAdd: false,
+                canRemove: true,
+              }
+            : library
+        )
+      );
     } catch (err) {
       if (isApiError(err)) {
         setError(err.message);
       } else {
-        setError("Failed to add media to default library");
+        setError("Failed to add media to library");
       }
     } finally {
       setLibraryMembershipBusy(false);
     }
-  }, [defaultLibraryId, libraryMembershipBusy, media?.id]);
+  }, [libraryMembershipBusy, media?.id]);
 
-  const handleRemoveFromDefaultLibrary = useCallback(async () => {
-    if (!media?.id || !defaultLibraryId || libraryMembershipBusy) {
+  const handleRemoveFromLibrary = useCallback(async (libraryId: string) => {
+    if (!media?.id || libraryMembershipBusy) {
       return;
     }
     setLibraryMembershipBusy(true);
     setError(null);
     try {
-      await apiFetch(`/api/libraries/${defaultLibraryId}/media/${media.id}`, {
+      await apiFetch(`/api/libraries/${libraryId}/media/${media.id}`, {
         method: "DELETE",
       });
-      setMediaInDefaultLibrary(false);
+      setLibraryPickerLibraries((current) =>
+        current.map((library) =>
+          library.id === libraryId
+            ? {
+                ...library,
+                isInLibrary: false,
+                canAdd: true,
+                canRemove: false,
+              }
+            : library
+        )
+      );
     } catch (err) {
       if (isApiError(err)) {
         setError(err.message);
       } else {
-        setError("Failed to remove media from default library");
+        setError("Failed to remove media from library");
       }
     } finally {
       setLibraryMembershipBusy(false);
     }
-  }, [defaultLibraryId, libraryMembershipBusy, media?.id]);
+  }, [libraryMembershipBusy, media?.id]);
 
   const refreshTranscriptProvisioningState = useCallback(async () => {
     if (!media?.id || !isTranscriptMedia) {
@@ -2166,11 +2181,11 @@ export default function useMediaViewState(id: string) {
     saveReaderResumeState,
 
     // Library
-    defaultLibraryId,
-    mediaInDefaultLibrary,
+    libraryPickerLibraries,
+    libraryPickerLoading,
     libraryMembershipBusy,
-    handleAddToDefaultLibrary,
-    handleRemoveFromDefaultLibrary,
+    handleAddToLibrary,
+    handleRemoveFromLibrary,
 
     // EPUB
     epubSections,

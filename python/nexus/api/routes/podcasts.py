@@ -14,6 +14,7 @@ from nexus.schemas.podcast import (
     PodcastSubscribeRequest,
     PodcastSubscriptionSettingsPatchRequest,
 )
+from nexus.services import libraries as libraries_service
 from nexus.services import podcasts as podcast_service
 
 router = APIRouter()
@@ -102,6 +103,16 @@ def get_subscription_status(
     """Read viewer-visible sync status for one podcast subscription."""
     out = podcast_service.get_subscription_status(db, viewer.user_id, podcast_id)
     return success_response(out.model_dump(mode="json"))
+
+
+@router.get("/podcasts/{podcast_id}/libraries")
+def get_podcast_libraries(
+    podcast_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    rows = libraries_service.list_podcast_item_libraries(db, viewer.user_id, podcast_id)
+    return success_response([row.model_dump(mode="json") for row in rows])
 
 
 @router.patch("/podcasts/subscriptions/{podcast_id}/settings")

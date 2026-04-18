@@ -33,6 +33,7 @@ from nexus.schemas.media import (
 )
 from nexus.schemas.reader import ReaderResumeStatePatch
 from nexus.services import epub_lifecycle, epub_read, image_proxy
+from nexus.services import libraries as libraries_service
 from nexus.services import media as media_service
 from nexus.services import podcasts as podcast_service
 from nexus.services import reader as reader_service
@@ -163,6 +164,7 @@ def create_from_url(
         db=db,
         viewer_id=viewer.user_id,
         url=request_body.url,
+        library_id=request_body.library_id,
         request_id=request_id,
     )
     return success_response(result.model_dump(mode="json"))
@@ -217,6 +219,7 @@ def create_captured_url(
         db=db,
         viewer_id=viewer.user_id,
         url=request_body.url,
+        library_id=request_body.library_id,
         request_id=getattr(request.state, "request_id", None),
     )
     return success_response(result.model_dump(mode="json"))
@@ -235,6 +238,16 @@ def get_media(
     """
     result = media_service.get_media_for_viewer(db, viewer.user_id, media_id)
     return success_response(result.model_dump(mode="json"))
+
+
+@router.get("/media/{media_id}/libraries")
+def get_media_libraries(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    rows = libraries_service.list_media_item_libraries(db, viewer.user_id, media_id)
+    return success_response([row.model_dump(mode="json") for row in rows])
 
 
 @router.get("/media/{media_id}/fragments")
@@ -339,6 +352,7 @@ def upload_init(
         filename=request.filename,
         content_type=request.content_type,
         size_bytes=request.size_bytes,
+        library_id=request.library_id,
     )
     return success_response(result)
 
