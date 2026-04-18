@@ -22,7 +22,7 @@ import LibraryTargetPicker, {
 } from "@/components/LibraryTargetPicker";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
-import ActionMenu from "@/components/ui/ActionMenu";
+import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import styles from "./page.module.css";
@@ -446,20 +446,6 @@ export default function PodcastDetailPaneBody() {
   const transcriptionAllowed = (billingAccount?.transcription_usage.limit ?? 0) > 0;
 
   useSetPaneTitle(detail?.podcast.title ?? "Podcast");
-
-  usePaneChromeOverride({
-    actions: isMobileViewport ? (
-      <button
-        type="button"
-        className={styles.paneActionButton}
-        onClick={() => setEpisodesDrawerOpen((open) => !open)}
-        aria-label="Episodes"
-        aria-expanded={episodesDrawerOpen}
-      >
-        Episodes
-      </button>
-    ) : undefined,
-  });
 
   const loadAvailableLibraries = useCallback(async () => {
     if (availableLibrariesLoading || availableLibrariesLoaded) {
@@ -1590,6 +1576,49 @@ export default function PodcastDetailPaneBody() {
     return new Set(queueItems.map((item) => item.media_id));
   }, [queueItems]);
   const activeSubscription = detail?.subscription ?? null;
+  const paneOptions: ActionMenuOption[] = [];
+
+  if (activeSubscription) {
+    paneOptions.push({
+      id: "settings",
+      label: "Settings",
+      disabled: unsubscribeBusy,
+      onSelect: openSettingsModal,
+    });
+    paneOptions.push({
+      id: "refresh-sync",
+      label: refreshSyncBusy ? "Refreshing..." : "Refresh sync",
+      disabled: refreshSyncBusy,
+      onSelect: () => {
+        void handleRefreshSync();
+      },
+    });
+    paneOptions.push({
+      id: "unsubscribe",
+      label: unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe",
+      tone: "danger",
+      disabled: unsubscribeBusy,
+      onSelect: () => {
+        void handleUnsubscribe();
+      },
+    });
+  }
+
+  usePaneChromeOverride({
+    actions: isMobileViewport ? (
+      <button
+        type="button"
+        className={styles.paneActionButton}
+        onClick={() => setEpisodesDrawerOpen((open) => !open)}
+        aria-label="Episodes"
+        aria-expanded={episodesDrawerOpen}
+      >
+        Episodes
+      </button>
+    ) : undefined,
+    options: paneOptions,
+  });
+
   const podcastLibraryCount = podcastLibraries.filter((library) => library.isInLibrary).length;
   const podcastPickerLibraries = podcastLibraries.map((library) => {
     const busyKey = `${library.id}:${podcastId}`;
@@ -1955,20 +1984,11 @@ export default function PodcastDetailPaneBody() {
         <div className={styles.primaryColumn}>
           <div className={styles.primaryScroll}>
             <div className={styles.headerActions}>
-              <Link href="/podcasts/subscriptions" className={styles.navLink}>
-                My podcasts
+              <Link href="/podcasts" className={styles.navLink}>
+                Podcasts
               </Link>
               <div className={styles.headerButtons}>
-                {activeSubscription ? (
-                  <button
-                    type="button"
-                    className={styles.syncButton}
-                    onClick={() => void handleRefreshSync()}
-                    disabled={refreshSyncBusy}
-                  >
-                    {refreshSyncBusy ? "Refreshing..." : "Refresh sync"}
-                  </button>
-                ) : (
+                {activeSubscription ? null : (
                   <button
                     type="button"
                     className={styles.syncButton}
@@ -2009,25 +2029,6 @@ export default function PodcastDetailPaneBody() {
                     emptyMessage="No non-default libraries available."
                   />
                 )}
-                {activeSubscription ? (
-                  <button
-                    type="button"
-                    className={styles.syncButton}
-                    onClick={openSettingsModal}
-                  >
-                    Settings
-                  </button>
-                ) : null}
-                {activeSubscription ? (
-                  <button
-                    type="button"
-                    className={styles.unsubscribeButton}
-                    onClick={() => void handleUnsubscribe()}
-                    disabled={unsubscribeBusy}
-                  >
-                    {unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe"}
-                  </button>
-                ) : null}
               </div>
             </div>
             <SectionCard

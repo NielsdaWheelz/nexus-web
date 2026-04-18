@@ -3,8 +3,8 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import PodcastsPage from "./page";
-import PodcastSubscriptionsPage from "./subscriptions/page";
 import PodcastDetailPage from "./[podcastId]/page";
+import PodcastDiscoverPage from "@/app/(authenticated)/discover/podcasts/page";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 
 const mockUsePaneParam = vi.fn<(param: string) => string | null>();
@@ -59,6 +59,17 @@ vi.mock("@/lib/billing/useBillingAccount", () => ({
     error: null,
     reload: async () => {},
   }),
+}));
+
+vi.mock("@/lib/panes/openInAppPane", () => ({
+  requestOpenInAppPane: () => false,
+}));
+
+vi.mock("@/lib/panes/paneRouteRegistry", () => ({
+  resolvePaneRoute: () => null,
+  getParentHref: () => null,
+  DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX: 360,
+  DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX: 360,
 }));
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -156,6 +167,19 @@ function renderLatestPaneActions() {
   return render(<>{actions}</>);
 }
 
+function getLatestPaneOptions() {
+  const options = getLatestChromeOverride().options;
+  if (!Array.isArray(options)) {
+    return [];
+  }
+  return options as Array<{
+    id: string;
+    label: string;
+    tone?: "default" | "danger";
+    onSelect?: () => void;
+  }>;
+}
+
 describe("podcasts product flows", () => {
   beforeEach(() => {
     mockUsePaneParam.mockReset();
@@ -212,7 +236,7 @@ describe("podcasts product flows", () => {
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    render(createElement(PodcastsPage));
+    render(createElement(PodcastDiscoverPage));
 
     await user.type(
       screen.getByPlaceholderText("Search podcasts by title or topic..."),
@@ -286,7 +310,7 @@ describe("podcasts product flows", () => {
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    render(createElement(PodcastsPage));
+    render(createElement(PodcastDiscoverPage));
 
     await user.type(
       screen.getByPlaceholderText("Search podcasts by title or topic..."),
@@ -335,7 +359,11 @@ describe("podcasts product flows", () => {
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    render(createElement(PodcastSubscriptionsPage));
+    render(createElement(PodcastsPage));
+
+    expect(
+      screen.queryByPlaceholderText("Search podcasts by title or topic...")
+    ).not.toBeInTheDocument();
 
     expect(await screen.findByText("Systems Podcast 0")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Actions" }));
@@ -459,11 +487,20 @@ describe("podcasts product flows", () => {
       )
     );
 
-    await user.click(await screen.findByRole("button", { name: "Unsubscribe" }));
+    expect((await screen.findAllByRole("button", { name: "Libraries" })).length).toBeGreaterThan(0);
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      'Unsubscribe from "Systems Podcast"?\n\nThis will remove the podcast from 1 library.\n\nIt will remain in 1 shared library you cannot administer.'
-    );
+    const unsubscribeOption = getLatestPaneOptions().find((option) => option.id === "unsubscribe");
+    if (!unsubscribeOption?.onSelect) {
+      throw new Error("Expected unsubscribe pane option");
+    }
+
+    unsubscribeOption.onSelect();
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith(
+        'Unsubscribe from "Systems Podcast"?\n\nThis will remove the podcast from 1 library.\n\nIt will remain in 1 shared library you cannot administer.'
+      );
+    });
 
     await waitFor(() => {
       expect(
@@ -565,5 +602,21 @@ describe("podcasts product flows", () => {
     const episodeDrawer = await screen.findByRole("dialog", { name: "Episodes" });
     expect(within(episodeDrawer).getByText("Episode 0")).toBeInTheDocument();
     expect(within(episodeDrawer).getByRole("button", { name: "Libraries" })).toBeVisible();
+  });
+
+  it("links the empty subscriptions state to podcast discovery", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({ data: [] });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(createElement(PodcastsPage));
+
+    expect(
+      await screen.findByRole("link", { name: "Discover podcasts." })
+    ).toHaveAttribute("href", "/discover/podcasts");
   });
 });

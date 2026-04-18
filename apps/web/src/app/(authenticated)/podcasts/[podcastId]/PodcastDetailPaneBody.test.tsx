@@ -48,6 +48,17 @@ vi.mock("@/lib/player/globalPlayer", () => ({
   }),
 }));
 
+vi.mock("@/lib/panes/openInAppPane", () => ({
+  requestOpenInAppPane: () => false,
+}));
+
+vi.mock("@/lib/panes/paneRouteRegistry", () => ({
+  resolvePaneRoute: () => null,
+  getParentHref: () => null,
+  DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX: 360,
+  DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX: 360,
+}));
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -69,6 +80,20 @@ function renderLatestPaneActions() {
     throw new Error("Expected pane actions override to be present");
   }
   return render(<>{actions}</>);
+}
+
+function getLatestPaneOptions() {
+  const options = getLatestChromeOverride().options;
+  if (!Array.isArray(options)) {
+    return [];
+  }
+  return options as Array<{
+    id: string;
+    label: string;
+    tone?: "default" | "danger";
+    disabled?: boolean;
+    onSelect?: () => void;
+  }>;
 }
 
 function buildEpisode() {
@@ -168,6 +193,79 @@ describe("PodcastDetailPaneBody", () => {
     expect(within(episodesAside).getByRole("heading", { name: "Episodes" })).toBeInTheDocument();
     expect(within(episodesAside).getByText("Episode 0")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Episodes" })).not.toBeInTheDocument();
+  });
+
+  it("moves subscribed show secondary actions into pane chrome options", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/podcast-1") {
+        return jsonResponse({
+          data: {
+            podcast: {
+              id: "podcast-1",
+              provider: "podcast_index",
+              provider_podcast_id: "provider-1",
+              title: "Systems Podcast",
+              author: "Systems Team",
+              feed_url: "https://feeds.example.com/systems.xml",
+              website_url: null,
+              image_url: null,
+              description: "Systems thinking show",
+              created_at: "2026-03-06T00:00:00Z",
+              updated_at: "2026-03-06T00:00:00Z",
+            },
+            subscription: {
+              user_id: "user-1",
+              podcast_id: "podcast-1",
+              status: "active",
+              sync_status: "complete",
+              sync_error_code: null,
+              sync_error_message: null,
+              sync_attempts: 1,
+              sync_started_at: null,
+              sync_completed_at: null,
+              last_synced_at: null,
+              updated_at: "2026-03-06T00:00:00Z",
+              default_playback_speed: null,
+              auto_queue: false,
+            },
+          },
+        });
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+        return jsonResponse({ data: [buildEpisode()] });
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/media/transcript/forecasts") {
+        return jsonResponse({ data: [] });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<PodcastDetailPaneBody />);
+
+    expect(await screen.findByRole("heading", { name: "Systems Podcast" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Libraries" }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Refresh sync" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unsubscribe" })).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(getLatestPaneOptions()).toEqual([
+        expect.objectContaining({ id: "settings", label: "Settings" }),
+        expect.objectContaining({ id: "refresh-sync", label: "Refresh sync" }),
+        expect.objectContaining({
+          id: "unsubscribe",
+          label: "Unsubscribe",
+          tone: "danger",
+        }),
+      ]);
+    });
   });
 
   it("opens and closes the mobile episodes drawer from the pane header action", async () => {

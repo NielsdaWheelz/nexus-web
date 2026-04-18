@@ -1,4 +1,66 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/app/(authenticated)/libraries/LibrariesPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/libraries/[id]/LibraryPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/media/[id]/MediaPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/conversations/ConversationsPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/conversations/[id]/ConversationPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/conversations/new/ConversationNewPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/discover/DiscoverPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/discover/podcasts/PodcastDiscoverPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/documents/DocumentsPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/podcasts/PodcastsPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/videos/VideosPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/search/SearchPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/settings/SettingsPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/settings/billing/SettingsBillingPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/settings/reader/SettingsReaderPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/settings/keys/SettingsKeysPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/settings/local-vault/SettingsLocalVaultPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/settings/keybindings/KeybindingsPaneBody", () => ({
+  default: () => null,
+}));
+
 import { resolvePaneRoute } from "./paneRouteRegistry";
 
 describe("pane route registry", () => {
@@ -46,6 +108,15 @@ describe("pane route registry", () => {
     expect(route.definition?.getChrome).toBeTypeOf("function");
   });
 
+  it("resolves the discover podcasts surface as a standard pane", () => {
+    const route = resolvePaneRoute("/discover/podcasts");
+    expect(route.id).toBe("discoverPodcasts");
+    expect(route.staticTitle).toBe("Discover podcasts");
+    expect(route.definition?.bodyMode).toBe("standard");
+    expect(route.definition?.defaultWidthPx).toBe(480);
+    expect(route.definition?.getChrome).toBeTypeOf("function");
+  });
+
   it("resolves /conversations/new with query params", () => {
     const route = resolvePaneRoute("/conversations/new?attach_type=highlight&attach_id=abc");
     expect(route.id).toBe("conversationNew");
@@ -69,6 +140,7 @@ describe("pane route registry", () => {
   it("resolves expanded authenticated static routes", () => {
     expect(resolvePaneRoute("/libraries").id).toBe("libraries");
     expect(resolvePaneRoute("/discover").id).toBe("discover");
+    expect(resolvePaneRoute("/discover/podcasts").id).toBe("discoverPodcasts");
     expect(resolvePaneRoute("/documents").id).toBe("documents");
     expect(resolvePaneRoute("/podcasts").id).toBe("podcasts");
     expect(resolvePaneRoute("/videos").id).toBe("videos");
@@ -83,5 +155,11 @@ describe("pane route registry", () => {
     expect(resolvePaneRoute("/settings/identities").id).toBe(
       "settingsIdentities"
     );
+  });
+
+  it("treats the removed subscriptions pane as unsupported", () => {
+    const route = resolvePaneRoute("/podcasts/subscriptions");
+    expect(route.id).toBe("unsupported");
+    expect(route.render).toBeNull();
   });
 });

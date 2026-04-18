@@ -8,9 +8,9 @@ import ConversationsPaneBody from "@/app/(authenticated)/conversations/Conversat
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
 import ConversationNewPaneBody from "@/app/(authenticated)/conversations/new/ConversationNewPaneBody";
 import DiscoverPaneBody from "@/app/(authenticated)/discover/DiscoverPaneBody";
+import PodcastDiscoverPaneBody from "@/app/(authenticated)/discover/podcasts/PodcastDiscoverPaneBody";
 import DocumentsPaneBody from "@/app/(authenticated)/documents/DocumentsPaneBody";
 import PodcastsPaneBody from "@/app/(authenticated)/podcasts/PodcastsPaneBody";
-import PodcastSubscriptionsPaneBody from "@/app/(authenticated)/podcasts/subscriptions/PodcastSubscriptionsPaneBody";
 import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
 import VideosPaneBody from "@/app/(authenticated)/videos/VideosPaneBody";
 import SearchPaneBody from "@/app/(authenticated)/search/SearchPaneBody";
@@ -47,9 +47,9 @@ export type PaneRouteId =
   | "conversationNew"
   | "conversation"
   | "discover"
+  | "discoverPodcasts"
   | "documents"
   | "podcasts"
-  | "podcastSubscriptions"
   | "podcastDetail"
   | "videos"
   | "search"
@@ -88,7 +88,9 @@ const MIN_STANDARD_PANE_WIDTH_PX = 320;
 const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 const DEFAULT_STANDARD_PANE_WIDTH_PX = 480;
 const DEFAULT_DENSE_LIST_PANE_WIDTH_PX = 560;
-export const DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX = 280;
+export const DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX = 280;
+export const DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX = DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX;
+const REMOVED_STATIC_PATHS = new Set(["/podcasts/subscriptions"]);
 
 const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
   {
@@ -189,7 +191,21 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Discover",
-      subtitle: "Browse content by type.",
+      subtitle: "Upload files, add URLs, and discover podcasts.",
+    }),
+  },
+  {
+    id: "discoverPodcasts",
+    pattern: ["discover", "podcasts"],
+    staticTitle: "Discover podcasts",
+    render: () => <PodcastDiscoverPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Discover podcasts",
+      subtitle: "Search global feeds, inspect shows, and subscribe.",
     }),
   },
   {
@@ -212,26 +228,12 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     staticTitle: "Podcasts",
     render: () => <PodcastsPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-    getChrome: () => ({
-      title: "Podcasts",
-      subtitle: "Discover shows, manage subscriptions, and save them into libraries.",
-    }),
-  },
-  {
-    id: "podcastSubscriptions",
-    pattern: ["podcasts", "subscriptions"],
-    staticTitle: "My podcasts",
-    render: () => <PodcastSubscriptionsPaneBody />,
-    bodyMode: "standard",
     defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
-      title: "My podcasts",
-      subtitle: "Operational podcast settings plus library membership.",
+      title: "Podcasts",
+      subtitle: "Followed shows, sync state, and subscription settings.",
     }),
   },
   {
@@ -446,6 +448,17 @@ export function getParentHref(resolved: ResolvedPaneRoute): string | null {
 
 export function resolvePaneRoute(href: string): ResolvedPaneRoute {
   const pathname = parseHrefPathname(href);
+  if (REMOVED_STATIC_PATHS.has(pathname)) {
+    return {
+      id: "unsupported",
+      pathname,
+      params: {},
+      staticTitle: "Tab",
+      resourceRef: null,
+      render: null,
+      definition: null,
+    };
+  }
   for (const definition of ROUTE_DEFINITIONS) {
     const params = matchPattern(pathname, definition.pattern);
     if (!params) {

@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
 import MediaCatalogPage from "./MediaCatalogPage";
+
+vi.mock("@/lib/panes/openInAppPane", () => ({
+  requestOpenInAppPane: () => false,
+}));
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -11,12 +15,12 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-describe("media catalog library actions", () => {
+describe("media catalog item-action cutover", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("offers explicit add/remove actions for each non-default library", async () => {
+  it("keeps library membership in the libraries picker and secondary actions in the row menu", async () => {
     const user = userEvent.setup();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
@@ -45,22 +49,49 @@ describe("media catalog library actions", () => {
           page: { next_cursor: null },
         });
       }
-      if (url.pathname === "/api/libraries" && (init?.method ?? "GET") === "GET") {
+      if (url.pathname === "/api/media/media-a/libraries" && (init?.method ?? "GET") === "GET") {
         return jsonResponse({
           data: [
-            { id: "library-default", name: "Default", is_default: true },
-            { id: "library-sports", name: "Sports", is_default: false },
-            { id: "library-history", name: "History", is_default: false },
+            {
+              id: "library-sports",
+              name: "Sports",
+              color: null,
+              is_in_library: true,
+              can_add: false,
+              can_remove: true,
+            },
+            {
+              id: "library-history",
+              name: "History",
+              color: null,
+              is_in_library: false,
+              can_add: true,
+              can_remove: false,
+            },
           ],
         });
       }
-      if (url.pathname === "/api/libraries/library-sports/entries" && (init?.method ?? "GET") === "GET") {
+      if (url.pathname === "/api/media/media-b/libraries" && (init?.method ?? "GET") === "GET") {
         return jsonResponse({
-          data: [{ kind: "media", media: { id: "media-a" } }],
+          data: [
+            {
+              id: "library-sports",
+              name: "Sports",
+              color: null,
+              is_in_library: false,
+              can_add: true,
+              can_remove: false,
+            },
+            {
+              id: "library-history",
+              name: "History",
+              color: null,
+              is_in_library: false,
+              can_add: true,
+              can_remove: false,
+            },
+          ],
         });
-      }
-      if (url.pathname === "/api/libraries/library-history/entries" && (init?.method ?? "GET") === "GET") {
-        return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/libraries/library-sports/media/media-a" && init?.method === "DELETE") {
         return jsonResponse({ data: { ok: true } });
@@ -82,15 +113,20 @@ describe("media catalog library actions", () => {
     expect(await screen.findByText("In sports library")).toBeInTheDocument();
     expect(screen.getByText("Outside every library")).toBeInTheDocument();
 
-    const actionButtons = screen.getAllByRole("button", { name: "Actions" });
-    expect(actionButtons).toHaveLength(2);
+    const librariesButtons = screen.getAllByRole("button", { name: "Libraries" });
+    expect(librariesButtons).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Actions" })).toHaveLength(1);
 
-    await user.click(actionButtons[0]);
-    expect(await screen.findByRole("menuitem", { name: "Remove from Sports" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Add to History" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Open source" })).toBeInTheDocument();
+    await user.click(librariesButtons[0]);
+    const firstLibrariesDialog = await screen.findByRole("dialog", { name: "Libraries" });
+    expect(
+      await within(firstLibrariesDialog).findByRole("button", { name: /Sports/i })
+    ).toBeInTheDocument();
+    expect(
+      within(firstLibrariesDialog).getByRole("button", { name: /History/i })
+    ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("menuitem", { name: "Remove from Sports" }));
+    await user.click(within(firstLibrariesDialog).getByRole("button", { name: /Sports/i }));
     await waitFor(() => {
       expect(
         fetchSpy.mock.calls.some(([url, init]) => {
@@ -100,8 +136,9 @@ describe("media catalog library actions", () => {
       ).toBe(true);
     });
 
-    await user.click(actionButtons[1]);
-    await user.click(await screen.findByRole("menuitem", { name: "Add to History" }));
+    await user.click(librariesButtons[1]);
+    const secondLibrariesDialog = await screen.findByRole("dialog", { name: "Libraries" });
+    await user.click(within(secondLibrariesDialog).getByRole("button", { name: /History/i }));
     await waitFor(() => {
       expect(
         fetchSpy.mock.calls.some(([url, init]) => {
@@ -110,5 +147,10 @@ describe("media catalog library actions", () => {
         })
       ).toBe(true);
     });
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Open source" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /Sports/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /History/i })).not.toBeInTheDocument();
   });
 });

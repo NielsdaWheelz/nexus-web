@@ -140,17 +140,29 @@ export default function LibraryPaneBody() {
     }
 
     try {
-      if (entry.kind === "podcast" && entry.podcast) {
+      if (entry.kind === "podcast") {
+        if (!entry.podcast) {
+          throw new Error("Library entry is missing podcast payload");
+        }
         await apiFetch(`/api/libraries/${id}/podcasts/${entry.podcast.id}`, {
           method: "DELETE",
         });
+        setEntries((prev) => prev.filter((candidate) => candidate.id !== entry.id));
+        return;
       }
-      if (entry.kind === "media" && entry.media) {
+      if (entry.kind === "media") {
+        if (!entry.media) {
+          throw new Error("Library entry is missing media payload");
+        }
         await apiFetch(`/api/libraries/${id}/media/${entry.media.id}`, {
           method: "DELETE",
         });
+        setEntries((prev) => prev.filter((candidate) => candidate.id !== entry.id));
+        return;
       }
-      setEntries((prev) => prev.filter((candidate) => candidate.id !== entry.id));
+
+      const unsupportedKind: never = entry.kind;
+      throw new Error(`Unsupported library entry kind: ${unsupportedKind}`);
     } catch (err) {
       if (isApiError(err)) {
         setError(err.message);
@@ -387,8 +399,24 @@ export default function LibraryPaneBody() {
                         ...handleProps.listeners,
                       }
                     : undefined;
+                const rowOptions =
+                  library.role === "admin"
+                    ? [
+                        {
+                          id: "remove-from-library",
+                          label: "Remove from library",
+                          tone: "danger" as const,
+                          onSelect: () => {
+                            void handleRemoveEntry(item);
+                          },
+                        },
+                      ]
+                    : [];
 
-                if (item.kind === "podcast" && item.podcast) {
+                if (item.kind === "podcast") {
+                  if (!item.podcast) {
+                    throw new Error("Library entry is missing podcast payload");
+                  }
                   const subscription = item.subscription;
                   return (
                     <div className={styles.mediaRow} data-dragging={isDragging ? "true" : "false"}>
@@ -422,26 +450,15 @@ export default function LibraryPaneBody() {
                           </span>
                         </a>
                       </div>
-                      {library.role === "admin" && (
-                        <ActionMenu
-                          options={[
-                            {
-                              id: "remove-from-library",
-                              label: "Remove from library",
-                              tone: "danger",
-                              onSelect: () => {
-                                void handleRemoveEntry(item);
-                              },
-                            },
-                          ]}
-                          className={styles.rowActionMenu}
-                        />
-                      )}
+                      <ActionMenu options={rowOptions} className={styles.rowActionMenu} />
                     </div>
                   );
                 }
 
-                if (item.kind === "media" && item.media) {
+                if (item.kind === "media") {
+                  if (!item.media) {
+                    throw new Error("Library entry is missing media payload");
+                  }
                   const Icon = MEDIA_KIND_ICONS[item.media.kind] ?? Globe;
                   return (
                     <div className={styles.mediaRow} data-dragging={isDragging ? "true" : "false"}>
@@ -471,26 +488,13 @@ export default function LibraryPaneBody() {
                           </span>
                         </a>
                       </div>
-                      {library.role === "admin" && (
-                        <ActionMenu
-                          options={[
-                            {
-                              id: "remove-from-library",
-                              label: "Remove from library",
-                              tone: "danger",
-                              onSelect: () => {
-                                void handleRemoveEntry(item);
-                              },
-                            },
-                          ]}
-                          className={styles.rowActionMenu}
-                        />
-                      )}
+                      <ActionMenu options={rowOptions} className={styles.rowActionMenu} />
                     </div>
                   );
                 }
 
-                return null;
+                const unsupportedKind: never = item.kind;
+                throw new Error(`Unsupported library entry kind: ${unsupportedKind}`);
               }}
             />
           )}

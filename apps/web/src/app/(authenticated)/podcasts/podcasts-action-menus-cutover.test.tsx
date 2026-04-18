@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import PodcastsPage from "./page";
 import PodcastDetailPage from "./[podcastId]/page";
-import PodcastSubscriptionsPage from "./subscriptions/page";
+import PodcastDiscoverPage from "@/app/(authenticated)/discover/podcasts/page";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 
 const mockUsePaneParam = vi.fn<(param: string) => string | null>();
@@ -59,6 +59,17 @@ vi.mock("@/lib/billing/useBillingAccount", () => ({
     error: null,
     reload: async () => {},
   }),
+}));
+
+vi.mock("@/lib/panes/openInAppPane", () => ({
+  requestOpenInAppPane: () => false,
+}));
+
+vi.mock("@/lib/panes/paneRouteRegistry", () => ({
+  resolvePaneRoute: () => null,
+  getParentHref: () => null,
+  DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX: 360,
+  DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX: 360,
 }));
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -153,6 +164,18 @@ function renderLatestPaneActions() {
     throw new Error("Expected pane actions override to be present");
   }
   return render(<>{actions}</>);
+}
+
+function getLatestPaneOptions() {
+  const options = getLatestChromeOverride().options;
+  if (!Array.isArray(options)) {
+    return [];
+  }
+  return options as Array<{
+    id: string;
+    label: string;
+    tone?: "default" | "danger";
+  }>;
 }
 
 describe("podcast ui cutover", () => {
@@ -265,7 +288,7 @@ describe("podcast ui cutover", () => {
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    render(createElement(PodcastSubscriptionsPage));
+    render(createElement(PodcastsPage));
 
     expect(await screen.findByText("Systems Podcast 0")).toBeInTheDocument();
     expect(screen.queryByLabelText("Subscription category")).not.toBeInTheDocument();
@@ -390,6 +413,16 @@ describe("podcast ui cutover", () => {
       )
     );
 
+    expect((await screen.findAllByRole("button", { name: "Libraries" })).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Refresh sync" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unsubscribe" })).not.toBeInTheDocument();
+    expect(getLatestPaneOptions()).toEqual([
+      expect.objectContaining({ id: "settings", label: "Settings" }),
+      expect.objectContaining({ id: "refresh-sync", label: "Refresh sync" }),
+      expect.objectContaining({ id: "unsubscribe", label: "Unsubscribe", tone: "danger" }),
+    ]);
+
     renderLatestPaneActions();
     await user.click(screen.getByRole("button", { name: "Episodes" }));
 
@@ -466,7 +499,7 @@ describe("podcast ui cutover", () => {
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    render(createElement(PodcastsPage));
+    render(createElement(PodcastDiscoverPage));
 
     await user.type(screen.getByPlaceholderText("Search podcasts by title or topic..."), "discovery");
     await user.click(screen.getByRole("button", { name: "Search" }));
