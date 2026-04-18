@@ -1,55 +1,56 @@
 "use client";
 
-import type { ComponentType } from "react";
-import { ArrowRight, FileText, Mic, Video } from "lucide-react";
+import { ArrowRight, Link2, Mic, Upload } from "lucide-react";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
+import { OPEN_UPLOAD_EVENT } from "@/components/CommandPalette";
 import styles from "./page.module.css";
 
-interface DiscoverCard {
-  href: string;
-  title: string;
-  description: string;
-  Icon: ComponentType<{ size?: number; className?: string }>;
-}
-
-const DISCOVER_CARDS: DiscoverCard[] = [
-  {
-    href: "/documents",
-    title: "Documents",
-    description: "Review articles, PDFs, and EPUBs across your libraries.",
-    Icon: FileText,
-  },
-  {
-    href: "/podcasts",
-    title: "Podcasts",
-    description: "Search global podcast feeds and inspect episode content already ingested.",
-    Icon: Mic,
-  },
-  {
-    href: "/videos",
-    title: "Videos",
-    description: "Browse video entries, including YouTube ingests.",
-    Icon: Video,
-  },
-];
-
 export default function DiscoverPaneBody() {
+  const openUpload = () => {
+    window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
+  };
+
   return (
     <>
-      <SectionCard>
+      <SectionCard
+        title="Browse"
+        description="Find new sources before you subscribe or ingest."
+      >
         <AppList>
-          {DISCOVER_CARDS.map(({ href, title, description, Icon }) => (
-            <AppListItem
-              key={href}
-              href={href}
-              icon={<Icon size={18} />}
-              title={title}
-              description={description}
-              trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
-            />
-          ))}
+          <AppListItem
+            href="/discover/podcasts"
+            icon={<Mic size={18} />}
+            title="Discover podcasts"
+            description="Search global podcast feeds, inspect shows, and subscribe."
+            trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
+          />
         </AppList>
+      </SectionCard>
+      <SectionCard
+        title="Import"
+        description="Bring new sources into Nexus without filing them under Discover."
+      >
+        <div className={styles.ingestActions}>
+          <button type="button" className={styles.ingestButton} onClick={openUpload}>
+            <span className={styles.ingestIcon} aria-hidden="true">
+              <Upload size={18} />
+            </span>
+            <span className={styles.ingestTitle}>Upload file</span>
+            <span className={styles.ingestDescription}>
+              Add PDFs, EPUBs, and other supported files.
+            </span>
+          </button>
+          <button type="button" className={styles.ingestButton} onClick={openUpload}>
+            <span className={styles.ingestIcon} aria-hidden="true">
+              <Link2 size={18} />
+            </span>
+            <span className={styles.ingestTitle}>Add from URL</span>
+            <span className={styles.ingestDescription}>
+              Save an article, video, or feed from a link.
+            </span>
+          </button>
+        </div>
       </SectionCard>
     </>
   );

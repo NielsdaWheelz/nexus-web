@@ -1,89 +1,198 @@
-.discoveryHeader {
+.content {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
-.discoveryForm {
-  display: flex;
-  gap: var(--space-2);
+.sectionActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.input {
-  flex: 1;
-  min-width: 220px;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  color: var(--color-text);
-  padding: var(--space-2) var(--space-3);
-}
-
-.input:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.searchButton {
-  background: var(--color-accent);
-  border: 1px solid var(--color-accent);
-  border-radius: 8px;
-  color: var(--color-bg);
-  padding: var(--space-2) var(--space-4);
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.searchButton:disabled {
-  cursor: not-allowed;
-  opacity: 0.65;
-}
-
-.thumbnailFallback {
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-}
-
-.externalLink {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.subscriptionsLink {
-  color: var(--color-accent);
-  text-decoration: none;
-  font-weight: 600;
-}
-
-.subscribeButton {
+.secondaryAction {
   border: 1px solid var(--color-border);
   background: var(--color-bg-panel);
   color: var(--color-text);
   border-radius: 8px;
   padding: 6px 10px;
   font-size: var(--font-size-xs);
+  text-decoration: none;
   cursor: pointer;
 }
 
-.subscribeButton:disabled {
+.secondaryAction:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-.viewPodcastLink {
-  color: var(--color-accent);
-  text-decoration: none;
+.primaryAction {
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  border-radius: 8px;
+  padding: 6px 10px;
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  cursor: pointer;
 }
 
-.subscriptionState {
+.primaryAction:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.inlineLink {
+  color: var(--color-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.sortRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sortLabel {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.sortSelect {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: var(--font-size-sm);
+}
+
+.trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.unplayedBadge {
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+}
+
+.status {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
   text-transform: capitalize;
 }
 
-@media (max-width: 900px) {
-  .discoveryForm {
-    flex-direction: column;
-  }
+.loadMoreButton {
+  align-self: flex-start;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.loadMoreButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1000;
+}
+
+.modalCard {
+  width: min(560px, 100%);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modalTitle {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  color: var(--color-text);
+}
+
+.modalDescription {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.modalActions {
+  display: flex;
+  gap: 8px;
+}
+
+.fileLabel {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.fileInput {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.settingsFieldLabel {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.settingsSelect {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: var(--font-size-sm);
+}
+
+.settingsToggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.importSummary {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.importSummaryTitle {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.importErrors {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--color-text-muted);
 }

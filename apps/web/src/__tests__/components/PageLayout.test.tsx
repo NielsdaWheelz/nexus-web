@@ -11,7 +11,7 @@ describe("PageLayout", () => {
     render(
       <PageLayout
         title="Podcasts"
-        description="Discover and manage podcast media"
+        description="Followed shows and subscription settings"
         options={[{ id: "archive", label: "Archive", onSelect: onArchive }]}
       >
         <div>Page body</div>
@@ -19,7 +19,7 @@ describe("PageLayout", () => {
     );
 
     expect(screen.getByRole("heading", { level: 1, name: "Podcasts" })).toBeInTheDocument();
-    expect(screen.getByText("Discover and manage podcast media")).toBeInTheDocument();
+    expect(screen.getByText("Followed shows and subscription settings")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Options" }));
     await user.click(screen.getByRole("menuitem", { name: "Archive" }));

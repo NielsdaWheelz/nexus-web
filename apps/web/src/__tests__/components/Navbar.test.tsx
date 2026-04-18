@@ -56,6 +56,11 @@ describe("Navbar", () => {
   beforeEach(() => {
     mockNavigatePane.mockClear();
     mockActivatePane.mockClear();
+    MOCK_STORE.state.activePaneId = "pane-test-1";
+    MOCK_STORE.state.panes = [
+      { id: "pane-test-1", href: "/libraries", widthPx: 480 },
+      { id: "pane-test-2", href: "/conversations", widthPx: 480 },
+    ];
     vi.stubGlobal("innerWidth", 1200);
     window.dispatchEvent(new Event("resize"));
   });
@@ -68,6 +73,14 @@ describe("Navbar", () => {
   it("renders the libraries link", () => {
     render(<Navbar />);
     expect(screen.getByText("Libraries")).toBeInTheDocument();
+  });
+
+  it("renders Documents, Podcasts, and Videos as first-class nav items", () => {
+    render(<Navbar />);
+
+    expect(screen.getByText("Documents")).toBeInTheDocument();
+    expect(screen.getByText("Podcasts")).toBeInTheDocument();
+    expect(screen.getByText("Videos")).toBeInTheDocument();
   });
 
   it("keeps Search as the explicit desktop search destination", () => {
@@ -104,6 +117,34 @@ describe("Navbar", () => {
     render(<Navbar />);
     const librariesLink = screen.getByRole("link", { name: "Libraries", hidden: true });
     expect(librariesLink.className).toMatch(/active/i);
+  });
+
+  it("activates Podcasts for podcast routes without keeping Discover active", () => {
+    MOCK_STORE.state.panes = [{ id: "pane-test-1", href: "/podcasts", widthPx: 480 }];
+
+    render(<Navbar />);
+
+    expect(screen.getByRole("link", { name: "Podcasts", hidden: true }).className).toMatch(
+      /active/i
+    );
+    expect(screen.getByRole("link", { name: "Discover", hidden: true }).className).not.toMatch(
+      /active/i
+    );
+  });
+
+  it("keeps Discover active for discover child routes", () => {
+    MOCK_STORE.state.panes = [
+      { id: "pane-test-1", href: "/discover/podcasts", widthPx: 480 },
+    ];
+
+    render(<Navbar />);
+
+    expect(screen.getByRole("link", { name: "Discover", hidden: true }).className).toMatch(
+      /active/i
+    );
+    expect(screen.getByRole("link", { name: "Podcasts", hidden: true }).className).not.toMatch(
+      /active/i
+    );
   });
 
   it("exposes an Add content button without rendering an upload sheet", () => {

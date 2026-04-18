@@ -75,6 +75,7 @@ const ACTIONS: Action[] = [
   // Navigate
   { id: "nav-libraries", label: "Libraries", keywords: ["collections", "sources"], section: "Navigate", icon: BookOpen, execute: () => requestOpenInAppPane("/libraries") },
   { id: "nav-discover", label: "Discover", keywords: ["browse", "content", "lanes"], section: "Navigate", icon: Compass, execute: () => requestOpenInAppPane("/discover") },
+  { id: "nav-discover-podcasts", label: "Discover podcasts", keywords: ["search", "feeds", "subscribe"], section: "Navigate", icon: Mic, execute: () => requestOpenInAppPane("/discover/podcasts") },
   { id: "nav-documents", label: "Documents", keywords: ["pdf", "epub", "articles"], section: "Navigate", icon: FileText, execute: () => requestOpenInAppPane("/documents") },
   { id: "nav-podcasts", label: "Podcasts", keywords: ["audio", "feeds", "episodes"], section: "Navigate", icon: Mic, execute: () => requestOpenInAppPane("/podcasts") },
   { id: "nav-videos", label: "Videos", keywords: ["youtube", "video"], section: "Navigate", icon: Video, execute: () => requestOpenInAppPane("/videos") },
@@ -117,9 +118,9 @@ function getRecentDestinationIcon(routeId: string): LucideIcon {
     case "conversationNew":
       return MessageSquare;
     case "discover":
+    case "discoverPodcasts":
       return Compass;
     case "podcasts":
-    case "podcastSubscriptions":
     case "podcastDetail":
       return Mic;
     case "videos":

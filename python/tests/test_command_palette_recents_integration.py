@@ -92,6 +92,42 @@ class TestPostCommandPaletteRecent:
         assert data["title_snapshot"] == "Search"
         assert data["last_used_at"]
 
+    def test_post_canonicalizes_discover_podcasts_route(self, auth_client):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        response = auth_client.post(
+            "/me/command-palette-recents",
+            json={"href": "/discover/podcasts?query=tech", "title_snapshot": "Discover podcasts"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"Expected discover podcasts recent to be accepted, got {response.status_code}: "
+            f"{response.json()}"
+        )
+        data = response.json()["data"]
+        assert data["href"] == "/discover/podcasts"
+        assert data["title_snapshot"] == "Discover podcasts"
+
+    def test_post_canonicalizes_podcast_home_route(self, auth_client):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        response = auth_client.post(
+            "/me/command-palette-recents",
+            json={"href": "/podcasts?sort=unplayed", "title_snapshot": "Podcasts"},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"Expected podcasts recent to be accepted, got {response.status_code}: "
+            f"{response.json()}"
+        )
+        data = response.json()["data"]
+        assert data["href"] == "/podcasts"
+        assert data["title_snapshot"] == "Podcasts"
+
     def test_post_updates_last_used_at_instead_of_creating_second_row(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -173,6 +209,28 @@ class TestPostCommandPaletteRecent:
         rows = list_response.json()["data"]
         assert len(rows) == 1
         assert rows[0]["href"] == "/conversations/conv-1"
+
+    def test_removed_podcast_subscriptions_route_is_rejected(self, auth_client):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        response = auth_client.post(
+            "/me/command-palette-recents",
+            json={"href": "/podcasts/subscriptions", "title_snapshot": "My podcasts"},
+            headers=auth_headers(user_id),
+        )
+        list_response = auth_client.get(
+            "/me/command-palette-recents",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400, (
+            f"Expected removed subscriptions route to be rejected, got {response.status_code}: "
+            f"{response.json()}"
+        )
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+        assert list_response.status_code == 200
+        assert list_response.json()["data"] == []
 
     def test_transient_routes_are_rejected_and_do_not_create_rows(self, auth_client):
         user_id = create_test_user_id()

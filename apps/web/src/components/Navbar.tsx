@@ -1,22 +1,19 @@
 "use client";
 
-import {
-  useCallback,
-  useMemo,
-  useState,
-  type MouseEvent,
-} from "react";
-import type { LucideIcon } from "lucide-react";
+import { useCallback, useMemo, useState, type MouseEvent } from "react";
 import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
   Compass,
+  FileText,
   LogOut,
   MessageSquare,
+  Mic,
   Plus,
   Search,
   Settings,
+  Video,
 } from "lucide-react";
 import Link from "next/link";
 import { useWorkspaceStore } from "@/lib/workspace/store";
@@ -26,35 +23,6 @@ import styles from "./Navbar.module.css";
 interface NavbarProps {
   onToggle?: (collapsed: boolean) => void;
 }
-
-interface NavItem {
-  href: string;
-  label: string;
-  icon: LucideIcon;
-  isActive?: (pathname: string) => boolean;
-}
-
-const NAV_ITEMS: NavItem[] = [
-  { href: "/libraries", label: "Libraries", icon: BookOpen },
-  {
-    href: "/discover",
-    label: "Discover",
-    icon: Compass,
-    isActive: (pathname) =>
-      pathname.startsWith("/discover") ||
-      pathname.startsWith("/documents") ||
-      pathname.startsWith("/podcasts") ||
-      pathname.startsWith("/videos"),
-  },
-  { href: "/conversations", label: "Chat", icon: MessageSquare },
-  { href: "/search", label: "Search", icon: Search },
-  {
-    href: "/settings",
-    label: "Settings",
-    icon: Settings,
-    isActive: (pathname) => pathname.startsWith("/settings"),
-  },
-];
 
 function pathnameFromHref(href: string): string {
   try {
@@ -76,6 +44,19 @@ export default function Navbar({ onToggle }: NavbarProps) {
     () => (activePane ? pathnameFromHref(activePane.href) : ""),
     [activePane],
   );
+  const librariesActive =
+    currentPathname === "/libraries" || currentPathname.startsWith("/libraries/");
+  const discoverActive =
+    currentPathname === "/discover" || currentPathname.startsWith("/discover/");
+  const documentsActive = currentPathname === "/documents";
+  const podcastsActive =
+    currentPathname === "/podcasts" || currentPathname.startsWith("/podcasts/");
+  const videosActive = currentPathname === "/videos";
+  const chatActive =
+    currentPathname === "/conversations" || currentPathname.startsWith("/conversations/");
+  const searchActive = currentPathname === "/search";
+  const settingsActive =
+    currentPathname === "/settings" || currentPathname.startsWith("/settings/");
 
   const handleToggle = () => {
     const newState = !collapsed;
@@ -101,16 +82,6 @@ export default function Navbar({ onToggle }: NavbarProps) {
     },
     [navigateToHref],
   );
-
-  const isActive = (item: NavItem) => {
-    if (!currentPathname) {
-      return false;
-    }
-    if (item.isActive) {
-      return item.isActive(currentPathname);
-    }
-    return currentPathname === item.href || currentPathname.startsWith(`${item.href}/`);
-  };
 
   const ToggleIcon = collapsed ? ChevronRight : ChevronLeft;
 
@@ -138,22 +109,86 @@ export default function Navbar({ onToggle }: NavbarProps) {
       </div>
 
       <div className={styles.nav}>
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon;
-          return (
-            <a
-              key={item.href}
-              href={item.href}
-              className={`${styles.navItem} ${isActive(item) ? styles.active : ""}`}
-              onClick={(e) => handleNavClick(e, item.href)}
-            >
-              <span className={styles.icon} aria-hidden="true">
-                <Icon size={18} strokeWidth={2} />
-              </span>
-              {!collapsed && <span className={styles.label}>{item.label}</span>}
-            </a>
-          );
-        })}
+        <a
+          href="/libraries"
+          className={`${styles.navItem} ${librariesActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/libraries")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <BookOpen size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Libraries</span>}
+        </a>
+        <a
+          href="/discover"
+          className={`${styles.navItem} ${discoverActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/discover")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <Compass size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Discover</span>}
+        </a>
+        <a
+          href="/documents"
+          className={`${styles.navItem} ${documentsActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/documents")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <FileText size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Documents</span>}
+        </a>
+        <a
+          href="/podcasts"
+          className={`${styles.navItem} ${podcastsActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/podcasts")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <Mic size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Podcasts</span>}
+        </a>
+        <a
+          href="/videos"
+          className={`${styles.navItem} ${videosActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/videos")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <Video size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Videos</span>}
+        </a>
+        <a
+          href="/conversations"
+          className={`${styles.navItem} ${chatActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/conversations")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <MessageSquare size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Chat</span>}
+        </a>
+        <a
+          href="/search"
+          className={`${styles.navItem} ${searchActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/search")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <Search size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Search</span>}
+        </a>
+        <a
+          href="/settings"
+          className={`${styles.navItem} ${settingsActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/settings")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <Settings size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Settings</span>}
+        </a>
       </div>
 
       <div className={styles.uploadSection}>
