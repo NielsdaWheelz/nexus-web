@@ -1768,7 +1768,7 @@ class TestS4Migration0007:
             "idx_default_library_backfill_jobs_status_updated",
             # existing-table supporting indexes
             "idx_memberships_user_library_role",
-            "idx_library_media_media_library",
+            "idx_library_entries_media_library",
             "idx_conversation_shares_library_conversation",
         ]
 
@@ -3970,125 +3970,65 @@ class TestPlaybackQueueMigration:
         )
 
 
-class TestPodcastSubscriptionCategoryMigration:
-    """Schema assertions for PR-14 podcast subscription categories cutover."""
+class TestLibraryEntriesCutoverMigration:
+    """Schema assertions for the mixed library entry hard cutover."""
 
-    def test_head_contains_subscription_categories_and_subscription_fk_contract(
-        self, migrated_engine
-    ):
+    def test_head_drops_subscription_categories_and_category_fk(self, migrated_engine):
         with Session(migrated_engine) as session:
-            category_columns = session.execute(
+            categories_table = session.execute(
                 text(
                     """
-                    SELECT column_name
-                    FROM information_schema.columns
+                    SELECT 1
+                    FROM information_schema.tables
                     WHERE table_name = 'podcast_subscription_categories'
-                    ORDER BY ordinal_position
                     """
                 )
-            ).fetchall()
-            category_constraints = session.execute(
+            ).fetchone()
+            category_column = session.execute(
                 text(
                     """
-                    SELECT conname
-                    FROM pg_constraint
-                    WHERE conrelid = 'podcast_subscription_categories'::regclass
-                    ORDER BY conname
-                    """
-                )
-            ).fetchall()
-            category_indexes = session.execute(
-                text(
-                    """
-                    SELECT indexname
-                    FROM pg_indexes
-                    WHERE tablename = 'podcast_subscription_categories'
-                    ORDER BY indexname
-                    """
-                )
-            ).fetchall()
-            subscription_category_column = session.execute(
-                text(
-                    """
-                    SELECT column_name, data_type, is_nullable
+                    SELECT 1
                     FROM information_schema.columns
                     WHERE table_name = 'podcast_subscriptions'
                       AND column_name = 'category_id'
                     """
                 )
             ).fetchone()
-            subscription_fk_constraints = session.execute(
+            unsubscribe_mode_column = session.execute(
                 text(
                     """
-                    SELECT conname
-                    FROM pg_constraint
-                    WHERE conrelid = 'podcast_subscriptions'::regclass
-                      AND contype = 'f'
-                    ORDER BY conname
-                    """
-                )
-            ).fetchall()
-
-        category_column_names = {row[0] for row in category_columns}
-        assert {
-            "id",
-            "user_id",
-            "name",
-            "position",
-            "color",
-            "created_at",
-        }.issubset(category_column_names), (
-            "podcast subscription category migration must create category contract columns; "
-            f"got {category_column_names}"
-        )
-
-        category_constraint_names = {row[0] for row in category_constraints}
-        assert "uq_podcast_subscription_categories_user_name" in category_constraint_names, (
-            "categories table must enforce per-user unique names"
-        )
-
-        category_index_names = {row[0] for row in category_indexes}
-        assert "ix_podcast_subscription_categories_user_position" in category_index_names, (
-            "categories table must support deterministic user-scoped ordering reads"
-        )
-
-        assert subscription_category_column is not None, (
-            "podcast_subscriptions.category_id must exist for subscription-category assignment"
-        )
-        assert subscription_category_column[1] == "uuid", (
-            f"category_id should be uuid type, got {subscription_category_column[1]}"
-        )
-        assert subscription_category_column[2] == "YES", (
-            "category_id must be nullable so uncategorized remains an explicit state"
-        )
-
-        fk_names = {row[0] for row in subscription_fk_constraints}
-        assert "fk_podcast_subscriptions_category_id" in fk_names, (
-            "podcast_subscriptions.category_id must enforce FK integrity to categories table"
-        )
-
-
-class TestLibraryMediaOrderingMigration:
-    """Schema assertions for durable library media ordering."""
-
-    def test_head_contains_library_media_position_contract(self, migrated_engine):
-        with Session(migrated_engine) as session:
-            position_column = session.execute(
-                text(
-                    """
-                    SELECT column_name, data_type, is_nullable, column_default
+                    SELECT 1
                     FROM information_schema.columns
-                    WHERE table_name = 'library_media'
-                      AND column_name = 'position'
+                    WHERE table_name = 'podcast_subscriptions'
+                      AND column_name = 'unsubscribe_mode'
                     """
                 )
             ).fetchone()
+
+        assert categories_table is None, "podcast subscription categories must be removed at head"
+        assert category_column is None, "podcast_subscriptions.category_id must be removed at head"
+        assert unsubscribe_mode_column is None, (
+            "podcast_subscriptions.unsubscribe_mode must be removed at head"
+        )
+
+    def test_head_contains_library_entries_contract(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            entry_columns = session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'library_entries'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
             constraints = session.execute(
                 text(
                     """
                     SELECT conname
                     FROM pg_constraint
-                    WHERE conrelid = 'library_media'::regclass
+                    WHERE conrelid = 'library_entries'::regclass
                     ORDER BY conname
                     """
                 )
@@ -4098,25 +4038,229 @@ class TestLibraryMediaOrderingMigration:
                     """
                     SELECT indexname
                     FROM pg_indexes
-                    WHERE tablename = 'library_media'
+                    WHERE tablename = 'library_entries'
                     ORDER BY indexname
                     """
                 )
             ).fetchall()
+            color_column = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'libraries'
+                      AND column_name = 'color'
+                    """
+                )
+            ).fetchone()
+            legacy_table = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_name = 'library_media'
+                    """
+                )
+            ).fetchone()
 
-        assert position_column is not None, (
-            "library_media.position must exist to support persisted drag-reorder semantics"
+        entry_column_names = {row[0] for row in entry_columns}
+        assert {
+            "id",
+            "library_id",
+            "media_id",
+            "podcast_id",
+            "created_at",
+            "position",
+        }.issubset(entry_column_names), (
+            "library_entries must contain the mixed-entry contract columns"
         )
-        assert position_column[1] in {"integer", "bigint"}, (
-            f"Expected library_media.position integer-like type, got {position_column[1]}"
-        )
-        assert position_column[2] == "NO", "library_media.position must be non-null"
 
         constraint_names = {row[0] for row in constraints}
-        assert "ck_library_media_position_non_negative" in constraint_names
+        assert "ck_library_entries_exactly_one_target" in constraint_names
+        assert "ck_library_entries_position_non_negative" in constraint_names
+        assert "uq_library_entries_library_media" in constraint_names
+        assert "uq_library_entries_library_podcast" in constraint_names
 
         index_names = {row[0] for row in indexes}
-        assert "ix_library_media_library_position" in index_names
+        assert "ix_library_entries_library_position" in index_names
+        assert "idx_library_entries_media_library" in index_names
+
+        assert color_column is not None, "libraries.color must exist at head"
+        assert color_column[1] == "text"
+        assert color_column[2] == "YES"
+        assert legacy_table is None, "legacy library_media table must be removed at head"
+
+    def test_upgrade_0046_to_0047_backfills_media_and_podcast_entries(self):
+        run_alembic_command("downgrade base")
+        result = run_alembic_command("upgrade 0046")
+        assert result.returncode == 0, f"upgrade 0046 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        default_library_id = uuid4()
+        shared_library_id = uuid4()
+        media_id = uuid4()
+        podcast_id = uuid4()
+        category_id = uuid4()
+
+        with Session(engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO libraries (id, owner_user_id, name, is_default)
+                    VALUES (:id, :owner_id, 'My Library', true)
+                """),
+                {"id": default_library_id, "owner_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO libraries (id, owner_user_id, name, is_default)
+                    VALUES (:id, :owner_id, 'Shared', false)
+                """),
+                {"id": shared_library_id, "owner_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'admin')
+                """),
+                {"library_id": default_library_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'admin')
+                """),
+                {"library_id": shared_library_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES (:id, 'web_article', 'Migrated Article', 'ready_for_reading')
+                """),
+                {"id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO library_media (library_id, media_id, position)
+                    VALUES (:library_id, :media_id, 3)
+                """),
+                {"library_id": shared_library_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO podcasts (
+                        id, provider, provider_podcast_id, title, feed_url
+                    ) VALUES (
+                        :id, 'podcast_index', 'migrated-podcast', 'Migrated Podcast', 'https://example.com/feed.xml'
+                    )
+                """),
+                {"id": podcast_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO podcast_subscription_categories (
+                        id, user_id, name, position, color
+                    ) VALUES (
+                        :id, :user_id, 'Sports', 0, '#123456'
+                    )
+                """),
+                {"id": category_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO podcast_subscriptions (
+                        user_id, podcast_id, status, category_id
+                    ) VALUES (
+                        :user_id, :podcast_id, 'active', :category_id
+                    )
+                """),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                    "category_id": category_id,
+                },
+            )
+            session.commit()
+
+        result = run_alembic_command("upgrade 0047")
+        assert result.returncode == 0, f"upgrade 0047 failed: {result.stderr}"
+
+        with Session(engine) as session:
+            media_entry = session.execute(
+                text("""
+                    SELECT library_id, media_id, podcast_id, position
+                    FROM library_entries
+                    WHERE library_id = :library_id
+                      AND media_id = :media_id
+                """),
+                {"library_id": shared_library_id, "media_id": media_id},
+            ).fetchone()
+            category_library = session.execute(
+                text("""
+                    SELECT id, owner_user_id, name, color, is_default
+                    FROM libraries
+                    WHERE owner_user_id = :user_id
+                      AND name = 'Sports'
+                      AND is_default = false
+                """),
+                {"user_id": user_id},
+            ).fetchone()
+            assert category_library is not None
+            podcast_entry = session.execute(
+                text("""
+                    SELECT podcast_id
+                    FROM library_entries
+                    WHERE library_id = :library_id
+                      AND podcast_id = :podcast_id
+                """),
+                {"library_id": category_library[0], "podcast_id": podcast_id},
+            ).fetchone()
+            category_table = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_name = 'podcast_subscription_categories'
+                    """
+                )
+            ).fetchone()
+            category_column = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_subscriptions'
+                      AND column_name = 'category_id'
+                    """
+                )
+            ).fetchone()
+            unsubscribe_mode_column = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_subscriptions'
+                      AND column_name = 'unsubscribe_mode'
+                    """
+                )
+            ).fetchone()
+
+        engine.dispose()
+
+        assert media_entry is not None
+        assert media_entry[0] == shared_library_id
+        assert media_entry[1] == media_id
+        assert media_entry[2] is None
+        assert media_entry[3] == 3
+        assert category_library[1] == user_id
+        assert category_library[2] == "Sports"
+        assert category_library[3] == "#123456"
+        assert category_library[4] is False
+        assert podcast_entry is not None
+        assert category_table is None
+        assert category_column is None
+        assert unsubscribe_mode_column is None
 
 
 class TestPodcastEpisodeChapterMigration:

@@ -28,6 +28,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from tests.factories import (
+    add_media_to_library as add_media_entry_to_library,
+)
+from tests.factories import (
     create_epub_chapter_fragment,
     create_epub_media_in_library,
     get_user_default_library,
@@ -122,7 +125,7 @@ class TestCreateHighlight:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -154,7 +157,7 @@ class TestCreateHighlight:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -180,7 +183,7 @@ class TestCreateHighlight:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -212,7 +215,7 @@ class TestCreateHighlight:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -261,7 +264,7 @@ class TestListHighlights:
         direct_db.register_cleanup("annotations", "highlight_id", None)  # will clean by FK
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -312,7 +315,7 @@ class TestGetHighlight:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A adds media to their library and creates highlight
@@ -358,7 +361,7 @@ class TestUpdateHighlight:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -399,7 +402,7 @@ class TestUpdateHighlight:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -435,7 +438,7 @@ class TestUpdateHighlight:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -485,7 +488,7 @@ class TestDeleteHighlight:
         # Note: No need to register cleanup for highlights/annotations since we delete them
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -531,7 +534,7 @@ class TestDeleteAnnotation:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -572,7 +575,7 @@ class TestMediaReadiness:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -600,7 +603,7 @@ class TestMediaReadiness:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -669,7 +672,7 @@ class TestEmojiCodepointSlicing:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -717,7 +720,7 @@ class TestLibraryMembership:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Only User A adds to their library
@@ -764,7 +767,7 @@ class TestAnnotationUpsert:
         direct_db.register_cleanup("annotations", "highlight_id", None)
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -804,7 +807,7 @@ class TestAnnotationUpsert:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -851,7 +854,7 @@ class TestEdgeCases:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -878,7 +881,7 @@ class TestEdgeCases:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -988,14 +991,7 @@ def create_shared_library_with_media(
         {"lib_id": lib_id, "user_id": member_id},
     )
     # Add media to shared library
-    session.execute(
-        text("""
-            INSERT INTO library_media (library_id, media_id)
-            VALUES (:lib_id, :media_id)
-            ON CONFLICT DO NOTHING
-        """),
-        {"lib_id": lib_id, "media_id": media_id},
-    )
+    add_media_entry_to_library(session, lib_id, media_id)
     session.commit()
     return lib_id
 
@@ -1061,11 +1057,11 @@ class TestHighlightSharedRead:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
-        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A creates a highlight
@@ -1112,11 +1108,11 @@ class TestHighlightSharedRead:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
-        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A creates a highlight
@@ -1169,11 +1165,11 @@ class TestHighlightSharedRead:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
-        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A creates highlight
@@ -1233,7 +1229,7 @@ class TestHighlightSharedRead:
             media_id, fragment_id = create_media_and_fragment(session)
 
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -1270,11 +1266,11 @@ class TestHighlightSharedRead:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
-        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # A creates highlight
@@ -1314,11 +1310,11 @@ class TestHighlightSharedRead:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
-        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         resp = auth_client.post(
@@ -1366,11 +1362,11 @@ class TestHighlightSharedRead:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
-        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         resp = auth_client.post(
@@ -1409,11 +1405,11 @@ class TestHighlightSharedRead:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
-        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         resp = auth_client.post(
@@ -1452,11 +1448,11 @@ class TestHighlightSharedRead:
 
         direct_db.register_cleanup("annotations", "highlight_id", None)
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
-        direct_db.register_cleanup("library_media", "library_id", lib_id)
+        direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         resp = auth_client.post(
@@ -1486,7 +1482,7 @@ class TestHighlightSharedRead:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -1542,7 +1538,7 @@ class TestHighlightSharedRead:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -1614,7 +1610,7 @@ class TestEpubHighlightCompatibility:
         for fid in frag_ids:
             direct_db.register_cleanup("highlights", "fragment_id", fid)
             direct_db.register_cleanup("fragments", "id", fid)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         ch1_frag = frag_ids[1]
@@ -1652,7 +1648,7 @@ class TestEpubHighlightCompatibility:
         for fid in frag_ids:
             direct_db.register_cleanup("highlights", "fragment_id", fid)
             direct_db.register_cleanup("fragments", "id", fid)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Highlight "café" in chapter 1 text
@@ -1691,7 +1687,7 @@ class TestEpubHighlightCompatibility:
         for fid in frag_ids:
             direct_db.register_cleanup("highlights", "fragment_id", fid)
             direct_db.register_cleanup("fragments", "id", fid)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Chapter 1 has len(EPUB_CH1_TEXT) codepoints.
@@ -1731,7 +1727,7 @@ class TestS6PR01FragmentHighlightRouteSmoke:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -1790,7 +1786,7 @@ class TestS6PR02DualWrite:
         direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -1836,7 +1832,7 @@ class TestS6PR02DualWrite:
         direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -1883,7 +1879,7 @@ class TestS6PR02ResponseContract:
         direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -1946,7 +1942,7 @@ class TestS6PR02DormantWindowRepair:
         direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", h_id)
         direct_db.register_cleanup("highlights", "id", h_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Patch color — should trigger dormant repair
@@ -2014,7 +2010,7 @@ class TestMediaWideHighlightListing:
         direct_db.register_cleanup("highlights", "fragment_id", fragment_ch1)
         direct_db.register_cleanup("fragments", "id", fragment_ch0)
         direct_db.register_cleanup("fragments", "id", fragment_ch1)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -2115,7 +2111,7 @@ class TestMediaWideHighlightListing:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
@@ -2175,7 +2171,7 @@ class TestMediaWideHighlightListing:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)

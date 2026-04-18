@@ -38,12 +38,22 @@ async function deleteConversationViaApi(
   conversationId: string
 ) {
   await ensureAppContext(page);
-  const response = await page.request.delete(`/api/conversations/${conversationId}`);
-  if (!response.ok() && response.status() !== 404) {
-    const body = await response.text();
-    throw new Error(
-      `Failed to delete conversation ${conversationId}: status=${response.status()}; body=${body.slice(0, 300)}`
-    );
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await page.request.delete(`/api/conversations/${conversationId}`);
+      if (!response.ok() && response.status() !== 404) {
+        const body = await response.text();
+        throw new Error(
+          `Failed to delete conversation ${conversationId}: status=${response.status()}; body=${body.slice(0, 300)}`
+        );
+      }
+      return;
+    } catch (error) {
+      if (attempt === 2) {
+        throw error;
+      }
+      await page.waitForTimeout(250 * (attempt + 1));
+    }
   }
 }
 

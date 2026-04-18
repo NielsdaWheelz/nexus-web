@@ -11,7 +11,21 @@ import styles from "./page.module.css";
 
 const SUBSCRIPTION_PAGE_SIZE = 100;
 
+interface LibrarySummary {
+  id: string;
+  name: string;
+  is_default: boolean;
+}
+
+interface LibraryEntrySummary {
+  kind: "media" | "podcast";
+  podcast?: {
+    id: string;
+  } | null;
+}
+
 interface PodcastDiscoveryItem {
+  podcast_id: string | null;
   provider_podcast_id: string;
   title: string;
   author: string | null;
@@ -57,6 +71,9 @@ export default function PodcastsPaneBody() {
   >({});
   const [subscriptionsHydrated, setSubscriptionsHydrated] = useState(false);
   const [subscribingProviderIds, setSubscribingProviderIds] = useState<Set<string>>(new Set());
+  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
+  const [libraryIdsByPodcastId, setLibraryIdsByPodcastId] = useState<Record<string, string[]>>({});
+  const [busyLibraryMembershipKeys, setBusyLibraryMembershipKeys] = useState<Set<string>>(new Set());
 
   const hydrateSubscriptions = useCallback(async () => {
     if (subscriptionsHydrated) {
@@ -85,6 +102,43 @@ export default function PodcastsPaneBody() {
     setSubscriptionsHydrated(true);
   }, [subscriptionsHydrated]);
 
+  const loadLibraryMemberships = useCallback(async () => {
+    try {
+      const librariesResponse = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
+      const nextLibraries = librariesResponse.data.filter((library) => !library.is_default);
+      setLibraries(nextLibraries);
+      if (nextLibraries.length === 0) {
+        setLibraryIdsByPodcastId({});
+        return;
+      }
+      const entryResponses = await Promise.all(
+        nextLibraries.map((library) =>
+          apiFetch<{ data: LibraryEntrySummary[] }>(`/api/libraries/${library.id}/entries`)
+        )
+      );
+      const nextLibraryIdsByPodcastId: Record<string, string[]> = {};
+      for (let index = 0; index < nextLibraries.length; index += 1) {
+        const library = nextLibraries[index];
+        for (const entry of entryResponses[index].data) {
+          if (entry.kind !== "podcast" || !entry.podcast) {
+            continue;
+          }
+          const existingLibraryIds = nextLibraryIdsByPodcastId[entry.podcast.id] ?? [];
+          nextLibraryIdsByPodcastId[entry.podcast.id] = [...existingLibraryIds, library.id];
+        }
+      }
+      setLibraryIdsByPodcastId(nextLibraryIdsByPodcastId);
+    } catch (error) {
+      if (isApiError(error)) {
+        setDiscoverError(error.message);
+      } else {
+        setDiscoverError("Failed to load library memberships");
+      }
+      setLibraries([]);
+      setLibraryIdsByPodcastId({});
+    }
+  }, []);
+
   useEffect(() => {
     void hydrateSubscriptions().catch((error: unknown) => {
       if (isApiError(error)) {
@@ -93,7 +147,8 @@ export default function PodcastsPaneBody() {
         setDiscoverError("Failed to load existing subscriptions");
       }
     });
-  }, [hydrateSubscriptions]);
+    void loadLibraryMemberships();
+  }, [hydrateSubscriptions, loadLibraryMemberships]);
 
   const handleDiscover = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -148,6 +203,13 @@ export default function PodcastsPaneBody() {
           sync_status: response.data.sync_status,
         },
       }));
+      setDiscoverResults((prev) =>
+        prev.map((result) =>
+          result.provider_podcast_id === providerPodcastId
+            ? { ...result, podcast_id: response.data.podcast_id }
+            : result
+        )
+      );
     } catch (error) {
       if (isApiError(error)) {
         setDiscoverError(error.message);
@@ -163,6 +225,71 @@ export default function PodcastsPaneBody() {
     }
   };
 
+  const handleAddPodcastToLibrary = useCallback(async (podcastId: string, libraryId: string) => {
+    const busyKey = `${libraryId}:${podcastId}`;
+    setBusyLibraryMembershipKeys((prev) => new Set(prev).add(busyKey));
+    setDiscoverError(null);
+    try {
+      await apiFetch(`/api/libraries/${libraryId}/podcasts`, {
+        method: "POST",
+        body: JSON.stringify({ podcast_id: podcastId }),
+      });
+      setLibraryIdsByPodcastId((prev) => {
+        const next = { ...prev };
+        const nextIds = new Set(next[podcastId] ?? []);
+        nextIds.add(libraryId);
+        next[podcastId] = [...nextIds];
+        return next;
+      });
+    } catch (error) {
+      if (isApiError(error)) {
+        setDiscoverError(error.message);
+      } else {
+        setDiscoverError("Failed to add podcast to library");
+      }
+    } finally {
+      setBusyLibraryMembershipKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(busyKey);
+        return next;
+      });
+    }
+  }, []);
+
+  const handleRemovePodcastFromLibrary = useCallback(async (podcastId: string, libraryId: string) => {
+    const busyKey = `${libraryId}:${podcastId}`;
+    setBusyLibraryMembershipKeys((prev) => new Set(prev).add(busyKey));
+    setDiscoverError(null);
+    try {
+      await apiFetch(`/api/libraries/${libraryId}/podcasts/${podcastId}`, {
+        method: "DELETE",
+      });
+      setLibraryIdsByPodcastId((prev) => {
+        const next = { ...prev };
+        const nextIds = new Set(next[podcastId] ?? []);
+        nextIds.delete(libraryId);
+        if (nextIds.size === 0) {
+          delete next[podcastId];
+        } else {
+          next[podcastId] = [...nextIds];
+        }
+        return next;
+      });
+    } catch (error) {
+      if (isApiError(error)) {
+        setDiscoverError(error.message);
+      } else {
+        setDiscoverError("Failed to remove podcast from library");
+      }
+    } finally {
+      setBusyLibraryMembershipKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(busyKey);
+        return next;
+      });
+    }
+  }, []);
+
   return (
     <MediaCatalogPage
       title="Podcasts"
@@ -171,7 +298,7 @@ export default function PodcastsPaneBody() {
       headerSlot={
         <SectionCard
           title="Discover podcasts"
-          description="Search global feeds, subscribe, and open podcast detail views."
+          description="Search global feeds, open podcast detail views, and subscribe."
           actions={
             <Link href="/podcasts/subscriptions" className={styles.subscriptionsLink}>
               My podcasts
@@ -205,13 +332,33 @@ export default function PodcastsPaneBody() {
             <AppList>
               {discoverResults.map((result) => {
                 const subscription = subscriptionByProviderId[result.provider_podcast_id];
+                const podcastId = subscription?.podcast_id ?? result.podcast_id;
                 const isSubscribing = subscribingProviderIds.has(result.provider_podcast_id);
+                const currentLibraryIds = new Set(podcastId ? libraryIdsByPodcastId[podcastId] ?? [] : []);
+                const libraryOptions =
+                  podcastId && subscription
+                    ? libraries.map((library) => {
+                        const inLibrary = currentLibraryIds.has(library.id);
+                        const busyKey = `${library.id}:${podcastId}`;
+                        return {
+                          id: `${inLibrary ? "remove" : "add"}-${library.id}`,
+                          label: `${inLibrary ? "Remove from" : "Add to"} ${library.name}`,
+                          disabled: busyLibraryMembershipKeys.has(busyKey),
+                          onSelect: () => {
+                            void (inLibrary
+                              ? handleRemovePodcastFromLibrary(podcastId, library.id)
+                              : handleAddPodcastToLibrary(podcastId, library.id));
+                          },
+                        };
+                      })
+                    : [];
+
                 return (
                   <AppListItem
                     key={result.provider_podcast_id}
-                    href={subscription ? `/podcasts/${subscription.podcast_id}` : result.website_url || result.feed_url}
-                    target={subscription ? undefined : "_blank"}
-                    rel={subscription ? undefined : "noopener noreferrer"}
+                    href={podcastId ? `/podcasts/${podcastId}` : result.website_url || result.feed_url}
+                    target={podcastId ? undefined : "_blank"}
+                    rel={podcastId ? undefined : "noopener noreferrer"}
                     icon={<span className={styles.thumbnailFallback}>POD</span>}
                     title={result.title}
                     description={result.author || "Unknown author"}
@@ -222,8 +369,8 @@ export default function PodcastsPaneBody() {
                       ) : undefined
                     }
                     actions={
-                      subscription ? (
-                        <Link href={`/podcasts/${subscription.podcast_id}`} className={styles.viewPodcastLink}>
+                      subscription && podcastId ? (
+                        <Link href={`/podcasts/${podcastId}`} className={styles.viewPodcastLink}>
                           View podcast
                         </Link>
                       ) : (
@@ -238,6 +385,7 @@ export default function PodcastsPaneBody() {
                       )
                     }
                     options={[
+                      ...libraryOptions,
                       ...(result.website_url
                         ? [
                             {

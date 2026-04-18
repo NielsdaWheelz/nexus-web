@@ -11,6 +11,7 @@ relevant factory here — not in N test files.
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -24,7 +25,6 @@ from nexus.db.models import (
     Highlight,
     HighlightFragmentAnchor,
     Library,
-    LibraryMedia,
     Media,
     MediaFile,
     MediaKind,
@@ -198,6 +198,72 @@ def create_test_media(
     return media.id
 
 
+def add_media_to_library(session: Session, library_id: UUID, media_id: UUID) -> None:
+    """Attach media to a library using the mixed library_entries table."""
+    existing = session.execute(
+        text(
+            """
+            SELECT 1
+            FROM library_entries
+            WHERE library_id = :library_id
+              AND media_id = :media_id
+            """
+        ),
+        {"library_id": library_id, "media_id": media_id},
+    ).scalar_one_or_none()
+    if existing is None:
+        next_position = int(
+            session.execute(
+                text(
+                    """
+                    SELECT COALESCE(MAX(position) + 1, 0)
+                    FROM library_entries
+                    WHERE library_id = :library_id
+                    """
+                ),
+                {"library_id": library_id},
+            ).scalar_one()
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO library_entries (
+                    id,
+                    library_id,
+                    position,
+                    created_at,
+                    media_id,
+                    podcast_id
+                )
+                VALUES (
+                    :id,
+                    :library_id,
+                    :position,
+                    :created_at,
+                    :media_id,
+                    NULL
+                )
+                """
+            ),
+            {
+                "id": uuid4(),
+                "library_id": library_id,
+                "position": next_position,
+                "created_at": datetime.now(UTC),
+                "media_id": media_id,
+            },
+        )
+
+    lib = session.get(Library, library_id)
+    if lib and lib.is_default:
+        session.merge(
+            DefaultLibraryIntrinsic(
+                default_library_id=library_id,
+                media_id=media_id,
+            )
+        )
+
+
 def create_test_media_in_library(
     session: Session,
     user_id: UUID,
@@ -219,15 +285,7 @@ def create_test_media_in_library(
     )
     session.add(media)
     session.flush()
-    session.add(LibraryMedia(library_id=library_id, media_id=media.id))
-    lib = session.get(Library, library_id)
-    if lib and lib.is_default:
-        session.add(
-            DefaultLibraryIntrinsic(
-                default_library_id=library_id,
-                media_id=media.id,
-            )
-        )
+    add_media_to_library(session, library_id, media.id)
     session.commit()
     return media.id
 
@@ -270,13 +328,7 @@ def create_searchable_media(
         .all()
     )
     for lib in default_libs:
-        session.merge(LibraryMedia(library_id=lib.id, media_id=media.id))
-        session.merge(
-            DefaultLibraryIntrinsic(
-                default_library_id=lib.id,
-                media_id=media.id,
-            )
-        )
+        add_media_to_library(session, lib.id, media.id)
     session.commit()
     return media.id
 
@@ -470,7 +522,7 @@ def create_searchable_media_in_library(
     )
     session.add(fragment)
     session.flush()
-    session.merge(LibraryMedia(library_id=library_id, media_id=media.id))
+    add_media_to_library(session, library_id, media.id)
     session.commit()
     return media.id
 
@@ -514,15 +566,7 @@ def create_epub_media_in_library(
     )
     session.add(media)
     session.flush()
-    session.add(LibraryMedia(library_id=library_id, media_id=media.id))
-    lib = session.get(Library, library_id)
-    if lib and lib.is_default:
-        session.add(
-            DefaultLibraryIntrinsic(
-                default_library_id=library_id,
-                media_id=media.id,
-            )
-        )
+    add_media_to_library(session, library_id, media.id)
     session.commit()
     return media.id
 
@@ -805,15 +849,7 @@ def create_pdf_media_with_text(
     )
     session.add(media)
     session.flush()
-    session.add(LibraryMedia(library_id=library_id, media_id=media.id))
-    lib = session.get(Library, library_id)
-    if lib and lib.is_default:
-        session.add(
-            DefaultLibraryIntrinsic(
-                default_library_id=library_id,
-                media_id=media.id,
-            )
-        )
+    add_media_to_library(session, library_id, media.id)
 
     if page_spans is None:
         chunk_size = len(plain_text) // page_count

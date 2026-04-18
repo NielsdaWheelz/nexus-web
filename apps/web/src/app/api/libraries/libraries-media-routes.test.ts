@@ -10,13 +10,6 @@ describe("library media BFF proxy routes", () => {
     mockProxyToFastAPI.mockClear();
   });
 
-  it("GET /api/libraries/[id]/media proxies to /libraries/{id}/media", async () => {
-    const { GET } = await import("./[id]/media/route");
-    const req = new Request("http://localhost/api/libraries/lib-1/media");
-    await GET(req, { params: Promise.resolve({ id: "lib-1" }) });
-    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/libraries/lib-1/media");
-  });
-
   it("POST /api/libraries/[id]/media proxies to /libraries/{id}/media", async () => {
     const { POST } = await import("./[id]/media/route");
     const req = new Request("http://localhost/api/libraries/lib-1/media", {
@@ -35,12 +28,42 @@ describe("library media BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/libraries/lib-1/media/media-9");
   });
 
-  it("PUT /api/libraries/[id]/media/order proxies to /libraries/{id}/media/order", async () => {
-    const { PUT } = await import("./[id]/media/order/route");
-    const req = new Request("http://localhost/api/libraries/lib-1/media/order", {
-      method: "PUT",
+  it("GET /api/libraries/[id]/entries proxies to /libraries/{id}/entries", async () => {
+    const { GET } = await import("./[id]/entries/route");
+    const req = new Request("http://localhost/api/libraries/lib-1/entries");
+    await GET(req, { params: Promise.resolve({ id: "lib-1" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/libraries/lib-1/entries");
+  });
+
+  it("PATCH /api/libraries/[id]/entries/reorder proxies to /libraries/{id}/entries/reorder", async () => {
+    const { PATCH } = await import("./[id]/entries/reorder/route");
+    const req = new Request("http://localhost/api/libraries/lib-1/entries/reorder", {
+      method: "PATCH",
     });
-    await PUT(req, { params: Promise.resolve({ id: "lib-1" }) });
-    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/libraries/lib-1/media/order");
+    await PATCH(req, { params: Promise.resolve({ id: "lib-1" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/libraries/lib-1/entries/reorder");
+  });
+
+  it("POST /api/libraries/[id]/podcasts proxies to /libraries/{id}/podcasts", async () => {
+    const { POST } = await import("./[id]/podcasts/route");
+    const req = new Request("http://localhost/api/libraries/lib-1/podcasts", {
+      method: "POST",
+    });
+    await POST(req, { params: Promise.resolve({ id: "lib-1" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/libraries/lib-1/podcasts");
+  });
+
+  it("DELETE /api/libraries/[id]/podcasts/[podcastId] proxies to /libraries/{id}/podcasts/{podcastId}", async () => {
+    const { DELETE } = await import("./[id]/podcasts/[podcastId]/route");
+    const req = new Request("http://localhost/api/libraries/lib-1/podcasts/podcast-9", {
+      method: "DELETE",
+    });
+    await DELETE(req, {
+      params: Promise.resolve({ id: "lib-1", podcastId: "podcast-9" }),
+    });
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(
+      req,
+      "/libraries/lib-1/podcasts/podcast-9"
+    );
   });
 });

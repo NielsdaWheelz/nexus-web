@@ -33,6 +33,7 @@ from nexus.services.default_library_closure import (
     reset_backfill_job_to_pending_for_retry,
     validate_backfill_job_tuple,
 )
+from tests.factories import add_media_to_library
 from tests.helpers import create_test_user_id
 
 pytestmark = pytest.mark.integration
@@ -85,16 +86,9 @@ def _create_media(db: Session) -> UUID:
     return media_id
 
 
-def _add_library_media(db: Session, library_id: UUID, media_id: UUID) -> None:
-    """Insert library_media row."""
-    db.execute(
-        text("""
-            INSERT INTO library_media (library_id, media_id)
-            VALUES (:lib, :media)
-            ON CONFLICT DO NOTHING
-        """),
-        {"lib": library_id, "media": media_id},
-    )
+def _add_library_entry(db: Session, library_id: UUID, media_id: UUID) -> None:
+    """Insert a media library_entries row."""
+    add_media_to_library(db, library_id, media_id)
 
 
 def _insert_backfill_job(
@@ -284,15 +278,15 @@ class TestMaterializeClosureForSource:
     """Tests for materialize_closure_for_source."""
 
     def test_inserts_edges_and_materializes_default_row(self, db_session: Session):
-        """Materializes closure edges and library_media for default library."""
+        """Materializes closure edges and library_entries for the default library."""
         user_id = create_test_user_id()
         dl_id = _create_user(db_session, user_id)
         src_id = _create_non_default_library(db_session, user_id)
 
         media1 = _create_media(db_session)
         media2 = _create_media(db_session)
-        _add_library_media(db_session, src_id, media1)
-        _add_library_media(db_session, src_id, media2)
+        _add_library_entry(db_session, src_id, media1)
+        _add_library_entry(db_session, src_id, media2)
 
         edges = materialize_closure_for_source(db_session, dl_id, src_id)
         assert edges == 2
@@ -307,10 +301,10 @@ class TestMaterializeClosureForSource:
         ).scalar()
         assert edge_count == 2
 
-        # Verify library_media rows exist in default library
+        # Verify library_entries rows exist in the default library
         lm_count = db_session.execute(
             text("""
-                SELECT COUNT(*) FROM library_media
+                SELECT COUNT(*) FROM library_entries
                 WHERE library_id = :dl AND media_id IN (:m1, :m2)
             """),
             {"dl": dl_id, "m1": media1, "m2": media2},
@@ -324,7 +318,7 @@ class TestMaterializeClosureForSource:
         src_id = _create_non_default_library(db_session, user_id)
 
         media1 = _create_media(db_session)
-        _add_library_media(db_session, src_id, media1)
+        _add_library_entry(db_session, src_id, media1)
 
         edges1 = materialize_closure_for_source(db_session, dl_id, src_id)
         assert edges1 == 1

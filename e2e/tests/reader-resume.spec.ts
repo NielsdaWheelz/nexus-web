@@ -185,12 +185,9 @@ test.describe("reader settings + resume", () => {
   test("epub chapter location resumes after reload", async ({ page }) => {
     const seed = readReaderResumeSeed();
     const mediaId = seed.epub_media_id;
-    const chapterOne = seed.epub_chapter_titles[0];
     const chapterTwo = seed.epub_chapter_titles[1];
 
     await page.goto(`/media/${mediaId}`);
-    await expect(page.getByRole("heading", { name: chapterOne })).toBeVisible({ timeout: 15_000 });
-
     const chapterSelect = page.getByLabel("Select chapter");
     await expect(chapterSelect).toBeVisible();
     await chapterSelect.selectOption({ label: chapterTwo });

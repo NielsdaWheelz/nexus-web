@@ -41,15 +41,11 @@ from nexus.schemas.podcast import (
     PodcastOpmlImportOut,
     PodcastSubscribeOut,
     PodcastSubscribeRequest,
-    PodcastSubscriptionCategoryCreateRequest,
-    PodcastSubscriptionCategoryOrderRequest,
-    PodcastSubscriptionCategoryOut,
-    PodcastSubscriptionCategoryPatchRequest,
-    PodcastSubscriptionCategoryRefOut,
     PodcastSubscriptionListItemOut,
     PodcastSubscriptionSettingsPatchRequest,
     PodcastSubscriptionStatusOut,
     PodcastSubscriptionSyncRefreshOut,
+    PodcastUnsubscribeOut,
 )
 from nexus.services import playback_queue as playback_queue_service
 from nexus.services.billing import get_entitlements, get_transcription_usage
@@ -79,7 +75,6 @@ logger = get_logger(__name__)
 PODCAST_PROVIDER = "podcast_index"
 PODCAST_INDEX_EPISODE_PAGE_SIZE = 100
 PODCAST_FEED_PAGINATION_MAX_PAGES = 10
-PODCAST_UNSUBSCRIBE_MODES = {1, 2, 3}
 PODCAST_PROVIDER_RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 PODCAST_PROVIDER_MAX_ATTEMPTS = 3
 PODCAST_PROVIDER_BACKOFF_SECONDS = (0.25, 0.5, 1.0)
@@ -102,8 +97,6 @@ PODCAST_TRANSCRIPT_REQUEST_REASONS = {
 PODCAST_EPISODE_STATES = {"all", "unplayed", "in_progress", "played"}
 PODCAST_EPISODE_SORT_OPTIONS = {"newest", "oldest", "duration_asc", "duration_desc"}
 PODCAST_SUBSCRIPTION_SORT_OPTIONS = {"recent_episode", "unplayed_count", "alpha"}
-PODCAST_SUBSCRIPTION_UNCATEGORIZED_FILTER_TOKEN = "null"
-PODCAST_SUBSCRIPTION_CATEGORY_COLOR_PATTERN = re.compile(r"^#[0-9A-Fa-f]{6}$")
 PODCAST_OPML_MAX_BYTES = 1_000_000
 PODCAST_OPML_MAX_OUTLINES = 200
 PODCAST_OPML_MAX_TITLE_LENGTH = 512
@@ -612,12 +605,8 @@ def get_subscription_status(
                 ps.user_id,
                 ps.podcast_id,
                 ps.status,
-                ps.unsubscribe_mode,
                 ps.default_playback_speed,
                 ps.auto_queue,
-                c.id AS category_id,
-                c.name AS category_name,
-                c.color AS category_color,
                 ps.sync_status,
                 ps.sync_error_code,
                 ps.sync_error_message,
@@ -627,9 +616,6 @@ def get_subscription_status(
                 ps.last_synced_at,
                 ps.updated_at
             FROM podcast_subscriptions ps
-            LEFT JOIN podcast_subscription_categories c
-              ON c.id = ps.category_id
-             AND c.user_id = ps.user_id
             WHERE ps.user_id = :user_id AND ps.podcast_id = :podcast_id
             """
         ),
@@ -642,18 +628,16 @@ def get_subscription_status(
         user_id=row[0],
         podcast_id=row[1],
         status=row[2],
-        unsubscribe_mode=row[3],
-        default_playback_speed=float(row[4]) if row[4] is not None else None,
-        auto_queue=bool(row[5]),
-        category=_category_ref_from_values(row[6], row[7], row[8]),
-        sync_status=row[9],
-        sync_error_code=row[10],
-        sync_error_message=row[11],
-        sync_attempts=row[12],
-        sync_started_at=row[13],
-        sync_completed_at=row[14],
-        last_synced_at=row[15],
-        updated_at=row[16],
+        default_playback_speed=float(row[3]) if row[3] is not None else None,
+        auto_queue=bool(row[4]),
+        sync_status=row[5],
+        sync_error_code=row[6],
+        sync_error_message=row[7],
+        sync_attempts=row[8],
+        sync_started_at=row[9],
+        sync_completed_at=row[10],
+        last_synced_at=row[11],
+        updated_at=row[12],
     )
 
 
@@ -675,25 +659,6 @@ def update_subscription_settings_for_viewer(
     if "auto_queue" in body.model_fields_set:
         assignments.append("auto_queue = :auto_queue")
         params["auto_queue"] = bool(body.auto_queue)
-    if "category_id" in body.model_fields_set:
-        if body.category_id is None:
-            assignments.append("category_id = NULL")
-        else:
-            category_exists = db.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM podcast_subscription_categories
-                    WHERE id = :category_id
-                      AND user_id = :user_id
-                    """
-                ),
-                {"category_id": body.category_id, "user_id": viewer_id},
-            ).fetchone()
-            if category_exists is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast category not found")
-            assignments.append("category_id = :category_id")
-            params["category_id"] = body.category_id
     if not assignments:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -721,466 +686,6 @@ def update_subscription_settings_for_viewer(
     return get_subscription_status(db, viewer_id, podcast_id)
 
 
-def _category_ref_from_values(
-    category_id: Any, category_name: Any, category_color: Any
-) -> PodcastSubscriptionCategoryRefOut | None:
-    if category_id is None or category_name is None:
-        return None
-    return PodcastSubscriptionCategoryRefOut(
-        id=UUID(str(category_id)),
-        name=str(category_name),
-        color=str(category_color) if category_color is not None else None,
-    )
-
-
-def _normalize_subscription_category_name(name: str) -> str:
-    normalized = str(name or "").strip()
-    if not normalized:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Podcast category name is required",
-        )
-    return normalized
-
-
-def _normalize_subscription_category_color(color: str | None) -> str | None:
-    if color is None:
-        return None
-    normalized = str(color).strip()
-    if not normalized:
-        return None
-    if not PODCAST_SUBSCRIPTION_CATEGORY_COLOR_PATTERN.fullmatch(normalized):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Podcast category color must be a 6-digit hex value like #3366FF",
-        )
-    return normalized.upper()
-
-
-def _is_subscription_category_name_conflict(exc: IntegrityError) -> bool:
-    return "uq_podcast_subscription_categories_user_name" in str(exc)
-
-
-def _category_name_exists_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    name: str,
-    *,
-    exclude_category_id: UUID | None = None,
-) -> bool:
-    query = """
-        SELECT 1
-        FROM podcast_subscription_categories
-        WHERE user_id = :user_id
-          AND LOWER(name) = LOWER(:name)
-    """
-    params: dict[str, object] = {"user_id": viewer_id, "name": name}
-    if exclude_category_id is not None:
-        query += " AND id <> :exclude_category_id"
-        params["exclude_category_id"] = exclude_category_id
-    row = db.execute(text(query), params).fetchone()
-    return row is not None
-
-
-def _normalize_subscription_category_positions_for_viewer(db: Session, viewer_id: UUID) -> None:
-    db.execute(
-        text(
-            """
-            WITH ordered AS (
-                SELECT
-                    id,
-                    ROW_NUMBER() OVER (ORDER BY position ASC, created_at ASC, id ASC) - 1 AS next_position
-                FROM podcast_subscription_categories
-                WHERE user_id = :user_id
-            )
-            UPDATE podcast_subscription_categories c
-            SET position = ordered.next_position
-            FROM ordered
-            WHERE c.id = ordered.id
-              AND c.position IS DISTINCT FROM ordered.next_position
-            """
-        ),
-        {"user_id": viewer_id},
-    )
-
-
-def _reposition_subscription_category_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    category_id: UUID,
-    target_position: int,
-) -> None:
-    ordered_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text(
-                """
-                SELECT id
-                FROM podcast_subscription_categories
-                WHERE user_id = :user_id
-                ORDER BY position ASC, created_at ASC, id ASC
-                """
-            ),
-            {"user_id": viewer_id},
-        ).fetchall()
-    ]
-    if category_id not in ordered_ids:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast category not found")
-    bounded_position = max(0, min(target_position, len(ordered_ids) - 1))
-    ordered_ids.remove(category_id)
-    ordered_ids.insert(bounded_position, category_id)
-    for idx, ordered_category_id in enumerate(ordered_ids):
-        db.execute(
-            text(
-                """
-                UPDATE podcast_subscription_categories
-                SET position = :position
-                WHERE id = :category_id
-                  AND user_id = :user_id
-                """
-            ),
-            {
-                "position": idx,
-                "category_id": ordered_category_id,
-                "user_id": viewer_id,
-            },
-        )
-
-
-def _list_subscription_categories_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-) -> list[PodcastSubscriptionCategoryOut]:
-    rows = db.execute(
-        text(
-            f"""
-            WITH visible_media AS (
-                {visible_media_ids_cte_sql()}
-            ),
-            episode_states AS (
-                SELECT
-                    pe.podcast_id,
-                    CASE
-                        WHEN pls.is_completed IS TRUE THEN 'played'
-                        WHEN COALESCE(pls.position_ms, 0) > 0 THEN 'in_progress'
-                        ELSE 'unplayed'
-                    END AS episode_state
-                FROM podcast_episodes pe
-                JOIN visible_media vm
-                  ON vm.media_id = pe.media_id
-                LEFT JOIN podcast_listening_states pls
-                  ON pls.user_id = :user_id
-                 AND pls.media_id = pe.media_id
-            ),
-            subscription_counts AS (
-                SELECT
-                    ps.category_id,
-                    COUNT(*) AS subscription_count
-                FROM podcast_subscriptions ps
-                WHERE ps.user_id = :user_id
-                  AND ps.status = 'active'
-                  AND ps.category_id IS NOT NULL
-                GROUP BY ps.category_id
-            ),
-            unplayed_counts AS (
-                SELECT
-                    ps.category_id,
-                    COUNT(*) FILTER (WHERE es.episode_state = 'unplayed') AS unplayed_count
-                FROM podcast_subscriptions ps
-                LEFT JOIN episode_states es
-                  ON es.podcast_id = ps.podcast_id
-                WHERE ps.user_id = :user_id
-                  AND ps.status = 'active'
-                  AND ps.category_id IS NOT NULL
-                GROUP BY ps.category_id
-            )
-            SELECT
-                c.id,
-                c.name,
-                c.position,
-                c.color,
-                c.created_at,
-                COALESCE(sc.subscription_count, 0) AS subscription_count,
-                COALESCE(uc.unplayed_count, 0) AS unplayed_count
-            FROM podcast_subscription_categories c
-            LEFT JOIN subscription_counts sc
-              ON sc.category_id = c.id
-            LEFT JOIN unplayed_counts uc
-              ON uc.category_id = c.id
-            WHERE c.user_id = :user_id
-            ORDER BY c.position ASC, c.created_at ASC, c.id ASC
-            """
-        ),
-        {"user_id": viewer_id, "viewer_id": viewer_id},
-    ).fetchall()
-
-    return [
-        PodcastSubscriptionCategoryOut(
-            id=row[0],
-            name=row[1],
-            position=int(row[2]),
-            color=row[3],
-            created_at=row[4],
-            subscription_count=int(row[5] or 0),
-            unplayed_count=int(row[6] or 0),
-        )
-        for row in rows
-    ]
-
-
-def list_subscription_categories(
-    db: Session, viewer_id: UUID
-) -> list[PodcastSubscriptionCategoryOut]:
-    return _list_subscription_categories_for_viewer(db, viewer_id)
-
-
-def create_subscription_category(
-    db: Session,
-    viewer_id: UUID,
-    body: PodcastSubscriptionCategoryCreateRequest,
-) -> PodcastSubscriptionCategoryOut:
-    normalized_name = _normalize_subscription_category_name(body.name)
-    normalized_color = _normalize_subscription_category_color(body.color)
-
-    if _category_name_exists_for_viewer(db, viewer_id, normalized_name):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Podcast category name already exists",
-        )
-
-    with transaction(db):
-        next_position = int(
-            db.execute(
-                text(
-                    """
-                    SELECT COALESCE(MAX(position), -1) + 1
-                    FROM podcast_subscription_categories
-                    WHERE user_id = :user_id
-                    """
-                ),
-                {"user_id": viewer_id},
-            ).scalar()
-            or 0
-        )
-        now = datetime.now(UTC)
-        try:
-            row = db.execute(
-                text(
-                    """
-                    INSERT INTO podcast_subscription_categories (
-                        user_id,
-                        name,
-                        position,
-                        color,
-                        created_at
-                    )
-                    VALUES (
-                        :user_id,
-                        :name,
-                        :position,
-                        :color,
-                        :created_at
-                    )
-                    RETURNING id, name, position, color, created_at
-                    """
-                ),
-                {
-                    "user_id": viewer_id,
-                    "name": normalized_name,
-                    "position": next_position,
-                    "color": normalized_color,
-                    "created_at": now,
-                },
-            ).fetchone()
-        except IntegrityError as exc:
-            if _is_subscription_category_name_conflict(exc):
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "Podcast category name already exists",
-                ) from exc
-            raise
-
-    return PodcastSubscriptionCategoryOut(
-        id=row[0],
-        name=row[1],
-        position=int(row[2]),
-        color=row[3],
-        created_at=row[4],
-        subscription_count=0,
-        unplayed_count=0,
-    )
-
-
-def update_subscription_category(
-    db: Session,
-    viewer_id: UUID,
-    category_id: UUID,
-    body: PodcastSubscriptionCategoryPatchRequest,
-) -> PodcastSubscriptionCategoryOut:
-    with transaction(db):
-        exists = db.execute(
-            text(
-                """
-                SELECT 1
-                FROM podcast_subscription_categories
-                WHERE id = :category_id
-                  AND user_id = :user_id
-                """
-            ),
-            {"category_id": category_id, "user_id": viewer_id},
-        ).fetchone()
-        if exists is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast category not found")
-
-        assignments: list[str] = []
-        params: dict[str, object] = {
-            "category_id": category_id,
-            "user_id": viewer_id,
-        }
-        if "name" in body.model_fields_set:
-            normalized_name = _normalize_subscription_category_name(body.name or "")
-            if _category_name_exists_for_viewer(
-                db,
-                viewer_id,
-                normalized_name,
-                exclude_category_id=category_id,
-            ):
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "Podcast category name already exists",
-                )
-            assignments.append("name = :name")
-            params["name"] = normalized_name
-        if "color" in body.model_fields_set:
-            assignments.append("color = :color")
-            params["color"] = _normalize_subscription_category_color(body.color)
-        if assignments:
-            assignment_sql = ", ".join(assignments)
-            try:
-                db.execute(
-                    text(
-                        f"""
-                        UPDATE podcast_subscription_categories
-                        SET {assignment_sql}
-                        WHERE id = :category_id
-                          AND user_id = :user_id
-                        """
-                    ),
-                    params,
-                )
-            except IntegrityError as exc:
-                if _is_subscription_category_name_conflict(exc):
-                    raise InvalidRequestError(
-                        ApiErrorCode.E_INVALID_REQUEST,
-                        "Podcast category name already exists",
-                    ) from exc
-                raise
-        if "position" in body.model_fields_set and body.position is not None:
-            _reposition_subscription_category_for_viewer(
-                db,
-                viewer_id,
-                category_id,
-                body.position,
-            )
-        _normalize_subscription_category_positions_for_viewer(db, viewer_id)
-
-    categories = _list_subscription_categories_for_viewer(db, viewer_id)
-    for category in categories:
-        if category.id == category_id:
-            return category
-    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast category not found")
-
-
-def delete_subscription_category(
-    db: Session,
-    viewer_id: UUID,
-    category_id: UUID,
-) -> None:
-    with transaction(db):
-        exists = db.execute(
-            text(
-                """
-                SELECT 1
-                FROM podcast_subscription_categories
-                WHERE id = :category_id
-                  AND user_id = :user_id
-                """
-            ),
-            {"category_id": category_id, "user_id": viewer_id},
-        ).fetchone()
-        if exists is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast category not found")
-        db.execute(
-            text(
-                """
-                UPDATE podcast_subscriptions
-                SET category_id = NULL
-                WHERE user_id = :user_id
-                  AND category_id = :category_id
-                """
-            ),
-            {"user_id": viewer_id, "category_id": category_id},
-        )
-        db.execute(
-            text(
-                """
-                DELETE FROM podcast_subscription_categories
-                WHERE id = :category_id
-                  AND user_id = :user_id
-                """
-            ),
-            {"category_id": category_id, "user_id": viewer_id},
-        )
-        _normalize_subscription_category_positions_for_viewer(db, viewer_id)
-
-
-def reorder_subscription_categories(
-    db: Session,
-    viewer_id: UUID,
-    body: PodcastSubscriptionCategoryOrderRequest,
-) -> list[PodcastSubscriptionCategoryOut]:
-    requested_ids = [UUID(str(category_id)) for category_id in body.category_ids]
-    current_ids = [
-        UUID(str(row[0]))
-        for row in db.execute(
-            text(
-                """
-                SELECT id
-                FROM podcast_subscription_categories
-                WHERE user_id = :user_id
-                ORDER BY position ASC, created_at ASC, id ASC
-                """
-            ),
-            {"user_id": viewer_id},
-        ).fetchall()
-    ]
-    if len(requested_ids) != len(current_ids) or set(requested_ids) != set(current_ids):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "category_ids must include every category exactly once",
-        )
-
-    with transaction(db):
-        for idx, category_id in enumerate(requested_ids):
-            db.execute(
-                text(
-                    """
-                    UPDATE podcast_subscription_categories
-                    SET position = :position
-                    WHERE id = :category_id
-                      AND user_id = :user_id
-                    """
-                ),
-                {
-                    "position": idx,
-                    "category_id": category_id,
-                    "user_id": viewer_id,
-                },
-            )
-        _normalize_subscription_category_positions_for_viewer(db, viewer_id)
-    return _list_subscription_categories_for_viewer(db, viewer_id)
-
-
 def _podcast_list_item_from_row(row: Any) -> PodcastListItemOut:
     return PodcastListItemOut(
         id=row[0],
@@ -1204,8 +709,6 @@ def list_subscriptions(
     limit: int = 100,
     offset: int = 0,
     sort: str = "recent_episode",
-    category_id: UUID | None = None,
-    uncategorized_only: bool = False,
 ) -> list[PodcastSubscriptionListItemOut]:
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
@@ -1216,12 +719,6 @@ def list_subscriptions(
             ApiErrorCode.E_INVALID_REQUEST,
             "Invalid podcast subscriptions sort option",
         )
-    if category_id is not None and uncategorized_only:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "category_id and uncategorized filter cannot be used together",
-        )
-
     limit = min(limit, 200)
 
     if sort == "alpha":
@@ -1238,22 +735,12 @@ def list_subscriptions(
             "sa.latest_published_at DESC NULLS LAST, ps.updated_at DESC, ps.podcast_id DESC"
         )
 
-    subscription_where_clauses = [
-        "ps.user_id = :user_id",
-        "ps.status = 'active'",
-    ]
     query_params: dict[str, object] = {
         "user_id": viewer_id,
         "viewer_id": viewer_id,
         "limit": limit,
         "offset": offset,
     }
-    if uncategorized_only:
-        subscription_where_clauses.append("ps.category_id IS NULL")
-    elif category_id is not None:
-        subscription_where_clauses.append("ps.category_id = :category_id")
-        query_params["category_id"] = category_id
-    subscription_where_sql = " AND ".join(subscription_where_clauses)
 
     rows = db.execute(
         text(
@@ -1293,12 +780,8 @@ def list_subscriptions(
             SELECT
                 ps.podcast_id,
                 ps.status,
-                ps.unsubscribe_mode,
                 ps.default_playback_speed,
                 ps.auto_queue,
-                c.id AS category_id,
-                c.name AS category_name,
-                c.color AS category_color,
                 ps.sync_status,
                 ps.sync_error_code,
                 ps.sync_error_message,
@@ -1322,11 +805,9 @@ def list_subscriptions(
                 sa.latest_published_at
             FROM podcast_subscriptions ps
             JOIN podcasts p ON p.id = ps.podcast_id
-            LEFT JOIN podcast_subscription_categories c
-              ON c.id = ps.category_id
-             AND c.user_id = ps.user_id
             LEFT JOIN subscription_aggregates sa ON sa.podcast_id = ps.podcast_id
-            WHERE {subscription_where_sql}
+            WHERE ps.user_id = :user_id
+              AND ps.status = 'active'
             ORDER BY {order_by_sql}
             LIMIT :limit
             OFFSET :offset
@@ -1336,24 +817,22 @@ def list_subscriptions(
     ).fetchall()
     out: list[PodcastSubscriptionListItemOut] = []
     for row in rows:
-        podcast = _podcast_list_item_from_row(row[16:27])
+        podcast = _podcast_list_item_from_row(row[12:23])
         out.append(
             PodcastSubscriptionListItemOut(
                 podcast_id=row[0],
                 status=row[1],
-                unsubscribe_mode=row[2],
-                default_playback_speed=float(row[3]) if row[3] is not None else None,
-                auto_queue=bool(row[4]),
-                category=_category_ref_from_values(row[5], row[6], row[7]),
-                sync_status=row[8],
-                sync_error_code=row[9],
-                sync_error_message=row[10],
-                sync_attempts=row[11],
-                sync_started_at=row[12],
-                sync_completed_at=row[13],
-                last_synced_at=row[14],
-                updated_at=row[15],
-                unplayed_count=int(row[27] or 0),
+                default_playback_speed=float(row[2]) if row[2] is not None else None,
+                auto_queue=bool(row[3]),
+                sync_status=row[4],
+                sync_error_code=row[5],
+                sync_error_message=row[6],
+                sync_attempts=row[7],
+                sync_started_at=row[8],
+                sync_completed_at=row[9],
+                last_synced_at=row[10],
+                updated_at=row[11],
+                unplayed_count=int(row[23] or 0),
                 podcast=podcast,
             )
         )
@@ -1369,23 +848,6 @@ def get_podcast_detail_for_viewer(
         text(
             """
             SELECT
-                ps.user_id,
-                ps.podcast_id,
-                ps.status,
-                ps.unsubscribe_mode,
-                ps.default_playback_speed,
-                ps.auto_queue,
-                c.id AS category_id,
-                c.name AS category_name,
-                c.color AS category_color,
-                ps.sync_status,
-                ps.sync_error_code,
-                ps.sync_error_message,
-                ps.sync_attempts,
-                ps.sync_started_at,
-                ps.sync_completed_at,
-                ps.last_synced_at,
-                ps.updated_at,
                 p.id,
                 p.provider,
                 p.provider_podcast_id,
@@ -1396,40 +858,50 @@ def get_podcast_detail_for_viewer(
                 p.image_url,
                 p.description,
                 p.created_at,
-                p.updated_at
-            FROM podcast_subscriptions ps
-            JOIN podcasts p ON p.id = ps.podcast_id
-            LEFT JOIN podcast_subscription_categories c
-              ON c.id = ps.category_id
-             AND c.user_id = ps.user_id
-            WHERE ps.user_id = :user_id
-              AND ps.podcast_id = :podcast_id
-              AND ps.status = 'active'
+                p.updated_at,
+                ps.user_id,
+                ps.podcast_id,
+                ps.status,
+                ps.default_playback_speed,
+                ps.auto_queue,
+                ps.sync_status,
+                ps.sync_error_code,
+                ps.sync_error_message,
+                ps.sync_attempts,
+                ps.sync_started_at,
+                ps.sync_completed_at,
+                ps.last_synced_at,
+                ps.updated_at
+            FROM podcasts p
+            LEFT JOIN podcast_subscriptions ps
+              ON ps.podcast_id = p.id
+             AND ps.user_id = :user_id
+            WHERE p.id = :podcast_id
             """
         ),
         {"user_id": viewer_id, "podcast_id": podcast_id},
     ).fetchone()
     if row is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
 
-    subscription = PodcastSubscriptionStatusOut(
-        user_id=row[0],
-        podcast_id=row[1],
-        status=row[2],
-        unsubscribe_mode=row[3],
-        default_playback_speed=float(row[4]) if row[4] is not None else None,
-        auto_queue=bool(row[5]),
-        category=_category_ref_from_values(row[6], row[7], row[8]),
-        sync_status=row[9],
-        sync_error_code=row[10],
-        sync_error_message=row[11],
-        sync_attempts=row[12],
-        sync_started_at=row[13],
-        sync_completed_at=row[14],
-        last_synced_at=row[15],
-        updated_at=row[16],
-    )
-    podcast = _podcast_list_item_from_row(row[17:])
+    podcast = _podcast_list_item_from_row(row[0:11])
+    subscription: PodcastSubscriptionStatusOut | None = None
+    if row[11] is not None:
+        subscription = PodcastSubscriptionStatusOut(
+            user_id=row[11],
+            podcast_id=row[12],
+            status=row[13],
+            default_playback_speed=float(row[14]) if row[14] is not None else None,
+            auto_queue=bool(row[15]),
+            sync_status=row[16],
+            sync_error_code=row[17],
+            sync_error_message=row[18],
+            sync_attempts=row[19],
+            sync_started_at=row[20],
+            sync_completed_at=row[21],
+            last_synced_at=row[22],
+            updated_at=row[23],
+        )
     return PodcastDetailOut(podcast=podcast, subscription=subscription)
 
 
@@ -1460,9 +932,18 @@ def list_podcast_episodes_for_viewer(
         )
 
     limit = min(limit, 200)
-    detail = get_podcast_detail_for_viewer(db, viewer_id, podcast_id)
-    if detail.subscription.status != "active":
-        return []
+    podcast_exists = db.execute(
+        text(
+            """
+            SELECT 1
+            FROM podcasts
+            WHERE id = :podcast_id
+            """
+        ),
+        {"podcast_id": podcast_id},
+    ).fetchone()
+    if podcast_exists is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
 
     normalized_query = q.strip() if q else None
     if normalized_query == "":
@@ -2342,16 +1823,11 @@ def unsubscribe_from_podcast(
     db: Session,
     viewer_id: UUID,
     podcast_id: UUID,
-    *,
-    mode: int = 1,
-) -> PodcastSubscriptionStatusOut:
-    if mode not in PODCAST_UNSUBSCRIBE_MODES:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Unsubscribe mode must be one of: 1, 2, 3",
-        )
-
+) -> PodcastUnsubscribeOut:
     now = datetime.now(UTC)
+    removed_from_library_count = 0
+    retained_shared_library_count = 0
+
     with transaction(db):
         subscription_exists = db.execute(
             text(
@@ -2367,13 +1843,86 @@ def unsubscribe_from_podcast(
         if subscription_exists is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
 
+        library_rows = db.execute(
+            text(
+                """
+                SELECT
+                    le.id,
+                    le.library_id,
+                    l.owner_user_id,
+                    l.is_default,
+                    m.role
+                FROM library_entries le
+                JOIN libraries l
+                  ON l.id = le.library_id
+                JOIN memberships m
+                  ON m.library_id = le.library_id
+                 AND m.user_id = :user_id
+                WHERE le.podcast_id = :podcast_id
+                FOR UPDATE OF le
+                """
+            ),
+            {"user_id": viewer_id, "podcast_id": podcast_id},
+        ).fetchall()
+
+        removable_entry_ids: list[UUID] = []
+        removable_library_ids: list[UUID] = []
+        for row in library_rows:
+            entry_id = UUID(str(row[0]))
+            library_id = UUID(str(row[1]))
+            owner_user_id = row[2]
+            is_default = bool(row[3])
+            role = str(row[4])
+
+            if is_default:
+                continue
+            if role == "admin":
+                removable_entry_ids.append(entry_id)
+                removable_library_ids.append(library_id)
+                continue
+            if owner_user_id != viewer_id:
+                retained_shared_library_count += 1
+
+        for entry_id in removable_entry_ids:
+            db.execute(
+                text(
+                    """
+                    DELETE FROM library_entries
+                    WHERE id = :entry_id
+                    """
+                ),
+                {"entry_id": entry_id},
+            )
+        removed_from_library_count = len(removable_entry_ids)
+        for library_id in sorted(set(removable_library_ids)):
+            db.execute(
+                text(
+                    """
+                    WITH ordered AS (
+                        SELECT
+                            id,
+                            ROW_NUMBER() OVER (
+                                ORDER BY position ASC, created_at ASC, id ASC
+                            ) - 1 AS next_position
+                        FROM library_entries
+                        WHERE library_id = :library_id
+                    )
+                    UPDATE library_entries le
+                    SET position = ordered.next_position
+                    FROM ordered
+                    WHERE le.id = ordered.id
+                      AND le.position IS DISTINCT FROM ordered.next_position
+                    """
+                ),
+                {"library_id": library_id},
+            )
+
         db.execute(
             text(
                 """
                 UPDATE podcast_subscriptions
                 SET
                     status = 'unsubscribed',
-                    unsubscribe_mode = :mode,
                     updated_at = :updated_at
                 WHERE user_id = :user_id AND podcast_id = :podcast_id
                 """
@@ -2381,120 +1930,16 @@ def unsubscribe_from_podcast(
             {
                 "user_id": viewer_id,
                 "podcast_id": podcast_id,
-                "mode": mode,
                 "updated_at": now,
             },
         )
 
-        media_ids = [
-            row[0]
-            for row in db.execute(
-                text(
-                    """
-                    SELECT media_id
-                    FROM podcast_episodes
-                    WHERE podcast_id = :podcast_id
-                    """
-                ),
-                {"podcast_id": podcast_id},
-            ).fetchall()
-        ]
-
-        if media_ids and mode >= 2:
-            _remove_subscription_episodes_from_default_library(
-                db=db,
-                user_id=viewer_id,
-                media_ids=media_ids,
-            )
-        if media_ids and mode == 3:
-            _remove_subscription_episodes_from_single_member_libraries(
-                db=db,
-                user_id=viewer_id,
-                media_ids=media_ids,
-            )
-
-    return get_subscription_status(db, viewer_id, podcast_id)
-
-
-def _remove_subscription_episodes_from_default_library(
-    *,
-    db: Session,
-    user_id: UUID,
-    media_ids: list[UUID],
-) -> None:
-    from nexus.services.default_library_closure import remove_default_intrinsic_and_gc
-
-    default_library_id = db.execute(
-        text(
-            """
-            SELECT id
-            FROM libraries
-            WHERE owner_user_id = :user_id AND is_default = true
-            """
-        ),
-        {"user_id": user_id},
-    ).scalar()
-    if default_library_id is None:
-        return
-
-    for media_id in media_ids:
-        remove_default_intrinsic_and_gc(db, default_library_id, media_id)
-
-
-def _remove_subscription_episodes_from_single_member_libraries(
-    *,
-    db: Session,
-    user_id: UUID,
-    media_ids: list[UUID],
-) -> None:
-    from nexus.services.default_library_closure import remove_media_from_non_default_closure
-
-    library_rows = db.execute(
-        text(
-            """
-            SELECT l.id
-            FROM libraries l
-            WHERE l.owner_user_id = :user_id
-              AND l.is_default = false
-              AND (
-                  SELECT COUNT(*)
-                  FROM memberships m
-                  WHERE m.library_id = l.id
-              ) = 1
-            """
-        ),
-        {"user_id": user_id},
-    ).fetchall()
-
-    single_member_library_ids = [row[0] for row in library_rows]
-    if not single_member_library_ids:
-        return
-
-    for library_id in single_member_library_ids:
-        for media_id in media_ids:
-            membership_row = db.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM library_media
-                    WHERE library_id = :library_id AND media_id = :media_id
-                    """
-                ),
-                {"library_id": library_id, "media_id": media_id},
-            ).fetchone()
-            if membership_row is None:
-                continue
-
-            db.execute(
-                text(
-                    """
-                    DELETE FROM library_media
-                    WHERE library_id = :library_id AND media_id = :media_id
-                    """
-                ),
-                {"library_id": library_id, "media_id": media_id},
-            )
-            remove_media_from_non_default_closure(db, library_id, media_id)
+    return PodcastUnsubscribeOut(
+        podcast_id=podcast_id,
+        status="unsubscribed",
+        removed_from_library_count=removed_from_library_count,
+        retained_shared_library_count=retained_shared_library_count,
+    )
 
 
 def run_scheduled_active_subscription_poll(
@@ -4706,7 +4151,6 @@ def _upsert_subscription(
                 user_id,
                 podcast_id,
                 status,
-                unsubscribe_mode,
                 auto_queue,
                 sync_status,
                 created_at,
@@ -4716,7 +4160,6 @@ def _upsert_subscription(
                 :user_id,
                 :podcast_id,
                 'active',
-                1,
                 :auto_queue,
                 'pending',
                 :created_at,
@@ -4725,7 +4168,6 @@ def _upsert_subscription(
             ON CONFLICT (user_id, podcast_id)
             DO UPDATE SET
                 status = 'active',
-                unsubscribe_mode = 1,
                 auto_queue = EXCLUDED.auto_queue,
                 sync_status = 'pending',
                 sync_error_code = NULL,

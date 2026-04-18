@@ -72,7 +72,6 @@ import {
   type TranscriptFragment,
   type TranscriptRequestForecast,
   type MeResponse,
-  type LibraryMediaSummary,
   type SelectionState,
   type ActiveContent,
   type PdfDocumentHighlight,
@@ -80,7 +79,7 @@ import {
   type NavigationTocNodeLike,
   TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
   DOCUMENT_PROCESSING_POLL_INTERVAL_MS,
-  LIBRARY_MEDIA_PAGE_SIZE,
+  LIBRARY_ENTRY_PAGE_SIZE,
   escapeAttrValue,
   getPaneScrollContainer,
   findFirstVisibleCanonicalOffset,
@@ -563,22 +562,27 @@ export default function useMediaViewState(id: string) {
         let offset = 0;
         let found = false;
         while (true) {
-          const page = await apiFetch<{ data: LibraryMediaSummary[] }>(
-            `/api/libraries/${libraryId}/media?limit=${LIBRARY_MEDIA_PAGE_SIZE}&offset=${offset}`
+          const page = await apiFetch<{
+            data: Array<{
+              kind: "media" | "podcast";
+              media?: { id: string } | null;
+            }>;
+          }>(
+            `/api/libraries/${libraryId}/entries?limit=${LIBRARY_ENTRY_PAGE_SIZE}&offset=${offset}`
           );
           if (cancelled) {
             return;
           }
           for (const item of page.data) {
-            if (item.id === media.id) {
+            if (item.kind === "media" && item.media?.id === media.id) {
               found = true;
               break;
             }
           }
-          if (found || page.data.length < LIBRARY_MEDIA_PAGE_SIZE) {
+          if (found || page.data.length < LIBRARY_ENTRY_PAGE_SIZE) {
             break;
           }
-          offset += LIBRARY_MEDIA_PAGE_SIZE;
+          offset += LIBRARY_ENTRY_PAGE_SIZE;
         }
         if (!cancelled) {
           setMediaInDefaultLibrary(found);

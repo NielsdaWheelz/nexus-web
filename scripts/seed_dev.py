@@ -39,7 +39,7 @@ from nexus.db.models import (
     Highlight,
     HighlightFragmentAnchor,
     Library,
-    LibraryMedia,
+    LibraryEntry,
     Media,
     MediaKind,
     Membership,
@@ -48,7 +48,6 @@ from nexus.db.models import (
     Podcast,
     PodcastEpisode,
     PodcastSubscription,
-    PodcastSubscriptionCategory,
     ProcessingStatus,
 )
 from nexus.db.session import create_session_factory
@@ -165,6 +164,30 @@ def main() -> None:
             track("library: Research", True)
         else:
             track("library: Research", False)
+
+        history_lib_id = _sid("library:history")
+        if not _exists(db, Library, history_lib_id):
+            db.add(
+                Library(
+                    id=history_lib_id,
+                    owner_user_id=user_id,
+                    name="History",
+                    color="#8B4513",
+                    is_default=False,
+                )
+            )
+            db.flush()
+            db.add(
+                Membership(
+                    library_id=history_lib_id,
+                    user_id=user_id,
+                    role="admin",
+                )
+            )
+            db.flush()
+            track("library: History", True)
+        else:
+            track("library: History", False)
 
         # ── Web articles ──────────────────────────────────────────────
         # Article 1: Paul Graham — Beating the Averages
@@ -708,23 +731,7 @@ def main() -> None:
             else:
                 track(f"media: {ep_title} (episode)", False)
 
-        # ── Podcast subscription + category ───────────────────────────
-        category_id = _sid("podcast-cat:history")
-        if not db.get(PodcastSubscriptionCategory, category_id):
-            db.add(
-                PodcastSubscriptionCategory(
-                    id=category_id,
-                    user_id=user_id,
-                    name="History",
-                    position=0,
-                    color="#8B4513",
-                )
-            )
-            db.flush()
-            track("podcast category: History", True)
-        else:
-            track("podcast category: History", False)
-
+        # ── Podcast subscription + library membership ─────────────────
         existing_sub = db.execute(
             select(PodcastSubscription).where(
                 PodcastSubscription.user_id == user_id,
@@ -738,7 +745,6 @@ def main() -> None:
                     podcast_id=podcast_id,
                     status="active",
                     auto_queue=True,
-                    category_id=category_id,
                     sync_status="complete",
                 )
             )
@@ -746,6 +752,25 @@ def main() -> None:
             track("subscription: Hardcore History", True)
         else:
             track("subscription: Hardcore History", False)
+
+        existing_podcast_entry = db.execute(
+            select(LibraryEntry).where(
+                LibraryEntry.library_id == history_lib_id,
+                LibraryEntry.podcast_id == podcast_id,
+            )
+        ).scalar_one_or_none()
+        if not existing_podcast_entry:
+            db.add(
+                LibraryEntry(
+                    library_id=history_lib_id,
+                    podcast_id=podcast_id,
+                    position=0,
+                )
+            )
+            db.flush()
+            track("library entry: History -> Hardcore History", True)
+        else:
+            track("library entry: History -> Hardcore History", False)
 
         # ── Assign media to libraries ─────────────────────────────────
         default_lib_media = [
@@ -756,14 +781,14 @@ def main() -> None:
         ] + episode_media_ids
         for pos, media_id in enumerate(default_lib_media):
             existing_lm = db.execute(
-                select(LibraryMedia).where(
-                    LibraryMedia.library_id == default_library_id,
-                    LibraryMedia.media_id == media_id,
+                select(LibraryEntry).where(
+                    LibraryEntry.library_id == default_library_id,
+                    LibraryEntry.media_id == media_id,
                 )
             ).scalar_one_or_none()
             if not existing_lm:
                 db.add(
-                    LibraryMedia(
+                    LibraryEntry(
                         library_id=default_library_id,
                         media_id=media_id,
                         position=pos,
@@ -780,14 +805,14 @@ def main() -> None:
         research_lib_media = [epub_media_id, karpathy_media_id, gomez_media_id]
         for pos, media_id in enumerate(research_lib_media):
             existing_lm = db.execute(
-                select(LibraryMedia).where(
-                    LibraryMedia.library_id == research_lib_id,
-                    LibraryMedia.media_id == media_id,
+                select(LibraryEntry).where(
+                    LibraryEntry.library_id == research_lib_id,
+                    LibraryEntry.media_id == media_id,
                 )
             ).scalar_one_or_none()
             if not existing_lm:
                 db.add(
-                    LibraryMedia(
+                    LibraryEntry(
                         library_id=research_lib_id,
                         media_id=media_id,
                         position=pos,

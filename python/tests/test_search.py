@@ -90,7 +90,7 @@ class TestBasicSearch:
             media_id = create_searchable_media(session, user_id, title="Python Programming Guide")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get("/search?q=python+programming", headers=auth_headers(user_id))
@@ -118,9 +118,9 @@ class TestBasicSearch:
         direct_db.register_cleanup("default_library_intrinsics", "media_id", unavailable_video_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", unavailable_podcast_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", ready_video_id)
-        direct_db.register_cleanup("library_media", "media_id", unavailable_video_id)
-        direct_db.register_cleanup("library_media", "media_id", unavailable_podcast_id)
-        direct_db.register_cleanup("library_media", "media_id", ready_video_id)
+        direct_db.register_cleanup("library_entries", "media_id", unavailable_video_id)
+        direct_db.register_cleanup("library_entries", "media_id", unavailable_podcast_id)
+        direct_db.register_cleanup("library_entries", "media_id", ready_video_id)
         direct_db.register_cleanup("media", "id", unavailable_video_id)
         direct_db.register_cleanup("media", "id", unavailable_podcast_id)
         direct_db.register_cleanup("media", "id", ready_video_id)
@@ -193,7 +193,7 @@ class TestBasicSearch:
             for media_id in (unavailable_video_id, unavailable_podcast_id, ready_video_id):
                 session.execute(
                     text("""
-                        INSERT INTO library_media (library_id, media_id)
+                        INSERT INTO library_entries (library_id, media_id)
                         VALUES (:library_id, :media_id)
                     """),
                     {"library_id": default_library_id, "media_id": media_id},
@@ -229,7 +229,7 @@ class TestBasicSearch:
             media_id = create_searchable_media(session, user_id, title="Test Article")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Search for content in fragment's canonical_text
@@ -254,7 +254,7 @@ class TestBasicSearch:
         direct_db.register_cleanup("annotations", "id", annotation_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get("/search?q=annotation+databases", headers=auth_headers(user_id))
@@ -308,7 +308,7 @@ class TestSearchVisibility:
             media_id = create_searchable_media(session, user_b, title="Secret Private Document")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A searches for it
@@ -342,7 +342,7 @@ class TestSearchVisibility:
         direct_db.register_cleanup("annotations", "id", annotation_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A searches for it
@@ -431,8 +431,8 @@ class TestSearchScopes:
 
         direct_db.register_cleanup("fragments", "media_id", media1)
         direct_db.register_cleanup("fragments", "media_id", media2)
-        direct_db.register_cleanup("library_media", "media_id", media1)
-        direct_db.register_cleanup("library_media", "media_id", media2)
+        direct_db.register_cleanup("library_entries", "media_id", media1)
+        direct_db.register_cleanup("library_entries", "media_id", media2)
         direct_db.register_cleanup("media", "id", media1)
         direct_db.register_cleanup("media", "id", media2)
 
@@ -477,7 +477,7 @@ class TestSearchScopes:
             # Also add to the non-default library
             session.execute(
                 text("""
-                    INSERT INTO library_media (library_id, media_id)
+                    INSERT INTO library_entries (library_id, media_id)
                     VALUES (:library_id, :media_id)
                     ON CONFLICT DO NOTHING
                 """),
@@ -486,7 +486,7 @@ class TestSearchScopes:
             session.commit()
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)
@@ -586,7 +586,7 @@ class TestSearchTypeFiltering:
             )
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get("/search?q=python&types=media", headers=auth_headers(user_id))
@@ -606,7 +606,7 @@ class TestSearchTypeFiltering:
             media_id = create_searchable_media(session, user_id, title="Test Content Article")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
@@ -628,7 +628,7 @@ class TestSearchTypeFiltering:
             media_id = create_searchable_media(session, user_id, title="Test Article")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Include unknown type - should be ignored
@@ -649,7 +649,7 @@ class TestSearchTypeFiltering:
             media_id = create_searchable_media(session, user_id, title="Unknown Type Control")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
@@ -673,7 +673,7 @@ class TestSearchTypeFiltering:
             )
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
@@ -713,7 +713,7 @@ class TestSearchPagination:
 
         for mid in media_ids:
             direct_db.register_cleanup("fragments", "media_id", mid)
-            direct_db.register_cleanup("library_media", "media_id", mid)
+            direct_db.register_cleanup("library_entries", "media_id", mid)
             direct_db.register_cleanup("media", "id", mid)
 
         response = auth_client.get("/search?q=test+article", headers=auth_headers(user_id))
@@ -739,7 +739,7 @@ class TestSearchPagination:
 
         for mid in media_ids:
             direct_db.register_cleanup("fragments", "media_id", mid)
-            direct_db.register_cleanup("library_media", "media_id", mid)
+            direct_db.register_cleanup("library_entries", "media_id", mid)
             direct_db.register_cleanup("media", "id", mid)
 
         # First page
@@ -805,7 +805,7 @@ class TestSearchResultFormat:
             media_id = create_searchable_media(session, user_id, title="Unique Title For Test")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
@@ -841,7 +841,7 @@ class TestSearchResultFormat:
             media_id = create_searchable_media(session, user_id, title="Test Article")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
@@ -896,7 +896,7 @@ class TestSearchResultFormat:
             media_id = create_searchable_media(session, user_id, title="Test")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get("/search?q=test", headers=auth_headers(user_id))
@@ -957,7 +957,7 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("media_authors", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
@@ -1085,7 +1085,7 @@ class TestSearchS4AnnotationVisibility:
         direct_db.register_cleanup("annotations", "id", annotation_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)
@@ -1126,7 +1126,7 @@ class TestSearchS4AnnotationVisibility:
         direct_db.register_cleanup("annotations", "id", annotation_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)
@@ -1311,7 +1311,7 @@ class TestSearchS4ResponseShape:
             media_id = create_searchable_media(session, user_id, title="Shape Test Article")
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get("/search?q=shape+test", headers=auth_headers(user_id))
@@ -1335,9 +1335,9 @@ class TestSearchS4Provenance:
     def test_search_does_not_return_stale_default_library_rows_without_intrinsic_or_closure(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Stale default library_media without intrinsic or closure is not searchable.
+        """Stale default library_entries without intrinsic or closure is not searchable.
 
-        Create a library_media row for the user's default library without any
+        Create a library_entries row for the user's default library without any
         intrinsic or closure-edge provenance. Search must not return it.
         """
         user_id = create_test_user_id()
@@ -1367,10 +1367,10 @@ class TestSearchS4Provenance:
                     "text": "Stale provenance glockenspiel fragment content",
                 },
             )
-            # Insert library_media WITHOUT intrinsic or closure (stale row)
+            # Insert library_entries WITHOUT intrinsic or closure (stale row)
             session.execute(
                 text("""
-                    INSERT INTO library_media (library_id, media_id)
+                    INSERT INTO library_entries (library_id, media_id)
                     VALUES (:lib_id, :media_id)
                 """),
                 {"lib_id": default_lib_id, "media_id": media_id},
@@ -1378,7 +1378,7 @@ class TestSearchS4Provenance:
             session.commit()
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get("/search?q=glockenspiel", headers=auth_headers(user_id))
@@ -1491,7 +1491,7 @@ class TestSemanticTranscriptChunkSearch:
             session.execute(
                 text(
                     """
-                    INSERT INTO library_media (library_id, media_id)
+                    INSERT INTO library_entries (library_id, media_id)
                     VALUES (:library_id, :media_id)
                     """
                 ),
@@ -1618,7 +1618,7 @@ class TestSemanticTranscriptChunkSearch:
             session.commit()
 
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         return user_id, media_id
 
@@ -1982,7 +1982,7 @@ class TestSearchTranscriptVersionNavigation:
             session.execute(
                 text(
                     """
-                    INSERT INTO library_media (library_id, media_id)
+                    INSERT INTO library_entries (library_id, media_id)
                     VALUES (:library_id, :media_id)
                     """
                 ),
@@ -2217,7 +2217,7 @@ class TestSearchTranscriptVersionNavigation:
         direct_db.register_cleanup("podcast_transcript_versions", "id", version_v1)
         direct_db.register_cleanup("podcast_transcript_versions", "id", version_v2)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(

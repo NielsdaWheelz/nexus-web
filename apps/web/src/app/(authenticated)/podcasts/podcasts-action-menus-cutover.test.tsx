@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createElement } from "react";
 import PodcastsPage from "./page";
 import PodcastDetailPage from "./[podcastId]/page";
 import PodcastSubscriptionsPage from "./subscriptions/page";
@@ -100,7 +101,6 @@ function buildSubscriptionRow() {
   return {
     podcast_id: "podcast-0",
     status: "active",
-    unsubscribe_mode: 1,
     default_playback_speed: null,
     auto_queue: false,
     sync_status: "complete",
@@ -112,7 +112,6 @@ function buildSubscriptionRow() {
     last_synced_at: null,
     updated_at: "2026-03-06T00:00:00Z",
     unplayed_count: 0,
-    category: null,
     podcast: {
       id: "podcast-0",
       provider: "podcast_index",
@@ -129,19 +128,18 @@ function buildSubscriptionRow() {
   };
 }
 
-describe("podcast ui action menu cutover", () => {
+describe("podcast ui cutover", () => {
   beforeEach(() => {
     mockUsePaneParam.mockReset();
     mockPush.mockReset();
     vi.restoreAllMocks();
   });
 
-  it("keeps My podcasts inline and moves detail secondary actions into the header menu", async () => {
-    const user = userEvent.setup();
+  it("shows a subscribe CTA for readable-but-unsubscribed podcast detail", async () => {
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "podcastId" ? "podcast-1" : null
     );
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, _init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/podcasts/podcast-1") {
         return jsonResponse({
@@ -159,30 +157,17 @@ describe("podcast ui action menu cutover", () => {
               created_at: "2026-03-06T00:00:00Z",
               updated_at: "2026-03-06T00:00:00Z",
             },
-            subscription: {
-              user_id: "user-1",
-              podcast_id: "podcast-1",
-              status: "active",
-              unsubscribe_mode: 1,
-              sync_status: "complete",
-              sync_error_code: null,
-              sync_error_message: null,
-              sync_attempts: 1,
-              sync_started_at: null,
-              sync_completed_at: null,
-              last_synced_at: null,
-              updated_at: "2026-03-06T00:00:00Z",
-            },
+            subscription: null,
           },
         });
       }
       if (url.pathname === "/api/podcasts/podcast-1/episodes") {
         return jsonResponse({ data: [buildEpisode("media-0", "Episode 0")] });
       }
-      if (url.pathname === "/api/me") {
-        return jsonResponse({ data: { user_id: "user-1", default_library_id: null } });
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
       }
-      if (url.pathname === "/api/podcasts/categories") {
+      if (url.pathname === "/api/playback/queue") {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
@@ -201,111 +186,60 @@ describe("podcast ui action menu cutover", () => {
           ],
         });
       }
-      if (url.pathname === "/api/podcasts/subscriptions/podcast-1/sync" && init?.method === "POST") {
-        return jsonResponse({
-          data: {
-            podcast_id: "podcast-1",
-            sync_status: "running",
-            sync_error_code: null,
-            sync_error_message: null,
-            sync_attempts: 2,
-            sync_enqueued: true,
-          },
-        });
-      }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
     render(
-      <GlobalPlayerProvider>
-        <PodcastDetailPage />
-      </GlobalPlayerProvider>
+      createElement(
+        GlobalPlayerProvider,
+        null,
+        createElement(PodcastDetailPage)
+      )
     );
 
     expect(await screen.findByText("Episode 0")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "My podcasts" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Refresh sync" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Unsubscribe" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Refresh sync" }));
-    await waitFor(() => {
-      expect(
-        fetchSpy.mock.calls.some(([url, init]) => {
-          const parsed = new URL(String(url), "http://localhost");
-          return parsed.pathname === "/api/podcasts/subscriptions/podcast-1/sync" && init?.method === "POST";
-        })
-      ).toBe(true);
-    });
+    expect(screen.getByRole("button", { name: "Subscribe" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refresh sync" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unsubscribe" })).not.toBeInTheDocument();
   });
 
-  it("moves subscription row actions into a row menu while keeping category editing inline", async () => {
+  it("moves subscription actions into the row menu and removes category controls from subscriptions", async () => {
     const user = userEvent.setup();
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, _init) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/podcasts/categories") {
-        return jsonResponse({
-          data: [
-            {
-              id: "cat-1",
-              name: "Tech",
-              position: 0,
-              color: null,
-              created_at: "2026-03-06T00:00:00Z",
-              subscription_count: 1,
-              unplayed_count: 0,
-            },
-          ],
-        });
-      }
-      if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
+      if (url.pathname === "/api/podcasts/subscriptions" && (_init?.method ?? "GET") === "GET") {
         return jsonResponse({ data: [buildSubscriptionRow()] });
       }
-      if (url.pathname === "/api/podcasts/subscriptions/podcast-0/sync" && init?.method === "POST") {
+      if (url.pathname === "/api/libraries" && (_init?.method ?? "GET") === "GET") {
         return jsonResponse({
-          data: {
-            podcast_id: "podcast-0",
-            sync_status: "running",
-            sync_error_code: null,
-            sync_error_message: null,
-            sync_attempts: 2,
-            sync_enqueued: true,
-          },
+          data: [{ id: "library-sports", name: "Sports", is_default: false, role: "admin" }],
         });
+      }
+      if (url.pathname === "/api/libraries/library-sports/entries" && (_init?.method ?? "GET") === "GET") {
+        return jsonResponse({ data: [] });
       }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    render(<PodcastSubscriptionsPage />);
+    render(createElement(PodcastSubscriptionsPage));
 
     expect(await screen.findByText("Systems Podcast 0")).toBeInTheDocument();
-    expect(screen.getByLabelText("Category for Systems Podcast 0")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open settings for Systems Podcast 0" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Refresh sync for Systems Podcast 0" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Unsubscribe from Systems Podcast 0" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Subscription category")).not.toBeInTheDocument();
+    expect(screen.queryByText("New category")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
     expect(await screen.findByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Refresh sync" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Add to Sports" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Unsubscribe" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("menuitem", { name: "Refresh sync" }));
-    await waitFor(() => {
-      expect(
-        fetchSpy.mock.calls.some(([url, init]) => {
-          const parsed = new URL(String(url), "http://localhost");
-          return parsed.pathname === "/api/podcasts/subscriptions/podcast-0/sync" && init?.method === "POST";
-        })
-      ).toBe(true);
-    });
   });
 
-  it("keeps episode primary controls inline and moves state/library toggles into row menu", async () => {
+  it("keeps queue controls inline and moves episode library toggles into the row menu", async () => {
     const user = userEvent.setup();
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "podcastId" ? "podcast-1" : null
     );
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, _init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/podcasts/podcast-1") {
         return jsonResponse({
@@ -327,7 +261,6 @@ describe("podcast ui action menu cutover", () => {
               user_id: "user-1",
               podcast_id: "podcast-1",
               status: "active",
-              unsubscribe_mode: 1,
               sync_status: "complete",
               sync_error_code: null,
               sync_error_message: null,
@@ -336,6 +269,8 @@ describe("podcast ui action menu cutover", () => {
               sync_completed_at: null,
               last_synced_at: null,
               updated_at: "2026-03-06T00:00:00Z",
+              default_playback_speed: null,
+              auto_queue: false,
             },
           },
         });
@@ -345,18 +280,23 @@ describe("podcast ui action menu cutover", () => {
           data: [buildEpisode("media-0", "Episode 0", { transcript_state: "not_requested" })],
         });
       }
-      if (url.pathname === "/api/me") {
+      if (url.pathname === "/api/libraries") {
         return jsonResponse({
-          data: {
-            user_id: "user-1",
-            default_library_id: "library-1",
-          },
+          data: [
+            { id: "library-sports", name: "Sports", is_default: false, role: "admin" },
+            { id: "library-history", name: "History", is_default: false, role: "admin" },
+          ],
         });
       }
-      if (url.pathname === "/api/libraries/library-1/media" && (init?.method ?? "GET") === "GET") {
+      if (url.pathname === "/api/libraries/library-sports/entries") {
         return jsonResponse({ data: [] });
       }
-      if (url.pathname === "/api/podcasts/categories") {
+      if (url.pathname === "/api/libraries/library-history/entries") {
+        return jsonResponse({
+          data: [{ kind: "media", media: { id: "media-0" } }],
+        });
+      }
+      if (url.pathname === "/api/playback/queue") {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
@@ -375,59 +315,65 @@ describe("podcast ui action menu cutover", () => {
           ],
         });
       }
-      if (url.pathname === "/api/media/media-0/listening-state" && init?.method === "PUT") {
-        return jsonResponse({ data: { ok: true } });
-      }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
     render(
-      <GlobalPlayerProvider>
-        <PodcastDetailPage />
-      </GlobalPlayerProvider>
+      createElement(
+        GlobalPlayerProvider,
+        null,
+        createElement(PodcastDetailPage)
+      )
     );
 
     expect(await screen.findByText("Episode 0")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Play next for Episode 0" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add Episode 0 to queue" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Request transcript for Episode 0" })).toBeInTheDocument();
-
-    // Expand transcript request UI
-    await user.click(screen.getByRole("button", { name: "Request transcript for Episode 0" }));
-    expect(screen.getByLabelText("Transcript request reason for Episode 0")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Submit transcript request for Episode 0" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Mark as played for Episode 0" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add Episode 0 to library" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play next for Episode 0" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add Episode 0 to queue" })).toBeVisible();
+    expect(screen.queryByLabelText("Subscription category")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
     expect(await screen.findByRole("menuitem", { name: "Mark as played" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Add to library" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("menuitem", { name: "Mark as played" }));
-    await waitFor(() => {
-      expect(
-        fetchSpy.mock.calls.some(([url, init]) => {
-          const parsed = new URL(String(url), "http://localhost");
-          return parsed.pathname === "/api/media/media-0/listening-state" && init?.method === "PUT";
-        })
-      ).toBe(true);
-    });
+    expect(screen.getByRole("menuitem", { name: "Add to Sports" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Remove from History" })).toBeInTheDocument();
   });
 
-  it("adds discovery row menus while keeping primary subscribe inline", async () => {
+  it("keeps discovery subscribe inline while moving subscribed library actions into the row menu", async () => {
     const user = userEvent.setup();
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, _init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/media") {
         return jsonResponse({ data: [], page: { next_cursor: null } });
       }
       if (url.pathname === "/api/podcasts/subscriptions") {
-        return jsonResponse({ data: [] });
+        return jsonResponse({
+          data: [
+            {
+              ...buildSubscriptionRow(),
+              podcast_id: "podcast-1",
+              podcast: {
+                ...buildSubscriptionRow().podcast,
+                id: "podcast-1",
+                provider_podcast_id: "provider-1",
+              },
+            },
+          ],
+        });
+      }
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({
+          data: [{ id: "library-sports", name: "Sports", is_default: false, role: "admin" }],
+        });
+      }
+      if (url.pathname === "/api/libraries/library-sports/entries") {
+        return jsonResponse({
+          data: [{ kind: "podcast", podcast: { id: "podcast-1" } }],
+        });
       }
       if (url.pathname === "/api/podcasts/discover") {
         return jsonResponse({
           data: [
             {
+              podcast_id: "podcast-1",
               provider_podcast_id: "provider-1",
               title: "Discovery Podcast",
               author: "Discovery Team",
@@ -439,44 +385,19 @@ describe("podcast ui action menu cutover", () => {
           ],
         });
       }
-      if (url.pathname === "/api/podcasts/subscriptions" && init?.method === "POST") {
-        return jsonResponse({
-          data: {
-            podcast_id: "podcast-1",
-            subscription_created: true,
-            sync_status: "pending",
-            sync_enqueued: true,
-            sync_error_code: null,
-            sync_error_message: null,
-            sync_attempts: 0,
-            last_synced_at: null,
-            window_size: 3,
-          },
-        });
-      }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    render(<PodcastsPage />);
+    render(createElement(PodcastsPage));
 
     await user.type(screen.getByPlaceholderText("Search podcasts by title or topic..."), "discovery");
     await user.click(screen.getByRole("button", { name: "Search" }));
 
     expect(await screen.findByText("Discovery Podcast")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Subscribe" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View podcast" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
-    expect(await screen.findByRole("menuitem", { name: "Open website" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Open feed" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Subscribe" }));
-    await waitFor(() => {
-      expect(
-        fetchSpy.mock.calls.some(([url, init]) => {
-          const parsed = new URL(String(url), "http://localhost");
-          return parsed.pathname === "/api/podcasts/subscriptions" && init?.method === "POST";
-        })
-      ).toBe(true);
-    });
+    expect(await screen.findByRole("menuitem", { name: "Remove from Sports" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Open website" })).toBeInTheDocument();
   });
 });

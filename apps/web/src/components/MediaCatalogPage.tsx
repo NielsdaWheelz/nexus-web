@@ -46,13 +46,17 @@ interface MediaListResponse {
   };
 }
 
-interface MeResponse {
-  user_id: string;
-  default_library_id: string | null;
+interface LibrarySummary {
+  id: string;
+  name: string;
+  is_default: boolean;
 }
 
-interface LibraryMediaSummary {
-  id: string;
+interface LibraryEntrySummary {
+  kind: "media" | "podcast";
+  media?: {
+    id: string;
+  } | null;
 }
 
 interface CatalogItem {
@@ -72,8 +76,6 @@ const KIND_LABEL: Record<MediaKind, string> = {
   podcast_episode: "Podcast Episode",
   video: "Video",
 };
-
-const LIBRARY_MEDIA_PAGE_SIZE = 200;
 
 function isMediaKind(kind: string): kind is MediaKind {
   return (
@@ -116,7 +118,6 @@ function statusVariant(
   return "neutral";
 }
 
-
 export default function MediaCatalogPage({
   title,
   allowedKinds,
@@ -129,9 +130,9 @@ export default function MediaCatalogPage({
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [defaultLibraryId, setDefaultLibraryId] = useState<string | null>(null);
-  const [libraryMediaIds, setLibraryMediaIds] = useState<Set<string>>(new Set());
-  const [busyMediaIds, setBusyMediaIds] = useState<Set<string>>(new Set());
+  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
+  const [libraryIdsByMediaId, setLibraryIdsByMediaId] = useState<Record<string, string[]>>({});
+  const [busyMembershipKeys, setBusyMembershipKeys] = useState<Set<string>>(new Set());
   const allowedKindsKey = useMemo(
     () => [...allowedKinds].sort().join(","),
     [allowedKinds]
@@ -150,33 +151,6 @@ export default function MediaCatalogPage({
           kind: allowedKindsKey,
         });
         const response = await apiFetch<MediaListResponse>(`/api/media?${params.toString()}`);
-        let nextDefaultLibraryId: string | null = null;
-        let nextLibraryMediaIds = new Set<string>();
-
-        try {
-          const meResponse = await apiFetch<{ data: MeResponse }>("/api/me");
-          nextDefaultLibraryId = meResponse.data.default_library_id;
-
-          if (nextDefaultLibraryId) {
-            let offset = 0;
-            while (true) {
-              const page = await apiFetch<{ data: LibraryMediaSummary[] }>(
-                `/api/libraries/${nextDefaultLibraryId}/media?limit=${LIBRARY_MEDIA_PAGE_SIZE}&offset=${offset}`
-              );
-              for (const media of page.data) {
-                nextLibraryMediaIds.add(media.id);
-              }
-              if (page.data.length < LIBRARY_MEDIA_PAGE_SIZE) {
-                break;
-              }
-              offset += LIBRARY_MEDIA_PAGE_SIZE;
-            }
-          }
-        } catch {
-          nextDefaultLibraryId = null;
-          nextLibraryMediaIds = new Set<string>();
-        }
-
         const nextItems = response.data
           .filter((item) => isMediaKind(item.kind))
           .map((item) => ({
@@ -189,12 +163,43 @@ export default function MediaCatalogPage({
             updated_at: item.updated_at,
           }));
 
+        let nextLibraries: LibrarySummary[] = [];
+        let nextLibraryIdsByMediaId: Record<string, string[]> = {};
+        try {
+          const librariesResponse = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
+          nextLibraries = librariesResponse.data.filter((library) => !library.is_default);
+          if (nextLibraries.length > 0) {
+            const entryResponses = await Promise.all(
+              nextLibraries.map((library) =>
+                apiFetch<{ data: LibraryEntrySummary[] }>(`/api/libraries/${library.id}/entries`)
+              )
+            );
+            for (let index = 0; index < nextLibraries.length; index += 1) {
+              const library = nextLibraries[index];
+              const entries = entryResponses[index].data;
+              for (const entry of entries) {
+                if (entry.kind !== "media" || !entry.media) {
+                  continue;
+                }
+                const existingLibraryIds = nextLibraryIdsByMediaId[entry.media.id] ?? [];
+                nextLibraryIdsByMediaId[entry.media.id] = [
+                  ...existingLibraryIds,
+                  library.id,
+                ];
+              }
+            }
+          }
+        } catch {
+          nextLibraries = [];
+          nextLibraryIdsByMediaId = {};
+        }
+
         if (!cancelled) {
           setItems(nextItems);
           setNextCursor(response.page.next_cursor);
-          setDefaultLibraryId(nextDefaultLibraryId);
-          setLibraryMediaIds(nextLibraryMediaIds);
-          setBusyMediaIds(new Set());
+          setLibraries(nextLibraries);
+          setLibraryIdsByMediaId(nextLibraryIdsByMediaId);
+          setBusyMembershipKeys(new Set());
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -211,7 +216,7 @@ export default function MediaCatalogPage({
       }
     };
 
-    load();
+    void load();
 
     return () => {
       cancelled = true;
@@ -270,18 +275,22 @@ export default function MediaCatalogPage({
   }, [items, query]);
 
   const handleAddToLibrary = useCallback(
-    async (mediaId: string) => {
-      if (!defaultLibraryId) {
-        return;
-      }
-      setBusyMediaIds((prev) => new Set(prev).add(mediaId));
+    async (mediaId: string, libraryId: string) => {
+      const busyKey = `${libraryId}:${mediaId}`;
+      setBusyMembershipKeys((prev) => new Set(prev).add(busyKey));
       setError(null);
       try {
-        await apiFetch(`/api/libraries/${defaultLibraryId}/media`, {
+        await apiFetch(`/api/libraries/${libraryId}/media`, {
           method: "POST",
           body: JSON.stringify({ media_id: mediaId }),
         });
-        setLibraryMediaIds((prev) => new Set(prev).add(mediaId));
+        setLibraryIdsByMediaId((prev) => {
+          const next = { ...prev };
+          const nextIds = new Set(next[mediaId] ?? []);
+          nextIds.add(libraryId);
+          next[mediaId] = [...nextIds];
+          return next;
+        });
       } catch (mutationError) {
         if (isApiError(mutationError)) {
           setError(mutationError.message);
@@ -289,30 +298,34 @@ export default function MediaCatalogPage({
           setError(`Failed to add item to ${title.toLowerCase()} library`);
         }
       } finally {
-        setBusyMediaIds((prev) => {
+        setBusyMembershipKeys((prev) => {
           const next = new Set(prev);
-          next.delete(mediaId);
+          next.delete(busyKey);
           return next;
         });
       }
     },
-    [defaultLibraryId, title]
+    [title]
   );
 
   const handleRemoveFromLibrary = useCallback(
-    async (mediaId: string) => {
-      if (!defaultLibraryId) {
-        return;
-      }
-      setBusyMediaIds((prev) => new Set(prev).add(mediaId));
+    async (mediaId: string, libraryId: string) => {
+      const busyKey = `${libraryId}:${mediaId}`;
+      setBusyMembershipKeys((prev) => new Set(prev).add(busyKey));
       setError(null);
       try {
-        await apiFetch(`/api/libraries/${defaultLibraryId}/media/${mediaId}`, {
+        await apiFetch(`/api/libraries/${libraryId}/media/${mediaId}`, {
           method: "DELETE",
         });
-        setLibraryMediaIds((prev) => {
-          const next = new Set(prev);
-          next.delete(mediaId);
+        setLibraryIdsByMediaId((prev) => {
+          const next = { ...prev };
+          const nextIds = new Set(next[mediaId] ?? []);
+          nextIds.delete(libraryId);
+          if (nextIds.size === 0) {
+            delete next[mediaId];
+          } else {
+            next[mediaId] = [...nextIds];
+          }
           return next;
         });
       } catch (mutationError) {
@@ -322,14 +335,14 @@ export default function MediaCatalogPage({
           setError(`Failed to remove item from ${title.toLowerCase()} library`);
         }
       } finally {
-        setBusyMediaIds((prev) => {
+        setBusyMembershipKeys((prev) => {
           const next = new Set(prev);
-          next.delete(mediaId);
+          next.delete(busyKey);
           return next;
         });
       }
     },
-    [defaultLibraryId, title]
+    [title]
   );
 
   return (
@@ -359,23 +372,22 @@ export default function MediaCatalogPage({
         ) : (
           <AppList>
             {filteredItems.map((item) => {
-              const inDefaultLibrary = libraryMediaIds.has(item.id);
-              const isMutating = busyMediaIds.has(item.id);
+              const libraryIds = new Set(libraryIdsByMediaId[item.id] ?? []);
               const options = [
-                ...(defaultLibraryId
-                  ? [
-                      {
-                        id: inDefaultLibrary ? "remove-from-library" : "add-to-library",
-                        label: inDefaultLibrary ? "Remove from library" : "Add to library",
-                        disabled: isMutating,
-                        onSelect: () => {
-                          void (inDefaultLibrary
-                            ? handleRemoveFromLibrary(item.id)
-                            : handleAddToLibrary(item.id));
-                        },
-                      },
-                    ]
-                  : []),
+                ...libraries.map((library) => {
+                  const inLibrary = libraryIds.has(library.id);
+                  const busyKey = `${library.id}:${item.id}`;
+                  return {
+                    id: `${inLibrary ? "remove" : "add"}-${library.id}`,
+                    label: `${inLibrary ? "Remove from" : "Add to"} ${library.name}`,
+                    disabled: busyMembershipKeys.has(busyKey),
+                    onSelect: () => {
+                      void (inLibrary
+                        ? handleRemoveFromLibrary(item.id, library.id)
+                        : handleAddToLibrary(item.id, library.id));
+                    },
+                  };
+                }),
                 ...(item.canonical_source_url
                   ? [
                       {
@@ -391,7 +403,10 @@ export default function MediaCatalogPage({
                 <AppListItem
                   key={item.id}
                   href={`/media/${item.id}`}
-                  icon={(() => { const Icon = MEDIA_KIND_ICONS[item.kind] ?? Globe; return <Icon size={18} aria-hidden="true" />; })()}
+                  icon={(() => {
+                    const Icon = MEDIA_KIND_ICONS[item.kind] ?? Globe;
+                    return <Icon size={18} aria-hidden="true" />;
+                  })()}
                   title={item.title}
                   status={statusVariant(item.processing_status)}
                   meta={[KIND_LABEL[item.kind], `Updated ${formatDate(item.updated_at)}`].join(" · ")}

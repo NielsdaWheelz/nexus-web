@@ -4,7 +4,6 @@ Centralises all s4 provenance helpers so writer touchpoints cannot diverge.
 
 Rules:
 - All helpers accept Session and never call commit()/rollback().
-- All insert paths use ON CONFLICT DO NOTHING for idempotency.
 - Lock ordering for worker paths:
     1. claim/update default_library_backfill_jobs
     2. lock membership row (source_library_id, user_id)
@@ -43,32 +42,58 @@ def ensure_default_intrinsic(
     default_library_id: UUID,
     media_id: UUID,
 ) -> None:
-    """Ensure library_media + intrinsic rows exist for a default library.
+    """Ensure a media library entry + intrinsic row exist for a default library.
 
     Used by all default-library direct writer paths (upload, from_url, etc.).
     Never writes closure edges.
     """
-    db.execute(
+    entry_exists = db.execute(
         text("""
-            INSERT INTO library_media (library_id, media_id, position)
-            SELECT
-                :lib,
-                :media,
-                COALESCE(MAX(position), -1) + 1
-            FROM library_media
+            SELECT 1
+            FROM library_entries
             WHERE library_id = :lib
-            ON CONFLICT (library_id, media_id) DO NOTHING
+              AND media_id = :media
         """),
         {"lib": default_library_id, "media": media_id},
-    )
-    db.execute(
+    ).fetchone()
+    if entry_exists is None:
+        next_position = db.execute(
+            text("""
+                SELECT COALESCE(MAX(position), -1) + 1
+                FROM library_entries
+                WHERE library_id = :lib
+            """),
+            {"lib": default_library_id},
+        ).scalar()
+        db.execute(
+            text("""
+                INSERT INTO library_entries (library_id, media_id, podcast_id, position)
+                VALUES (:lib, :media, NULL, :position)
+            """),
+            {
+                "lib": default_library_id,
+                "media": media_id,
+                "position": int(next_position or 0),
+            },
+        )
+
+    intrinsic_exists = db.execute(
         text("""
-            INSERT INTO default_library_intrinsics (default_library_id, media_id)
-            VALUES (:lib, :media)
-            ON CONFLICT (default_library_id, media_id) DO NOTHING
+            SELECT 1
+            FROM default_library_intrinsics
+            WHERE default_library_id = :lib
+              AND media_id = :media
         """),
         {"lib": default_library_id, "media": media_id},
-    )
+    ).fetchone()
+    if intrinsic_exists is None:
+        db.execute(
+            text("""
+                INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                VALUES (:lib, :media)
+            """),
+            {"lib": default_library_id, "media": media_id},
+        )
 
 
 def remove_default_intrinsic_and_gc(
@@ -76,7 +101,7 @@ def remove_default_intrinsic_and_gc(
     default_library_id: UUID,
     media_id: UUID,
 ) -> None:
-    """Remove intrinsic row and gc the materialized library_media row if unjustified.
+    """Remove intrinsic row and gc the materialized library entry if unjustified.
 
     Does NOT delete closure edges -- those are removed only by membership or
     non-default library media removal paths.
@@ -90,7 +115,7 @@ def remove_default_intrinsic_and_gc(
         {"lib": default_library_id, "media": media_id},
     )
     # GC
-    _gc_default_library_media_row(db, default_library_id, media_id)
+    _gc_default_library_entry(db, default_library_id, media_id)
 
 
 # ---------------------------------------------------------------------------
@@ -103,53 +128,69 @@ def add_media_to_non_default_closure(
     source_library_id: UUID,
     media_id: UUID,
 ) -> None:
-    """Create closure edges + materialized default rows for all current members.
-
-    Called when media is added to a non-default library.
-    """
-    # Insert closure edges for each member's default library
-    db.execute(
+    """Create closure edges and materialized default media entries for all members."""
+    default_library_rows = db.execute(
         text("""
-            INSERT INTO default_library_closure_edges
-                (default_library_id, media_id, source_library_id)
-            SELECT dl.id, :media, :source
+            SELECT dl.id
             FROM memberships m
             JOIN libraries dl
-                ON dl.owner_user_id = m.user_id AND dl.is_default = true
+              ON dl.owner_user_id = m.user_id
+             AND dl.is_default = true
             WHERE m.library_id = :source
-            ON CONFLICT (default_library_id, media_id, source_library_id) DO NOTHING
+            ORDER BY dl.id ASC
         """),
-        {"media": media_id, "source": source_library_id},
-    )
-    # Materialise default library_media rows from those edges
-    db.execute(
-        text("""
-            WITH target_defaults AS (
-                SELECT dl.id AS library_id
-                FROM memberships m
-                JOIN libraries dl
-                  ON dl.owner_user_id = m.user_id
-                 AND dl.is_default = true
-                WHERE m.library_id = :source
-            ),
-            next_positions AS (
-                SELECT
-                    td.library_id,
-                    :media AS media_id,
-                    COALESCE((
-                        SELECT MAX(lm.position) + 1
-                        FROM library_media lm
-                        WHERE lm.library_id = td.library_id
-                    ), 0) AS position
-                FROM target_defaults td
+        {"source": source_library_id},
+    ).fetchall()
+    for (default_library_id,) in default_library_rows:
+        edge_exists = db.execute(
+            text("""
+                SELECT 1
+                FROM default_library_closure_edges
+                WHERE default_library_id = :dl
+                  AND media_id = :media
+                  AND source_library_id = :source
+            """),
+            {"dl": default_library_id, "media": media_id, "source": source_library_id},
+        ).fetchone()
+        if edge_exists is None:
+            db.execute(
+                text("""
+                    INSERT INTO default_library_closure_edges
+                        (default_library_id, media_id, source_library_id)
+                    VALUES (:dl, :media, :source)
+                """),
+                {"dl": default_library_id, "media": media_id, "source": source_library_id},
             )
-            INSERT INTO library_media (library_id, media_id, position)
-            SELECT library_id, media_id, position
-            FROM next_positions
-            ON CONFLICT (library_id, media_id) DO NOTHING
-        """),
-        {"media": media_id, "source": source_library_id},
-    )
+
+        entry_exists = db.execute(
+            text("""
+                SELECT 1
+                FROM library_entries
+                WHERE library_id = :dl
+                  AND media_id = :media
+            """),
+            {"dl": default_library_id, "media": media_id},
+        ).fetchone()
+        if entry_exists is None:
+            next_position = db.execute(
+                text("""
+                    SELECT COALESCE(MAX(position), -1) + 1
+                    FROM library_entries
+                    WHERE library_id = :dl
+                """),
+                {"dl": default_library_id},
+            ).scalar()
+            db.execute(
+                text("""
+                    INSERT INTO library_entries (library_id, media_id, podcast_id, position)
+                    VALUES (:dl, :media, NULL, :position)
+                """),
+                {
+                    "dl": default_library_id,
+                    "media": media_id,
+                    "position": int(next_position or 0),
+                },
+            )
 
 
 def remove_media_from_non_default_closure(
@@ -179,7 +220,7 @@ def remove_media_from_non_default_closure(
 
     # GC each affected default library
     for (dl_id,) in affected:
-        _gc_default_library_media_row(db, dl_id, media_id)
+        _gc_default_library_entry(db, dl_id, media_id)
 
 
 def remove_member_closure_and_gc(
@@ -227,7 +268,7 @@ def remove_member_closure_and_gc(
 
     # GC each affected media row
     for (media_id,) in affected_media:
-        _gc_default_library_media_row(db, default_library_id, media_id)
+        _gc_default_library_entry(db, default_library_id, media_id)
 
     # Delete matching backfill job row
     db.execute(
@@ -246,12 +287,12 @@ def remove_member_closure_and_gc(
 # ---------------------------------------------------------------------------
 
 
-def _gc_default_library_media_row(
+def _gc_default_library_entry(
     db: Session,
     default_library_id: UUID,
     media_id: UUID,
 ) -> None:
-    """Delete library_media(default, media) iff no intrinsic and no closure edge."""
+    """Delete library_entries(default, media) iff no intrinsic and no closure edge."""
     has_intrinsic = db.execute(
         text("""
             SELECT 1 FROM default_library_intrinsics
@@ -275,7 +316,7 @@ def _gc_default_library_media_row(
 
     db.execute(
         text("""
-            DELETE FROM library_media
+            DELETE FROM library_entries
             WHERE library_id = :dl AND media_id = :media
         """),
         {"dl": default_library_id, "media": media_id},
@@ -528,47 +569,73 @@ def materialize_closure_for_source(
     default_library_id: UUID,
     source_library_id: UUID,
 ) -> int:
-    """Insert missing closure edges + materialized default rows for all media in source.
+    """Insert missing closure edges and default media entries for one source library."""
+    source_media_ids = [
+        UUID(str(row[0]))
+        for row in db.execute(
+            text("""
+                SELECT media_id
+                FROM library_entries
+                WHERE library_id = :source
+                  AND media_id IS NOT NULL
+                ORDER BY position ASC, created_at DESC, id DESC
+            """),
+            {"source": source_library_id},
+        ).fetchall()
+    ]
 
-    Returns count of edges inserted. All inserts are idempotent.
-    """
-    result = db.execute(
-        text("""
-            INSERT INTO default_library_closure_edges
-                (default_library_id, media_id, source_library_id)
-            SELECT :dl, lm.media_id, :source
-            FROM library_media lm
-            WHERE lm.library_id = :source
-            ON CONFLICT (default_library_id, media_id, source_library_id) DO NOTHING
-        """),
-        {"dl": default_library_id, "source": source_library_id},
-    )
-    edges_count = result.rowcount
-
-    db.execute(
-        text("""
-            WITH source_media AS (
-                SELECT
-                    lm.media_id,
-                    ROW_NUMBER() OVER (
-                        ORDER BY lm.position ASC, lm.created_at DESC, lm.media_id DESC
-                    ) - 1 AS sort_offset
-                FROM library_media lm
-                WHERE lm.library_id = :source
-            ),
-            base_position AS (
-                SELECT COALESCE(MAX(position), -1) + 1 AS value
-                FROM library_media
-                WHERE library_id = :dl
+    edges_count = 0
+    for media_id in source_media_ids:
+        edge_exists = db.execute(
+            text("""
+                SELECT 1
+                FROM default_library_closure_edges
+                WHERE default_library_id = :dl
+                  AND media_id = :media
+                  AND source_library_id = :source
+            """),
+            {"dl": default_library_id, "media": media_id, "source": source_library_id},
+        ).fetchone()
+        if edge_exists is None:
+            db.execute(
+                text("""
+                    INSERT INTO default_library_closure_edges
+                        (default_library_id, media_id, source_library_id)
+                    VALUES (:dl, :media, :source)
+                """),
+                {"dl": default_library_id, "media": media_id, "source": source_library_id},
             )
-            INSERT INTO library_media (library_id, media_id, position)
-            SELECT :dl, sm.media_id, bp.value + sm.sort_offset
-            FROM source_media sm
-            CROSS JOIN base_position bp
-            ON CONFLICT (library_id, media_id) DO NOTHING
-        """),
-        {"dl": default_library_id, "source": source_library_id},
-    )
+            edges_count += 1
+
+        entry_exists = db.execute(
+            text("""
+                SELECT 1
+                FROM library_entries
+                WHERE library_id = :dl
+                  AND media_id = :media
+            """),
+            {"dl": default_library_id, "media": media_id},
+        ).fetchone()
+        if entry_exists is None:
+            next_position = db.execute(
+                text("""
+                    SELECT COALESCE(MAX(position), -1) + 1
+                    FROM library_entries
+                    WHERE library_id = :dl
+                """),
+                {"dl": default_library_id},
+            ).scalar()
+            db.execute(
+                text("""
+                    INSERT INTO library_entries (library_id, media_id, podcast_id, position)
+                    VALUES (:dl, :media, NULL, :position)
+                """),
+                {
+                    "dl": default_library_id,
+                    "media": media_id,
+                    "position": int(next_position or 0),
+                },
+            )
 
     return edges_count
 

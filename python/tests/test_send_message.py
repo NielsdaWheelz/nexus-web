@@ -27,6 +27,7 @@ from nexus.schemas.billing import BillingEntitlementsOut
 from nexus.services.crypto import MASTER_KEY_SIZE, clear_master_key_cache, encrypt_api_key
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 from tests.factories import (
+    add_media_to_library,
     create_epub_chapter_fragment,
     create_epub_media_in_library,
     create_pdf_media_with_text,
@@ -716,24 +717,7 @@ class TestSendMessageContext:
                     "created_by_user_id": user_id,
                 },
             )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO library_media (library_id, media_id)
-                    VALUES (:library_id, :media_id)
-                    """
-                ),
-                {"library_id": default_library_id, "media_id": media_id},
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                    VALUES (:default_library_id, :media_id)
-                    """
-                ),
-                {"default_library_id": default_library_id, "media_id": media_id},
-            )
+            add_media_to_library(session, default_library_id, media_id)
             session.execute(
                 text(
                     """
@@ -783,7 +767,7 @@ class TestSendMessageContext:
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.post(
@@ -855,24 +839,7 @@ class TestSendMessageContext:
                     "created_by_user_id": user_id,
                 },
             )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO library_media (library_id, media_id)
-                    VALUES (:library_id, :media_id)
-                    """
-                ),
-                {"library_id": default_library_id, "media_id": media_id},
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                    VALUES (:default_library_id, :media_id)
-                    """
-                ),
-                {"default_library_id": default_library_id, "media_id": media_id},
-            )
+            add_media_to_library(session, default_library_id, media_id)
             session.execute(
                 text(
                     """
@@ -923,7 +890,7 @@ class TestSendMessageContext:
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.post(
@@ -1135,7 +1102,7 @@ class TestSendMessagePdfQuoteToChat:
             direct_db.register_cleanup("annotations", "id", annotation_id)
         direct_db.register_cleanup("highlight_pdf_anchors", "highlight_id", highlight_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1933,7 +1900,7 @@ class TestSendMessageEpubQuoteToChat:
         direct_db.register_cleanup("highlights", "id", hl_id)
         direct_db.register_cleanup("fragments", "id", frag0)
         direct_db.register_cleanup("fragments", "id", frag1)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.post(
@@ -1973,7 +1940,7 @@ class TestSendMessageEpubQuoteToChat:
         direct_db.register_cleanup("highlights", "id", hl_id)
         direct_db.register_cleanup("fragments", "id", frag0)
         direct_db.register_cleanup("fragments", "id", frag1)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.post(
@@ -2013,7 +1980,7 @@ class TestSendMessageEpubQuoteToChat:
         direct_db.register_cleanup("highlights", "id", hl_id)
         direct_db.register_cleanup("fragments", "id", frag0)
         direct_db.register_cleanup("fragments", "id", frag1)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.post(

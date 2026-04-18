@@ -10,14 +10,14 @@ All functions:
 
 Query Semantics:
 - Membership role values: 'admin', 'member' (lowercase strings, not enums)
-- LibraryMedia is the join table between libraries and media
+- LibraryEntry rows with non-null media_id connect libraries and media
 - Media readability is via s4 provenance: non-default membership, intrinsic, or active closure edge
 
 S4 Provenance Rules (can_read_media):
-- Non-default path: exists non-default library L with viewer membership and library_media(L, media)
+- Non-default path: exists non-default library L with viewer membership and library_entries(L, media)
 - Default intrinsic path: viewer owns default library D, row in default_library_intrinsics(D, media)
 - Default closure path: viewer owns default library D, closure edge (D, media, source_L), viewer member of source_L
-- Raw (default_library_id, media_id) in library_media is NOT sufficient without provenance
+- Raw (default_library_id, media_id) in library_entries is NOT sufficient without provenance
 
 S4 Conversation Visibility (can_read_conversation):
 - Viewer is owner, OR
@@ -41,7 +41,7 @@ from nexus.db.models import (
     DefaultLibraryIntrinsic,
     Highlight,
     Library,
-    LibraryMedia,
+    LibraryEntry,
     Membership,
 )
 
@@ -59,10 +59,11 @@ def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bo
     """
     # Path 1: non-default library membership
     non_default = exists().where(
-        LibraryMedia.media_id == media_id,
-        LibraryMedia.library_id == Membership.library_id,
+        LibraryEntry.media_id == media_id,
+        LibraryEntry.media_id.is_not(None),
+        LibraryEntry.library_id == Membership.library_id,
         Membership.user_id == viewer_user_id,
-        LibraryMedia.library_id == Library.id,
+        LibraryEntry.library_id == Library.id,
         Library.is_default == False,  # noqa: E712
     )
 
@@ -107,11 +108,12 @@ def can_read_media_bulk(
 
     # Path 1: non-default library membership
     non_default_q = (
-        select(LibraryMedia.media_id)
-        .join(Membership, LibraryMedia.library_id == Membership.library_id)
-        .join(Library, LibraryMedia.library_id == Library.id)
+        select(LibraryEntry.media_id)
+        .join(Membership, LibraryEntry.library_id == Membership.library_id)
+        .join(Library, LibraryEntry.library_id == Library.id)
         .where(
-            LibraryMedia.media_id.in_(media_ids),
+            LibraryEntry.media_id.in_(media_ids),
+            LibraryEntry.media_id.is_not(None),
             Membership.user_id == viewer_user_id,
             Library.is_default == False,  # noqa: E712
         )
@@ -232,15 +234,15 @@ def _highlight_library_intersection_exists(
 
     return (
         select(literal(1))
-        .select_from(LibraryMedia.__table__)
-        .join(viewer_m, viewer_m.c.library_id == LibraryMedia.__table__.c.library_id)
+        .select_from(LibraryEntry.__table__)
+        .join(viewer_m, viewer_m.c.library_id == LibraryEntry.__table__.c.library_id)
         .join(
             author_m,
-            (author_m.c.library_id == LibraryMedia.__table__.c.library_id)
+            (author_m.c.library_id == LibraryEntry.__table__.c.library_id)
             & (author_m.c.user_id == author_user_id_expr),
         )
         .where(
-            LibraryMedia.__table__.c.media_id == media_id,
+            LibraryEntry.__table__.c.media_id == media_id,
             viewer_m.c.user_id == viewer_user_id,
         )
         .exists()
@@ -337,15 +339,16 @@ def is_admin_of_any_containing_library(
     """Check if viewer is admin of any library containing the media.
 
     True iff there exists a library L such that:
-    - (L contains media_id via LibraryMedia) AND
+    - (L contains media_id via LibraryEntry.media_id) AND
     - viewer_user_id has Membership in L with role == 'admin'.
 
     Returns False if media_id does not exist.
     """
     query = select(
         exists().where(
-            LibraryMedia.media_id == media_id,
-            LibraryMedia.library_id == Membership.library_id,
+            LibraryEntry.media_id == media_id,
+            LibraryEntry.media_id.is_not(None),
+            LibraryEntry.library_id == Membership.library_id,
             Membership.user_id == viewer_user_id,
             Membership.role == "admin",
         )

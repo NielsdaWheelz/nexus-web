@@ -723,7 +723,7 @@ class TestPodcastSubscriptionSyncLifecycle:
                 text(
                     """
                     SELECT m.title
-                    FROM library_media lm
+                    FROM library_entries lm
                     JOIN media m ON m.id = lm.media_id
                     WHERE lm.library_id = :library_id
                       AND m.kind = 'podcast_episode'
@@ -1091,7 +1091,7 @@ class TestPodcastSubscribeIngest:
                 text(
                     """
                     SELECT m.title
-                    FROM library_media lm
+                    FROM library_entries lm
                     JOIN media m ON m.id = lm.media_id
                     WHERE lm.library_id = :library_id
                       AND m.kind = 'podcast_episode'
@@ -1172,7 +1172,7 @@ class TestPodcastSubscribeIngest:
                 text(
                     """
                     SELECT m.title
-                    FROM library_media lm
+                    FROM library_entries lm
                     JOIN media m ON m.id = lm.media_id
                     WHERE lm.library_id = :library_id
                       AND m.kind = 'podcast_episode'
@@ -1368,7 +1368,7 @@ class TestPodcastSubscribeIngest:
                 text(
                     """
                     SELECT lm.media_id
-                    FROM library_media lm
+                    FROM library_entries lm
                     JOIN media m ON m.id = lm.media_id
                     WHERE lm.library_id = :library_id
                       AND m.kind = 'podcast_episode'
@@ -1380,7 +1380,7 @@ class TestPodcastSubscribeIngest:
                 text(
                     """
                     SELECT lm.media_id
-                    FROM library_media lm
+                    FROM library_entries lm
                     JOIN media m ON m.id = lm.media_id
                     WHERE lm.library_id = :library_id
                       AND m.kind = 'podcast_episode'
@@ -3490,6 +3490,38 @@ def _create_library(auth_client, user_id: UUID, *, name: str) -> UUID:
     return UUID(response.json()["data"]["id"])
 
 
+def _ensure_library_entries_table(direct_db: DirectSessionManager) -> None:
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS library_entries (
+                    id UUID PRIMARY KEY,
+                    library_id UUID NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+                    position INTEGER NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    media_id UUID NULL REFERENCES media(id) ON DELETE CASCADE,
+                    podcast_id UUID NULL REFERENCES podcasts(id) ON DELETE CASCADE,
+                    CONSTRAINT ck_library_entries_exactly_one_target
+                        CHECK (((media_id IS NOT NULL)::int + (podcast_id IS NOT NULL)::int) = 1),
+                    CONSTRAINT uq_library_entries_library_media UNIQUE (library_id, media_id),
+                    CONSTRAINT uq_library_entries_library_podcast UNIQUE (library_id, podcast_id),
+                    CONSTRAINT ck_library_entries_position_non_negative CHECK (position >= 0)
+                )
+                """
+            )
+        )
+        session.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_library_entries_library_position
+                ON library_entries (library_id, position)
+                """
+            )
+        )
+        session.commit()
+
+
 class TestPodcastMediaDetailContract:
     def test_media_detail_exposes_typed_playback_source_for_podcast_episode(
         self, auth_client, monkeypatch, direct_db
@@ -4002,7 +4034,7 @@ class TestPodcastSubscriptionLifecycleClosure:
         assert media_id is not None
         return podcast_id, media_id
 
-    def test_unsubscribe_defaults_to_mode_1_and_stops_future_poll_ingest(
+    def test_unsubscribe_stops_future_poll_ingest_and_keeps_saved_episodes(
         self, auth_client, monkeypatch, direct_db
     ):
         user_id = create_test_user_id()
@@ -4035,6 +4067,7 @@ class TestPodcastSubscriptionLifecycleClosure:
             podcasts=[payload],
             episodes_by_podcast=episodes_by_podcast,
         )
+        _ensure_library_entries_table(direct_db)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
         podcast_id = UUID(subscribe_data["podcast_id"])
@@ -4061,7 +4094,18 @@ class TestPodcastSubscriptionLifecycleClosure:
         )
         unsubscribed_data = unsubscribe.json()["data"]
         assert unsubscribed_data["status"] == "unsubscribed"
-        assert unsubscribed_data["unsubscribe_mode"] == 1
+        assert unsubscribed_data["removed_from_library_count"] == 0
+        assert unsubscribed_data["retained_shared_library_count"] == 0
+
+        detail_after_unsubscribe = auth_client.get(
+            f"/podcasts/{podcast_id}",
+            headers=auth_headers(user_id),
+        )
+        assert detail_after_unsubscribe.status_code == 200, (
+            "podcast detail should remain readable after unsubscribe, "
+            f"got {detail_after_unsubscribe.status_code}: {detail_after_unsubscribe.text}"
+        )
+        assert detail_after_unsubscribe.json()["data"]["subscription"]["status"] == "unsubscribed"
 
         poll_result = _run_active_subscription_poll(direct_db, limit=100)
         assert poll_result["processed_count"] == 0
@@ -4071,7 +4115,7 @@ class TestPodcastSubscriptionLifecycleClosure:
                 text(
                     """
                     SELECT m.title
-                    FROM library_media lm
+                    FROM library_entries lm
                     JOIN media m ON m.id = lm.media_id
                     WHERE lm.library_id = :library_id
                       AND m.kind = 'podcast_episode'
@@ -4082,177 +4126,173 @@ class TestPodcastSubscriptionLifecycleClosure:
             ).fetchall()
         assert [row[0] for row in titles] == ["Episode One"]
 
-    def test_unsubscribe_mode_2_removes_default_but_never_shared_library_media(
+    def test_unsubscribe_removes_authorized_podcast_library_entries_and_keeps_saved_media(
         self, auth_client, monkeypatch, direct_db
     ):
         user_id = create_test_user_id()
-        collaborator_id = create_test_user_id()
-        default_library_id = _bootstrap_user(auth_client, user_id)
-        _bootstrap_user(auth_client, collaborator_id)
+        shared_admin_owner_id = create_test_user_id()
+        shared_member_owner_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _bootstrap_user(auth_client, shared_admin_owner_id)
+        _bootstrap_user(auth_client, shared_member_owner_id)
 
-        provider_podcast_id = f"mode2-{uuid4()}"
+        provider_podcast_id = f"unsubscribe-library-entries-{uuid4()}"
         podcast_id, media_id = self._ingest_single_episode_subscription(
             auth_client=auth_client,
             monkeypatch=monkeypatch,
             direct_db=direct_db,
             user_id=user_id,
             provider_podcast_id=provider_podcast_id,
-            title="Mode 2 Podcast",
-            episode_title="Mode 2 Episode",
-            audio_url="https://cdn.example.com/m2.mp3",
+            title="Library Entries Podcast",
+            episode_title="Saved Episode",
+            audio_url="https://cdn.example.com/unsubscribe-library-entries.mp3",
         )
 
-        shared_library_id = _create_library(
-            auth_client, user_id, name=f"shared-{provider_podcast_id}"
+        owned_library_id = _create_library(
+            auth_client, user_id, name=f"owned-{provider_podcast_id}"
         )
+        shared_admin_library_id = _create_library(
+            auth_client,
+            shared_admin_owner_id,
+            name=f"shared-admin-{provider_podcast_id}",
+        )
+        shared_member_library_id = _create_library(
+            auth_client,
+            shared_member_owner_id,
+            name=f"shared-member-{provider_podcast_id}",
+        )
+
+        _ensure_library_entries_table(direct_db)
         with direct_db.session() as session:
             session.execute(
                 text(
                     """
                     INSERT INTO memberships (library_id, user_id, role)
-                    VALUES (:library_id, :user_id, 'member')
+                    VALUES (:library_id, :user_id, :role)
                     """
                 ),
-                {"library_id": shared_library_id, "user_id": collaborator_id},
+                {
+                    "library_id": shared_admin_library_id,
+                    "user_id": user_id,
+                    "role": "admin",
+                },
             )
-            session.commit()
-
-        add_shared = auth_client.post(
-            f"/libraries/{shared_library_id}/media",
-            headers=auth_headers(user_id),
-            json={"media_id": str(media_id)},
-        )
-        assert add_shared.status_code == 201
-
-        unsubscribe = auth_client.delete(
-            f"/podcasts/subscriptions/{podcast_id}?mode=2",
-            headers=auth_headers(user_id),
-        )
-        assert unsubscribe.status_code == 200
-        data = unsubscribe.json()["data"]
-        assert data["status"] == "unsubscribed"
-        assert data["unsubscribe_mode"] == 2
-
-        with direct_db.session() as session:
-            default_intrinsic = session.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM default_library_intrinsics
-                    WHERE default_library_id = :library_id AND media_id = :media_id
-                    """
-                ),
-                {"library_id": default_library_id, "media_id": media_id},
-            ).fetchone()
-            shared_row = session.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM library_media
-                    WHERE library_id = :library_id AND media_id = :media_id
-                    """
-                ),
-                {"library_id": shared_library_id, "media_id": media_id},
-            ).fetchone()
-
-        assert default_intrinsic is None
-        assert shared_row is not None
-
-    def test_unsubscribe_mode_3_removes_single_member_libraries_without_touching_shared(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        user_id = create_test_user_id()
-        collaborator_id = create_test_user_id()
-        default_library_id = _bootstrap_user(auth_client, user_id)
-        _bootstrap_user(auth_client, collaborator_id)
-
-        provider_podcast_id = f"mode3-{uuid4()}"
-        podcast_id, media_id = self._ingest_single_episode_subscription(
-            auth_client=auth_client,
-            monkeypatch=monkeypatch,
-            direct_db=direct_db,
-            user_id=user_id,
-            provider_podcast_id=provider_podcast_id,
-            title="Mode 3 Podcast",
-            episode_title="Mode 3 Episode",
-            audio_url="https://cdn.example.com/m3.mp3",
-        )
-
-        single_member_library_id = _create_library(
-            auth_client, user_id, name=f"solo-{provider_podcast_id}"
-        )
-        shared_library_id = _create_library(
-            auth_client, user_id, name=f"shared-{provider_podcast_id}"
-        )
-        with direct_db.session() as session:
             session.execute(
                 text(
                     """
                     INSERT INTO memberships (library_id, user_id, role)
-                    VALUES (:library_id, :user_id, 'member')
+                    VALUES (:library_id, :user_id, :role)
                     """
                 ),
-                {"library_id": shared_library_id, "user_id": collaborator_id},
+                {
+                    "library_id": shared_member_library_id,
+                    "user_id": user_id,
+                    "role": "member",
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO library_entries (id, library_id, position, podcast_id)
+                    VALUES (:entry_id, :library_id, :position, :podcast_id)
+                    """
+                ),
+                {
+                    "entry_id": uuid4(),
+                    "library_id": owned_library_id,
+                    "position": 0,
+                    "podcast_id": podcast_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO library_entries (id, library_id, position, podcast_id)
+                    VALUES (:entry_id, :library_id, :position, :podcast_id)
+                    """
+                ),
+                {
+                    "entry_id": uuid4(),
+                    "library_id": shared_admin_library_id,
+                    "position": 0,
+                    "podcast_id": podcast_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO library_entries (id, library_id, position, podcast_id)
+                    VALUES (:entry_id, :library_id, :position, :podcast_id)
+                    """
+                ),
+                {
+                    "entry_id": uuid4(),
+                    "library_id": shared_member_library_id,
+                    "position": 0,
+                    "podcast_id": podcast_id,
+                },
             )
             session.commit()
 
-        add_single = auth_client.post(
-            f"/libraries/{single_member_library_id}/media",
+        add_owned_media = auth_client.post(
+            f"/libraries/{owned_library_id}/media",
             headers=auth_headers(user_id),
             json={"media_id": str(media_id)},
         )
-        assert add_single.status_code == 201
-        add_shared = auth_client.post(
-            f"/libraries/{shared_library_id}/media",
+        assert add_owned_media.status_code == 201
+        add_shared_admin_media = auth_client.post(
+            f"/libraries/{shared_admin_library_id}/media",
             headers=auth_headers(user_id),
             json={"media_id": str(media_id)},
         )
-        assert add_shared.status_code == 201
+        assert add_shared_admin_media.status_code == 201
 
         unsubscribe = auth_client.delete(
-            f"/podcasts/subscriptions/{podcast_id}?mode=3",
+            f"/podcasts/subscriptions/{podcast_id}",
             headers=auth_headers(user_id),
         )
         assert unsubscribe.status_code == 200
         data = unsubscribe.json()["data"]
         assert data["status"] == "unsubscribed"
-        assert data["unsubscribe_mode"] == 3
+        assert data["removed_from_library_count"] == 2
+        assert data["retained_shared_library_count"] == 1
 
         with direct_db.session() as session:
-            default_intrinsic = session.execute(
+            remaining_library_ids = session.execute(
                 text(
                     """
-                    SELECT 1
-                    FROM default_library_intrinsics
-                    WHERE default_library_id = :library_id AND media_id = :media_id
+                    SELECT library_id
+                    FROM library_entries
+                    WHERE podcast_id = :podcast_id
+                    ORDER BY library_id ASC
                     """
                 ),
-                {"library_id": default_library_id, "media_id": media_id},
-            ).fetchone()
-            single_member_row = session.execute(
+                {"podcast_id": podcast_id},
+            ).fetchall()
+            owned_media_row = session.execute(
                 text(
                     """
                     SELECT 1
-                    FROM library_media
+                    FROM library_entries
                     WHERE library_id = :library_id AND media_id = :media_id
                     """
                 ),
-                {"library_id": single_member_library_id, "media_id": media_id},
+                {"library_id": owned_library_id, "media_id": media_id},
             ).fetchone()
-            shared_row = session.execute(
+            shared_admin_media_row = session.execute(
                 text(
                     """
                     SELECT 1
-                    FROM library_media
+                    FROM library_entries
                     WHERE library_id = :library_id AND media_id = :media_id
                     """
                 ),
-                {"library_id": shared_library_id, "media_id": media_id},
+                {"library_id": shared_admin_library_id, "media_id": media_id},
             ).fetchone()
 
-        assert default_intrinsic is None
-        assert single_member_row is None
-        assert shared_row is not None
+        assert [UUID(str(row[0])) for row in remaining_library_ids] == [shared_member_library_id]
+        assert owned_media_row is not None
+        assert shared_admin_media_row is not None
 
     def test_active_subscription_poll_ingests_newly_published_episode(
         self, auth_client, monkeypatch, direct_db
@@ -4313,7 +4353,7 @@ class TestPodcastSubscriptionLifecycleClosure:
                 text(
                     """
                     SELECT m.title
-                    FROM library_media lm
+                    FROM library_entries lm
                     JOIN media m ON m.id = lm.media_id
                     WHERE lm.library_id = :library_id
                       AND m.kind = 'podcast_episode'
@@ -4616,198 +4656,32 @@ class TestPodcastApiSurface:
         )
         assert empty_payload.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_subscription_categories_crud_assignment_filter_and_delete_uncategorizes(
-        self, auth_client, monkeypatch, direct_db
+    def test_patch_subscription_settings_rejects_removed_category_field(
+        self, auth_client, monkeypatch
     ):
         user_id = create_test_user_id()
-        provider_alpha = f"surface-categories-alpha-{uuid4()}"
-        provider_beta = f"surface-categories-beta-{uuid4()}"
-        alpha_podcast_id, _ = self._subscribe_and_sync_single_podcast(
-            auth_client=auth_client,
-            monkeypatch=monkeypatch,
-            direct_db=direct_db,
-            user_id=user_id,
-            provider_podcast_id=provider_alpha,
-            title="Categories Alpha",
-        )
-        beta_podcast_id, _ = self._subscribe_and_sync_single_podcast(
-            auth_client=auth_client,
-            monkeypatch=monkeypatch,
-            direct_db=direct_db,
-            user_id=user_id,
-            provider_podcast_id=provider_beta,
-            title="Categories Beta",
-        )
-        headers = auth_headers(user_id)
-
-        create_tech = auth_client.post(
-            "/podcasts/categories",
-            headers=headers,
-            json={"name": "Tech", "color": "#3366FF"},
-        )
-        assert create_tech.status_code == 200, (
-            "category create should accept name + optional color, "
-            f"got {create_tech.status_code}: {create_tech.text}"
-        )
-        tech_category = create_tech.json()["data"]
-
-        create_news = auth_client.post(
-            "/podcasts/categories",
-            headers=headers,
-            json={"name": "News"},
-        )
-        assert create_news.status_code == 200, (
-            "second category create should succeed for same user with unique name, "
-            f"got {create_news.status_code}: {create_news.text}"
-        )
-        news_category = create_news.json()["data"]
-
-        assign_alpha = auth_client.patch(
-            f"/podcasts/subscriptions/{alpha_podcast_id}/settings",
-            headers=headers,
-            json={"category_id": tech_category["id"]},
-        )
-        assert assign_alpha.status_code == 200, (
-            "subscription settings patch should accept category_id assignment, "
-            f"got {assign_alpha.status_code}: {assign_alpha.text}"
-        )
-        assert assign_alpha.json()["data"]["category"]["id"] == tech_category["id"]
-
-        all_rows_response = auth_client.get(
-            "/podcasts/subscriptions?sort=alpha&limit=20",
-            headers=headers,
-        )
-        assert all_rows_response.status_code == 200, (
-            "subscriptions list should still return all rows when category filter is absent, "
-            f"got {all_rows_response.status_code}: {all_rows_response.text}"
-        )
-        all_rows = all_rows_response.json()["data"]
-        row_by_podcast_id = {row["podcast_id"]: row for row in all_rows}
-        assert row_by_podcast_id[str(alpha_podcast_id)]["category"]["id"] == tech_category["id"]
-        assert row_by_podcast_id[str(beta_podcast_id)]["category"] is None
-
-        tech_only_response = auth_client.get(
-            f"/podcasts/subscriptions?category_id={tech_category['id']}&sort=alpha&limit=20",
-            headers=headers,
-        )
-        assert tech_only_response.status_code == 200, (
-            "subscriptions list category filter should return only rows in that category, "
-            f"got {tech_only_response.status_code}: {tech_only_response.text}"
-        )
-        tech_only_ids = [row["podcast_id"] for row in tech_only_response.json()["data"]]
-        assert tech_only_ids == [str(alpha_podcast_id)], (
-            f"category_id filter should isolate assigned subscription, got {tech_only_ids}"
-        )
-
-        uncategorized_response = auth_client.get(
-            "/podcasts/subscriptions?category_id=null&sort=alpha&limit=20",
-            headers=headers,
-        )
-        assert uncategorized_response.status_code == 200, (
-            "category_id=null filter should return uncategorized subscriptions, "
-            f"got {uncategorized_response.status_code}: {uncategorized_response.text}"
-        )
-        uncategorized_ids = [row["podcast_id"] for row in uncategorized_response.json()["data"]]
-        assert uncategorized_ids == [str(beta_podcast_id)], (
-            f"uncategorized filter should include only uncategorized rows, got {uncategorized_ids}"
-        )
-
-        categories_response = auth_client.get("/podcasts/categories", headers=headers)
-        assert categories_response.status_code == 200, (
-            "categories list should include aggregate counts per category, "
-            f"got {categories_response.status_code}: {categories_response.text}"
-        )
-        categories = categories_response.json()["data"]
-        category_by_name = {row["name"]: row for row in categories}
-        assert category_by_name["Tech"]["subscription_count"] == 1
-        assert category_by_name["Tech"]["unplayed_count"] == 2
-        assert category_by_name["News"]["subscription_count"] == 0
-        assert category_by_name["News"]["unplayed_count"] == 0
-
-        patch_tech = auth_client.patch(
-            f"/podcasts/categories/{tech_category['id']}",
-            headers=headers,
-            json={"name": "Engineering", "color": "#224466"},
-        )
-        assert patch_tech.status_code == 200, (
-            "category patch should allow rename + recolor updates, "
-            f"got {patch_tech.status_code}: {patch_tech.text}"
-        )
-        patched_tech = patch_tech.json()["data"]
-        assert patched_tech["name"] == "Engineering"
-        assert patched_tech["color"] == "#224466"
-
-        reorder_response = auth_client.put(
-            "/podcasts/categories/order",
-            headers=headers,
-            json={"category_ids": [news_category["id"], tech_category["id"]]},
-        )
-        assert reorder_response.status_code == 200, (
-            "categories order route should support deterministic reorder writes, "
-            f"got {reorder_response.status_code}: {reorder_response.text}"
-        )
-        reordered = reorder_response.json()["data"]
-        assert [row["id"] for row in reordered] == [news_category["id"], tech_category["id"]]
-
-        delete_response = auth_client.delete(
-            f"/podcasts/categories/{tech_category['id']}",
-            headers=headers,
-        )
-        assert delete_response.status_code == 200, (
-            "deleting a category should succeed and preserve subscriptions, "
-            f"got {delete_response.status_code}: {delete_response.text}"
-        )
-
-        alpha_detail = auth_client.get(f"/podcasts/{alpha_podcast_id}", headers=headers)
-        assert alpha_detail.status_code == 200, (
-            "podcast detail should still be readable after category deletion, "
-            f"got {alpha_detail.status_code}: {alpha_detail.text}"
-        )
-        assert alpha_detail.json()["data"]["subscription"]["category"] is None, (
-            "deleting category must null subscription category assignment instead of deleting subscription"
-        )
-
-        uncategorized_after_delete = auth_client.get(
-            "/podcasts/subscriptions?category_id=null&sort=alpha&limit=20",
-            headers=headers,
-        )
-        assert uncategorized_after_delete.status_code == 200
-        uncategorized_after_delete_ids = {
-            row["podcast_id"] for row in uncategorized_after_delete.json()["data"]
-        }
-        assert uncategorized_after_delete_ids == {
-            str(alpha_podcast_id),
-            str(beta_podcast_id),
-        }, (
-            "deleted-category subscriptions must move to uncategorized pool, "
-            f"got {uncategorized_after_delete_ids}"
-        )
-
-    def test_subscription_category_name_must_be_unique_per_user(self, auth_client):
-        user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
-        headers = auth_headers(user_id)
 
-        first_create = auth_client.post(
-            "/podcasts/categories",
-            headers=headers,
-            json={"name": "Tech"},
+        provider_podcast_id = f"surface-settings-category-removed-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Removed Category Podcast")
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: []},
         )
-        assert first_create.status_code == 200, (
-            "first category create should succeed, "
-            f"got {first_create.status_code}: {first_create.text}"
-        )
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = subscribe_data["podcast_id"]
 
-        duplicate_create = auth_client.post(
-            "/podcasts/categories",
-            headers=headers,
-            json={"name": "Tech"},
+        removed_field = auth_client.patch(
+            f"/podcasts/subscriptions/{podcast_id}/settings",
+            headers=auth_headers(user_id),
+            json={"category_id": str(uuid4())},
         )
-        assert duplicate_create.status_code == 400, (
-            "duplicate category names for same user must be rejected by uniqueness contract, "
-            f"got {duplicate_create.status_code}: {duplicate_create.text}"
+        assert removed_field.status_code == 400, (
+            "hard cutover should reject the removed category_id field instead of silently accepting it, "
+            f"got {removed_field.status_code}: {removed_field.text}"
         )
-        assert duplicate_create.json()["error"]["code"] == "E_INVALID_REQUEST"
+        assert removed_field.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_episode_from_feed_item_extracts_rss_transcript_refs_with_relative_url_resolution(self):
         from nexus.services import podcasts as podcast_service
@@ -5463,7 +5337,7 @@ upgrade now
             f"expected podlove chapters to persist with rss_podlove source, got {source_rows}"
         )
 
-    def test_non_subscriber_gets_masked_404_for_podcast_detail_and_episodes(
+    def test_non_subscriber_can_read_podcast_detail_and_gets_visible_episodes_only(
         self, auth_client, monkeypatch, direct_db
     ):
         subscriber_id = create_test_user_id()
@@ -5483,19 +5357,23 @@ upgrade now
             f"/podcasts/{podcast_id}",
             headers=auth_headers(other_user_id),
         )
-        assert detail_response.status_code == 404, (
-            "podcast detail should be hidden from non-subscribers to prevent existence leakage, "
+        assert detail_response.status_code == 200, (
+            "podcast detail should stay readable without an active subscription, "
             f"got {detail_response.status_code}: {detail_response.text}"
         )
+        detail_data = detail_response.json()["data"]
+        assert detail_data["podcast"]["id"] == str(podcast_id)
+        assert detail_data["subscription"] is None
 
         episodes_response = auth_client.get(
             f"/podcasts/{podcast_id}/episodes",
             headers=auth_headers(other_user_id),
         )
-        assert episodes_response.status_code == 404, (
-            "podcast episodes should be hidden from non-subscribers to prevent existence leakage, "
+        assert episodes_response.status_code == 200, (
+            "podcast episode listing should respect media visibility instead of subscription state, "
             f"got {episodes_response.status_code}: {episodes_response.text}"
         )
+        assert episodes_response.json()["data"] == []
 
     def test_get_podcast_episodes_supports_state_sort_search_and_derived_episode_state(
         self, auth_client, monkeypatch, direct_db
@@ -6113,7 +5991,9 @@ class TestPodcastOpmlImportExport:
             f"got: {response.json()['error']}"
         )
 
-    def test_export_opml_returns_active_subscriptions_with_download_headers(self, auth_client):
+    def test_export_opml_returns_active_subscriptions_with_download_headers(
+        self, auth_client, direct_db
+    ):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
 
@@ -6122,11 +6002,12 @@ class TestPodcastOpmlImportExport:
         first_payload = _podcast_payload(first_provider, "Export Active Podcast")
         second_payload = _podcast_payload(second_provider, "Export Unsubscribed Podcast")
 
+        _ensure_library_entries_table(direct_db)
         first_sub = _subscribe(auth_client, user_id, first_payload)
         second_sub = _subscribe(auth_client, user_id, second_payload)
 
         unsubscribe_response = auth_client.delete(
-            f"/podcasts/subscriptions/{second_sub['podcast_id']}?mode=1",
+            f"/podcasts/subscriptions/{second_sub['podcast_id']}",
             headers=auth_headers(user_id),
         )
         assert unsubscribe_response.status_code == 200, (

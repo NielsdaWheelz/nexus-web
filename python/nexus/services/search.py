@@ -218,18 +218,20 @@ def visible_media_ids_cte_sql() -> str:
     3. Default closure: viewer owns default library with closure edge, and viewer is
        currently a member of the source library.
 
-    Raw presence in library_media for a default library is NOT sufficient without
+    Raw presence in library_entries for a default library is NOT sufficient without
     intrinsic or active closure-edge justification.
 
     Requires :viewer_id parameter.
     Returns media_id column.
     """
     return """
-        SELECT lm.media_id
-        FROM library_media lm
-        JOIN memberships m ON m.library_id = lm.library_id
-        JOIN libraries l ON l.id = lm.library_id
-        WHERE m.user_id = :viewer_id AND l.is_default = false
+        SELECT le.media_id
+        FROM library_entries le
+        JOIN memberships m ON m.library_id = le.library_id
+        JOIN libraries l ON l.id = le.library_id
+        WHERE m.user_id = :viewer_id
+          AND l.is_default = false
+          AND le.media_id IS NOT NULL
 
         UNION
 
@@ -463,7 +465,10 @@ def _search_media(
     elif scope_type == "library":
         scope_filter = """
             AND m.id IN (
-                SELECT media_id FROM library_media WHERE library_id = :scope_id
+                SELECT media_id
+                FROM library_entries
+                WHERE library_id = :scope_id
+                  AND media_id IS NOT NULL
             )
         """
         params["scope_id"] = scope_id
@@ -534,7 +539,10 @@ def _search_fragments(
     elif scope_type == "library":
         scope_filter = """
             AND f.media_id IN (
-                SELECT media_id FROM library_media WHERE library_id = :scope_id
+                SELECT media_id
+                FROM library_entries
+                WHERE library_id = :scope_id
+                  AND media_id IS NOT NULL
             )
         """
         params["scope_id"] = scope_id
@@ -621,7 +629,10 @@ def _search_annotations(
     elif scope_type == "library":
         scope_filter = """
             AND f.media_id IN (
-                SELECT media_id FROM library_media WHERE library_id = :scope_id
+                SELECT media_id
+                FROM library_entries
+                WHERE library_id = :scope_id
+                  AND media_id IS NOT NULL
             )
         """
         params["scope_id"] = scope_id
@@ -692,12 +703,13 @@ def _search_annotations(
           AND {transcript_media_filter}
           AND EXISTS (
               SELECT 1
-              FROM library_media lm_ann
+              FROM library_entries lm_ann
               JOIN memberships vm_ann ON vm_ann.library_id = lm_ann.library_id
                                       AND vm_ann.user_id = :viewer_id
               JOIN memberships am_ann ON am_ann.library_id = lm_ann.library_id
                                       AND am_ann.user_id = h.user_id
               WHERE lm_ann.media_id = f.media_id
+                AND lm_ann.media_id IS NOT NULL
           )
         {scope_filter}
         ORDER BY score DESC, a.id ASC
@@ -859,7 +871,10 @@ def _search_transcript_chunks(
     elif scope_type == "library":
         scope_filter = """
             AND tc.media_id IN (
-                SELECT media_id FROM library_media WHERE library_id = :scope_id
+                SELECT media_id
+                FROM library_entries
+                WHERE library_id = :scope_id
+                  AND media_id IS NOT NULL
             )
         """
         params["scope_id"] = scope_id

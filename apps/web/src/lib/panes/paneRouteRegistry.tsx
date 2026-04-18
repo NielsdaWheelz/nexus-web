@@ -102,7 +102,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Libraries",
-      subtitle: "Your source collections.",
+      subtitle: "Mixed collections for podcasts and media.",
     }),
   },
   {
@@ -215,7 +215,10 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-    getChrome: () => ({ title: "Podcasts" }),
+    getChrome: () => ({
+      title: "Podcasts",
+      subtitle: "Discover shows, manage subscriptions, and save them into libraries.",
+    }),
   },
   {
     id: "podcastSubscriptions",
@@ -226,7 +229,10 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-    getChrome: () => ({ title: "My podcasts" }),
+    getChrome: () => ({
+      title: "My podcasts",
+      subtitle: "Operational podcast settings plus library membership.",
+    }),
   },
   {
     id: "podcastDetail",

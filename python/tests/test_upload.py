@@ -24,6 +24,7 @@ from nexus.auth.middleware import AuthMiddleware
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.storage.client import FakeStorageClient
+from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.mock_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
@@ -298,7 +299,7 @@ class TestConfirmIngest:
         media_id = init_data["media_id"]
         storage_path = init_data["storage_path"]
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -346,7 +347,7 @@ class TestConfirmIngest:
         media_id = init_data["media_id"]
         storage_path = init_data["storage_path"]
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -392,7 +393,7 @@ class TestConfirmIngest:
         init_data = init_response.json()["data"]
         media_id = init_data["media_id"]
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -430,7 +431,7 @@ class TestConfirmIngest:
         media_id = init_data["media_id"]
         storage_path = init_data["storage_path"]
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -463,7 +464,7 @@ class TestConfirmIngest:
         ).json()["data"]
 
         media_id_1 = init_1["media_id"]
-        direct_db.register_cleanup("library_media", "media_id", media_id_1)
+        direct_db.register_cleanup("library_entries", "media_id", media_id_1)
         direct_db.register_cleanup("media_file", "media_id", media_id_1)
         direct_db.register_cleanup("media", "id", media_id_1)
 
@@ -491,7 +492,7 @@ class TestConfirmIngest:
         media_id_2 = init_2["media_id"]
         # Note: media_id_2 will be deleted by dedupe, so cleanup registration
         # is not strictly needed, but let's be safe
-        direct_db.register_cleanup("library_media", "media_id", media_id_2)
+        direct_db.register_cleanup("library_entries", "media_id", media_id_2)
         direct_db.register_cleanup("media_file", "media_id", media_id_2)
         direct_db.register_cleanup("media", "id", media_id_2)
 
@@ -535,7 +536,7 @@ class TestConfirmIngest:
         ).json()["data"]
 
         media_id_a = init_a["media_id"]
-        direct_db.register_cleanup("library_media", "media_id", media_id_a)
+        direct_db.register_cleanup("library_entries", "media_id", media_id_a)
         direct_db.register_cleanup("media_file", "media_id", media_id_a)
         direct_db.register_cleanup("media", "id", media_id_a)
 
@@ -555,7 +556,7 @@ class TestConfirmIngest:
         ).json()["data"]
 
         media_id_b = init_b["media_id"]
-        direct_db.register_cleanup("library_media", "media_id", media_id_b)
+        direct_db.register_cleanup("library_entries", "media_id", media_id_b)
         direct_db.register_cleanup("media_file", "media_id", media_id_b)
         direct_db.register_cleanup("media", "id", media_id_b)
 
@@ -591,7 +592,7 @@ class TestFileDownload:
         ).json()["data"]
 
         media_id = init_response["media_id"]
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -630,7 +631,7 @@ class TestFileDownload:
         ).json()["data"]
 
         media_id = init_response["media_id"]
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -673,17 +674,10 @@ class TestFileDownload:
             )
             library_id = result.scalar()
 
-            # Add to library
-            session.execute(
-                text("""
-                    INSERT INTO library_media (library_id, media_id)
-                    VALUES (:lib_id, :media_id)
-                """),
-                {"lib_id": library_id, "media_id": media_id},
-            )
+            add_media_to_library(session, library_id, media_id)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = upload_client.get(
@@ -715,7 +709,7 @@ class TestMediaWithCapabilities:
         ).json()["data"]
 
         media_id = init_response["media_id"]
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -763,7 +757,7 @@ class TestMediaWithCapabilities:
         ).json()["data"]
 
         media_id = init_response["media_id"]
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -799,7 +793,7 @@ class TestUploadProvenance:
     def test_upload_init_creates_default_library_intrinsic_row(
         self, upload_client, fake_storage, direct_db: DirectSessionManager
     ):
-        """Upload init creates both library_media and intrinsic row."""
+        """Upload init creates both library_entries and intrinsic rows."""
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
@@ -816,7 +810,7 @@ class TestUploadProvenance:
 
         media_id = init_response["media_id"]
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -839,6 +833,15 @@ class TestUploadProvenance:
             ).fetchone()
             assert intrinsic is not None
 
+            entry = session.execute(
+                text("""
+                    SELECT 1 FROM library_entries
+                    WHERE library_id = :dl AND media_id = :m
+                """),
+                {"dl": dl[0], "m": media_id},
+            ).fetchone()
+            assert entry is not None
+
     def test_ingest_duplicate_keeps_winner_attached_with_intrinsic(
         self, upload_client, fake_storage, direct_db: DirectSessionManager
     ):
@@ -859,7 +862,7 @@ class TestUploadProvenance:
         ).json()["data"]
         media_id_1 = init1["media_id"]
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id_1)
-        direct_db.register_cleanup("library_media", "media_id", media_id_1)
+        direct_db.register_cleanup("library_entries", "media_id", media_id_1)
         direct_db.register_cleanup("media_file", "media_id", media_id_1)
         direct_db.register_cleanup("media", "id", media_id_1)
 
@@ -879,7 +882,7 @@ class TestUploadProvenance:
         ).json()["data"]
         media_id_2 = init2["media_id"]
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id_2)
-        direct_db.register_cleanup("library_media", "media_id", media_id_2)
+        direct_db.register_cleanup("library_entries", "media_id", media_id_2)
         direct_db.register_cleanup("media_file", "media_id", media_id_2)
         direct_db.register_cleanup("media", "id", media_id_2)
 
@@ -930,7 +933,7 @@ class TestEpubIngestLifecycle:
         direct_db.register_cleanup("fragment_blocks", "fragment_id", mid)  # best-effort
         direct_db.register_cleanup("default_library_intrinsics", "media_id", mid)
         direct_db.register_cleanup("fragments", "media_id", mid)
-        direct_db.register_cleanup("library_media", "media_id", mid)
+        direct_db.register_cleanup("library_entries", "media_id", mid)
         direct_db.register_cleanup("media_file", "media_id", mid)
         direct_db.register_cleanup("media", "id", mid)
 
@@ -1180,7 +1183,7 @@ class TestIngestResponseBackwardCompatibility:
         init_data = resp.json()["data"]
         media_id = init_data["media_id"]
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1216,7 +1219,7 @@ class TestPdfIngestLifecycle:
         mid = d["media_id"]
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", mid)
-        direct_db.register_cleanup("library_media", "media_id", mid)
+        direct_db.register_cleanup("library_entries", "media_id", mid)
         direct_db.register_cleanup("media_file", "media_id", mid)
         direct_db.register_cleanup("media", "id", mid)
 

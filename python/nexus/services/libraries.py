@@ -24,18 +24,21 @@ from nexus.schemas.library import (
     AcceptLibraryInviteResponse,
     DeclineLibraryInviteResponse,
     InviteAcceptMembershipOut,
+    LibraryEntryOrderRequest,
+    LibraryEntryOut,
     LibraryInvitationOut,
     LibraryInvitationStatusValue,
-    LibraryMediaOrderRequest,
-    LibraryMediaOut,
     LibraryMemberOut,
     LibraryOut,
+    LibraryPodcastOut,
+    LibraryPodcastSubscriptionOut,
     LibraryRole,
 )
 from nexus.schemas.media import MediaAuthorOut, MediaOut
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
+from nexus.services.search import visible_media_ids_cte_sql
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +66,9 @@ def create_library(db: Session, viewer_id: UUID, name: str) -> LibraryOut:
         # Create library
         result = db.execute(
             text("""
-                INSERT INTO libraries (name, owner_user_id, is_default)
-                VALUES (:name, :viewer_id, false)
-                RETURNING id, name, owner_user_id, is_default, created_at, updated_at
+                INSERT INTO libraries (name, color, owner_user_id, is_default)
+                VALUES (:name, NULL, :viewer_id, false)
+                RETURNING id, name, color, owner_user_id, is_default, created_at, updated_at
             """),
             {"name": name, "viewer_id": viewer_id},
         )
@@ -85,11 +88,12 @@ def create_library(db: Session, viewer_id: UUID, name: str) -> LibraryOut:
     return LibraryOut(
         id=library_row[0],
         name=library_row[1],
-        owner_user_id=library_row[2],
-        is_default=library_row[3],
+        color=library_row[2],
+        owner_user_id=library_row[3],
+        is_default=library_row[4],
         role="admin",  # Creator is always admin
-        created_at=library_row[4],
-        updated_at=library_row[5],
+        created_at=library_row[5],
+        updated_at=library_row[6],
     )
 
 
@@ -119,7 +123,7 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
         # Fetch library with membership check (FOR UPDATE to lock)
         result = db.execute(
             text("""
-                SELECT l.id, l.name, l.owner_user_id, l.is_default, l.created_at, l.updated_at, m.role
+                SELECT l.id, l.name, l.color, l.owner_user_id, l.is_default, l.created_at, l.updated_at, m.role
                 FROM libraries l
                 JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
                 WHERE l.id = :library_id
@@ -132,8 +136,8 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
         if row is None:
             raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
-        is_default = row[3]
-        role = row[6]
+        is_default = row[4]
+        role = row[7]
 
         if is_default:
             raise ForbiddenError(
@@ -157,10 +161,11 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
     return LibraryOut(
         id=row[0],
         name=name,
-        owner_user_id=row[2],
-        is_default=row[3],
+        color=row[2],
+        owner_user_id=row[3],
+        is_default=row[4],
         role=role,
-        created_at=row[4],
+        created_at=row[5],
         updated_at=now,
     )
 
@@ -181,6 +186,8 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
         ForbiddenError: If library is default or viewer is not owner.
     """
     with transaction(db):
+        from nexus.services.default_library_closure import remove_media_from_non_default_closure
+
         result = db.execute(
             text("""
                 SELECT l.id, l.is_default, l.owner_user_id, m.role
@@ -209,6 +216,26 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                 ApiErrorCode.E_OWNER_REQUIRED, "Only the library owner can delete it"
             )
 
+        media_ids = [
+            UUID(str(entry[0]))
+            for entry in db.execute(
+                text("""
+                    SELECT media_id
+                    FROM library_entries
+                    WHERE library_id = :library_id
+                      AND media_id IS NOT NULL
+                    ORDER BY position ASC, created_at DESC, id DESC
+                """),
+                {"library_id": library_id},
+            ).fetchall()
+        ]
+        for media_id in media_ids:
+            remove_media_from_non_default_closure(db, library_id, media_id)
+
+        db.execute(
+            text("DELETE FROM library_entries WHERE library_id = :library_id"),
+            {"library_id": library_id},
+        )
         db.execute(
             text("DELETE FROM libraries WHERE id = :library_id"),
             {"library_id": library_id},
@@ -237,7 +264,7 @@ def list_libraries(db: Session, viewer_id: UUID, limit: int = 100) -> list[Libra
 
     result = db.execute(
         text("""
-            SELECT l.id, l.name, l.owner_user_id, l.is_default, l.created_at, l.updated_at, m.role
+            SELECT l.id, l.name, l.color, l.owner_user_id, l.is_default, l.created_at, l.updated_at, m.role
             FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             ORDER BY l.created_at ASC, l.id ASC
@@ -250,11 +277,12 @@ def list_libraries(db: Session, viewer_id: UUID, limit: int = 100) -> list[Libra
         LibraryOut(
             id=row[0],
             name=row[1],
-            owner_user_id=row[2],
-            is_default=row[3],
-            created_at=row[4],
-            updated_at=row[5],
-            role=row[6],
+            color=row[2],
+            owner_user_id=row[3],
+            is_default=row[4],
+            created_at=row[5],
+            updated_at=row[6],
+            role=row[7],
         )
         for row in result.fetchall()
     ]
@@ -276,7 +304,7 @@ def get_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOut:
     """
     result = db.execute(
         text("""
-            SELECT l.id, l.name, l.owner_user_id, l.is_default, l.created_at, l.updated_at, m.role
+            SELECT l.id, l.name, l.color, l.owner_user_id, l.is_default, l.created_at, l.updated_at, m.role
             FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             WHERE l.id = :library_id
@@ -291,11 +319,12 @@ def get_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOut:
     return LibraryOut(
         id=row[0],
         name=row[1],
-        owner_user_id=row[2],
-        is_default=row[3],
-        created_at=row[4],
-        updated_at=row[5],
-        role=row[6],
+        color=row[2],
+        owner_user_id=row[3],
+        is_default=row[4],
+        created_at=row[5],
+        updated_at=row[6],
+        role=row[7],
     )
 
 
@@ -304,11 +333,11 @@ def add_media_to_library(
     viewer_id: UUID,
     library_id: UUID,
     media_id: UUID,
-) -> LibraryMediaOut:
+) -> LibraryEntryOut:
     """Add media to a library.
 
     S4 closure rules:
-    - Default target: ensure intrinsic + library_media, no closure edges.
+    - Default target: ensure intrinsic + library entry, no closure edges.
     - Non-default target: insert source row, create closure edges + materialized
       default rows for all current members.
 
@@ -317,9 +346,6 @@ def add_media_to_library(
         viewer_id: The ID of the viewer.
         library_id: The ID of the library.
         media_id: The ID of the media to add.
-
-    Returns:
-        The library-media association.
 
     Raises:
         NotFoundError: If library not found, viewer not a member, or media not found.
@@ -360,47 +386,44 @@ def add_media_to_library(
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
         is_default_library = membership[1]
-        next_position = _next_library_media_position(db, library_id)
-
-        # Step 3: Insert into target library
-        result = db.execute(
-            text("""
-                INSERT INTO library_media (library_id, media_id, position)
-                VALUES (:library_id, :media_id, :position)
-                ON CONFLICT (library_id, media_id) DO NOTHING
-                RETURNING library_id, media_id, created_at, position
-            """),
-            {
-                "library_id": library_id,
-                "media_id": media_id,
-                "position": next_position,
-            },
-        )
-        row = result.fetchone()
-
-        # Step 4: S4 provenance
         if is_default_library:
             ensure_default_intrinsic(db, library_id, media_id)
         else:
-            add_media_to_non_default_closure(db, library_id, media_id)
-
-        # If row is None, the association already existed - fetch it
-        if row is None:
-            result = db.execute(
+            row = db.execute(
                 text("""
-                    SELECT library_id, media_id, created_at, position
-                    FROM library_media
-                    WHERE library_id = :library_id AND media_id = :media_id
+                    SELECT id, library_id, media_id, podcast_id, created_at, position
+                    FROM library_entries
+                    WHERE library_id = :library_id
+                      AND media_id = :media_id
                 """),
                 {"library_id": library_id, "media_id": media_id},
-            )
-            row = result.fetchone()
+            ).fetchone()
+            if row is None:
+                row = db.execute(
+                    text("""
+                        INSERT INTO library_entries (library_id, media_id, podcast_id, position)
+                        VALUES (:library_id, :media_id, NULL, :position)
+                        RETURNING id, library_id, media_id, podcast_id, created_at, position
+                    """),
+                    {
+                        "library_id": library_id,
+                        "media_id": media_id,
+                        "position": _next_library_entry_position(db, library_id),
+                    },
+                ).fetchone()
+            add_media_to_non_default_closure(db, library_id, media_id)
+        if is_default_library:
+            row = db.execute(
+                text("""
+                    SELECT id, library_id, media_id, podcast_id, created_at, position
+                    FROM library_entries
+                    WHERE library_id = :library_id
+                      AND media_id = :media_id
+                """),
+                {"library_id": library_id, "media_id": media_id},
+            ).fetchone()
 
-    return LibraryMediaOut(
-        library_id=row[0],
-        media_id=row[1],
-        created_at=row[2],
-    )
+    return _hydrate_library_entries(db, viewer_id, [row])[0]
 
 
 def remove_media_from_library(
@@ -467,49 +490,141 @@ def remove_media_from_library(
             raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
 
         # Step 3: Verify media exists in this library
-        result = db.execute(
+        row = db.execute(
             text("""
-                SELECT 1 FROM library_media
-                WHERE library_id = :library_id AND media_id = :media_id
+                SELECT id
+                FROM library_entries
+                WHERE library_id = :library_id
+                  AND media_id = :media_id
             """),
             {"library_id": library_id, "media_id": media_id},
-        )
-        if result.fetchone() is None:
+        ).fetchone()
+        if row is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
 
         if is_default:
-            # S4: remove intrinsic + gc (no cascade to non-default libraries)
             remove_default_intrinsic_and_gc(db, library_id, media_id)
         else:
-            # Remove from non-default: delete source row, remove closure edges, gc defaults
             db.execute(
                 text("""
-                    DELETE FROM library_media
-                    WHERE library_id = :library_id AND media_id = :media_id
+                    DELETE FROM library_entries
+                    WHERE library_id = :library_id
+                      AND media_id = :media_id
                 """),
                 {"library_id": library_id, "media_id": media_id},
             )
             remove_media_from_non_default_closure(db, library_id, media_id)
-        _normalize_library_media_positions(db, library_id)
+        _normalize_library_entry_positions(db, library_id)
 
 
-def list_library_media(
+def add_podcast_to_library(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    podcast_id: UUID,
+) -> LibraryEntryOut:
+    with transaction(db):
+        membership = db.execute(
+            text("""
+                SELECT m.role, l.is_default
+                FROM memberships m
+                JOIN libraries l ON l.id = m.library_id
+                WHERE m.library_id = :library_id
+                  AND m.user_id = :viewer_id
+                FOR UPDATE OF l
+            """),
+            {"library_id": library_id, "viewer_id": viewer_id},
+        ).fetchone()
+        if membership is None:
+            raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
+        if membership[0] != "admin":
+            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
+        if bool(membership[1]):
+            raise ForbiddenError(
+                ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN,
+                "Podcasts cannot be added to the default library",
+            )
+
+        podcast_row = db.execute(
+            text("""
+                SELECT p.id
+                FROM podcasts p
+                JOIN podcast_subscriptions ps
+                  ON ps.podcast_id = p.id
+                 AND ps.user_id = :viewer_id
+                 AND ps.status = 'active'
+                WHERE p.id = :podcast_id
+            """),
+            {"viewer_id": viewer_id, "podcast_id": podcast_id},
+        ).fetchone()
+        if podcast_row is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Active podcast subscription not found")
+
+        row = db.execute(
+            text("""
+                SELECT id, library_id, media_id, podcast_id, created_at, position
+                FROM library_entries
+                WHERE library_id = :library_id
+                  AND podcast_id = :podcast_id
+            """),
+            {"library_id": library_id, "podcast_id": podcast_id},
+        ).fetchone()
+        if row is None:
+            next_position = _next_library_entry_position(db, library_id)
+            row = db.execute(
+                text("""
+                    INSERT INTO library_entries (library_id, media_id, podcast_id, position)
+                    VALUES (:library_id, NULL, :podcast_id, :position)
+                    RETURNING id, library_id, media_id, podcast_id, created_at, position
+                """),
+                {
+                    "library_id": library_id,
+                    "podcast_id": podcast_id,
+                    "position": next_position,
+                },
+            ).fetchone()
+
+    return _hydrate_library_entries(db, viewer_id, [row])[0]
+
+
+def remove_podcast_from_library(
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    podcast_id: UUID,
+) -> None:
+    with transaction(db):
+        row = _fetch_library_with_membership(db, viewer_id, library_id, lock=True)
+        _require_admin(row[6])
+        _require_non_default(row[1])
+        deleted = db.execute(
+            text("""
+                DELETE FROM library_entries
+                WHERE library_id = :library_id
+                  AND podcast_id = :podcast_id
+                RETURNING id
+            """),
+            {"library_id": library_id, "podcast_id": podcast_id},
+        ).fetchone()
+        if deleted is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found in library")
+        _normalize_library_entry_positions(db, library_id)
+
+
+def list_library_entries(
     db: Session,
     viewer_id: UUID,
     library_id: UUID,
     limit: int = 100,
     offset: int = 0,
-) -> list[MediaOut]:
-    """List media in a library.
+) -> list[LibraryEntryOut]:
+    """List ordered entries in a library.
 
     Args:
         db: Database session.
         viewer_id: The ID of the viewer.
         library_id: The ID of the library.
         limit: Maximum number of media to return (default 100, max 200).
-
-    Returns:
-        List of media ordered by library_media.position ASC, then recency.
 
     Raises:
         NotFoundError: If library not found or viewer is not a member.
@@ -534,158 +649,85 @@ def list_library_media(
     if result.fetchone() is None:
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
-    # Fetch media with fields needed for capabilities
-    result = db.execute(
+    rows = db.execute(
         text("""
-            SELECT m.id, m.kind, m.title, m.canonical_source_url,
-                   m.processing_status, m.failure_stage, m.last_error_code,
-                   m.external_playback_url, m.provider, m.provider_id,
-                   m.created_at, m.updated_at,
-                   EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) as has_file,
-                   EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) as has_fragments,
-                   m.published_date, m.publisher, m.language, m.description
-            FROM media m
-            JOIN library_media lm ON lm.media_id = m.id
-            WHERE lm.library_id = :library_id
-            ORDER BY lm.position ASC, lm.created_at DESC, m.id DESC
+            SELECT id, library_id, media_id, podcast_id, created_at, position
+            FROM library_entries
+            WHERE library_id = :library_id
+            ORDER BY position ASC, created_at DESC, id DESC
             LIMIT :limit
             OFFSET :offset
         """),
         {"library_id": library_id, "limit": limit, "offset": offset},
-    )
-
-    rows = result.fetchall()
-
-    pdf_media_ids = [row[0] for row in rows if row[1] == "pdf"]
-    pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
-
-    # Batch-fetch authors for all returned media IDs to avoid N+1
-    page_media_ids = [row[0] for row in rows]
-    authors_by_media: dict = {mid: [] for mid in page_media_ids}
-    if page_media_ids:
-        author_rows = db.execute(
-            text(
-                "SELECT id, media_id, name, role FROM media_authors "
-                "WHERE media_id = ANY(:ids) ORDER BY sort_order"
-            ),
-            {"ids": page_media_ids},
-        ).fetchall()
-        for ar in author_rows:
-            authors_by_media[ar[1]].append(MediaAuthorOut(id=ar[0], name=ar[2], role=ar[3]))
-
-    media_list = []
-    for row in rows:
-        _pdf_ready = pdf_readiness.get(row[0], False) if row[1] == "pdf" else False
-        capabilities = derive_capabilities(
-            kind=row[1],
-            processing_status=row[4],
-            last_error_code=row[6],
-            media_file_exists=row[12],
-            external_playback_url_exists=row[7] is not None,
-            has_fragments=row[13],
-            pdf_quote_text_ready=_pdf_ready,
-        )
-        playback_source = derive_playback_source(
-            kind=row[1],
-            external_playback_url=row[7],
-            canonical_source_url=row[3],
-            provider=row[8],
-            provider_id=row[9],
-        )
-        media_list.append(
-            MediaOut(
-                id=row[0],
-                kind=row[1],
-                title=row[2],
-                canonical_source_url=row[3],
-                processing_status=row[4],
-                failure_stage=row[5],
-                last_error_code=row[6],
-                playback_source=playback_source,
-                capabilities=capabilities,
-                authors=authors_by_media.get(row[0], []),
-                published_date=row[14],
-                publisher=row[15],
-                language=row[16],
-                description=row[17],
-                created_at=row[10],
-                updated_at=row[11],
-            )
-        )
-    return media_list
+    ).fetchall()
+    return _hydrate_library_entries(db, viewer_id, rows)
 
 
-def reorder_library_media(
+def reorder_library_entries(
     db: Session,
     viewer_id: UUID,
     library_id: UUID,
-    body: LibraryMediaOrderRequest,
-) -> list[MediaOut]:
-    """Replace full library media order for admin viewers."""
-    requested_media_ids = [UUID(str(media_id)) for media_id in body.media_ids]
-    if len(set(requested_media_ids)) != len(requested_media_ids):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Library media order contains duplicates",
-        )
-
+    body: LibraryEntryOrderRequest,
+) -> list[LibraryEntryOut]:
+    """Replace full library entry order for admin viewers."""
     with transaction(db):
-        _, _, _, _, _, _, role = _fetch_library_with_membership(
+        _, _, _, _, _, _, role, _ = _fetch_library_with_membership(
             db,
             viewer_id,
             library_id,
             lock=True,
         )
         _require_admin(role)
-        existing_media_ids = [
+        existing_entry_ids = [
             row[0]
             for row in db.execute(
                 text("""
-                    SELECT media_id
-                    FROM library_media
+                    SELECT id
+                    FROM library_entries
                     WHERE library_id = :library_id
-                    ORDER BY position ASC, created_at DESC, media_id DESC
+                    ORDER BY position ASC, created_at DESC, id DESC
                 """),
                 {"library_id": library_id},
             ).fetchall()
         ]
-        if len(existing_media_ids) != len(requested_media_ids) or set(existing_media_ids) != set(
-            requested_media_ids
+        requested_entry_ids = [UUID(str(entry_id)) for entry_id in body.entry_ids]
+        if len(existing_entry_ids) != len(requested_entry_ids) or set(existing_entry_ids) != set(
+            requested_entry_ids
         ):
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST,
-                "Library reorder requires an exact full set of media IDs",
+                "Library reorder requires an exact full set of entry IDs",
             )
-        for position, media_id in enumerate(requested_media_ids):
+        for position, entry_id in enumerate(requested_entry_ids):
             db.execute(
                 text("""
-                    UPDATE library_media
+                    UPDATE library_entries
                     SET position = :position
                     WHERE library_id = :library_id
-                      AND media_id = :media_id
+                      AND id = :entry_id
                 """),
                 {
                     "position": position,
                     "library_id": library_id,
-                    "media_id": media_id,
+                    "entry_id": entry_id,
                 },
             )
-        _normalize_library_media_positions(db, library_id)
+        _normalize_library_entry_positions(db, library_id)
 
-    return list_library_media(
+    return list_library_entries(
         db,
         viewer_id=viewer_id,
         library_id=library_id,
-        limit=min(max(len(requested_media_ids), 1), 200),
+        limit=min(max(len(requested_entry_ids), 1), 200),
         offset=0,
     )
 
 
-def _next_library_media_position(db: Session, library_id: UUID) -> int:
+def _next_library_entry_position(db: Session, library_id: UUID) -> int:
     next_position = db.execute(
         text("""
             SELECT COALESCE(MAX(position), -1) + 1
-            FROM library_media
+            FROM library_entries
             WHERE library_id = :library_id
         """),
         {"library_id": library_id},
@@ -695,28 +737,252 @@ def _next_library_media_position(db: Session, library_id: UUID) -> int:
     return int(next_position)
 
 
-def _normalize_library_media_positions(db: Session, library_id: UUID) -> None:
+def _normalize_library_entry_positions(db: Session, library_id: UUID) -> None:
     db.execute(
         text("""
             WITH ordered AS (
                 SELECT
-                    library_id,
-                    media_id,
+                    id,
                     ROW_NUMBER() OVER (
-                        ORDER BY position ASC, created_at DESC, media_id DESC
+                        ORDER BY position ASC, created_at DESC, id DESC
                     ) - 1 AS new_position
-                FROM library_media
+                FROM library_entries
                 WHERE library_id = :library_id
             )
-            UPDATE library_media lm
+            UPDATE library_entries le
             SET position = ordered.new_position
             FROM ordered
-            WHERE lm.library_id = ordered.library_id
-              AND lm.media_id = ordered.media_id
-              AND lm.position <> ordered.new_position
+            WHERE le.id = ordered.id
+              AND le.position <> ordered.new_position
         """),
         {"library_id": library_id},
     )
+
+
+def _hydrate_library_entries(
+    db: Session,
+    viewer_id: UUID,
+    rows: list[tuple],
+) -> list[LibraryEntryOut]:
+    if not rows:
+        return []
+
+    media_ids: list[UUID] = []
+    podcast_ids: list[UUID] = []
+    for row in rows:
+        if row[2] is not None:
+            media_ids.append(UUID(str(row[2])))
+        if row[3] is not None:
+            podcast_ids.append(UUID(str(row[3])))
+
+    media_by_id: dict[UUID, MediaOut] = {}
+    if media_ids:
+        media_rows = db.execute(
+            text("""
+                SELECT m.id, m.kind, m.title, m.canonical_source_url,
+                       m.processing_status, m.failure_stage, m.last_error_code,
+                       m.external_playback_url, m.provider, m.provider_id,
+                       m.created_at, m.updated_at,
+                       EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file,
+                       EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) AS has_fragments,
+                       m.published_date, m.publisher, m.language, m.description
+                FROM media m
+                WHERE m.id = ANY(:media_ids)
+            """),
+            {"media_ids": media_ids},
+        ).fetchall()
+        pdf_media_ids = [UUID(str(row[0])) for row in media_rows if row[1] == "pdf"]
+        pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
+        author_rows = db.execute(
+            text("""
+                SELECT id, media_id, name, role
+                FROM media_authors
+                WHERE media_id = ANY(:media_ids)
+                ORDER BY sort_order
+            """),
+            {"media_ids": media_ids},
+        ).fetchall()
+        authors_by_media: dict[UUID, list[MediaAuthorOut]] = {
+            media_id: [] for media_id in media_ids
+        }
+        for author_row in author_rows:
+            author_media_id = UUID(str(author_row[1]))
+            authors_by_media.setdefault(author_media_id, []).append(
+                MediaAuthorOut(id=author_row[0], name=author_row[2], role=author_row[3])
+            )
+        for media_row in media_rows:
+            media_id = UUID(str(media_row[0]))
+            pdf_ready = pdf_readiness.get(media_id, False) if media_row[1] == "pdf" else False
+            media_by_id[media_id] = MediaOut(
+                id=media_id,
+                kind=media_row[1],
+                title=media_row[2],
+                canonical_source_url=media_row[3],
+                processing_status=media_row[4],
+                failure_stage=media_row[5],
+                last_error_code=media_row[6],
+                playback_source=derive_playback_source(
+                    kind=media_row[1],
+                    external_playback_url=media_row[7],
+                    canonical_source_url=media_row[3],
+                    provider=media_row[8],
+                    provider_id=media_row[9],
+                ),
+                capabilities=derive_capabilities(
+                    kind=media_row[1],
+                    processing_status=media_row[4],
+                    last_error_code=media_row[6],
+                    media_file_exists=bool(media_row[12]),
+                    external_playback_url_exists=media_row[7] is not None,
+                    has_fragments=bool(media_row[13]),
+                    pdf_quote_text_ready=pdf_ready,
+                ),
+                authors=authors_by_media.get(media_id, []),
+                published_date=media_row[14],
+                publisher=media_row[15],
+                language=media_row[16],
+                description=media_row[17],
+                created_at=media_row[10],
+                updated_at=media_row[11],
+            )
+
+    podcast_rows_by_id: dict[UUID, tuple] = {}
+    if podcast_ids:
+        podcast_rows = db.execute(
+            text(
+                f"""
+                WITH visible_media AS (
+                    {visible_media_ids_cte_sql()}
+                ),
+                podcast_unplayed AS (
+                    SELECT
+                        pe.podcast_id,
+                        COUNT(*) FILTER (
+                            WHERE pls.is_completed IS NOT TRUE
+                              AND COALESCE(pls.position_ms, 0) = 0
+                        ) AS unplayed_count
+                    FROM podcast_episodes pe
+                    JOIN visible_media vm
+                      ON vm.media_id = pe.media_id
+                    LEFT JOIN podcast_listening_states pls
+                      ON pls.user_id = :viewer_id
+                     AND pls.media_id = pe.media_id
+                    WHERE pe.podcast_id = ANY(:podcast_ids)
+                    GROUP BY pe.podcast_id
+                )
+                SELECT
+                    p.id,
+                    p.provider,
+                    p.provider_podcast_id,
+                    p.title,
+                    p.author,
+                    p.feed_url,
+                    p.website_url,
+                    p.image_url,
+                    p.description,
+                    p.created_at,
+                    p.updated_at,
+                    COALESCE(pu.unplayed_count, 0) AS unplayed_count,
+                    ps.status,
+                    ps.default_playback_speed,
+                    ps.auto_queue,
+                    ps.sync_status,
+                    ps.sync_error_code,
+                    ps.sync_error_message,
+                    ps.sync_attempts,
+                    ps.sync_started_at,
+                    ps.sync_completed_at,
+                    ps.last_synced_at,
+                    ps.updated_at
+                FROM podcasts p
+                LEFT JOIN podcast_unplayed pu
+                  ON pu.podcast_id = p.id
+                LEFT JOIN podcast_subscriptions ps
+                  ON ps.podcast_id = p.id
+                 AND ps.user_id = :viewer_id
+                WHERE p.id = ANY(:podcast_ids)
+                """
+            ),
+            {"viewer_id": viewer_id, "podcast_ids": podcast_ids},
+        ).fetchall()
+        podcast_rows_by_id = {UUID(str(row[0])): row for row in podcast_rows}
+
+    hydrated: list[LibraryEntryOut] = []
+    for row in rows:
+        entry_id = UUID(str(row[0]))
+        entry_library_id = UUID(str(row[1]))
+        media_id = UUID(str(row[2])) if row[2] is not None else None
+        podcast_id = UUID(str(row[3])) if row[3] is not None else None
+        if media_id is not None:
+            media = media_by_id.get(media_id)
+            if media is None:
+                continue
+            hydrated.append(
+                LibraryEntryOut(
+                    id=entry_id,
+                    library_id=entry_library_id,
+                    kind="media",
+                    position=int(row[5]),
+                    created_at=row[4],
+                    media=media,
+                    podcast=None,
+                    subscription=None,
+                )
+            )
+            continue
+
+        if podcast_id is None:
+            continue
+
+        podcast_row = podcast_rows_by_id.get(podcast_id)
+        if podcast_row is None:
+            continue
+
+        subscription = None
+        if podcast_row[12] is not None:
+            subscription = LibraryPodcastSubscriptionOut(
+                status=podcast_row[12],
+                default_playback_speed=float(podcast_row[13])
+                if podcast_row[13] is not None
+                else None,
+                auto_queue=bool(podcast_row[14]),
+                sync_status=podcast_row[15],
+                sync_error_code=podcast_row[16],
+                sync_error_message=podcast_row[17],
+                sync_attempts=int(podcast_row[18] or 0),
+                sync_started_at=podcast_row[19],
+                sync_completed_at=podcast_row[20],
+                last_synced_at=podcast_row[21],
+                updated_at=podcast_row[22],
+            )
+
+        hydrated.append(
+            LibraryEntryOut(
+                id=entry_id,
+                library_id=entry_library_id,
+                kind="podcast",
+                position=int(row[5]),
+                created_at=row[4],
+                media=None,
+                podcast=LibraryPodcastOut(
+                    id=podcast_id,
+                    provider=podcast_row[1],
+                    provider_podcast_id=podcast_row[2],
+                    title=podcast_row[3],
+                    author=podcast_row[4],
+                    feed_url=podcast_row[5],
+                    website_url=podcast_row[6],
+                    image_url=podcast_row[7],
+                    description=podcast_row[8],
+                    created_at=podcast_row[9],
+                    updated_at=podcast_row[10],
+                    unplayed_count=int(podcast_row[11] or 0),
+                ),
+                subscription=subscription,
+            )
+        )
+
+    return hydrated
 
 
 # =============================================================================
@@ -729,14 +995,14 @@ def _fetch_library_with_membership(
 ) -> tuple:
     """Fetch library row joined with viewer membership.
 
-    Returns (library_id, is_default, owner_user_id, created_at, updated_at, name, role)
+    Returns (library_id, is_default, owner_user_id, created_at, updated_at, name, role, color)
     or raises masked 404 if not found or viewer is not a member.
     """
     lock_clause = "FOR UPDATE OF l" if lock else ""
     result = db.execute(
         text(f"""
             SELECT l.id, l.is_default, l.owner_user_id, l.created_at, l.updated_at,
-                   l.name, m.role
+                   l.name, m.role, l.color
             FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
             WHERE l.id = :library_id
@@ -767,15 +1033,34 @@ def _require_non_default(is_default: bool) -> None:
 
 def _repair_owner_admin_invariant(db: Session, library_id: UUID, owner_user_id: UUID) -> None:
     """Ensure the owner has an admin membership row. Create or promote if needed."""
-    db.execute(
+    row = db.execute(
         text("""
-            INSERT INTO memberships (library_id, user_id, role)
-            VALUES (:library_id, :owner_user_id, 'admin')
-            ON CONFLICT (library_id, user_id)
-            DO UPDATE SET role = 'admin'
+            SELECT role
+            FROM memberships
+            WHERE library_id = :library_id
+              AND user_id = :owner_user_id
         """),
         {"library_id": library_id, "owner_user_id": owner_user_id},
-    )
+    ).fetchone()
+    if row is None:
+        db.execute(
+            text("""
+                INSERT INTO memberships (library_id, user_id, role)
+                VALUES (:library_id, :owner_user_id, 'admin')
+            """),
+            {"library_id": library_id, "owner_user_id": owner_user_id},
+        )
+        return
+    if row[0] != "admin":
+        db.execute(
+            text("""
+                UPDATE memberships
+                SET role = 'admin'
+                WHERE library_id = :library_id
+                  AND user_id = :owner_user_id
+            """),
+            {"library_id": library_id, "owner_user_id": owner_user_id},
+        )
 
 
 def list_library_members(
@@ -1021,7 +1306,7 @@ def transfer_library_ownership(
         # Lock library and fetch with viewer membership
         result = db.execute(
             text("""
-                SELECT l.id, l.name, l.owner_user_id, l.is_default, l.created_at,
+                SELECT l.id, l.name, l.color, l.owner_user_id, l.is_default, l.created_at,
                        l.updated_at, m.role
                 FROM libraries l
                 LEFT JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
@@ -1032,12 +1317,12 @@ def transfer_library_ownership(
         )
         row = result.fetchone()
 
-        if row is None or row[6] is None:
+        if row is None or row[7] is None:
             raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
-        is_default = row[3]
-        current_owner = row[2]
-        viewer_role = row[6]
+        is_default = row[4]
+        current_owner = row[3]
+        viewer_role = row[7]
 
         _require_non_default(is_default)
 
@@ -1063,10 +1348,11 @@ def transfer_library_ownership(
             return LibraryOut(
                 id=row[0],
                 name=row[1],
-                owner_user_id=row[2],
-                is_default=row[3],
-                created_at=row[4],
-                updated_at=row[5],
+                color=row[2],
+                owner_user_id=row[3],
+                is_default=row[4],
+                created_at=row[5],
+                updated_at=row[6],
                 role=viewer_role,
             )
 
@@ -1111,9 +1397,10 @@ def transfer_library_ownership(
     return LibraryOut(
         id=row[0],
         name=row[1],
+        color=row[2],
         owner_user_id=new_owner_user_id,
-        is_default=row[3],
-        created_at=row[4],
+        is_default=row[4],
+        created_at=row[5],
         updated_at=now,
         role="admin",
     )
@@ -1395,15 +1682,23 @@ def accept_library_invite(
                 "Cannot accept invite to default library",
             )
 
-        # Step 5: Membership upsert (ON CONFLICT DO NOTHING)
-        db.execute(
+        membership = db.execute(
             text("""
-                INSERT INTO memberships (library_id, user_id, role)
-                VALUES (:lid, :uid, :role)
-                ON CONFLICT (library_id, user_id) DO NOTHING
+                SELECT role
+                FROM memberships
+                WHERE library_id = :lid
+                  AND user_id = :uid
             """),
-            {"lid": invite_library_id, "uid": viewer_id, "role": invite_role},
-        )
+            {"lid": invite_library_id, "uid": viewer_id},
+        ).fetchone()
+        if membership is None:
+            db.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:lid, :uid, :role)
+                """),
+                {"lid": invite_library_id, "uid": viewer_id, "role": invite_role},
+            )
 
         # Step 6: Update invite to accepted
         now = datetime.now(UTC)
@@ -1428,26 +1723,53 @@ def accept_library_invite(
 
         backfill_job_status = "pending"
         if default_lib is not None:
-            db.execute(
+            job = db.execute(
                 text("""
-                    INSERT INTO default_library_backfill_jobs
-                        (default_library_id, source_library_id, user_id,
-                         status, attempts, last_error_code, updated_at, finished_at)
-                    VALUES (:dlid, :slid, :uid, 'pending', 0, NULL, now(), NULL)
-                    ON CONFLICT (default_library_id, source_library_id, user_id)
-                    DO UPDATE SET
-                        status = 'pending',
-                        attempts = 0,
-                        last_error_code = NULL,
-                        updated_at = now(),
-                        finished_at = NULL
+                    SELECT status
+                    FROM default_library_backfill_jobs
+                    WHERE default_library_id = :dlid
+                      AND source_library_id = :slid
+                      AND user_id = :uid
                 """),
                 {
                     "dlid": default_lib[0],
                     "slid": invite_library_id,
                     "uid": viewer_id,
                 },
-            )
+            ).fetchone()
+            if job is None:
+                db.execute(
+                    text("""
+                        INSERT INTO default_library_backfill_jobs
+                            (default_library_id, source_library_id, user_id,
+                             status, attempts, last_error_code, updated_at, finished_at)
+                        VALUES (:dlid, :slid, :uid, 'pending', 0, NULL, now(), NULL)
+                    """),
+                    {
+                        "dlid": default_lib[0],
+                        "slid": invite_library_id,
+                        "uid": viewer_id,
+                    },
+                )
+            else:
+                db.execute(
+                    text("""
+                        UPDATE default_library_backfill_jobs
+                        SET status = 'pending',
+                            attempts = 0,
+                            last_error_code = NULL,
+                            updated_at = now(),
+                            finished_at = NULL
+                        WHERE default_library_id = :dlid
+                          AND source_library_id = :slid
+                          AND user_id = :uid
+                    """),
+                    {
+                        "dlid": default_lib[0],
+                        "slid": invite_library_id,
+                        "uid": viewer_id,
+                    },
+                )
 
         # Refetch updated invite row
         updated = db.execute(

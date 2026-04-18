@@ -4,14 +4,12 @@ from uuid import uuid4
 
 import pytest
 
-from nexus.db.models import (
-    DefaultLibraryIntrinsic,
-    LibraryMedia,
-    Media,
-    MediaKind,
-    ProcessingStatus,
+from nexus.db.models import Media, MediaKind, ProcessingStatus
+from tests.factories import (
+    add_media_to_library,
+    create_test_media_in_library,
+    get_user_default_library,
 )
-from tests.factories import create_test_media_in_library, get_user_default_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -51,7 +49,7 @@ class TestListVisibleMedia:
 
         for media_id in (media_a, media_b):
             direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-            direct_db.register_cleanup("library_media", "media_id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get("/media", headers=auth_headers(user_a))
@@ -90,18 +88,12 @@ class TestListVisibleMedia:
                 )
             )
             session.flush()
-            session.add(LibraryMedia(library_id=default_library_id, media_id=pdf_id))
-            session.add(
-                DefaultLibraryIntrinsic(
-                    default_library_id=default_library_id,
-                    media_id=pdf_id,
-                )
-            )
+            add_media_to_library(session, default_library_id, pdf_id)
             session.commit()
 
         for media_id in (article_id, pdf_id):
             direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-            direct_db.register_cleanup("library_media", "media_id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get("/media?kind=pdf", headers=auth_headers(user_id))
@@ -130,7 +122,7 @@ class TestListVisibleMedia:
 
         for media_id in media_ids:
             direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-            direct_db.register_cleanup("library_media", "media_id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
 
         page_one = auth_client.get("/media?limit=2", headers=auth_headers(user_id))
@@ -195,7 +187,7 @@ class TestListVisibleMedia:
 
         for media_id in (match_id, non_match_id):
             direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-            direct_db.register_cleanup("library_media", "media_id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get("/media?search=Distributed", headers=auth_headers(user_id))

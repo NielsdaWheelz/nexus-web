@@ -110,10 +110,6 @@ export interface MeResponse {
   default_library_id: string | null;
 }
 
-export interface LibraryMediaSummary {
-  id: string;
-}
-
 export interface SelectionState {
   range: Range;
   rect: DOMRect;
@@ -148,7 +144,7 @@ export interface NavigationTocNodeLike {
 export const TEXT_ANCHOR_TOP_PADDING_PX = 56;
 export const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
 export const DOCUMENT_PROCESSING_POLL_INTERVAL_MS = 3000;
-export const LIBRARY_MEDIA_PAGE_SIZE = 200;
+export const LIBRARY_ENTRY_PAGE_SIZE = 200;
 
 // =============================================================================
 // DOM / Utility helpers

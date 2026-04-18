@@ -214,18 +214,18 @@ def _remove_background_job_insert_failure(direct_db: DirectSessionManager) -> No
         session.commit()
 
 
-def _install_library_media_insert_failure(direct_db: DirectSessionManager) -> None:
-    """Force library_media inserts to fail until teardown is called."""
+def _install_library_entry_insert_failure(direct_db: DirectSessionManager) -> None:
+    """Force library_entries inserts to fail until teardown is called."""
     with direct_db.session() as session:
         session.execute(
             text(
                 """
-                CREATE OR REPLACE FUNCTION nexus_test_fail_library_media_insert()
+                CREATE OR REPLACE FUNCTION nexus_test_fail_library_entry_insert()
                 RETURNS trigger
                 LANGUAGE plpgsql
                 AS $$
                 BEGIN
-                    RAISE EXCEPTION 'library_media unavailable';
+                    RAISE EXCEPTION 'library_entries unavailable';
                 END;
                 $$;
                 """
@@ -234,35 +234,35 @@ def _install_library_media_insert_failure(direct_db: DirectSessionManager) -> No
         session.execute(
             text(
                 """
-                DROP TRIGGER IF EXISTS nexus_test_fail_library_media_insert
-                ON library_media
+                DROP TRIGGER IF EXISTS nexus_test_fail_library_entry_insert
+                ON library_entries
                 """
             )
         )
         session.execute(
             text(
                 """
-                CREATE TRIGGER nexus_test_fail_library_media_insert
-                BEFORE INSERT ON library_media
+                CREATE TRIGGER nexus_test_fail_library_entry_insert
+                BEFORE INSERT ON library_entries
                 FOR EACH ROW
-                EXECUTE FUNCTION nexus_test_fail_library_media_insert()
+                EXECUTE FUNCTION nexus_test_fail_library_entry_insert()
                 """
             )
         )
         session.commit()
 
 
-def _remove_library_media_insert_failure(direct_db: DirectSessionManager) -> None:
+def _remove_library_entry_insert_failure(direct_db: DirectSessionManager) -> None:
     with direct_db.session() as session:
         session.execute(
             text(
                 """
-                DROP TRIGGER IF EXISTS nexus_test_fail_library_media_insert
-                ON library_media
+                DROP TRIGGER IF EXISTS nexus_test_fail_library_entry_insert
+                ON library_entries
                 """
             )
         )
-        session.execute(text("DROP FUNCTION IF EXISTS nexus_test_fail_library_media_insert()"))
+        session.execute(text("DROP FUNCTION IF EXISTS nexus_test_fail_library_entry_insert()"))
         session.commit()
 
 
@@ -305,7 +305,7 @@ class TestFromUrlSuccess:
         assert "ingest_enqueued" in data
 
         # Register cleanup
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Verify media row in database
@@ -369,7 +369,7 @@ class TestFromUrlSuccess:
                 direct_db.register_cleanup("background_jobs", "id", job_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         assert data["idempotency_outcome"] == "created"
@@ -442,7 +442,7 @@ class TestFromUrlSuccess:
                 direct_db.register_cleanup("background_jobs", "id", job_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         assert data["idempotency_outcome"] == "created"
@@ -483,14 +483,14 @@ class TestFromUrlSuccess:
         assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        # Verify library_media row exists
+        # Verify library_entries row exists
         with direct_db.session() as session:
             result = session.execute(
                 text("""
-                    SELECT library_id, media_id FROM library_media
+                    SELECT library_id, media_id FROM library_entries
                     WHERE library_id = :library_id AND media_id = :media_id
                 """),
                 {"library_id": default_library_id, "media_id": media_id},
@@ -514,7 +514,7 @@ class TestFromUrlSuccess:
         assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Creator should be able to read the media
@@ -537,7 +537,7 @@ class TestFromUrlSuccess:
         assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         with direct_db.session() as session:
@@ -567,7 +567,7 @@ class TestFromUrlSuccess:
         assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         with direct_db.session() as session:
@@ -599,7 +599,7 @@ class TestFromUrlSuccess:
         assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         with direct_db.session() as session:
@@ -630,7 +630,7 @@ class TestFromUrlSuccess:
         first_data = first_response.json()["data"]
         media_id = UUID(first_data["media_id"])
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         assert first_data["idempotency_outcome"] == "created"
@@ -700,7 +700,7 @@ class TestFromUrlSuccess:
         first_data = first_response.json()["data"]
         media_id = UUID(first_data["media_id"])
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         second_response = auth_client.post(
@@ -719,7 +719,7 @@ class TestFromUrlSuccess:
             attachments = session.execute(
                 text("""
                     SELECT library_id
-                    FROM library_media
+                    FROM library_entries
                     WHERE media_id = :media_id
                 """),
                 {"media_id": media_id},
@@ -747,7 +747,7 @@ class TestFromUrlSuccess:
 
         data = response.json()["data"]
         media_id = UUID(data["media_id"])
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         assert data["ingest_enqueued"] is True, (
@@ -907,7 +907,7 @@ class TestFromUrlXPost:
         media_id = UUID(data["media_id"])
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media_authors", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         assert data["idempotency_outcome"] == "created"
@@ -987,7 +987,7 @@ class TestFromUrlXPost:
         media_id = UUID(first_data["media_id"])
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media_authors", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         second_response = auth_client.post(
@@ -1007,7 +1007,7 @@ class TestFromUrlXPost:
             attachments = session.execute(
                 text("""
                     SELECT library_id
-                    FROM library_media
+                    FROM library_entries
                     WHERE media_id = :media_id
                 """),
                 {"media_id": media_id},
@@ -1098,7 +1098,7 @@ class TestFromUrlRemoteFiles:
 
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         assert data["idempotency_outcome"] == "created"
@@ -1152,7 +1152,7 @@ class TestFromUrlRemoteFiles:
 
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         assert data["idempotency_outcome"] == "created"
@@ -1214,7 +1214,7 @@ class TestFromUrlRemoteFiles:
 
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         assert data["processing_status"] == "extracting"
@@ -1464,7 +1464,7 @@ class TestFromUrlRemoteFiles:
         monkeypatch.setattr("nexus.services.media.uuid4", lambda: media_uuid)
         storage_path = build_storage_path(media_uuid, "pdf")
 
-        _install_library_media_insert_failure(direct_db)
+        _install_library_entry_insert_failure(direct_db)
         try:
             _expect_remote_file(
                 remote_http,
@@ -1480,7 +1480,7 @@ class TestFromUrlRemoteFiles:
                     headers=auth_headers(user_id),
                 )
         finally:
-            _remove_library_media_insert_failure(direct_db)
+            _remove_library_entry_insert_failure(direct_db)
 
         assert storage.put_paths == [storage_path]
         assert storage.get_object(storage_path) is None
@@ -1524,7 +1524,7 @@ class TestFromUrlRemoteFiles:
 
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         second_response = auth_client.post(
@@ -1752,7 +1752,7 @@ class TestFromUrlVisibility:
         assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # User B tries to read - should get 404 (masked)
@@ -1792,7 +1792,7 @@ class TestFromUrlProvenance:
     def test_from_url_creates_default_library_intrinsic_row(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """POST /media/from_url creates both library_media and intrinsic row."""
+        """POST /media/from_url creates both library_entries and intrinsic rows."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -1805,7 +1805,7 @@ class TestFromUrlProvenance:
         media_id = UUID(response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         with direct_db.session() as session:
@@ -1819,10 +1819,10 @@ class TestFromUrlProvenance:
             ).fetchone()
             assert dl is not None
 
-            # Verify library_media exists
+            # Verify library_entries exists
             lm = session.execute(
                 text("""
-                    SELECT 1 FROM library_media
+                    SELECT 1 FROM library_entries
                     WHERE library_id = :dl AND media_id = :m
                 """),
                 {"dl": dl[0], "m": media_id},

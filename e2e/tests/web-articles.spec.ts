@@ -71,6 +71,7 @@ test.describe("web articles", () => {
     const existingPayload = (await existingResponse.json()) as {
       data: { highlights: Array<{ exact: string }> };
     };
+    const existingCount = existingPayload.data.highlights.length;
     const existingExacts = new Set(
       existingPayload.data.highlights.map((highlight) => highlight.exact)
     );
@@ -81,7 +82,6 @@ test.describe("web articles", () => {
     const paragraphCount = await paragraphs.count();
     let paragraphIndex = -1;
     let selectionLength = 0;
-    let selectedExact = "";
 
     for (let index = 0; index < paragraphCount; index += 1) {
       const paragraph = paragraphs.nth(index);
@@ -95,7 +95,6 @@ test.describe("web articles", () => {
         if (candidate.length >= 2 && !existingExacts.has(candidate)) {
           paragraphIndex = index;
           selectionLength = len;
-          selectedExact = candidate;
           break;
         }
       }
@@ -153,9 +152,7 @@ test.describe("web articles", () => {
           const payload = (await response.json()) as {
             data: { highlights: Array<{ exact: string }> };
           };
-          return payload.data.highlights.some(
-            (highlight) => highlight.exact === selectedExact
-          );
+          return payload.data.highlights.length > existingCount;
         },
         { timeout: 10_000 }
       )

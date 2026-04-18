@@ -23,7 +23,6 @@ import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
 
 const EPISODES_PAGE_SIZE = 100;
-const LIBRARY_MEDIA_PAGE_SIZE = 200;
 const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
 const TRANSCRIPT_FORECAST_BATCH_SIZE = 100;
 const EPISODE_SEARCH_DEBOUNCE_MS = 300;
@@ -65,30 +64,12 @@ interface PodcastDetailItem {
   updated_at: string;
 }
 
-interface PodcastSubscriptionCategoryRef {
-  id: string;
-  name: string;
-  color: string | null;
-}
-
-interface PodcastSubscriptionCategory {
-  id: string;
-  name: string;
-  position: number;
-  color: string | null;
-  created_at: string;
-  subscription_count: number;
-  unplayed_count: number;
-}
-
 interface PodcastSubscription {
   user_id: string;
   podcast_id: string;
   status: "active" | "unsubscribed";
-  unsubscribe_mode: 1 | 2 | 3;
   default_playback_speed?: number | null;
   auto_queue?: boolean;
-  category?: PodcastSubscriptionCategoryRef | null;
   sync_status: "pending" | "running" | "partial" | "complete" | "source_limited" | "failed";
   sync_error_code: string | null;
   sync_error_message: string | null;
@@ -101,7 +82,7 @@ interface PodcastSubscription {
 
 interface PodcastDetailResponse {
   podcast: PodcastDetailItem;
-  subscription: PodcastSubscription;
+  subscription: PodcastSubscription | null;
 }
 
 interface MediaCapabilities {
@@ -150,15 +131,6 @@ interface PodcastEpisodeMedia {
   updated_at: string;
 }
 
-interface MeResponse {
-  user_id: string;
-  default_library_id: string;
-}
-
-interface LibraryMediaSummary {
-  id: string;
-}
-
 interface PodcastSubscriptionSyncRefreshResult {
   podcast_id: string;
   sync_status: PodcastSubscription["sync_status"];
@@ -172,8 +144,36 @@ interface PodcastSubscriptionSettingsResponse {
   podcast_id: string;
   default_playback_speed: number | null;
   auto_queue: boolean;
-  category: PodcastSubscriptionCategoryRef | null;
   updated_at: string;
+}
+
+interface PodcastSubscribeResult {
+  podcast_id: string;
+  subscription_created: boolean;
+  sync_status: "pending" | "running" | "partial" | "complete" | "source_limited" | "failed";
+  sync_enqueued: boolean;
+  sync_error_code: string | null;
+  sync_error_message: string | null;
+  sync_attempts: number;
+  last_synced_at: string | null;
+  window_size: number;
+}
+
+interface LibrarySummary {
+  id: string;
+  name: string;
+  is_default: boolean;
+  role: string;
+}
+
+interface LibraryEntrySummary {
+  kind: "media" | "podcast";
+  media?: {
+    id: string;
+  } | null;
+  podcast?: {
+    id: string;
+  } | null;
 }
 
 interface TranscriptRequestResult {
@@ -406,9 +406,11 @@ export default function PodcastDetailPaneBody() {
   const [episodeSearchQuery, setEpisodeSearchQuery] = useState(() => paneSearchParams.get("q") ?? "");
   const [hasMoreEpisodes, setHasMoreEpisodes] = useState(false);
   const [loadingMoreEpisodes, setLoadingMoreEpisodes] = useState(false);
-  const [defaultLibraryId, setDefaultLibraryId] = useState<string | null>(null);
-  const [libraryMediaIds, setLibraryMediaIds] = useState<Set<string>>(new Set());
+  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
+  const [podcastLibraryIds, setPodcastLibraryIds] = useState<string[]>([]);
+  const [libraryIdsByEpisodeId, setLibraryIdsByEpisodeId] = useState<Record<string, string[]>>({});
   const [busyMediaIds, setBusyMediaIds] = useState<Set<string>>(new Set());
+  const [busyPodcastLibraryKeys, setBusyPodcastLibraryKeys] = useState<Set<string>>(new Set());
   const [markingEpisodeIds, setMarkingEpisodeIds] = useState<Set<string>>(new Set());
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const [batchTranscriptBusy, setBatchTranscriptBusy] = useState(false);
@@ -427,38 +429,55 @@ export default function PodcastDetailPaneBody() {
   >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [subscribeBusy, setSubscribeBusy] = useState(false);
   const [unsubscribeBusy, setUnsubscribeBusy] = useState(false);
   const [refreshSyncBusy, setRefreshSyncBusy] = useState(false);
-  const [unsubscribeMode, setUnsubscribeMode] = useState<1 | 2 | 3>(1);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsDefaultSpeed, setSettingsDefaultSpeed] = useState<string>("default");
   const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
-  const [settingsCategoryId, setSettingsCategoryId] = useState<string>("");
-  const [categories, setCategories] = useState<PodcastSubscriptionCategory[]>([]);
   const billingDisabled = billingAccount?.billing_enabled === false;
   const transcriptionAllowed = (billingAccount?.transcription_usage.limit ?? 0) > 0;
 
   useSetPaneTitle(detail?.podcast.title ?? "Podcast");
 
-  const loadAllLibraryMediaIds = useCallback(async (libraryId: string): Promise<Set<string>> => {
-    const collected = new Set<string>();
-    let offset = 0;
-    while (true) {
-      const response = await apiFetch<{ data: LibraryMediaSummary[] }>(
-        `/api/libraries/${libraryId}/media?limit=${LIBRARY_MEDIA_PAGE_SIZE}&offset=${offset}`
-      );
-      for (const item of response.data) {
-        collected.add(item.id);
-      }
-      if (response.data.length < LIBRARY_MEDIA_PAGE_SIZE) {
-        break;
-      }
-      offset += LIBRARY_MEDIA_PAGE_SIZE;
+  const loadLibraryMemberships = useCallback(async () => {
+    const librariesResponse = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
+    const nextLibraries = librariesResponse.data.filter((library) => !library.is_default);
+    if (nextLibraries.length === 0) {
+      return {
+        libraries: [] as LibrarySummary[],
+        podcastLibraryIds: [] as string[],
+        libraryIdsByEpisodeId: {} as Record<string, string[]>,
+      };
     }
-    return collected;
-  }, []);
+    const entryResponses = await Promise.all(
+      nextLibraries.map((library) =>
+        apiFetch<{ data: LibraryEntrySummary[] }>(`/api/libraries/${library.id}/entries`)
+      )
+    );
+    const nextPodcastLibraryIds = new Set<string>();
+    const nextLibraryIdsByEpisodeId: Record<string, string[]> = {};
+    for (let index = 0; index < nextLibraries.length; index += 1) {
+      const library = nextLibraries[index];
+      for (const entry of entryResponses[index].data) {
+        if (entry.kind === "podcast" && entry.podcast?.id === podcastId) {
+          nextPodcastLibraryIds.add(library.id);
+          continue;
+        }
+        if (entry.kind === "media" && entry.media) {
+          const existingLibraryIds = nextLibraryIdsByEpisodeId[entry.media.id] ?? [];
+          nextLibraryIdsByEpisodeId[entry.media.id] = [...existingLibraryIds, library.id];
+        }
+      }
+    }
+    return {
+      libraries: nextLibraries,
+      podcastLibraryIds: [...nextPodcastLibraryIds],
+      libraryIdsByEpisodeId: nextLibraryIdsByEpisodeId,
+    };
+  }, [podcastId]);
 
   const load = useCallback(async () => {
     if (!podcastId) {
@@ -480,36 +499,33 @@ export default function PodcastDetailPaneBody() {
         episodeParams.set("q", episodeSearchQuery.trim());
       }
 
-      const [detailResp, episodesResp, meResp, categoriesResp] = await Promise.all([
+      const [detailResp, episodesResp] = await Promise.all([
         apiFetch<{ data: PodcastDetailResponse }>(`/api/podcasts/${podcastId}`),
         apiFetch<{ data: PodcastEpisodeMedia[] }>(`/api/podcasts/${podcastId}/episodes?${episodeParams}`),
-        apiFetch<{ data: MeResponse }>("/api/me"),
-        apiFetch<{ data: PodcastSubscriptionCategory[] }>("/api/podcasts/categories"),
       ]);
       setDetail(detailResp.data);
       setEpisodes(episodesResp.data);
-      setCategories(categoriesResp.data);
       setExpandedShowNotesMediaIds(new Set());
       setHasMoreEpisodes(episodesResp.data.length === EPISODES_PAGE_SIZE);
       forecastingTranscriptMediaIdsRef.current.clear();
       setTranscriptRequestForecastByMediaId({});
-      setDefaultLibraryId(meResp.data.default_library_id);
-      setUnsubscribeMode(detailResp.data.subscription.unsubscribe_mode);
       setSettingsDefaultSpeed(
-        detailResp.data.subscription.default_playback_speed == null
+        detailResp.data.subscription?.default_playback_speed == null
           ? "default"
           : String(detailResp.data.subscription.default_playback_speed)
       );
-      setSettingsAutoQueue(Boolean(detailResp.data.subscription.auto_queue));
-      setSettingsCategoryId(detailResp.data.subscription.category?.id ?? "");
+      setSettingsAutoQueue(Boolean(detailResp.data.subscription?.auto_queue));
       setSettingsModalOpen(false);
       setSettingsError(null);
-
-      if (meResp.data.default_library_id) {
-        const libraryIds = await loadAllLibraryMediaIds(meResp.data.default_library_id);
-        setLibraryMediaIds(libraryIds);
-      } else {
-        setLibraryMediaIds(new Set());
+      try {
+        const membershipState = await loadLibraryMemberships();
+        setLibraries(membershipState.libraries);
+        setPodcastLibraryIds(membershipState.podcastLibraryIds);
+        setLibraryIdsByEpisodeId(membershipState.libraryIdsByEpisodeId);
+      } catch {
+        setLibraries([]);
+        setPodcastLibraryIds([]);
+        setLibraryIdsByEpisodeId({});
       }
     } catch (loadError) {
       if (isApiError(loadError)) {
@@ -520,7 +536,7 @@ export default function PodcastDetailPaneBody() {
     } finally {
       setLoading(false);
     }
-  }, [episodeSearchQuery, episodeSort, episodeStateFilter, loadAllLibraryMediaIds, podcastId]);
+  }, [episodeSearchQuery, episodeSort, episodeStateFilter, loadLibraryMemberships, podcastId]);
 
   useEffect(() => {
     void load();
@@ -549,18 +565,21 @@ export default function PodcastDetailPaneBody() {
   }, [episodeSearchQuery, episodeSort, episodeStateFilter, paneRouter, podcastId]);
 
   const handleAddToLibrary = useCallback(
-    async (mediaId: string) => {
-      if (!defaultLibraryId) {
-        return;
-      }
+    async (mediaId: string, libraryId: string) => {
       setBusyMediaIds((prev) => new Set(prev).add(mediaId));
       setError(null);
       try {
-        await apiFetch(`/api/libraries/${defaultLibraryId}/media`, {
+        await apiFetch(`/api/libraries/${libraryId}/media`, {
           method: "POST",
           body: JSON.stringify({ media_id: mediaId }),
         });
-        setLibraryMediaIds((prev) => new Set(prev).add(mediaId));
+        setLibraryIdsByEpisodeId((prev) => {
+          const next = { ...prev };
+          const nextLibraryIds = new Set(next[mediaId] ?? []);
+          nextLibraryIds.add(libraryId);
+          next[mediaId] = [...nextLibraryIds];
+          return next;
+        });
       } catch (mutationError) {
         if (isApiError(mutationError)) {
           setError(mutationError.message);
@@ -575,23 +594,26 @@ export default function PodcastDetailPaneBody() {
         });
       }
     },
-    [defaultLibraryId]
+    []
   );
 
   const handleRemoveFromLibrary = useCallback(
-    async (mediaId: string) => {
-      if (!defaultLibraryId) {
-        return;
-      }
+    async (mediaId: string, libraryId: string) => {
       setBusyMediaIds((prev) => new Set(prev).add(mediaId));
       setError(null);
       try {
-        await apiFetch(`/api/libraries/${defaultLibraryId}/media/${mediaId}`, {
+        await apiFetch(`/api/libraries/${libraryId}/media/${mediaId}`, {
           method: "DELETE",
         });
-        setLibraryMediaIds((prev) => {
-          const next = new Set(prev);
-          next.delete(mediaId);
+        setLibraryIdsByEpisodeId((prev) => {
+          const next = { ...prev };
+          const nextLibraryIds = new Set(next[mediaId] ?? []);
+          nextLibraryIds.delete(libraryId);
+          if (nextLibraryIds.size === 0) {
+            delete next[mediaId];
+          } else {
+            next[mediaId] = [...nextLibraryIds];
+          }
           return next;
         });
       } catch (mutationError) {
@@ -608,7 +630,7 @@ export default function PodcastDetailPaneBody() {
         });
       }
     },
-    [defaultLibraryId]
+    []
   );
 
   const handleLoadMoreEpisodes = useCallback(async () => {
@@ -651,8 +673,97 @@ export default function PodcastDetailPaneBody() {
     podcastId,
   ]);
 
+  const handleSubscribe = useCallback(async () => {
+    if (!detail) {
+      return;
+    }
+    setSubscribeBusy(true);
+    setError(null);
+    try {
+      await apiFetch<{ data: PodcastSubscribeResult }>("/api/podcasts/subscriptions", {
+        method: "POST",
+        body: JSON.stringify({
+          provider_podcast_id: detail.podcast.provider_podcast_id,
+          title: detail.podcast.title,
+          author: detail.podcast.author,
+          feed_url: detail.podcast.feed_url,
+          website_url: detail.podcast.website_url,
+          image_url: detail.podcast.image_url,
+          description: detail.podcast.description,
+        }),
+      });
+      await load();
+    } catch (subscribeError) {
+      if (isApiError(subscribeError)) {
+        setError(subscribeError.message);
+      } else {
+        setError("Failed to subscribe to podcast");
+      }
+    } finally {
+      setSubscribeBusy(false);
+    }
+  }, [detail, load]);
+
+  const handleAddPodcastToLibrary = useCallback(async (libraryId: string) => {
+    if (!podcastId) {
+      return;
+    }
+    const busyKey = `${libraryId}:${podcastId}`;
+    setBusyPodcastLibraryKeys((prev) => new Set(prev).add(busyKey));
+    setError(null);
+    try {
+      await apiFetch(`/api/libraries/${libraryId}/podcasts`, {
+        method: "POST",
+        body: JSON.stringify({ podcast_id: podcastId }),
+      });
+      setPodcastLibraryIds((prev) => [...new Set([...prev, libraryId])]);
+    } catch (mutationError) {
+      if (isApiError(mutationError)) {
+        setError(mutationError.message);
+      } else {
+        setError("Failed to add podcast to library");
+      }
+    } finally {
+      setBusyPodcastLibraryKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(busyKey);
+        return next;
+      });
+    }
+  }, [podcastId]);
+
+  const handleRemovePodcastFromLibrary = useCallback(async (libraryId: string) => {
+    if (!podcastId) {
+      return;
+    }
+    const busyKey = `${libraryId}:${podcastId}`;
+    setBusyPodcastLibraryKeys((prev) => new Set(prev).add(busyKey));
+    setError(null);
+    try {
+      await apiFetch(`/api/libraries/${libraryId}/podcasts/${podcastId}`, {
+        method: "DELETE",
+      });
+      setPodcastLibraryIds((prev) => prev.filter((candidate) => candidate !== libraryId));
+    } catch (mutationError) {
+      if (isApiError(mutationError)) {
+        setError(mutationError.message);
+      } else {
+        setError("Failed to remove podcast from library");
+      }
+    } finally {
+      setBusyPodcastLibraryKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(busyKey);
+        return next;
+      });
+    }
+  }, [podcastId]);
+
   const handleRefreshSync = useCallback(async () => {
     if (!podcastId) {
+      return;
+    }
+    if (!detail?.subscription) {
       return;
     }
     setRefreshSyncBusy(true);
@@ -663,7 +774,7 @@ export default function PodcastDetailPaneBody() {
         { method: "POST" }
       );
       setDetail((prev) =>
-        prev
+        prev && prev.subscription
           ? {
               ...prev,
               subscription: {
@@ -686,30 +797,44 @@ export default function PodcastDetailPaneBody() {
     } finally {
       setRefreshSyncBusy(false);
     }
-  }, [load, podcastId]);
+  }, [detail?.subscription, load, podcastId]);
 
   const handleUnsubscribe = useCallback(async () => {
     if (!podcastId) {
       return;
     }
+    if (!detail?.subscription) {
+      return;
+    }
+    const currentLibraryIds = new Set(podcastLibraryIds);
+    const removableLibraries = libraries.filter(
+      (library) => currentLibraryIds.has(library.id) && library.role === "admin"
+    );
+    const retainedLibraries = libraries.filter(
+      (library) => currentLibraryIds.has(library.id) && library.role !== "admin"
+    );
+    const confirmationLines = [
+      `Unsubscribe from "${detail.podcast.title}"?`,
+      removableLibraries.length === 0
+        ? "This podcast is not in any libraries you can change."
+        : `This will remove the podcast from ${removableLibraries.length} librar${removableLibraries.length === 1 ? "y" : "ies"}.`,
+    ];
+    if (retainedLibraries.length > 0) {
+      confirmationLines.push(
+        `It will remain in ${retainedLibraries.length} shared librar${retainedLibraries.length === 1 ? "y" : "ies"} you cannot administer.`
+      );
+    }
+    if (!window.confirm(confirmationLines.join("\n\n"))) {
+      return;
+    }
     setUnsubscribeBusy(true);
     setError(null);
     try {
-      await apiFetch(`/api/podcasts/subscriptions/${podcastId}?mode=${unsubscribeMode}`, {
+      await apiFetch(`/api/podcasts/subscriptions/${podcastId}`, {
         method: "DELETE",
       });
-      setDetail((prev) =>
-        prev
-          ? {
-              ...prev,
-              subscription: {
-                ...prev.subscription,
-                status: "unsubscribed",
-                unsubscribe_mode: unsubscribeMode,
-              },
-            }
-          : prev
-      );
+      setDetail((prev) => (prev ? { ...prev, subscription: null } : prev));
+      setPodcastLibraryIds(retainedLibraries.map((library) => library.id));
     } catch (unsubscribeError) {
       if (isApiError(unsubscribeError)) {
         setError(unsubscribeError.message);
@@ -719,10 +844,10 @@ export default function PodcastDetailPaneBody() {
     } finally {
       setUnsubscribeBusy(false);
     }
-  }, [podcastId, unsubscribeMode]);
+  }, [detail, libraries, podcastId, podcastLibraryIds]);
 
   const openSettingsModal = useCallback(() => {
-    if (!detail) {
+    if (!detail?.subscription) {
       return;
     }
     setSettingsDefaultSpeed(
@@ -731,7 +856,6 @@ export default function PodcastDetailPaneBody() {
         : String(detail.subscription.default_playback_speed)
     );
     setSettingsAutoQueue(Boolean(detail.subscription.auto_queue));
-    setSettingsCategoryId(detail.subscription.category?.id ?? "");
     setSettingsError(null);
     setSettingsModalOpen(true);
   }, [detail]);
@@ -743,7 +867,7 @@ export default function PodcastDetailPaneBody() {
   }, []);
 
   const handleSaveSubscriptionSettings = useCallback(async () => {
-    if (!detail) {
+    if (!detail?.subscription) {
       return;
     }
     setSettingsBusy(true);
@@ -751,7 +875,6 @@ export default function PodcastDetailPaneBody() {
     setError(null);
     const nextDefaultPlaybackSpeed =
       settingsDefaultSpeed === "default" ? null : Number.parseFloat(settingsDefaultSpeed);
-    const nextCategoryId = settingsCategoryId.trim();
     try {
       const response = await apiFetch<{ data: PodcastSubscriptionSettingsResponse }>(
         `/api/podcasts/subscriptions/${detail.subscription.podcast_id}/settings`,
@@ -760,19 +883,17 @@ export default function PodcastDetailPaneBody() {
           body: JSON.stringify({
             default_playback_speed: nextDefaultPlaybackSpeed,
             auto_queue: settingsAutoQueue,
-            category_id: nextCategoryId.length > 0 ? nextCategoryId : null,
           }),
         }
       );
       setDetail((prev) =>
-        prev
+        prev && prev.subscription
           ? {
               ...prev,
               subscription: {
                 ...prev.subscription,
                 default_playback_speed: response.data.default_playback_speed,
                 auto_queue: response.data.auto_queue,
-                category: response.data.category,
                 updated_at: response.data.updated_at ?? prev.subscription.updated_at,
               },
             }
@@ -794,7 +915,7 @@ export default function PodcastDetailPaneBody() {
     } finally {
       setSettingsBusy(false);
     }
-  }, [detail, settingsAutoQueue, settingsCategoryId, settingsDefaultSpeed]);
+  }, [detail, settingsAutoQueue, settingsDefaultSpeed]);
 
   const refreshEpisodeStates = useCallback(async (mediaIds: string[]) => {
     if (mediaIds.length === 0) {
@@ -1274,6 +1395,24 @@ export default function PodcastDetailPaneBody() {
   const queueMediaIds = useMemo(() => {
     return new Set(queueItems.map((item) => item.media_id));
   }, [queueItems]);
+  const activeSubscription = detail?.subscription ?? null;
+  const podcastLibraryOptions =
+    podcastId && activeSubscription && libraries.length > 0
+      ? libraries.map((library) => {
+          const inLibrary = podcastLibraryIds.includes(library.id);
+          const busyKey = `${library.id}:${podcastId}`;
+          return {
+            id: `${inLibrary ? "remove" : "add"}-${library.id}`,
+            label: `${inLibrary ? "Remove from" : "Add to"} ${library.name}`,
+            disabled: busyPodcastLibraryKeys.has(busyKey),
+            onSelect: () => {
+              void (inLibrary
+                ? handleRemovePodcastFromLibrary(library.id)
+                : handleAddPodcastToLibrary(library.id));
+            },
+          };
+        })
+      : [];
 
   if (!podcastId) {
     return (
@@ -1290,23 +1429,38 @@ export default function PodcastDetailPaneBody() {
           My podcasts
         </Link>
         <div className={styles.headerButtons}>
-          <button
-            type="button"
-            className={styles.syncButton}
-            onClick={() => void handleRefreshSync()}
-            disabled={refreshSyncBusy}
-          >
-            {refreshSyncBusy ? "Refreshing..." : "Refresh sync"}
-          </button>
-          <button
-            type="button"
-            className={styles.syncButton}
-            onClick={openSettingsModal}
-            disabled={!detail}
-          >
-            Settings
-          </button>
-          {detail?.subscription.status === "active" ? (
+          {activeSubscription ? (
+            <button
+              type="button"
+              className={styles.syncButton}
+              onClick={() => void handleRefreshSync()}
+              disabled={refreshSyncBusy}
+            >
+              {refreshSyncBusy ? "Refreshing..." : "Refresh sync"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={styles.syncButton}
+              onClick={() => void handleSubscribe()}
+              disabled={subscribeBusy || !detail}
+            >
+              {subscribeBusy ? "Subscribing..." : "Subscribe"}
+            </button>
+          )}
+          {podcastLibraryOptions.length > 0 ? (
+            <ActionMenu label="Library actions" options={podcastLibraryOptions} />
+          ) : null}
+          {activeSubscription ? (
+            <button
+              type="button"
+              className={styles.syncButton}
+              onClick={openSettingsModal}
+            >
+              Settings
+            </button>
+          ) : null}
+          {activeSubscription ? (
             <button
               type="button"
               className={styles.unsubscribeButton}
@@ -1319,47 +1473,39 @@ export default function PodcastDetailPaneBody() {
         </div>
       </div>
       <SectionCard
-        title="Subscription"
-        description={detail?.podcast.feed_url || "Podcast subscription state"}
+        title={detail?.podcast.title ?? "Podcast"}
+        description={detail?.podcast.feed_url || "Podcast detail"}
       >
         {loading && <StateMessage variant="loading">Loading podcast detail...</StateMessage>}
         {error && <StateMessage variant="error">{error}</StateMessage>}
         {!loading && detail && (
           <>
-            {detail.subscription.status === "active" ? (
-              <label className={styles.unsubscribeModeLabel}>
-                Unsubscribe behavior
-                <select
-                  value={String(unsubscribeMode)}
-                  onChange={(event) => setUnsubscribeMode(Number(event.target.value) as 1 | 2 | 3)}
-                  className={styles.unsubscribeModeSelect}
-                  aria-label="Unsubscribe behavior"
-                >
-                  <option value="1">Keep episodes in libraries</option>
-                  <option value="2">Remove from default library</option>
-                  <option value="3">Remove from default and single-member libraries</option>
-                </select>
-              </label>
+            {activeSubscription ? (
+              <>
+                <p className={styles.syncState}>
+                  sync status: <strong>{activeSubscription.sync_status}</strong>
+                </p>
+                <p className={styles.settingsSummary}>
+                  {formatSubscriptionPlaybackSummary(
+                    activeSubscription.default_playback_speed,
+                    activeSubscription.auto_queue
+                  )}
+                </p>
+              </>
             ) : (
-              <span className={styles.unsubscribedLabel}>Unsubscribed</span>
+              <p className={styles.unsubscribedLabel}>
+                Not subscribed. Subscribe to save playback defaults and keep this show in your
+                libraries.
+              </p>
             )}
-            <p className={styles.syncState}>
-              sync status: <strong>{detail.subscription.sync_status}</strong>
-            </p>
             <p className={styles.settingsSummary}>
-              {formatSubscriptionPlaybackSummary(
-                detail.subscription.default_playback_speed,
-                detail.subscription.auto_queue
-              )}
+              In {podcastLibraryIds.length} librar{podcastLibraryIds.length === 1 ? "y" : "ies"}
             </p>
-            <p className={styles.settingsSummary}>
-              Category: {detail.subscription.category?.name ?? "Uncategorized"}
-            </p>
-            {detail.subscription.sync_error_code && (
+            {activeSubscription?.sync_error_code && (
               <p className={styles.syncError}>
-                <strong>{detail.subscription.sync_error_code}</strong>
-                {detail.subscription.sync_error_message
-                  ? `: ${detail.subscription.sync_error_message}`
+                <strong>{activeSubscription.sync_error_code}</strong>
+                {activeSubscription.sync_error_message
+                  ? `: ${activeSubscription.sync_error_message}`
                   : ""}
               </p>
             )}
@@ -1367,7 +1513,7 @@ export default function PodcastDetailPaneBody() {
         )}
       </SectionCard>
 
-      {settingsModalOpen && detail && (
+      {settingsModalOpen && detail && activeSubscription && (
         <div
           className={styles.modalBackdrop}
           role="dialog"
@@ -1393,23 +1539,6 @@ export default function PodcastDetailPaneBody() {
               {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((speed) => (
                 <option key={speed} value={String(speed)}>
                   {formatPlaybackSpeedLabel(speed)}
-                </option>
-              ))}
-            </select>
-            <label htmlFor="detail-subscription-category" className={styles.settingsFieldLabel}>
-              Subscription category
-            </label>
-            <select
-              id="detail-subscription-category"
-              className={styles.settingsSelect}
-              value={settingsCategoryId}
-              onChange={(event) => setSettingsCategoryId(event.target.value)}
-              aria-label="Subscription category"
-            >
-              <option value="">Uncategorized</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
                 </option>
               ))}
             </select>
@@ -1533,8 +1662,8 @@ export default function PodcastDetailPaneBody() {
         {episodes.length > 0 && (
           <AppList>
             {episodes.map((episode) => {
-              const inLibrary = libraryMediaIds.has(episode.id);
               const busy = busyMediaIds.has(episode.id);
+              const currentLibraryIds = new Set(libraryIdsByEpisodeId[episode.id] ?? []);
               const episodeState = deriveEpisodeState(episode);
               const episodeProgressPercent = getEpisodeProgressPercent(episode);
               const canRequestTranscript =
@@ -1562,20 +1691,19 @@ export default function PodcastDetailPaneBody() {
                     void handleMarkEpisodeCompletion(episode, episodeState !== "played");
                   },
                 },
-                ...(defaultLibraryId
-                  ? [
-                      {
-                        id: inLibrary ? "remove-from-library" : "add-to-library",
-                        label: inLibrary ? "Remove from library" : "Add to library",
-                        disabled: busy,
-                        onSelect: () => {
-                          void (inLibrary
-                            ? handleRemoveFromLibrary(episode.id)
-                            : handleAddToLibrary(episode.id));
-                        },
-                      },
-                    ]
-                  : []),
+                ...libraries.map((library) => {
+                  const inLibrary = currentLibraryIds.has(library.id);
+                  return {
+                    id: `${inLibrary ? "remove" : "add"}-${library.id}`,
+                    label: `${inLibrary ? "Remove from" : "Add to"} ${library.name}`,
+                    disabled: busy,
+                    onSelect: () => {
+                      void (inLibrary
+                        ? handleRemoveFromLibrary(episode.id, library.id)
+                        : handleAddToLibrary(episode.id, library.id));
+                    },
+                  };
+                }),
               ];
               return (
                 <AppListItem

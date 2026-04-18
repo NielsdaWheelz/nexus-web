@@ -449,7 +449,7 @@ class TestPdfQuoteBlockingStream:
 
         direct_db.register_cleanup("highlight_pdf_anchors", "highlight_id", highlight_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 

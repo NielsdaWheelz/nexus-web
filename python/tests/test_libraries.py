@@ -20,6 +20,17 @@ from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
 
+
+def _list_library_entries(auth_client, user_id: UUID, library_id: str):
+    return auth_client.get(f"/libraries/{library_id}/entries", headers=auth_headers(user_id))
+
+
+def _library_entry_media_ids(rows: list[dict]) -> list[str]:
+    return [
+        row["media"]["id"] for row in rows if row["kind"] == "media" and row["media"] is not None
+    ]
+
+
 # =============================================================================
 # Library Create Tests
 # =============================================================================
@@ -338,10 +349,10 @@ class TestDeleteLibrary:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
 
-    def test_delete_library_cascades_library_media(
+    def test_delete_library_cascades_library_entries(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Deleting library cascades to library_media."""
+        """Deleting library cascades to library_entries."""
         user_id = create_test_user_id()
 
         # Create media first using direct_db
@@ -349,7 +360,7 @@ class TestDeleteLibrary:
             media_id = create_test_media(session)
 
         # Register cleanup
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Create library and add media
@@ -364,10 +375,12 @@ class TestDeleteLibrary:
             headers=auth_headers(user_id),
         )
 
-        # Verify library_media exists
+        # Verify library_entries exists
         with direct_db.session() as session:
             result = session.execute(
-                text("SELECT 1 FROM library_media WHERE library_id = :id AND media_id = :media_id"),
+                text(
+                    "SELECT 1 FROM library_entries WHERE library_id = :id AND media_id = :media_id"
+                ),
                 {"id": library_id, "media_id": media_id},
             )
             assert result.fetchone() is not None
@@ -375,10 +388,10 @@ class TestDeleteLibrary:
         # Delete library
         auth_client.delete(f"/libraries/{library_id}", headers=auth_headers(user_id))
 
-        # Verify library_media deleted (cascade)
+        # Verify library_entries deleted (cascade)
         with direct_db.session() as session:
             result = session.execute(
-                text("SELECT 1 FROM library_media WHERE library_id = :id"),
+                text("SELECT 1 FROM library_entries WHERE library_id = :id"),
                 {"id": library_id},
             )
             assert result.fetchone() is None
@@ -401,7 +414,7 @@ class TestAddMediaToLibrary:
             media_id = create_test_media(session)
 
         # Register cleanup
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -416,7 +429,8 @@ class TestAddMediaToLibrary:
         assert response.status_code == 201
         data = response.json()["data"]
         assert data["library_id"] == library_id
-        assert data["media_id"] == str(media_id)
+        assert data["kind"] == "media"
+        assert data["media"]["id"] == str(media_id)
 
     def test_add_media_library_not_found(self, auth_client, direct_db: DirectSessionManager):
         """Add media to non-existent library returns 404."""
@@ -461,7 +475,7 @@ class TestAddMediaToLibrary:
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -482,7 +496,8 @@ class TestAddMediaToLibrary:
             headers=auth_headers(user_id),
         )
         assert resp2.status_code == 201
-        assert resp2.json()["data"]["media_id"] == str(media_id)
+        assert resp2.json()["data"]["kind"] == "media"
+        assert resp2.json()["data"]["media"]["id"] == str(media_id)
 
 
 class TestRemoveMediaFromLibrary:
@@ -495,7 +510,7 @@ class TestRemoveMediaFromLibrary:
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -557,8 +572,144 @@ class TestRemoveMediaFromLibrary:
         assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
 
 
+class TestPodcastLibraryEntries:
+    """Tests for podcast entry library routes."""
+
+    def test_add_podcast_success(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        create_resp = auth_client.post(
+            "/libraries",
+            json={"name": "Podcasts"},
+            headers=auth_headers(user_id),
+        )
+        library_id = create_resp.json()["data"]["id"]
+        podcast_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO podcasts (
+                        id, provider, provider_podcast_id, title, feed_url
+                    ) VALUES (
+                        :id, 'podcast_index', 'football-ramble', 'Football Ramble', 'https://example.com/feed.xml'
+                    )
+                """),
+                {"id": podcast_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
+                    VALUES (:user_id, :podcast_id, 'active')
+                """),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+
+        response = auth_client.post(
+            f"/libraries/{library_id}/podcasts",
+            json={"podcast_id": str(podcast_id)},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 201
+        data = response.json()["data"]
+        assert data["kind"] == "podcast"
+        assert data["podcast"]["id"] == str(podcast_id)
+
+    def test_add_podcast_default_library_forbidden(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        default_library_id = me_resp.json()["data"]["default_library_id"]
+        podcast_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO podcasts (
+                        id, provider, provider_podcast_id, title, feed_url
+                    ) VALUES (
+                        :id, 'podcast_index', 'chinese-history', 'The China History Podcast', 'https://example.com/china.xml'
+                    )
+                """),
+                {"id": podcast_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
+                    VALUES (:user_id, :podcast_id, 'active')
+                """),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+
+        response = auth_client.post(
+            f"/libraries/{default_library_id}/podcasts",
+            json={"podcast_id": str(podcast_id)},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "E_DEFAULT_LIBRARY_FORBIDDEN"
+
+    def test_remove_podcast_success(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        create_resp = auth_client.post(
+            "/libraries",
+            json={"name": "Sports"},
+            headers=auth_headers(user_id),
+        )
+        library_id = create_resp.json()["data"]["id"]
+        podcast_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO podcasts (
+                        id, provider, provider_podcast_id, title, feed_url
+                    ) VALUES (
+                        :id, 'podcast_index', 'test-podcast', 'Test Podcast', 'https://example.com/test.xml'
+                    )
+                """),
+                {"id": podcast_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
+                    VALUES (:user_id, :podcast_id, 'active')
+                """),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+
+        add_resp = auth_client.post(
+            f"/libraries/{library_id}/podcasts",
+            json={"podcast_id": str(podcast_id)},
+            headers=auth_headers(user_id),
+        )
+        assert add_resp.status_code == 201
+
+        remove_resp = auth_client.delete(
+            f"/libraries/{library_id}/podcasts/{podcast_id}",
+            headers=auth_headers(user_id),
+        )
+        assert remove_resp.status_code == 204
+
+
 class TestListLibraryMedia:
-    """Tests for GET /libraries/{id}/media endpoint."""
+    """Tests for GET /libraries/{id}/entries endpoint."""
 
     def test_list_media_empty(self, auth_client):
         """List media in empty library returns empty list."""
@@ -567,7 +718,7 @@ class TestListLibraryMedia:
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
 
-        response = auth_client.get(f"/libraries/{library_id}/media", headers=auth_headers(user_id))
+        response = _list_library_entries(auth_client, user_id, library_id)
 
         assert response.status_code == 200
         assert response.json()["data"] == []
@@ -579,7 +730,7 @@ class TestListLibraryMedia:
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -593,13 +744,14 @@ class TestListLibraryMedia:
         )
 
         # List media
-        response = auth_client.get(f"/libraries/{library_id}/media", headers=auth_headers(user_id))
+        response = _list_library_entries(auth_client, user_id, library_id)
 
         assert response.status_code == 200
         data = response.json()["data"]
         assert len(data) == 1
-        assert data[0]["id"] == str(media_id)
-        assert data[0]["kind"] == "web_article"
+        assert data[0]["kind"] == "media"
+        assert data[0]["media"]["id"] == str(media_id)
+        assert data[0]["media"]["kind"] == "web_article"
 
     def test_list_media_library_not_found(self, auth_client):
         """List media in non-existent library returns 404."""
@@ -607,13 +759,13 @@ class TestListLibraryMedia:
 
         auth_client.get("/me", headers=auth_headers(user_id))
 
-        response = auth_client.get(f"/libraries/{uuid4()}/media", headers=auth_headers(user_id))
+        response = _list_library_entries(auth_client, user_id, str(uuid4()))
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
 
     def test_list_media_ordering(self, auth_client, direct_db: DirectSessionManager):
-        """Media is ordered by persistent library_media.position ascending."""
+        """Media is ordered by persistent library_entries.position ascending."""
         user_id = create_test_user_id()
 
         # Create multiple media items
@@ -630,7 +782,7 @@ class TestListLibraryMedia:
                 )
                 session.commit()
                 media_ids.append(media_id)
-                direct_db.register_cleanup("library_media", "media_id", media_id)
+                direct_db.register_cleanup("library_entries", "media_id", media_id)
                 direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -645,18 +797,18 @@ class TestListLibraryMedia:
             )
 
         # List media (should preserve append order: first added first)
-        response = auth_client.get(f"/libraries/{library_id}/media", headers=auth_headers(user_id))
+        response = _list_library_entries(auth_client, user_id, library_id)
 
         assert response.status_code == 200
         data = response.json()["data"]
         assert len(data) == 3
-        assert [item["id"] for item in data] == [str(media_id) for media_id in media_ids]
+        assert _library_entry_media_ids(data) == [str(media_id) for media_id in media_ids]
 
 
 class TestReorderLibraryMedia:
-    """Tests for PUT /libraries/{id}/media/order endpoint."""
+    """Tests for PATCH /libraries/{id}/entries/reorder endpoint."""
 
-    def test_reorder_library_media_replaces_order(
+    def test_reorder_library_entries_replaces_order(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -668,7 +820,7 @@ class TestReorderLibraryMedia:
             for index in range(3):
                 media_id = create_test_media(session, title=f"Reorder {index}")
                 media_ids.append(media_id)
-                direct_db.register_cleanup("library_media", "media_id", media_id)
+                direct_db.register_cleanup("library_entries", "media_id", media_id)
                 direct_db.register_cleanup("media", "id", media_id)
             session.commit()
 
@@ -681,22 +833,32 @@ class TestReorderLibraryMedia:
             assert add_resp.status_code in (200, 201)
 
         reordered_media_ids = [media_ids[2], media_ids[0], media_ids[1]]
-        reorder_resp = auth_client.put(
-            f"/libraries/{library_id}/media/order",
-            json={"media_ids": [str(media_id) for media_id in reordered_media_ids]},
+        list_resp = _list_library_entries(auth_client, user_id, library_id)
+        existing_entries = list_resp.json()["data"]
+        media_entry_id_by_media_id = {
+            row["media"]["id"]: row["id"]
+            for row in existing_entries
+            if row["kind"] == "media" and row["media"] is not None
+        }
+        reordered_entry_ids = [
+            media_entry_id_by_media_id[str(media_id)] for media_id in reordered_media_ids
+        ]
+        reorder_resp = auth_client.patch(
+            f"/libraries/{library_id}/entries/reorder",
+            json={"entry_ids": reordered_entry_ids},
             headers=auth_headers(user_id),
         )
         assert reorder_resp.status_code == 200, (
             f"Expected 200 reorder response, got {reorder_resp.status_code}: {reorder_resp.text}"
         )
 
-        list_resp = auth_client.get(f"/libraries/{library_id}/media", headers=auth_headers(user_id))
+        list_resp = _list_library_entries(auth_client, user_id, library_id)
         assert list_resp.status_code == 200
-        assert [row["id"] for row in list_resp.json()["data"]] == [
+        assert _library_entry_media_ids(list_resp.json()["data"]) == [
             str(media_id) for media_id in reordered_media_ids
         ]
 
-    def test_reorder_library_media_requires_exact_media_set(
+    def test_reorder_library_entries_requires_exact_media_set(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -708,7 +870,7 @@ class TestReorderLibraryMedia:
             media_b = create_test_media(session, title="Order B")
             session.commit()
         for media_id in (media_a, media_b):
-            direct_db.register_cleanup("library_media", "media_id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
             auth_client.post(
                 f"/libraries/{library_id}/media",
@@ -716,15 +878,23 @@ class TestReorderLibraryMedia:
                 headers=auth_headers(user_id),
             )
 
-        missing_id_resp = auth_client.put(
-            f"/libraries/{library_id}/media/order",
-            json={"media_ids": [str(media_a)]},
+        list_resp = _list_library_entries(auth_client, user_id, library_id)
+        existing_entries = list_resp.json()["data"]
+        media_entry_id_by_media_id = {
+            row["media"]["id"]: row["id"]
+            for row in existing_entries
+            if row["kind"] == "media" and row["media"] is not None
+        }
+
+        missing_id_resp = auth_client.patch(
+            f"/libraries/{library_id}/entries/reorder",
+            json={"entry_ids": [media_entry_id_by_media_id[str(media_a)]]},
             headers=auth_headers(user_id),
         )
         assert missing_id_resp.status_code == 400
         assert missing_id_resp.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_reorder_library_media_forbids_non_admin(
+    def test_reorder_library_entries_forbids_non_admin(
         self, auth_client, direct_db: DirectSessionManager
     ):
         owner_id = create_test_user_id()
@@ -743,7 +913,7 @@ class TestReorderLibraryMedia:
             media_b = create_test_media(session, title="Shared B")
             session.commit()
         for media_id in (media_a, media_b):
-            direct_db.register_cleanup("library_media", "media_id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
             auth_client.post(
                 f"/libraries/{library_id}/media",
@@ -764,9 +934,21 @@ class TestReorderLibraryMedia:
         )
         assert accept_resp.status_code == 200
 
-        reorder_resp = auth_client.put(
-            f"/libraries/{library_id}/media/order",
-            json={"media_ids": [str(media_b), str(media_a)]},
+        list_resp = _list_library_entries(auth_client, owner_id, library_id)
+        existing_entries = list_resp.json()["data"]
+        media_entry_id_by_media_id = {
+            row["media"]["id"]: row["id"]
+            for row in existing_entries
+            if row["kind"] == "media" and row["media"] is not None
+        }
+        reorder_resp = auth_client.patch(
+            f"/libraries/{library_id}/entries/reorder",
+            json={
+                "entry_ids": [
+                    media_entry_id_by_media_id[str(media_b)],
+                    media_entry_id_by_media_id[str(media_a)],
+                ]
+            },
             headers=auth_headers(member_id),
         )
         assert reorder_resp.status_code == 403
@@ -788,7 +970,7 @@ class TestDefaultLibraryClosure:
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Create a non-default library
@@ -811,7 +993,7 @@ class TestDefaultLibraryClosure:
         with direct_db.session() as session:
             result = session.execute(
                 text("""
-                    SELECT 1 FROM library_media
+                    SELECT 1 FROM library_entries
                     WHERE library_id = :library_id AND media_id = :media_id
                 """),
                 {"library_id": default_library_id, "media_id": media_id},
@@ -830,7 +1012,7 @@ class TestDefaultLibraryClosure:
 
         direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Bootstrap member before inviting
@@ -881,7 +1063,7 @@ class TestDefaultLibraryClosure:
 
                 lm = session.execute(
                     text("""
-                        SELECT 1 FROM library_media
+                        SELECT 1 FROM library_entries
                         WHERE library_id = :dl AND media_id = :m
                     """),
                     {"dl": dl_id, "m": media_id},
@@ -899,7 +1081,7 @@ class TestDefaultLibraryClosure:
 
         direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -947,7 +1129,7 @@ class TestDefaultLibraryClosure:
 
             lm = session.execute(
                 text("""
-                    SELECT 1 FROM library_media
+                    SELECT 1 FROM library_entries
                     WHERE library_id = :dl AND media_id = :m
                 """),
                 {"dl": default_library_id, "m": media_id},
@@ -965,7 +1147,7 @@ class TestDefaultLibraryClosure:
 
         direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -1006,10 +1188,10 @@ class TestDefaultLibraryClosure:
             ).fetchone()
             assert intrinsic is None
 
-            # But library_media should still exist (closure edge remains)
+            # But library_entries should still exist (closure edge remains)
             lm = session.execute(
                 text("""
-                    SELECT 1 FROM library_media
+                    SELECT 1 FROM library_entries
                     WHERE library_id = :dl AND media_id = :m
                 """),
                 {"dl": default_library_id, "m": media_id},
@@ -1027,7 +1209,7 @@ class TestDefaultLibraryClosure:
 
         direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -1058,7 +1240,7 @@ class TestDefaultLibraryClosure:
         with direct_db.session() as session:
             assert (
                 session.execute(
-                    text("SELECT 1 FROM library_media WHERE library_id = :dl AND media_id = :m"),
+                    text("SELECT 1 FROM library_entries WHERE library_id = :dl AND media_id = :m"),
                     {"dl": default_library_id, "m": media_id},
                 ).fetchone()
                 is not None
@@ -1074,7 +1256,7 @@ class TestDefaultLibraryClosure:
         with direct_db.session() as session:
             assert (
                 session.execute(
-                    text("SELECT 1 FROM library_media WHERE library_id = :dl AND media_id = :m"),
+                    text("SELECT 1 FROM library_entries WHERE library_id = :dl AND media_id = :m"),
                     {"dl": default_library_id, "m": media_id},
                 ).fetchone()
                 is None
@@ -1090,7 +1272,7 @@ class TestDefaultLibraryClosure:
             media_id = create_test_media(session)
 
         direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -1119,7 +1301,7 @@ class TestDefaultLibraryClosure:
         with direct_db.session() as session:
             result = session.execute(
                 text("""
-                    SELECT 1 FROM library_media
+                    SELECT 1 FROM library_entries
                     WHERE library_id = :library_id AND media_id = :media_id
                 """),
                 {"library_id": default_library_id, "media_id": media_id},
@@ -1136,7 +1318,7 @@ class TestDefaultLibraryClosure:
             media_id = create_test_media(session)
 
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Get default library
@@ -1172,7 +1354,7 @@ class TestDefaultLibraryClosure:
             media_id = create_test_media(session)
 
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -2291,7 +2473,7 @@ class TestVisibility:
         library_id = create_resp.json()["data"]["id"]
 
         # User B tries to access it
-        response = auth_client.get(f"/libraries/{library_id}/media", headers=auth_headers(user_b))
+        response = _list_library_entries(auth_client, user_b, library_id)
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
@@ -2738,7 +2920,7 @@ class TestLibraryInviteAccept:
 
         with direct_db.session() as session:
             media_id = create_test_media(session)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         auth_client.post(
@@ -2819,7 +3001,7 @@ class TestLibraryInviteAccept:
 
         with direct_db.session() as session:
             media_id = create_test_media(session)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         auth_client.post(
@@ -2836,11 +3018,9 @@ class TestLibraryInviteAccept:
         )
 
         # Invitee can immediately list media in the source library
-        response = auth_client.get(
-            f"/libraries/{library_id}/media", headers=auth_headers(invitee_id)
-        )
+        response = _list_library_entries(auth_client, invitee_id, library_id)
         assert response.status_code == 200
-        media_ids = [m["id"] for m in response.json()["data"]]
+        media_ids = _library_entry_media_ids(response.json()["data"])
         assert str(media_id) in media_ids
 
     def test_accept_invite_idempotent_when_already_accepted(self, auth_client):
@@ -3263,7 +3443,7 @@ class TestRemoveMemberClosureCleanup:
         direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("default_library_backfill_jobs", "source_library_id", None)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Bootstrap member before inviting
@@ -3326,7 +3506,7 @@ class TestRemoveMemberClosureCleanup:
 
             lm = session.execute(
                 text("""
-                    SELECT 1 FROM library_media
+                    SELECT 1 FROM library_entries
                     WHERE library_id = :dl AND media_id = :m
                 """),
                 {"dl": member_dl, "m": media_id},
@@ -3402,7 +3582,7 @@ class TestVisibilityClosureScenarios:
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_a))
@@ -3416,10 +3596,10 @@ class TestVisibilityClosureScenarios:
         )
 
         # User A can list media
-        response = auth_client.get(f"/libraries/{library_a}/media", headers=auth_headers(user_a))
+        response = _list_library_entries(auth_client, user_a, library_a)
 
         assert response.status_code == 200
-        media_ids = [m["id"] for m in response.json()["data"]]
+        media_ids = _library_entry_media_ids(response.json()["data"])
         assert str(media_id) in media_ids
 
     def test_v2_non_member_cannot_read_media(self, auth_client, direct_db: DirectSessionManager):
@@ -3430,7 +3610,7 @@ class TestVisibilityClosureScenarios:
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_a))
@@ -3447,7 +3627,7 @@ class TestVisibilityClosureScenarios:
         auth_client.get("/me", headers=auth_headers(user_b))
 
         # User B cannot access A's library
-        response = auth_client.get(f"/libraries/{library_a}/media", headers=auth_headers(user_b))
+        response = _list_library_entries(auth_client, user_b, library_a)
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
@@ -3459,7 +3639,7 @@ class TestVisibilityClosureScenarios:
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_a))
@@ -3476,10 +3656,10 @@ class TestVisibilityClosureScenarios:
         auth_client.post("/libraries", json={"name": "Library B"}, headers=auth_headers(user_a))
 
         # User A can still read media via default library
-        response = auth_client.get(f"/libraries/{library_a}/media", headers=auth_headers(user_a))
+        response = _list_library_entries(auth_client, user_a, library_a)
 
         assert response.status_code == 200
-        media_ids = [m["id"] for m in response.json()["data"]]
+        media_ids = _library_entry_media_ids(response.json()["data"])
         assert str(media_id) in media_ids
 
     def test_v4_remove_from_default_keeps_closure_backed_row(
@@ -3493,7 +3673,7 @@ class TestVisibilityClosureScenarios:
 
         direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_a))
@@ -3515,7 +3695,7 @@ class TestVisibilityClosureScenarios:
         # Verify in both
         with direct_db.session() as session:
             result = session.execute(
-                text("SELECT library_id FROM library_media WHERE media_id = :media_id"),
+                text("SELECT library_id FROM library_entries WHERE media_id = :media_id"),
                 {"media_id": media_id},
             )
             before_ids = {row[0] for row in result.fetchall()}
@@ -3532,7 +3712,7 @@ class TestVisibilityClosureScenarios:
         # Media also stays in other_library (not affected by default removal).
         with direct_db.session() as session:
             result = session.execute(
-                text("SELECT library_id FROM library_media WHERE media_id = :media_id"),
+                text("SELECT library_id FROM library_entries WHERE media_id = :media_id"),
                 {"media_id": media_id},
             )
             after_ids = {row[0] for row in result.fetchall()}
@@ -3546,7 +3726,7 @@ class TestVisibilityClosureScenarios:
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_a))
@@ -3565,7 +3745,7 @@ class TestVisibilityClosureScenarios:
 
         # Now media list should be empty
         response = auth_client.get(
-            f"/libraries/{default_library}/media", headers=auth_headers(user_a)
+            f"/libraries/{default_library}/entries", headers=auth_headers(user_a)
         )
 
         assert response.status_code == 200
@@ -3579,7 +3759,7 @@ class TestVisibilityClosureScenarios:
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A adds media then removes it
@@ -3607,13 +3787,13 @@ class TestVisibilityClosureScenarios:
         )
 
         # User B can read
-        response_b = auth_client.get(f"/libraries/{library_b}/media", headers=auth_headers(user_b))
+        response_b = _list_library_entries(auth_client, user_b, library_b)
         assert response_b.status_code == 200
-        media_ids_b = [m["id"] for m in response_b.json()["data"]]
+        media_ids_b = _library_entry_media_ids(response_b.json()["data"])
         assert str(media_id) in media_ids_b
 
         # User A cannot read (their library is empty)
-        response_a = auth_client.get(f"/libraries/{library_a}/media", headers=auth_headers(user_a))
+        response_a = _list_library_entries(auth_client, user_a, library_a)
         assert response_a.status_code == 200
         assert response_a.json()["data"] == []
 
@@ -3700,11 +3880,11 @@ class TestLibraryListPdfCapabilities:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_ready)
         direct_db.register_cleanup("media_file", "media_id", mid_ready)
-        direct_db.register_cleanup("library_media", "media_id", mid_ready)
+        direct_db.register_cleanup("library_entries", "media_id", mid_ready)
         direct_db.register_cleanup("media", "id", mid_ready)
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_not_ready)
         direct_db.register_cleanup("media_file", "media_id", mid_not_ready)
-        direct_db.register_cleanup("library_media", "media_id", mid_not_ready)
+        direct_db.register_cleanup("library_entries", "media_id", mid_not_ready)
         direct_db.register_cleanup("media", "id", mid_not_ready)
 
         for mid in [mid_ready, mid_not_ready]:
@@ -3714,9 +3894,13 @@ class TestLibraryListPdfCapabilities:
                 headers=auth_headers(user_id),
             )
 
-        list_resp = auth_client.get(f"/libraries/{library_id}/media", headers=auth_headers(user_id))
+        list_resp = _list_library_entries(auth_client, user_id, library_id)
         assert list_resp.status_code == 200
-        items = {m["id"]: m for m in list_resp.json()["data"]}
+        items = {
+            row["media"]["id"]: row["media"]
+            for row in list_resp.json()["data"]
+            if row["kind"] == "media" and row["media"] is not None
+        }
 
         ready_caps = items[str(mid_ready)]["capabilities"]
         assert ready_caps["can_quote"] is True
@@ -3744,7 +3928,7 @@ class TestLibraryListPdfCapabilities:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid)
         direct_db.register_cleanup("media_file", "media_id", mid)
-        direct_db.register_cleanup("library_media", "media_id", mid)
+        direct_db.register_cleanup("library_entries", "media_id", mid)
         direct_db.register_cleanup("media", "id", mid)
 
         auth_client.post(
@@ -3753,8 +3937,14 @@ class TestLibraryListPdfCapabilities:
             headers=auth_headers(user_id),
         )
 
-        list_resp = auth_client.get(f"/libraries/{library_id}/media", headers=auth_headers(user_id))
-        list_caps = next(m for m in list_resp.json()["data"] if m["id"] == str(mid))["capabilities"]
+        list_resp = _list_library_entries(auth_client, user_id, library_id)
+        list_caps = next(
+            row["media"]["capabilities"]
+            for row in list_resp.json()["data"]
+            if row["kind"] == "media"
+            and row["media"] is not None
+            and row["media"]["id"] == str(mid)
+        )
 
         detail_resp = auth_client.get(f"/media/{mid}", headers=auth_headers(user_id))
         detail_caps = detail_resp.json()["data"]["capabilities"]

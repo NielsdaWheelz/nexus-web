@@ -31,7 +31,7 @@ class TestIngestYoutubeVideo:
         media_id = UUID(create_response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         monkeypatch.setattr(
@@ -103,7 +103,7 @@ class TestIngestYoutubeVideo:
         media_id = UUID(create_response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         monkeypatch.setattr(
@@ -150,7 +150,7 @@ class TestIngestYoutubeVideo:
         media_id = UUID(create_response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         calls = {"count": 0}

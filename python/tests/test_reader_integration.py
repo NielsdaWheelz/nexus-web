@@ -200,7 +200,7 @@ class TestGetMediaReaderState:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -232,7 +232,7 @@ class TestGetMediaReaderState:
         # reader_media_state CASCADE-deletes with media; no explicit cleanup needed
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -272,7 +272,7 @@ class TestGetMediaReaderState:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_a, media_id)
@@ -306,7 +306,7 @@ class TestPatchMediaReaderState:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -353,7 +353,7 @@ class TestPatchMediaReaderState:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -378,7 +378,7 @@ class TestPatchMediaReaderState:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_a, media_id)
@@ -403,7 +403,7 @@ class TestPatchMediaReaderState:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -434,7 +434,7 @@ class TestPatchMediaReaderState:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -490,7 +490,7 @@ class TestPatchMediaReaderState:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -515,7 +515,7 @@ class TestPatchMediaReaderState:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -545,7 +545,7 @@ class TestPatchMediaReaderState:
         direct_db.register_cleanup("reader_media_state", "media_id", media_id)
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)

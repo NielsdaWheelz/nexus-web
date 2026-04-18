@@ -26,6 +26,7 @@ from nexus.services.highlights import (
     get_highlight_for_author_write_or_404,
     get_highlight_for_visible_read_or_404,
 )
+from tests.factories import add_media_to_library
 
 pytestmark = pytest.mark.integration
 
@@ -116,14 +117,7 @@ def _create_media_and_fragment(db: Session, title="Test Article"):
 
 
 def _add_media_to_library(db: Session, library_id, media_id):
-    db.execute(
-        text("""
-            INSERT INTO library_media (library_id, media_id)
-            VALUES (:lib, :mid)
-            ON CONFLICT DO NOTHING
-        """),
-        {"lib": library_id, "mid": media_id},
-    )
+    add_media_to_library(db, library_id, media_id)
     db.flush()
 
 

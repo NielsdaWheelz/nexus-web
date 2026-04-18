@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 
 type Params = Promise<{ id: string }>;
 
-export async function PUT(req: Request, { params }: { params: Params }) {
+export async function PATCH(req: Request, { params }: { params: Params }) {
   const { id } = await params;
-  return proxyToFastAPI(req, `/libraries/${id}/media/order`);
+  return proxyToFastAPI(req, `/libraries/${id}/entries/reorder`);
 }

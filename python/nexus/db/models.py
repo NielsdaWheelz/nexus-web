@@ -236,6 +236,7 @@ class Library(Base):
         nullable=False,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    color: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -260,8 +261,8 @@ class Library(Base):
     memberships: Mapped[list["Membership"]] = relationship(
         "Membership", back_populates="library", cascade="all, delete-orphan"
     )
-    library_media: Mapped[list["LibraryMedia"]] = relationship(
-        "LibraryMedia", back_populates="library", cascade="all, delete-orphan"
+    library_entries: Mapped[list["LibraryEntry"]] = relationship(
+        "LibraryEntry", back_populates="library", cascade="all, delete-orphan"
     )
 
 
@@ -418,8 +419,8 @@ class Media(Base):
     fragments: Mapped[list["Fragment"]] = relationship(
         "Fragment", back_populates="media", cascade="all, delete-orphan"
     )
-    library_media: Mapped[list["LibraryMedia"]] = relationship(
-        "LibraryMedia", back_populates="media", cascade="all, delete-orphan"
+    library_entries: Mapped[list["LibraryEntry"]] = relationship(
+        "LibraryEntry", back_populates="media", cascade="all, delete-orphan"
     )
     media_file: Mapped["MediaFile | None"] = relationship(
         "MediaFile", back_populates="media", cascade="all, delete-orphan", uselist=False
@@ -586,20 +587,30 @@ class Fragment(Base):
     )
 
 
-class LibraryMedia(Base):
-    """Association between libraries and media."""
+class LibraryEntry(Base):
+    """Association between a library and exactly one content target."""
 
-    __tablename__ = "library_media"
+    __tablename__ = "library_entries"
 
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
     library_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("libraries.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     )
-    media_id: Mapped[UUID] = mapped_column(
+    media_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("media.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=True,
+    )
+    podcast_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcasts.id", ondelete="CASCADE"),
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -609,13 +620,22 @@ class LibraryMedia(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     __table_args__ = (
-        CheckConstraint("position >= 0", name="ck_library_media_position_non_negative"),
-        Index("ix_library_media_library_position", "library_id", "position"),
+        CheckConstraint(
+            "(media_id IS NOT NULL AND podcast_id IS NULL) "
+            "OR (media_id IS NULL AND podcast_id IS NOT NULL)",
+            name="ck_library_entries_exactly_one_target",
+        ),
+        CheckConstraint("position >= 0", name="ck_library_entries_position_non_negative"),
+        UniqueConstraint("library_id", "media_id", name="uq_library_entries_library_media"),
+        UniqueConstraint("library_id", "podcast_id", name="uq_library_entries_library_podcast"),
+        Index("idx_library_entries_media_library", "media_id", "library_id"),
+        Index("idx_library_entries_podcast_library", "podcast_id", "library_id"),
+        Index("ix_library_entries_library_position", "library_id", "position"),
     )
 
-    # Relationships
-    library: Mapped["Library"] = relationship("Library", back_populates="library_media")
-    media: Mapped["Media"] = relationship("Media", back_populates="library_media")
+    library: Mapped["Library"] = relationship("Library", back_populates="library_entries")
+    media: Mapped["Media | None"] = relationship("Media", back_populates="library_entries")
+    podcast: Mapped["Podcast | None"] = relationship("Podcast", back_populates="library_entries")
 
 
 # =============================================================================
@@ -664,44 +684,8 @@ class Podcast(Base):
     episodes: Mapped[list["PodcastEpisode"]] = relationship(
         "PodcastEpisode", back_populates="podcast", cascade="all, delete-orphan"
     )
-
-
-class PodcastSubscriptionCategory(Base):
-    """Per-user subscription grouping category (folder-like)."""
-
-    __tablename__ = "podcast_subscription_categories"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    position: Mapped[int] = mapped_column(Integer, nullable=False)
-    color: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "name",
-            name="uq_podcast_subscription_categories_user_name",
-        ),
-        Index("ix_podcast_subscription_categories_user_position", "user_id", "position"),
-    )
-
-    subscriptions: Mapped[list["PodcastSubscription"]] = relationship(
-        "PodcastSubscription",
-        back_populates="category",
+    library_entries: Mapped[list["LibraryEntry"]] = relationship(
+        "LibraryEntry", back_populates="podcast", cascade="all, delete-orphan"
     )
 
 
@@ -721,14 +705,8 @@ class PodcastSubscription(Base):
         primary_key=True,
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
-    unsubscribe_mode: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     auto_queue: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     default_playback_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
-    category_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcast_subscription_categories.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     sync_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     sync_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -757,10 +735,6 @@ class PodcastSubscription(Base):
             name="ck_podcast_subscriptions_status",
         ),
         CheckConstraint(
-            "unsubscribe_mode IN (1, 2, 3)",
-            name="ck_podcast_subscriptions_unsubscribe_mode_valid",
-        ),
-        CheckConstraint(
             "sync_status IN ('pending', 'running', 'partial', 'complete', 'source_limited', 'failed')",
             name="ck_podcast_subscriptions_sync_status",
         ),
@@ -775,10 +749,6 @@ class PodcastSubscription(Base):
     )
 
     podcast: Mapped["Podcast"] = relationship("Podcast")
-    category: Mapped["PodcastSubscriptionCategory | None"] = relationship(
-        "PodcastSubscriptionCategory",
-        back_populates="subscriptions",
-    )
 
 
 class PodcastSubscriptionPollRun(Base):
@@ -2728,8 +2698,8 @@ class DefaultLibraryClosureEdge(Base):
 class DefaultLibraryBackfillJob(Base):
     """Durable backfill intent for default-library closure materialization.
 
-    Created when an invite is accepted.  A worker picks up pending jobs and
-    materializes closure edges + default library_media rows.
+    Created when an invite is accepted. A worker picks up pending jobs and
+    materializes closure edges + default library entry rows.
     """
 
     __tablename__ = "default_library_backfill_jobs"

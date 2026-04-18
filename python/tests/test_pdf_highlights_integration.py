@@ -97,7 +97,7 @@ def _setup_pdf_media(
             status=status,
         )
     direct_db.register_cleanup("media", "id", media_id)
-    direct_db.register_cleanup("library_media", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
     direct_db.register_cleanup("highlight_pdf_anchors", "media_id", media_id)
     direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
@@ -255,7 +255,7 @@ class TestCreatePdfHighlight:
             session.commit()
 
         direct_db.register_cleanup("media", "id", mid)
-        direct_db.register_cleanup("library_media", "media_id", mid)
+        direct_db.register_cleanup("library_entries", "media_id", mid)
 
         _add_media_to_library(auth_client, user_id, mid)
 
@@ -587,7 +587,7 @@ class TestListPdfHighlightsIndex:
         direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("highlight_pdf_anchors", "media_id", media_id)
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("memberships", "library_id", shared_library_id)
         direct_db.register_cleanup("libraries", "id", shared_library_id)
@@ -829,7 +829,7 @@ class TestPdfHighlightVisibilityRegression:
         direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("highlight_pdf_anchors", "media_id", media_id)
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("memberships", "library_id", shared_library_id)
         direct_db.register_cleanup("libraries", "id", shared_library_id)
@@ -894,7 +894,7 @@ class TestPdfHighlightVisibilityRegression:
         direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("highlight_pdf_anchors", "media_id", media_id)
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("memberships", "library_id", shared_library_id)
         direct_db.register_cleanup("libraries", "id", shared_library_id)
@@ -1030,7 +1030,7 @@ class TestUpdatePdfHighlight:
             session.commit()
 
         direct_db.register_cleanup("media", "id", mid)
-        direct_db.register_cleanup("library_media", "media_id", mid)
+        direct_db.register_cleanup("library_entries", "media_id", mid)
         direct_db.register_cleanup("fragments", "id", fid)
         direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fid)
         direct_db.register_cleanup("highlights", "fragment_id", fid)

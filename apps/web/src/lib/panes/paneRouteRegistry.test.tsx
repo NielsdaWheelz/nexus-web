@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
+import { resolvePaneRoute } from "./paneRouteRegistry";
 
 describe("pane route registry", () => {
   it("resolves typed route params", () => {

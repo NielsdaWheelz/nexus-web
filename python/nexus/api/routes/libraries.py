@@ -22,10 +22,11 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.library import (
     AddMediaRequest,
+    AddPodcastRequest,
     CreateLibraryInviteRequest,
     CreateLibraryRequest,
+    LibraryEntryOrderRequest,
     LibraryInvitationStatusValue,
-    LibraryMediaOrderRequest,
     TransferLibraryOwnershipRequest,
     UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
@@ -295,41 +296,41 @@ def transfer_library_ownership(
     return success_response(result.model_dump(mode="json"))
 
 
-# ---- Library Media ----
+# ---- Library Entries ----
 
 
-@router.get("/libraries/{library_id}/media")
-def list_library_media(
+@router.get("/libraries/{library_id}/entries")
+def list_library_entries(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=100, ge=1, description="Maximum results (clamped to 200)"),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
-    """List media in a library.
+    """List ordered entries in a library.
 
-    Returns media ordered by library_media.position ASC and recency tiebreakers.
+    Returns one mixed list of podcasts and media ordered by entry position ASC.
     """
-    result = libraries_service.list_library_media(
+    result = libraries_service.list_library_entries(
         db,
         viewer.user_id,
         library_id,
         limit=limit,
         offset=offset,
     )
-    return success_response([media.model_dump(mode="json") for media in result])
+    return success_response([entry.model_dump(mode="json") for entry in result])
 
 
-@router.put("/libraries/{library_id}/media/order")
-def put_library_media_order(
+@router.patch("/libraries/{library_id}/entries/reorder")
+def patch_library_entry_order(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    body: LibraryMediaOrderRequest,
+    body: LibraryEntryOrderRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Replace full media ordering for a library."""
-    result = libraries_service.reorder_library_media(db, viewer.user_id, library_id, body)
-    return success_response([media.model_dump(mode="json") for media in result])
+    """Replace full entry ordering for a library."""
+    result = libraries_service.reorder_library_entries(db, viewer.user_id, library_id, body)
+    return success_response([entry.model_dump(mode="json") for entry in result])
 
 
 @router.post("/libraries/{library_id}/media", status_code=201)
@@ -347,6 +348,20 @@ def add_media_to_library(
     return success_response(result.model_dump(mode="json"))
 
 
+@router.post("/libraries/{library_id}/podcasts", status_code=201)
+def add_podcast_to_library(
+    library_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    body: AddPodcastRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Add a subscribed podcast reference to a non-default library."""
+    result = libraries_service.add_podcast_to_library(
+        db, viewer.user_id, library_id, body.podcast_id
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
 @router.delete("/libraries/{library_id}/media/{media_id}", status_code=204)
 def remove_media_from_library(
     library_id: UUID,
@@ -359,4 +374,16 @@ def remove_media_from_library(
     Only admins can remove media. Enforces default library closure rules.
     """
     libraries_service.remove_media_from_library(db, viewer.user_id, library_id, media_id)
+    return Response(status_code=204)
+
+
+@router.delete("/libraries/{library_id}/podcasts/{podcast_id}", status_code=204)
+def remove_podcast_from_library(
+    library_id: UUID,
+    podcast_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Remove a podcast reference from one non-default library."""
+    libraries_service.remove_podcast_from_library(db, viewer.user_id, library_id, podcast_id)
     return Response(status_code=204)

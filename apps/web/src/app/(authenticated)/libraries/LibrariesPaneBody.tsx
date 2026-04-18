@@ -259,9 +259,8 @@ export default function LibrariesPaneBody() {
 
   return (
     <>
-      <SectionCard>
+      <SectionCard title="Libraries" description="Mixed collections for podcasts and media.">
         <div className={styles.content}>
-          {/* Create library form */}
           <form className={styles.createForm} onSubmit={handleCreateLibrary}>
             <input
               type="text"
@@ -286,7 +285,7 @@ export default function LibrariesPaneBody() {
             <StateMessage variant="loading">Loading libraries...</StateMessage>
           ) : libraries.length === 0 ? (
             <StateMessage variant="empty">
-              No libraries yet. create your first library above.
+              No libraries yet. Create your first library above.
             </StateMessage>
           ) : (
             <AppList>
@@ -304,7 +303,11 @@ export default function LibrariesPaneBody() {
                     )
                   }
                   title={library.name}
-                  meta={`role ${library.role}`}
+                  meta={
+                    library.is_default
+                      ? `default media library · role ${library.role}`
+                      : `mixed library · role ${library.role}`
+                  }
                   trailing={
                     library.is_default ? (
                       <StatusPill variant="info">default</StatusPill>

@@ -5,7 +5,7 @@ Worker behaviour (per s4 spec section 7.4):
 2. Validate tuple integrity; invalid tuple is terminal failure.
 3. Lock membership row before materialization (strict revocation).
 4. If membership absent, complete with zero inserts.
-5. Materialise closure edges + default library_media rows.
+5. Materialise closure edges + default library entry rows.
 6. Status-guarded complete/fail transitions.
 7. Deterministic retry: delays [60, 300, 900, 3600, 21600], max 5 attempts.
 """

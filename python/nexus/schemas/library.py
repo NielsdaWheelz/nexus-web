@@ -1,7 +1,4 @@
-"""Library-related Pydantic schemas.
-
-Contains request and response models for library endpoints.
-"""
+"""Library-related request and response schemas."""
 
 from datetime import datetime
 from typing import Literal
@@ -9,128 +6,138 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# MediaOut is defined in schemas/media.py - import from there
 from nexus.schemas.media import MediaOut
-
-# --- S4 typed aliases ---
 
 LibraryRole = Literal["admin", "member"]
 LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
-
 BackfillJobStatusValue = Literal["pending", "running", "completed", "failed"]
-
-__all__ = [
-    "CreateLibraryRequest",
-    "UpdateLibraryRequest",
-    "AddMediaRequest",
-    "LibraryMediaOrderRequest",
-    "UpdateLibraryMemberRequest",
-    "TransferLibraryOwnershipRequest",
-    "LibraryOut",
-    "LibraryMediaOut",
-    "MediaOut",
-    # S4 types
-    "LibraryRole",
-    "LibraryInvitationStatusValue",
-    "BackfillJobStatusValue",
-    "LibraryMemberOut",
-    "LibraryInvitationOut",
-    # S4 PR-04 invite request/response schemas
-    "CreateLibraryInviteRequest",
-    "InviteAcceptMembershipOut",
-    "AcceptLibraryInviteResponse",
-    "DeclineLibraryInviteResponse",
-    # S4 PR-05 backfill requeue schemas
-    "RequeueDefaultLibraryBackfillJobRequest",
-    "DefaultLibraryBackfillJobOut",
+LibraryEntryKind = Literal["media", "podcast"]
+PodcastSubscriptionStatusValue = Literal["active", "unsubscribed"]
+PodcastSyncStatusValue = Literal[
+    "pending", "running", "partial", "complete", "source_limited", "failed"
 ]
 
-# =============================================================================
-# Request Schemas
-# =============================================================================
+__all__ = [
+    "AddMediaRequest",
+    "AddPodcastRequest",
+    "AcceptLibraryInviteResponse",
+    "BackfillJobStatusValue",
+    "CreateLibraryInviteRequest",
+    "CreateLibraryRequest",
+    "DeclineLibraryInviteResponse",
+    "DefaultLibraryBackfillJobOut",
+    "InviteAcceptMembershipOut",
+    "LibraryEntryKind",
+    "LibraryEntryOrderRequest",
+    "LibraryEntryOut",
+    "LibraryInvitationOut",
+    "LibraryInvitationStatusValue",
+    "LibraryMemberOut",
+    "LibraryOut",
+    "LibraryPodcastOut",
+    "LibraryPodcastSubscriptionOut",
+    "LibraryRole",
+    "RequeueDefaultLibraryBackfillJobRequest",
+    "TransferLibraryOwnershipRequest",
+    "UpdateLibraryMemberRequest",
+    "UpdateLibraryRequest",
+]
 
 
 class CreateLibraryRequest(BaseModel):
-    """Request body for creating a new library."""
-
     name: str = Field(..., min_length=1, max_length=100, description="Library name (1-100 chars)")
 
 
 class UpdateLibraryRequest(BaseModel):
-    """Request body for updating a library."""
-
     name: str = Field(
         ..., min_length=1, max_length=100, description="New library name (1-100 chars)"
     )
 
 
 class AddMediaRequest(BaseModel):
-    """Request body for adding media to a library."""
-
     media_id: UUID = Field(..., description="ID of the media to add")
 
 
-class LibraryMediaOrderRequest(BaseModel):
-    """Request body for replacing library media order."""
+class AddPodcastRequest(BaseModel):
+    podcast_id: UUID = Field(..., description="ID of the podcast to add")
 
-    media_ids: list[UUID] = Field(min_length=1, max_length=500)
+
+class LibraryEntryOrderRequest(BaseModel):
+    entry_ids: list[UUID] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_entry_ids(self) -> "LibraryEntryOrderRequest":
+        if len(set(self.entry_ids)) != len(self.entry_ids):
+            raise ValueError("entry_ids must not contain duplicates")
+        return self
 
     model_config = ConfigDict(extra="forbid")
 
 
 class UpdateLibraryMemberRequest(BaseModel):
-    """Request body for updating a library member's role."""
-
     role: LibraryRole = Field(..., description="New role for the member ('admin' or 'member')")
 
 
 class TransferLibraryOwnershipRequest(BaseModel):
-    """Request body for transferring library ownership."""
-
     new_owner_user_id: UUID = Field(..., description="User ID of the new owner")
 
 
-# =============================================================================
-# Response Schemas
-# =============================================================================
-
-
 class LibraryOut(BaseModel):
-    """Response schema for a library.
-
-    Note: The `role` field is the viewer's membership role, not a property
-    of the library itself. Must be computed via JOIN with memberships table.
-    """
-
     id: UUID
     name: str
+    color: str | None = None
     owner_user_id: UUID
     is_default: bool
-    role: str  # "admin" or "member" — viewer's role in this library
+    role: LibraryRole
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class LibraryMediaOut(BaseModel):
-    """Response schema for a library-media association."""
-
-    library_id: UUID
-    media_id: UUID
+class LibraryPodcastOut(BaseModel):
+    id: UUID
+    provider: str
+    provider_podcast_id: str
+    title: str
+    author: str | None = None
+    feed_url: str
+    website_url: str | None = None
+    image_url: str | None = None
+    description: str | None = None
     created_at: datetime
+    updated_at: datetime
+    unplayed_count: int = Field(ge=0, default=0)
+
+
+class LibraryPodcastSubscriptionOut(BaseModel):
+    status: PodcastSubscriptionStatusValue
+    default_playback_speed: float | None = Field(default=None, ge=0.5, le=3.0)
+    auto_queue: bool = False
+    sync_status: PodcastSyncStatusValue
+    sync_error_code: str | None = None
+    sync_error_message: str | None = None
+    sync_attempts: int = Field(ge=0)
+    sync_started_at: datetime | None = None
+    sync_completed_at: datetime | None = None
+    last_synced_at: datetime | None = None
+    updated_at: datetime
+
+
+class LibraryEntryOut(BaseModel):
+    id: UUID
+    library_id: UUID
+    kind: LibraryEntryKind
+    position: int = Field(ge=0)
+    created_at: datetime
+    media: MediaOut | None = None
+    podcast: LibraryPodcastOut | None = None
+    subscription: LibraryPodcastSubscriptionOut | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
-# =============================================================================
-# S4 Response Schemas
-# =============================================================================
-
-
 class LibraryMemberOut(BaseModel):
-    """Response schema for a library member."""
-
     user_id: UUID
     role: LibraryRole
     is_owner: bool
@@ -142,8 +149,6 @@ class LibraryMemberOut(BaseModel):
 
 
 class LibraryInvitationOut(BaseModel):
-    """Response schema for a library invitation."""
-
     id: UUID
     library_id: UUID
     inviter_user_id: UUID
@@ -158,22 +163,9 @@ class LibraryInvitationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# =============================================================================
-# S4 PR-04 Invite Request/Response Schemas
-# =============================================================================
-
-
 class CreateLibraryInviteRequest(BaseModel):
-    """Request body for creating a library invitation.
-
-    Provide either invitee_user_id or invitee_email (at least one required).
-    If both are provided, invitee_user_id takes precedence.
-    """
-
     invitee_user_id: UUID | None = Field(default=None, description="User ID of the invitee")
-    invitee_email: str | None = Field(
-        default=None, description="Email of the invitee (alternative to user_id)"
-    )
+    invitee_email: str | None = Field(default=None, description="Email of the invitee")
     role: LibraryRole = Field(
         ..., description="Role to assign to the invitee ('admin' or 'member')"
     )
@@ -186,8 +178,6 @@ class CreateLibraryInviteRequest(BaseModel):
 
 
 class InviteAcceptMembershipOut(BaseModel):
-    """Membership info returned after accepting an invite."""
-
     library_id: UUID
     user_id: UUID
     role: LibraryRole
@@ -196,8 +186,6 @@ class InviteAcceptMembershipOut(BaseModel):
 
 
 class AcceptLibraryInviteResponse(BaseModel):
-    """Response for accepting a library invitation."""
-
     invite: LibraryInvitationOut
     membership: InviteAcceptMembershipOut
     idempotent: bool
@@ -207,30 +195,19 @@ class AcceptLibraryInviteResponse(BaseModel):
 
 
 class DeclineLibraryInviteResponse(BaseModel):
-    """Response for declining a library invitation."""
-
     invite: LibraryInvitationOut
     idempotent: bool
 
     model_config = ConfigDict(from_attributes=True)
 
 
-# =============================================================================
-# S4 PR-05 Internal Backfill Requeue Schemas
-# =============================================================================
-
-
 class RequeueDefaultLibraryBackfillJobRequest(BaseModel):
-    """Request body for requeuing a backfill job (internal operator endpoint)."""
-
     default_library_id: UUID = Field(..., description="Default library ID")
     source_library_id: UUID = Field(..., description="Source (non-default) library ID")
     user_id: UUID = Field(..., description="User ID who owns the default library")
 
 
 class DefaultLibraryBackfillJobOut(BaseModel):
-    """Response for backfill job state (internal operator endpoint)."""
-
     default_library_id: UUID
     source_library_id: UUID
     user_id: UUID

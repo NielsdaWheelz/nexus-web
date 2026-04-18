@@ -28,6 +28,7 @@ from nexus.db.models import ProcessingStatus
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.media import create_provisional_web_article
+from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.mock_verifier import MockJwtVerifier
 from tests.utils.db import DirectSessionManager
@@ -151,7 +152,7 @@ class TestWebArticleHighlightE2E:
         # Register cleanup for data created by this test (reverse order of dependencies)
         # Note: highlights are cleaned via cascade when fragments are deleted
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Step 2: Run ingestion synchronously (use direct_db session for visibility)
@@ -338,7 +339,7 @@ class TestSharedHighlightVisibility:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Bootstrap both users
@@ -384,17 +385,10 @@ class TestSharedHighlightVisibility:
                 """),
                 {"lib": shared_lib_id, "uid": user_b},
             )
-            session.execute(
-                text("""
-                    INSERT INTO library_media (library_id, media_id)
-                    VALUES (:lib, :mid)
-                    ON CONFLICT DO NOTHING
-                """),
-                {"lib": shared_lib_id, "mid": media_id},
-            )
+            add_media_to_library(session, shared_lib_id, media_id)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "library_id", shared_lib_id)
+        direct_db.register_cleanup("library_entries", "library_id", shared_lib_id)
         direct_db.register_cleanup("memberships", "library_id", shared_lib_id)
         direct_db.register_cleanup("libraries", "id", shared_lib_id)
 
@@ -485,7 +479,7 @@ class TestSharedHighlightVisibility:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A adds media and creates highlight
@@ -577,7 +571,7 @@ class TestUnicodeEmojiStability:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Add to user's library
@@ -672,7 +666,7 @@ class TestUnicodeEmojiStability:
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Add to user's library
@@ -1158,7 +1152,7 @@ class TestProcessingStateRegression:
             session.commit()
 
         direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Add to library

@@ -365,7 +365,7 @@ def confirm_ingest(
         # Capture path before deletion
         loser_path = storage_path
 
-        # Delete the media row (cascades to media_file, library_media)
+        # Delete the media row (cascades to media_file and media library_entries)
         db.delete(media)
 
         # Ensure winner is in viewer's default library

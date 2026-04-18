@@ -160,7 +160,7 @@ class TestGetMedia:
         with direct_db.session() as session:
             media_id = create_seeded_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -194,7 +194,7 @@ class TestGetMedia:
         with direct_db.session() as session:
             media_id = create_seeded_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -241,7 +241,7 @@ class TestGetMedia:
         with direct_db.session() as session:
             media_id = create_seeded_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -271,7 +271,7 @@ class TestGetMedia:
         with direct_db.session() as session:
             media_id = create_seeded_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -331,7 +331,7 @@ class TestGetMedia:
             session.add(media)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -378,7 +378,7 @@ class TestMediaListeningState:
             )
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -416,7 +416,7 @@ class TestMediaListeningState:
             )
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -485,7 +485,7 @@ class TestMediaListeningState:
             )
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -533,7 +533,7 @@ class TestMediaListeningState:
             )
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -579,7 +579,7 @@ class TestMediaListeningState:
             )
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -630,7 +630,7 @@ class TestMediaListeningState:
             )
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -676,7 +676,7 @@ class TestMediaListeningState:
             )
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -727,7 +727,7 @@ class TestMediaListeningStateBatch:
             session.commit()
 
         for media_id in media_ids:
-            direct_db.register_cleanup("library_media", "media_id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
             add_media_to_default_library(auth_client, user_id, media_id)
@@ -770,7 +770,7 @@ class TestMediaListeningStateBatch:
             )
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", visible_media_id)
+        direct_db.register_cleanup("library_entries", "media_id", visible_media_id)
         direct_db.register_cleanup("podcast_listening_states", "media_id", visible_media_id)
         direct_db.register_cleanup("media", "id", visible_media_id)
         add_media_to_default_library(auth_client, user_id, visible_media_id)
@@ -806,7 +806,7 @@ class TestGetMediaFragments:
         with direct_db.session() as session:
             media_id = create_seeded_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -856,7 +856,7 @@ class TestGetMediaFragments:
         with direct_db.session() as session:
             media_id = create_seeded_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -909,7 +909,7 @@ class TestGetMediaFragments:
 
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -950,7 +950,7 @@ class TestGetMediaFragments:
             session.add(media)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Add to library
@@ -985,7 +985,7 @@ class TestContentSafety:
         with direct_db.session() as session:
             media_id = create_seeded_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1025,7 +1025,7 @@ class TestTimestampSerialization:
         with direct_db.session() as session:
             media_id = create_seeded_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1058,7 +1058,7 @@ class TestTimestampSerialization:
         with direct_db.session() as session:
             media_id = create_seeded_media(session)
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1105,7 +1105,7 @@ class TestEpubChapterFragmentsImmutableAcrossReadsAndHighlightChurn:
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("highlights", "fragment_id", frag_ids[1])
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -1175,7 +1175,7 @@ class TestEpubFragmentContentStableAcrossEmbeddingStatusTransition:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -1292,7 +1292,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragment_blocks", "fragment_id", frag_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1354,7 +1354,7 @@ class TestGetEpubAssetSuccessAndMasking:
             session.add(media)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -1424,7 +1424,7 @@ class TestGetEpubAssetSuccessAndMasking:
             session.add(media)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -1471,7 +1471,7 @@ class TestGetEpubAssetKindAndReadyGuards:
             session.add(media)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -1504,7 +1504,7 @@ class TestGetEpubAssetKindAndReadyGuards:
             session.add(media)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -1580,7 +1580,7 @@ class TestRetryEpubEndpoint:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1637,7 +1637,7 @@ class TestRetryEpubEndpoint:
             session.add(media)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
@@ -1663,7 +1663,7 @@ class TestRetryEpubEndpoint:
         with direct_db.session() as session:
             media_id = _create_failed_epub(session, user_id, last_error_code="E_ARCHIVE_UNSAFE")
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1702,7 +1702,7 @@ class TestRetryEpubEndpoint:
             session.add(media)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", non_epub_id)
+        direct_db.register_cleanup("library_entries", "media_id", non_epub_id)
         direct_db.register_cleanup("media", "id", non_epub_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_a))
@@ -1721,7 +1721,7 @@ class TestRetryEpubEndpoint:
         with direct_db.session() as session:
             epub_id = _create_failed_epub(session, user_a)
 
-        direct_db.register_cleanup("library_media", "media_id", epub_id)
+        direct_db.register_cleanup("library_entries", "media_id", epub_id)
         direct_db.register_cleanup("media_file", "media_id", epub_id)
         direct_db.register_cleanup("media", "id", epub_id)
 
@@ -1801,7 +1801,7 @@ class TestRetryEpubEndpoint:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1867,7 +1867,7 @@ class TestRetryEpubEndpoint:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1926,7 +1926,7 @@ class TestRetryEpubEndpoint:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1999,7 +1999,7 @@ class TestGetEpubChaptersManifestPaginationIsDeterministic:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2059,7 +2059,7 @@ class TestGetEpubChaptersCursorOutOfRangeReturnsEmptyPage:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2081,7 +2081,7 @@ class TestGetEpubChaptersCursorOutOfRangeReturnsEmptyPage:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2107,7 +2107,7 @@ class TestGetEpubChaptersManifestIsMetadataOnly:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2143,7 +2143,7 @@ class TestGetEpubChaptersProjectionExcludesHeavyColumns:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2210,7 +2210,7 @@ class TestGetEpubChaptersPrimaryTocNodeUsesMinOrderKey:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2236,7 +2236,7 @@ class TestGetEpubChapterByIdxReturnsPayloadAndNavigation:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2277,7 +2277,7 @@ class TestGetEpubChapterReturnsSingleChapterNotConcatenated:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2302,7 +2302,7 @@ class TestGetEpubChapterMissingIdxReturns404:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2363,7 +2363,7 @@ class TestGetEpubTocReturnsNestedTreeOrderedByOrderKey:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2401,7 +2401,7 @@ class TestGetEpubTocEmptyReturnsNodesEmpty:
             media_id, _ = _create_ready_epub(session, num_chapters=1, with_toc=False)
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2424,7 +2424,7 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2463,7 +2463,7 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2490,7 +2490,7 @@ class TestGetEpubReadEndpointsVisibilityMasking:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # Only user A gets the media
@@ -2528,7 +2528,7 @@ class TestGetEpubReadEndpointsKindAndReadinessGuards:
             session.add(media)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2557,7 +2557,7 @@ class TestGetEpubReadEndpointsKindAndReadinessGuards:
             session.add(media)
             session.commit()
 
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2584,7 +2584,7 @@ class TestGetEpubChaptersInvalidLimitCursorAndIdxAre400:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2628,7 +2628,7 @@ class TestGetFragmentsEpubReady:
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2734,7 +2734,7 @@ class TestPdfCapabilityDerivation:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2760,7 +2760,7 @@ class TestPdfCapabilityDerivation:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id_ready)
         direct_db.register_cleanup("media_file", "media_id", media_id_ready)
-        direct_db.register_cleanup("library_media", "media_id", media_id_ready)
+        direct_db.register_cleanup("library_entries", "media_id", media_id_ready)
         direct_db.register_cleanup("media", "id", media_id_ready)
 
         _add_media_to_user_library(auth_client, user_id, media_id_ready)
@@ -2785,7 +2785,7 @@ class TestPdfCapabilityDerivation:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2810,7 +2810,7 @@ class TestPdfCapabilityDerivation:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2837,7 +2837,7 @@ class TestPdfCapabilityDerivation:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_no_text)
         direct_db.register_cleanup("media_file", "media_id", mid_no_text)
-        direct_db.register_cleanup("library_media", "media_id", mid_no_text)
+        direct_db.register_cleanup("library_entries", "media_id", mid_no_text)
         direct_db.register_cleanup("media", "id", mid_no_text)
 
         _add_media_to_user_library(auth_client, uid, mid_no_text)
@@ -2858,7 +2858,7 @@ class TestPdfCapabilityDerivation:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_full)
         direct_db.register_cleanup("media_file", "media_id", mid_full)
-        direct_db.register_cleanup("library_media", "media_id", mid_full)
+        direct_db.register_cleanup("library_entries", "media_id", mid_full)
         direct_db.register_cleanup("media", "id", mid_full)
 
         _add_media_to_user_library(auth_client, uid2, mid_full)
@@ -2885,7 +2885,7 @@ class TestPdfRetry:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2908,7 +2908,7 @@ class TestPdfRetry:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2939,7 +2939,7 @@ class TestPdfRetry:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -2990,7 +2990,7 @@ class TestPdfRetry:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -3024,7 +3024,7 @@ class TestPdfRetry:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -3079,7 +3079,7 @@ class TestPdfRetry:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -3104,7 +3104,7 @@ class TestPdfRetry:
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_media", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _add_media_to_user_library(auth_client, user_id, media_id)

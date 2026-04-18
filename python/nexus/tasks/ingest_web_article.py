@@ -376,7 +376,7 @@ def _handle_duplicate(
 
         ensure_default_intrinsic(db, library_id, winner_id)
 
-    # Delete loser (cascades library_media entries)
+    # Delete loser (cascades media library_entries)
     db.execute(text("DELETE FROM media WHERE id = :id"), {"id": loser_id})
     db.commit()
 

@@ -6,18 +6,20 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import (
     Annotation,
-    DefaultLibraryIntrinsic,
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
-    LibraryMedia,
     Media,
     MediaKind,
     Page,
     ProcessingStatus,
 )
 from nexus.services.vault import export_vault, sync_vault
-from tests.factories import create_pdf_media_with_text, get_user_default_library
+from tests.factories import (
+    add_media_to_library,
+    create_pdf_media_with_text,
+    get_user_default_library,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -321,8 +323,7 @@ def _seed_article_highlight(
     )
     session.add(media)
     session.flush()
-    session.add(LibraryMedia(library_id=library_id, media_id=media.id))
-    session.add(DefaultLibraryIntrinsic(default_library_id=library_id, media_id=media.id))
+    add_media_to_library(session, library_id, media.id)
 
     canonical_text = "This is the first sentence. This is the second sentence for local sync."
     fragment = Fragment(
@@ -375,5 +376,5 @@ def _register_seed_cleanup(
     direct_db.register_cleanup("highlights", "id", highlight_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-    direct_db.register_cleanup("library_media", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)

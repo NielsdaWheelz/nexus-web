@@ -12,7 +12,7 @@ Key invariants tested:
 - No existence leak (non-existent resources return False, not raise)
 - All functions accept explicit Session
 - Bulk function uses exactly one query
-- Default library_media alone is NOT sufficient without intrinsic/closure
+- Default library_entries alone is NOT sufficient without intrinsic/closure
 - Strict revocation: membership/share removal flips outcome immediately
 """
 
@@ -80,7 +80,7 @@ def _create_media(db: Session, title: str = "Test") -> "UUID":
 def _add_media_to_library(db: Session, library_id, media_id) -> None:
     db.execute(
         text("""
-            INSERT INTO library_media (library_id, media_id)
+            INSERT INTO library_entries (library_id, media_id)
             VALUES (:lib, :media)
             ON CONFLICT DO NOTHING
         """),
@@ -201,15 +201,15 @@ class TestCanReadMedia:
         ensure_user_and_default_library(db_session, user_id)
         assert can_read_media(db_session, user_id, uuid4()) is False
 
-    def test_can_read_media_false_for_default_library_media_without_intrinsic_or_closure(
+    def test_can_read_media_false_for_default_library_entries_without_intrinsic_or_closure(
         self, db_session: Session
     ):
-        """Default library_media row alone is NOT sufficient for s4 visibility."""
+        """Default library_entries row alone is NOT sufficient for s4 visibility."""
         user_id = uuid4()
         default_lib = ensure_user_and_default_library(db_session, user_id)
         media_id = _create_media(db_session)
 
-        # Only add to library_media, NO intrinsic, NO closure edge
+        # Only add to library_entries, NO intrinsic, NO closure edge
         _add_media_to_library(db_session, default_lib, media_id)
 
         assert can_read_media(db_session, user_id, media_id) is False
@@ -308,7 +308,7 @@ class TestCanReadMediaBulk:
         _add_media_to_library(db_session, default_lib, media_closure)
         _add_closure_edge(db_session, default_lib, media_closure, source_lib)
 
-        # Unreadable (default library_media only, no provenance)
+        # Unreadable (default library_entries only, no provenance)
         media_unreadable = _create_media(db_session, "no provenance")
         _add_media_to_library(db_session, default_lib, media_unreadable)
 
