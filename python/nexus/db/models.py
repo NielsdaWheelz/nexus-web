@@ -185,6 +185,12 @@ class User(Base):
     playback_queue_items: Mapped[list["PlaybackQueueItem"]] = relationship(
         "PlaybackQueueItem", back_populates="user", cascade="all, delete-orphan"
     )
+    podcast_listening_states: Mapped[list["PodcastListeningState"]] = relationship(
+        "PodcastListeningState", back_populates="user", cascade="all, delete-orphan"
+    )
+    command_palette_recents: Mapped[list["CommandPaletteRecent"]] = relationship(
+        "CommandPaletteRecent", back_populates="user"
+    )
 
 
 class Page(Base):
@@ -199,7 +205,7 @@ class Page(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -998,7 +1004,7 @@ class PodcastListeningState(Base):
     )
 
     media: Mapped["Media"] = relationship("Media", back_populates="podcast_listening_states")
-    user: Mapped["User"] = relationship("User")
+    user: Mapped["User"] = relationship("User", back_populates="podcast_listening_states")
 
 
 class PlaybackQueueItem(Base):
@@ -2302,7 +2308,7 @@ class BillingAccount(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     stripe_customer_id: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -2958,6 +2964,47 @@ class ReaderProfile(Base):
 
     # Relationships
     user: Mapped["User"] = relationship("User")
+
+
+class CommandPaletteRecent(Base):
+    """Per-user command palette recent destinations."""
+
+    __tablename__ = "command_palette_recents"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    href: Mapped[str] = mapped_column(Text, nullable=False)
+    title_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    last_used_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "href", name="uq_command_palette_recents_user_href"),
+        Index(
+            "ix_command_palette_recents_user_last_used_at_id",
+            "user_id",
+            text("last_used_at DESC"),
+            text("id DESC"),
+        ),
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="command_palette_recents")
 
 
 class ReaderMediaState(Base):

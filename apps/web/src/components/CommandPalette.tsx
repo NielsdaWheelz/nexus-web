@@ -27,6 +27,7 @@ import {
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { resolvePaneDescriptor } from "@/lib/workspace/paneDescriptor";
+import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { apiFetch } from "@/lib/api/client";
 import {
   type SearchResponseShape,
@@ -57,11 +58,14 @@ interface Action {
   execute: () => void;
 }
 
+interface CommandPaletteRecentRow {
+  href: string;
+  title_snapshot: string | null;
+  last_used_at: string;
+}
+
 const OPEN_UPLOAD_EVENT = "nexus:open-upload";
 const OPEN_COMMAND_PALETTE_EVENT = "nexus:open-command-palette";
-
-const RECENT_STORAGE_KEY = "nexus.commandPalette.recent.v1";
-const MAX_RECENT = 8;
 
 function dispatchOpenUpload() {
   window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
@@ -100,26 +104,39 @@ const SEARCH_TYPE_ICON: Record<SearchType, LucideIcon> = {
   transcript_chunk: Mic,
 };
 
-function loadRecentIds(): string[] {
-  try {
-    const raw = localStorage.getItem(RECENT_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
-  } catch {
-    return [];
+function getRecentDestinationIcon(routeId: string): LucideIcon {
+  switch (routeId) {
+    case "libraries":
+    case "library":
+      return BookOpen;
+    case "media":
+    case "documents":
+      return FileText;
+    case "conversations":
+    case "conversation":
+    case "conversationNew":
+      return MessageSquare;
+    case "discover":
+      return Compass;
+    case "podcasts":
+    case "podcastSubscriptions":
+    case "podcastDetail":
+      return Mic;
+    case "videos":
+      return Video;
+    case "search":
+      return Search;
+    case "settings":
+    case "settingsBilling":
+    case "settingsReader":
+    case "settingsKeys":
+    case "settingsLocalVault":
+    case "settingsIdentities":
+    case "settingsKeybindings":
+      return Settings;
+    default:
+      return Globe;
   }
-}
-
-function saveRecentIds(ids: string[]): void {
-  try {
-    localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(ids));
-  } catch { /* quota or private mode — ignore */ }
-}
-
-function pushRecent(ids: string[], actionId: string): string[] {
-  const next = [actionId, ...ids.filter((id) => id !== actionId)];
-  return next.slice(0, MAX_RECENT);
 }
 
 export { OPEN_UPLOAD_EVENT, OPEN_COMMAND_PALETTE_EVENT };
@@ -128,7 +145,7 @@ export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  const [recentIds, setRecentIds] = useState<string[]>([]);
+  const [recentRows, setRecentRows] = useState<CommandPaletteRecentRow[]>([]);
   const [searchResults, setSearchResults] = useState<SearchResultRowViewModel[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [keybindings, setKeybindings] = useState<Record<string, string>>({});
@@ -146,11 +163,35 @@ export default function CommandPalette() {
     closePane,
   } = useWorkspaceStore();
 
-  // Load recent IDs and keybindings on mount
+  // Load keybindings on mount
   useEffect(() => {
-    setRecentIds(loadRecentIds());
     setKeybindings(loadKeybindings());
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await apiFetch<{ data: CommandPaletteRecentRow[] }>(
+          "/api/me/command-palette-recents"
+        );
+        if (!cancelled) {
+          setRecentRows(Array.isArray(response.data) ? response.data : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setRecentRows([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   // Global keyboard shortcut listener
   useEffect(() => {
@@ -176,9 +217,6 @@ export default function CommandPalette() {
           e.preventDefault();
           const action = ACTIONS_BY_ID.get(actionId);
           if (action) {
-            const next = pushRecent(recentIds, actionId);
-            setRecentIds(next);
-            saveRecentIds(next);
             action.execute();
           }
           return;
@@ -187,7 +225,7 @@ export default function CommandPalette() {
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [keybindings, recentIds]);
+  }, [keybindings]);
 
   // External open trigger (mobile Commands button)
   useEffect(() => {
@@ -274,11 +312,22 @@ export default function CommandPalette() {
   // Build recent actions (only when no query)
   const recentActions = useMemo(() => {
     if (query) return [];
-    return recentIds
-      .map((id) => ACTIONS_BY_ID.get(id))
-      .filter((a): a is Action => a !== undefined)
-      .map((a) => ({ ...a, section: "Recent" as Section }));
-  }, [query, recentIds]);
+    return recentRows.map((row) => {
+      const route = resolvePaneRoute(row.href);
+      const label = row.title_snapshot?.trim() || route.staticTitle;
+      return {
+        id: `recent-${encodeURIComponent(row.href)}`,
+        label,
+        keywords: [row.href],
+        section: "Recent" as Section,
+        icon: getRecentDestinationIcon(route.id),
+        execute: () =>
+          requestOpenInAppPane(row.href, {
+            titleHint: row.title_snapshot ?? undefined,
+          }),
+      };
+    });
+  }, [query, recentRows]);
 
   // Build pane-switching actions from workspace state
   const paneActions: Action[] = useMemo(() => {
@@ -341,16 +390,10 @@ export default function CommandPalette() {
 
   const executeAction = useCallback(
     (action: Action) => {
-      // Track in recents (only for static actions, not search results)
-      if (ACTIONS_BY_ID.has(action.id)) {
-        const next = pushRecent(recentIds, action.id);
-        setRecentIds(next);
-        saveRecentIds(next);
-      }
       close();
       action.execute();
     },
-    [close, recentIds],
+    [close],
   );
 
   const handleKeyDown = useCallback(
