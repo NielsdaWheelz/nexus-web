@@ -62,6 +62,12 @@ vi.mock("@/lib/billing/useBillingAccount", () => ({
 }));
 
 vi.mock("@/lib/panes/openInAppPane", () => ({
+  NEXUS_OPEN_PANE_EVENT: "nexus:open-pane",
+  NEXUS_OPEN_PANE_MESSAGE_TYPE: "nexus:open-pane",
+  consumePendingPaneOpenQueue: () => [],
+  isOpenInAppPaneMessage: () => false,
+  normalizePaneHref: (href: string) => href,
+  setPaneGraphReady: vi.fn(),
   requestOpenInAppPane: () => false,
 }));
 
@@ -94,6 +100,8 @@ function buildSubscriptionRow(index: number, overrides: Record<string, unknown> 
     last_synced_at: null,
     updated_at: "2026-03-06T00:00:00Z",
     unplayed_count: 0,
+    latest_episode_published_at: "2026-03-05T00:00:00Z",
+    visible_libraries: [],
     podcast: {
       id: `podcast-${index}`,
       provider: "podcast_index",
@@ -340,6 +348,9 @@ describe("podcasts product flows", () => {
     const user = userEvent.setup();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
       if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
         return jsonResponse({ data: [buildSubscriptionRow(0)] });
       }
@@ -361,9 +372,7 @@ describe("podcasts product flows", () => {
 
     render(createElement(PodcastsPage));
 
-    expect(
-      screen.queryByPlaceholderText("Search podcasts by title or topic...")
-    ).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search followed podcasts...")).toBeInTheDocument();
 
     expect(await screen.findByText("Systems Podcast 0")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Actions" }));
@@ -388,7 +397,6 @@ describe("podcasts product flows", () => {
   });
 
   it("describes library removal impact when unsubscribing from detail", async () => {
-    const user = userEvent.setup();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "podcastId" ? "podcast-1" : null
@@ -604,10 +612,16 @@ describe("podcasts product flows", () => {
     expect(within(episodeDrawer).getByRole("button", { name: "Libraries" })).toBeVisible();
   });
 
-  it("links the empty subscriptions state to podcast discovery", async () => {
+  it("opens the add dialog from the empty subscriptions state", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
       if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/libraries") {
         return jsonResponse({ data: [] });
       }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
@@ -615,8 +629,6 @@ describe("podcasts product flows", () => {
 
     render(createElement(PodcastsPage));
 
-    expect(
-      await screen.findByRole("link", { name: "Discover podcasts." })
-    ).toHaveAttribute("href", "/discover/podcasts");
+    expect(await screen.findByRole("button", { name: "Add a podcast" })).toBeInTheDocument();
   });
 });

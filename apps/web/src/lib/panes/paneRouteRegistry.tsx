@@ -90,8 +90,6 @@ const DEFAULT_STANDARD_PANE_WIDTH_PX = 480;
 const DEFAULT_DENSE_LIST_PANE_WIDTH_PX = 560;
 export const DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX = 280;
 export const DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX = DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX;
-const REMOVED_STATIC_PATHS = new Set(["/podcasts/subscriptions"]);
-
 const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
   {
     id: "libraries",
@@ -233,7 +231,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Podcasts",
-      subtitle: "Followed shows, sync state, and subscription settings.",
+      subtitle: "Followed shows, library membership, and subscription controls.",
     }),
   },
   {
@@ -448,17 +446,6 @@ export function getParentHref(resolved: ResolvedPaneRoute): string | null {
 
 export function resolvePaneRoute(href: string): ResolvedPaneRoute {
   const pathname = parseHrefPathname(href);
-  if (REMOVED_STATIC_PATHS.has(pathname)) {
-    return {
-      id: "unsupported",
-      pathname,
-      params: {},
-      staticTitle: "Tab",
-      resourceRef: null,
-      render: null,
-      definition: null,
-    };
-  }
   for (const definition of ROUTE_DEFINITIONS) {
     const params = matchPattern(pathname, definition.pattern);
     if (!params) {

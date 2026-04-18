@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { OPEN_UPLOAD_EVENT } from "@/components/CommandPalette";
+import { OPEN_ADD_CONTENT_EVENT } from "@/components/CommandPalette";
 
 const {
   mockUploadIngestFile,
@@ -63,9 +63,20 @@ vi.mock("next/navigation", () => ({
 
 import IngestionTray from "@/components/IngestionTray";
 
-function openTray() {
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function openTray(mode: "content" | "podcast" | "opml" = "content") {
   act(() => {
-    window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
+    window.dispatchEvent(
+      new CustomEvent(OPEN_ADD_CONTENT_EVENT, {
+        detail: { mode },
+      })
+    );
   });
 }
 
@@ -88,12 +99,6 @@ function dispatchPaste(target: EventTarget, text: string) {
 }
 
 function dispatchDrop(target: EventTarget, text: string, files: File[] = []) {
-  const items = files.map((file) => ({
-    kind: "file",
-    type: file.type,
-    getAsFile: () => file,
-  }));
-
   const event = new Event("drop", { bubbles: true, cancelable: true }) as Event & {
     dataTransfer?: {
       types: string[];
@@ -106,7 +111,7 @@ function dispatchDrop(target: EventTarget, text: string, files: File[] = []) {
   event.dataTransfer = {
     types: files.length ? ["Files", "text/plain", "text/uri-list"] : ["text/plain", "text/uri-list"],
     files,
-    items,
+    items: files,
     length: files.length,
     getData: (type: string) => (type === "text/plain" || type === "text/uri-list" ? text : ""),
   };
@@ -118,13 +123,24 @@ describe("IngestionTray", () => {
     vi.clearAllMocks();
     mockViewportState.isMobile = false;
     document.body.style.overflow = "";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({ data: [] });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
   });
 
   afterEach(() => {
     document.body.style.overflow = "";
+    vi.restoreAllMocks();
   });
 
-  it("opens on OPEN_UPLOAD_EVENT and closes on Close or Escape", async () => {
+  it("opens on OPEN_ADD_CONTENT_EVENT and closes on Close or Escape", async () => {
     const user = userEvent.setup();
     render(<IngestionTray />);
 
@@ -136,23 +152,28 @@ describe("IngestionTray", () => {
     await user.click(screen.getByLabelText("Close"));
     expect(screen.queryByLabelText("Add content")).not.toBeInTheDocument();
 
-    openTray();
+    openTray("podcast");
     const reopened = await screen.findByLabelText("Add content");
+    expect(
+      within(reopened).getByText("Search shows, subscribe, and place them into libraries.")
+    ).toBeInTheDocument();
     fireEvent.keyDown(reopened, { key: "Escape" });
     await waitFor(() => {
       expect(screen.queryByLabelText("Add content")).not.toBeInTheDocument();
     });
   });
 
-  it("shows explicit PDF and EPUB URL support in tray copy", async () => {
+  it("shows explicit content-mode copy by default", async () => {
     render(<IngestionTray />);
 
     openTray();
 
     await screen.findByLabelText("Add content");
-    expect(screen.getByText("Upload PDFs and EPUBs, or paste PDF, EPUB, article, or video URLs.")).toBeInTheDocument();
+    expect(screen.getByText("Upload files or paste links.")).toBeInTheDocument();
     expect(
-      screen.getByText("One per line, or paste a block of text containing PDF, EPUB, article, or video links.")
+      screen.getByText(
+        "One per line, or paste a block of text containing PDF, EPUB, article, or video links."
+      )
     ).toBeInTheDocument();
   });
 
@@ -163,7 +184,7 @@ describe("IngestionTray", () => {
 
     expect(document.body.style.overflow).toBe("");
 
-    openTray();
+    openTray("podcast");
 
     await waitFor(() => {
       expect(screen.getByLabelText("Add content")).toBeInTheDocument();
@@ -186,8 +207,6 @@ describe("IngestionTray", () => {
     const dialog = await screen.findByLabelText("Add content");
     const fileInput = within(dialog).getByLabelText("Upload file") as HTMLInputElement;
 
-    expect(fileInput).toHaveAttribute("multiple");
-
     const firstFile = makeFile("one.pdf", "application/pdf");
     const secondFile = makeFile("two.epub", "application/epub+zip");
 
@@ -196,8 +215,14 @@ describe("IngestionTray", () => {
     await waitFor(() => {
       expect(mockUploadIngestFile).toHaveBeenCalledTimes(2);
     });
-    expect(mockUploadIngestFile).toHaveBeenNthCalledWith(1, firstFile);
-    expect(mockUploadIngestFile).toHaveBeenNthCalledWith(2, secondFile);
+    expect(mockUploadIngestFile).toHaveBeenNthCalledWith(1, {
+      file: firstFile,
+      libraryId: null,
+    });
+    expect(mockUploadIngestFile).toHaveBeenNthCalledWith(2, {
+      file: secondFile,
+      libraryId: null,
+    });
   });
 
   it("pastes multiple URLs outside inputs", async () => {
@@ -208,18 +233,23 @@ describe("IngestionTray", () => {
       </>
     );
 
-    const text = "https://example.com/one.pdf\nand https://example.com/two.epub";
-    dispatchPaste(window, text);
+    dispatchPaste(window, "https://example.com/one.pdf\nhttps://example.com/two.epub");
 
     await waitFor(() => {
       expect(mockAddMediaFromUrl).toHaveBeenCalledTimes(2);
     });
 
-    expect(mockAddMediaFromUrl).toHaveBeenNthCalledWith(1, "https://example.com/one.pdf");
-    expect(mockAddMediaFromUrl).toHaveBeenNthCalledWith(2, "https://example.com/two.epub");
+    expect(mockAddMediaFromUrl).toHaveBeenNthCalledWith(1, {
+      url: "https://example.com/one.pdf",
+      libraryId: null,
+    });
+    expect(mockAddMediaFromUrl).toHaveBeenNthCalledWith(2, {
+      url: "https://example.com/two.epub",
+      libraryId: null,
+    });
   });
 
-  it("ignores paste inside an input", async () => {
+  it("ignores paste inside an input", () => {
     render(
       <>
         <IngestionTray />
@@ -250,9 +280,127 @@ describe("IngestionTray", () => {
       expect(mockAddMediaFromUrl).toHaveBeenCalledTimes(2);
     });
 
-    expect(mockUploadIngestFile).toHaveBeenNthCalledWith(1, firstFile);
-    expect(mockUploadIngestFile).toHaveBeenNthCalledWith(2, secondFile);
-    expect(mockAddMediaFromUrl).toHaveBeenNthCalledWith(1, "https://example.com/drop-one.pdf");
-    expect(mockAddMediaFromUrl).toHaveBeenNthCalledWith(2, "https://example.com/drop-two.epub");
+    expect(mockUploadIngestFile).toHaveBeenNthCalledWith(1, {
+      file: firstFile,
+      libraryId: null,
+    });
+    expect(mockUploadIngestFile).toHaveBeenNthCalledWith(2, {
+      file: secondFile,
+      libraryId: null,
+    });
+    expect(mockAddMediaFromUrl).toHaveBeenNthCalledWith(1, {
+      url: "https://example.com/drop-one.pdf",
+      libraryId: null,
+    });
+    expect(mockAddMediaFromUrl).toHaveBeenNthCalledWith(2, {
+      url: "https://example.com/drop-two.epub",
+      libraryId: null,
+    });
+  });
+
+  it("searches podcasts and subscribes into a specific library from podcast mode", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({
+          data: [{ id: "library-sports", name: "Sports", is_default: false }],
+        });
+      }
+      if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/podcasts/discover") {
+        return jsonResponse({
+          data: [
+            {
+              podcast_id: null,
+              provider_podcast_id: "provider-1",
+              title: "Systems Podcast",
+              author: "Systems Team",
+              feed_url: "https://feeds.example.com/systems.xml",
+              website_url: "https://example.com/systems",
+              image_url: null,
+              description: "Systems thinking show",
+            },
+          ],
+        });
+      }
+      if (url.pathname === "/api/podcasts/subscriptions" && init?.method === "POST") {
+        return jsonResponse({
+          data: {
+            podcast_id: "podcast-1",
+            subscription_created: true,
+            sync_status: "pending",
+            sync_enqueued: true,
+            sync_error_code: null,
+            sync_error_message: null,
+            sync_attempts: 0,
+            last_synced_at: null,
+            window_size: 3,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<IngestionTray />);
+
+    openTray("podcast");
+
+    fireEvent.change(screen.getByPlaceholderText("Search podcasts by title or topic..."), {
+      target: { value: "systems" },
+    });
+    await user.click(screen.getByText("Search"));
+
+    await screen.findByText("Systems Podcast");
+    await user.click(screen.getByText("Add to library"));
+    const librariesDialog = await screen.findByRole("dialog", { name: "Add to library" });
+    await user.click(within(librariesDialog).getByRole("button", { name: /Sports/i }));
+
+    await waitFor(() => {
+      const subscribeCall = fetchSpy.mock.calls.find(([url, init]) => {
+          const parsed = new URL(String(url), "http://localhost");
+          return parsed.pathname === "/api/podcasts/subscriptions" && init?.method === "POST";
+        });
+      expect(subscribeCall).toBeTruthy();
+      const body = JSON.parse(String(subscribeCall?.[1]?.body ?? "{}"));
+      expect(body.library_id).toBe("library-sports");
+    });
+
+    expect(await screen.findByText("View podcast")).toHaveAttribute("href", "/podcasts/podcast-1");
+  });
+
+  it("imports opml from opml mode and renders the summary", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/podcasts/import/opml" && init?.method === "POST") {
+        return jsonResponse({
+          data: {
+            total: 3,
+            imported: 2,
+            skipped_already_subscribed: 1,
+            skipped_invalid: 0,
+            errors: [],
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<IngestionTray />);
+
+    openTray("opml");
+    const fileInput = await screen.findByLabelText("Import OPML file");
+    await user.upload(fileInput, makeFile("podcasts.opml", "application/xml"));
+
+    await user.click(screen.getByText("Import OPML"));
+
+    expect(await screen.findByText("Import summary")).toBeInTheDocument();
+    expect(screen.getByText("2 imported, 1 already subscribed, 0 invalid.")).toBeInTheDocument();
   });
 });

@@ -157,9 +157,12 @@ describe("pane route registry", () => {
     );
   });
 
-  it("treats the removed subscriptions pane as unsupported", () => {
-    const route = resolvePaneRoute("/podcasts/subscriptions");
-    expect(route.id).toBe("unsupported");
-    expect(route.render).toBeNull();
+  it("describes podcasts as the followed-show management surface", () => {
+    const route = resolvePaneRoute("/podcasts");
+    expect(route.definition?.getChrome?.({ href: "/podcasts", params: {} })).toMatchObject({
+      title: "Podcasts",
+      subtitle: "Followed shows, library membership, and subscription controls.",
+    });
   });
+
 });

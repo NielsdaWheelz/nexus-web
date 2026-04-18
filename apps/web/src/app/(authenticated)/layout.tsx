@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import Navbar from "@/components/Navbar";
 import CommandPalette from "@/components/CommandPalette";
-import IngestionTray from "@/components/IngestionTray";
+import AddContentTray from "@/components/IngestionTray";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { ToastProvider } from "@/components/Toast";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
@@ -25,7 +25,7 @@ export default function AuthenticatedLayout() {
           <PaneRootNavigationProvider>
             <WorkspaceStoreProvider>
               <CommandPalette />
-              <IngestionTray />
+              <AddContentTray />
               <div
                 className={`${styles.layout} ${navbarCollapsed ? styles.navCollapsed : ""}`}
               >

@@ -47,9 +47,18 @@ def subscribe_to_podcast(
 def list_subscriptions(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    limit: int = Query(default=100, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    sort: Literal["recent_episode", "unplayed_count", "alpha"] = Query(default="recent_episode"),
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    sort: Annotated[
+        Literal["recent_episode", "unplayed_count", "alpha"],
+        Query(),
+    ] = "recent_episode",
+    q: Annotated[str | None, Query()] = None,
+    filter: Annotated[
+        Literal["all", "has_new", "not_in_library"],
+        Query(),
+    ] = "all",
+    library_id: Annotated[UUID | None, Query()] = None,
 ) -> dict:
     """List active podcast subscriptions for the viewer."""
     rows = podcast_service.list_subscriptions(
@@ -58,6 +67,9 @@ def list_subscriptions(
         limit=limit,
         offset=offset,
         sort=sort,
+        q=q,
+        filter=filter,
+        library_id=library_id,
     )
     return success_response([row.model_dump(mode="json") for row in rows])
 

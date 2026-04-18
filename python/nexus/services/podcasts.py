@@ -45,6 +45,7 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionSettingsPatchRequest,
     PodcastSubscriptionStatusOut,
     PodcastSubscriptionSyncRefreshOut,
+    PodcastSubscriptionVisibleLibraryOut,
     PodcastUnsubscribeOut,
 )
 from nexus.services import playback_queue as playback_queue_service
@@ -97,6 +98,7 @@ PODCAST_TRANSCRIPT_REQUEST_REASONS = {
 PODCAST_EPISODE_STATES = {"all", "unplayed", "in_progress", "played"}
 PODCAST_EPISODE_SORT_OPTIONS = {"newest", "oldest", "duration_asc", "duration_desc"}
 PODCAST_SUBSCRIPTION_SORT_OPTIONS = {"recent_episode", "unplayed_count", "alpha"}
+PODCAST_SUBSCRIPTION_FILTER_OPTIONS = {"all", "has_new", "not_in_library"}
 PODCAST_OPML_MAX_BYTES = 1_000_000
 PODCAST_OPML_MAX_OUTLINES = 200
 PODCAST_OPML_MAX_TITLE_LENGTH = 512
@@ -760,6 +762,9 @@ def list_subscriptions(
     limit: int = 100,
     offset: int = 0,
     sort: str = "recent_episode",
+    q: str | None = None,
+    filter: str = "all",
+    library_id: UUID | None = None,
 ) -> list[PodcastSubscriptionListItemOut]:
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
@@ -770,7 +775,15 @@ def list_subscriptions(
             ApiErrorCode.E_INVALID_REQUEST,
             "Invalid podcast subscriptions sort option",
         )
+    if filter not in PODCAST_SUBSCRIPTION_FILTER_OPTIONS:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid podcast subscriptions filter option",
+        )
     limit = min(limit, 200)
+    q = q.strip() if q is not None else None
+    if q == "":
+        q = None
 
     if sort == "alpha":
         order_by_sql = "LOWER(p.title) ASC, ps.podcast_id ASC"
@@ -786,11 +799,28 @@ def list_subscriptions(
             "sa.latest_published_at DESC NULLS LAST, ps.updated_at DESC, ps.podcast_id DESC"
         )
 
+    if filter == "all":
+        filter_sql = "TRUE"
+    elif filter == "has_new":
+        filter_sql = "COALESCE(sa.unplayed_count, 0) > 0"
+    elif filter == "not_in_library":
+        filter_sql = "COALESCE(vl.visible_library_count, 0) = 0"
+    else:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Invalid podcast subscriptions filter option",
+        )
+
     query_params: dict[str, object] = {
         "user_id": viewer_id,
         "viewer_id": viewer_id,
         "limit": limit,
         "offset": offset,
+        "has_query": q is not None,
+        "q": q,
+        "q_pattern": f"%{q}%" if q is not None else None,
+        "has_library_scope": library_id is not None,
+        "library_id": library_id,
     }
 
     rows = db.execute(
@@ -827,6 +857,28 @@ def list_subscriptions(
                 WHERE ps.user_id = :user_id
                   AND ps.status = 'active'
                 GROUP BY ps.podcast_id
+            ),
+            visible_non_default_libraries AS (
+                SELECT
+                    le.podcast_id,
+                    COUNT(*) AS visible_library_count,
+                    json_agg(
+                        json_build_object(
+                            'id', l.id,
+                            'name', l.name,
+                            'color', l.color
+                        )
+                        ORDER BY l.created_at ASC, l.id ASC
+                    ) AS visible_libraries
+                FROM library_entries le
+                JOIN libraries l
+                  ON l.id = le.library_id
+                 AND l.is_default = false
+                JOIN memberships m
+                  ON m.library_id = l.id
+                 AND m.user_id = :viewer_id
+                WHERE le.podcast_id IS NOT NULL
+                GROUP BY le.podcast_id
             )
             SELECT
                 ps.podcast_id,
@@ -853,12 +905,35 @@ def list_subscriptions(
                 p.created_at,
                 p.updated_at,
                 COALESCE(sa.unplayed_count, 0) AS unplayed_count,
-                sa.latest_published_at
+                sa.latest_published_at,
+                COALESCE(vl.visible_libraries, '[]'::json) AS visible_libraries
             FROM podcast_subscriptions ps
             JOIN podcasts p ON p.id = ps.podcast_id
             LEFT JOIN subscription_aggregates sa ON sa.podcast_id = ps.podcast_id
+            LEFT JOIN visible_non_default_libraries vl ON vl.podcast_id = ps.podcast_id
             WHERE ps.user_id = :user_id
               AND ps.status = 'active'
+              AND (
+                    :has_query IS FALSE
+                    OR p.title ILIKE :q_pattern
+                    OR COALESCE(p.author, '') ILIKE :q_pattern
+                )
+              AND {filter_sql}
+              AND (
+                    :has_library_scope IS FALSE
+                    OR EXISTS(
+                        SELECT 1
+                        FROM library_entries le
+                        JOIN libraries l
+                          ON l.id = le.library_id
+                         AND l.is_default = false
+                        JOIN memberships m
+                          ON m.library_id = l.id
+                         AND m.user_id = :viewer_id
+                        WHERE le.library_id = :library_id
+                          AND le.podcast_id = ps.podcast_id
+                    )
+                )
             ORDER BY {order_by_sql}
             LIMIT :limit
             OFFSET :offset
@@ -869,6 +944,9 @@ def list_subscriptions(
     out: list[PodcastSubscriptionListItemOut] = []
     for row in rows:
         podcast = _podcast_list_item_from_row(row[12:23])
+        visible_libraries_payload = row[25]
+        if isinstance(visible_libraries_payload, str):
+            visible_libraries_payload = json.loads(visible_libraries_payload)
         out.append(
             PodcastSubscriptionListItemOut(
                 podcast_id=row[0],
@@ -884,6 +962,15 @@ def list_subscriptions(
                 last_synced_at=row[10],
                 updated_at=row[11],
                 unplayed_count=int(row[23] or 0),
+                latest_episode_published_at=row[24],
+                visible_libraries=[
+                    PodcastSubscriptionVisibleLibraryOut(
+                        id=item["id"],
+                        name=item["name"],
+                        color=item.get("color"),
+                    )
+                    for item in (visible_libraries_payload or [])
+                ],
                 podcast=podcast,
             )
         )

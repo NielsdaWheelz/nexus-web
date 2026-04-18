@@ -9,7 +9,7 @@
   position: fixed;
   left: calc(var(--navbar-width) + var(--space-3));
   bottom: var(--space-4);
-  width: min(460px, calc(100vw - var(--navbar-width) - 2rem));
+  width: min(520px, calc(100vw - var(--navbar-width) - 2rem));
   max-height: min(760px, calc(100vh - 2rem));
   display: flex;
   flex-direction: column;
@@ -111,6 +111,32 @@
   color: var(--color-text);
 }
 
+.modeTabs {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg);
+}
+
+.modeTab,
+.modeTabActive {
+  border: 1px solid var(--color-border);
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  padding: 8px 12px;
+  background: var(--color-bg-panel);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.modeTabActive {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
 .body {
   display: flex;
   flex-direction: column;
@@ -182,40 +208,49 @@
   font-weight: 600;
 }
 
-.urlForm textarea {
+.urlForm textarea,
+.input {
   width: 100%;
-  resize: vertical;
-  min-height: 74px;
   padding: var(--space-2) var(--space-3);
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--color-text);
   font: inherit;
   font-size: var(--font-size-sm);
 }
 
-.urlForm textarea:focus {
+.urlForm textarea {
+  resize: vertical;
+  min-height: 74px;
+}
+
+.urlForm textarea:focus,
+.input:focus {
   outline: none;
   border-color: var(--color-accent);
 }
 
-.urlActions {
+.urlActions,
+.opmlActions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
 }
 
-.urlActions span {
+.urlActions span,
+.opmlFileName {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
 }
 
-.urlActions button {
+.urlActions button,
+.searchButton,
+.subscribeButton {
   padding: var(--space-2) var(--space-4);
-  border: none;
-  border-radius: 6px;
+  border: 1px solid var(--color-accent);
+  border-radius: 8px;
   background: var(--color-accent);
   color: var(--color-bg);
   cursor: pointer;
@@ -223,7 +258,9 @@
   font-weight: 700;
 }
 
-.urlActions button:disabled {
+.urlActions button:disabled,
+.searchButton:disabled,
+.subscribeButton:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -293,6 +330,77 @@
   color: var(--color-error);
 }
 
+.discoveryForm {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.thumbnailFallback,
+.podcastArtwork {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thumbnailFallback {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+
+.podcastArtwork {
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.subscriptionState {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: capitalize;
+}
+
+.viewPodcastLink {
+  color: var(--color-accent);
+  text-decoration: none;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.opmlPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.opmlDescription {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.importSummary {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.importSummaryTitle {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.importErrors {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--color-text-muted);
+}
+
 .dropOverlay {
   position: fixed;
   inset: 0;
@@ -325,6 +433,15 @@
   font-size: var(--font-size-sm);
 }
 
+@media (max-width: 900px) {
+  .discoveryForm,
+  .urlActions,
+  .opmlActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 @media (max-width: 768px) {
   .desktopLayer {
     display: none;
@@ -332,11 +449,6 @@
 
   .body {
     padding: var(--space-4);
-  }
-
-  .urlActions {
-    align-items: stretch;
-    flex-direction: column;
   }
 }
 

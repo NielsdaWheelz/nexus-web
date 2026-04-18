@@ -4,10 +4,77 @@
   gap: var(--space-4);
 }
 
-.sectionActions {
-  display: inline-flex;
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.searchForm {
+  display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: min(360px, 100%);
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 220px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.searchInput:focus,
+.selectField select:focus,
+.settingsSelect:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.searchButton,
+.primaryAction {
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toolbarControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.selectField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 140px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.selectField select,
+.settingsSelect {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: var(--font-size-sm);
 }
 
 .secondaryAction {
@@ -15,70 +82,99 @@
   background: var(--color-bg-panel);
   color: var(--color-text);
   border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  text-decoration: none;
+  padding: 8px 12px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
 }
 
-.secondaryAction:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.primaryAction {
-  border: 1px solid var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-bg);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.primaryAction:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.inlineLink {
-  color: var(--color-accent);
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.sortRow {
+.summaryRow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
 
-.sortLabel {
+.summaryCount {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
 }
 
-.sortSelect {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
+.inlineButton {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--color-accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.podcastArtwork,
+.thumbnailFallback {
+  width: 100%;
+  height: 100%;
   border-radius: 8px;
-  padding: 6px 8px;
-  font-size: var(--font-size-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.podcastArtwork {
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.thumbnailFallback {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+
+.rowDescription {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rowAuthor {
+  color: var(--color-text-secondary);
+}
+
+.libraryBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.libraryBadge,
+.emptyLibraryBadge,
+.unplayedBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  background: var(--color-bg-panel);
+}
+
+.emptyLibraryBadge {
+  color: var(--color-text-muted);
+}
+
+.colorDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
 }
 
 .trailing {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-.unplayedBadge {
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 2px 8px;
-  font-size: var(--font-size-xs);
-  color: var(--color-text);
 }
 
 .status {
@@ -98,31 +194,26 @@
   cursor: pointer;
 }
 
-.loadMoreButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .modalBackdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
+  background: rgba(0, 0, 0, 0.5);
   z-index: 1000;
 }
 
 .modalCard {
   width: min(560px, 100%);
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg-elevated);
 }
 
 .modalTitle {
@@ -142,30 +233,11 @@
   gap: 8px;
 }
 
-.fileLabel {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-}
-
-.fileInput {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 8px;
-}
-
 .settingsFieldLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-}
-
-.settingsSelect {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 8px;
   font-size: var(--font-size-sm);
 }
 
@@ -177,22 +249,28 @@
   font-size: var(--font-size-sm);
 }
 
-.importSummary {
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 10px;
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-}
+@media (max-width: 900px) {
+  .toolbar,
+  .summaryRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
 
-.importSummaryTitle {
-  margin: 0 0 8px;
-  font-weight: 600;
-}
+  .searchForm,
+  .toolbarControls {
+    width: 100%;
+  }
 
-.importErrors {
-  margin: 8px 0 0;
-  padding-left: 18px;
-  color: var(--color-text-muted);
+  .toolbarControls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .selectField {
+    min-width: 0;
+  }
+
+  .modalActions {
+    flex-direction: column;
+  }
 }

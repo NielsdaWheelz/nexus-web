@@ -1,25 +1,40 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch, isApiError } from "@/lib/api/client";
-import LibraryTargetPicker, {
-  type LibraryTargetPickerItem,
-} from "@/components/LibraryTargetPicker";
 import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
   formatPlaybackSpeedLabel,
 } from "@/lib/player/subscriptionPlaybackSpeed";
+import { dispatchOpenAddContent } from "@/components/CommandPalette";
+import { apiFetch, isApiError } from "@/lib/api/client";
+import LibraryTargetPicker, {
+  type LibraryTargetPickerItem,
+} from "@/components/LibraryTargetPicker";
+import ActionMenu from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
 
-const SUBSCRIPTIONS_PAGE_SIZE = 100;
+const PAGE_SIZE = 100;
 
 type SubscriptionSort = "recent_episode" | "unplayed_count" | "alpha";
+type SubscriptionFilter = "all" | "has_new" | "not_in_library";
 
-interface PodcastListItem {
+type LibrarySummary = {
+  id: string;
+  name: string;
+  is_default: boolean;
+  color?: string | null;
+};
+
+type PodcastSubscriptionVisibleLibrary = {
+  id: string;
+  name: string;
+  color: string | null;
+};
+
+type PodcastListItem = {
   id: string;
   provider: string;
   provider_podcast_id: string;
@@ -31,9 +46,9 @@ interface PodcastListItem {
   description: string | null;
   created_at: string;
   updated_at: string;
-}
+};
 
-interface PodcastSubscriptionRow {
+type PodcastSubscriptionRow = {
   podcast_id: string;
   status: "active" | "unsubscribed";
   default_playback_speed?: number | null;
@@ -47,34 +62,41 @@ interface PodcastSubscriptionRow {
   last_synced_at: string | null;
   updated_at: string;
   unplayed_count: number;
+  latest_episode_published_at: string | null;
+  visible_libraries: PodcastSubscriptionVisibleLibrary[];
   podcast: PodcastListItem;
-}
+};
 
-interface PodcastSubscriptionSettingsResponse {
+type PodcastSubscriptionSettingsResponse = {
   podcast_id: string;
   default_playback_speed: number | null;
   auto_queue: boolean;
   updated_at: string;
-}
+};
 
-interface PodcastSubscriptionSyncRefreshResult {
+type PodcastSubscriptionSyncRefreshResult = {
   podcast_id: string;
   sync_status: PodcastSubscriptionRow["sync_status"];
   sync_error_code: string | null;
   sync_error_message: string | null;
   sync_attempts: number;
   sync_enqueued: boolean;
+};
+
+function toTimestamp(value: string | null): number {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-interface PodcastOpmlImportResult {
-  total: number;
-  imported: number;
-  skipped_already_subscribed: number;
-  skipped_invalid: number;
-  errors: Array<{
-    feed_url: string | null;
-    error: string;
-  }>;
+function formatDate(value: string | null): string {
+  const timestamp = toTimestamp(value);
+  if (timestamp === 0) {
+    return "No synced episodes yet";
+  }
+  return new Date(timestamp).toLocaleDateString();
 }
 
 export default function PodcastsPaneBody() {
@@ -87,6 +109,12 @@ export default function PodcastsPaneBody() {
   const [busyPodcastIds, setBusyPodcastIds] = useState<Set<string>>(new Set());
   const [refreshingPodcastIds, setRefreshingPodcastIds] = useState<Set<string>>(new Set());
   const [subscriptionSort, setSubscriptionSort] = useState<SubscriptionSort>("recent_episode");
+  const [subscriptionFilter, setSubscriptionFilter] = useState<SubscriptionFilter>("all");
+  const [searchText, setSearchText] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
+  const [librariesLoading, setLibrariesLoading] = useState(false);
+  const [selectedLibraryId, setSelectedLibraryId] = useState<string>("");
   const [librariesByPodcastId, setLibrariesByPodcastId] = useState<
     Record<string, LibraryTargetPickerItem[]>
   >({});
@@ -96,16 +124,30 @@ export default function PodcastsPaneBody() {
   const [busyLibraryMembershipKeys, setBusyLibraryMembershipKeys] = useState<Set<string>>(
     new Set()
   );
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [importBusy, setImportBusy] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importResult, setImportResult] = useState<PodcastOpmlImportResult | null>(null);
   const [settingsPodcastId, setSettingsPodcastId] = useState<string | null>(null);
-  const [settingsDefaultSpeed, setSettingsDefaultSpeed] = useState<string>("default");
+  const [settingsDefaultSpeed, setSettingsDefaultSpeed] = useState("default");
   const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+
+  const loadLibraries = useCallback(async () => {
+    if (librariesLoading) {
+      return;
+    }
+    setLibrariesLoading(true);
+    try {
+      const response = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
+      setLibraries(response.data.filter((library) => !library.is_default));
+    } catch (loadError) {
+      if (isApiError(loadError)) {
+        setError(loadError.message);
+      } else {
+        setError("Failed to load libraries");
+      }
+    } finally {
+      setLibrariesLoading(false);
+    }
+  }, [librariesLoading]);
 
   const loadSubscriptions = useCallback(
     async (offset = 0, append = false) => {
@@ -117,22 +159,28 @@ export default function PodcastsPaneBody() {
       setError(null);
       try {
         const params = new URLSearchParams({
-          limit: String(SUBSCRIPTIONS_PAGE_SIZE),
+          limit: String(PAGE_SIZE),
           offset: String(offset),
           sort: subscriptionSort,
+          filter: subscriptionFilter,
         });
+        if (appliedSearch) {
+          params.set("q", appliedSearch);
+        }
+        if (selectedLibraryId) {
+          params.set("library_id", selectedLibraryId);
+        }
         const response = await apiFetch<{ data: PodcastSubscriptionRow[] }>(
           `/api/podcasts/subscriptions?${params.toString()}`
         );
-        const nextRows = response.data.filter((row) => row.status === "active");
-        setRows((prev) => (append ? [...prev, ...nextRows] : nextRows));
-        setHasMore(response.data.length === SUBSCRIPTIONS_PAGE_SIZE);
+        setRows((prev) => (append ? [...prev, ...response.data] : response.data));
+        setHasMore(response.data.length === PAGE_SIZE);
         setNextOffset(offset + response.data.length);
       } catch (loadError) {
         if (isApiError(loadError)) {
           setError(loadError.message);
         } else {
-          setError("Failed to load subscriptions");
+          setError("Failed to load followed podcasts");
         }
       } finally {
         if (append) {
@@ -142,7 +190,7 @@ export default function PodcastsPaneBody() {
         }
       }
     },
-    [subscriptionSort]
+    [appliedSearch, selectedLibraryId, subscriptionFilter, subscriptionSort]
   );
 
   const loadPodcastLibraries = useCallback(
@@ -153,8 +201,8 @@ export default function PodcastsPaneBody() {
       if (!force && librariesByPodcastId[podcastId]) {
         return librariesByPodcastId[podcastId];
       }
-
       setLoadingLibraryPodcastIds((prev) => new Set(prev).add(podcastId));
+      setError(null);
       try {
         const response = await apiFetch<{
           data: Array<{
@@ -198,45 +246,74 @@ export default function PodcastsPaneBody() {
   );
 
   useEffect(() => {
-    void loadSubscriptions();
+    void loadLibraries();
+  }, [loadLibraries]);
+
+  useEffect(() => {
+    void loadSubscriptions(0, false);
   }, [loadSubscriptions]);
 
-  const handleAddPodcastToLibrary = useCallback(async (podcastId: string, libraryId: string) => {
-    const busyKey = `${libraryId}:${podcastId}`;
-    setBusyLibraryMembershipKeys((prev) => new Set(prev).add(busyKey));
-    setError(null);
-    try {
-      await apiFetch(`/api/libraries/${libraryId}/podcasts`, {
-        method: "POST",
-        body: JSON.stringify({ podcast_id: podcastId }),
-      });
-      setLibrariesByPodcastId((prev) => ({
-        ...prev,
-        [podcastId]: (prev[podcastId] ?? []).map((library) =>
-          library.id === libraryId
-            ? {
-                ...library,
-                isInLibrary: true,
-                canAdd: false,
-                canRemove: true,
-              }
-            : library
-        ),
-      }));
-    } catch (mutationError) {
-      if (isApiError(mutationError)) {
-        setError(mutationError.message);
-      } else {
-        setError("Failed to add podcast to library");
+  const handleAddPodcastToLibrary = useCallback(
+    async (podcastId: string, libraryId: string) => {
+      const busyKey = `${libraryId}:${podcastId}`;
+      setBusyLibraryMembershipKeys((prev) => new Set(prev).add(busyKey));
+      setError(null);
+      try {
+        await apiFetch(`/api/libraries/${libraryId}/podcasts`, {
+          method: "POST",
+          body: JSON.stringify({ podcast_id: podcastId }),
+        });
+        setLibrariesByPodcastId((prev) => ({
+          ...prev,
+          [podcastId]: (prev[podcastId] ?? []).map((library) =>
+            library.id === libraryId
+              ? {
+                  ...library,
+                  isInLibrary: true,
+                  canAdd: false,
+                  canRemove: true,
+                }
+              : library
+          ),
+        }));
+        setRows((prev) =>
+          prev.map((row) => {
+            if (row.podcast_id !== podcastId || row.visible_libraries.some((library) => library.id === libraryId)) {
+              return row;
+            }
+            const summary = libraries.find((library) => library.id === libraryId);
+            if (!summary) {
+              return row;
+            }
+            return {
+              ...row,
+              visible_libraries: [
+                ...row.visible_libraries,
+                {
+                  id: summary.id,
+                  name: summary.name,
+                  color: summary.color ?? null,
+                },
+              ],
+            };
+          })
+        );
+      } catch (mutationError) {
+        if (isApiError(mutationError)) {
+          setError(mutationError.message);
+        } else {
+          setError("Failed to add podcast to library");
+        }
+      } finally {
+        setBusyLibraryMembershipKeys((prev) => {
+          const next = new Set(prev);
+          next.delete(busyKey);
+          return next;
+        });
       }
-    } finally {
-      setBusyLibraryMembershipKeys((prev) => {
-        const next = new Set(prev);
-        next.delete(busyKey);
-        return next;
-      });
-    }
-  }, []);
+    },
+    [libraries]
+  );
 
   const handleRemovePodcastFromLibrary = useCallback(
     async (podcastId: string, libraryId: string) => {
@@ -260,6 +337,18 @@ export default function PodcastsPaneBody() {
               : library
           ),
         }));
+        setRows((prev) =>
+          prev.map((row) =>
+            row.podcast_id === podcastId
+              ? {
+                  ...row,
+                  visible_libraries: row.visible_libraries.filter(
+                    (library) => library.id !== libraryId
+                  ),
+                }
+              : row
+          )
+        );
       } catch (mutationError) {
         if (isApiError(mutationError)) {
           setError(mutationError.message);
@@ -426,114 +515,158 @@ export default function PodcastsPaneBody() {
     }
   }, [rows, settingsAutoQueue, settingsDefaultSpeed, settingsPodcastId]);
 
-  const openImportModal = useCallback(() => {
-    setImportError(null);
-    setImportResult(null);
-    setImportFile(null);
-    setIsImportModalOpen(true);
-  }, []);
-
-  const closeImportModal = useCallback(() => {
-    setIsImportModalOpen(false);
-    setImportBusy(false);
-  }, []);
-
-  const handleImportOpml = useCallback(async () => {
-    if (!importFile) {
-      setImportError("Select an OPML/XML file to import.");
-      return;
-    }
-    setImportBusy(true);
-    setImportError(null);
-    setImportResult(null);
-    try {
-      const formData = new FormData();
-      formData.append("file", importFile);
-      const response = await fetch("/api/podcasts/import/opml", {
-        method: "POST",
-        body: formData,
-      });
-      const responseBody = (await response.json().catch(() => null)) as
-        | { data?: PodcastOpmlImportResult; error?: { message?: string } }
-        | null;
-
-      if (!response.ok) {
-        throw new Error(responseBody?.error?.message || "Failed to import OPML file");
-      }
-      if (!responseBody?.data) {
-        throw new Error("Import response missing summary payload");
-      }
-
-      setImportResult(responseBody.data);
-      await loadSubscriptions(0, false);
-    } catch (opmlImportError) {
-      if (opmlImportError instanceof Error && opmlImportError.message) {
-        setImportError(opmlImportError.message);
-      } else {
-        setImportError("Failed to import OPML file");
-      }
-    } finally {
-      setImportBusy(false);
-    }
-  }, [importFile, loadSubscriptions]);
-
   const activeCount = rows.length;
   const settingsRow = rows.find((row) => row.podcast_id === settingsPodcastId) ?? null;
+  const hasActiveFilters =
+    appliedSearch.length > 0 || subscriptionFilter !== "all" || selectedLibraryId.length > 0;
 
   return (
     <>
       <SectionCard>
         <div className={styles.content}>
-          <div className={styles.sectionActions}>
-            <button
-              type="button"
-              className={styles.secondaryAction}
-              onClick={openImportModal}
-              aria-label="Import OPML"
+          <div className={styles.toolbar}>
+            <form
+              className={styles.searchForm}
+              onSubmit={(event) => {
+                event.preventDefault();
+                setAppliedSearch(searchText.trim());
+              }}
             >
-              Import OPML
-            </button>
-            <a
-              href="/api/podcasts/export/opml"
-              download="nexus-podcasts.opml"
-              className={styles.secondaryAction}
-              aria-label="Export OPML"
-            >
-              Export OPML
-            </a>
-            <span>{activeCount} active</span>
+              <input
+                className={styles.searchInput}
+                type="search"
+                value={searchText}
+                placeholder="Search followed podcasts..."
+                onChange={(event) => setSearchText(event.target.value)}
+              />
+              <button type="submit" className={styles.searchButton}>
+                Search
+              </button>
+            </form>
+
+            <div className={styles.toolbarControls}>
+              <label className={styles.selectField}>
+                <span>Filter</span>
+                <select
+                  value={subscriptionFilter}
+                  onChange={(event) =>
+                    setSubscriptionFilter(event.target.value as SubscriptionFilter)
+                  }
+                >
+                  <option value="all">All</option>
+                  <option value="has_new">Has New</option>
+                  <option value="not_in_library">Not In Library</option>
+                </select>
+              </label>
+
+              <label className={styles.selectField}>
+                <span>Library</span>
+                <select
+                  value={selectedLibraryId}
+                  onChange={(event) => setSelectedLibraryId(event.target.value)}
+                  disabled={librariesLoading}
+                >
+                  <option value="">All libraries</option>
+                  {libraries.map((library) => (
+                    <option key={library.id} value={library.id}>
+                      {library.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className={styles.selectField}>
+                <span>Sort</span>
+                <select
+                  value={subscriptionSort}
+                  onChange={(event) =>
+                    setSubscriptionSort(event.target.value as SubscriptionSort)
+                  }
+                >
+                  <option value="recent_episode">Recent Episode</option>
+                  <option value="unplayed_count">Most Unplayed</option>
+                  <option value="alpha">A-Z</option>
+                </select>
+              </label>
+
+              <button
+                type="button"
+                className={styles.primaryAction}
+                onClick={() => dispatchOpenAddContent("podcast")}
+              >
+                Add
+              </button>
+
+              <ActionMenu
+                label="Podcast page actions"
+                options={[
+                  {
+                    id: "export-opml",
+                    label: "Export OPML",
+                    href: "/api/podcasts/export/opml",
+                  },
+                ]}
+              />
+            </div>
           </div>
 
-          <div className={styles.sortRow}>
-            <label htmlFor="subscription-sort" className={styles.sortLabel}>
-              Subscription sort
-            </label>
-            <select
-              id="subscription-sort"
-              value={subscriptionSort}
-              onChange={(event) => setSubscriptionSort(event.target.value as SubscriptionSort)}
-              className={styles.sortSelect}
-              aria-label="Subscription sort"
-            >
-              <option value="recent_episode">Recent Episode</option>
-              <option value="unplayed_count">Most Unplayed</option>
-              <option value="alpha">A-Z</option>
-            </select>
+          <div className={styles.summaryRow}>
+            <span className={styles.summaryCount}>
+              {activeCount} followed show{activeCount === 1 ? "" : "s"}
+            </span>
+            {hasActiveFilters ? (
+              <button
+                type="button"
+                className={styles.secondaryAction}
+                onClick={() => {
+                  setSearchText("");
+                  setAppliedSearch("");
+                  setSubscriptionFilter("all");
+                  setSelectedLibraryId("");
+                }}
+              >
+                Clear filters
+              </button>
+            ) : null}
           </div>
 
-          {loading && <StateMessage variant="loading">Loading subscriptions...</StateMessage>}
-          {error && <StateMessage variant="error">{error}</StateMessage>}
+          {loading ? <StateMessage variant="loading">Loading followed podcasts...</StateMessage> : null}
+          {error ? <StateMessage variant="error">{error}</StateMessage> : null}
 
-          {!loading && rows.length === 0 && !error && (
+          {!loading && rows.length === 0 && !error ? (
             <StateMessage variant="empty">
-              No active podcast subscriptions yet.{" "}
-              <Link href="/discover/podcasts" className={styles.inlineLink}>
-                Discover podcasts.
-              </Link>
+              {hasActiveFilters ? (
+                <>
+                  No podcasts match the current filters.{" "}
+                  <button
+                    type="button"
+                    className={styles.inlineButton}
+                    onClick={() => {
+                      setSearchText("");
+                      setAppliedSearch("");
+                      setSubscriptionFilter("all");
+                      setSelectedLibraryId("");
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                </>
+              ) : (
+                <>
+                  No followed podcasts yet.{" "}
+                  <button
+                    type="button"
+                    className={styles.inlineButton}
+                    onClick={() => dispatchOpenAddContent("podcast")}
+                  >
+                    Add a podcast
+                  </button>
+                </>
+              )}
             </StateMessage>
-          )}
+          ) : null}
 
-          {rows.length > 0 && (
+          {rows.length > 0 ? (
             <AppList>
               {rows.map((row) => {
                 const rowBusy = busyPodcastIds.has(row.podcast_id);
@@ -556,18 +689,51 @@ export default function PodcastsPaneBody() {
                   <AppListItem
                     key={row.podcast_id}
                     href={`/podcasts/${row.podcast_id}`}
-                    title={row.podcast.title}
-                    description={row.podcast.author || "Unknown author"}
-                    meta={
-                      row.sync_error_code
-                        ? `${row.sync_status} sync - ${row.sync_error_code}: ${row.sync_error_message || "unknown error"}`
-                        : `${row.sync_status} sync`
+                    icon={
+                      row.podcast.image_url ? (
+                        <span
+                          className={styles.podcastArtwork}
+                          style={{ backgroundImage: `url(${row.podcast.image_url})` }}
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <span className={styles.thumbnailFallback}>POD</span>
+                      )
                     }
+                    title={row.podcast.title}
+                    description={
+                      <span className={styles.rowDescription}>
+                        <span className={styles.rowAuthor}>
+                          {row.podcast.author || "Unknown author"}
+                        </span>
+                        <span className={styles.libraryBadges}>
+                          {row.visible_libraries.length > 0 ? (
+                            row.visible_libraries.map((library) => (
+                              <span key={library.id} className={styles.libraryBadge}>
+                                {library.color ? (
+                                  <span
+                                    className={styles.colorDot}
+                                    style={{ backgroundColor: library.color }}
+                                    aria-hidden="true"
+                                  />
+                                ) : null}
+                                {library.name}
+                              </span>
+                            ))
+                          ) : (
+                            <span className={styles.emptyLibraryBadge}>No library</span>
+                          )}
+                        </span>
+                      </span>
+                    }
+                    meta={`Latest episode ${formatDate(row.latest_episode_published_at)}`}
                     trailing={
                       <span className={styles.trailing}>
-                        {row.unplayed_count > 0 && (
-                          <span className={styles.unplayedBadge}>{row.unplayed_count} new</span>
-                        )}
+                        {row.unplayed_count > 0 ? (
+                          <span className={styles.unplayedBadge}>
+                            {row.unplayed_count} new
+                          </span>
+                        ) : null}
                         <span className={styles.status}>{row.sync_status}</span>
                       </span>
                     }
@@ -617,54 +783,50 @@ export default function PodcastsPaneBody() {
                 );
               })}
             </AppList>
-          )}
+          ) : null}
 
-          {!loading && hasMore && (
+          {hasMore ? (
             <button
               type="button"
               className={styles.loadMoreButton}
+              onClick={() => {
+                void loadSubscriptions(nextOffset, true);
+              }}
               disabled={loadingMore}
-              onClick={() => void loadSubscriptions(nextOffset, true)}
-              aria-label="Load more subscriptions"
             >
-              {loadingMore ? "Loading..." : "Load more subscriptions"}
+              {loadingMore ? "Loading..." : "Load more"}
             </button>
-          )}
+          ) : null}
         </div>
       </SectionCard>
 
-      {settingsRow && (
-        <div
-          className={styles.modalBackdrop}
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Subscription settings for ${settingsRow.podcast.title}`}
-        >
-          <div className={styles.modalCard}>
-            <h3 className={styles.modalTitle}>Subscription settings</h3>
-            <p className={styles.modalDescription}>
-              Configure default playback behavior for <strong>{settingsRow.podcast.title}</strong>.
-            </p>
-            <label
-              htmlFor="subscription-default-playback-speed"
-              className={styles.settingsFieldLabel}
-            >
+      {settingsRow ? (
+        <div className={styles.modalBackdrop} role="presentation" onClick={closeSettingsModal}>
+          <div
+            className={styles.modalCard}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Podcast settings"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 className={styles.modalTitle}>Podcast settings</h2>
+            <p className={styles.modalDescription}>{settingsRow.podcast.title}</p>
+            <label className={styles.settingsFieldLabel}>
               Default playback speed
+              <select
+                value={settingsDefaultSpeed}
+                onChange={(event) => setSettingsDefaultSpeed(event.target.value)}
+                className={styles.settingsSelect}
+                aria-label="Default playback speed"
+              >
+                <option value="default">Use player default</option>
+                {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
+                  <option key={option} value={String(option)}>
+                    {formatPlaybackSpeedLabel(option)}
+                  </option>
+                ))}
+              </select>
             </label>
-            <select
-              id="subscription-default-playback-speed"
-              className={styles.settingsSelect}
-              value={settingsDefaultSpeed}
-              onChange={(event) => setSettingsDefaultSpeed(event.target.value)}
-              aria-label="Default playback speed"
-            >
-              <option value="default">Default (1.0x)</option>
-              {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((speed) => (
-                <option key={speed} value={String(speed)}>
-                  {formatPlaybackSpeedLabel(speed)}
-                </option>
-              ))}
-            </select>
             <label className={styles.settingsToggleLabel}>
               <input
                 type="checkbox"
@@ -672,101 +834,32 @@ export default function PodcastsPaneBody() {
                 onChange={(event) => setSettingsAutoQueue(event.target.checked)}
                 aria-label="Automatically add new episodes to my queue"
               />
-              <span>Automatically add new episodes to my queue</span>
+              Automatically add new episodes to my queue
             </label>
-            <p className={styles.modalDescription}>
-              New episodes from this podcast will be added to the end of your playback queue when
-              they&apos;re synced.
-            </p>
-            {settingsError && <StateMessage variant="error">{settingsError}</StateMessage>}
+            {settingsError ? <StateMessage variant="error">{settingsError}</StateMessage> : null}
             <div className={styles.modalActions}>
               <button
                 type="button"
                 className={styles.primaryAction}
-                onClick={() => void handleSaveSettings()}
+                onClick={() => {
+                  void handleSaveSettings();
+                }}
                 disabled={settingsBusy}
-                aria-label="Save subscription settings"
               >
-                {settingsBusy ? "Saving..." : "Save"}
+                {settingsBusy ? "Saving..." : "Save subscription settings"}
               </button>
               <button
                 type="button"
                 className={styles.secondaryAction}
                 onClick={closeSettingsModal}
                 disabled={settingsBusy}
-                aria-label="Close subscription settings"
               >
-                Close
+                Cancel
               </button>
             </div>
           </div>
         </div>
-      )}
-
-      {isImportModalOpen && (
-        <div className={styles.modalBackdrop} role="dialog" aria-modal="true" aria-label="Import OPML">
-          <div className={styles.modalCard}>
-            <h3 className={styles.modalTitle}>Import OPML</h3>
-            <p className={styles.modalDescription}>
-              Upload an OPML or XML file to bulk subscribe podcasts.
-            </p>
-            <label htmlFor="opml-file-input" className={styles.fileLabel}>
-              OPML file
-            </label>
-            <input
-              id="opml-file-input"
-              type="file"
-              accept=".opml,.xml,application/xml,text/xml"
-              onChange={(event) => {
-                setImportFile(event.target.files?.[0] ?? null);
-              }}
-              className={styles.fileInput}
-              aria-label="OPML file"
-            />
-
-            {importError && <StateMessage variant="error">{importError}</StateMessage>}
-            {importResult && (
-              <div className={styles.importSummary}>
-                <p className={styles.importSummaryTitle}>Import complete</p>
-                <p>Total found: {importResult.total}</p>
-                <p>Imported: {importResult.imported}</p>
-                <p>Already subscribed: {importResult.skipped_already_subscribed}</p>
-                <p>Invalid/skipped: {importResult.skipped_invalid}</p>
-                {importResult.errors.length > 0 && (
-                  <ul className={styles.importErrors}>
-                    {importResult.errors.map((errorRow, index) => (
-                      <li key={`${errorRow.feed_url ?? "missing-feed"}-${index}`}>
-                        {errorRow.feed_url ? `${errorRow.feed_url}: ` : ""}
-                        {errorRow.error}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-
-            <div className={styles.modalActions}>
-              <button
-                type="button"
-                className={styles.primaryAction}
-                onClick={() => void handleImportOpml()}
-                disabled={importBusy || !importFile}
-                aria-label="Import"
-              >
-                {importBusy ? "Importing..." : "Import"}
-              </button>
-              <button
-                type="button"
-                className={styles.secondaryAction}
-                onClick={closeImportModal}
-                aria-label="Close"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      ) : null}
     </>
   );
 }

@@ -48,6 +48,7 @@ import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import styles from "./CommandPalette.module.css";
 
 type Section = "Recent" | "Panes" | "Create" | "Navigate" | "Settings" | "Search Results";
+type AddContentMode = "content" | "podcast" | "opml";
 
 interface Action {
   id: string;
@@ -64,11 +65,15 @@ interface CommandPaletteRecentRow {
   last_used_at: string;
 }
 
-const OPEN_UPLOAD_EVENT = "nexus:open-upload";
+const OPEN_ADD_CONTENT_EVENT = "nexus:open-add-content";
 const OPEN_COMMAND_PALETTE_EVENT = "nexus:open-command-palette";
 
-function dispatchOpenUpload() {
-  window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
+function dispatchOpenAddContent(mode: AddContentMode = "content") {
+  window.dispatchEvent(
+    new CustomEvent(OPEN_ADD_CONTENT_EVENT, {
+      detail: { mode },
+    })
+  );
 }
 
 const ACTIONS: Action[] = [
@@ -90,8 +95,10 @@ const ACTIONS: Action[] = [
   // Create
   { id: "create-conversation", label: "New conversation", keywords: ["chat", "message"], section: "Create", icon: MessageSquarePlus, execute: () => requestOpenInAppPane("/conversations/new") },
   { id: "create-library", label: "New library", keywords: ["collection", "create"], section: "Create", icon: FolderPlus, execute: () => requestOpenInAppPane("/libraries") },
-  { id: "create-upload", label: "Upload file", keywords: ["pdf", "epub", "import", "add"], section: "Create", icon: Upload, execute: dispatchOpenUpload },
-  { id: "create-url", label: "Add from URL", keywords: ["link", "paste", "import"], section: "Create", icon: Link, execute: dispatchOpenUpload },
+  { id: "create-upload", label: "Upload file", keywords: ["pdf", "epub", "import", "add"], section: "Create", icon: Upload, execute: () => dispatchOpenAddContent("content") },
+  { id: "create-url", label: "Add from URL", keywords: ["link", "paste", "import"], section: "Create", icon: Link, execute: () => dispatchOpenAddContent("content") },
+  { id: "create-podcast", label: "Add podcast", keywords: ["podcast", "subscribe", "feed"], section: "Create", icon: Mic, execute: () => dispatchOpenAddContent("podcast") },
+  { id: "create-opml", label: "Import OPML", keywords: ["podcast", "opml", "import"], section: "Create", icon: Upload, execute: () => dispatchOpenAddContent("opml") },
 ];
 
 const ACTIONS_BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
@@ -140,7 +147,12 @@ function getRecentDestinationIcon(routeId: string): LucideIcon {
   }
 }
 
-export { OPEN_UPLOAD_EVENT, OPEN_COMMAND_PALETTE_EVENT };
+export {
+  OPEN_ADD_CONTENT_EVENT,
+  OPEN_COMMAND_PALETTE_EVENT,
+  dispatchOpenAddContent,
+};
+export type { AddContentMode };
 
 export default function CommandPalette() {
   const [open, setOpen] = useState(false);

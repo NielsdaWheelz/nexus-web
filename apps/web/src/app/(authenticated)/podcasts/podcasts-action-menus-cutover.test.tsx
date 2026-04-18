@@ -62,6 +62,12 @@ vi.mock("@/lib/billing/useBillingAccount", () => ({
 }));
 
 vi.mock("@/lib/panes/openInAppPane", () => ({
+  NEXUS_OPEN_PANE_EVENT: "nexus:open-pane",
+  NEXUS_OPEN_PANE_MESSAGE_TYPE: "nexus:open-pane",
+  consumePendingPaneOpenQueue: () => [],
+  isOpenInAppPaneMessage: () => false,
+  normalizePaneHref: (href: string) => href,
+  setPaneGraphReady: vi.fn(),
   requestOpenInAppPane: () => false,
 }));
 
@@ -134,6 +140,8 @@ function buildSubscriptionRow() {
     last_synced_at: null,
     updated_at: "2026-03-06T00:00:00Z",
     unplayed_count: 0,
+    latest_episode_published_at: "2026-03-05T00:00:00Z",
+    visible_libraries: [],
     podcast: {
       id: "podcast-0",
       provider: "podcast_index",
@@ -268,6 +276,9 @@ describe("podcast ui cutover", () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, _init) => {
       const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
       if (url.pathname === "/api/podcasts/subscriptions" && (_init?.method ?? "GET") === "GET") {
         return jsonResponse({ data: [buildSubscriptionRow()] });
       }

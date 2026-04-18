@@ -3,12 +3,12 @@
 import { ArrowRight, Link2, Mic, Upload } from "lucide-react";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
-import { OPEN_UPLOAD_EVENT } from "@/components/CommandPalette";
+import { dispatchOpenAddContent } from "@/components/CommandPalette";
 import styles from "./page.module.css";
 
 export default function DiscoverPaneBody() {
   const openUpload = () => {
-    window.dispatchEvent(new CustomEvent(OPEN_UPLOAD_EVENT));
+    dispatchOpenAddContent("content");
   };
 
   return (

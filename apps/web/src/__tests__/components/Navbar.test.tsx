@@ -50,7 +50,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import Navbar from "@/components/Navbar";
-import { OPEN_UPLOAD_EVENT } from "@/components/CommandPalette";
+import { OPEN_ADD_CONTENT_EVENT } from "@/components/CommandPalette";
 
 describe("Navbar", () => {
   beforeEach(() => {
@@ -157,13 +157,13 @@ describe("Navbar", () => {
   it("dispatches the upload event when Add content is clicked", async () => {
     const user = userEvent.setup();
     const onOpenUpload = vi.fn();
-    window.addEventListener(OPEN_UPLOAD_EVENT, onOpenUpload as EventListener);
+    window.addEventListener(OPEN_ADD_CONTENT_EVENT, onOpenUpload as EventListener);
 
     render(<Navbar />);
 
     await user.click(screen.getByLabelText("Add content"));
 
     expect(onOpenUpload).toHaveBeenCalledTimes(1);
-    window.removeEventListener(OPEN_UPLOAD_EVENT, onOpenUpload as EventListener);
+    window.removeEventListener(OPEN_ADD_CONTENT_EVENT, onOpenUpload as EventListener);
   });
 });

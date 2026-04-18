@@ -4443,6 +4443,8 @@ class TestPodcastApiSurface:
         assert row["podcast_id"] == str(podcast_id)
         assert row["status"] == "active"
         assert row["sync_status"] in {"complete", "source_limited"}
+        assert row["latest_episode_published_at"] == "2026-03-03T10:00:00Z"
+        assert row["visible_libraries"] == []
         assert row["podcast"]["provider_podcast_id"] == provider_podcast_id
         assert row["podcast"]["title"] == "Surface Podcast"
         assert row["podcast"]["feed_url"] == f"https://feeds.example.com/{provider_podcast_id}.xml"
@@ -5663,6 +5665,163 @@ upgrade now
         assert all("unplayed_count" in row for row in default_rows), (
             "subscriptions payload must include unplayed_count per row for UI badge rendering"
         )
+        assert [row["latest_episode_published_at"] for row in default_rows] == [
+            "2026-03-05T10:00:00Z",
+            "2026-03-04T10:00:00Z",
+        ], "subscriptions payload must include latest episode timestamps for recency badges"
+
+    def test_list_subscriptions_supports_query_filter_library_scope_and_visible_libraries(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        alpha_provider = f"surface-filter-alpha-{uuid4()}"
+        bravo_provider = f"surface-filter-bravo-{uuid4()}"
+        charlie_provider = f"surface-filter-charlie-{uuid4()}"
+        alpha_payload = _podcast_payload(alpha_provider, "Alpha Systems")
+        bravo_payload = _podcast_payload(bravo_provider, "Bravo Archive")
+        charlie_payload = _podcast_payload(charlie_provider, "Charlie Orphan")
+        episodes_by_podcast = {
+            alpha_provider: [
+                {
+                    "provider_episode_id": f"{alpha_provider}-ep-1",
+                    "guid": f"{alpha_provider}-guid-1",
+                    "title": "Alpha Episode 1",
+                    "audio_url": "https://cdn.example.com/filter-alpha-1.mp3",
+                    "published_at": "2026-03-05T10:00:00Z",
+                    "duration_seconds": 240,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "alpha1"}],
+                }
+            ],
+            bravo_provider: [
+                {
+                    "provider_episode_id": f"{bravo_provider}-ep-1",
+                    "guid": f"{bravo_provider}-guid-1",
+                    "title": "Bravo Episode 1",
+                    "audio_url": "https://cdn.example.com/filter-bravo-1.mp3",
+                    "published_at": "2026-03-04T10:00:00Z",
+                    "duration_seconds": 240,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "bravo1"}],
+                }
+            ],
+            charlie_provider: [
+                {
+                    "provider_episode_id": f"{charlie_provider}-ep-1",
+                    "guid": f"{charlie_provider}-guid-1",
+                    "title": "Charlie Episode 1",
+                    "audio_url": "https://cdn.example.com/filter-charlie-1.mp3",
+                    "published_at": "2026-03-03T10:00:00Z",
+                    "duration_seconds": 240,
+                    "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "charlie1"}],
+                }
+            ],
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[alpha_payload, bravo_payload, charlie_payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+
+        alpha_podcast_id = UUID(_subscribe(auth_client, user_id, alpha_payload)["podcast_id"])
+        bravo_podcast_id = UUID(_subscribe(auth_client, user_id, bravo_payload)["podcast_id"])
+        charlie_podcast_id = UUID(_subscribe(auth_client, user_id, charlie_payload)["podcast_id"])
+
+        _run_subscription_sync(direct_db, user_id, alpha_podcast_id, run_transcription_jobs=False)
+        _run_subscription_sync(direct_db, user_id, bravo_podcast_id, run_transcription_jobs=False)
+        _run_subscription_sync(direct_db, user_id, charlie_podcast_id, run_transcription_jobs=False)
+
+        alpha_library_id = _create_library(auth_client, user_id, name=f"alpha-{alpha_provider}")
+        bravo_library_id = _create_library(auth_client, user_id, name=f"bravo-{bravo_provider}")
+
+        add_alpha_to_library = auth_client.post(
+            f"/libraries/{alpha_library_id}/podcasts",
+            headers=auth_headers(user_id),
+            json={"podcast_id": str(alpha_podcast_id)},
+        )
+        assert add_alpha_to_library.status_code == 201, (
+            "adding alpha podcast to a non-default library should succeed before scope assertions, "
+            f"got {add_alpha_to_library.status_code}: {add_alpha_to_library.text}"
+        )
+        add_bravo_to_library = auth_client.post(
+            f"/libraries/{bravo_library_id}/podcasts",
+            headers=auth_headers(user_id),
+            json={"podcast_id": str(bravo_podcast_id)},
+        )
+        assert add_bravo_to_library.status_code == 201, (
+            "adding bravo podcast to a non-default library should succeed before scope assertions, "
+            f"got {add_bravo_to_library.status_code}: {add_bravo_to_library.text}"
+        )
+
+        bravo_episodes = auth_client.get(
+            f"/podcasts/{bravo_podcast_id}/episodes?state=all&sort=newest&limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert bravo_episodes.status_code == 200
+        mark_bravo_played = auth_client.put(
+            f"/media/{bravo_episodes.json()['data'][0]['id']}/listening-state",
+            json={"is_completed": True},
+            headers=auth_headers(user_id),
+        )
+        assert mark_bravo_played.status_code == 204, (
+            "marking bravo played should succeed before has_new assertions, "
+            f"got {mark_bravo_played.status_code}: {mark_bravo_played.text}"
+        )
+
+        search_response = auth_client.get(
+            "/podcasts/subscriptions?q=orphan&sort=alpha",
+            headers=auth_headers(user_id),
+        )
+        assert search_response.status_code == 200, (
+            "subscriptions search should succeed with q filter, "
+            f"got {search_response.status_code}: {search_response.text}"
+        )
+        assert [row["podcast"]["title"] for row in search_response.json()["data"]] == [
+            "Charlie Orphan"
+        ]
+
+        has_new_response = auth_client.get(
+            "/podcasts/subscriptions?filter=has_new&sort=alpha",
+            headers=auth_headers(user_id),
+        )
+        assert has_new_response.status_code == 200, (
+            "subscriptions filter=has_new should succeed, "
+            f"got {has_new_response.status_code}: {has_new_response.text}"
+        )
+        assert [row["podcast"]["title"] for row in has_new_response.json()["data"]] == [
+            "Alpha Systems",
+            "Charlie Orphan",
+        ]
+
+        not_in_library_response = auth_client.get(
+            "/podcasts/subscriptions?filter=not_in_library&sort=alpha",
+            headers=auth_headers(user_id),
+        )
+        assert not_in_library_response.status_code == 200, (
+            "subscriptions filter=not_in_library should succeed, "
+            f"got {not_in_library_response.status_code}: {not_in_library_response.text}"
+        )
+        not_in_library_rows = not_in_library_response.json()["data"]
+        assert [row["podcast"]["title"] for row in not_in_library_rows] == ["Charlie Orphan"]
+        assert not_in_library_rows[0]["visible_libraries"] == []
+
+        library_scope_response = auth_client.get(
+            f"/podcasts/subscriptions?library_id={alpha_library_id}&sort=alpha",
+            headers=auth_headers(user_id),
+        )
+        assert library_scope_response.status_code == 200, (
+            "subscriptions library scope should succeed, "
+            f"got {library_scope_response.status_code}: {library_scope_response.text}"
+        )
+        library_scope_rows = library_scope_response.json()["data"]
+        assert [row["podcast"]["title"] for row in library_scope_rows] == ["Alpha Systems"]
+        assert library_scope_rows[0]["visible_libraries"] == [
+            {
+                "id": str(alpha_library_id),
+                "name": f"alpha-{alpha_provider}",
+                "color": None,
+            }
+        ], "subscriptions rows should expose visible non-default libraries for badge rendering"
 
     def test_discover_retries_transient_provider_timeout_before_failing(
         self, auth_client, monkeypatch

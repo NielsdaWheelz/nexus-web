@@ -89,6 +89,12 @@ class PodcastSubscriptionStatusOut(BaseModel):
     updated_at: datetime
 
 
+class PodcastSubscriptionVisibleLibraryOut(BaseModel):
+    id: UUID
+    name: str
+    color: str | None = None
+
+
 class PodcastListItemOut(BaseModel):
     id: UUID
     provider: str
@@ -117,6 +123,8 @@ class PodcastSubscriptionListItemOut(BaseModel):
     last_synced_at: datetime | None = None
     updated_at: datetime
     unplayed_count: int = Field(ge=0, default=0)
+    latest_episode_published_at: datetime | None = None
+    visible_libraries: list[PodcastSubscriptionVisibleLibraryOut] = Field(default_factory=list)
     podcast: PodcastListItemOut
 
 
