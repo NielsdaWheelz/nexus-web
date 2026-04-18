@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,
@@ -36,7 +37,6 @@ from nexus.schemas.library import (
     LibraryRole,
 )
 from nexus.schemas.media import MediaAuthorOut, MediaOut
-from nexus.auth.permissions import can_read_media
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source

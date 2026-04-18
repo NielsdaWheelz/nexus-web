@@ -18,6 +18,7 @@ const CONVERSATIONS_HREFS = ["/conversations"] as const;
 const CONVERSATION_DETAIL_HREFS = ["/conversations/conv-123"] as const;
 const LIBRARIES_HREFS = ["/libraries"] as const;
 const LIBRARY_DETAIL_HREFS = ["/libraries/lib-123"] as const;
+const PODCAST_DETAIL_HREFS = ["/podcasts/pod-123"] as const;
 
 const SETTINGS_ROUTE_FILES = [
   "src/app/(authenticated)/settings/page.tsx",
@@ -37,6 +38,9 @@ const CONVERSATION_DETAIL_ROUTE_FILES = [
 const LIBRARIES_ROUTE_FILES = ["src/app/(authenticated)/libraries/page.tsx"] as const;
 const LIBRARY_DETAIL_ROUTE_FILES = [
   "src/app/(authenticated)/libraries/[id]/page.tsx",
+] as const;
+const PODCAST_DETAIL_ROUTE_FILES = [
+  "src/app/(authenticated)/podcasts/[podcastId]/page.tsx",
 ] as const;
 
 function resolveFromWebRoot(relativePath: string): string {
@@ -287,6 +291,44 @@ describe("workspace pane cutover contract (library detail slice)", () => {
   });
 
   it("routes /libraries/[id] through the unified workspace host", () => {
+    const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
+    expect(layoutSource.includes("WorkspaceHost")).toBe(true);
+  });
+});
+
+describe("workspace pane cutover contract (podcast detail slice)", () => {
+  it("declares /podcasts/:podcastId with pane metadata for a wide document surface", () => {
+    for (const href of PODCAST_DETAIL_HREFS) {
+      const route = resolvePaneRoute(href);
+      expect(route.id).toBe("podcastDetail");
+      expect(route.definition).toBeTruthy();
+      expect(route.definition?.bodyMode).toBe("document");
+      expect(route.definition?.defaultWidthPx).toBe(960);
+      expect(route.definition?.minWidthPx).toBe(760);
+      expect(route.definition?.maxWidthPx).toBe(1400);
+      expect(route.definition?.getChrome).toBeTypeOf("function");
+    }
+  });
+
+  it("keeps /podcasts/[podcastId] route entrypoint free of legacy pane wrappers", () => {
+    for (const relativeFilePath of PODCAST_DETAIL_ROUTE_FILES) {
+      const source = readFileSync(resolveFromWebRoot(relativeFilePath), "utf-8");
+      expect(source.includes("PageLayout")).toBe(false);
+      expect(source.includes('from "@/components/PaneContainer"')).toBe(false);
+      expect(source.includes('from "@/components/Pane"')).toBe(false);
+      expect(source.includes("SplitSurface")).toBe(false);
+    }
+  });
+
+  it("keeps podcast-detail pane registry wiring off route page modules", () => {
+    const registrySource = readFileSync(
+      resolveFromWebRoot("src/lib/panes/paneRouteRegistry.tsx"),
+      "utf-8"
+    );
+    expect(registrySource.includes('"/podcasts/[podcastId]/page"')).toBe(false);
+  });
+
+  it("routes /podcasts/[podcastId] through the unified workspace host", () => {
     const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
     expect(layoutSource.includes("WorkspaceHost")).toBe(true);
   });

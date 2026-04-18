@@ -33,6 +33,19 @@ describe("pane route registry", () => {
     expect(route.definition?.getChrome).toBeTypeOf("function");
   });
 
+  it("keeps podcast-detail route as a wide document surface", () => {
+    const route = resolvePaneRoute("/podcasts/pod-123");
+    expect(route.id).toBe("podcastDetail");
+    expect(route.params.podcastId).toBe("pod-123");
+    expect(route.staticTitle).toBe("Podcast");
+    expect(route.resourceRef).toBe("podcast:pod-123");
+    expect(route.definition?.bodyMode).toBe("document");
+    expect(route.definition?.defaultWidthPx).toBe(960);
+    expect(route.definition?.minWidthPx).toBe(760);
+    expect(route.definition?.maxWidthPx).toBe(1400);
+    expect(route.definition?.getChrome).toBeTypeOf("function");
+  });
+
   it("resolves /conversations/new with query params", () => {
     const route = resolvePaneRoute("/conversations/new?attach_type=highlight&attach_id=abc");
     expect(route.id).toBe("conversationNew");

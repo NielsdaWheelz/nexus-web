@@ -481,7 +481,7 @@ describe("podcasts product flows", () => {
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "podcastId" ? "podcast-1" : null
     );
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, _init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/podcasts/podcast-1") {
         return jsonResponse({

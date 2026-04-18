@@ -91,6 +91,7 @@ make test-real
 - `docs/sdlc/` -> planning and execution workflow: `docs/sdlc/README.md`
 - `docs/reader-implementation.md` -> current reader behavior contract
 - `docs/mobile-command-palette.md` -> mobile command launcher behavior contract
+- `docs/podcast-detail-episode-pane-cutover.md` -> podcast detail split-pane cutover contract
 
 ## Documentation Rules
 

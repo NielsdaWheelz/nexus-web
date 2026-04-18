@@ -2151,7 +2151,11 @@ export default function PodcastDetailPaneBody() {
       )}
 
       {isMobileViewport && episodesDrawerOpen ? (
-        <div className={styles.episodesBackdrop} onClick={() => setEpisodesDrawerOpen(false)}>
+        <div
+          className={styles.episodesBackdrop}
+          data-testid="episodes-backdrop"
+          onClick={() => setEpisodesDrawerOpen(false)}
+        >
           <aside
             className={styles.episodesDrawer}
             role="dialog"

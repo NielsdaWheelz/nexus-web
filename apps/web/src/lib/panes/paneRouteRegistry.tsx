@@ -243,9 +243,9 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       return podcastId ? `podcast:${podcastId}` : null;
     },
     render: () => <PodcastDetailPaneBody />,
-    bodyMode: "standard",
-    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    bodyMode: "document",
+    defaultWidthPx: 960,
+    minWidthPx: 760,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Podcast" }),
   },

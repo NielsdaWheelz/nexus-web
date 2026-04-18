@@ -52,10 +52,10 @@ from nexus.schemas.media import (
     MediaOut,
     PodcastEpisodeChapterOut,
 )
+from nexus.services import libraries as libraries_service
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from nexus.services import libraries as libraries_service
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.sanitize_html import sanitize_html

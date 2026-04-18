@@ -99,7 +99,9 @@ def record_recent_for_viewer(
         canonical_href = f"/media/{segments[1]}"
     elif segments[0] == "conversations" and len(segments) == 2:
         if segments[1] == "new":
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported recent destination")
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Unsupported recent destination"
+            )
         canonical_href = f"/conversations/{segments[1]}"
     elif segments[0] == "podcasts" and len(segments) == 2:
         if segments[1] == "subscriptions":
