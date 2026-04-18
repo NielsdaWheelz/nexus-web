@@ -11,6 +11,7 @@ from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.podcast import (
+    PodcastEnsureRequest,
     PodcastSubscribeRequest,
     PodcastSubscriptionSettingsPatchRequest,
 )
@@ -23,13 +24,26 @@ router = APIRouter()
 @router.get("/podcasts/discover")
 def discover_podcasts(
     viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
     q: str = Query(min_length=1),
     limit: int = Query(default=10, ge=1, le=50),
 ) -> dict:
     """Discover podcasts globally (not library-scoped)."""
     _ = viewer
-    rows = podcast_service.discover_podcasts(q, limit=limit)
+    rows = podcast_service.discover_podcasts(db, q, limit=limit)
     return success_response([row.model_dump(mode="json") for row in rows])
+
+
+@router.post("/podcasts/ensure")
+def ensure_podcast(
+    body: PodcastEnsureRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Ensure one discovered podcast exists locally and return its local id."""
+    _ = viewer
+    out = podcast_service.ensure_podcast(db, body)
+    return success_response(out.model_dump(mode="json"))
 
 
 @router.post("/podcasts/subscriptions")

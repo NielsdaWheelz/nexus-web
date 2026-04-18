@@ -18,6 +18,21 @@ describe("podcast BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/discover");
   });
 
+  it("POST /api/podcasts/ensure proxies to /podcasts/ensure", async () => {
+    const { POST } = await import("./ensure/route");
+    const req = new Request("http://localhost/api/podcasts/ensure", {
+      method: "POST",
+      body: JSON.stringify({
+        provider_podcast_id: "abc",
+        feed_url: "https://example.com/feed.xml",
+        title: "Example Podcast",
+      }),
+    });
+    await POST(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/podcasts/ensure");
+  });
+
   it("GET /api/podcasts/subscriptions proxies to /podcasts/subscriptions", async () => {
     const { GET } = await import("./subscriptions/route");
     const req = new Request("http://localhost/api/podcasts/subscriptions?limit=20");

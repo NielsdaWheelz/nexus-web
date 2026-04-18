@@ -30,7 +30,9 @@ import LibraryTargetPicker, {
 } from "@/components/LibraryTargetPicker";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import StateMessage from "@/components/ui/StateMessage";
-import { AppList, AppListItem } from "@/components/ui/AppList";
+import { AppList } from "@/components/ui/AppList";
+import appListStyles from "@/components/ui/AppList.module.css";
+import ContextRow from "@/components/ui/ContextRow";
 import styles from "./IngestionTray.module.css";
 
 type QueueItem = {
@@ -80,6 +82,10 @@ type PodcastSubscribeResult = {
 type PodcastSubscriptionSnapshot = {
   podcast_id: string;
   sync_status: PodcastSubscribeResult["sync_status"];
+};
+
+type PodcastEnsureResult = {
+  podcast_id: string;
 };
 
 type PodcastSubscriptionListRow = {
@@ -165,6 +171,10 @@ export default function AddContentTray() {
   >({});
   const [subscriptionsHydrated, setSubscriptionsHydrated] = useState(false);
   const [subscribingProviderIds, setSubscribingProviderIds] = useState<Set<string>>(
+    new Set()
+  );
+  const [openingProviderIds, setOpeningProviderIds] = useState<Set<string>>(new Set());
+  const [unsubscribingProviderIds, setUnsubscribingProviderIds] = useState<Set<string>>(
     new Set()
   );
   const [librariesByPodcastId, setLibrariesByPodcastId] = useState<
@@ -519,6 +529,115 @@ export default function AddContentTray() {
       }
     },
     [libraries]
+  );
+
+  const handleOpenPodcast = useCallback(
+    async (item: PodcastDiscoveryItem) => {
+      const providerPodcastId = item.provider_podcast_id;
+      if (openingProviderIds.has(providerPodcastId)) {
+        return;
+      }
+
+      setOpeningProviderIds((prev) => new Set(prev).add(providerPodcastId));
+      setDiscoverError(null);
+
+      try {
+        let podcastId =
+          subscriptionByProviderId[providerPodcastId]?.podcast_id ?? item.podcast_id;
+
+        if (!podcastId) {
+          const response = await apiFetch<{ data: PodcastEnsureResult }>("/api/podcasts/ensure", {
+            method: "POST",
+            body: JSON.stringify({
+              provider_podcast_id: item.provider_podcast_id,
+              feed_url: item.feed_url,
+              title: item.title,
+              author: item.author,
+              image_url: item.image_url,
+              description: item.description,
+            }),
+          });
+          podcastId = response.data.podcast_id;
+          setDiscoverResults((prev) =>
+            prev.map((result) =>
+              result.provider_podcast_id === providerPodcastId
+                ? { ...result, podcast_id: podcastId }
+                : result
+            )
+          );
+        }
+
+        if (
+          !requestOpenInAppPane(`/podcasts/${podcastId}`, {
+            titleHint: item.title,
+            resourceRef: `podcast:${podcastId}`,
+          })
+        ) {
+          throw new Error("Failed to open podcast");
+        }
+
+        setOpen(false);
+      } catch (error) {
+        if (isApiError(error)) {
+          setDiscoverError(error.message);
+        } else if (error instanceof Error && error.message) {
+          setDiscoverError(error.message);
+        } else {
+          setDiscoverError("Failed to open podcast");
+        }
+      } finally {
+        setOpeningProviderIds((prev) => {
+          const next = new Set(prev);
+          next.delete(providerPodcastId);
+          return next;
+        });
+      }
+    },
+    [openingProviderIds, subscriptionByProviderId]
+  );
+
+  const handleUnsubscribe = useCallback(
+    async (item: PodcastDiscoveryItem, podcastId: string) => {
+      const providerPodcastId = item.provider_podcast_id;
+      if (unsubscribingProviderIds.has(providerPodcastId)) {
+        return;
+      }
+
+      setUnsubscribingProviderIds((prev) => new Set(prev).add(providerPodcastId));
+      setDiscoverError(null);
+
+      try {
+        await apiFetch(`/api/podcasts/subscriptions/${podcastId}`, {
+          method: "DELETE",
+        });
+        setSubscriptionByProviderId((prev) => {
+          const next = { ...prev };
+          delete next[providerPodcastId];
+          return next;
+        });
+        setLibrariesByPodcastId((prev) => {
+          if (!prev[podcastId]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[podcastId];
+          return next;
+        });
+      } catch (error) {
+        if (isApiError(error)) {
+          setDiscoverError(error.message);
+        } else {
+          setDiscoverError("Failed to unsubscribe from podcast");
+        }
+      } finally {
+        setUnsubscribingProviderIds((prev) => {
+          const next = new Set(prev);
+          next.delete(providerPodcastId);
+          return next;
+        });
+      }
+    },
+    [unsubscribingProviderIds]
   );
 
   const handleAddPodcastToLibrary = useCallback(async (podcastId: string, libraryId: string) => {
@@ -1056,6 +1175,10 @@ export default function AddContentTray() {
                     const subscription = subscriptionByProviderId[result.provider_podcast_id];
                     const podcastId = subscription?.podcast_id ?? result.podcast_id;
                     const isSubscribing = subscribingProviderIds.has(result.provider_podcast_id);
+                    const isOpening = openingProviderIds.has(result.provider_podcast_id);
+                    const isUnsubscribing = unsubscribingProviderIds.has(
+                      result.provider_podcast_id
+                    );
                     const pickerLibraries = podcastId
                       ? (librariesByPodcastId[podcastId] ?? []).map((library) => {
                           const busyKey = `${library.id}:${podcastId}`;
@@ -1069,83 +1192,126 @@ export default function AddContentTray() {
                           };
                         })
                       : [];
+                    const summaryText =
+                      result.description
+                        ?.replace(/<[^>]+>/g, " ")
+                        .replace(/\s+/g, " ")
+                        .trim() || "Open the show pane to inspect the podcast and its episodes.";
+                    const stateLabel = isOpening
+                      ? "Opening..."
+                      : isUnsubscribing
+                        ? "Unsubscribing..."
+                        : subscription
+                          ? subscription.sync_status === "complete"
+                            ? "Followed"
+                            : `Followed · ${subscription.sync_status.replace(/_/g, " ")}`
+                          : null;
 
                     return (
-                      <AppListItem
-                        key={result.provider_podcast_id}
-                        href={podcastId ? `/podcasts/${podcastId}` : result.website_url || result.feed_url}
-                        target={podcastId ? undefined : "_blank"}
-                        rel={podcastId ? undefined : "noopener noreferrer"}
-                        icon={
-                          result.image_url ? (
-                            <span
-                              className={styles.podcastArtwork}
-                              style={{ backgroundImage: `url(${result.image_url})` }}
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <span className={styles.thumbnailFallback}>POD</span>
-                          )
-                        }
-                        title={result.title}
-                        description={result.author || "Unknown author"}
-                        meta={result.feed_url}
-                        trailing={
-                          subscription ? (
-                            <span className={styles.subscriptionState}>
-                              {subscription.sync_status}
-                            </span>
-                          ) : undefined
-                        }
-                        actions={
-                          subscription && podcastId ? (
-                            <>
-                              <a href={`/podcasts/${podcastId}`} className={styles.viewPodcastLink}>
-                                View podcast
-                              </a>
-                              <LibraryTargetPicker
-                                label="Libraries"
-                                libraries={pickerLibraries}
-                                loading={loadingLibraryPodcastIds.has(podcastId)}
-                                onOpen={() => {
-                                  void loadPodcastLibraries(podcastId);
-                                }}
-                                onAddToLibrary={(libraryId) => {
-                                  void handleAddPodcastToLibrary(podcastId, libraryId);
-                                }}
-                                onRemoveFromLibrary={(libraryId) => {
-                                  void handleRemovePodcastFromLibrary(podcastId, libraryId);
-                                }}
-                                emptyMessage="No non-default libraries available."
-                              />
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                className={styles.subscribeButton}
-                                disabled={isSubscribing}
-                                onClick={() => void handleSubscribe(result)}
-                              >
-                                {isSubscribing ? "Subscribing..." : "Subscribe"}
-                              </button>
-                              <LibraryTargetPicker
-                                label="Add to library"
-                                libraries={libraries}
-                                loading={librariesLoading}
-                                disabled={isSubscribing}
-                                onOpen={() => {
-                                  void loadLibraries();
-                                }}
-                                onSelectLibrary={(libraryId) => {
-                                  void handleSubscribe(result, libraryId);
-                                }}
-                                emptyMessage="No non-default libraries available."
-                              />
-                            </>
-                          )
-                        }
-                      />
+                      <li key={result.provider_podcast_id} className={appListStyles.item}>
+                        <ContextRow
+                          className={appListStyles.row}
+                          mainClassName={`${appListStyles.primary} ${styles.podcastResultMain}`}
+                          leadingClassName={`${appListStyles.icon} ${styles.podcastResultLeading}`}
+                          contentClassName={appListStyles.content}
+                          titleClassName={appListStyles.title}
+                          descriptionClassName={`${appListStyles.description} ${styles.podcastResultDescription}`}
+                          metaClassName={`${appListStyles.meta} ${styles.podcastResultMeta}`}
+                          trailingClassName={appListStyles.trailing}
+                          actionsClassName={`${appListStyles.actions} ${styles.podcastResultActions}`}
+                          mainRole="button"
+                          mainTabIndex={0}
+                          onMainClick={() => {
+                            void handleOpenPodcast(result);
+                          }}
+                          onMainKeyDown={(event) => {
+                            if (event.key !== "Enter" && event.key !== " ") {
+                              return;
+                            }
+                            event.preventDefault();
+                            void handleOpenPodcast(result);
+                          }}
+                          leading={
+                            result.image_url ? (
+                              <span className={styles.podcastArtwork}>
+                                <img
+                                  src={result.image_url}
+                                  alt=""
+                                  className={styles.podcastArtworkImage}
+                                />
+                              </span>
+                            ) : (
+                              <span className={styles.podcastArtworkFallback} aria-hidden="true">
+                                <Mic size={18} />
+                              </span>
+                            )
+                          }
+                          title={result.title}
+                          description={summaryText}
+                          meta={result.author || undefined}
+                          trailing={
+                            stateLabel ? (
+                              <span className={styles.subscriptionState}>{stateLabel}</span>
+                            ) : undefined
+                          }
+                          actions={
+                            subscription && podcastId ? (
+                              <>
+                                <LibraryTargetPicker
+                                  label="Libraries"
+                                  libraries={pickerLibraries}
+                                  loading={loadingLibraryPodcastIds.has(podcastId)}
+                                  disabled={isUnsubscribing}
+                                  onOpen={() => {
+                                    void loadPodcastLibraries(podcastId);
+                                  }}
+                                  onAddToLibrary={(libraryId) => {
+                                    void handleAddPodcastToLibrary(podcastId, libraryId);
+                                  }}
+                                  onRemoveFromLibrary={(libraryId) => {
+                                    void handleRemovePodcastFromLibrary(podcastId, libraryId);
+                                  }}
+                                  emptyMessage="No non-default libraries available."
+                                />
+                                <button
+                                  type="button"
+                                  className={styles.unsubscribeButton}
+                                  disabled={isUnsubscribing}
+                                  onClick={() => {
+                                    void handleUnsubscribe(result, podcastId);
+                                  }}
+                                >
+                                  {isUnsubscribing ? "Unsubscribing..." : "Unsubscribe"}
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className={styles.subscribeButton}
+                                  disabled={isSubscribing}
+                                  onClick={() => void handleSubscribe(result)}
+                                >
+                                  {isSubscribing ? "Subscribing..." : "Subscribe"}
+                                </button>
+                                <LibraryTargetPicker
+                                  label="Subscribe + add to library"
+                                  libraries={libraries}
+                                  loading={librariesLoading}
+                                  disabled={isSubscribing}
+                                  onOpen={() => {
+                                    void loadLibraries();
+                                  }}
+                                  onSelectLibrary={(libraryId) => {
+                                    void handleSubscribe(result, libraryId);
+                                  }}
+                                  emptyMessage="No non-default libraries available."
+                                />
+                              </>
+                            )
+                          }
+                        />
+                      </li>
                     );
                   })}
                 </AppList>

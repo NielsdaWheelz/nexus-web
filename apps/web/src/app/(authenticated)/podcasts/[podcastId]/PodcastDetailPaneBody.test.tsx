@@ -251,21 +251,10 @@ describe("PodcastDetailPaneBody", () => {
 
     expect(await screen.findByRole("heading", { name: "Systems Podcast" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Libraries" }).length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: "Refresh sync" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Unsubscribe" })).not.toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(getLatestPaneOptions()).toEqual([
-        expect.objectContaining({ id: "settings", label: "Settings" }),
-        expect.objectContaining({ id: "refresh-sync", label: "Refresh sync" }),
-        expect.objectContaining({
-          id: "unsubscribe",
-          label: "Unsubscribe",
-          tone: "danger",
-        }),
-      ]);
-    });
+    expect(screen.getByRole("button", { name: "Refresh sync" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unsubscribe" })).toBeInTheDocument();
+    expect(getLatestPaneOptions()).toEqual([]);
   });
 
   it("opens and closes the mobile episodes drawer from the pane header action", async () => {

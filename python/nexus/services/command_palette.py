@@ -75,14 +75,6 @@ def record_recent_for_viewer(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Unsupported recent destination",
             )
-    elif segments[0] == "discover" and len(segments) == 2:
-        if segments[1] == "podcasts":
-            canonical_href = "/discover/podcasts"
-        else:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Unsupported recent destination",
-            )
     elif segments[0] == "settings" and len(segments) == 2:
         if segments[1] == "billing":
             canonical_href = "/settings/billing"

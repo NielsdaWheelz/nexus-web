@@ -132,10 +132,8 @@ describe("Navbar", () => {
     );
   });
 
-  it("keeps Discover active for discover child routes", () => {
-    MOCK_STORE.state.panes = [
-      { id: "pane-test-1", href: "/discover/podcasts", widthPx: 480 },
-    ];
+  it("keeps Discover active for the discover route", () => {
+    MOCK_STORE.state.panes = [{ id: "pane-test-1", href: "/discover", widthPx: 480 }];
 
     render(<Navbar />);
 

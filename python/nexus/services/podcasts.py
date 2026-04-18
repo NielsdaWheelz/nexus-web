@@ -36,6 +36,8 @@ from nexus.schemas.media import MediaOut
 from nexus.schemas.podcast import (
     PodcastDetailOut,
     PodcastDiscoveryOut,
+    PodcastEnsureOut,
+    PodcastEnsureRequest,
     PodcastListItemOut,
     PodcastOpmlImportErrorOut,
     PodcastOpmlImportOut,
@@ -363,7 +365,12 @@ def get_podcast_index_client() -> PodcastIndexClient:
     )
 
 
-def discover_podcasts(query: str, *, limit: int = 10) -> list[PodcastDiscoveryOut]:
+def discover_podcasts(
+    db: Session,
+    query: str,
+    *,
+    limit: int = 10,
+) -> list[PodcastDiscoveryOut]:
     query = query.strip()
     if not query:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Query must not be empty")
@@ -372,7 +379,112 @@ def discover_podcasts(query: str, *, limit: int = 10) -> list[PodcastDiscoveryOu
 
     client = get_podcast_index_client()
     rows = client.search_podcasts(query, limit)
-    return [PodcastDiscoveryOut(**row) for row in rows]
+    results: list[PodcastDiscoveryOut] = []
+    for row in rows:
+        feed_url = row["feed_url"]
+        try:
+            feed_url = _validate_and_normalize_feed_url(feed_url)
+        except InvalidRequestError:
+            pass
+
+        podcast_id = _select_podcast_id_by_provider_id(db, row["provider_podcast_id"])
+        if podcast_id is None:
+            podcast_id = _select_podcast_id_by_feed_url(db, feed_url)
+
+        results.append(
+            PodcastDiscoveryOut(
+                podcast_id=podcast_id,
+                provider_podcast_id=row["provider_podcast_id"],
+                title=row["title"],
+                author=row["author"],
+                feed_url=feed_url,
+                website_url=row["website_url"],
+                image_url=row["image_url"],
+                description=row["description"],
+            )
+        )
+    return results
+
+
+def ensure_podcast(
+    db: Session,
+    body: PodcastEnsureRequest,
+) -> PodcastEnsureOut:
+    normalized_feed_url = _validate_and_normalize_feed_url(body.feed_url)
+    normalized_body = body.model_copy(update={"feed_url": normalized_feed_url})
+    now = datetime.now(UTC)
+
+    with transaction(db):
+        podcast_id = _select_podcast_id_by_provider_id(db, normalized_body.provider_podcast_id)
+        if podcast_id is not None:
+            feed_url_owner_id = _select_podcast_id_by_feed_url(db, normalized_body.feed_url)
+            if feed_url_owner_id is not None and feed_url_owner_id != podcast_id:
+                row = db.execute(
+                    text(
+                        """
+                        UPDATE podcasts
+                        SET
+                            title = :title,
+                            author = COALESCE(:author, author),
+                            website_url = COALESCE(:website_url, website_url),
+                            image_url = COALESCE(:image_url, image_url),
+                            description = COALESCE(:description, description),
+                            updated_at = :updated_at
+                        WHERE id = :podcast_id
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "title": normalized_body.title,
+                        "author": normalized_body.author,
+                        "website_url": normalized_body.website_url,
+                        "image_url": normalized_body.image_url,
+                        "description": normalized_body.description,
+                        "updated_at": now,
+                        "podcast_id": podcast_id,
+                    },
+                ).fetchone()
+                return PodcastEnsureOut(podcast_id=row[0])
+
+            podcast_id = _upsert_podcast(db, normalized_body, now=now)
+            return PodcastEnsureOut(podcast_id=podcast_id)
+
+        podcast_id = _select_podcast_id_by_feed_url(db, normalized_body.feed_url)
+        if podcast_id is not None:
+            row = db.execute(
+                text(
+                    """
+                    UPDATE podcasts
+                    SET
+                        provider_podcast_id = :provider_podcast_id,
+                        title = :title,
+                        author = COALESCE(:author, author),
+                        feed_url = :feed_url,
+                        website_url = COALESCE(:website_url, website_url),
+                        image_url = COALESCE(:image_url, image_url),
+                        description = COALESCE(:description, description),
+                        updated_at = :updated_at
+                    WHERE id = :podcast_id
+                    RETURNING id
+                    """
+                ),
+                {
+                    "provider_podcast_id": normalized_body.provider_podcast_id,
+                    "title": normalized_body.title,
+                    "author": normalized_body.author,
+                    "feed_url": normalized_body.feed_url,
+                    "website_url": normalized_body.website_url,
+                    "image_url": normalized_body.image_url,
+                    "description": normalized_body.description,
+                    "updated_at": now,
+                    "podcast_id": podcast_id,
+                },
+            ).fetchone()
+            return PodcastEnsureOut(podcast_id=row[0])
+
+        podcast_id = _upsert_podcast(db, normalized_body, now=now)
+
+    return PodcastEnsureOut(podcast_id=podcast_id)
 
 
 def import_subscriptions_from_opml(
@@ -4208,7 +4320,12 @@ def _get_podcast_sync_metadata(db: Session, podcast_id: UUID) -> dict[str, Any]:
     }
 
 
-def _upsert_podcast(db: Session, body: PodcastSubscribeRequest, *, now: datetime) -> UUID:
+def _upsert_podcast(
+    db: Session,
+    body: PodcastSubscribeRequest | PodcastEnsureRequest,
+    *,
+    now: datetime,
+) -> UUID:
     row = db.execute(
         text(
             """
@@ -4239,11 +4356,11 @@ def _upsert_podcast(db: Session, body: PodcastSubscribeRequest, *, now: datetime
             ON CONFLICT (provider, provider_podcast_id)
             DO UPDATE SET
                 title = EXCLUDED.title,
-                author = EXCLUDED.author,
+                author = COALESCE(EXCLUDED.author, podcasts.author),
                 feed_url = EXCLUDED.feed_url,
-                website_url = EXCLUDED.website_url,
-                image_url = EXCLUDED.image_url,
-                description = EXCLUDED.description,
+                website_url = COALESCE(EXCLUDED.website_url, podcasts.website_url),
+                image_url = COALESCE(EXCLUDED.image_url, podcasts.image_url),
+                description = COALESCE(EXCLUDED.description, podcasts.description),
                 updated_at = EXCLUDED.updated_at
             RETURNING id
             """
@@ -4324,6 +4441,26 @@ def _upsert_subscription(
         },
     )
     return existing is None
+
+
+def _select_podcast_id_by_provider_id(db: Session, provider_podcast_id: str) -> UUID | None:
+    row = db.execute(
+        text(
+            """
+            SELECT id
+            FROM podcasts
+            WHERE provider = :provider
+              AND provider_podcast_id = :provider_podcast_id
+            """
+        ),
+        {
+            "provider": PODCAST_PROVIDER,
+            "provider_podcast_id": provider_podcast_id,
+        },
+    ).fetchone()
+    if row is None:
+        return None
+    return row[0]
 
 
 def _validate_opml_upload(*, content_type: str | None, payload: bytes) -> None:

@@ -335,38 +335,81 @@
   gap: var(--space-2);
 }
 
-.thumbnailFallback,
-.podcastArtwork {
-  width: 100%;
-  height: 100%;
-  border-radius: 8px;
+.podcastResultMain {
+  cursor: pointer;
+}
+
+.podcastResultMain:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.podcastResultLeading {
+  width: 48px;
+  height: 48px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.podcastArtwork,
+.podcastArtworkFallback {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-subtle);
 }
 
-.thumbnailFallback {
-  font-size: var(--font-size-xs);
-  font-weight: 700;
+.podcastArtworkImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
-.podcastArtwork {
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: cover;
+.podcastResultDescription {
+  color: var(--color-text-secondary);
+}
+
+.podcastResultMeta {
+  white-space: nowrap;
+}
+
+.podcastResultActions {
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .subscriptionState {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
-  text-transform: capitalize;
+  text-align: right;
 }
 
-.viewPodcastLink {
-  color: var(--color-accent);
-  text-decoration: none;
+.unsubscribeButton {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
   font-size: var(--font-size-xs);
   font-weight: 600;
+}
+
+.unsubscribeButton:hover {
+  background: var(--color-surface);
+}
+
+.unsubscribeButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .opmlPanel {

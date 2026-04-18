@@ -21,9 +21,6 @@ vi.mock("@/app/(authenticated)/conversations/new/ConversationNewPaneBody", () =>
 vi.mock("@/app/(authenticated)/discover/DiscoverPaneBody", () => ({
   default: () => null,
 }));
-vi.mock("@/app/(authenticated)/discover/podcasts/PodcastDiscoverPaneBody", () => ({
-  default: () => null,
-}));
 vi.mock("@/app/(authenticated)/documents/DocumentsPaneBody", () => ({
   default: () => null,
 }));
@@ -108,13 +105,12 @@ describe("pane route registry", () => {
     expect(route.definition?.getChrome).toBeTypeOf("function");
   });
 
-  it("resolves the discover podcasts surface as a standard pane", () => {
+  it("rejects the removed discover podcasts surface", () => {
     const route = resolvePaneRoute("/discover/podcasts");
-    expect(route.id).toBe("discoverPodcasts");
-    expect(route.staticTitle).toBe("Discover podcasts");
-    expect(route.definition?.bodyMode).toBe("standard");
-    expect(route.definition?.defaultWidthPx).toBe(480);
-    expect(route.definition?.getChrome).toBeTypeOf("function");
+    expect(route.id).toBe("unsupported");
+    expect(route.render).toBeNull();
+    expect(route.staticTitle).toBe("Tab");
+    expect(route.resourceRef).toBeNull();
   });
 
   it("resolves /conversations/new with query params", () => {
@@ -124,6 +120,14 @@ describe("pane route registry", () => {
 
   it("returns unsupported when route is not registered", () => {
     const route = resolvePaneRoute("/not-supported");
+    expect(route.id).toBe("unsupported");
+    expect(route.render).toBeNull();
+    expect(route.staticTitle).toBe("Tab");
+    expect(route.resourceRef).toBeNull();
+  });
+
+  it("rejects the removed /podcasts/subscriptions route", () => {
+    const route = resolvePaneRoute("/podcasts/subscriptions");
     expect(route.id).toBe("unsupported");
     expect(route.render).toBeNull();
     expect(route.staticTitle).toBe("Tab");
@@ -140,7 +144,7 @@ describe("pane route registry", () => {
   it("resolves expanded authenticated static routes", () => {
     expect(resolvePaneRoute("/libraries").id).toBe("libraries");
     expect(resolvePaneRoute("/discover").id).toBe("discover");
-    expect(resolvePaneRoute("/discover/podcasts").id).toBe("discoverPodcasts");
+    expect(resolvePaneRoute("/discover/podcasts").id).toBe("unsupported");
     expect(resolvePaneRoute("/documents").id).toBe("documents");
     expect(resolvePaneRoute("/podcasts").id).toBe("podcasts");
     expect(resolvePaneRoute("/videos").id).toBe("videos");
@@ -161,7 +165,7 @@ describe("pane route registry", () => {
     const route = resolvePaneRoute("/podcasts");
     expect(route.definition?.getChrome?.({ href: "/podcasts", params: {} })).toMatchObject({
       title: "Podcasts",
-      subtitle: "Followed shows, library membership, and subscription controls.",
+      subtitle: "Followed shows, show status, and library membership.",
     });
   });
 

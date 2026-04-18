@@ -7,6 +7,7 @@ const {
   mockUploadIngestFile,
   mockAddMediaFromUrl,
   mockGetFileUploadError,
+  mockRequestOpenInAppPane,
   mockViewportState,
 } = vi.hoisted(() => {
   const mockUploadIngestFile = vi.fn().mockResolvedValue({
@@ -18,12 +19,14 @@ const {
     duplicate: false,
   });
   const mockGetFileUploadError = vi.fn().mockReturnValue(null);
+  const mockRequestOpenInAppPane = vi.fn().mockReturnValue(true);
   const mockViewportState = { isMobile: false };
 
   return {
     mockUploadIngestFile,
     mockAddMediaFromUrl,
     mockGetFileUploadError,
+    mockRequestOpenInAppPane,
     mockViewportState,
   };
 });
@@ -45,7 +48,7 @@ vi.mock("@/lib/panes/openInAppPane", () => ({
   isOpenInAppPaneMessage: () => false,
   normalizePaneHref: (href: string) => href,
   setPaneGraphReady: vi.fn(),
-  requestOpenInAppPane: vi.fn(),
+  requestOpenInAppPane: mockRequestOpenInAppPane,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -320,7 +323,7 @@ describe("IngestionTray", () => {
               author: "Systems Team",
               feed_url: "https://feeds.example.com/systems.xml",
               website_url: "https://example.com/systems",
-              image_url: null,
+              image_url: "https://cdn.example.com/systems.jpg",
               description: "Systems thinking show",
             },
           ],
@@ -354,21 +357,163 @@ describe("IngestionTray", () => {
     await user.click(screen.getByText("Search"));
 
     await screen.findByText("Systems Podcast");
-    await user.click(screen.getByText("Add to library"));
-    const librariesDialog = await screen.findByRole("dialog", { name: "Add to library" });
+    expect(screen.getByText("Systems thinking show")).toBeInTheDocument();
+    expect(screen.getByText("Systems Team")).toBeInTheDocument();
+    expect(screen.queryByText("https://feeds.example.com/systems.xml")).not.toBeInTheDocument();
+    await user.click(screen.getByText("Subscribe + add to library"));
+    const librariesDialog = await screen.findByRole("dialog", {
+      name: "Subscribe + add to library",
+    });
     await user.click(within(librariesDialog).getByRole("button", { name: /Sports/i }));
 
     await waitFor(() => {
       const subscribeCall = fetchSpy.mock.calls.find(([url, init]) => {
-          const parsed = new URL(String(url), "http://localhost");
-          return parsed.pathname === "/api/podcasts/subscriptions" && init?.method === "POST";
-        });
+        const parsed = new URL(String(url), "http://localhost");
+        return parsed.pathname === "/api/podcasts/subscriptions" && init?.method === "POST";
+      });
       expect(subscribeCall).toBeTruthy();
       const body = JSON.parse(String(subscribeCall?.[1]?.body ?? "{}"));
       expect(body.library_id).toBe("library-sports");
     });
 
-    expect(await screen.findByText("View podcast")).toHaveAttribute("href", "/podcasts/podcast-1");
+    expect(screen.getByText("Libraries")).toBeInTheDocument();
+    expect(screen.getByText("Unsubscribe")).toBeInTheDocument();
+    expect(screen.queryByText("View podcast")).not.toBeInTheDocument();
+    expect(screen.queryByText("Subscribe + add to library")).not.toBeInTheDocument();
+  });
+
+  it("opens a local discovery result directly in the podcast pane", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/podcasts/discover") {
+        return jsonResponse({
+          data: [
+            {
+              podcast_id: "podcast-local",
+              provider_podcast_id: "provider-local",
+              title: "Local Systems Podcast",
+              author: "Systems Team",
+              feed_url: "https://feeds.example.com/local.xml",
+              website_url: "https://example.com/local",
+              image_url: "https://cdn.example.com/local.jpg",
+              description: "A locally known show",
+            },
+          ],
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<IngestionTray />);
+
+    openTray("podcast");
+
+    fireEvent.change(screen.getByPlaceholderText("Search podcasts by title or topic..."), {
+      target: { value: "local systems" },
+    });
+    await user.click(screen.getByText("Search"));
+
+    await user.click(await screen.findByText("Local Systems Podcast"));
+
+    await waitFor(() => {
+      expect(mockRequestOpenInAppPane).toHaveBeenCalledWith("/podcasts/podcast-local", {
+        titleHint: "Local Systems Podcast",
+        resourceRef: "podcast:podcast-local",
+      });
+    });
+
+    expect(
+      fetchSpy.mock.calls.find(([url]) => {
+        const parsed = new URL(String(url), "http://localhost");
+        return parsed.pathname === "/api/podcasts/ensure";
+      })
+    ).toBeUndefined();
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Add content")).not.toBeInTheDocument();
+    });
+  });
+
+  it("ensures an unresolved discovery result before opening the podcast pane", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/podcasts/subscriptions" && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/podcasts/discover") {
+        return jsonResponse({
+          data: [
+            {
+              podcast_id: null,
+              provider_podcast_id: "provider-ensure",
+              title: "Ensure Systems Podcast",
+              author: "Systems Team",
+              feed_url: "https://feeds.example.com/ensure.xml",
+              website_url: "https://example.com/ensure",
+              image_url: "https://cdn.example.com/ensure.jpg",
+              description: "<p>Detailed systems thinking show</p>",
+            },
+          ],
+        });
+      }
+      if (url.pathname === "/api/podcasts/ensure" && init?.method === "POST") {
+        return jsonResponse({
+          data: {
+            podcast_id: "podcast-ensure",
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<IngestionTray />);
+
+    openTray("podcast");
+
+    fireEvent.change(screen.getByPlaceholderText("Search podcasts by title or topic..."), {
+      target: { value: "ensure systems" },
+    });
+    await user.click(screen.getByText("Search"));
+
+    await screen.findByText("Ensure Systems Podcast");
+    expect(screen.getByText("Detailed systems thinking show")).toBeInTheDocument();
+    expect(screen.queryByText("https://feeds.example.com/ensure.xml")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Ensure Systems Podcast"));
+
+    await waitFor(() => {
+      const ensureCall = fetchSpy.mock.calls.find(([url, init]) => {
+        const parsed = new URL(String(url), "http://localhost");
+        return parsed.pathname === "/api/podcasts/ensure" && init?.method === "POST";
+      });
+      expect(ensureCall).toBeTruthy();
+      const body = JSON.parse(String(ensureCall?.[1]?.body ?? "{}"));
+      expect(body).toEqual({
+        provider_podcast_id: "provider-ensure",
+        feed_url: "https://feeds.example.com/ensure.xml",
+        title: "Ensure Systems Podcast",
+        author: "Systems Team",
+        image_url: "https://cdn.example.com/ensure.jpg",
+        description: "<p>Detailed systems thinking show</p>",
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockRequestOpenInAppPane).toHaveBeenCalledWith("/podcasts/podcast-ensure", {
+        titleHint: "Ensure Systems Podcast",
+        resourceRef: "podcast:podcast-ensure",
+      });
+    });
   });
 
   it("imports opml from opml mode and renders the summary", async () => {

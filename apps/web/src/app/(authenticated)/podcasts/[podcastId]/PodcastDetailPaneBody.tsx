@@ -22,7 +22,7 @@ import LibraryTargetPicker, {
 } from "@/components/LibraryTargetPicker";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
-import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import ActionMenu from "@/components/ui/ActionMenu";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import styles from "./page.module.css";
@@ -1576,33 +1576,6 @@ export default function PodcastDetailPaneBody() {
     return new Set(queueItems.map((item) => item.media_id));
   }, [queueItems]);
   const activeSubscription = detail?.subscription ?? null;
-  const paneOptions: ActionMenuOption[] = [];
-
-  if (activeSubscription) {
-    paneOptions.push({
-      id: "settings",
-      label: "Settings",
-      disabled: unsubscribeBusy,
-      onSelect: openSettingsModal,
-    });
-    paneOptions.push({
-      id: "refresh-sync",
-      label: refreshSyncBusy ? "Refreshing..." : "Refresh sync",
-      disabled: refreshSyncBusy,
-      onSelect: () => {
-        void handleRefreshSync();
-      },
-    });
-    paneOptions.push({
-      id: "unsubscribe",
-      label: unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe",
-      tone: "danger",
-      disabled: unsubscribeBusy,
-      onSelect: () => {
-        void handleUnsubscribe();
-      },
-    });
-  }
 
   usePaneChromeOverride({
     actions: isMobileViewport ? (
@@ -1616,7 +1589,6 @@ export default function PodcastDetailPaneBody() {
         Episodes
       </button>
     ) : undefined,
-    options: paneOptions,
   });
 
   const podcastLibraryCount = podcastLibraries.filter((library) => library.isInLibrary).length;
@@ -1988,78 +1960,158 @@ export default function PodcastDetailPaneBody() {
                 Podcasts
               </Link>
               <div className={styles.headerButtons}>
-                {activeSubscription ? null : (
-                  <button
-                    type="button"
-                    className={styles.syncButton}
-                    onClick={() => void handleSubscribe()}
-                    disabled={subscribeBusy || !detail}
-                  >
-                    {subscribeBusy ? "Subscribing..." : "Subscribe"}
-                  </button>
-                )}
                 {activeSubscription ? (
-                  <LibraryTargetPicker
-                    label="Libraries"
-                    libraries={podcastPickerLibraries}
-                    loading={podcastLibrariesLoading}
-                    onOpen={() => {
-                      void loadPodcastLibraries();
-                    }}
-                    onAddToLibrary={(libraryId) => {
-                      void handleAddPodcastToLibrary(libraryId);
-                    }}
-                    onRemoveFromLibrary={(libraryId) => {
-                      void handleRemovePodcastFromLibrary(libraryId);
-                    }}
-                    emptyMessage="No non-default libraries available."
-                  />
+                  <div className={styles.subscriptionActions}>
+                    <LibraryTargetPicker
+                      label="Libraries"
+                      libraries={podcastPickerLibraries}
+                      loading={podcastLibrariesLoading}
+                      onOpen={() => {
+                        void loadPodcastLibraries();
+                      }}
+                      onAddToLibrary={(libraryId) => {
+                        void handleAddPodcastToLibrary(libraryId);
+                      }}
+                      onRemoveFromLibrary={(libraryId) => {
+                        void handleRemovePodcastFromLibrary(libraryId);
+                      }}
+                      emptyMessage="No non-default libraries available."
+                    />
+                    <button
+                      type="button"
+                      className={styles.settingsButton}
+                      onClick={openSettingsModal}
+                      disabled={unsubscribeBusy}
+                    >
+                      Settings
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.syncButton}
+                      onClick={() => void handleRefreshSync()}
+                      disabled={refreshSyncBusy}
+                    >
+                      {refreshSyncBusy ? "Refreshing..." : "Refresh sync"}
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.unsubscribeButton}
+                      onClick={() => void handleUnsubscribe()}
+                      disabled={unsubscribeBusy}
+                    >
+                      {unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe"}
+                    </button>
+                  </div>
                 ) : (
-                  <LibraryTargetPicker
-                    label="Add to library"
-                    libraries={availableLibraries}
-                    loading={availableLibrariesLoading}
-                    disabled={subscribeBusy}
-                    onOpen={() => {
-                      void loadAvailableLibraries();
-                    }}
-                    onSelectLibrary={(libraryId) => {
-                      void handleSubscribe(libraryId);
-                    }}
-                    emptyMessage="No non-default libraries available."
-                  />
+                  <div className={styles.subscriptionActions}>
+                    <button
+                      type="button"
+                      className={styles.syncButton}
+                      onClick={() => void handleSubscribe()}
+                      disabled={subscribeBusy || !detail}
+                    >
+                      {subscribeBusy ? "Subscribing..." : "Subscribe"}
+                    </button>
+                    <LibraryTargetPicker
+                      label="Subscribe + library"
+                      libraries={availableLibraries}
+                      loading={availableLibrariesLoading}
+                      disabled={subscribeBusy}
+                      onOpen={() => {
+                        void loadAvailableLibraries();
+                      }}
+                      onSelectLibrary={(libraryId) => {
+                        void handleSubscribe(libraryId);
+                      }}
+                      emptyMessage="No non-default libraries available."
+                    />
+                  </div>
                 )}
               </div>
             </div>
-            <SectionCard
-              title={detail?.podcast.title ?? "Podcast"}
-              description={detail?.podcast.feed_url || "Podcast detail"}
-            >
+            <SectionCard>
               {loading && <StateMessage variant="loading">Loading podcast detail...</StateMessage>}
               {error && <StateMessage variant="error">{error}</StateMessage>}
               {!loading && detail && (
-                <>
-                  {activeSubscription ? (
-                    <>
-                      <p className={styles.syncState}>
-                        sync status: <strong>{activeSubscription.sync_status}</strong>
+                <div className={styles.summaryCard}>
+                  <div className={styles.summaryHeader}>
+                    {detail.podcast.image_url ? (
+                      <img
+                        src={detail.podcast.image_url}
+                        alt=""
+                        className={styles.summaryArtwork}
+                      />
+                    ) : (
+                      <span className={styles.summaryArtworkFallback} aria-hidden="true">
+                        {detail.podcast.title
+                          .split(/\s+/)
+                          .filter(Boolean)
+                          .slice(0, 2)
+                          .map((part) => part[0]?.toUpperCase() ?? "")
+                          .join("") || "P"}
+                      </span>
+                    )}
+                    <div className={styles.summaryCopy}>
+                      <h2 className={styles.summaryTitle}>{detail.podcast.title}</h2>
+                      {detail.podcast.author ? (
+                        <p className={styles.summaryByline}>{detail.podcast.author}</p>
+                      ) : null}
+                      <p className={styles.summaryDescription}>
+                        {detail.podcast.description?.trim() || "No summary from source."}
                       </p>
-                      <p className={styles.settingsSummary}>
+                    </div>
+                  </div>
+                  <div className={styles.summaryMeta}>
+                    <span className={styles.summaryMetaBadge}>
+                      {activeSubscription ? "Subscribed" : "Not subscribed"}
+                    </span>
+                    <span className={styles.summaryMetaBadge}>
+                      In {podcastLibraryCount} librar{podcastLibraryCount === 1 ? "y" : "ies"}
+                    </span>
+                    {activeSubscription ? (
+                      <span className={styles.summaryMetaBadge}>
+                        Sync {activeSubscription.sync_status}
+                      </span>
+                    ) : null}
+                    {activeSubscription ? (
+                      <span className={styles.summaryMetaBadge}>
                         {formatSubscriptionPlaybackSummary(
                           activeSubscription.default_playback_speed,
                           activeSubscription.auto_queue
                         )}
-                      </p>
-                    </>
+                      </span>
+                    ) : null}
+                    {detail.podcast.feed_url ? (
+                      <a
+                        href={detail.podcast.feed_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.summaryMetaLink}
+                      >
+                        RSS feed
+                      </a>
+                    ) : null}
+                    {detail.podcast.website_url ? (
+                      <a
+                        href={detail.podcast.website_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.summaryMetaLink}
+                      >
+                        Website
+                      </a>
+                    ) : null}
+                  </div>
+                  {activeSubscription ? (
+                    <p className={styles.syncState}>
+                      Subscription is active. Manage playback defaults, sync, and library
+                      membership from this header.
+                    </p>
                   ) : (
                     <p className={styles.unsubscribedLabel}>
-                      Not subscribed. Subscribe to save playback defaults and keep this show in your
-                      libraries.
+                      Subscribe to save playback defaults and add this show to your libraries.
                     </p>
                   )}
-                  <p className={styles.settingsSummary}>
-                    In {podcastLibraryCount} librar{podcastLibraryCount === 1 ? "y" : "ies"}
-                  </p>
                   {activeSubscription?.sync_error_code && (
                     <p className={styles.syncError}>
                       <strong>{activeSubscription.sync_error_code}</strong>
@@ -2068,7 +2120,7 @@ export default function PodcastDetailPaneBody() {
                         : ""}
                     </p>
                   )}
-                </>
+                </div>
               )}
             </SectionCard>
           </div>

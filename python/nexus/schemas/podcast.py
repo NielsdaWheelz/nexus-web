@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PodcastDiscoveryOut(BaseModel):
+    podcast_id: UUID | None = None
     provider_podcast_id: str
     title: str
     author: str | None = None
@@ -15,6 +16,20 @@ class PodcastDiscoveryOut(BaseModel):
     website_url: str | None = None
     image_url: str | None = None
     description: str | None = None
+
+
+class PodcastEnsureRequest(BaseModel):
+    provider_podcast_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    author: str | None = None
+    feed_url: str = Field(min_length=1)
+    website_url: str | None = None
+    image_url: str | None = None
+    description: str | None = None
+
+
+class PodcastEnsureOut(BaseModel):
+    podcast_id: UUID
 
 
 class PodcastSubscribeRequest(BaseModel):

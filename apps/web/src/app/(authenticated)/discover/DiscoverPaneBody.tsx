@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Link2, Mic, Upload } from "lucide-react";
+import { Link2, Mic, Upload } from "lucide-react";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import { dispatchOpenAddContent } from "@/components/CommandPalette";
@@ -11,6 +11,10 @@ export default function DiscoverPaneBody() {
     dispatchOpenAddContent("content");
   };
 
+  const openPodcastSearch = () => {
+    dispatchOpenAddContent("podcast");
+  };
+
   return (
     <>
       <SectionCard
@@ -19,11 +23,18 @@ export default function DiscoverPaneBody() {
       >
         <AppList>
           <AppListItem
-            href="/discover/podcasts"
             icon={<Mic size={18} />}
-            title="Discover podcasts"
-            description="Search global podcast feeds, inspect shows, and subscribe."
-            trailing={<ArrowRight size={16} className={styles.arrow} aria-hidden="true" />}
+            title="Add podcast"
+            description="Search global podcast feeds and open shows in-app."
+            actions={
+              <button
+                type="button"
+                className={styles.rowActionButton}
+                onClick={openPodcastSearch}
+              >
+                Open Add
+              </button>
+            }
           />
         </AppList>
       </SectionCard>

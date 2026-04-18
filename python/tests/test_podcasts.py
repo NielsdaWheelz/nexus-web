@@ -557,6 +557,331 @@ class TestPodcastDiscovery:
         assert "episodes" not in item, "discovery response leaked episode rows"
         assert "media_id" not in item, "discovery response leaked media identity"
 
+    def test_discovery_includes_local_podcast_id_when_known(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        provider_podcast_id = f"discover-local-{uuid4()}"
+        podcast = _podcast_payload(provider_podcast_id, "Local Systems Thinking Weekly")
+        podcast_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (
+                        id,
+                        provider,
+                        provider_podcast_id,
+                        title,
+                        author,
+                        feed_url,
+                        website_url,
+                        image_url,
+                        description
+                    )
+                    VALUES (
+                        :id,
+                        'podcast_index',
+                        :provider_podcast_id,
+                        :title,
+                        :author,
+                        :feed_url,
+                        :website_url,
+                        :image_url,
+                        :description
+                    )
+                    """
+                ),
+                {
+                    "id": podcast_id,
+                    "provider_podcast_id": podcast["provider_podcast_id"],
+                    "title": podcast["title"],
+                    "author": podcast["author"],
+                    "feed_url": podcast["feed_url"],
+                    "website_url": podcast["website_url"],
+                    "image_url": podcast["image_url"],
+                    "description": podcast["description"],
+                },
+            )
+            session.commit()
+
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[podcast],
+            episodes_by_podcast={provider_podcast_id: []},
+        )
+
+        response = auth_client.get(
+            "/podcasts/discover?q=systems&limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"discover failed: {response.status_code} {response.text}"
+        )
+        item = response.json()["data"][0]
+        assert item["podcast_id"] == str(podcast_id)
+        assert item["provider_podcast_id"] == provider_podcast_id
+
+
+class TestPodcastEnsure:
+    def test_ensure_returns_existing_local_podcast_id_by_provider_id(self, auth_client, direct_db):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        provider_podcast_id = f"ensure-provider-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Provider Match Podcast")
+        podcast_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (
+                        id,
+                        provider,
+                        provider_podcast_id,
+                        title,
+                        author,
+                        feed_url,
+                        website_url,
+                        image_url,
+                        description
+                    )
+                    VALUES (
+                        :id,
+                        'podcast_index',
+                        :provider_podcast_id,
+                        :title,
+                        :author,
+                        :feed_url,
+                        :website_url,
+                        :image_url,
+                        :description
+                    )
+                    """
+                ),
+                {
+                    "id": podcast_id,
+                    "provider_podcast_id": payload["provider_podcast_id"],
+                    "title": "Old Title",
+                    "author": "Old Author",
+                    "feed_url": payload["feed_url"],
+                    "website_url": payload["website_url"],
+                    "image_url": payload["image_url"],
+                    "description": "Old Description",
+                },
+            )
+            session.commit()
+
+        response = auth_client.post(
+            "/podcasts/ensure",
+            json=payload,
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"ensure failed unexpectedly: {response.status_code} {response.text}"
+        )
+        assert response.json()["data"]["podcast_id"] == str(podcast_id)
+
+        with direct_db.session() as session:
+            podcast_row = session.execute(
+                text(
+                    """
+                    SELECT title, author, description
+                    FROM podcasts
+                    WHERE id = :podcast_id
+                    """
+                ),
+                {"podcast_id": podcast_id},
+            ).fetchone()
+            subscription_count = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM podcast_subscriptions
+                        WHERE podcast_id = :podcast_id
+                        """
+                    ),
+                    {"podcast_id": podcast_id},
+                ).scalar_one()
+            )
+        assert podcast_row == (
+            payload["title"],
+            payload["author"],
+            payload["description"],
+        )
+        assert subscription_count == 0
+
+    def test_ensure_falls_back_to_existing_local_podcast_id_by_feed_url(
+        self, auth_client, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        payload = _podcast_payload(f"ensure-feed-{uuid4()}", "Feed Match Podcast")
+        podcast_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (
+                        id,
+                        provider,
+                        provider_podcast_id,
+                        title,
+                        author,
+                        feed_url,
+                        website_url,
+                        image_url,
+                        description
+                    )
+                    VALUES (
+                        :id,
+                        'podcast_index',
+                        :provider_podcast_id,
+                        :title,
+                        :author,
+                        :feed_url,
+                        :website_url,
+                        :image_url,
+                        :description
+                    )
+                    """
+                ),
+                {
+                    "id": podcast_id,
+                    "provider_podcast_id": f"opml-{uuid4()}",
+                    "title": "Imported Podcast",
+                    "author": "Imported Author",
+                    "feed_url": payload["feed_url"],
+                    "website_url": None,
+                    "image_url": None,
+                    "description": None,
+                },
+            )
+            session.commit()
+
+        response = auth_client.post(
+            "/podcasts/ensure",
+            json=payload,
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"ensure failed unexpectedly: {response.status_code} {response.text}"
+        )
+        assert response.json()["data"]["podcast_id"] == str(podcast_id)
+
+        with direct_db.session() as session:
+            podcast_row = session.execute(
+                text(
+                    """
+                    SELECT provider_podcast_id, title, author, image_url, description
+                    FROM podcasts
+                    WHERE id = :podcast_id
+                    """
+                ),
+                {"podcast_id": podcast_id},
+            ).fetchone()
+            subscription_count = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM podcast_subscriptions
+                        WHERE podcast_id = :podcast_id
+                        """
+                    ),
+                    {"podcast_id": podcast_id},
+                ).scalar_one()
+            )
+        assert podcast_row == (
+            payload["provider_podcast_id"],
+            payload["title"],
+            payload["author"],
+            payload["image_url"],
+            payload["description"],
+        )
+        assert subscription_count == 0
+
+    def test_ensure_creates_one_local_podcast_without_subscription_or_library_membership(
+        self, auth_client, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        _ensure_library_entries_table(direct_db)
+
+        payload = _podcast_payload(f"ensure-create-{uuid4()}", "Create Podcast")
+
+        first_response = auth_client.post(
+            "/podcasts/ensure",
+            json=payload,
+            headers=auth_headers(user_id),
+        )
+        second_response = auth_client.post(
+            "/podcasts/ensure",
+            json=payload,
+            headers=auth_headers(user_id),
+        )
+
+        assert first_response.status_code == 200, (
+            f"first ensure failed unexpectedly: {first_response.status_code} {first_response.text}"
+        )
+        assert second_response.status_code == 200, (
+            "second ensure should be idempotent, "
+            f"got {second_response.status_code}: {second_response.text}"
+        )
+
+        first_podcast_id = first_response.json()["data"]["podcast_id"]
+        second_podcast_id = second_response.json()["data"]["podcast_id"]
+        assert first_podcast_id == second_podcast_id
+
+        with direct_db.session() as session:
+            podcast_count = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM podcasts
+                        WHERE provider = 'podcast_index'
+                          AND provider_podcast_id = :provider_podcast_id
+                        """
+                    ),
+                    {"provider_podcast_id": payload["provider_podcast_id"]},
+                ).scalar_one()
+            )
+            subscription_count = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM podcast_subscriptions
+                        WHERE podcast_id = :podcast_id
+                        """
+                    ),
+                    {"podcast_id": first_podcast_id},
+                ).scalar_one()
+            )
+            library_entry_count = int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM library_entries
+                        WHERE podcast_id = :podcast_id
+                        """
+                    ),
+                    {"podcast_id": first_podcast_id},
+                ).scalar_one()
+            )
+        assert podcast_count == 1
+        assert subscription_count == 0
+        assert library_entry_count == 0
+
 
 class TestPodcastSubscriptionSyncLifecycle:
     def test_subscribe_is_control_plane_only_and_returns_pending(

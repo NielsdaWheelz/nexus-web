@@ -87,6 +87,21 @@
   cursor: pointer;
 }
 
+.rowActionButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.rowActionButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .summaryRow {
   display: flex;
   align-items: center;
@@ -133,21 +148,33 @@
 .rowDescription {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rowSummary {
+  color: var(--color-text);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
 }
 
 .rowAuthor {
   color: var(--color-text-secondary);
 }
 
-.libraryBadges {
+.metaRow {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  align-items: center;
 }
 
+.metaBadge,
 .libraryBadge,
-.emptyLibraryBadge,
+.syncBadge,
 .unplayedBadge {
   display: inline-flex;
   align-items: center;
@@ -160,8 +187,12 @@
   background: var(--color-bg-panel);
 }
 
-.emptyLibraryBadge {
+.metaBadge {
   color: var(--color-text-muted);
+}
+
+.syncBadge {
+  color: var(--color-warning);
 }
 
 .colorDot {
@@ -175,12 +206,6 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-.status {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-  text-transform: capitalize;
 }
 
 .loadMoreButton {

@@ -8,7 +8,6 @@ import ConversationsPaneBody from "@/app/(authenticated)/conversations/Conversat
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
 import ConversationNewPaneBody from "@/app/(authenticated)/conversations/new/ConversationNewPaneBody";
 import DiscoverPaneBody from "@/app/(authenticated)/discover/DiscoverPaneBody";
-import PodcastDiscoverPaneBody from "@/app/(authenticated)/discover/podcasts/PodcastDiscoverPaneBody";
 import DocumentsPaneBody from "@/app/(authenticated)/documents/DocumentsPaneBody";
 import PodcastsPaneBody from "@/app/(authenticated)/podcasts/PodcastsPaneBody";
 import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
@@ -47,7 +46,6 @@ export type PaneRouteId =
   | "conversationNew"
   | "conversation"
   | "discover"
-  | "discoverPodcasts"
   | "documents"
   | "podcasts"
   | "podcastDetail"
@@ -193,20 +191,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     }),
   },
   {
-    id: "discoverPodcasts",
-    pattern: ["discover", "podcasts"],
-    staticTitle: "Discover podcasts",
-    render: () => <PodcastDiscoverPaneBody />,
-    bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-    getChrome: () => ({
-      title: "Discover podcasts",
-      subtitle: "Search global feeds, inspect shows, and subscribe.",
-    }),
-  },
-  {
     id: "documents",
     pattern: ["documents"],
     staticTitle: "Documents",
@@ -231,7 +215,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Podcasts",
-      subtitle: "Followed shows, library membership, and subscription controls.",
+      subtitle: "Followed shows, show status, and library membership.",
     }),
   },
   {
@@ -446,6 +430,17 @@ export function getParentHref(resolved: ResolvedPaneRoute): string | null {
 
 export function resolvePaneRoute(href: string): ResolvedPaneRoute {
   const pathname = parseHrefPathname(href);
+  if (pathname === "/discover/podcasts" || pathname === "/podcasts/subscriptions") {
+    return {
+      id: "unsupported",
+      pathname,
+      params: {},
+      staticTitle: "Tab",
+      resourceRef: null,
+      render: null,
+      definition: null,
+    };
+  }
   for (const definition of ROUTE_DEFINITIONS) {
     const params = matchPattern(pathname, definition.pattern);
     if (!params) {

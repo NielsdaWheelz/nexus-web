@@ -91,12 +91,22 @@ function toTimestamp(value: string | null): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function formatDate(value: string | null): string {
+function formatLatestEpisodeLabel(value: string | null): string {
   const timestamp = toTimestamp(value);
   if (timestamp === 0) {
     return "No synced episodes yet";
   }
-  return new Date(timestamp).toLocaleDateString();
+  const days = Math.floor((Date.now() - timestamp) / 86_400_000);
+  if (days <= 0) {
+    return "Latest today";
+  }
+  if (days === 1) {
+    return "Latest yesterday";
+  }
+  if (days < 30) {
+    return `Latest ${days}d ago`;
+  }
+  return `Latest ${new Date(timestamp).toLocaleDateString()}`;
 }
 
 export default function PodcastsPaneBody() {
@@ -689,6 +699,8 @@ export default function PodcastsPaneBody() {
                   <AppListItem
                     key={row.podcast_id}
                     href={`/podcasts/${row.podcast_id}`}
+                    paneTitleHint={row.podcast.title}
+                    paneResourceRef={`podcast:${row.podcast_id}`}
                     icon={
                       row.podcast.image_url ? (
                         <span
@@ -697,36 +709,59 @@ export default function PodcastsPaneBody() {
                           aria-hidden="true"
                         />
                       ) : (
-                        <span className={styles.thumbnailFallback}>POD</span>
+                        <span className={styles.thumbnailFallback}>
+                          {row.podcast.title
+                            .split(/\s+/)
+                            .filter(Boolean)
+                            .slice(0, 2)
+                            .map((part) => part[0]?.toUpperCase() ?? "")
+                            .join("") || "P"}
+                        </span>
                       )
                     }
                     title={row.podcast.title}
                     description={
                       <span className={styles.rowDescription}>
-                        <span className={styles.rowAuthor}>
-                          {row.podcast.author || "Unknown author"}
+                        <span className={styles.rowSummary}>
+                          {row.podcast.description?.trim() ||
+                            row.podcast.author ||
+                            "No summary from source."}
                         </span>
-                        <span className={styles.libraryBadges}>
-                          {row.visible_libraries.length > 0 ? (
-                            row.visible_libraries.map((library) => (
-                              <span key={library.id} className={styles.libraryBadge}>
-                                {library.color ? (
-                                  <span
-                                    className={styles.colorDot}
-                                    style={{ backgroundColor: library.color }}
-                                    aria-hidden="true"
-                                  />
-                                ) : null}
-                                {library.name}
-                              </span>
-                            ))
-                          ) : (
-                            <span className={styles.emptyLibraryBadge}>No library</span>
-                          )}
-                        </span>
+                        {row.podcast.author ? (
+                          <span className={styles.rowAuthor}>{row.podcast.author}</span>
+                        ) : null}
                       </span>
                     }
-                    meta={`Latest episode ${formatDate(row.latest_episode_published_at)}`}
+                    meta={
+                      <span className={styles.metaRow}>
+                        <span className={styles.metaBadge}>
+                          {formatLatestEpisodeLabel(row.latest_episode_published_at)}
+                        </span>
+                        {row.default_playback_speed != null ? (
+                          <span className={styles.metaBadge}>
+                            {formatPlaybackSpeedLabel(row.default_playback_speed)} default
+                          </span>
+                        ) : null}
+                        {row.auto_queue ? (
+                          <span className={styles.metaBadge}>Auto-queue</span>
+                        ) : null}
+                        {row.visible_libraries.map((library) => (
+                          <span key={library.id} className={styles.libraryBadge}>
+                            {library.color ? (
+                              <span
+                                className={styles.colorDot}
+                                style={{ backgroundColor: library.color }}
+                                aria-hidden="true"
+                              />
+                            ) : null}
+                            {library.name}
+                          </span>
+                        ))}
+                        {row.sync_status !== "complete" ? (
+                          <span className={styles.syncBadge}>Sync {row.sync_status}</span>
+                        ) : null}
+                      </span>
+                    }
                     trailing={
                       <span className={styles.trailing}>
                         {row.unplayed_count > 0 ? (
@@ -734,25 +769,36 @@ export default function PodcastsPaneBody() {
                             {row.unplayed_count} new
                           </span>
                         ) : null}
-                        <span className={styles.status}>{row.sync_status}</span>
                       </span>
                     }
                     actions={
-                      <LibraryTargetPicker
-                        label="Libraries"
-                        libraries={pickerLibraries}
-                        loading={loadingLibraryPodcastIds.has(row.podcast_id)}
-                        onOpen={() => {
-                          void loadPodcastLibraries(row.podcast_id);
-                        }}
-                        onAddToLibrary={(libraryId) => {
-                          void handleAddPodcastToLibrary(row.podcast_id, libraryId);
-                        }}
-                        onRemoveFromLibrary={(libraryId) => {
-                          void handleRemovePodcastFromLibrary(row.podcast_id, libraryId);
-                        }}
-                        emptyMessage="No non-default libraries available."
-                      />
+                      <>
+                        <LibraryTargetPicker
+                          label="Libraries"
+                          libraries={pickerLibraries}
+                          loading={loadingLibraryPodcastIds.has(row.podcast_id)}
+                          onOpen={() => {
+                            void loadPodcastLibraries(row.podcast_id);
+                          }}
+                          onAddToLibrary={(libraryId) => {
+                            void handleAddPodcastToLibrary(row.podcast_id, libraryId);
+                          }}
+                          onRemoveFromLibrary={(libraryId) => {
+                            void handleRemovePodcastFromLibrary(row.podcast_id, libraryId);
+                          }}
+                          emptyMessage="No non-default libraries available."
+                        />
+                        <button
+                          type="button"
+                          className={styles.rowActionButton}
+                          onClick={() => {
+                            void handleUnsubscribe(row);
+                          }}
+                          disabled={rowBusy}
+                        >
+                          {rowBusy ? "Unsubscribing..." : "Unsubscribe"}
+                        </button>
+                      </>
                     }
                     options={[
                       {
@@ -767,15 +813,6 @@ export default function PodcastsPaneBody() {
                         disabled: rowRefreshing,
                         onSelect: () => {
                           void handleRefreshSync(row.podcast_id);
-                        },
-                      },
-                      {
-                        id: "unsubscribe",
-                        label: rowBusy ? "Unsubscribing..." : "Unsubscribe",
-                        tone: "danger",
-                        disabled: rowBusy,
-                        onSelect: () => {
-                          void handleUnsubscribe(row);
                         },
                       },
                     ]}
