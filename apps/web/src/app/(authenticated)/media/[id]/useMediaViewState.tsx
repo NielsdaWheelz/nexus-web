@@ -3,7 +3,7 @@
  * CRUD, selection handling, reader state, and toolbar construction.
  *
  * Consumed by both the Next.js page route (page.tsx) and the workspace pane
- * body (MediaPaneBody.tsx). Each consumer handles its own layout, linked-items
+ * body (MediaPaneBody.tsx). Each consumer handles its own layout, highlights
  * pane, and chrome delivery.
  */
 
@@ -1362,7 +1362,7 @@ export default function useMediaViewState(id: string) {
     [activeContent?.fragmentId, epubSections, router, id]
   );
 
-  const handleLinkedItemsScopeChange = useCallback(() => {
+  const handleHighlightsViewChange = useCallback(() => {
     setPendingHighlightId(null);
     setPendingHighlightFragmentId(null);
     setPdfNavigationTarget(null);
@@ -2252,10 +2252,10 @@ export default function useMediaViewState(id: string) {
     handleAnnotationSave,
     handleAnnotationDelete,
 
-    // Linked items navigation
+    // Highlights navigation
     handleNavigatePdfHighlight,
     handleNavigateToFragment,
-    handleLinkedItemsScopeChange,
+    handleHighlightsViewChange,
 
     // Chat
     handleSendToChat,

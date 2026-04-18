@@ -1,4 +1,9 @@
-import { type ReactElement, type ReactNode } from "react";
+import {
+  Children,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -125,14 +130,18 @@ vi.mock("@/components/ui/StatusPill", () => ({
   default: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
+vi.mock("@/components/LibraryTargetPicker", () => ({
+  default: () => <div data-testid="library-target-picker" />,
+}));
+
 vi.mock("@/components/workspace/DocumentViewport", () => ({
   default: ({ children }: { children: ReactNode }) => (
     <div data-testid="document-viewport">{children}</div>
   ),
 }));
 
-vi.mock("./MediaLinkedItemsPaneBody", () => ({
-  default: () => <div data-testid="linked-items-pane-body">Linked items pane</div>,
+vi.mock("./MediaHighlightsPaneBody", () => ({
+  default: () => <div data-testid="highlights-pane-body">Highlights pane</div>,
 }));
 
 vi.mock("./TranscriptMediaPane", () => ({
@@ -184,7 +193,7 @@ function buildViewState(overrides: Record<string, unknown> = {}): Record<string,
     focusHighlight: vi.fn(),
     handleNavigatePdfHighlight: vi.fn(),
     handleNavigateToFragment: vi.fn(),
-    handleLinkedItemsScopeChange: vi.fn(),
+    handleHighlightsViewChange: vi.fn(),
     handleSendToChat: vi.fn(),
     handleAnnotationSave: vi.fn(async () => {}),
     handleAnnotationDelete: vi.fn(async () => {}),
@@ -286,9 +295,34 @@ function getLatestSelectionPopoverProps(): Record<string, unknown> {
 type ToggleActionElement = ReactElement<{
   onClick: () => void;
   "aria-label"?: string;
+  "aria-expanded"?: boolean;
 }>;
 
-describe("MediaPaneBody desktop linked-items collapse", () => {
+function getLatestHighlightsAction(): ToggleActionElement | null {
+  const actions = getLatestChromeOverride().actions;
+  if (!actions || !isValidElement(actions)) {
+    return null;
+  }
+
+  const actionGroup = actions as ReactElement<{ children?: ReactNode }>;
+
+  for (const child of Children.toArray(actionGroup.props.children)) {
+    if (!isValidElement(child)) {
+      continue;
+    }
+    const action = child as ToggleActionElement;
+    if (
+      action.props["aria-label"] === "Highlights" &&
+      typeof action.props.onClick === "function"
+    ) {
+      return action;
+    }
+  }
+
+  return null;
+}
+
+describe("MediaPaneBody highlights shell", () => {
   let currentViewState = buildViewState();
 
   beforeEach(() => {
@@ -316,31 +350,14 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     document.body.style.overflow = "";
   });
 
-  it("toggles the desktop linked-items column from pane chrome actions", () => {
+  it("keeps the desktop highlights column visible without a pane chrome toggle", () => {
     render(<MediaPaneBody />);
 
-    expect(screen.getByTestId("linked-items-pane-body")).toBeInTheDocument();
-
-    let action = getLatestChromeOverride().actions as ToggleActionElement;
-    expect(action.props["aria-label"]).toBe("Hide highlights pane");
-
-    act(() => {
-      action.props.onClick();
-    });
-
-    expect(screen.queryByTestId("linked-items-pane-body")).not.toBeInTheDocument();
-
-    action = getLatestChromeOverride().actions as ToggleActionElement;
-    expect(action.props["aria-label"]).toBe("Show highlights pane");
-
-    act(() => {
-      action.props.onClick();
-    });
-
-    expect(screen.getByTestId("linked-items-pane-body")).toBeInTheDocument();
+    expect(screen.getByTestId("highlights-pane-body")).toBeInTheDocument();
+    expect(getLatestHighlightsAction()).toBeNull();
   });
 
-  it("suppresses collapse action when highlights pane is unavailable (focus mode)", () => {
+  it("suppresses the highlights pane and action when highlights are unavailable", () => {
     currentViewState = buildViewState({
       showHighlightsPane: false,
       focusModeEnabled: true,
@@ -349,22 +366,27 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
 
     render(<MediaPaneBody />);
 
-    expect(screen.queryByTestId("linked-items-pane-body")).not.toBeInTheDocument();
-    expect(getLatestChromeOverride().actions).toBeUndefined();
+    expect(screen.queryByTestId("highlights-pane-body")).not.toBeInTheDocument();
+    expect(getLatestHighlightsAction()).toBeNull();
     expect(
       screen.getByText("Focus mode enabled: highlights pane hidden.")
     ).toBeInTheDocument();
   });
 
-  it("closes the mobile linked-items drawer when highlights pane becomes unavailable", () => {
+  it("exposes a mobile Highlights action and closes the drawer when highlights become unavailable", () => {
     currentViewState = buildViewState({ isMobileViewport: true, showHighlightsPane: true });
     mockUseMediaViewState.mockImplementation(() => currentViewState);
 
     const { rerender } = render(<MediaPaneBody />);
-    const action = getLatestChromeOverride().actions as ToggleActionElement;
-    act(() => { action.props.onClick(); });
+    const action = getLatestHighlightsAction();
+    expect(action).not.toBeNull();
+    expect(action?.props["aria-expanded"]).toBe(false);
 
-    expect(screen.getByRole("dialog", { name: "Linked items" })).toBeInTheDocument();
+    act(() => {
+      action?.props.onClick();
+    });
+
+    expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
     expect(document.body.style.overflow).toBe("hidden");
 
     currentViewState = buildViewState({
@@ -375,11 +397,12 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     mockUseMediaViewState.mockImplementation(() => currentViewState);
     rerender(<MediaPaneBody />);
 
-    expect(screen.queryByRole("dialog", { name: "Linked items" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Highlights" })).not.toBeInTheDocument();
     expect(document.body.style.overflow).toBe("");
+    expect(getLatestHighlightsAction()).toBeNull();
   });
 
-  it("opens the mobile linked-items drawer when tapping a content highlight", async () => {
+  it("opens the mobile Highlights drawer when tapping a content highlight", async () => {
     const user = userEvent.setup();
     const handleContentClick = vi.fn(() => "hl-1");
     currentViewState = buildViewState({
@@ -389,12 +412,12 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     mockUseMediaViewState.mockImplementation(() => currentViewState);
 
     render(<MediaPaneBody />);
-    expect(screen.queryByRole("dialog", { name: "Linked items" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Highlights" })).not.toBeInTheDocument();
 
     await user.click(screen.getByTestId("html-renderer"));
 
     expect(handleContentClick).toHaveBeenCalled();
-    expect(screen.getByRole("dialog", { name: "Linked items" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
   });
 
   it("passes selection line rects into the reflowable selection popup", () => {
@@ -418,7 +441,7 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     });
   });
 
-  it("opens the mobile linked-items drawer when tapping a PDF highlight", async () => {
+  it("opens the mobile Highlights drawer when tapping a PDF highlight", async () => {
     const user = userEvent.setup();
     const focusHighlight = vi.fn();
     const dismissEditPopover = vi.fn();
@@ -446,13 +469,13 @@ describe("MediaPaneBody desktop linked-items collapse", () => {
     mockUseMediaViewState.mockImplementation(() => currentViewState);
 
     render(<MediaPaneBody />);
-    expect(screen.queryByRole("dialog", { name: "Linked items" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Highlights" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Tap PDF highlight" }));
 
     expect(dismissEditPopover).toHaveBeenCalledTimes(1);
     expect(focusHighlight).toHaveBeenCalledWith("pdf-highlight-1");
-    expect(screen.getByRole("dialog", { name: "Linked items" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
   });
 
   it("publishes compact PDF controls into pane chrome", () => {

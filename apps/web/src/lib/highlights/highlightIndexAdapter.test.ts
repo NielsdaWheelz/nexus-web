@@ -3,8 +3,6 @@ import {
   comparePdfStableOrderKeys,
   encodePdfStableOrderKey,
   sortPdfHighlightsByStableKey,
-  toPdfDocumentPaneItems,
-  toPdfPagePaneItems,
   toPdfStableOrderKey,
 } from "./highlightIndexAdapter";
 
@@ -102,14 +100,14 @@ describe("highlightIndexAdapter", () => {
       }),
     ];
 
-    const paneItems = toPdfDocumentPaneItems(highlights);
-    expect(paneItems[0]?.id).toBe("uuid-1");
-    expect(paneItems[1]?.id).toBe("uuid-2");
-    expect(paneItems[0]?.stable_order_key).toBeTruthy();
-    expect(paneItems[1]?.stable_order_key).toBeTruthy();
-    expect((paneItems[0]?.stable_order_key ?? "") < (paneItems[1]?.stable_order_key ?? "")).toBe(
-      true
+    const stableKeys = sortPdfHighlightsByStableKey(highlights).map((highlight) =>
+      encodePdfStableOrderKey(toPdfStableOrderKey(highlight))
     );
+
+    expect(stableKeys).toHaveLength(2);
+    expect(stableKeys[0]).toBeTruthy();
+    expect(stableKeys[1]).toBeTruthy();
+    expect(stableKeys[0] < stableKeys[1]).toBe(true);
   });
 
   it("keeps comparator and encoded key ordering consistent", () => {
@@ -135,24 +133,29 @@ describe("highlightIndexAdapter", () => {
     expect(encodePdfStableOrderKey(a) < encodePdfStableOrderKey(b)).toBe(true);
   });
 
-  it("preserves linked conversations in page and document pane items", () => {
+  it("normalizes missing quads to a stable zero-based key", () => {
     const highlight = {
       ...makePdfHighlight({
-        id: "id-linked",
-        page: 1,
+        id: "id-no-quads",
+        page: 3,
         top: 10,
         left: 5,
         createdAt: "2026-01-01T00:00:00Z",
       }),
-      linked_conversations: [{ conversation_id: "conv-1", title: "Linked chat" }],
+      anchor: {
+        type: "pdf_page_geometry" as const,
+        media_id: "media-id",
+        page_number: 3,
+        quads: [],
+      },
     };
-    const pageItems = toPdfPagePaneItems([highlight]);
-    const documentItems = toPdfDocumentPaneItems([highlight]);
-    expect(pageItems[0]?.linked_conversations).toEqual([
-      { conversation_id: "conv-1", title: "Linked chat" },
-    ]);
-    expect(documentItems[0]?.linked_conversations).toEqual([
-      { conversation_id: "conv-1", title: "Linked chat" },
-    ]);
+
+    expect(toPdfStableOrderKey(highlight)).toEqual({
+      page_number: 3,
+      sort_top: 0,
+      sort_left: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      id: "id-no-quads",
+    });
   });
 });

@@ -1,7 +1,7 @@
 /**
  * Media View Page styles.
  *
- * Styling for the media content pane and linked-items pane.
+ * Styling for the media content pane and highlights pane.
  * EPUB chapter navigation and TOC styles added in S5 PR-05.
  */
 
@@ -466,45 +466,8 @@
 }
 
 /* =============================================================================
-   Linked Items Pane
+   Highlights Pane
    ============================================================================= */
-
-.scopeCard {
-  margin-bottom: var(--space-2);
-}
-
-.scopeCardBody {
-  padding-top: var(--space-2);
-}
-
-.highlightScopeToggle {
-  display: inline-flex;
-  gap: var(--space-1);
-}
-
-.scopeBtn {
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-}
-
-.scopeBtn:hover {
-  border-color: var(--color-border);
-  color: var(--color-text-primary);
-}
-
-.scopeBtnActive {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-
-.bookHighlightsCard {
-  margin-top: var(--space-2);
-}
 
 .loadMoreBtn {
   display: inline-flex;
@@ -652,12 +615,12 @@
     max-height: 50dvh; /* adapt to mobile screen size instead of hardcoded 320px */
   }
 
-  .linkedColumn {
+  .highlightsColumn {
     display: none;
   }
 }
 
-/* --- Split layout: reader + linked items side by side --- */
+/* --- Split layout: reader + highlights side by side --- */
 
 .splitLayout {
   display: flex;
@@ -675,7 +638,8 @@
   overflow: hidden;
 }
 
-.linkedColumn {
+.highlightsColumn {
+  border-left: 1px solid var(--color-border-subtle);
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
@@ -685,30 +649,16 @@
   gap: var(--space-4);
 }
 
-.splitDivider {
-  flex: 0 0 var(--resize-handle-width, 8px);
-  cursor: col-resize;
-  background: transparent;
-  border: none;
-  border-left: 1px solid var(--color-border-subtle);
-  transition: background-color var(--transition-fast);
-}
+/* --- Mobile highlights drawer --- */
 
-.splitDivider:hover,
-.splitDivider:focus-visible {
-  background: var(--color-border-subtle);
-}
-
-/* --- Mobile linked-items drawer --- */
-
-.linkedBackdrop {
+.highlightsBackdrop {
   position: fixed;
   inset: 0;
   z-index: 200;
   background: rgba(0, 0, 0, 0.4);
 }
 
-.linkedDrawer {
+.highlightsDrawer {
   position: fixed;
   top: 0;
   right: 0;
@@ -720,7 +670,7 @@
   z-index: 201;
 }
 
-.linkedDrawerHeader {
+.highlightsDrawerHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -728,13 +678,13 @@
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
-.linkedDrawerHeader h2 {
+.highlightsDrawerHeader h2 {
   font-size: var(--font-size-base);
   font-weight: 600;
   margin: 0;
 }
 
-.linkedDrawerBody {
+.highlightsDrawerBody {
   flex: 1;
   overflow-y: auto;
 }
