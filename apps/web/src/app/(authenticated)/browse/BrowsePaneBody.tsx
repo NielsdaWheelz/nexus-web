@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 import { Mic, Play } from "lucide-react";
 import LibraryTargetPicker, {
   type LibraryTargetPickerItem,
@@ -310,7 +311,14 @@ export default function BrowsePaneBody() {
                     >
                       <div className={styles.leading}>
                         {result.image_url ? (
-                          <img src={result.image_url} alt="" className={styles.artwork} />
+                          <Image
+                            src={`/api/media/image?url=${encodeURIComponent(result.image_url)}`}
+                            alt=""
+                            width={56}
+                            height={56}
+                            className={styles.artwork}
+                            unoptimized
+                          />
                         ) : (
                           <span className={styles.fallback} aria-hidden="true">
                             <Mic size={18} />
@@ -384,7 +392,14 @@ export default function BrowsePaneBody() {
                   >
                     <div className={styles.leading}>
                       {result.podcast_image_url ? (
-                        <img src={result.podcast_image_url} alt="" className={styles.artwork} />
+                        <Image
+                          src={`/api/media/image?url=${encodeURIComponent(result.podcast_image_url)}`}
+                          alt=""
+                          width={56}
+                          height={56}
+                          className={styles.artwork}
+                          unoptimized
+                        />
                       ) : (
                         <span className={styles.fallback} aria-hidden="true">
                           <Play size={18} />

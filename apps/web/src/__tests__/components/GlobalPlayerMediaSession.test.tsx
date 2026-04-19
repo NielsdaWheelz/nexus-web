@@ -214,7 +214,9 @@ describe("GlobalPlayer MediaSession integration", () => {
       expect(sessionMetadata?.title).toBe("Episode A");
       expect(sessionMetadata?.artist).toBe("Queue Podcast");
       expect(sessionMetadata?.album).toBe("Queue Podcast");
-      expect(sessionMetadata?.artwork?.[0]?.src).toBe("https://cdn.example.com/podcast-cover.jpg");
+      expect(sessionMetadata?.artwork?.[0]?.src).toBe(
+        "/api/media/image?url=https%3A%2F%2Fcdn.example.com%2Fpodcast-cover.jpg"
+      );
 
       const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
       const playSpy = vi.spyOn(audio, "play").mockResolvedValue(undefined);

@@ -1394,12 +1394,13 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
     const artist = normalizeTrackText(track?.podcast_title);
-    const artwork = normalizeTrackText(track?.image_url);
     const metadataInit: MediaMetadataInit = {
       title: track.title,
       artist,
       album: artist,
-      artwork: artwork ? [{ src: artwork }] : [],
+      artwork: track.image_url
+        ? [{ src: `/api/media/image?url=${encodeURIComponent(track.image_url)}` }]
+        : [],
     };
     try {
       if (typeof window.MediaMetadata === "function") {

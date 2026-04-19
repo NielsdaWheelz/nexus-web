@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
   formatPlaybackSpeedLabel,
@@ -703,10 +704,13 @@ export default function PodcastsPaneBody() {
                     paneResourceRef={`podcast:${row.podcast_id}`}
                     icon={
                       row.podcast.image_url ? (
-                        <span
+                        <Image
+                          src={`/api/media/image?url=${encodeURIComponent(row.podcast.image_url)}`}
+                          alt=""
+                          width={32}
+                          height={32}
                           className={styles.podcastArtwork}
-                          style={{ backgroundImage: `url(${row.podcast.image_url})` }}
-                          aria-hidden="true"
+                          unoptimized
                         />
                       ) : (
                         <span className={styles.thumbnailFallback}>

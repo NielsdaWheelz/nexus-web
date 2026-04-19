@@ -433,7 +433,7 @@ export default function TranscriptPlaybackPanel({
                 >
                   {chapter.image_url ? (
                     <Image
-                      src={chapter.image_url}
+                      src={`/api/media/image?url=${encodeURIComponent(chapter.image_url)}`}
                       alt={`${chapter.title} thumbnail`}
                       width={40}
                       height={40}

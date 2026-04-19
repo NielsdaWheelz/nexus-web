@@ -313,7 +313,14 @@ export default function GlobalPlayerFooter() {
               aria-label="Expand player"
             >
               {track.image_url ? (
-                <Image src={track.image_url} alt="" width={40} height={40} className={styles.miniArtwork} unoptimized />
+                <Image
+                  src={`/api/media/image?url=${encodeURIComponent(track.image_url)}`}
+                  alt=""
+                  width={40}
+                  height={40}
+                  className={styles.miniArtwork}
+                  unoptimized
+                />
               ) : (
                 <div className={styles.miniArtworkFallback} aria-hidden="true" />
               )}
@@ -361,7 +368,14 @@ export default function GlobalPlayerFooter() {
                 </button>
 
                 {track.image_url ? (
-                  <Image src={track.image_url} alt={track.title} width={240} height={240} className={styles.expandedArtwork} unoptimized />
+                  <Image
+                    src={`/api/media/image?url=${encodeURIComponent(track.image_url)}`}
+                    alt={track.title}
+                    width={240}
+                    height={240}
+                    className={styles.expandedArtwork}
+                    unoptimized
+                  />
                 ) : (
                   <div className={styles.expandedArtworkFallback} aria-hidden="true" />
                 )}
@@ -539,7 +553,14 @@ export default function GlobalPlayerFooter() {
           {/* Desktop: full footer layout */}
           <div className={styles.metaRow}>
             {track.image_url && (
-              <Image src={track.image_url} alt="" width={32} height={32} className={styles.desktopArtwork} unoptimized />
+              <Image
+                src={`/api/media/image?url=${encodeURIComponent(track.image_url)}`}
+                alt=""
+                width={32}
+                height={32}
+                className={styles.desktopArtwork}
+                unoptimized
+              />
             )}
             <span className={styles.kicker}>Now playing</span>
             <div className={styles.metaText}>

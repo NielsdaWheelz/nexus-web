@@ -5,6 +5,13 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  images: {
+    localPatterns: [
+      {
+        pathname: "/api/media/image",
+      },
+    ],
+  },
   typescript: {
     ignoreBuildErrors: true,
   },

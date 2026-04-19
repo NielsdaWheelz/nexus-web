@@ -25,6 +25,16 @@ describe("media EPUB BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media");
   });
 
+  it("GET /api/media/image proxies to /media/image", async () => {
+    const { GET } = await import("./image/route");
+    const req = new Request(
+      "http://localhost/api/media/image?url=https%3A%2F%2Fcdn.example.com%2Fcover.jpg"
+    );
+    await GET(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/image");
+  });
+
   it("GET /api/media/[id]/chapters proxies to /media/{id}/chapters", async () => {
     const { GET } = await import("./[id]/chapters/route");
     const req = new Request("http://localhost/api/media/mid-123/chapters");

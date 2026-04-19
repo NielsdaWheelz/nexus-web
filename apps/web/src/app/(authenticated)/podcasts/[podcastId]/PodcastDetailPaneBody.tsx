@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
   usePaneParam,
@@ -2036,10 +2037,13 @@ export default function PodcastDetailPaneBody() {
                 <div className={styles.summaryCard}>
                   <div className={styles.summaryHeader}>
                     {detail.podcast.image_url ? (
-                      <img
-                        src={detail.podcast.image_url}
+                      <Image
+                        src={`/api/media/image?url=${encodeURIComponent(detail.podcast.image_url)}`}
                         alt=""
+                        width={88}
+                        height={88}
                         className={styles.summaryArtwork}
+                        unoptimized
                       />
                     ) : (
                       <span className={styles.summaryArtworkFallback} aria-hidden="true">
