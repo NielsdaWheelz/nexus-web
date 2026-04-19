@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import Navbar from "@/components/Navbar";
 import CommandPalette from "@/components/CommandPalette";
-import AddContentTray from "@/components/IngestionTray";
+import AddContentTray from "@/components/AddContentTray";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import { ToastProvider } from "@/components/Toast";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";

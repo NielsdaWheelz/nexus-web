@@ -10,6 +10,7 @@ const mockUsePaneParam = vi.fn<(param: string) => string | null>();
 const mockPush = vi.fn<(href: string) => void>();
 const mockUsePaneChromeOverride = vi.fn<(overrides: Record<string, unknown>) => void>();
 const mockViewportState = { isMobile: false };
+const mockRequestOpenInAppPane = vi.fn();
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
@@ -67,7 +68,7 @@ vi.mock("@/lib/panes/openInAppPane", () => ({
   isOpenInAppPaneMessage: () => false,
   normalizePaneHref: (href: string) => href,
   setPaneGraphReady: vi.fn(),
-  requestOpenInAppPane: () => false,
+  requestOpenInAppPane: (...args: unknown[]) => mockRequestOpenInAppPane(...args),
 }));
 
 vi.mock("@/lib/panes/paneRouteRegistry", () => ({
@@ -179,6 +180,7 @@ describe("podcasts product flows", () => {
     mockUsePaneParam.mockReset();
     mockPush.mockReset();
     mockUsePaneChromeOverride.mockReset();
+    mockRequestOpenInAppPane.mockReset();
     mockViewportState.isMobile = false;
     vi.restoreAllMocks();
   });
@@ -451,7 +453,8 @@ describe("podcasts product flows", () => {
     expect(within(episodeDrawer).getByRole("button", { name: "Libraries" })).toBeVisible();
   });
 
-  it("opens the add dialog from the empty subscriptions state", async () => {
+  it("routes the empty subscriptions state to browse", async () => {
+    const user = userEvent.setup();
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/libraries") {
@@ -468,6 +471,10 @@ describe("podcasts product flows", () => {
 
     render(createElement(PodcastsPage));
 
-    expect(await screen.findByRole("button", { name: "Add a podcast" })).toBeInTheDocument();
+    const button = await screen.findByRole("button", { name: "Browse podcasts" });
+    expect(button).toBeInTheDocument();
+
+    await user.click(button);
+    expect(mockRequestOpenInAppPane).toHaveBeenCalledWith("/browse?type=podcasts");
   });
 });

@@ -134,7 +134,7 @@ export default function SearchPaneBody() {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search your content..."
+              placeholder="Search your Nexus content..."
               autoFocus
             />
             <button
@@ -164,7 +164,7 @@ export default function SearchPaneBody() {
 
         {!hasSearched && (
           <StateMessage variant="info">
-            Enter a query to search across your media, annotations, transcript chunks, and conversations.
+            Enter a query to search content already in Nexus, including media, annotations, transcript chunks, and conversations.
           </StateMessage>
         )}
 

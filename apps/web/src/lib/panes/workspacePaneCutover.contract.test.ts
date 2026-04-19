@@ -13,7 +13,7 @@ const SETTINGS_HREFS = [
 ] as const;
 
 const SEARCH_HREFS = ["/search"] as const;
-const DISCOVER_HREFS = ["/discover"] as const;
+const BROWSE_HREFS = ["/browse"] as const;
 const CONVERSATIONS_HREFS = ["/conversations"] as const;
 const CONVERSATION_DETAIL_HREFS = ["/conversations/conv-123"] as const;
 const LIBRARIES_HREFS = ["/libraries"] as const;
@@ -30,7 +30,7 @@ const SETTINGS_ROUTE_FILES = [
 ] as const;
 
 const SEARCH_ROUTE_FILES = ["src/app/(authenticated)/search/page.tsx"] as const;
-const DISCOVER_ROUTE_FILES = ["src/app/(authenticated)/discover/page.tsx"] as const;
+const BROWSE_ROUTE_FILES = ["src/app/(authenticated)/browse/page.tsx"] as const;
 const CONVERSATIONS_ROUTE_FILES = ["src/app/(authenticated)/conversations/page.tsx"] as const;
 const CONVERSATION_DETAIL_ROUTE_FILES = [
   "src/app/(authenticated)/conversations/[id]/page.tsx",
@@ -112,9 +112,9 @@ describe("workspace pane cutover contract (search slice)", () => {
   });
 });
 
-describe("workspace pane cutover contract (discover slice)", () => {
-  it("declares discover route with pane metadata for chrome/body/width ownership", () => {
-    for (const href of DISCOVER_HREFS) {
+describe("workspace pane cutover contract (browse slice)", () => {
+  it("declares browse route with pane metadata for chrome/body/width ownership", () => {
+    for (const href of BROWSE_HREFS) {
       const route = resolvePaneRoute(href);
       expect(route.id).not.toBe("unsupported");
       expect(route.definition).toBeTruthy();
@@ -126,22 +126,22 @@ describe("workspace pane cutover contract (discover slice)", () => {
     }
   });
 
-  it("keeps discover route entrypoint free of PageLayout", () => {
-    for (const relativeFilePath of DISCOVER_ROUTE_FILES) {
+  it("keeps browse route entrypoint free of PageLayout", () => {
+    for (const relativeFilePath of BROWSE_ROUTE_FILES) {
       const source = readFileSync(resolveFromWebRoot(relativeFilePath), "utf-8");
       expect(source.includes("PageLayout")).toBe(false);
     }
   });
 
-  it("keeps discover pane registry wiring off route page modules", () => {
+  it("keeps browse pane registry wiring off route page modules", () => {
     const registrySource = readFileSync(
       resolveFromWebRoot("src/lib/panes/paneRouteRegistry.tsx"),
       "utf-8"
     );
-    expect(registrySource.includes('"/discover/page"')).toBe(false);
+    expect(registrySource.includes('"/browse/page"')).toBe(false);
   });
 
-  it("routes /discover through the unified workspace host", () => {
+  it("routes /browse through the unified workspace host", () => {
     const layoutSource = readFileSync(resolveFromWebRoot("src/app/(authenticated)/layout.tsx"), "utf-8");
     expect(layoutSource.includes("WorkspaceHost")).toBe(true);
   });

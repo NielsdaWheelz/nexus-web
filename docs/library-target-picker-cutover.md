@@ -273,8 +273,8 @@ it must not provide:
 the component earns its keep because it is reused in:
 
 - media detail
-- media catalog rows
-- podcast discovery rows
+- library rows
+- browse podcast rows
 - podcast subscriptions rows
 - podcast detail
 - add-new-media
@@ -293,18 +293,20 @@ the media detail surface must:
 
 do not keep the old default-library membership fetch or page scan.
 
-### media catalog surfaces
+### library and browse surfaces
 
-replace flat per-library option lists in `apps/web/src/components/MediaCatalogPage.tsx`
-with the picker.
+replace flat per-library option lists in:
 
-the catalog surface must not build one action-menu entry per library anymore.
+- `apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx`
+- `apps/web/src/app/(authenticated)/browse/BrowsePaneBody.tsx`
+
+these surfaces must not build one action or button per library anymore.
 
 the picker should own search and filtering when the user chooses a library.
 
 ### add-new-media
 
-`apps/web/src/components/IngestionTray.tsx` gets one optional library selector
+`apps/web/src/components/AddContentTray.tsx` gets one optional library selector
 above the file and url entry controls.
 
 rules:
@@ -320,8 +322,8 @@ do not add per-item inline library editing in this cutover.
 
 replace flat per-library menus in:
 
+- `apps/web/src/app/(authenticated)/browse/BrowsePaneBody.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx`
-- `apps/web/src/app/(authenticated)/podcasts/subscriptions/PodcastSubscriptionsPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody.tsx`
 
 unsubscribed podcast surfaces must show:
@@ -351,7 +353,7 @@ do not hide subscribe semantics behind a generic `Add to library` label.
 6. replace the media detail binary toggle with the picker.
 7. replace flat per-library option lists on media and podcast surfaces with the
    picker.
-8. add the optional library selector to `IngestionTray` and snapshot the
+8. add the optional library selector to `AddContentTray` and snapshot the
    selected target onto each queued item.
 9. update tests and remove old default-library-only client logic.
 
@@ -392,10 +394,10 @@ do not hide subscribe semantics behind a generic `Add to library` label.
 
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/useMediaViewState.tsx`
-- `apps/web/src/components/MediaCatalogPage.tsx`
-- `apps/web/src/components/IngestionTray.tsx`
+- `apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx`
+- `apps/web/src/app/(authenticated)/browse/BrowsePaneBody.tsx`
+- `apps/web/src/components/AddContentTray.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx`
-- `apps/web/src/app/(authenticated)/podcasts/subscriptions/PodcastSubscriptionsPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody.tsx`
 - one new dedicated library picker component under `apps/web/src/components/`
 

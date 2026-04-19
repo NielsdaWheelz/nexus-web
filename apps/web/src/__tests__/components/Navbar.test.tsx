@@ -75,12 +75,16 @@ describe("Navbar", () => {
     expect(screen.getByText("Libraries")).toBeInTheDocument();
   });
 
-  it("renders Documents, Podcasts, and Videos as first-class nav items", () => {
+  it("renders the final top-level nav labels and removes deleted ones", () => {
     render(<Navbar />);
 
-    expect(screen.getByText("Documents")).toBeInTheDocument();
+    expect(screen.getByText("Browse")).toBeInTheDocument();
     expect(screen.getByText("Podcasts")).toBeInTheDocument();
-    expect(screen.getByText("Videos")).toBeInTheDocument();
+    expect(screen.getByText("Chats")).toBeInTheDocument();
+    expect(screen.queryByText("Discover")).not.toBeInTheDocument();
+    expect(screen.queryByText("Documents")).not.toBeInTheDocument();
+    expect(screen.queryByText("Videos")).not.toBeInTheDocument();
+    expect(screen.queryByText("Chat")).not.toBeInTheDocument();
   });
 
   it("keeps Search as the explicit desktop search destination", () => {
@@ -119,7 +123,7 @@ describe("Navbar", () => {
     expect(librariesLink.className).toMatch(/active/i);
   });
 
-  it("activates Podcasts for podcast routes without keeping Discover active", () => {
+  it("activates Podcasts for podcast routes without keeping Browse active", () => {
     MOCK_STORE.state.panes = [{ id: "pane-test-1", href: "/podcasts", widthPx: 480 }];
 
     render(<Navbar />);
@@ -127,20 +131,33 @@ describe("Navbar", () => {
     expect(screen.getByRole("link", { name: "Podcasts", hidden: true }).className).toMatch(
       /active/i
     );
-    expect(screen.getByRole("link", { name: "Discover", hidden: true }).className).not.toMatch(
+    expect(screen.getByRole("link", { name: "Browse", hidden: true }).className).not.toMatch(
       /active/i
     );
   });
 
-  it("keeps Discover active for the discover route", () => {
-    MOCK_STORE.state.panes = [{ id: "pane-test-1", href: "/discover", widthPx: 480 }];
+  it("keeps Browse active for the browse route", () => {
+    MOCK_STORE.state.panes = [{ id: "pane-test-1", href: "/browse", widthPx: 480 }];
 
     render(<Navbar />);
 
-    expect(screen.getByRole("link", { name: "Discover", hidden: true }).className).toMatch(
+    expect(screen.getByRole("link", { name: "Browse", hidden: true }).className).toMatch(
       /active/i
     );
     expect(screen.getByRole("link", { name: "Podcasts", hidden: true }).className).not.toMatch(
+      /active/i
+    );
+  });
+
+  it("keeps Chats active for conversation routes", () => {
+    MOCK_STORE.state.panes = [{ id: "pane-test-1", href: "/conversations", widthPx: 480 }];
+
+    render(<Navbar />);
+
+    expect(screen.getByRole("link", { name: "Chats", hidden: true }).className).toMatch(
+      /active/i
+    );
+    expect(screen.getByRole("link", { name: "Search", hidden: true }).className).not.toMatch(
       /active/i
     );
   });

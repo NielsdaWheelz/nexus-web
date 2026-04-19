@@ -7,11 +7,9 @@ import MediaPaneBody from "@/app/(authenticated)/media/[id]/MediaPaneBody";
 import ConversationsPaneBody from "@/app/(authenticated)/conversations/ConversationsPaneBody";
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
 import ConversationNewPaneBody from "@/app/(authenticated)/conversations/new/ConversationNewPaneBody";
-import DiscoverPaneBody from "@/app/(authenticated)/discover/DiscoverPaneBody";
-import DocumentsPaneBody from "@/app/(authenticated)/documents/DocumentsPaneBody";
+import BrowsePaneBody from "@/app/(authenticated)/browse/BrowsePaneBody";
 import PodcastsPaneBody from "@/app/(authenticated)/podcasts/PodcastsPaneBody";
 import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
-import VideosPaneBody from "@/app/(authenticated)/videos/VideosPaneBody";
 import SearchPaneBody from "@/app/(authenticated)/search/SearchPaneBody";
 import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
 import SettingsBillingPaneBody from "@/app/(authenticated)/settings/billing/SettingsBillingPaneBody";
@@ -45,11 +43,9 @@ export type PaneRouteId =
   | "conversations"
   | "conversationNew"
   | "conversation"
-  | "discover"
-  | "documents"
+  | "browse"
   | "podcasts"
   | "podcastDetail"
-  | "videos"
   | "search"
   | "settings"
   | "settingsBilling"
@@ -177,31 +173,17 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     }),
   },
   {
-    id: "discover",
-    pattern: ["discover"],
-    staticTitle: "Discover",
-    render: () => <DiscoverPaneBody />,
+    id: "browse",
+    pattern: ["browse"],
+    staticTitle: "Browse",
+    render: () => <BrowsePaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
-      title: "Discover",
-      subtitle: "Upload files, add URLs, and discover podcasts.",
-    }),
-  },
-  {
-    id: "documents",
-    pattern: ["documents"],
-    staticTitle: "Documents",
-    render: () => <DocumentsPaneBody />,
-    bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-    getChrome: () => ({
-      title: "Documents",
-      subtitle: "All your readable sources in one place: articles, EPUBs, and PDFs.",
+      title: "Browse",
+      subtitle: "Search globally for podcasts, episodes, videos, and documents.",
     }),
   },
   {
@@ -215,7 +197,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Podcasts",
-      subtitle: "Followed shows, show status, and library membership.",
+      subtitle: "Followed shows, library membership, and subscription controls.",
     }),
   },
   {
@@ -232,20 +214,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     minWidthPx: 760,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Podcast" }),
-  },
-  {
-    id: "videos",
-    pattern: ["videos"],
-    staticTitle: "Videos",
-    render: () => <VideosPaneBody />,
-    bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-    getChrome: () => ({
-      title: "Videos",
-      subtitle: "Video items from your libraries, including YouTube ingests.",
-    }),
   },
   {
     id: "search",
@@ -430,7 +398,13 @@ export function getParentHref(resolved: ResolvedPaneRoute): string | null {
 
 export function resolvePaneRoute(href: string): ResolvedPaneRoute {
   const pathname = parseHrefPathname(href);
-  if (pathname === "/discover/podcasts" || pathname === "/podcasts/subscriptions") {
+  if (
+    pathname === "/discover" ||
+    pathname === "/discover/podcasts" ||
+    pathname === "/documents" ||
+    pathname === "/videos" ||
+    pathname === "/podcasts/subscriptions"
+  ) {
     return {
       id: "unsupported",
       pathname,

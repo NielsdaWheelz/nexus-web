@@ -6,14 +6,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Compass,
-  FileText,
   LogOut,
   MessageSquare,
   Mic,
   Plus,
   Search,
   Settings,
-  Video,
 } from "lucide-react";
 import Link from "next/link";
 import { useWorkspaceStore } from "@/lib/workspace/store";
@@ -46,13 +44,10 @@ export default function Navbar({ onToggle }: NavbarProps) {
   );
   const librariesActive =
     currentPathname === "/libraries" || currentPathname.startsWith("/libraries/");
-  const discoverActive =
-    currentPathname === "/discover" || currentPathname.startsWith("/discover/");
-  const documentsActive = currentPathname === "/documents";
+  const browseActive = currentPathname === "/browse";
   const podcastsActive =
     currentPathname === "/podcasts" || currentPathname.startsWith("/podcasts/");
-  const videosActive = currentPathname === "/videos";
-  const chatActive =
+  const chatsActive =
     currentPathname === "/conversations" || currentPathname.startsWith("/conversations/");
   const searchActive = currentPathname === "/search";
   const settingsActive =
@@ -120,24 +115,14 @@ export default function Navbar({ onToggle }: NavbarProps) {
           {!collapsed && <span className={styles.label}>Libraries</span>}
         </Link>
         <Link
-          href="/discover"
-          className={`${styles.navItem} ${discoverActive ? styles.active : ""}`}
-          onClick={(e) => handleNavClick(e, "/discover")}
+          href="/browse"
+          className={`${styles.navItem} ${browseActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/browse")}
         >
           <span className={styles.icon} aria-hidden="true">
             <Compass size={18} strokeWidth={2} />
           </span>
-          {!collapsed && <span className={styles.label}>Discover</span>}
-        </Link>
-        <Link
-          href="/documents"
-          className={`${styles.navItem} ${documentsActive ? styles.active : ""}`}
-          onClick={(e) => handleNavClick(e, "/documents")}
-        >
-          <span className={styles.icon} aria-hidden="true">
-            <FileText size={18} strokeWidth={2} />
-          </span>
-          {!collapsed && <span className={styles.label}>Documents</span>}
+          {!collapsed && <span className={styles.label}>Browse</span>}
         </Link>
         <Link
           href="/podcasts"
@@ -150,24 +135,14 @@ export default function Navbar({ onToggle }: NavbarProps) {
           {!collapsed && <span className={styles.label}>Podcasts</span>}
         </Link>
         <Link
-          href="/videos"
-          className={`${styles.navItem} ${videosActive ? styles.active : ""}`}
-          onClick={(e) => handleNavClick(e, "/videos")}
-        >
-          <span className={styles.icon} aria-hidden="true">
-            <Video size={18} strokeWidth={2} />
-          </span>
-          {!collapsed && <span className={styles.label}>Videos</span>}
-        </Link>
-        <Link
           href="/conversations"
-          className={`${styles.navItem} ${chatActive ? styles.active : ""}`}
+          className={`${styles.navItem} ${chatsActive ? styles.active : ""}`}
           onClick={(e) => handleNavClick(e, "/conversations")}
         >
           <span className={styles.icon} aria-hidden="true">
             <MessageSquare size={18} strokeWidth={2} />
           </span>
-          {!collapsed && <span className={styles.label}>Chat</span>}
+          {!collapsed && <span className={styles.label}>Chats</span>}
         </Link>
         <a
           href="/search"

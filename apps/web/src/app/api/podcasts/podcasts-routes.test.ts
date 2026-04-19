@@ -10,6 +10,14 @@ describe("podcast BFF proxy routes", () => {
     mockProxyToFastAPI.mockClear();
   });
 
+  it("GET /api/browse proxies to /browse", async () => {
+    const { GET } = await import("../browse/route");
+    const req = new Request("http://localhost/api/browse?q=ai&type=all&limit=10");
+    await GET(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/browse");
+  });
+
   it("GET /api/podcasts/discover proxies to /podcasts/discover", async () => {
     const { GET } = await import("./discover/route");
     const req = new Request("http://localhost/api/podcasts/discover?q=ai&limit=10");

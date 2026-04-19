@@ -255,12 +255,10 @@ fallback branches.
 - `apps/web/src/components/ConversationContextPane.tsx`
 - `apps/web/src/app/(authenticated)/libraries/LibrariesPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx`
-- `apps/web/src/components/MediaCatalogPage.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/useMediaViewState.tsx`
 - `apps/web/src/components/LinkedItemRow.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx`
-- `apps/web/src/app/(authenticated)/podcasts/subscriptions/PodcastSubscriptionsPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody.tsx`
 
 ### primary cutover targets
@@ -269,16 +267,14 @@ start with the surfaces that currently violate the target contract the most:
 
 1. `apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody.tsx`
 2. `apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx`
-3. `apps/web/src/components/MediaCatalogPage.tsx`
-4. `apps/web/src/app/(authenticated)/podcasts/subscriptions/PodcastSubscriptionsPaneBody.tsx`
-5. `apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx`
+3. `apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx`
+4. `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
 
 ### tests in scope
 
 - `apps/web/src/__tests__/components/ActionMenu.test.tsx`
 - `apps/web/src/__tests__/components/SurfaceHeader.test.tsx`
 - `apps/web/src/__tests__/components/Pane.test.tsx`
-- `apps/web/src/components/MediaCatalogPage.test.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/podcasts-action-menus-cutover.test.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody.test.tsx`

@@ -21,7 +21,6 @@ import {
   Settings,
   Type,
   Upload,
-  Video,
   X,
 } from "lucide-react";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
@@ -48,7 +47,7 @@ import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import styles from "./CommandPalette.module.css";
 
 type Section = "Recent" | "Panes" | "Create" | "Navigate" | "Settings" | "Search Results";
-type AddContentMode = "content" | "podcast" | "opml";
+type AddContentMode = "content" | "opml";
 
 interface Action {
   id: string;
@@ -79,11 +78,9 @@ function dispatchOpenAddContent(mode: AddContentMode = "content") {
 const ACTIONS: Action[] = [
   // Navigate
   { id: "nav-libraries", label: "Libraries", keywords: ["collections", "sources"], section: "Navigate", icon: BookOpen, execute: () => requestOpenInAppPane("/libraries") },
-  { id: "nav-discover", label: "Discover", keywords: ["browse", "content", "lanes"], section: "Navigate", icon: Compass, execute: () => requestOpenInAppPane("/discover") },
-  { id: "nav-documents", label: "Documents", keywords: ["pdf", "epub", "articles"], section: "Navigate", icon: FileText, execute: () => requestOpenInAppPane("/documents") },
+  { id: "nav-browse", label: "Browse", keywords: ["discover", "podcasts", "videos", "documents"], section: "Navigate", icon: Compass, execute: () => requestOpenInAppPane("/browse") },
   { id: "nav-podcasts", label: "Podcasts", keywords: ["audio", "feeds", "episodes"], section: "Navigate", icon: Mic, execute: () => requestOpenInAppPane("/podcasts") },
-  { id: "nav-videos", label: "Videos", keywords: ["youtube", "video"], section: "Navigate", icon: Video, execute: () => requestOpenInAppPane("/videos") },
-  { id: "nav-chat", label: "Chat", keywords: ["conversations", "messages"], section: "Navigate", icon: MessageSquare, execute: () => requestOpenInAppPane("/conversations") },
+  { id: "nav-chats", label: "Chats", keywords: ["conversations", "messages"], section: "Navigate", icon: MessageSquare, execute: () => requestOpenInAppPane("/conversations") },
   { id: "nav-search", label: "Search", keywords: ["find", "query"], section: "Navigate", icon: Search, execute: () => requestOpenInAppPane("/search") },
   { id: "nav-settings", label: "Settings", keywords: ["preferences", "account"], section: "Navigate", icon: Settings, execute: () => requestOpenInAppPane("/settings") },
   { id: "nav-reader-settings", label: "Reader Settings", keywords: ["typography", "font", "theme"], section: "Settings", icon: Type, execute: () => requestOpenInAppPane("/settings/reader") },
@@ -96,7 +93,6 @@ const ACTIONS: Action[] = [
   { id: "create-library", label: "New library", keywords: ["collection", "create"], section: "Create", icon: FolderPlus, execute: () => requestOpenInAppPane("/libraries") },
   { id: "create-upload", label: "Upload file", keywords: ["pdf", "epub", "import", "add"], section: "Create", icon: Upload, execute: () => dispatchOpenAddContent("content") },
   { id: "create-url", label: "Add from URL", keywords: ["link", "paste", "import"], section: "Create", icon: Link, execute: () => dispatchOpenAddContent("content") },
-  { id: "create-podcast", label: "Add podcast", keywords: ["podcast", "subscribe", "feed"], section: "Create", icon: Mic, execute: () => dispatchOpenAddContent("podcast") },
   { id: "create-opml", label: "Import OPML", keywords: ["podcast", "opml", "import"], section: "Create", icon: Upload, execute: () => dispatchOpenAddContent("opml") },
 ];
 
@@ -117,19 +113,16 @@ function getRecentDestinationIcon(routeId: string): LucideIcon {
     case "library":
       return BookOpen;
     case "media":
-    case "documents":
       return FileText;
+    case "browse":
+      return Compass;
     case "conversations":
     case "conversation":
     case "conversationNew":
       return MessageSquare;
-    case "discover":
-      return Compass;
     case "podcasts":
     case "podcastDetail":
       return Mic;
-    case "videos":
-      return Video;
     case "search":
       return Search;
     case "settings":

@@ -18,19 +18,13 @@ vi.mock("@/app/(authenticated)/conversations/[id]/ConversationPaneBody", () => (
 vi.mock("@/app/(authenticated)/conversations/new/ConversationNewPaneBody", () => ({
   default: () => null,
 }));
-vi.mock("@/app/(authenticated)/discover/DiscoverPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/documents/DocumentsPaneBody", () => ({
+vi.mock("@/app/(authenticated)/browse/BrowsePaneBody", () => ({
   default: () => null,
 }));
 vi.mock("@/app/(authenticated)/podcasts/PodcastsPaneBody", () => ({
   default: () => null,
 }));
 vi.mock("@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/videos/VideosPaneBody", () => ({
   default: () => null,
 }));
 vi.mock("@/app/(authenticated)/search/SearchPaneBody", () => ({
@@ -113,6 +107,12 @@ describe("pane route registry", () => {
     expect(route.resourceRef).toBeNull();
   });
 
+  it("rejects removed top-level discover and media catalog routes", () => {
+    expect(resolvePaneRoute("/discover").id).toBe("unsupported");
+    expect(resolvePaneRoute("/documents").id).toBe("unsupported");
+    expect(resolvePaneRoute("/videos").id).toBe("unsupported");
+  });
+
   it("resolves /conversations/new with query params", () => {
     const route = resolvePaneRoute("/conversations/new?attach_type=highlight&attach_id=abc");
     expect(route.id).toBe("conversationNew");
@@ -143,11 +143,9 @@ describe("pane route registry", () => {
 
   it("resolves expanded authenticated static routes", () => {
     expect(resolvePaneRoute("/libraries").id).toBe("libraries");
-    expect(resolvePaneRoute("/discover").id).toBe("discover");
+    expect(resolvePaneRoute("/browse").id).toBe("browse");
     expect(resolvePaneRoute("/discover/podcasts").id).toBe("unsupported");
-    expect(resolvePaneRoute("/documents").id).toBe("documents");
     expect(resolvePaneRoute("/podcasts").id).toBe("podcasts");
-    expect(resolvePaneRoute("/videos").id).toBe("videos");
     expect(resolvePaneRoute("/search").id).toBe("search");
     expect(resolvePaneRoute("/settings").id).toBe("settings");
     expect(resolvePaneRoute("/settings/billing").id).toBe("settingsBilling");
@@ -165,8 +163,15 @@ describe("pane route registry", () => {
     const route = resolvePaneRoute("/podcasts");
     expect(route.definition?.getChrome?.({ href: "/podcasts", params: {} })).toMatchObject({
       title: "Podcasts",
-      subtitle: "Followed shows, show status, and library membership.",
+      subtitle: "Followed shows, library membership, and subscription controls.",
     });
   });
 
+  it("describes browse as the global acquisition surface", () => {
+    const route = resolvePaneRoute("/browse");
+    expect(route.definition?.getChrome?.({ href: "/browse", params: {} })).toMatchObject({
+      title: "Browse",
+      subtitle: "Search globally for podcasts, episodes, videos, and documents.",
+    });
+  });
 });

@@ -68,7 +68,7 @@ describe("handleAuthCallback", () => {
     process.env[AUTH_ALLOWED_REDIRECT_ORIGINS] = "https://app.example.com";
     const exchangeCodeForSession = vi.fn().mockResolvedValue({ error: null });
     const request = new Request(
-      "http://internal.local/auth/callback?code=test-code&next=%2Fdocuments",
+      "http://internal.local/auth/callback?code=test-code&next=%2Fbrowse",
       {
         headers: {
           "x-forwarded-host": "evil.example.com",
@@ -82,7 +82,7 @@ describe("handleAuthCallback", () => {
     });
 
     expect(response.headers.get("location")).toBe(
-      "https://app.example.com/documents"
+      "https://app.example.com/browse"
     );
   });
 
@@ -159,7 +159,7 @@ describe("handleAuthCallback", () => {
     const exchangeCodeForSession = vi.fn();
     const response = await handleAuthCallback(
       new Request(
-        "https://app.example.com/auth/callback?error=access_denied&next=%2Fdocuments"
+        "https://app.example.com/auth/callback?error=access_denied&next=%2Fbrowse"
       ),
       { exchangeCodeForSession }
     );
@@ -167,7 +167,7 @@ describe("handleAuthCallback", () => {
     expect(exchangeCodeForSession).not.toHaveBeenCalled();
     expectLoginRedirectWithError(
       response.headers.get("location"),
-      "/documents",
+      "/browse",
       AUTH_CALLBACK_CANCELLED_MESSAGE
     );
   });
@@ -177,7 +177,7 @@ describe("handleAuthCallback", () => {
       .fn()
       .mockResolvedValue({ error: { message: "Provider rejected the code" } });
     const request = new Request(
-      "https://app.example.com/auth/callback?code=bad-code&next=%2Fdocuments"
+      "https://app.example.com/auth/callback?code=bad-code&next=%2Fbrowse"
     );
 
     const response = await handleAuthCallback(request, {
@@ -186,7 +186,7 @@ describe("handleAuthCallback", () => {
 
     expectLoginRedirectWithError(
       response.headers.get("location"),
-      "/documents",
+      "/browse",
       AUTH_CALLBACK_FAILURE_MESSAGE
     );
   });

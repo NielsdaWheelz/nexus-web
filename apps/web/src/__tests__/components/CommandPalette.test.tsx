@@ -120,6 +120,11 @@ describe("CommandPalette", () => {
     expect(screen.getByText("Deep Work")).toBeInTheDocument();
     expect(screen.getByText("Navigate")).toBeInTheDocument();
     expect(screen.getAllByText("Libraries").length).toBeGreaterThan(0);
+    expect(screen.getByText("Browse")).toBeInTheDocument();
+    expect(screen.getByText("Chats")).toBeInTheDocument();
+    expect(screen.queryByText("Discover")).not.toBeInTheDocument();
+    expect(screen.queryByText("Documents")).not.toBeInTheDocument();
+    expect(screen.queryByText("Videos")).not.toBeInTheDocument();
     expect(apiFetchMock).toHaveBeenCalledWith("/api/me/command-palette-recents");
   });
 

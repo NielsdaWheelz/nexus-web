@@ -35,7 +35,7 @@ describe("SearchPage pagination state", () => {
     render(<SearchPage />);
     expect(
       screen.getByText(
-        "Enter a query to search across your media, annotations, transcript chunks, and conversations."
+        "Enter a query to search content already in Nexus, including media, annotations, transcript chunks, and conversations."
       )
     ).toBeInTheDocument();
   });
@@ -73,13 +73,13 @@ describe("SearchPage pagination state", () => {
 
     render(<SearchPage />);
 
-    await user.type(screen.getByPlaceholderText("Search your content..."), "alpha");
+    await user.type(screen.getByPlaceholderText("Search your Nexus content..."), "alpha");
     await user.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Alpha result title")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();
 
-    await user.clear(screen.getByPlaceholderText("Search your content..."));
-    await user.type(screen.getByPlaceholderText("Search your content..."), "beta");
+    await user.clear(screen.getByPlaceholderText("Search your Nexus content..."));
+    await user.type(screen.getByPlaceholderText("Search your Nexus content..."), "beta");
 
     expect(screen.queryByText("Alpha result title")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
@@ -116,7 +116,7 @@ describe("SearchPage pagination state", () => {
 
     render(<SearchPage />);
 
-    await user.type(screen.getByPlaceholderText("Search your content..."), "alpha");
+    await user.type(screen.getByPlaceholderText("Search your Nexus content..."), "alpha");
     await user.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Alpha result title")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();

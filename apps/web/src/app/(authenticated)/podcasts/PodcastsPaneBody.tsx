@@ -5,8 +5,8 @@ import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
   formatPlaybackSpeedLabel,
 } from "@/lib/player/subscriptionPlaybackSpeed";
-import { dispatchOpenAddContent } from "@/components/CommandPalette";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import LibraryTargetPicker, {
   type LibraryTargetPickerItem,
 } from "@/components/LibraryTargetPicker";
@@ -602,9 +602,9 @@ export default function PodcastsPaneBody() {
               <button
                 type="button"
                 className={styles.primaryAction}
-                onClick={() => dispatchOpenAddContent("podcast")}
+                onClick={() => requestOpenInAppPane("/browse?type=podcasts")}
               >
-                Add
+                Browse
               </button>
 
               <ActionMenu
@@ -667,9 +667,9 @@ export default function PodcastsPaneBody() {
                   <button
                     type="button"
                     className={styles.inlineButton}
-                    onClick={() => dispatchOpenAddContent("podcast")}
+                    onClick={() => requestOpenInAppPane("/browse?type=podcasts")}
                   >
-                    Add a podcast
+                    Browse podcasts
                   </button>
                 </>
               )}

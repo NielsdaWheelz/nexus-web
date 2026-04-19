@@ -290,8 +290,7 @@ the branch between podcast row and media row stays local to this pane.
 
 ### podcasts
 
-`apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx`,
-`apps/web/src/app/(authenticated)/podcasts/subscriptions/PodcastSubscriptionsPaneBody.tsx`,
+`apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx`
 and
 `apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody.tsx`
 must change as follows:
@@ -305,9 +304,9 @@ must change as follows:
 - when unsubscribed from a podcast, remove local podcast-library membership rows
   that the viewer is allowed to remove, then update the detail view accordingly
 
-### subscriptions page
+### podcasts home
 
-the subscriptions page becomes operational, not organizational.
+the podcasts home becomes operational, not organizational.
 
 it should show:
 
@@ -363,9 +362,7 @@ it should not show:
 - `apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/libraries/LibrariesPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx`
-- `apps/web/src/app/(authenticated)/podcasts/subscriptions/PodcastSubscriptionsPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody.tsx`
-- `apps/web/src/components/MediaCatalogPage.tsx`
 - `apps/web/src/lib/panes/paneRouteRegistry.tsx`
 
 ### tests

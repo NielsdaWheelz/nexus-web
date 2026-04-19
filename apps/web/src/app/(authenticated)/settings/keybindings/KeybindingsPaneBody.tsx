@@ -19,11 +19,9 @@ interface BindableAction {
 const BINDABLE_ACTIONS: BindableAction[] = [
   { id: "open-palette", label: "Open command palette" },
   { id: "nav-libraries", label: "Go to Libraries" },
-  { id: "nav-discover", label: "Go to Discover" },
-  { id: "nav-documents", label: "Go to Documents" },
+  { id: "nav-browse", label: "Go to Browse" },
   { id: "nav-podcasts", label: "Go to Podcasts" },
-  { id: "nav-videos", label: "Go to Videos" },
-  { id: "nav-chat", label: "Go to Chat" },
+  { id: "nav-chats", label: "Go to Chats" },
   { id: "nav-search", label: "Go to Search" },
   { id: "nav-settings", label: "Go to Settings" },
   { id: "create-conversation", label: "New conversation" },

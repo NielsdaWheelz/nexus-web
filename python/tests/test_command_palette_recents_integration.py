@@ -74,6 +74,73 @@ class TestGetCommandPaletteRecents:
             "/search",
         ]
 
+    def test_get_rewrites_discover_to_browse_and_removes_deleted_routes(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        viewer_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+
+        now = datetime.now(UTC)
+        with direct_db.session() as session:
+            session.add_all(
+                [
+                    CommandPaletteRecent(
+                        user_id=viewer_id,
+                        href="/discover",
+                        title_snapshot="Discover",
+                        created_at=now - timedelta(minutes=4),
+                        last_used_at=now - timedelta(minutes=1),
+                    ),
+                    CommandPaletteRecent(
+                        user_id=viewer_id,
+                        href="/browse",
+                        title_snapshot="Browse",
+                        created_at=now - timedelta(minutes=3),
+                        last_used_at=now - timedelta(minutes=2),
+                    ),
+                    CommandPaletteRecent(
+                        user_id=viewer_id,
+                        href="/documents",
+                        title_snapshot="Documents",
+                        created_at=now - timedelta(minutes=5),
+                        last_used_at=now - timedelta(minutes=5),
+                    ),
+                    CommandPaletteRecent(
+                        user_id=viewer_id,
+                        href="/videos",
+                        title_snapshot="Videos",
+                        created_at=now - timedelta(minutes=6),
+                        last_used_at=now - timedelta(minutes=6),
+                    ),
+                    CommandPaletteRecent(
+                        user_id=viewer_id,
+                        href="/podcasts/subscriptions",
+                        title_snapshot="My podcasts",
+                        created_at=now - timedelta(minutes=7),
+                        last_used_at=now - timedelta(minutes=7),
+                    ),
+                ]
+            )
+            session.commit()
+
+        response = auth_client.get(
+            "/me/command-palette-recents",
+            headers=auth_headers(viewer_id),
+        )
+
+        assert response.status_code == 200
+        rows = response.json()["data"]
+        assert [row["href"] for row in rows] == ["/browse"]
+
+        with direct_db.session() as session:
+            persisted_rows = (
+                session.query(CommandPaletteRecent)
+                .filter(CommandPaletteRecent.user_id == viewer_id)
+                .order_by(CommandPaletteRecent.last_used_at.desc(), CommandPaletteRecent.id.desc())
+                .all()
+            )
+            assert [row.href for row in persisted_rows] == ["/browse"]
+
 
 class TestPostCommandPaletteRecent:
     def test_post_inserts_supported_route(self, auth_client):
@@ -91,6 +158,35 @@ class TestPostCommandPaletteRecent:
         assert data["href"] == "/search"
         assert data["title_snapshot"] == "Search"
         assert data["last_used_at"]
+
+    def test_post_accepts_browse_and_collapses_query_variants(self, auth_client):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        first = auth_client.post(
+            "/me/command-palette-recents",
+            json={"href": "/browse?q=systems&type=podcasts", "title_snapshot": "Browse"},
+            headers=auth_headers(user_id),
+        )
+        second = auth_client.post(
+            "/me/command-palette-recents",
+            json={"href": "/browse?type=documents#results", "title_snapshot": "Browse again"},
+            headers=auth_headers(user_id),
+        )
+        list_response = auth_client.get(
+            "/me/command-palette-recents",
+            headers=auth_headers(user_id),
+        )
+
+        assert first.status_code == 200, (
+            f"Expected browse recent to be accepted, got {first.status_code}: {first.json()}"
+        )
+        assert second.status_code == 200, (
+            f"Expected browse query variants to be accepted, got {second.status_code}: {second.json()}"
+        )
+        assert second.json()["data"]["href"] == "/browse"
+        assert list_response.status_code == 200
+        assert list_response.json()["data"] == [second.json()["data"]]
 
     def test_removed_discover_podcasts_route_is_rejected(self, auth_client):
         user_id = create_test_user_id()
@@ -230,6 +326,29 @@ class TestPostCommandPaletteRecent:
 
         assert response.status_code == 400, (
             f"Expected removed subscriptions route to be rejected, got {response.status_code}: "
+            f"{response.json()}"
+        )
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+        assert list_response.status_code == 200
+        assert list_response.json()["data"] == []
+
+    @pytest.mark.parametrize("href", ["/discover", "/documents", "/videos"])
+    def test_removed_top_level_routes_are_rejected(self, auth_client, href: str):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        response = auth_client.post(
+            "/me/command-palette-recents",
+            json={"href": href},
+            headers=auth_headers(user_id),
+        )
+        list_response = auth_client.get(
+            "/me/command-palette-recents",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400, (
+            f"Expected removed route {href} to be rejected, got {response.status_code}: "
             f"{response.json()}"
         )
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
