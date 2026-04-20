@@ -3,18 +3,23 @@
  *
  * Thin shell that delegates all media state to useMediaViewState and handles
  * the workspace-specific layout: reader with a fixed desktop highlights
- * column, mobile highlights drawer, and usePaneChromeOverride for pane chrome.
+ * column, mobile highlights + quote drawers, and usePaneChromeOverride for
+ * pane chrome.
  */
 
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import ReaderContentArea from "@/components/ReaderContentArea";
+import ChatComposer from "@/components/ChatComposer";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import PdfReader from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
 import HighlightEditPopover from "@/components/HighlightEditPopover";
 import { useToast } from "@/components/Toast";
+import type { ContextItem } from "@/lib/api/sse";
+import type { HighlightColor } from "@/lib/highlights/segmenter";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX } from "@/lib/panes/paneRouteRegistry";
 import MediaHighlightsPaneBody from "./MediaHighlightsPaneBody";
 import StateMessage from "@/components/ui/StateMessage";
@@ -22,10 +27,11 @@ import StatusPill from "@/components/ui/StatusPill";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryTargetPicker from "@/components/LibraryTargetPicker";
 import DocumentViewport from "@/components/workspace/DocumentViewport";
-import { usePaneParam } from "@/lib/panes/paneRuntime";
+import { usePaneParam, usePaneRouter } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { useReaderContext } from "@/lib/reader";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { useWorkspaceStore } from "@/lib/workspace/store";
 import TranscriptMediaPane from "./TranscriptMediaPane";
 import EpubContentPane from "./EpubContentPane";
 import { formatResumeTime, normalizeTranscriptChapters } from "./mediaHelpers";
@@ -39,6 +45,8 @@ export default function MediaPaneBody() {
     throw new Error("media route requires an id");
   }
 
+  const router = usePaneRouter();
+  const { navigatePane } = useWorkspaceStore();
   const mv = useMediaViewState(id);
   const { toast } = useToast();
   const { profile: readerProfile, updateTheme } = useReaderContext();
@@ -49,6 +57,11 @@ export default function MediaPaneBody() {
   // ==========================================================================
 
   const [highlightsDrawerOpen, setHighlightsDrawerOpen] = useState(false);
+  const [quoteDrawerState, setQuoteDrawerState] = useState<{
+    context: ContextItem;
+    targetPaneId: string | null;
+    targetConversationId: string | null;
+  } | null>(null);
   const resumeNoticeMediaIdRef = useRef<string | null>(null);
   const seededPodcastTrackRef = useRef<string | null>(null);
 
@@ -74,6 +87,53 @@ export default function MediaPaneBody() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- property-level deps are intentional; mv is a new object each render
     [mv.dismissEditPopover, mv.focusHighlight, mv.isMobileViewport, mv.showHighlightsPane]
   );
+
+  const handleQuoteToChat = useCallback(
+    async (color: HighlightColor) => {
+      if (!mv.isMobileViewport) {
+        await mv.handleQuoteSelectionToNewChat(color);
+        return;
+      }
+      const prepared = await mv.prepareQuoteSelectionForChat(color);
+      if (!prepared) {
+        return;
+      }
+      setQuoteDrawerState(prepared);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- property-level deps are intentional; mv is a new object each render
+    [
+      mv.handleQuoteSelectionToNewChat,
+      mv.isMobileViewport,
+      mv.prepareQuoteSelectionForChat,
+    ]
+  );
+
+  const handleQuoteDrawerConversationCreated = useCallback(
+    (conversationId: string) => {
+      if (quoteDrawerState?.targetPaneId) {
+        navigatePane(quoteDrawerState.targetPaneId, `/conversations/${conversationId}`);
+        return;
+      }
+      if (!requestOpenInAppPane(`/conversations/${conversationId}`, { titleHint: "Chat" })) {
+        router.push(`/conversations/${conversationId}`);
+      }
+    },
+    [navigatePane, quoteDrawerState?.targetPaneId, router]
+  );
+
+  const handleQuoteDrawerMessageSent = useCallback(() => {
+    if (quoteDrawerState?.targetPaneId && quoteDrawerState.targetConversationId) {
+      navigatePane(
+        quoteDrawerState.targetPaneId,
+        `/conversations/${quoteDrawerState.targetConversationId}`
+      );
+    }
+    setQuoteDrawerState(null);
+  }, [
+    navigatePane,
+    quoteDrawerState?.targetConversationId,
+    quoteDrawerState?.targetPaneId,
+  ]);
 
   const isReflowableReader = mv.canRead && !mv.isPdf;
   const mediaHeaderMeta = (
@@ -320,6 +380,28 @@ export default function MediaPaneBody() {
       setHighlightsDrawerOpen(false);
     }
   }, [highlightsDrawerOpen, mv.isMobileViewport, mv.showHighlightsPane]);
+
+  useEffect(() => {
+    if (!quoteDrawerState) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setQuoteDrawerState(null);
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [quoteDrawerState]);
+
+  useEffect(() => {
+    if (quoteDrawerState && !mv.isMobileViewport) {
+      setQuoteDrawerState(null);
+    }
+  }, [mv.isMobileViewport, quoteDrawerState]);
 
   useEffect(() => {
     if (!mv.media || !mv.isTranscriptMedia) {
@@ -646,6 +728,36 @@ export default function MediaPaneBody() {
         </div>
       )}
 
+      {mv.isMobileViewport && quoteDrawerState ? (
+        <div
+          className={styles.quoteBackdrop}
+          onClick={() => setQuoteDrawerState(null)}
+        >
+          <aside
+            className={styles.quoteDrawer}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Ask in chat"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className={styles.quoteDrawerHeader}>
+              <h2>Ask in chat</h2>
+              <button type="button" onClick={() => setQuoteDrawerState(null)}>
+                Close
+              </button>
+            </header>
+            <div className={styles.quoteDrawerBody}>
+              <ChatComposer
+                conversationId={quoteDrawerState.targetConversationId}
+                attachedContexts={[quoteDrawerState.context]}
+                onConversationCreated={handleQuoteDrawerConversationCreated}
+                onMessageSent={handleQuoteDrawerMessageSent}
+              />
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       {mv.editPopoverHighlight && mv.editPopoverAnchorRect && (
         <HighlightEditPopover
           highlight={mv.editPopoverHighlight}
@@ -666,9 +778,7 @@ export default function MediaPaneBody() {
           selectionLineRects={mv.selection.lineRects}
           containerRef={mv.contentRef}
           onCreateHighlight={mv.handleCreateHighlight}
-          onQuoteToChat={
-            mv.media.capabilities?.can_quote ? mv.handleQuoteSelectionToNewChat : undefined
-          }
+          onQuoteToChat={mv.media.capabilities?.can_quote ? handleQuoteToChat : undefined}
           onDismiss={mv.handleDismissPopover}
           isCreating={mv.isCreating}
         />

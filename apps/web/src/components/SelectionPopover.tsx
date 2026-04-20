@@ -3,13 +3,14 @@
  *
  * Appears when user selects text in the content area. Positioned relative
  * to the selection bounding box. Selecting a color creates the highlight
- * immediately, and Ask in chat creates a highlight then opens quote-to-chat.
+ * immediately, and the chat icon creates a highlight then opens quote-to-chat.
  * Dismisses on Escape, click outside, or selection collapse.
  */
 
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { MessageSquare } from "lucide-react";
 import { COLOR_LABELS } from "@/lib/highlights/colors";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights/segmenter";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -327,7 +328,7 @@ export default function SelectionPopover({
           disabled={isCreating}
           aria-label="Ask in chat"
         >
-          Ask in chat
+          <MessageSquare size={14} aria-hidden="true" />
         </button>
       )}
     </div>

@@ -9,6 +9,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import type { ContextItem } from "@/lib/api/sse";
 import {
   type PdfHighlightOut,
   type PdfReaderControlActions,
@@ -1603,12 +1604,17 @@ export default function useMediaViewState(id: string) {
         focusHighlight(createdHighlight.id);
         clearRetainedSelection(true);
 
-        const newHighlights = await fetchHighlights(activeContent.fragmentId);
-        if (requestVersion !== highlightVersionRef.current) {
-          return createdHighlight.id;
-        }
-        setHighlights(newHighlights);
-        setHighlightsVersion((v) => v + 1);
+        void fetchHighlights(activeContent.fragmentId)
+          .then((newHighlights) => {
+            if (requestVersion !== highlightVersionRef.current) {
+              return;
+            }
+            setHighlights(newHighlights);
+            setHighlightsVersion((v) => v + 1);
+          })
+          .catch((err) => {
+            console.error("Failed to refresh highlights after create:", err);
+          });
         return createdHighlight.id;
       } catch (err) {
         if (isApiError(err) && err.code === "E_HIGHLIGHT_CONFLICT") {
@@ -1938,6 +1944,61 @@ export default function useMediaViewState(id: string) {
   // Quote-to-Chat
   // ==========================================================================
 
+  const resolveQuoteChatTarget = useCallback(() => {
+    const baseOrigin =
+      window.location.origin && window.location.origin !== "null"
+        ? window.location.origin
+        : "http://localhost";
+    const isChatPaneHref = (href: string): boolean => {
+      try {
+        const pathname = new URL(href, baseOrigin).pathname;
+        if (pathname === "/conversations/new") {
+          return true;
+        }
+        return /^\/conversations\/[^/]+$/.test(pathname);
+      } catch {
+        return false;
+      }
+    };
+
+    const activePane =
+      workspaceState.panes.find((pane) => pane.id === workspaceState.activePaneId) ?? null;
+    let paneToReuse = activePane && isChatPaneHref(activePane.href) ? activePane : null;
+    if (!paneToReuse) {
+      const chatPanes = workspaceState.panes.filter((pane) => isChatPaneHref(pane.href));
+      if (chatPanes.length === 1) {
+        paneToReuse = chatPanes[0] ?? null;
+      }
+    }
+
+    if (!paneToReuse) {
+      return {
+        baseOrigin,
+        paneId: null,
+        paneHref: null,
+        conversationId: null,
+      };
+    }
+
+    try {
+      const pathname = new URL(paneToReuse.href, baseOrigin).pathname;
+      const match = pathname.match(/^\/conversations\/([^/]+)$/);
+      return {
+        baseOrigin,
+        paneId: paneToReuse.id,
+        paneHref: paneToReuse.href,
+        conversationId: match?.[1] ?? null,
+      };
+    } catch {
+      return {
+        baseOrigin,
+        paneId: paneToReuse.id,
+        paneHref: paneToReuse.href,
+        conversationId: null,
+      };
+    }
+  }, [workspaceState.activePaneId, workspaceState.panes]);
+
   const handleSendToChat = useCallback(
     (highlightId: string) => {
       const highlight =
@@ -1964,41 +2025,17 @@ export default function useMediaViewState(id: string) {
         quoteParams.set("attach_media_title", media.title);
       }
 
-      const baseOrigin =
-        window.location.origin && window.location.origin !== "null"
-          ? window.location.origin
-          : "http://localhost";
-      const isChatPaneHref = (href: string): boolean => {
-        try {
-          const pathname = new URL(href, baseOrigin).pathname;
-          if (pathname === "/conversations/new") {
-            return true;
-          }
-          return /^\/conversations\/[^/]+$/.test(pathname);
-        } catch {
-          return false;
-        }
-      };
+      const target = resolveQuoteChatTarget();
 
-      const activePane =
-        workspaceState.panes.find((pane) => pane.id === workspaceState.activePaneId) ?? null;
-      let paneToReuse = activePane && isChatPaneHref(activePane.href) ? activePane : null;
-      if (!paneToReuse) {
-        const chatPanes = workspaceState.panes.filter((pane) => isChatPaneHref(pane.href));
-        if (chatPanes.length === 1) {
-          paneToReuse = chatPanes[0] ?? null;
-        }
-      }
-
-      if (paneToReuse) {
-        const parsed = new URL(paneToReuse.href, baseOrigin);
+      if (target.paneId && target.paneHref) {
+        const parsed = new URL(target.paneHref, target.baseOrigin);
         const cleaned = stripAttachParams(parsed.searchParams);
         for (const [key, value] of quoteParams.entries()) {
           cleaned.set(key, value);
         }
         const qs = cleaned.toString();
         navigatePane(
-          paneToReuse.id,
+          target.paneId,
           qs ? `${parsed.pathname}?${qs}${parsed.hash}` : `${parsed.pathname}${parsed.hash}`
         );
         return;
@@ -2013,9 +2050,40 @@ export default function useMediaViewState(id: string) {
       navigatePane,
       pdfDocumentHighlights,
       pdfPageHighlights,
-      workspaceState.activePaneId,
-      workspaceState.panes,
+      resolveQuoteChatTarget,
     ]
+  );
+
+  const prepareQuoteSelectionForChat = useCallback(
+    async (
+      color: HighlightColor
+    ): Promise<{
+      context: ContextItem;
+      targetPaneId: string | null;
+      targetConversationId: string | null;
+    } | null> => {
+      const activeSelection = selection ?? selectionSnapshotRef.current;
+      const preview = activeSelection?.range.toString().trim().slice(0, 120) || undefined;
+      const highlightId = await handleCreateHighlight(color);
+      if (!highlightId) {
+        return null;
+      }
+
+      const target = resolveQuoteChatTarget();
+      return {
+        context: {
+          type: "highlight",
+          id: highlightId,
+          color,
+          ...(preview ? { preview } : {}),
+          ...(media?.id ? { mediaId: media.id } : {}),
+          ...(media?.title ? { mediaTitle: media.title } : {}),
+        },
+        targetPaneId: target.paneId,
+        targetConversationId: target.conversationId,
+      };
+    },
+    [handleCreateHighlight, media?.id, media?.title, resolveQuoteChatTarget, selection]
   );
 
   const handleQuoteSelectionToNewChat = useCallback(
@@ -2260,6 +2328,7 @@ export default function useMediaViewState(id: string) {
     // Chat
     handleSendToChat,
     handleOpenConversation,
+    prepareQuoteSelectionForChat,
     handleQuoteSelectionToNewChat,
 
     // Content interaction

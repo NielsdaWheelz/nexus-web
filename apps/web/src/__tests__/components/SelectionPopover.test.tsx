@@ -80,7 +80,7 @@ describe("SelectionPopover", () => {
     document.body.innerHTML = "";
   });
 
-  it("shows ask-in-chat action when onQuoteToChat is provided", async () => {
+  it("shows an icon-only ask-in-chat action when onQuoteToChat is provided", async () => {
     const onCreateHighlight = vi.fn();
     const onQuoteToChat = vi.fn();
     const user = userEvent.setup();
@@ -95,14 +95,18 @@ describe("SelectionPopover", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: "Ask in chat" }));
+    const button = screen.getByRole("button", { name: "Ask in chat" });
+    expect(button).toBeInTheDocument();
+    expect(button).not.toHaveTextContent("Ask in chat");
+
+    await user.click(button);
 
     expect(onQuoteToChat).toHaveBeenCalledTimes(1);
     expect(onQuoteToChat).toHaveBeenCalledWith("yellow");
     expect(onCreateHighlight).not.toHaveBeenCalled();
   });
 
-  it("passes the currently selected color to ask-in-chat", async () => {
+  it("passes the currently selected color to the ask-in-chat icon button", async () => {
     const onCreateHighlight = vi.fn();
     const onQuoteToChat = vi.fn();
     const user = userEvent.setup();

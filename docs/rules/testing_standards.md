@@ -322,10 +322,14 @@ Rule:
 
 - Normalize persisted per-media state before asserting initial reader UI (for example, reset reader state and explicitly select chapter/page where applicable)
 - Quote-to-chat assertions must be deterministic:
-  - If the active pane is chat (`/conversations/new` or `/conversations/:id`), assert quote-to-chat updates that pane with new `attach_*` params and does not open another chat tab
-  - If the active pane is not chat and exactly one chat pane exists, assert quote-to-chat updates that existing chat pane and does not open another chat tab
-  - Otherwise, assert quote-to-chat opens one new chat pane at `/conversations/new` with the expected `attach_*` params
-  - In all quote-to-chat cases, assert the linked-context chip is visible in chat composer after navigation
+  - Desktop: If the active pane is chat (`/conversations/new` or `/conversations/:id`), assert quote-to-chat updates that pane with new `attach_*` params and does not open another chat tab
+  - Desktop: If the active pane is not chat and exactly one chat pane exists, assert quote-to-chat updates that existing chat pane and does not open another chat tab
+  - Desktop: Otherwise, assert quote-to-chat opens one new chat pane at `/conversations/new` with the expected `attach_*` params
+  - Desktop: In all quote-to-chat cases, assert the linked-context chip is visible in chat composer after navigation
+  - Mobile: Assert quote-to-chat opens the local reader quote drawer instead of navigating away immediately
+  - Mobile: Assert the drawer shows the attached quote context and keeps the reader pane active until send
+  - Mobile: After send, assert the app reuses the active chat pane, reuses the only existing chat pane, or opens one new `/conversations/new` pane using the same pane-aware rules as desktop
+  - Mobile: After send, assert the linked-context chip is visible in chat composer and the reader quote drawer is closed
 - Prefer explicit action-menu interactions (`Actions` -> `menuitem`) over styling-dependent selectors
 - Keep single-flow E2E tests focused on one behavior; use API setup for prerequisites already covered by separate UI stress/interaction tests
 

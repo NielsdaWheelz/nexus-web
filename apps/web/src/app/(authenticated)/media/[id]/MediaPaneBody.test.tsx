@@ -4,7 +4,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MediaPaneBody from "./MediaPaneBody";
@@ -12,6 +12,8 @@ import MediaPaneBody from "./MediaPaneBody";
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 const mockUseMediaViewState = vi.fn<(id: string) => Record<string, unknown>>();
 const mockUsePaneChromeOverride = vi.fn<(overrides: Record<string, unknown>) => void>();
+const mockNavigatePane = vi.fn();
+const mockRequestOpenInAppPane = vi.fn();
 const mockSetTrack = vi.fn();
 function renderSelectionPopover(_props: Record<string, unknown>) {
   return <div data-testid="selection-popover" />;
@@ -25,6 +27,40 @@ function renderTranscriptMediaPane(_props: Record<string, unknown>) {
 const mockTranscriptMediaPane = vi.fn<(props: Record<string, unknown>) => ReactElement>(
   renderTranscriptMediaPane
 );
+function renderChatComposer(props: {
+  conversationId?: string | null;
+  attachedContexts?: { preview?: string }[];
+  onConversationCreated?: (conversationId: string) => void;
+  onMessageSent?: () => void;
+}) {
+  return (
+    <div data-testid="chat-composer">
+      <button
+        type="button"
+        onClick={() => {
+          props.onConversationCreated?.("conversation-1");
+          props.onMessageSent?.();
+        }}
+      >
+        Send mock message
+      </button>
+      <div data-testid="chat-composer-attached-count">
+        {props.attachedContexts?.length ?? 0}
+      </div>
+      {props.attachedContexts?.map((item, index) => (
+        <div key={`attached-context-${index}`}>{item.preview ?? ""}</div>
+      ))}
+    </div>
+  );
+}
+const mockChatComposer = vi.fn<
+  (props: {
+    conversationId?: string | null;
+    attachedContexts?: { preview?: string }[];
+    onConversationCreated?: (conversationId: string) => void;
+    onMessageSent?: () => void;
+  }) => ReactElement
+>(renderChatComposer);
 const mockReaderContentArea = vi.fn(
   ({ children }: { children: ReactNode }) => children
 );
@@ -36,9 +72,19 @@ vi.mock("@/lib/panes/paneRuntime", () => ({
   useSetPaneTitle: () => {},
 }));
 
+vi.mock("@/lib/panes/openInAppPane", () => ({
+  requestOpenInAppPane: (...args: unknown[]) => mockRequestOpenInAppPane(...args),
+}));
+
 vi.mock("@/components/workspace/PaneShell", () => ({
   usePaneChromeOverride: (overrides: Record<string, unknown>) =>
     mockUsePaneChromeOverride(overrides),
+}));
+
+vi.mock("@/lib/workspace/store", () => ({
+  useWorkspaceStore: () => ({
+    navigatePane: mockNavigatePane,
+  }),
 }));
 
 vi.mock("./useMediaViewState", () => ({
@@ -118,6 +164,14 @@ vi.mock("@/components/SelectionPopover", () => ({
   default: (props: Record<string, unknown>) => mockSelectionPopover(props),
 }));
 
+vi.mock("@/components/ChatComposer", () => ({
+  default: (props: {
+    attachedContexts?: { preview?: string }[];
+    onConversationCreated?: (conversationId: string) => void;
+    onMessageSent?: () => void;
+  }) => mockChatComposer(props),
+}));
+
 vi.mock("@/components/HighlightEditPopover", () => ({
   default: () => <div data-testid="highlight-edit-popover" />,
 }));
@@ -195,6 +249,8 @@ function buildViewState(overrides: Record<string, unknown> = {}): Record<string,
     handleNavigateToFragment: vi.fn(),
     handleHighlightsViewChange: vi.fn(),
     handleSendToChat: vi.fn(),
+    handleQuoteSelectionToNewChat: vi.fn(),
+    prepareQuoteSelectionForChat: vi.fn(async () => null),
     handleAnnotationSave: vi.fn(async () => {}),
     handleAnnotationDelete: vi.fn(async () => {}),
     buildRowOptions: vi.fn(() => []),
@@ -292,6 +348,16 @@ function getLatestSelectionPopoverProps(): Record<string, unknown> {
   return latest;
 }
 
+function getLatestChatComposerProps(): Record<string, unknown> {
+  const latest = mockChatComposer.mock.calls.at(-1)?.[0] as
+    | Record<string, unknown>
+    | undefined;
+  if (!latest) {
+    throw new Error("Expected ChatComposer to be rendered");
+  }
+  return latest;
+}
+
 type ToggleActionElement = ReactElement<{
   onClick: () => void;
   "aria-label"?: string;
@@ -329,9 +395,14 @@ describe("MediaPaneBody highlights shell", () => {
     mockUsePaneParam.mockReset();
     mockUseMediaViewState.mockReset();
     mockUsePaneChromeOverride.mockReset();
+    mockNavigatePane.mockReset();
+    mockRequestOpenInAppPane.mockReset();
+    mockRequestOpenInAppPane.mockReturnValue(true);
     mockSetTrack.mockReset();
     mockSelectionPopover.mockReset();
     mockSelectionPopover.mockImplementation(renderSelectionPopover);
+    mockChatComposer.mockReset();
+    mockChatComposer.mockImplementation(renderChatComposer);
     mockTranscriptMediaPane.mockReset();
     mockTranscriptMediaPane.mockImplementation(renderTranscriptMediaPane);
     mockReaderContentArea.mockReset();
@@ -439,6 +510,132 @@ describe("MediaPaneBody highlights shell", () => {
       selectionRect,
       selectionLineRects: lineRects,
     });
+  });
+
+  it("opens a local mobile quote drawer instead of navigating immediately from the selection popover", async () => {
+    const prepareQuoteSelectionForChat = vi.fn(async () => ({
+      context: {
+        type: "highlight",
+        id: "11111111-1111-4111-8111-111111111111",
+        color: "yellow",
+        preview: "Quoted line",
+        mediaId: "media-1",
+        mediaTitle: "Example media",
+      },
+      targetPaneId: null,
+      targetConversationId: null,
+    }));
+    const handleQuoteSelectionToNewChat = vi.fn();
+    const handleSendToChat = vi.fn();
+    currentViewState = buildViewState({
+      isMobileViewport: true,
+      media: {
+        id: "media-1",
+        kind: "web",
+        title: "Example media",
+        processing_status: "ready_for_reading",
+        canonical_source_url: null,
+        podcast_title: null,
+        podcast_image_url: null,
+        chapters: [],
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        last_error_code: null,
+        capabilities: { can_quote: true },
+      },
+      selection: {
+        range: document.createRange(),
+        rect: new DOMRect(96, 180, 120, 44),
+        lineRects: [new DOMRect(96, 180, 120, 18)],
+      },
+      prepareQuoteSelectionForChat,
+      handleQuoteSelectionToNewChat,
+      handleSendToChat,
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+
+    const onQuoteToChat = getLatestSelectionPopoverProps().onQuoteToChat as
+      | ((color: string) => Promise<void>)
+      | undefined;
+
+    expect(onQuoteToChat).toBeTypeOf("function");
+
+    await act(async () => {
+      await onQuoteToChat?.("yellow");
+    });
+
+    expect(prepareQuoteSelectionForChat).toHaveBeenCalledWith("yellow");
+    expect(handleQuoteSelectionToNewChat).not.toHaveBeenCalled();
+    expect(handleSendToChat).not.toHaveBeenCalled();
+
+    const drawer = screen.getByRole("dialog", { name: "Ask in chat" });
+    expect(within(drawer).getByTestId("chat-composer")).toBeInTheDocument();
+    expect(within(drawer).getByTestId("chat-composer-attached-count")).toHaveTextContent("1");
+    expect(within(drawer).getByText("Quoted line")).toBeInTheDocument();
+    expect(getLatestChatComposerProps()).toMatchObject({ conversationId: null });
+  });
+
+  it("opens the created conversation pane and closes the mobile quote drawer after send", async () => {
+    const user = userEvent.setup();
+    const prepareQuoteSelectionForChat = vi.fn(async () => ({
+      context: {
+        type: "highlight",
+        id: "11111111-1111-4111-8111-111111111111",
+        color: "yellow",
+        preview: "Quoted line",
+        mediaId: "media-1",
+        mediaTitle: "Example media",
+      },
+      targetPaneId: null,
+      targetConversationId: null,
+    }));
+    currentViewState = buildViewState({
+      isMobileViewport: true,
+      media: {
+        id: "media-1",
+        kind: "web",
+        title: "Example media",
+        processing_status: "ready_for_reading",
+        canonical_source_url: null,
+        podcast_title: null,
+        podcast_image_url: null,
+        chapters: [],
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        last_error_code: null,
+        capabilities: { can_quote: true },
+      },
+      selection: {
+        range: document.createRange(),
+        rect: new DOMRect(96, 180, 120, 44),
+        lineRects: [new DOMRect(96, 180, 120, 18)],
+      },
+      prepareQuoteSelectionForChat,
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+
+    const onQuoteToChat = getLatestSelectionPopoverProps().onQuoteToChat as
+      | ((color: string) => Promise<void>)
+      | undefined;
+
+    await act(async () => {
+      await onQuoteToChat?.("yellow");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Send mock message" }));
+
+    expect(mockRequestOpenInAppPane).toHaveBeenCalledWith("/conversations/conversation-1", {
+      titleHint: "Chat",
+    });
+    expect(screen.queryByRole("dialog", { name: "Ask in chat" })).not.toBeInTheDocument();
   });
 
   it("opens the mobile Highlights drawer when tapping a PDF highlight", async () => {
