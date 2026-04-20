@@ -74,7 +74,7 @@ class TestGetCommandPaletteRecents:
             "/search",
         ]
 
-    def test_get_rewrites_discover_to_browse_and_removes_deleted_routes(
+    def test_get_preserves_distinct_browse_states_and_cleans_removed_routes(
         self, auth_client, direct_db: DirectSessionManager
     ):
         viewer_id = create_test_user_id()
@@ -88,36 +88,57 @@ class TestGetCommandPaletteRecents:
                         user_id=viewer_id,
                         href="/discover",
                         title_snapshot="Discover",
-                        created_at=now - timedelta(minutes=4),
                         last_used_at=now - timedelta(minutes=1),
+                        created_at=now - timedelta(minutes=4),
                     ),
                     CommandPaletteRecent(
                         user_id=viewer_id,
-                        href="/browse",
-                        title_snapshot="Browse",
-                        created_at=now - timedelta(minutes=3),
+                        href="/browse?q=systems%20%20thinking&types=videos,podcasts,videos",
+                        title_snapshot="Systems browse",
                         last_used_at=now - timedelta(minutes=2),
+                        created_at=now - timedelta(minutes=3),
+                    ),
+                    CommandPaletteRecent(
+                        user_id=viewer_id,
+                        href="/browse?q=systems+thinking&types=podcasts,videos#results",
+                        title_snapshot="Older systems browse",
+                        last_used_at=now - timedelta(minutes=3),
+                        created_at=now - timedelta(minutes=3),
+                    ),
+                    CommandPaletteRecent(
+                        user_id=viewer_id,
+                        href="/browse?types=videos",
+                        title_snapshot="Videos only",
+                        last_used_at=now - timedelta(minutes=4),
+                        created_at=now - timedelta(minutes=4),
+                    ),
+                    CommandPaletteRecent(
+                        user_id=viewer_id,
+                        href="/browse?q=systems&type=podcasts",
+                        title_snapshot="Legacy browse type",
+                        last_used_at=now - timedelta(minutes=5),
+                        created_at=now - timedelta(minutes=5),
                     ),
                     CommandPaletteRecent(
                         user_id=viewer_id,
                         href="/documents",
                         title_snapshot="Documents",
-                        created_at=now - timedelta(minutes=5),
-                        last_used_at=now - timedelta(minutes=5),
+                        last_used_at=now - timedelta(minutes=6),
+                        created_at=now - timedelta(minutes=6),
                     ),
                     CommandPaletteRecent(
                         user_id=viewer_id,
                         href="/videos",
                         title_snapshot="Videos",
-                        created_at=now - timedelta(minutes=6),
-                        last_used_at=now - timedelta(minutes=6),
+                        last_used_at=now - timedelta(minutes=7),
+                        created_at=now - timedelta(minutes=7),
                     ),
                     CommandPaletteRecent(
                         user_id=viewer_id,
                         href="/podcasts/subscriptions",
                         title_snapshot="My podcasts",
-                        created_at=now - timedelta(minutes=7),
-                        last_used_at=now - timedelta(minutes=7),
+                        last_used_at=now - timedelta(minutes=8),
+                        created_at=now - timedelta(minutes=8),
                     ),
                 ]
             )
@@ -130,7 +151,11 @@ class TestGetCommandPaletteRecents:
 
         assert response.status_code == 200
         rows = response.json()["data"]
-        assert [row["href"] for row in rows] == ["/browse"]
+        assert [row["href"] for row in rows] == [
+            "/browse",
+            "/browse?q=systems+thinking&types=podcasts%2Cvideos",
+            "/browse?types=videos",
+        ]
 
         with direct_db.session() as session:
             persisted_rows = (
@@ -139,7 +164,11 @@ class TestGetCommandPaletteRecents:
                 .order_by(CommandPaletteRecent.last_used_at.desc(), CommandPaletteRecent.id.desc())
                 .all()
             )
-            assert [row.href for row in persisted_rows] == ["/browse"]
+            assert [row.href for row in persisted_rows] == [
+                "/browse",
+                "/browse?q=systems+thinking&types=podcasts%2Cvideos",
+                "/browse?types=videos",
+            ]
 
 
 class TestPostCommandPaletteRecent:
@@ -159,18 +188,24 @@ class TestPostCommandPaletteRecent:
         assert data["title_snapshot"] == "Search"
         assert data["last_used_at"]
 
-    def test_post_accepts_browse_and_collapses_query_variants(self, auth_client):
+    def test_post_accepts_browse_and_preserves_normalized_state(self, auth_client):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
 
         first = auth_client.post(
             "/me/command-palette-recents",
-            json={"href": "/browse?q=systems&type=podcasts", "title_snapshot": "Browse"},
+            json={
+                "href": "/browse?q=  systems   thinking  &types=videos,podcasts,videos&limit=20#results",
+                "title_snapshot": "Browse",
+            },
             headers=auth_headers(user_id),
         )
         second = auth_client.post(
             "/me/command-palette-recents",
-            json={"href": "/browse?type=documents#results", "title_snapshot": "Browse again"},
+            json={
+                "href": "/browse?q=systems+thinking&types=podcasts,videos",
+                "title_snapshot": "Browse again",
+            },
             headers=auth_headers(user_id),
         )
         list_response = auth_client.get(
@@ -184,9 +219,40 @@ class TestPostCommandPaletteRecent:
         assert second.status_code == 200, (
             f"Expected browse query variants to be accepted, got {second.status_code}: {second.json()}"
         )
-        assert second.json()["data"]["href"] == "/browse"
+        assert second.json()["data"]["href"] == "/browse?q=systems+thinking&types=podcasts%2Cvideos"
         assert list_response.status_code == 200
         assert list_response.json()["data"] == [second.json()["data"]]
+
+    def test_post_keeps_distinct_browse_states_distinct(self, auth_client):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        for href in (
+            "/browse?q=systems&types=podcasts",
+            "/browse?q=systems&types=videos",
+            "/browse?q=systems",
+        ):
+            response = auth_client.post(
+                "/me/command-palette-recents",
+                json={"href": href},
+                headers=auth_headers(user_id),
+            )
+            assert response.status_code == 200, (
+                f"Expected browse state {href} to be accepted, got {response.status_code}: "
+                f"{response.json()}"
+            )
+
+        list_response = auth_client.get(
+            "/me/command-palette-recents",
+            headers=auth_headers(user_id),
+        )
+
+        assert list_response.status_code == 200
+        assert [row["href"] for row in list_response.json()["data"]] == [
+            "/browse?q=systems",
+            "/browse?q=systems&types=videos",
+            "/browse?q=systems&types=podcasts",
+        ]
 
     def test_removed_discover_podcasts_route_is_rejected(self, auth_client):
         user_id = create_test_user_id()
@@ -326,6 +392,28 @@ class TestPostCommandPaletteRecent:
 
         assert response.status_code == 400, (
             f"Expected removed subscriptions route to be rejected, got {response.status_code}: "
+            f"{response.json()}"
+        )
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+        assert list_response.status_code == 200
+        assert list_response.json()["data"] == []
+
+    def test_legacy_browse_type_route_is_rejected(self, auth_client):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        response = auth_client.post(
+            "/me/command-palette-recents",
+            json={"href": "/browse?q=systems&type=podcasts", "title_snapshot": "Legacy browse"},
+            headers=auth_headers(user_id),
+        )
+        list_response = auth_client.get(
+            "/me/command-palette-recents",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400, (
+            f"Expected legacy browse type route to be rejected, got {response.status_code}: "
             f"{response.json()}"
         )
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"

@@ -1,27 +1,46 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
-import { Mic, Play } from "lucide-react";
+import { FileText, Mic, Play, Video } from "lucide-react";
 import LibraryTargetPicker, {
   type LibraryTargetPickerItem,
 } from "@/components/LibraryTargetPicker";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
-type BrowseType = "all" | "podcasts" | "podcast_episodes" | "videos" | "documents";
+type BrowseSectionType = "documents" | "videos" | "podcasts" | "podcast_episodes";
 
-type BrowsePageResponse = {
-  data: {
-    results: BrowseResult[];
-    page: {
-      has_more: boolean;
-      next_cursor: string | null;
-    };
-  };
+type BrowsePageInfo = {
+  has_more: boolean;
+  next_cursor: string | null;
+};
+
+type BrowseDocumentResult = {
+  type: "documents";
+  title: string;
+  description: string | null;
+  url: string;
+  document_kind: "pdf" | "epub";
+  site_name: string | null;
+  media_id?: string | null;
+};
+
+type BrowseVideoResult = {
+  type: "videos";
+  provider_video_id: string;
+  title: string;
+  description: string | null;
+  watch_url: string;
+  channel_title: string | null;
+  published_at: string | null;
+  thumbnail_url: string | null;
+  media_id?: string | null;
 };
 
 type BrowsePodcastResult = {
@@ -53,7 +72,26 @@ type BrowseEpisodeResult = {
   description: string | null;
 };
 
-type BrowseResult = BrowsePodcastResult | BrowseEpisodeResult;
+type BrowseResult =
+  | BrowseDocumentResult
+  | BrowseVideoResult
+  | BrowsePodcastResult
+  | BrowseEpisodeResult;
+
+type BrowseSectionData = {
+  results: BrowseResult[];
+  page: BrowsePageInfo;
+};
+
+type BrowseResponse = {
+  data: {
+    page?: BrowsePageInfo;
+    page_type?: BrowseSectionType | null;
+    query?: string;
+    results?: BrowseResult[];
+    sections?: Partial<Record<BrowseSectionType, BrowseSectionData>>;
+  };
+};
 
 type LibrarySummary = {
   id: string;
@@ -62,28 +100,199 @@ type LibrarySummary = {
   color?: string | null;
 };
 
-const FILTERS: Array<{ value: BrowseType; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "podcasts", label: "Podcasts" },
-  { value: "podcast_episodes", label: "Episodes" },
-  { value: "videos", label: "Videos" },
-  { value: "documents", label: "Documents" },
+const BROWSE_TYPES: BrowseSectionType[] = [
+  "documents",
+  "videos",
+  "podcasts",
+  "podcast_episodes",
 ];
 
+const TYPE_LABELS: Record<BrowseSectionType, string> = {
+  documents: "Documents",
+  videos: "Videos",
+  podcasts: "Podcasts",
+  podcast_episodes: "Episodes",
+};
+
+function emptySections(): Record<BrowseSectionType, BrowseSectionData> {
+  return {
+    documents: { results: [], page: { has_more: false, next_cursor: null } },
+    videos: { results: [], page: { has_more: false, next_cursor: null } },
+    podcasts: { results: [], page: { has_more: false, next_cursor: null } },
+    podcast_episodes: { results: [], page: { has_more: false, next_cursor: null } },
+  };
+}
+
+function normalizeBrowseQuery(value: string | null): string {
+  return value ? value.trim() : "";
+}
+
+function isBrowseSectionType(value: string): value is BrowseSectionType {
+  return (
+    value === "documents" ||
+    value === "videos" ||
+    value === "podcasts" ||
+    value === "podcast_episodes"
+  );
+}
+
+function parseVisibleTypes(searchParams: URLSearchParams): BrowseSectionType[] {
+  if (!searchParams.has("types")) {
+    const legacyType = searchParams.get("type");
+    if (legacyType && isBrowseSectionType(legacyType)) {
+      return [legacyType];
+    }
+    return [...BROWSE_TYPES];
+  }
+  const raw = searchParams.getAll("types").join(",");
+  if (raw === "") {
+    return [];
+  }
+  const seen = new Set<BrowseSectionType>();
+  for (const part of raw.split(",")) {
+    if (isBrowseSectionType(part) && !seen.has(part)) {
+      seen.add(part);
+    }
+  }
+  return seen.size > 0 ? BROWSE_TYPES.filter((type) => seen.has(type)) : [];
+}
+
+function buildBrowseHref(query: string, visibleTypes: BrowseSectionType[]): string {
+  const params = new URLSearchParams();
+  const trimmedQuery = query.trim();
+  if (trimmedQuery) {
+    params.set("q", trimmedQuery);
+  }
+  if (visibleTypes.length === 0) {
+    params.set("types", "");
+  } else if (visibleTypes.length < BROWSE_TYPES.length) {
+    params.set("types", visibleTypes.join(","));
+  }
+  const search = params.toString();
+  return search ? `/browse?${search}` : "/browse";
+}
+
+function formatEpisodeMeta(result: BrowseEpisodeResult): string {
+  const bits: string[] = [];
+  if (result.published_at) {
+    bits.push(`Published ${new Date(result.published_at).toLocaleDateString()}`);
+  }
+  if (result.duration_seconds) {
+    bits.push(`${Math.round(result.duration_seconds / 60)} min`);
+  }
+  return bits.length > 0 ? bits.join(" · ") : "Recent episode preview";
+}
+
+function normalizeSections(
+  data: BrowseResponse["data"],
+  requestedType: BrowseSectionType | null = null
+): Record<BrowseSectionType, BrowseSectionData> {
+  const nextSections = emptySections();
+  if (data.sections) {
+    for (const type of BROWSE_TYPES) {
+      const section = data.sections[type];
+      if (section) {
+        nextSections[type] = section;
+      }
+    }
+  }
+
+  if (!data.results || data.results.length === 0) {
+    return nextSections;
+  }
+
+  const targetType =
+    requestedType ?? (data.page_type && isBrowseSectionType(data.page_type) ? data.page_type : null);
+  if (targetType) {
+    nextSections[targetType] = {
+      results: data.results,
+      page: data.page ?? { has_more: false, next_cursor: null },
+    };
+    return nextSections;
+  }
+
+  const grouped = emptySections();
+  for (const result of data.results) {
+    grouped[result.type].results.push(result);
+  }
+  const populatedTypes = BROWSE_TYPES.filter((type) => grouped[type].results.length > 0);
+  if (populatedTypes.length === 1) {
+    grouped[populatedTypes[0]].page = data.page ?? { has_more: false, next_cursor: null };
+  }
+  return grouped;
+}
+
 export default function BrowsePaneBody() {
-  const [query, setQuery] = useState("");
-  const [resultType, setResultType] = useState<BrowseType>("all");
-  const [results, setResults] = useState<BrowseResult[]>([]);
+  const paneRouter = usePaneRouter();
+  const paneSearchParams = usePaneSearchParams();
+  const appliedQuery = normalizeBrowseQuery(paneSearchParams.get("q"));
+  const visibleTypes = parseVisibleTypes(paneSearchParams);
+
+  const [draftQuery, setDraftQuery] = useState(appliedQuery);
+  const [sections, setSections] = useState<Record<BrowseSectionType, BrowseSectionData>>(emptySections);
   const [searching, setSearching] = useState(false);
+  const [loadingMoreTypes, setLoadingMoreTypes] = useState<Set<BrowseSectionType>>(new Set());
+  const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [busyProviderIds, setBusyProviderIds] = useState<Set<string>>(new Set());
+  const [hasSearched, setHasSearched] = useState(Boolean(appliedQuery));
   const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);
   const [librariesLoading, setLibrariesLoading] = useState(false);
   const [librariesLoaded, setLibrariesLoaded] = useState(false);
 
-  const loadLibraries = useCallback(async () => {
+  useEffect(() => {
+    setDraftQuery(appliedQuery);
+  }, [appliedQuery]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!appliedQuery) {
+      setSections(emptySections());
+      setHasSearched(false);
+      setSearching(false);
+      setError(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setSearching(true);
+    setError(null);
+    void (async () => {
+      try {
+        const params = new URLSearchParams({
+          q: appliedQuery,
+          limit: "10",
+        });
+        const response = await apiFetch<BrowseResponse>(`/api/browse?${params.toString()}`);
+        if (cancelled) {
+          return;
+        }
+        setSections(normalizeSections(response.data));
+        setHasSearched(true);
+      } catch (searchError) {
+        if (cancelled) {
+          return;
+        }
+        setSections(emptySections());
+        setHasSearched(true);
+        if (isApiError(searchError)) {
+          setError(searchError.message);
+        } else {
+          setError("Browse failed");
+        }
+      } finally {
+        if (!cancelled) {
+          setSearching(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [appliedQuery]);
+
+  async function loadLibraries() {
     if (librariesLoading || librariesLoaded) {
       return;
     }
@@ -106,56 +315,21 @@ export default function BrowsePaneBody() {
     } finally {
       setLibrariesLoading(false);
     }
-  }, [librariesLoaded, librariesLoading]);
+  }
 
-  const search = useCallback(
-    async (cursor?: string) => {
-      const trimmed = query.trim();
-      if (!trimmed) {
-        return;
-      }
-      setSearching(true);
-      setError(null);
-      try {
-        const params = new URLSearchParams({
-          q: trimmed,
-          type: resultType,
-          limit: "20",
-        });
-        if (cursor) {
-          params.set("cursor", cursor);
-        }
-        const response = await apiFetch<BrowsePageResponse>(`/api/browse?${params.toString()}`);
-        const nextResults = response.data.results;
-        setResults((current) => (cursor ? [...current, ...nextResults] : nextResults));
-        setNextCursor(response.data.page.next_cursor);
-        setHasSearched(true);
-      } catch (searchError) {
-        if (isApiError(searchError)) {
-          setError(searchError.message);
-        } else {
-          setError("Browse failed");
-        }
-      } finally {
-        setSearching(false);
-      }
-    },
-    [query, resultType]
-  );
+  function updateVisibleTypes(nextVisibleTypes: BrowseSectionType[]) {
+    paneRouter.replace(buildBrowseHref(appliedQuery, nextVisibleTypes));
+  }
 
-  useEffect(() => {
-    setResults([]);
-    setNextCursor(null);
-    setHasSearched(false);
-    setError(null);
-  }, [query, resultType]);
-
-  const ensureAndOpenPodcast = useCallback(async (result: BrowsePodcastResult | BrowseEpisodeResult) => {
+  async function ensureAndOpenPodcast(result: BrowsePodcastResult | BrowseEpisodeResult) {
     if (result.podcast_id) {
       requestOpenInAppPane(`/podcasts/${result.podcast_id}`);
       return;
     }
-    setBusyProviderIds((current) => new Set(current).add(result.provider_podcast_id));
+
+    const busyKey = `podcast:${result.provider_podcast_id}`;
+    setBusyKeys((current) => new Set(current).add(busyKey));
+    setError(null);
     try {
       const response = await apiFetch<{ data: { podcast_id: string } }>("/api/podcasts/ensure", {
         method: "POST",
@@ -170,13 +344,26 @@ export default function BrowsePaneBody() {
         }),
       });
       const podcastId = response.data.podcast_id;
-      setResults((current) =>
-        current.map((row) =>
-          row.provider_podcast_id === result.provider_podcast_id
-            ? { ...row, podcast_id: podcastId }
-            : row
-        )
-      );
+      setSections((current) => ({
+        ...current,
+        podcasts: {
+          ...current.podcasts,
+          results: current.podcasts.results.map((row) =>
+            row.type === "podcasts" && row.provider_podcast_id === result.provider_podcast_id
+              ? { ...row, podcast_id: podcastId }
+              : row
+          ),
+        },
+        podcast_episodes: {
+          ...current.podcast_episodes,
+          results: current.podcast_episodes.results.map((row) =>
+            row.type === "podcast_episodes" &&
+            row.provider_podcast_id === result.provider_podcast_id
+              ? { ...row, podcast_id: podcastId }
+              : row
+          ),
+        },
+      }));
       requestOpenInAppPane(`/podcasts/${podcastId}`);
     } catch (openError) {
       if (isApiError(openError)) {
@@ -185,55 +372,156 @@ export default function BrowsePaneBody() {
         setError("Failed to open podcast");
       }
     } finally {
-      setBusyProviderIds((current) => {
+      setBusyKeys((current) => {
         const next = new Set(current);
-        next.delete(result.provider_podcast_id);
+        next.delete(busyKey);
         return next;
       });
     }
-  }, []);
+  }
 
-  const followPodcast = useCallback(
-    async (result: BrowsePodcastResult, libraryId: string | null = null) => {
-      setBusyProviderIds((current) => new Set(current).add(result.provider_podcast_id));
-      setError(null);
-      try {
-        const response = await apiFetch<{ data: { podcast_id: string } }>("/api/podcasts/subscriptions", {
-          method: "POST",
-          body: JSON.stringify({
-            provider_podcast_id: result.provider_podcast_id,
-            title: result.title,
-            author: result.author,
-            feed_url: result.feed_url,
-            website_url: result.website_url,
-            image_url: result.image_url,
-            description: result.description,
-            library_id: libraryId,
-          }),
-        });
-        setResults((current) =>
-          current.map((row) =>
+  async function followPodcast(result: BrowsePodcastResult, libraryId: string | null = null) {
+    const busyKey = `podcast:${result.provider_podcast_id}`;
+    setBusyKeys((current) => new Set(current).add(busyKey));
+    setError(null);
+    try {
+      const response = await apiFetch<{ data: { podcast_id: string } }>("/api/podcasts/subscriptions", {
+        method: "POST",
+        body: JSON.stringify({
+          provider_podcast_id: result.provider_podcast_id,
+          title: result.title,
+          author: result.author,
+          feed_url: result.feed_url,
+          website_url: result.website_url,
+          image_url: result.image_url,
+          description: result.description,
+          library_id: libraryId,
+        }),
+      });
+      setSections((current) => ({
+        ...current,
+        podcasts: {
+          ...current.podcasts,
+          results: current.podcasts.results.map((row) =>
             row.type === "podcasts" && row.provider_podcast_id === result.provider_podcast_id
               ? { ...row, podcast_id: response.data.podcast_id }
               : row
-          )
-        );
-      } catch (followError) {
-        if (isApiError(followError)) {
-          setError(followError.message);
-        } else {
-          setError("Failed to follow podcast");
-        }
-      } finally {
-        setBusyProviderIds((current) => {
-          const next = new Set(current);
-          next.delete(result.provider_podcast_id);
-          return next;
-        });
+          ),
+        },
+      }));
+    } catch (followError) {
+      if (isApiError(followError)) {
+        setError(followError.message);
+      } else {
+        setError("Failed to follow podcast");
       }
-    },
-    []
-  );
+    } finally {
+      setBusyKeys((current) => {
+        const next = new Set(current);
+        next.delete(busyKey);
+        return next;
+      });
+    }
+  }
+
+  async function addAndOpenResult(
+    result: BrowseDocumentResult | BrowseVideoResult,
+    libraryId: string | null = null
+  ) {
+    if (result.media_id) {
+      requestOpenInAppPane(`/media/${result.media_id}`);
+      return;
+    }
+
+    const busyKey =
+      result.type === "documents" ? `document:${result.url}` : `video:${result.provider_video_id}`;
+    setBusyKeys((current) => new Set(current).add(busyKey));
+    setError(null);
+    try {
+      const added = await addMediaFromUrl({
+        url: result.type === "documents" ? result.url : result.watch_url,
+        libraryId,
+      });
+      setSections((current) => ({
+        ...current,
+        [result.type]: {
+          ...current[result.type],
+          results: current[result.type].results.map((row) => {
+            if (result.type === "documents" && row.type === "documents" && row.url === result.url) {
+              return { ...row, media_id: added.mediaId };
+            }
+            if (
+              result.type === "videos" &&
+              row.type === "videos" &&
+              row.provider_video_id === result.provider_video_id
+            ) {
+              return { ...row, media_id: added.mediaId };
+            }
+            return row;
+          }),
+        },
+      }));
+      requestOpenInAppPane(`/media/${added.mediaId}`);
+    } catch (addError) {
+      if (isApiError(addError)) {
+        setError(addError.message);
+      } else if (addError instanceof Error && addError.message) {
+        setError(addError.message);
+      } else {
+        setError("Failed to add result");
+      }
+    } finally {
+      setBusyKeys((current) => {
+        const next = new Set(current);
+        next.delete(busyKey);
+        return next;
+      });
+    }
+  }
+
+  async function loadMore(sectionType: BrowseSectionType) {
+    const nextCursor = sections[sectionType].page.next_cursor;
+    if (!appliedQuery || !nextCursor) {
+      return;
+    }
+    setLoadingMoreTypes((current) => new Set(current).add(sectionType));
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        q: appliedQuery,
+        limit: "10",
+        page_type: sectionType,
+        cursor: nextCursor,
+      });
+      const response = await apiFetch<BrowseResponse>(`/api/browse?${params.toString()}`);
+      const nextSection = normalizeSections(response.data, sectionType)[sectionType];
+      if (!nextSection) {
+        throw new Error(`Missing ${sectionType} page`);
+      }
+      setSections((current) => ({
+        ...current,
+        [sectionType]: {
+          results: [...current[sectionType].results, ...nextSection.results],
+          page: nextSection.page,
+        },
+      }));
+    } catch (loadMoreError) {
+      if (isApiError(loadMoreError)) {
+        setError(loadMoreError.message);
+      } else {
+        setError("Failed to load more results");
+      }
+    } finally {
+      setLoadingMoreTypes((current) => {
+        const next = new Set(current);
+        next.delete(sectionType);
+        return next;
+      });
+    }
+  }
+
+  const visibleSections = visibleTypes.filter((type) => sections[type].results.length > 0);
+  const selectedTypeSet = new Set(visibleTypes);
 
   return (
     <SectionCard>
@@ -242,39 +530,51 @@ export default function BrowsePaneBody() {
           className={styles.searchForm}
           onSubmit={(event) => {
             event.preventDefault();
-            void search();
+            const trimmed = draftQuery.trim();
+            if (!trimmed) {
+              return;
+            }
+            paneRouter.replace(buildBrowseHref(trimmed, visibleTypes));
           }}
         >
           <div className={styles.searchRow}>
             <input
               className={styles.searchInput}
               type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              value={draftQuery}
+              onChange={(event) => setDraftQuery(event.target.value)}
               placeholder="Search for new podcasts, episodes, videos, or documents..."
               autoFocus
             />
             <button
               type="submit"
               className={styles.searchBtn}
-              disabled={searching || !query.trim()}
+              disabled={searching || !draftQuery.trim()}
             >
               {searching ? "..." : "Search"}
             </button>
           </div>
 
-          <div className={styles.filters} role="tablist" aria-label="Browse result type">
-            {FILTERS.map((filter) => (
-              <button
-                key={filter.value}
-                type="button"
-                role="tab"
-                aria-selected={resultType === filter.value}
-                className={resultType === filter.value ? styles.filterActive : styles.filter}
-                onClick={() => setResultType(filter.value)}
-              >
-                {filter.label}
-              </button>
+          <div className={styles.filters} aria-label="Browse visible result types">
+            {BROWSE_TYPES.map((type) => (
+              <label key={type} className={styles.filterOption}>
+                <input
+                  type="checkbox"
+                  checked={selectedTypeSet.has(type)}
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      updateVisibleTypes(
+                        [...visibleTypes, type].filter(
+                          (value, index, values) => values.indexOf(value) === index
+                        )
+                      );
+                      return;
+                    }
+                    updateVisibleTypes(visibleTypes.filter((value) => value !== type));
+                  }}
+                />
+                <span>{TYPE_LABELS[type]}</span>
+              </label>
             ))}
           </div>
         </form>
@@ -283,25 +583,246 @@ export default function BrowsePaneBody() {
 
         {!hasSearched ? (
           <StateMessage variant="info">
-            Search globally, then narrow the results by type. Browse finds things that are not already in your workspace.
+            Search once, then filter which result types stay visible. Browse finds things that are not already in your workspace.
           </StateMessage>
         ) : null}
 
         {searching ? <StateMessage variant="loading">Searching...</StateMessage> : null}
 
-        {hasSearched && !searching && results.length === 0 ? (
+        {hasSearched && !searching && visibleSections.length === 0 ? (
           <StateMessage variant="empty">
-            No browse results found for this query and type.
+            {visibleTypes.length === 0
+              ? "Select at least one visible result type."
+              : "No browse results found for this query."}
           </StateMessage>
         ) : null}
 
-        {results.length > 0 ? (
-          <div className={styles.resultRows}>
-            {results.map((result) => {
-              if (result.type === "podcasts") {
-                const busy = busyProviderIds.has(result.provider_podcast_id);
+        {visibleSections.map((sectionType) => (
+          <section key={sectionType} className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>{TYPE_LABELS[sectionType]}</h2>
+            </div>
+
+            <div className={styles.resultRows}>
+              {sections[sectionType].results.map((result) => {
+                if (result.type === "documents") {
+                  const busy = busyKeys.has(`document:${result.url}`);
+                  return (
+                    <div key={result.url} className={styles.row}>
+                      <button
+                        type="button"
+                        className={styles.primary}
+                        onClick={() => {
+                          void addAndOpenResult(result);
+                        }}
+                      >
+                        <div className={styles.leading}>
+                          <span className={styles.fallback} aria-hidden="true">
+                            <FileText size={18} />
+                          </span>
+                        </div>
+                        <div className={styles.copy}>
+                          <div className={styles.headingRow}>
+                            <span className={styles.typeBadge}>
+                              {result.document_kind === "pdf" ? "PDF" : "EPUB"}
+                            </span>
+                            {result.site_name ? (
+                              <span className={styles.meta}>{result.site_name}</span>
+                            ) : null}
+                          </div>
+                          <div className={styles.title}>{result.title}</div>
+                          <div className={styles.description}>
+                            {result.description || "Add this document to open it in the reader."}
+                          </div>
+                        </div>
+                      </button>
+                      <div className={styles.actions}>
+                        <button
+                          type="button"
+                          className={styles.primaryAction}
+                          disabled={busy}
+                          onClick={() => {
+                            void addAndOpenResult(result);
+                          }}
+                        >
+                          {result.media_id ? (busy ? "Opening..." : "Open") : busy ? "Adding..." : "Add"}
+                        </button>
+                        {!result.media_id ? (
+                          <LibraryTargetPicker
+                            label="Add + library"
+                            libraries={libraries}
+                            loading={librariesLoading}
+                            disabled={busy}
+                            onOpen={() => {
+                              void loadLibraries();
+                            }}
+                            onSelectLibrary={(libraryId) => {
+                              void addAndOpenResult(result, libraryId);
+                            }}
+                            emptyMessage="No non-default libraries available."
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (result.type === "videos") {
+                  const busy = busyKeys.has(`video:${result.provider_video_id}`);
+                  return (
+                    <div key={result.provider_video_id} className={styles.row}>
+                      <button
+                        type="button"
+                        className={styles.primary}
+                        onClick={() => {
+                          void addAndOpenResult(result);
+                        }}
+                      >
+                        <div className={styles.leading}>
+                          {result.thumbnail_url ? (
+                            <Image
+                              src={`/api/media/image?url=${encodeURIComponent(result.thumbnail_url)}`}
+                              alt=""
+                              width={56}
+                              height={56}
+                              className={styles.artwork}
+                              unoptimized
+                            />
+                          ) : (
+                            <span className={styles.fallback} aria-hidden="true">
+                              <Video size={18} />
+                            </span>
+                          )}
+                        </div>
+                        <div className={styles.copy}>
+                          <div className={styles.headingRow}>
+                            <span className={styles.typeBadge}>Video</span>
+                            {result.channel_title ? (
+                              <span className={styles.meta}>{result.channel_title}</span>
+                            ) : null}
+                          </div>
+                          <div className={styles.title}>{result.title}</div>
+                          <div className={styles.description}>
+                            {result.description || "Add this video to open it in the media reader."}
+                          </div>
+                        </div>
+                      </button>
+                      <div className={styles.actions}>
+                        <button
+                          type="button"
+                          className={styles.primaryAction}
+                          disabled={busy}
+                          onClick={() => {
+                            void addAndOpenResult(result);
+                          }}
+                        >
+                          {result.media_id ? (busy ? "Opening..." : "Open") : busy ? "Adding..." : "Add"}
+                        </button>
+                        {!result.media_id ? (
+                          <LibraryTargetPicker
+                            label="Add + library"
+                            libraries={libraries}
+                            loading={librariesLoading}
+                            disabled={busy}
+                            onOpen={() => {
+                              void loadLibraries();
+                            }}
+                            onSelectLibrary={(libraryId) => {
+                              void addAndOpenResult(result, libraryId);
+                            }}
+                            emptyMessage="No non-default libraries available."
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (result.type === "podcasts") {
+                  const busy = busyKeys.has(`podcast:${result.provider_podcast_id}`);
+                  return (
+                    <div key={result.provider_podcast_id} className={styles.row}>
+                      <button
+                        type="button"
+                        className={styles.primary}
+                        onClick={() => {
+                          void ensureAndOpenPodcast(result);
+                        }}
+                      >
+                        <div className={styles.leading}>
+                          {result.image_url ? (
+                            <Image
+                              src={`/api/media/image?url=${encodeURIComponent(result.image_url)}`}
+                              alt=""
+                              width={56}
+                              height={56}
+                              className={styles.artwork}
+                              unoptimized
+                            />
+                          ) : (
+                            <span className={styles.fallback} aria-hidden="true">
+                              <Mic size={18} />
+                            </span>
+                          )}
+                        </div>
+                        <div className={styles.copy}>
+                          <div className={styles.headingRow}>
+                            <span className={styles.typeBadge}>Podcast</span>
+                            {result.author ? <span className={styles.meta}>{result.author}</span> : null}
+                          </div>
+                          <div className={styles.title}>{result.title}</div>
+                          <div className={styles.description}>
+                            {result.description || "Open the show page or follow it from browse."}
+                          </div>
+                        </div>
+                      </button>
+                      <div className={styles.actions}>
+                        {result.podcast_id ? (
+                          <button
+                            type="button"
+                            className={styles.primaryAction}
+                            disabled={busy}
+                            onClick={() => {
+                              void ensureAndOpenPodcast(result);
+                            }}
+                          >
+                            {busy ? "Opening..." : "Open"}
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className={styles.primaryAction}
+                              disabled={busy}
+                              onClick={() => {
+                                void followPodcast(result);
+                              }}
+                            >
+                              {busy ? "Following..." : "Follow"}
+                            </button>
+                            <LibraryTargetPicker
+                              label="Follow + library"
+                              libraries={libraries}
+                              loading={librariesLoading}
+                              disabled={busy}
+                              onOpen={() => {
+                                void loadLibraries();
+                              }}
+                              onSelectLibrary={(libraryId) => {
+                                void followPodcast(result, libraryId);
+                              }}
+                              emptyMessage="No non-default libraries available."
+                            />
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                const busy = busyKeys.has(`podcast:${result.provider_podcast_id}`);
                 return (
-                  <div key={`podcast-${result.provider_podcast_id}`} className={styles.row}>
+                  <div key={result.provider_episode_id} className={styles.row}>
                     <button
                       type="button"
                       className={styles.primary}
@@ -310,9 +831,9 @@ export default function BrowsePaneBody() {
                       }}
                     >
                       <div className={styles.leading}>
-                        {result.image_url ? (
+                        {result.podcast_image_url ? (
                           <Image
-                            src={`/api/media/image?url=${encodeURIComponent(result.image_url)}`}
+                            src={`/api/media/image?url=${encodeURIComponent(result.podcast_image_url)}`}
                             alt=""
                             width={56}
                             height={56}
@@ -321,133 +842,52 @@ export default function BrowsePaneBody() {
                           />
                         ) : (
                           <span className={styles.fallback} aria-hidden="true">
-                            <Mic size={18} />
+                            <Play size={18} />
                           </span>
                         )}
                       </div>
                       <div className={styles.copy}>
                         <div className={styles.headingRow}>
-                          <span className={styles.typeBadge}>Podcast</span>
-                          {result.author ? <span className={styles.meta}>{result.author}</span> : null}
+                          <span className={styles.typeBadge}>Episode</span>
+                          <span className={styles.meta}>{result.podcast_title}</span>
                         </div>
                         <div className={styles.title}>{result.title}</div>
-                        <div className={styles.description}>
-                          {result.description || "Open the show page or follow it from browse."}
-                        </div>
+                        <div className={styles.description}>{formatEpisodeMeta(result)}</div>
                       </div>
                     </button>
                     <div className={styles.actions}>
-                      {result.podcast_id ? (
-                        <button
-                          type="button"
-                          className={styles.primaryAction}
-                          disabled={busy}
-                          onClick={() => {
-                            void ensureAndOpenPodcast(result);
-                          }}
-                        >
-                          {busy ? "Opening..." : "Open"}
-                        </button>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            className={styles.primaryAction}
-                            disabled={busy}
-                            onClick={() => {
-                              void followPodcast(result);
-                            }}
-                          >
-                            {busy ? "Following..." : "Follow"}
-                          </button>
-                          <LibraryTargetPicker
-                            label="Follow + library"
-                            libraries={libraries}
-                            loading={librariesLoading}
-                            disabled={busy}
-                            onOpen={() => {
-                              void loadLibraries();
-                            }}
-                            onSelectLibrary={(libraryId) => {
-                              void followPodcast(result, libraryId);
-                            }}
-                            emptyMessage="No non-default libraries available."
-                          />
-                        </>
-                      )}
+                      <button
+                        type="button"
+                        className={styles.primaryAction}
+                        disabled={busy}
+                        onClick={() => {
+                          void ensureAndOpenPodcast(result);
+                        }}
+                      >
+                        {busy ? "Opening..." : "Open show"}
+                      </button>
                     </div>
                   </div>
                 );
-              }
+              })}
+            </div>
 
-              const busy = busyProviderIds.has(result.provider_podcast_id);
-              return (
-                <div key={`episode-${result.provider_episode_id}`} className={styles.row}>
-                  <button
-                    type="button"
-                    className={styles.primary}
-                    onClick={() => {
-                      void ensureAndOpenPodcast(result);
-                    }}
-                  >
-                    <div className={styles.leading}>
-                      {result.podcast_image_url ? (
-                        <Image
-                          src={`/api/media/image?url=${encodeURIComponent(result.podcast_image_url)}`}
-                          alt=""
-                          width={56}
-                          height={56}
-                          className={styles.artwork}
-                          unoptimized
-                        />
-                      ) : (
-                        <span className={styles.fallback} aria-hidden="true">
-                          <Play size={18} />
-                        </span>
-                      )}
-                    </div>
-                    <div className={styles.copy}>
-                      <div className={styles.headingRow}>
-                        <span className={styles.typeBadge}>Episode</span>
-                        <span className={styles.meta}>{result.podcast_title}</span>
-                      </div>
-                      <div className={styles.title}>{result.title}</div>
-                      <div className={styles.description}>
-                        {result.published_at ? `Published ${new Date(result.published_at).toLocaleDateString()}` : "Recent episode preview"}
-                        {result.duration_seconds ? ` · ${Math.round(result.duration_seconds / 60)} min` : ""}
-                      </div>
-                    </div>
-                  </button>
-                  <div className={styles.actions}>
-                    <button
-                      type="button"
-                      className={styles.primaryAction}
-                      disabled={busy}
-                      onClick={() => {
-                        void ensureAndOpenPodcast(result);
-                      }}
-                    >
-                      {busy ? "Opening..." : "Open show"}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-
-        {nextCursor ? (
-          <button
-            type="button"
-            className={styles.loadMore}
-            onClick={() => {
-              void search(nextCursor);
-            }}
-            disabled={searching}
-          >
-            Load more
-          </button>
-        ) : null}
+            {sections[sectionType].page.next_cursor ? (
+              <button
+                type="button"
+                className={styles.loadMore}
+                onClick={() => {
+                  void loadMore(sectionType);
+                }}
+                disabled={loadingMoreTypes.has(sectionType)}
+              >
+                {loadingMoreTypes.has(sectionType)
+                  ? "Loading..."
+                  : `Load more ${TYPE_LABELS[sectionType].toLowerCase()}`}
+              </button>
+            ) : null}
+          </section>
+        ))}
       </div>
     </SectionCard>
   );

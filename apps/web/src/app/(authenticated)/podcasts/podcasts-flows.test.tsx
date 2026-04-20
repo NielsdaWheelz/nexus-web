@@ -475,6 +475,6 @@ describe("podcasts product flows", () => {
     expect(button).toBeInTheDocument();
 
     await user.click(button);
-    expect(mockRequestOpenInAppPane).toHaveBeenCalledWith("/browse?type=podcasts");
+    expect(mockRequestOpenInAppPane).toHaveBeenCalledWith("/browse?types=podcasts");
   });
 });

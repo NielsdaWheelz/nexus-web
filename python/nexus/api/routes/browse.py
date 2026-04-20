@@ -18,11 +18,11 @@ def browse_content(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     q: Annotated[str, Query(min_length=1)],
-    type: Annotated[
-        Literal["all", "podcasts", "podcast_episodes", "videos", "documents"],
+    limit: Annotated[int, Query(ge=1, le=20)] = 10,
+    page_type: Annotated[
+        Literal["documents", "videos", "podcasts", "podcast_episodes"] | None,
         Query(),
-    ] = "all",
-    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    ] = None,
     cursor: Annotated[str | None, Query()] = None,
 ) -> dict:
     """Browse globally discoverable acquisition results."""
@@ -31,8 +31,8 @@ def browse_content(
         browse_service.browse_content(
             db,
             q,
-            result_type=type,
             limit=limit,
+            page_type=page_type,
             cursor=cursor,
         )
     )

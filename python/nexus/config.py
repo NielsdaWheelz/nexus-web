@@ -75,6 +75,16 @@ class Settings(BaseSettings):
         default="https://api.podcastindex.org/api/1.0",
         alias="PODCAST_INDEX_BASE_URL",
     )
+    brave_search_api_key: str | None = Field(default=None, alias="BRAVE_SEARCH_API_KEY")
+    brave_search_base_url: str = Field(
+        default="https://api.search.brave.com/res/v1",
+        alias="BRAVE_SEARCH_BASE_URL",
+    )
+    youtube_data_api_key: str | None = Field(default=None, alias="YOUTUBE_DATA_API_KEY")
+    youtube_data_base_url: str = Field(
+        default="https://www.googleapis.com/youtube/v3",
+        alias="YOUTUBE_DATA_BASE_URL",
+    )
     deepgram_api_key: str | None = Field(default=None, alias="DEEPGRAM_API_KEY")
     deepgram_base_url: str = Field(default="https://api.deepgram.com", alias="DEEPGRAM_BASE_URL")
     deepgram_model: str = Field(default="nova-3", alias="DEEPGRAM_MODEL")
@@ -340,6 +350,17 @@ class Settings(BaseSettings):
                         ", ".join(missing_podcast_provider_settings),
                     )
                     self.podcasts_enabled = False
+        if self.nexus_env in (Environment.STAGING, Environment.PROD):
+            missing_browse_provider_settings: list[str] = []
+            if not self.brave_search_api_key:
+                missing_browse_provider_settings.append("BRAVE_SEARCH_API_KEY")
+            if not self.youtube_data_api_key:
+                missing_browse_provider_settings.append("YOUTUBE_DATA_API_KEY")
+            if missing_browse_provider_settings:
+                raise ValueError(
+                    "Browse providers are missing required credentials: "
+                    f"{', '.join(missing_browse_provider_settings)}"
+                )
         if self.ingest_reconcile_schedule_seconds < 1:
             raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 1.")
         if self.ingest_stale_extracting_seconds < 1:

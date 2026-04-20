@@ -25,6 +25,8 @@ def _make_settings(**overrides) -> Settings:
         "PODCASTS_ENABLED": True,
         "PODCAST_INDEX_API_KEY": "test-key",
         "PODCAST_INDEX_API_SECRET": "test-secret",
+        "BRAVE_SEARCH_API_KEY": "test-brave-key",
+        "YOUTUBE_DATA_API_KEY": "test-youtube-key",
     }
     defaults.update(overrides)
     return Settings(**defaults)
@@ -121,6 +123,24 @@ class TestPodcastProviderConfiguration:
         assert settings.podcasts_enabled is False
         assert settings.podcast_index_api_key is None
         assert settings.podcast_index_api_secret is None
+
+
+class TestBrowseProviderConfiguration:
+    def test_staging_requires_brave_search_credentials(self):
+        with pytest.raises(ValidationError, match="BRAVE_SEARCH_API_KEY"):
+            _make_settings(
+                NEXUS_ENV="staging",
+                NEXUS_INTERNAL_SECRET="secret",
+                BRAVE_SEARCH_API_KEY="",
+            )
+
+    def test_staging_requires_youtube_data_credentials(self):
+        with pytest.raises(ValidationError, match="YOUTUBE_DATA_API_KEY"):
+            _make_settings(
+                NEXUS_ENV="staging",
+                NEXUS_INTERNAL_SECRET="secret",
+                YOUTUBE_DATA_API_KEY="",
+            )
 
 
 class TestTranscriptEmbeddingConfiguration:

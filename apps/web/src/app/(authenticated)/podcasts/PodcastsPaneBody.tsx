@@ -603,7 +603,7 @@ export default function PodcastsPaneBody() {
               <button
                 type="button"
                 className={styles.primaryAction}
-                onClick={() => requestOpenInAppPane("/browse?type=podcasts")}
+                onClick={() => requestOpenInAppPane("/browse?types=podcasts")}
               >
                 Browse
               </button>
@@ -668,7 +668,7 @@ export default function PodcastsPaneBody() {
                   <button
                     type="button"
                     className={styles.inlineButton}
-                    onClick={() => requestOpenInAppPane("/browse?type=podcasts")}
+                    onClick={() => requestOpenInAppPane("/browse?types=podcasts")}
                   >
                     Browse podcasts
                   </button>

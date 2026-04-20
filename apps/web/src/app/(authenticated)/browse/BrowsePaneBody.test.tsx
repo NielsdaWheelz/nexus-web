@@ -3,7 +3,21 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import BrowsePaneBody from "./BrowsePaneBody";
 
-const mockRequestOpenInAppPane = vi.fn();
+let currentPaneSearch = "";
+
+const {
+  mockAddMediaFromUrl,
+  mockReplace,
+  mockRequestOpenInAppPane,
+} = vi.hoisted(() => ({
+  mockAddMediaFromUrl: vi.fn(),
+  mockReplace: vi.fn<(href: string) => void>(),
+  mockRequestOpenInAppPane: vi.fn(),
+}));
+
+vi.mock("@/lib/media/ingestionClient", () => ({
+  addMediaFromUrl: (...args: unknown[]) => mockAddMediaFromUrl(...args),
+}));
 
 vi.mock("@/lib/panes/openInAppPane", () => ({
   NEXUS_OPEN_PANE_EVENT: "nexus:open-pane",
@@ -15,6 +29,11 @@ vi.mock("@/lib/panes/openInAppPane", () => ({
   requestOpenInAppPane: (...args: unknown[]) => mockRequestOpenInAppPane(...args),
 }));
 
+vi.mock("@/lib/panes/paneRuntime", () => ({
+  usePaneRouter: () => ({ push: mockReplace, replace: mockReplace }),
+  usePaneSearchParams: () => new URLSearchParams(currentPaneSearch),
+}));
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -24,24 +43,30 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe("BrowsePaneBody", () => {
   beforeEach(() => {
-    mockRequestOpenInAppPane.mockReset();
+    currentPaneSearch = "";
     vi.restoreAllMocks();
+    mockAddMediaFromUrl.mockReset();
+    mockAddMediaFromUrl.mockResolvedValue({ mediaId: "media-1", duplicate: false });
+    mockReplace.mockReset();
+    mockRequestOpenInAppPane.mockReset();
+    mockReplace.mockImplementation((href: string) => {
+      currentPaneSearch = new URL(href, "http://localhost").search;
+    });
   });
 
-  it("renders one global search with type filters and no import controls", () => {
+  it("renders one global search with visible-section checkboxes and no import controls", () => {
     render(<BrowsePaneBody />);
 
     expect(
       screen.getByPlaceholderText("Search for new podcasts, episodes, videos, or documents...")
     ).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "All" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Podcasts" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Episodes" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Videos" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Documents" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Podcasts" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Episodes" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Videos" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Documents" })).toBeChecked();
     expect(
       screen.getByText(
-        "Search globally, then narrow the results by type. Browse finds things that are not already in your workspace."
+        "Search once, then filter which result types stay visible. Browse finds things that are not already in your workspace."
       )
     ).toBeInTheDocument();
 
@@ -49,40 +74,179 @@ describe("BrowsePaneBody", () => {
     expect(screen.queryByRole("button", { name: "Import OPML" })).not.toBeInTheDocument();
   });
 
-  it("searches and opens an existing podcast result", async () => {
+  it("hydrates q and visible types from the pane URL, groups sections, and does not refetch on checkbox toggles", async () => {
     const user = userEvent.setup();
+    currentPaneSearch = "?q=systems&types=podcasts,podcast_episodes";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/browse") {
         return jsonResponse({
           data: {
+            query: "systems",
+            sections: {
+              podcasts: {
+                results: [
+                  {
+                    type: "podcasts",
+                    podcast_id: "podcast-1",
+                    provider_podcast_id: "provider-1",
+                    title: "Systems Podcast",
+                    author: "Systems Team",
+                    feed_url: "https://feeds.example.com/systems.xml",
+                    website_url: null,
+                    image_url: null,
+                    description: "Practical systems interviews for engineering teams.",
+                  },
+                ],
+                page: {
+                  has_more: false,
+                  next_cursor: null,
+                },
+              },
+              podcast_episodes: {
+                results: [
+                  {
+                    type: "podcast_episodes",
+                    podcast_id: "podcast-1",
+                    provider_podcast_id: "provider-1",
+                    provider_episode_id: "episode-1",
+                    podcast_title: "Systems Podcast",
+                    podcast_author: "Systems Team",
+                    podcast_image_url: null,
+                    title: "Episode One",
+                    audio_url: "https://cdn.example.com/e1.mp3",
+                    published_at: "2026-04-10T00:00:00Z",
+                    duration_seconds: 1800,
+                    feed_url: "https://feeds.example.com/systems.xml",
+                    website_url: null,
+                    description: "Episode summary",
+                  },
+                ],
+                page: {
+                  has_more: false,
+                  next_cursor: null,
+                },
+              },
+              videos: {
+                results: [
+                  {
+                    type: "videos",
+                    provider_video_id: "video-1",
+                    title: "Systems Design Video",
+                    watch_url: "https://video.example.com/watch?v=1",
+                    channel_title: "Systems Channel",
+                    published_at: "2026-04-10T00:00:00Z",
+                    thumbnail_url: "https://video.example.com/thumb.jpg",
+                    description: "Video summary",
+                  },
+                ],
+                page: {
+                  has_more: false,
+                  next_cursor: null,
+                },
+              },
+              documents: {
+                results: [],
+                page: {
+                  has_more: false,
+                  next_cursor: null,
+                },
+              },
+            },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    const view = render(<BrowsePaneBody />);
+
+    expect(await screen.findByDisplayValue("systems")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Podcasts" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Episodes" })).toBeInTheDocument();
+    expect(screen.getAllByText("Systems Podcast")).toHaveLength(2);
+    expect(screen.getByText("Episode One")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Videos" })).not.toBeInTheDocument();
+    expect(
+      fetchSpy.mock.calls.some(([input]) => {
+        const url = new URL(String(input), "http://localhost");
+        return (
+          url.pathname === "/api/browse" &&
+          url.searchParams.get("q") === "systems" &&
+          url.searchParams.get("limit") === "10" &&
+          url.searchParams.get("page_type") === null
+        );
+      })
+    ).toBe(true);
+
+    await user.click(screen.getByRole("checkbox", { name: "Episodes" }));
+    view.rerender(<BrowsePaneBody />);
+
+    expect(screen.queryByText("Episode One")).not.toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(mockReplace).toHaveBeenCalledWith("/browse?q=systems&types=podcasts");
+  });
+
+  it("loads more for a single section with page_type and cursor", async () => {
+    const user = userEvent.setup();
+    currentPaneSearch = "?q=systems";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/browse" && !url.searchParams.has("cursor")) {
+        return jsonResponse({
+          data: {
+            query: "systems",
+            sections: {
+              podcasts: {
+                results: [
+                  {
+                    type: "podcasts",
+                    podcast_id: "podcast-1",
+                    provider_podcast_id: "provider-1",
+                    title: "Systems Podcast",
+                    author: "Systems Team",
+                    feed_url: "https://feeds.example.com/systems.xml",
+                    website_url: null,
+                    image_url: null,
+                    description: "Practical systems interviews for engineering teams.",
+                  },
+                ],
+                page: {
+                  has_more: true,
+                  next_cursor: "podcasts-cursor-1",
+                },
+              },
+              podcast_episodes: {
+                results: [],
+                page: { has_more: false, next_cursor: null },
+              },
+              videos: {
+                results: [],
+                page: { has_more: false, next_cursor: null },
+              },
+              documents: {
+                results: [],
+                page: { has_more: false, next_cursor: null },
+              },
+            },
+          },
+        });
+      }
+      if (url.pathname === "/api/browse" && url.searchParams.get("cursor") === "podcasts-cursor-1") {
+        return jsonResponse({
+          data: {
+            page_type: "podcasts",
             results: [
               {
                 type: "podcasts",
-                podcast_id: "podcast-1",
-                provider_podcast_id: "provider-1",
-                title: "Systems Podcast",
+                podcast_id: "podcast-2",
+                provider_podcast_id: "provider-2",
+                title: "Systems Podcast Two",
                 author: "Systems Team",
-                feed_url: "https://feeds.example.com/systems.xml",
+                feed_url: "https://feeds.example.com/systems-2.xml",
                 website_url: null,
                 image_url: null,
-                description: "Practical systems interviews for engineering teams.",
-              },
-              {
-                type: "podcast_episodes",
-                podcast_id: "podcast-1",
-                provider_podcast_id: "provider-1",
-                provider_episode_id: "episode-1",
-                podcast_title: "Systems Podcast",
-                podcast_author: "Systems Team",
-                podcast_image_url: null,
-                title: "Episode One",
-                audio_url: "https://cdn.example.com/e1.mp3",
-                published_at: "2026-04-10T00:00:00Z",
-                duration_seconds: 1800,
-                feed_url: "https://feeds.example.com/systems.xml",
-                website_url: null,
-                description: "Episode summary",
+                description: "A second podcast page.",
               },
             ],
             page: {
@@ -97,33 +261,26 @@ describe("BrowsePaneBody", () => {
 
     render(<BrowsePaneBody />);
 
-    await user.type(
-      screen.getByPlaceholderText("Search for new podcasts, episodes, videos, or documents..."),
-      "systems"
-    );
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("Systems Podcast")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load more podcasts" }));
 
-    expect(await screen.findByText("Practical systems interviews for engineering teams.")).toBeInTheDocument();
-    expect(screen.getByText("Episode One")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Open" }));
-
-    expect(mockRequestOpenInAppPane).toHaveBeenCalledWith("/podcasts/podcast-1");
+    expect(await screen.findByText("Systems Podcast Two")).toBeInTheDocument();
     expect(
       fetchSpy.mock.calls.some(([input]) => {
         const url = new URL(String(input), "http://localhost");
         return (
           url.pathname === "/api/browse" &&
           url.searchParams.get("q") === "systems" &&
-          url.searchParams.get("type") === "all" &&
-          url.searchParams.get("limit") === "20"
+          url.searchParams.get("page_type") === "podcasts" &&
+          url.searchParams.get("cursor") === "podcasts-cursor-1"
         );
       })
     ).toBe(true);
   });
 
-  it("follows a new podcast result from browse", async () => {
+  it("follows a new podcast result from grouped browse results", async () => {
     const user = userEvent.setup();
+    currentPaneSearch = "?q=new&types=podcasts";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/browse") {
@@ -157,12 +314,6 @@ describe("BrowsePaneBody", () => {
 
     render(<BrowsePaneBody />);
 
-    await user.type(
-      screen.getByPlaceholderText("Search for new podcasts, episodes, videos, or documents..."),
-      "new"
-    );
-    await user.click(screen.getByRole("button", { name: "Search" }));
-
     await screen.findByText("New Systems Podcast");
     await user.click(screen.getByRole("button", { name: "Follow" }));
 
@@ -180,5 +331,62 @@ describe("BrowsePaneBody", () => {
     });
 
     expect(await screen.findByRole("button", { name: "Open" })).toBeInTheDocument();
+  });
+
+  it("adds a video result to media and opens the media pane", async () => {
+    const user = userEvent.setup();
+    currentPaneSearch = "?q=video&types=videos";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/browse") {
+        return jsonResponse({
+          data: {
+            query: "video",
+            sections: {
+              documents: {
+                results: [],
+                page: { has_more: false, next_cursor: null },
+              },
+              videos: {
+                results: [
+                  {
+                    type: "videos",
+                    provider_video_id: "video-1",
+                    title: "Systems Design Video",
+                    watch_url: "https://video.example.com/watch?v=1",
+                    channel_title: "Systems Channel",
+                    published_at: "2026-04-10T00:00:00Z",
+                    thumbnail_url: "https://video.example.com/thumb.jpg",
+                    description: "Video summary",
+                  },
+                ],
+                page: { has_more: false, next_cursor: null },
+              },
+              podcasts: {
+                results: [],
+                page: { has_more: false, next_cursor: null },
+              },
+              podcast_episodes: {
+                results: [],
+                page: { has_more: false, next_cursor: null },
+              },
+            },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<BrowsePaneBody />);
+
+    await screen.findByText("Systems Design Video");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(mockAddMediaFromUrl).toHaveBeenCalledWith({
+      url: "https://video.example.com/watch?v=1",
+      libraryId: null,
+    });
+    expect(mockRequestOpenInAppPane).toHaveBeenCalledWith("/media/media-1");
   });
 });

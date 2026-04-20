@@ -12,7 +12,17 @@ describe("podcast BFF proxy routes", () => {
 
   it("GET /api/browse proxies to /browse", async () => {
     const { GET } = await import("../browse/route");
-    const req = new Request("http://localhost/api/browse?q=ai&type=all&limit=10");
+    const req = new Request("http://localhost/api/browse?q=ai&limit=10");
+    await GET(req);
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/browse");
+  });
+
+  it("GET /api/browse pagination params proxy to /browse", async () => {
+    const { GET } = await import("../browse/route");
+    const req = new Request(
+      "http://localhost/api/browse?q=ai&limit=10&page_type=documents&cursor=cursor-2"
+    );
     await GET(req);
     expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/browse");

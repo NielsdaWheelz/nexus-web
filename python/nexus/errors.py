@@ -108,6 +108,7 @@ class ApiErrorCode(str, Enum):
     E_ARCHIVE_UNSAFE = "E_ARCHIVE_UNSAFE"  # 400
 
     # S7 Podcast provider errors
+    E_BROWSE_PROVIDER_UNAVAILABLE = "E_BROWSE_PROVIDER_UNAVAILABLE"  # 503 upstream unavailable
     E_PODCAST_PROVIDER_UNAVAILABLE = "E_PODCAST_PROVIDER_UNAVAILABLE"  # 503 upstream unavailable
     E_TRANSCRIPTION_FAILED = "E_TRANSCRIPTION_FAILED"  # 502 provider returned error
     E_TRANSCRIPTION_TIMEOUT = "E_TRANSCRIPTION_TIMEOUT"  # 504 provider timed out
@@ -214,6 +215,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_CHAPTER_NOT_FOUND: 404,
     ApiErrorCode.E_ARCHIVE_UNSAFE: 400,
     # S7 podcast provider errors
+    ApiErrorCode.E_BROWSE_PROVIDER_UNAVAILABLE: 503,
     ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE: 503,
     ApiErrorCode.E_TRANSCRIPTION_FAILED: 502,
     ApiErrorCode.E_TRANSCRIPTION_TIMEOUT: 504,
