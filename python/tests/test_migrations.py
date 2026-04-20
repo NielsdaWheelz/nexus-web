@@ -4096,171 +4096,173 @@ class TestLibraryEntriesCutoverMigration:
         assert result.returncode == 0, f"upgrade 0046 failed: {result.stderr}"
 
         engine = create_engine(get_test_database_url())
-        user_id = uuid4()
-        default_library_id = uuid4()
-        shared_library_id = uuid4()
-        media_id = uuid4()
-        podcast_id = uuid4()
-        category_id = uuid4()
+        try:
+            user_id = uuid4()
+            default_library_id = uuid4()
+            shared_library_id = uuid4()
+            media_id = uuid4()
+            podcast_id = uuid4()
+            category_id = uuid4()
 
-        with Session(engine) as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text("""
-                    INSERT INTO libraries (id, owner_user_id, name, is_default)
-                    VALUES (:id, :owner_id, 'My Library', true)
-                """),
-                {"id": default_library_id, "owner_id": user_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO libraries (id, owner_user_id, name, is_default)
-                    VALUES (:id, :owner_id, 'Shared', false)
-                """),
-                {"id": shared_library_id, "owner_id": user_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO memberships (library_id, user_id, role)
-                    VALUES (:library_id, :user_id, 'admin')
-                """),
-                {"library_id": default_library_id, "user_id": user_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO memberships (library_id, user_id, role)
-                    VALUES (:library_id, :user_id, 'admin')
-                """),
-                {"library_id": shared_library_id, "user_id": user_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:id, 'web_article', 'Migrated Article', 'ready_for_reading')
-                """),
-                {"id": media_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO library_media (library_id, media_id, position)
-                    VALUES (:library_id, :media_id, 3)
-                """),
-                {"library_id": shared_library_id, "media_id": media_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO podcasts (
-                        id, provider, provider_podcast_id, title, feed_url
-                    ) VALUES (
-                        :id, 'podcast_index', 'migrated-podcast', 'Migrated Podcast', 'https://example.com/feed.xml'
-                    )
-                """),
-                {"id": podcast_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO podcast_subscription_categories (
-                        id, user_id, name, position, color
-                    ) VALUES (
-                        :id, :user_id, 'Sports', 0, '#123456'
-                    )
-                """),
-                {"id": category_id, "user_id": user_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO podcast_subscriptions (
-                        user_id, podcast_id, status, category_id
-                    ) VALUES (
-                        :user_id, :podcast_id, 'active', :category_id
-                    )
-                """),
-                {
-                    "user_id": user_id,
-                    "podcast_id": podcast_id,
-                    "category_id": category_id,
-                },
-            )
-            session.commit()
-
-        result = run_alembic_command("upgrade 0047")
-        assert result.returncode == 0, f"upgrade 0047 failed: {result.stderr}"
-
-        with Session(engine) as session:
-            media_entry = session.execute(
-                text("""
-                    SELECT library_id, media_id, podcast_id, position
-                    FROM library_entries
-                    WHERE library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": shared_library_id, "media_id": media_id},
-            ).fetchone()
-            category_library = session.execute(
-                text("""
-                    SELECT id, owner_user_id, name, color, is_default
-                    FROM libraries
-                    WHERE owner_user_id = :user_id
-                      AND name = 'Sports'
-                      AND is_default = false
-                """),
-                {"user_id": user_id},
-            ).fetchone()
-            assert category_library is not None
-            podcast_entry = session.execute(
-                text("""
-                    SELECT podcast_id
-                    FROM library_entries
-                    WHERE library_id = :library_id
-                      AND podcast_id = :podcast_id
-                """),
-                {"library_id": category_library[0], "podcast_id": podcast_id},
-            ).fetchone()
-            category_table = session.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM information_schema.tables
-                    WHERE table_name = 'podcast_subscription_categories'
-                    """
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text("""
+                        INSERT INTO libraries (id, owner_user_id, name, is_default)
+                        VALUES (:id, :owner_id, 'My Library', true)
+                    """),
+                    {"id": default_library_id, "owner_id": user_id},
                 )
-            ).fetchone()
-            category_column = session.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM information_schema.columns
-                    WHERE table_name = 'podcast_subscriptions'
-                      AND column_name = 'category_id'
-                    """
+                session.execute(
+                    text("""
+                        INSERT INTO libraries (id, owner_user_id, name, is_default)
+                        VALUES (:id, :owner_id, 'Shared', false)
+                    """),
+                    {"id": shared_library_id, "owner_id": user_id},
                 )
-            ).fetchone()
-            unsubscribe_mode_column = session.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM information_schema.columns
-                    WHERE table_name = 'podcast_subscriptions'
-                      AND column_name = 'unsubscribe_mode'
-                    """
+                session.execute(
+                    text("""
+                        INSERT INTO memberships (library_id, user_id, role)
+                        VALUES (:library_id, :user_id, 'admin')
+                    """),
+                    {"library_id": default_library_id, "user_id": user_id},
                 )
-            ).fetchone()
+                session.execute(
+                    text("""
+                        INSERT INTO memberships (library_id, user_id, role)
+                        VALUES (:library_id, :user_id, 'admin')
+                    """),
+                    {"library_id": shared_library_id, "user_id": user_id},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO media (id, kind, title, processing_status)
+                        VALUES (:id, 'web_article', 'Migrated Article', 'ready_for_reading')
+                    """),
+                    {"id": media_id},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO library_media (library_id, media_id, position)
+                        VALUES (:library_id, :media_id, 3)
+                    """),
+                    {"library_id": shared_library_id, "media_id": media_id},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO podcasts (
+                            id, provider, provider_podcast_id, title, feed_url
+                        ) VALUES (
+                            :id, 'podcast_index', 'migrated-podcast', 'Migrated Podcast', 'https://example.com/feed.xml'
+                        )
+                    """),
+                    {"id": podcast_id},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO podcast_subscription_categories (
+                            id, user_id, name, position, color
+                        ) VALUES (
+                            :id, :user_id, 'Sports', 0, '#123456'
+                        )
+                    """),
+                    {"id": category_id, "user_id": user_id},
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO podcast_subscriptions (
+                            user_id, podcast_id, status, category_id
+                        ) VALUES (
+                            :user_id, :podcast_id, 'active', :category_id
+                        )
+                    """),
+                    {
+                        "user_id": user_id,
+                        "podcast_id": podcast_id,
+                        "category_id": category_id,
+                    },
+                )
+                session.commit()
 
-        engine.dispose()
+            result = run_alembic_command("upgrade 0047")
+            assert result.returncode == 0, f"upgrade 0047 failed: {result.stderr}"
 
-        assert media_entry is not None
-        assert media_entry[0] == shared_library_id
-        assert media_entry[1] == media_id
-        assert media_entry[2] is None
-        assert media_entry[3] == 3
-        assert category_library[1] == user_id
-        assert category_library[2] == "Sports"
-        assert category_library[3] == "#123456"
-        assert category_library[4] is False
-        assert podcast_entry is not None
-        assert category_table is None
-        assert category_column is None
-        assert unsubscribe_mode_column is None
+            with Session(engine) as session:
+                media_entry = session.execute(
+                    text("""
+                        SELECT library_id, media_id, podcast_id, position
+                        FROM library_entries
+                        WHERE library_id = :library_id
+                          AND media_id = :media_id
+                    """),
+                    {"library_id": shared_library_id, "media_id": media_id},
+                ).fetchone()
+                category_library = session.execute(
+                    text("""
+                        SELECT id, owner_user_id, name, color, is_default
+                        FROM libraries
+                        WHERE owner_user_id = :user_id
+                          AND name = 'Sports'
+                          AND is_default = false
+                    """),
+                    {"user_id": user_id},
+                ).fetchone()
+                assert category_library is not None
+                podcast_entry = session.execute(
+                    text("""
+                        SELECT podcast_id
+                        FROM library_entries
+                        WHERE library_id = :library_id
+                          AND podcast_id = :podcast_id
+                    """),
+                    {"library_id": category_library[0], "podcast_id": podcast_id},
+                ).fetchone()
+                category_table = session.execute(
+                    text(
+                        """
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_name = 'podcast_subscription_categories'
+                        """
+                    )
+                ).fetchone()
+                category_column = session.execute(
+                    text(
+                        """
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_name = 'podcast_subscriptions'
+                          AND column_name = 'category_id'
+                        """
+                    )
+                ).fetchone()
+                unsubscribe_mode_column = session.execute(
+                    text(
+                        """
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_name = 'podcast_subscriptions'
+                          AND column_name = 'unsubscribe_mode'
+                        """
+                    )
+                ).fetchone()
+
+            assert media_entry is not None
+            assert media_entry[0] == shared_library_id
+            assert media_entry[1] == media_id
+            assert media_entry[2] is None
+            assert media_entry[3] == 3
+            assert category_library[1] == user_id
+            assert category_library[2] == "Sports"
+            assert category_library[3] == "#123456"
+            assert category_library[4] is False
+            assert podcast_entry is not None
+            assert category_table is None
+            assert category_column is None
+            assert unsubscribe_mode_column is None
+        finally:
+            engine.dispose()
+            run_alembic_command("upgrade head")
 
 
 class TestPodcastEpisodeChapterMigration:
@@ -4360,3 +4362,70 @@ class TestPodcastEpisodeShowNotesMigration:
         assert column_contract["description_text"][1] == "YES", (
             "description_text should be nullable for episodes with no show notes"
         )
+
+
+class TestProjectGutenbergCatalogMigration:
+    """Schema assertions for the local Project Gutenberg catalog mirror."""
+
+    def test_head_contains_project_gutenberg_catalog_table_contract(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            columns = session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'project_gutenberg_catalog'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
+            constraints = session.execute(
+                text(
+                    """
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'project_gutenberg_catalog'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'project_gutenberg_catalog'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+
+        column_names = {row[0] for row in columns}
+        assert {
+            "ebook_id",
+            "title",
+            "gutenberg_type",
+            "issued",
+            "language",
+            "authors",
+            "subjects",
+            "locc",
+            "bookshelves",
+            "copyright_status",
+            "download_count",
+            "raw_metadata",
+            "synced_at",
+            "created_at",
+            "updated_at",
+        }.issubset(column_names), (
+            "project_gutenberg_catalog must persist normalized catalog fields plus raw metadata; "
+            f"got columns {column_names}"
+        )
+
+        constraint_names = {row[0] for row in constraints}
+        assert "ck_project_gutenberg_catalog_ebook_id_positive" in constraint_names
+        assert "project_gutenberg_catalog_pkey" in constraint_names
+
+        index_names = {row[0] for row in indexes}
+        assert "ix_project_gutenberg_catalog_language" in index_names
+        assert "ix_project_gutenberg_catalog_title" in index_names

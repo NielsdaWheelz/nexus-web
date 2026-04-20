@@ -20,6 +20,7 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "podcast_reindex_semantic_job",
         "podcast_active_subscription_poll_job",
         "reconcile_stale_ingest_media_job",
+        "sync_gutenberg_catalog_job",
         "backfill_default_library_closure_job",
     }
     actual_kinds = set(get_default_registry().keys())

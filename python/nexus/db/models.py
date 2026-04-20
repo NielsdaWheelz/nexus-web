@@ -513,6 +513,50 @@ class MediaAuthor(Base):
     media: Mapped["Media"] = relationship("Media", back_populates="authors")
 
 
+class ProjectGutenbergCatalogEntry(Base):
+    """Local mirror of the Project Gutenberg catalog metadata feed."""
+
+    __tablename__ = "project_gutenberg_catalog"
+
+    ebook_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    gutenberg_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    issued: Mapped[date | None] = mapped_column(Date, nullable=True)
+    language: Mapped[str | None] = mapped_column(Text, nullable=True)
+    authors: Mapped[str | None] = mapped_column(Text, nullable=True)
+    subjects: Mapped[str | None] = mapped_column(Text, nullable=True)
+    locc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bookshelves: Mapped[str | None] = mapped_column(Text, nullable=True)
+    copyright_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    download_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_metadata: Mapped[dict[str, str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    synced_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("ebook_id > 0", name="ck_project_gutenberg_catalog_ebook_id_positive"),
+        Index("ix_project_gutenberg_catalog_language", "language"),
+        Index("ix_project_gutenberg_catalog_title", "title"),
+    )
+
+
 class MediaFile(Base):
     """Media file storage metadata (0..1 per media).
 

@@ -26,8 +26,10 @@ type BrowseDocumentResult = {
   title: string;
   description: string | null;
   url: string;
-  document_kind: "pdf" | "epub";
+  document_kind: "pdf" | "epub" | "web_article";
   site_name: string | null;
+  source_label?: string | null;
+  source_type?: string | null;
   media_id?: string | null;
 };
 
@@ -181,6 +183,54 @@ function formatEpisodeMeta(result: BrowseEpisodeResult): string {
     bits.push(`${Math.round(result.duration_seconds / 60)} min`);
   }
   return bits.length > 0 ? bits.join(" · ") : "Recent episode preview";
+}
+
+function getDocumentSourceLabel(result: BrowseDocumentResult): string | null {
+  if (typeof result.source_label === "string" && result.source_label.trim()) {
+    return result.source_label.trim();
+  }
+  if (result.source_type === "nexus") {
+    return "Nexus";
+  }
+  if (result.source_type === "project_gutenberg") {
+    return "Project Gutenberg";
+  }
+  if (result.site_name && result.site_name.trim()) {
+    return result.site_name.trim();
+  }
+  return null;
+}
+
+function isProjectGutenbergDocument(result: BrowseDocumentResult): boolean {
+  if (result.source_type === "project_gutenberg") {
+    return true;
+  }
+  const sourceLabel = getDocumentSourceLabel(result);
+  return sourceLabel === "Project Gutenberg";
+}
+
+function getDocumentActionLabel(result: BrowseDocumentResult, busy: boolean): string {
+  if (result.media_id) {
+    return busy ? "Opening..." : "Open";
+  }
+  if (isProjectGutenbergDocument(result)) {
+    return busy ? "Importing..." : "Import";
+  }
+  return busy ? "Adding..." : "Add";
+}
+
+function getDocumentLibraryActionLabel(result: BrowseDocumentResult): string {
+  return isProjectGutenbergDocument(result) ? "Import + library" : "Add + library";
+}
+
+function getDocumentFallbackDescription(result: BrowseDocumentResult): string {
+  if (result.media_id) {
+    return "Open this document in the reader.";
+  }
+  if (isProjectGutenbergDocument(result)) {
+    return "Import this Project Gutenberg document into the reader.";
+  }
+  return "Add this document to open it in the reader.";
 }
 
 function normalizeSections(
@@ -607,6 +657,7 @@ export default function BrowsePaneBody() {
               {sections[sectionType].results.map((result) => {
                 if (result.type === "documents") {
                   const busy = busyKeys.has(`document:${result.url}`);
+                  const sourceLabel = getDocumentSourceLabel(result);
                   return (
                     <div key={result.url} className={styles.row}>
                       <button
@@ -624,15 +675,19 @@ export default function BrowsePaneBody() {
                         <div className={styles.copy}>
                           <div className={styles.headingRow}>
                             <span className={styles.typeBadge}>
-                              {result.document_kind === "pdf" ? "PDF" : "EPUB"}
+                              {result.document_kind === "pdf"
+                                ? "PDF"
+                                : result.document_kind === "epub"
+                                  ? "EPUB"
+                                  : "Article"}
                             </span>
-                            {result.site_name ? (
-                              <span className={styles.meta}>{result.site_name}</span>
+                            {sourceLabel ? (
+                              <span className={styles.typeBadge}>{sourceLabel}</span>
                             ) : null}
                           </div>
                           <div className={styles.title}>{result.title}</div>
                           <div className={styles.description}>
-                            {result.description || "Add this document to open it in the reader."}
+                            {result.description || getDocumentFallbackDescription(result)}
                           </div>
                         </div>
                       </button>
@@ -645,11 +700,11 @@ export default function BrowsePaneBody() {
                             void addAndOpenResult(result);
                           }}
                         >
-                          {result.media_id ? (busy ? "Opening..." : "Open") : busy ? "Adding..." : "Add"}
+                          {getDocumentActionLabel(result, busy)}
                         </button>
                         {!result.media_id ? (
                           <LibraryTargetPicker
-                            label="Add + library"
+                            label={getDocumentLibraryActionLabel(result)}
                             libraries={libraries}
                             loading={librariesLoading}
                             disabled={busy}

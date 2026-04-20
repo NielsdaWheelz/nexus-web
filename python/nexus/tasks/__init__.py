@@ -11,6 +11,7 @@ from nexus.tasks.podcast_reindex_semantic import podcast_reindex_semantic_job
 from nexus.tasks.podcast_sync_subscription import podcast_sync_subscription_job
 from nexus.tasks.podcast_transcribe_episode import podcast_transcribe_episode_job
 from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
+from nexus.tasks.sync_gutenberg_catalog import sync_gutenberg_catalog_job
 
 __all__ = [
     "ingest_web_article",
@@ -24,4 +25,5 @@ __all__ = [
     "podcast_sync_subscription_job",
     "podcast_transcribe_episode_job",
     "reconcile_stale_ingest_media_job",
+    "sync_gutenberg_catalog_job",
 ]

@@ -333,6 +333,85 @@ describe("BrowsePaneBody", () => {
     expect(await screen.findByRole("button", { name: "Open" })).toBeInTheDocument();
   });
 
+  it("keeps documents in one section and splits Nexus open vs Gutenberg import actions", async () => {
+    const user = userEvent.setup();
+    currentPaneSearch = "?q=docs&types=documents";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/browse") {
+        return jsonResponse({
+          data: {
+            query: "docs",
+            sections: {
+              documents: {
+                results: [
+                  {
+                    type: "documents",
+                    title: "Imported Nexus PDF",
+                    description: "Already in the workspace.",
+                    url: "https://nexus.example.com/imported.pdf",
+                    document_kind: "pdf",
+                    site_name: "nexus.example.com",
+                    source_label: "Nexus",
+                    source_type: "nexus",
+                    media_id: "media-existing",
+                  },
+                  {
+                    type: "documents",
+                    title: "Pride and Prejudice",
+                    description: "Public domain EPUB",
+                    url: "https://www.gutenberg.org/ebooks/1342.epub.noimages",
+                    document_kind: "epub",
+                    site_name: "www.gutenberg.org",
+                    source_label: "Project Gutenberg",
+                    source_type: "project_gutenberg",
+                    media_id: null,
+                  },
+                ],
+                page: { has_more: false, next_cursor: null },
+              },
+              videos: {
+                results: [],
+                page: { has_more: false, next_cursor: null },
+              },
+              podcasts: {
+                results: [],
+                page: { has_more: false, next_cursor: null },
+              },
+              podcast_episodes: {
+                results: [],
+                page: { has_more: false, next_cursor: null },
+              },
+            },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<BrowsePaneBody />);
+
+    expect(await screen.findByRole("heading", { name: "Documents" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Videos" })).not.toBeInTheDocument();
+    expect(screen.getByText("Imported Nexus PDF")).toBeInTheDocument();
+    expect(screen.getByText("Pride and Prejudice")).toBeInTheDocument();
+    expect(screen.getByText("Nexus")).toBeInTheDocument();
+    expect(screen.getByText("Project Gutenberg")).toBeInTheDocument();
+
+    const openButtons = screen.getAllByRole("button", { name: "Open" });
+    expect(openButtons).toHaveLength(1);
+    await user.click(openButtons[0]);
+    expect(mockRequestOpenInAppPane).toHaveBeenCalledWith("/media/media-existing");
+    expect(mockAddMediaFromUrl).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    expect(mockAddMediaFromUrl).toHaveBeenCalledWith({
+      url: "https://www.gutenberg.org/ebooks/1342.epub.noimages",
+      libraryId: null,
+    });
+    expect(mockRequestOpenInAppPane).toHaveBeenCalledWith("/media/media-1");
+  });
+
   it("adds a video result to media and opens the media pane", async () => {
     const user = userEvent.setup();
     currentPaneSearch = "?q=video&types=videos";

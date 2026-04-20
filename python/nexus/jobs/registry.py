@@ -141,6 +141,14 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             lease_seconds=300,
             periodic_interval_seconds=int(settings.ingest_reconcile_schedule_seconds),
         ),
+        "sync_gutenberg_catalog_job": JobDefinition(
+            kind="sync_gutenberg_catalog_job",
+            handler=_run_sync_gutenberg_catalog,
+            max_attempts=1,
+            retry_delays_seconds=(0,),
+            lease_seconds=7200,
+            periodic_interval_seconds=86400,
+        ),
         "backfill_default_library_closure_job": JobDefinition(
             kind="backfill_default_library_closure_job",
             handler=_run_backfill_default_library_closure,
@@ -246,6 +254,15 @@ def _run_reconcile_stale_ingest_media(*, payload: Mapping[str, Any]) -> Mapping[
 
     return reconcile_stale_ingest_media_job(
         request_id=_optional_str(payload.get("request_id")),
+    )
+
+
+def _run_sync_gutenberg_catalog(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.sync_gutenberg_catalog import sync_gutenberg_catalog_job
+
+    return sync_gutenberg_catalog_job(
+        request_id=_optional_str(payload.get("request_id")),
+        scheduler_identity=_optional_str(payload.get("scheduler_identity")),
     )
 
 

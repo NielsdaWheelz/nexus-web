@@ -7,14 +7,17 @@ import json
 import time
 from typing import Any, Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import httpx
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.services import podcasts as podcast_service
+from nexus.services.search import visible_media_ids_cte_sql
 
 logger = get_logger(__name__)
 
@@ -32,12 +35,14 @@ _BROWSE_PROVIDER_MAX_ATTEMPTS = 3
 _BROWSE_PROVIDER_RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 _BROWSE_PROVIDER_BACKOFF_SECONDS = (0.25, 0.75, 1.5)
 _BROWSE_PROVIDER_TIMEOUT = 15.0
-_BRAVE_WEB_RESULT_MAX_OFFSET = 9
+_PROJECT_GUTENBERG_LANDING_URL = "https://www.gutenberg.org/ebooks/{ebook_id}"
+_PROJECT_GUTENBERG_EPUB_IMPORT_URL = "https://www.gutenberg.org/ebooks/{ebook_id}.epub.noimages"
 _YOUTUBE_WATCH_URL = "https://www.youtube.com/watch?v={video_id}"
 
 
 def browse_content(
     db: Session,
+    viewer_id: UUID,
     query: str,
     *,
     limit: int = DEFAULT_BROWSE_LIMIT,
@@ -64,6 +69,7 @@ def browse_content(
             "sections": {
                 page_type: _browse_section(
                     db,
+                    viewer_id,
                     trimmed_query,
                     page_type=page_type,
                     limit=limit,
@@ -81,6 +87,7 @@ def browse_content(
     for section_type in BROWSE_SECTION_TYPES:
         sections[section_type] = _browse_section(
             db,
+            viewer_id,
             trimmed_query,
             page_type=section_type,
             limit=limit,
@@ -92,6 +99,7 @@ def browse_content(
 
 def _browse_section(
     db: Session,
+    viewer_id: UUID,
     query: str,
     *,
     page_type: BrowseSectionType,
@@ -100,7 +108,7 @@ def _browse_section(
     podcast_rows: list[Any] | None = None,
 ) -> dict[str, object]:
     if page_type == "documents":
-        return _browse_documents(query, limit=limit, cursor=cursor)
+        return _browse_documents(db, viewer_id, query, limit=limit, cursor=cursor)
     if page_type == "videos":
         return _browse_videos(query, limit=limit, cursor=cursor)
     if page_type == "podcasts":
@@ -120,18 +128,108 @@ def _browse_section(
     )
 
 
-def _browse_documents(query: str, *, limit: int, cursor: str | None) -> dict[str, object]:
-    page_index = 0
+def _browse_documents(
+    db: Session,
+    viewer_id: UUID,
+    query: str,
+    *,
+    limit: int,
+    cursor: str | None,
+) -> dict[str, object]:
+    phase = "nexus"
+    nexus_offset = 0
+    gutenberg_offset = 0
     if cursor is not None:
-        page_index = int(_decode_browse_cursor(cursor, query, "documents").get("offset", 0))
+        decoded = _decode_browse_cursor(cursor, query, "documents")
+        try:
+            phase = str(decoded.get("phase") or "nexus")
+            if phase not in {"nexus", "gutenberg"}:
+                raise ValueError("Invalid document browse phase")
+            nexus_offset = int(decoded.get("nexus_offset", 0))
+            gutenberg_offset = int(decoded.get("gutenberg_offset", 0))
+            if nexus_offset < 0 or gutenberg_offset < 0:
+                raise ValueError("Negative document browse offsets are invalid")
+        except Exception:
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
 
-    rows = _search_document_rows(query, limit=limit, page_index=page_index)
-    has_more = len(rows) == limit and page_index < _BRAVE_WEB_RESULT_MAX_OFFSET
+    if phase == "gutenberg":
+        gutenberg_rows = _search_project_gutenberg_rows(
+            db,
+            query,
+            limit=limit + 1,
+            offset=gutenberg_offset,
+        )
+        page_rows = gutenberg_rows[:limit]
+        has_more = len(gutenberg_rows) > limit
+        next_cursor = (
+            _encode_browse_cursor(
+                query,
+                "documents",
+                {
+                    "phase": "gutenberg",
+                    "gutenberg_offset": gutenberg_offset + limit,
+                },
+            )
+            if has_more
+            else None
+        )
+        return {
+            "results": page_rows,
+            "page": {
+                "has_more": has_more,
+                "next_cursor": next_cursor,
+            },
+        }
+
+    nexus_rows = _search_nexus_document_rows(
+        db,
+        viewer_id,
+        query,
+        limit=limit + 1,
+        offset=nexus_offset,
+    )
+    if len(nexus_rows) > limit:
+        page_rows = nexus_rows[:limit]
+        next_cursor = _encode_browse_cursor(
+            query,
+            "documents",
+            {
+                "phase": "nexus",
+                "nexus_offset": nexus_offset + limit,
+            },
+        )
+        return {
+            "results": page_rows,
+            "page": {
+                "has_more": True,
+                "next_cursor": next_cursor,
+            },
+        }
+
+    page_rows = list(nexus_rows)
+    remaining = limit - len(page_rows)
+    gutenberg_rows = _search_project_gutenberg_rows(
+        db,
+        query,
+        limit=remaining + 1,
+        offset=0,
+    )
+    page_rows.extend(gutenberg_rows[:remaining])
+    has_more = len(gutenberg_rows) > remaining
     next_cursor = (
-        _encode_browse_cursor(query, "documents", {"offset": page_index + 1}) if has_more else None
+        _encode_browse_cursor(
+            query,
+            "documents",
+            {
+                "phase": "gutenberg",
+                "gutenberg_offset": remaining,
+            },
+        )
+        if has_more
+        else None
     )
     return {
-        "results": rows,
+        "results": page_rows,
         "page": {
             "has_more": has_more,
             "next_cursor": next_cursor,
@@ -237,51 +335,192 @@ def _browse_podcast_episodes(
     }
 
 
-def _search_document_rows(query: str, *, limit: int, page_index: int) -> list[dict[str, object]]:
-    settings = get_settings()
-    if not settings.brave_search_api_key:
-        raise ApiError(
-            ApiErrorCode.E_BROWSE_PROVIDER_UNAVAILABLE,
-            "Browse document provider credentials are not configured",
+def _search_nexus_document_rows(
+    db: Session,
+    viewer_id: UUID,
+    query: str,
+    *,
+    limit: int,
+    offset: int,
+) -> list[dict[str, object]]:
+    raw_rows = db.execute(
+        text(
+            f"""
+            WITH
+                visible_media AS ({visible_media_ids_cte_sql()}),
+                title_hits AS (
+                    SELECT
+                        m.id AS media_id,
+                        ts_rank_cd(m.title_tsv, websearch_to_tsquery('english', :query)) * 1.2 AS score,
+                        NULL::text AS snippet
+                    FROM media m
+                    JOIN visible_media vm ON vm.media_id = m.id
+                    WHERE m.kind IN ('web_article', 'epub', 'pdf')
+                      AND m.title_tsv @@ websearch_to_tsquery('english', :query)
+                ),
+                fragment_hits AS (
+                    SELECT
+                        m.id AS media_id,
+                        ts_rank_cd(f.canonical_text_tsv, websearch_to_tsquery('english', :query)) AS score,
+                        ts_headline(
+                            'english',
+                            f.canonical_text,
+                            websearch_to_tsquery('english', :query),
+                            'StartSel=, StopSel=, MaxWords=24, MinWords=8, MaxFragments=1'
+                        ) AS snippet
+                    FROM fragments f
+                    JOIN media m ON m.id = f.media_id
+                    JOIN visible_media vm ON vm.media_id = m.id
+                    WHERE m.kind IN ('web_article', 'epub', 'pdf')
+                      AND f.canonical_text_tsv @@ websearch_to_tsquery('english', :query)
+                ),
+                candidate_hits AS (
+                    SELECT * FROM title_hits
+                    UNION ALL
+                    SELECT * FROM fragment_hits
+                ),
+                best_hits AS (
+                    SELECT DISTINCT ON (media_id)
+                        media_id,
+                        score,
+                        snippet
+                    FROM candidate_hits
+                    ORDER BY media_id, score DESC
+                )
+            SELECT
+                m.id,
+                m.kind,
+                m.title,
+                m.description,
+                m.requested_url,
+                m.canonical_source_url,
+                best_hits.snippet
+            FROM best_hits
+            JOIN media m ON m.id = best_hits.media_id
+            ORDER BY best_hits.score DESC, m.updated_at DESC, m.id DESC
+            OFFSET :offset
+            LIMIT :limit
+            """
+        ),
+        {
+            "viewer_id": viewer_id,
+            "query": query,
+            "offset": offset,
+            "limit": limit,
+        },
+    ).mappings()
+    results: list[dict[str, object]] = []
+    for row in raw_rows:
+        source_url = _string_or_none(row["requested_url"]) or _string_or_none(
+            row["canonical_source_url"]
         )
-
-    payload = _get_json(
-        f"{settings.brave_search_base_url.rstrip('/')}/web/search",
-        headers={
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip",
-            "X-Subscription-Token": settings.brave_search_api_key,
-        },
-        params={
-            "q": f"{query} filetype:pdf OR {query} ext:epub",
-            "count": limit,
-            "offset": page_index,
-            "result_filter": "web",
-            "operators": "true",
-        },
-        provider_name="brave_search_documents",
-    )
-    web_results = payload.get("web", {})
-    candidates = web_results.get("results", []) if isinstance(web_results, dict) else []
-    rows: list[dict[str, object]] = []
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
-        url = str(candidate.get("url") or "").strip()
-        document_kind = _document_kind_from_url(url)
-        if document_kind is None:
-            continue
-        rows.append(
+        media_id = str(row["id"])
+        document_kind = str(row["kind"])
+        results.append(
             {
                 "type": "documents",
-                "title": str(candidate.get("title") or "Untitled document"),
-                "description": _string_or_none(candidate.get("description")),
-                "url": url,
+                "title": str(row["title"] or "Untitled document"),
+                "description": _string_or_none(row["snippet"])
+                or _string_or_none(row["description"]),
+                "url": source_url or f"nexus://media/{media_id}",
                 "document_kind": document_kind,
-                "site_name": _site_name_from_url(url),
+                "site_name": _site_name_from_url(source_url) if source_url else None,
+                "source_label": "Nexus",
+                "source_type": "nexus",
+                "media_id": media_id,
             }
         )
-    return rows
+    return results
+
+
+def _search_project_gutenberg_rows(
+    db: Session,
+    query: str,
+    *,
+    limit: int,
+    offset: int,
+) -> list[dict[str, object]]:
+    raw_rows = db.execute(
+        text(
+            """
+            WITH search_hits AS (
+                SELECT
+                    ebook_id,
+                    title,
+                    authors,
+                    subjects,
+                    bookshelves,
+                    download_count,
+                    ts_rank_cd(
+                        to_tsvector(
+                            'english',
+                            concat_ws(
+                                ' ',
+                                coalesce(title, ''),
+                                coalesce(authors, ''),
+                                coalesce(subjects, ''),
+                                coalesce(bookshelves, '')
+                            )
+                        ),
+                        websearch_to_tsquery('english', :query)
+                    ) AS score
+                FROM project_gutenberg_catalog
+                WHERE to_tsvector(
+                        'english',
+                        concat_ws(
+                            ' ',
+                            coalesce(title, ''),
+                            coalesce(authors, ''),
+                            coalesce(subjects, ''),
+                            coalesce(bookshelves, '')
+                        )
+                    ) @@ websearch_to_tsquery('english', :query)
+            )
+            SELECT
+                ebook_id,
+                title,
+                authors,
+                subjects,
+                bookshelves,
+                download_count
+            FROM search_hits
+            ORDER BY score DESC, download_count DESC NULLS LAST, ebook_id ASC
+            OFFSET :offset
+            LIMIT :limit
+            """
+        ),
+        {
+            "query": query,
+            "offset": offset,
+            "limit": limit,
+        },
+    ).mappings()
+    results: list[dict[str, object]] = []
+    for row in raw_rows:
+        ebook_id = int(row["ebook_id"])
+        landing_url = _PROJECT_GUTENBERG_LANDING_URL.format(ebook_id=ebook_id)
+        import_url = _PROJECT_GUTENBERG_EPUB_IMPORT_URL.format(ebook_id=ebook_id)
+        description = (
+            _string_or_none(row["authors"])
+            or _string_or_none(row["bookshelves"])
+            or _string_or_none(row["subjects"])
+        )
+        results.append(
+            {
+                "type": "documents",
+                "title": str(row["title"] or "Untitled document"),
+                "description": description,
+                "url": import_url,
+                "document_kind": "epub",
+                "site_name": "gutenberg.org",
+                "source_label": "Project Gutenberg",
+                "source_type": "project_gutenberg",
+                "landing_url": landing_url,
+                "author": _string_or_none(row["authors"]),
+                "media_id": None,
+            }
+        )
+    return results
 
 
 def _search_video_rows(
@@ -469,18 +708,6 @@ def _get_json(
         ApiErrorCode.E_BROWSE_PROVIDER_UNAVAILABLE,
         f"{provider_name} request failed",
     ) from last_error
-
-
-def _document_kind_from_url(url: str) -> str | None:
-    try:
-        path = urlsplit(url).path.lower()
-    except Exception:
-        return None
-    if path.endswith(".pdf"):
-        return "pdf"
-    if path.endswith(".epub"):
-        return "epub"
-    return None
 
 
 def _site_name_from_url(url: str) -> str | None:

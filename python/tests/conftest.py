@@ -33,7 +33,6 @@ if not os.environ.get("SUPABASE_AUDIENCES"):
 os.environ["PODCASTS_ENABLED"] = "true"
 os.environ.setdefault("PODCAST_INDEX_API_KEY", "test-podcast-index-key")
 os.environ.setdefault("PODCAST_INDEX_API_SECRET", "test-podcast-index-secret")
-os.environ.setdefault("BRAVE_SEARCH_API_KEY", "test-brave-search-key")
 os.environ.setdefault("YOUTUBE_DATA_API_KEY", "test-youtube-data-key")
 
 # Add repo root to sys.path for importing top-level packages (e.g., apps)

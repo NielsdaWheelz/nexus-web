@@ -26,10 +26,10 @@ def browse_content(
     cursor: Annotated[str | None, Query()] = None,
 ) -> dict:
     """Browse globally discoverable acquisition results."""
-    _ = viewer
     return success_response(
         browse_service.browse_content(
             db,
+            viewer.user_id,
             q,
             limit=limit,
             page_type=page_type,

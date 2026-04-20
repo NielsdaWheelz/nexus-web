@@ -17,6 +17,7 @@ def test_registry_marks_periodic_jobs_with_positive_intervals():
     assert set(periodic_jobs.keys()) == {
         "podcast_active_subscription_poll_job",
         "reconcile_stale_ingest_media_job",
+        "sync_gutenberg_catalog_job",
     }, f"Unexpected periodic job set: {sorted(periodic_jobs.keys())}"
     for kind, definition in periodic_jobs.items():
         assert int(definition.periodic_interval_seconds or 0) > 0, (
