@@ -214,7 +214,7 @@ describe("PaneShell", () => {
     expect(screen.queryByRole("button", { name: "Options" })).not.toBeInTheDocument();
   });
 
-  it("renders a visible Commands trigger on mobile and dispatches the open event", async () => {
+  it("renders an icon-only Search trigger on mobile and dispatches the open event", async () => {
     const user = userEvent.setup();
     const onOpen = vi.fn();
     window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen as EventListener);
@@ -234,8 +234,8 @@ describe("PaneShell", () => {
       </PaneShell>
     );
 
-    const trigger = screen.getByRole("button", { name: "Commands" });
-    expect(trigger).toHaveTextContent("Commands");
+    const trigger = screen.getByRole("button", { name: "Search" });
+    expect(trigger).not.toHaveTextContent(/\S/);
 
     await user.click(trigger);
 
