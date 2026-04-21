@@ -80,15 +80,15 @@ describe("CommandPalette", () => {
     });
   }
 
-  it("opens on the mobile Commands event and uses the cutover copy", async () => {
+  it("opens on the mobile launcher event and uses search-first copy", async () => {
     render(<CommandPalette />);
 
     openPalette();
 
-    expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Commands" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Search" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Search" })).toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText("Search or run a command...")
+      screen.getByPlaceholderText("Search or run an action...")
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
@@ -170,7 +170,7 @@ describe("CommandPalette", () => {
     render(<CommandPalette />);
 
     openPalette();
-    await screen.findByRole("dialog", { name: "Command palette" });
+    await screen.findByRole("dialog", { name: "Search" });
 
     expect(screen.queryByText("Recent")).not.toBeInTheDocument();
 
@@ -181,7 +181,7 @@ describe("CommandPalette", () => {
     );
   });
 
-  it("shows a visible mobile Commands trigger that opens the existing command palette", async () => {
+  it("shows an icon-only mobile Search trigger that opens the existing palette", async () => {
     const user = userEvent.setup();
 
     render(
@@ -202,15 +202,15 @@ describe("CommandPalette", () => {
       </>
     );
 
-    const trigger = screen.getByRole("button", { name: "Commands" });
-    expect(trigger).toHaveTextContent("Commands");
+    const trigger = screen.getByRole("button", { name: "Search" });
+    expect(trigger).not.toHaveTextContent(/\S/);
 
     await user.click(trigger);
 
-    const dialog = await screen.findByRole("dialog", { name: "Command palette" });
-    expect(within(dialog).getByRole("heading", { name: "Commands" })).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Search" });
+    expect(within(dialog).getByRole("heading", { name: "Search" })).toBeInTheDocument();
     expect(
-      within(dialog).getByPlaceholderText("Search or run a command...")
+      within(dialog).getByPlaceholderText("Search or run an action...")
     ).toBeInTheDocument();
   });
 });

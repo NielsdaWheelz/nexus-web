@@ -1,5 +1,6 @@
 "use client";
 
+import { Search } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -220,12 +221,16 @@ export default function PaneShell({
                 {effectiveActions}
                 <button
                   type="button"
-                  className={styles.commandPaletteButton}
-                  onClick={() => window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT))}
-                  aria-label="Commands"
+                  className={styles.mobileSearchButton}
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent(OPEN_COMMAND_PALETTE_EVENT)
+                    )
+                  }
+                  aria-label="Search"
                   aria-haspopup="dialog"
                 >
-                  Commands
+                  <Search size={16} aria-hidden="true" />
                 </button>
               </>
             ) : (

@@ -231,7 +231,7 @@ export default function CommandPalette() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [keybindings]);
 
-  // External open trigger (mobile Commands button)
+  // External open trigger (mobile Search button)
   useEffect(() => {
     const handler = () => {
       setQuery("");
@@ -512,10 +512,10 @@ export default function CommandPalette() {
       ref={inputRef}
       type="text"
       className={styles.input}
-      placeholder="Search or run a command..."
+      placeholder="Search or run an action..."
       value={query}
       onChange={(e) => setQuery(e.target.value)}
-      aria-label="Filter commands"
+      aria-label="Search actions"
       aria-activedescendant={
         flatItems[activeIndex]
           ? `cmd-${flatItems[activeIndex].id}`
@@ -536,13 +536,13 @@ export default function CommandPalette() {
           className={styles.mobileSheet}
           role="dialog"
           aria-modal="true"
-          aria-label="Command palette"
+          aria-label="Search"
           tabIndex={-1}
           onClick={(e) => e.stopPropagation()}
           onKeyDown={handleKeyDown}
         >
           <header className={styles.mobileHeader}>
-            <h2>Commands</h2>
+            <h2>Search</h2>
             <button
               type="button"
               className={styles.mobileClose}
@@ -565,7 +565,7 @@ export default function CommandPalette() {
         className={styles.panel}
         role="dialog"
         aria-modal="true"
-        aria-label="Command palette"
+        aria-label="Search"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >

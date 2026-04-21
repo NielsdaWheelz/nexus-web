@@ -93,30 +93,26 @@
   padding-top: var(--space-2);
 }
 
-.commandPaletteButton {
+.mobileSearchButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 28px;
-  height: 28px;
-  padding: 0 var(--space-2);
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-bg);
   color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.commandPaletteButton:hover {
+.mobileSearchButton:hover {
   background: var(--color-bg-hover);
   color: var(--color-text);
 }
 
-.commandPaletteButton:active {
+.mobileSearchButton:active {
   background: var(--color-bg-active);
 }
