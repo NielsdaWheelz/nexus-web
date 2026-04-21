@@ -9,7 +9,7 @@ export async function GET(req: Request, { params }: { params: Params }) {
   return proxyToFastAPI(req, `/media/${id}/reader-state`);
 }
 
-export async function PATCH(req: Request, { params }: { params: Params }) {
+export async function PUT(req: Request, { params }: { params: Params }) {
   const { id } = await params;
   return proxyToFastAPI(req, `/media/${id}/reader-state`);
 }

@@ -23,6 +23,7 @@ from urllib.parse import quote, unquote, urlparse
 from uuid import UUID
 from xml.etree import ElementTree as ET
 
+from lxml.html import HtmlElement, document_fromstring, tostring
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
@@ -94,6 +95,191 @@ _ASSET_KEY_SAFE = re.compile(r"^[a-zA-Z0-9_./-]+$")
 
 # Tags to strip entirely from EPUB chapter content (before sanitization)
 _STRIP_TAGS = frozenset({"head", "script", "style", "meta", "link", "base"})
+
+_EPUB_ALLOWED_HTML_TAGS = frozenset(
+    {
+        "p",
+        "br",
+        "strong",
+        "em",
+        "b",
+        "i",
+        "u",
+        "s",
+        "blockquote",
+        "pre",
+        "code",
+        "ul",
+        "ol",
+        "li",
+        "dl",
+        "dt",
+        "dd",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "a",
+        "img",
+        "table",
+        "thead",
+        "tbody",
+        "tfoot",
+        "tr",
+        "th",
+        "td",
+        "sup",
+        "sub",
+        "div",
+        "span",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "nav",
+        "aside",
+        "figure",
+        "figcaption",
+        "main",
+    }
+)
+
+_EPUB_ALLOWED_SVG_TAGS = frozenset(
+    {
+        "svg",
+        "g",
+        "image",
+        "path",
+        "circle",
+        "ellipse",
+        "line",
+        "polyline",
+        "polygon",
+        "rect",
+        "use",
+        "defs",
+        "symbol",
+        "title",
+        "desc",
+        "clippath",
+        "lineargradient",
+        "radialgradient",
+        "stop",
+    }
+)
+
+_EPUB_GLOBAL_ATTRS = frozenset({"id", "title", "lang", "dir", "xml:lang"})
+_EPUB_ALLOWED_ATTRS = {
+    "a": {"href", "title", "name"},
+    "img": {"src", "alt", "title", "width", "height"},
+    "th": {"colspan", "rowspan", "scope"},
+    "td": {"colspan", "rowspan"},
+}
+_EPUB_ALLOWED_SVG_ATTRS = {
+    "svg": {
+        "viewbox",
+        "width",
+        "height",
+        "preserveaspectratio",
+        "xmlns",
+        "xmlns:xlink",
+        "version",
+    },
+    "g": {"transform", "fill", "stroke", "stroke-width", "opacity", "clip-path"},
+    "path": {
+        "d",
+        "transform",
+        "fill",
+        "stroke",
+        "stroke-width",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "stroke-dasharray",
+        "stroke-dashoffset",
+        "fill-rule",
+        "opacity",
+        "clip-path",
+    },
+    "circle": {"cx", "cy", "r", "fill", "stroke", "stroke-width", "opacity", "transform"},
+    "ellipse": {"cx", "cy", "rx", "ry", "fill", "stroke", "stroke-width", "opacity"},
+    "line": {
+        "x1",
+        "y1",
+        "x2",
+        "y2",
+        "stroke",
+        "stroke-width",
+        "stroke-linecap",
+        "opacity",
+        "transform",
+    },
+    "polyline": {
+        "points",
+        "fill",
+        "stroke",
+        "stroke-width",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "opacity",
+        "transform",
+    },
+    "polygon": {
+        "points",
+        "fill",
+        "stroke",
+        "stroke-width",
+        "stroke-linejoin",
+        "opacity",
+        "transform",
+    },
+    "rect": {
+        "x",
+        "y",
+        "width",
+        "height",
+        "rx",
+        "ry",
+        "fill",
+        "stroke",
+        "stroke-width",
+        "opacity",
+        "transform",
+    },
+    "image": {
+        "href",
+        "xlink:href",
+        "x",
+        "y",
+        "width",
+        "height",
+        "preserveAspectRatio",
+        "transform",
+        "opacity",
+    },
+    "use": {"href", "xlink:href", "x", "y", "width", "height", "transform"},
+    "defs": set(),
+    "symbol": {"viewBox", "preserveAspectRatio"},
+    "title": set(),
+    "desc": set(),
+    "clippath": {"id"},
+    "lineargradient": {"id", "x1", "x2", "y1", "y2", "gradientunits", "gradienttransform"},
+    "radialgradient": {
+        "id",
+        "cx",
+        "cy",
+        "r",
+        "fx",
+        "fy",
+        "gradientunits",
+        "gradienttransform",
+    },
+    "stop": {"offset", "stop-color", "stop-opacity"},
+}
+_FORBIDDEN_URL_SCHEMES = frozenset({"javascript", "vbscript", "data", "file"})
+_EVENT_HANDLER_RE = re.compile(r"^on", re.IGNORECASE)
 
 
 @dataclass
@@ -318,7 +504,7 @@ def extract_epub_artifacts(
 
         # ---- TOC materialization -------------------------------------------
         toc_nodes = _materialize_toc(zf, opf_tree, opf_dir, manifest, href_to_frag_idx, media_id)
-        nav_locations = _materialize_nav_locations(toc_nodes, fragments)
+        nav_locations = _materialize_nav_locations(toc_nodes, fragments, retained_hrefs)
 
         # ---- check parse-time budget ---------------------------------------
         elapsed_ms = int((time.monotonic() - t_start) * 1000)
@@ -733,6 +919,7 @@ def _rewrite_chapter_resources(
         attr_name = match.group(1)
         quote_char = match.group(2)
         raw_url = match.group(3)
+        attr_name_lower = attr_name.lower()
 
         if not raw_url or raw_url.startswith("#"):
             return match.group(0)
@@ -741,7 +928,7 @@ def _rewrite_chapter_resources(
 
         # external http(s) image
         if parsed.scheme in ("http", "https"):
-            if attr_name == "src":
+            if attr_name_lower in {"src", "xlink:href"}:
                 encoded = quote(raw_url, safe="")
                 return f"{attr_name}={quote_char}{IMAGE_PROXY_URL.format(encoded_url=encoded)}{quote_char}"
             return match.group(0)
@@ -755,10 +942,11 @@ def _rewrite_chapter_resources(
         path_only = decoded.split("#")[0] if "#" in decoded else decoded
         resolved = posixpath.normpath(posixpath.join(chapter_dir, path_only))
 
-        # Preserve readable chapter links as logical chapter references; do not
-        # convert them into binary asset URLs.
-        if attr_name.lower() == "href" and resolved in readable_paths:
-            return match.group(0)
+        if attr_name_lower == "href" and resolved in readable_paths:
+            rewritten = resolved
+            if frag:
+                rewritten += f"#{frag}"
+            return f"{attr_name}={quote_char}{rewritten}{quote_char}"
 
         # check if it exists in the archive
         if resolved in asset_key_map:
@@ -795,7 +983,7 @@ def _rewrite_chapter_resources(
         return f"{attr_name}={quote_char}{rewritten}{quote_char}"
 
     html = re.sub(
-        r"""(src|href)\s*=\s*(["'])(.*?)\2""",
+        r"""((?:xlink:)?href|src)\s*=\s*(["'])(.*?)\2""",
         _rewrite_attr,
         html,
         flags=re.IGNORECASE,
@@ -844,22 +1032,234 @@ def _guess_content_type(
 
 
 # ---------------------------------------------------------------------------
-# Sanitization wrapper for EPUB (reuses existing primitives)
+# Sanitization wrapper for EPUB
 # ---------------------------------------------------------------------------
 
 
 def _epub_sanitize(html: str) -> str:
-    """Sanitize chapter HTML using the platform sanitizer.
+    """Sanitize EPUB chapter HTML while preserving EPUB-local assets and SVG."""
+    if not html or not html.strip():
+        return ""
 
-    Uses a synthetic base URL since EPUB internal refs are already rewritten.
-    """
-    from nexus.services.sanitize_html import sanitize_html
+    try:
+        doc = document_fromstring(html)
+    except Exception as exc:
+        raise ValueError(f"Failed to parse EPUB HTML: {exc}") from exc
 
-    return sanitize_html(
-        html,
-        base_url="https://epub.internal/",
-        preserve_anchor_targets=True,
-    )
+    body = doc.body
+    if body is None:
+        return ""
+
+    for child in list(body):
+        if isinstance(child, HtmlElement):
+            _sanitize_epub_element(child)
+
+    result = tostring(body, encoding="unicode", method="html")
+    if result.startswith("<body>") and result.endswith("</body>"):
+        result = result[6:-7]
+    return result
+
+
+def _sanitize_epub_element(element: HtmlElement) -> None:
+    for child in list(element):
+        if isinstance(child, HtmlElement):
+            _sanitize_epub_element(child)
+
+    tag = _local_name(element.tag)
+    blocked_tags = {
+        "script",
+        "iframe",
+        "object",
+        "embed",
+        "form",
+        "meta",
+        "base",
+        "link",
+        "style",
+        "foreignobject",
+        "animate",
+        "set",
+        "feimage",
+    }
+    if tag in blocked_tags:
+        _remove_element(element)
+        return
+
+    if tag not in _EPUB_ALLOWED_HTML_TAGS and tag not in _EPUB_ALLOWED_SVG_TAGS:
+        _unwrap_element(element)
+        return
+
+    _sanitize_epub_attributes(element, tag)
+
+
+def _sanitize_epub_attributes(element: HtmlElement, tag: str) -> None:
+    allowed_attrs = set(_EPUB_GLOBAL_ATTRS)
+    if tag in _EPUB_ALLOWED_HTML_TAGS:
+        allowed_attrs.update(_EPUB_ALLOWED_ATTRS.get(tag, set()))
+    if tag in _EPUB_ALLOWED_SVG_TAGS:
+        allowed_attrs.update(_EPUB_ALLOWED_SVG_ATTRS.get(tag, set()))
+
+    for attr in list(element.attrib):
+        normalized_attr = _normalized_attr_name(attr)
+        normalized_lower = normalized_attr.lower()
+        value = element.attrib.get(attr, "")
+
+        if _EVENT_HANDLER_RE.match(normalized_lower):
+            del element.attrib[attr]
+            continue
+        if normalized_lower in {"style", "class"}:
+            del element.attrib[attr]
+            continue
+        if normalized_attr not in allowed_attrs:
+            del element.attrib[attr]
+            continue
+        if normalized_attr in {"id", "name"} and not value.strip():
+            del element.attrib[attr]
+            continue
+
+    if tag == "a":
+        _sanitize_epub_link(element)
+    elif tag == "img":
+        _sanitize_epub_image(element)
+
+    if tag in _EPUB_ALLOWED_SVG_TAGS:
+        _sanitize_svg_attributes(element, tag)
+
+
+def _sanitize_epub_link(element: HtmlElement) -> None:
+    href = element.get("href", "")
+    if not href:
+        return
+
+    if href.startswith("//"):
+        del element.attrib["href"]
+        return
+
+    parsed = urlparse(href)
+    scheme = parsed.scheme.lower()
+    if scheme in _FORBIDDEN_URL_SCHEMES or (scheme and scheme not in {"http", "https"}):
+        del element.attrib["href"]
+        return
+
+    if scheme in {"http", "https"}:
+        existing_rel = element.get("rel", "")
+        rel_values = set(existing_rel.split()) if existing_rel else set()
+        rel_values.add("noopener")
+        rel_values.add("noreferrer")
+        element.set("rel", " ".join(sorted(rel_values)))
+        element.set("target", "_blank")
+        element.set("referrerpolicy", "no-referrer")
+
+
+def _sanitize_epub_image(element: HtmlElement) -> None:
+    src = element.get("src", "")
+    if not src:
+        return
+
+    if src.startswith("//"):
+        del element.attrib["src"]
+        return
+
+    parsed = urlparse(src)
+    scheme = parsed.scheme.lower()
+    if scheme in _FORBIDDEN_URL_SCHEMES:
+        del element.attrib["src"]
+        return
+    if scheme and scheme not in {"http", "https"}:
+        del element.attrib["src"]
+
+
+def _sanitize_svg_attributes(element: HtmlElement, tag: str) -> None:
+    for attr in list(element.attrib):
+        normalized_attr = _normalized_attr_name(attr)
+        value = element.attrib.get(attr, "")
+
+        if normalized_attr in {"href", "xlink:href"}:
+            if tag == "image":
+                if not _is_safe_svg_image_href(value):
+                    del element.attrib[attr]
+                    continue
+            elif not _is_safe_svg_href(value):
+                del element.attrib[attr]
+                continue
+        if normalized_attr in {"clip-path", "fill", "stroke"} and "url(" in value.lower():
+            if not _is_safe_svg_url_reference(value):
+                del element.attrib[attr]
+                continue
+
+
+def _is_safe_svg_href(value: str) -> bool:
+    return bool(value) and value.startswith("#")
+
+
+def _is_safe_svg_image_href(value: str) -> bool:
+    if not value or value.startswith("//"):
+        return False
+    parsed = urlparse(value)
+    scheme = parsed.scheme.lower()
+    if scheme in _FORBIDDEN_URL_SCHEMES:
+        return False
+    if not scheme:
+        return value.startswith("/media/")
+    return scheme in {"http", "https"}
+
+
+def _is_safe_svg_url_reference(value: str) -> bool:
+    trimmed = value.strip().replace(" ", "")
+    return bool(re.fullmatch(r"url\(#[-A-Za-z0-9_:.]+\)", trimmed))
+
+
+def _normalized_attr_name(attr: str) -> str:
+    if attr.startswith("{"):
+        namespace, local = attr[1:].split("}", 1)
+        if namespace == "http://www.w3.org/1999/xlink":
+            return f"xlink:{local.lower()}"
+        return local.lower()
+    return attr.lower()
+
+
+def _local_name(name: str | None) -> str:
+    if not name:
+        return ""
+    if "}" in name:
+        return name.rsplit("}", 1)[1].lower()
+    return name.lower()
+
+
+def _remove_element(element: HtmlElement) -> None:
+    parent = element.getparent()
+    if parent is not None:
+        parent.remove(element)
+
+
+def _unwrap_element(element: HtmlElement) -> None:
+    parent = element.getparent()
+    if parent is None:
+        return
+
+    index = list(parent).index(element)
+    tail = element.tail or ""
+
+    for i, child in enumerate(element):
+        parent.insert(index + i, child)
+
+    text = element.text or ""
+    if index > 0:
+        prev = parent[index - 1]
+        prev.tail = (prev.tail or "") + text
+    else:
+        parent.text = (parent.text or "") + text
+
+    if len(element) > 0:
+        last_child = element[-1]
+        last_child.tail = (last_child.tail or "") + tail
+    elif index > 0:
+        prev = parent[index - 1]
+        prev.tail = (prev.tail or "") + tail
+    else:
+        parent.text = (parent.text or "") + tail
+
+    parent.remove(element)
 
 
 # ---------------------------------------------------------------------------
@@ -974,16 +1374,7 @@ def _walk_nav_ol(
         if not label:
             continue
 
-        # resolve href to fragment_idx
-        frag_idx = None
-        resolved_href = None
-        if href:
-            path_part = href.split("#")[0]
-            resolved_href = (
-                posixpath.normpath(posixpath.join(nav_dir, path_part)) if path_part else None
-            )
-            if resolved_href and resolved_href in href_to_frag_idx:
-                frag_idx = href_to_frag_idx[resolved_href]
+        canonical_href, frag_idx = _resolve_nav_target(href, nav_dir, href_to_frag_idx)
 
         # generate node_id
         raw_id = _generate_node_id_token(nav_id_attr, href, label)
@@ -998,7 +1389,7 @@ def _walk_nav_ol(
                 node_id=node_id,
                 parent_node_id=parent_id,
                 label=label[:512],
-                href=href,
+                href=canonical_href,
                 fragment_idx=frag_idx,
                 depth=depth,
                 order_key=order_key,
@@ -1086,12 +1477,7 @@ def _walk_ncx_navpoints(
             content_el = np.find(".//{http://www.daisy.org/z3986/2005/ncx/}content")
         href = content_el.get("src") if content_el is not None else None
 
-        frag_idx = None
-        if href:
-            path_part = href.split("#")[0]
-            resolved = posixpath.normpath(posixpath.join(ncx_dir, path_part)) if path_part else None
-            if resolved and resolved in href_to_frag_idx:
-                frag_idx = href_to_frag_idx[resolved]
+        canonical_href, frag_idx = _resolve_nav_target(href, ncx_dir, href_to_frag_idx)
 
         raw_id = _generate_node_id_token(nav_id_attr, href, label)
         raw_id = _ensure_sibling_unique(raw_id, sibling_ids)
@@ -1105,7 +1491,7 @@ def _walk_ncx_navpoints(
                 node_id=node_id,
                 parent_node_id=parent_id,
                 label=label[:512],
-                href=href,
+                href=canonical_href,
                 fragment_idx=frag_idx,
                 depth=depth,
                 order_key=order_key,
@@ -1124,6 +1510,30 @@ def _walk_ncx_navpoints(
         ordinal += 1
 
 
+def _resolve_nav_target(
+    href: str | None,
+    base_dir: str,
+    href_to_frag_idx: dict[str, int],
+) -> tuple[str | None, int | None]:
+    if not href:
+        return None, None
+
+    parsed = urlparse(href)
+    if parsed.scheme:
+        return href, None
+
+    path_part = unquote(parsed.path or "")
+    anchor = parsed.fragment or None
+    resolved_path = (
+        posixpath.normpath(posixpath.join(base_dir, path_part)) if path_part else None
+    )
+    canonical_href = resolved_path
+    if canonical_href and anchor:
+        canonical_href = f"{canonical_href}#{anchor}"
+    frag_idx = href_to_frag_idx.get(resolved_path) if resolved_path else None
+    return canonical_href, frag_idx
+
+
 # ---------------------------------------------------------------------------
 # Navigation location materialization
 # ---------------------------------------------------------------------------
@@ -1132,37 +1542,49 @@ def _walk_ncx_navpoints(
 def _materialize_nav_locations(
     toc_nodes: list[_TocNodeSpec],
     fragments: list[Fragment],
+    retained_hrefs: list[str],
 ) -> list[_NavLocationSpec]:
-    """Build canonical navigation locations from TOC mappings + fragment fallback."""
+    """Build canonical section rows in fragment/spine order."""
     locations: list[_NavLocationSpec] = []
-    used_fragment_idxs: set[int] = set()
-    seen_location_ids: set[str] = set()
+    toc_by_fragment: dict[int, list[_TocNodeSpec]] = {}
+    seen_section_ids: set[str] = set()
     ordinal = 0
 
     for tn in toc_nodes:
         if tn.fragment_idx is None:
             continue
-        href_path, href_fragment = _split_href_parts(tn.href)
-        location_id = _toc_location_id(tn, seen_location_ids)
-        locations.append(
-            _NavLocationSpec(
-                location_id=location_id,
-                ordinal=ordinal,
-                source_node_id=tn.node_id,
-                label=tn.label[:512],
-                fragment_idx=tn.fragment_idx,
-                href_path=href_path,
-                href_fragment=href_fragment,
-                source="toc",
-            )
-        )
-        used_fragment_idxs.add(tn.fragment_idx)
-        ordinal += 1
+        toc_by_fragment.setdefault(tn.fragment_idx, []).append(tn)
 
     for frag in sorted(fragments, key=lambda f: f.idx):
-        if frag.idx in used_fragment_idxs:
+        chapter_href = retained_hrefs[frag.idx] if 0 <= frag.idx < len(retained_hrefs) else None
+        fragment_toc_nodes = toc_by_fragment.get(frag.idx, [])
+
+        if fragment_toc_nodes:
+            for tn in fragment_toc_nodes:
+                href_path, href_fragment = _split_href_parts(tn.href)
+                href_path = href_path or chapter_href
+                if href_path is None:
+                    continue
+                location_id = _section_location_id(href_path, href_fragment, seen_section_ids)
+                locations.append(
+                    _NavLocationSpec(
+                        location_id=location_id,
+                        ordinal=ordinal,
+                        source_node_id=tn.node_id,
+                        label=tn.label[:512],
+                        fragment_idx=frag.idx,
+                        href_path=href_path,
+                        href_fragment=href_fragment,
+                        source="toc",
+                    )
+                )
+                ordinal += 1
             continue
-        location_id = _ensure_location_id_unique(f"frag-{frag.idx:06d}", seen_location_ids)
+
+        if chapter_href is None:
+            continue
+
+        location_id = _section_location_id(chapter_href, None, seen_section_ids)
         locations.append(
             _NavLocationSpec(
                 location_id=location_id,
@@ -1170,9 +1592,9 @@ def _materialize_nav_locations(
                 source_node_id=None,
                 label=_fallback_fragment_label(frag.canonical_text, frag.idx),
                 fragment_idx=frag.idx,
-                href_path=None,
+                href_path=chapter_href,
                 href_fragment=None,
-                source="fragment_fallback",
+                source="spine",
             )
         )
         ordinal += 1
@@ -1189,22 +1611,31 @@ def _split_href_parts(href: str | None) -> tuple[str | None, str | None]:
     return (path_part or None, frag_part or None)
 
 
-def _toc_location_id(tn: _TocNodeSpec, seen: set[str]) -> str:
-    base = _slug(tn.node_id)[:32]
-    digest = hashlib.sha256(f"{tn.node_id}|{tn.order_key}".encode()).hexdigest()[:12]
-    return _ensure_location_id_unique(f"toc-{base}-{digest}", seen)
-
-
-def _ensure_location_id_unique(candidate: str, seen: set[str]) -> str:
+def _section_location_id(
+    href_path: str,
+    href_fragment: str | None,
+    seen: set[str],
+) -> str:
+    base = href_path if not href_fragment else f"{href_path}#{href_fragment}"
+    candidate = _truncate_section_id(base)
     if candidate not in seen:
         seen.add(candidate)
         return candidate
-    i = 1
-    while f"{candidate}-{i}" in seen:
-        i += 1
-    unique = f"{candidate}-{i}"
-    seen.add(unique)
-    return unique
+
+    suffix = 2
+    while True:
+        unique = _truncate_section_id(f"{base}~{suffix}")
+        if unique not in seen:
+            seen.add(unique)
+            return unique
+        suffix += 1
+
+
+def _truncate_section_id(value: str) -> str:
+    if len(value) <= 255:
+        return value
+    digest = hashlib.sha256(value.encode()).hexdigest()[:16]
+    return f"{value[:238]}~{digest}"
 
 
 def _fallback_fragment_label(canonical_text: str, idx: int) -> str:

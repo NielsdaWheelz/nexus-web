@@ -21,6 +21,22 @@ function renderSelectionPopover(_props: Record<string, unknown>) {
 const mockSelectionPopover = vi.fn<(props: Record<string, unknown>) => ReactElement>(
   renderSelectionPopover
 );
+const mockPdfReader = vi.fn(
+  ({
+    onHighlightTap,
+  }: {
+    onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
+  }) => (
+    <div data-testid="pdf-reader">
+      <button
+        type="button"
+        onClick={() => onHighlightTap?.("pdf-highlight-1", new DOMRect(10, 20, 30, 12))}
+      >
+        Tap PDF highlight
+      </button>
+    </div>
+  )
+);
 function renderTranscriptMediaPane(_props: Record<string, unknown>) {
   return <div data-testid="transcript-media-pane" />;
 }
@@ -64,6 +80,9 @@ const mockChatComposer = vi.fn<
 const mockReaderContentArea = vi.fn(
   ({ children }: { children: ReactNode }) => children
 );
+const mockMediaHighlightsPaneBody = vi.fn((_props: Record<string, unknown>) => (
+  <div data-testid="highlights-pane-body">Highlights pane</div>
+));
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
@@ -144,20 +163,12 @@ vi.mock("@/components/HtmlRenderer", () => ({
 }));
 
 vi.mock("@/components/PdfReader", () => ({
-  default: ({
-    onHighlightTap,
-  }: {
+  default: (props: {
     onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
-  }) => (
-    <div data-testid="pdf-reader">
-      <button
-        type="button"
-        onClick={() => onHighlightTap?.("pdf-highlight-1", new DOMRect(10, 20, 30, 12))}
-      >
-        Tap PDF highlight
-      </button>
-    </div>
-  ),
+    startPageNumber?: number;
+    startZoom?: number;
+    onResumeStateChange?: (pageNumber: number, zoom: number) => void;
+  }) => mockPdfReader(props),
 }));
 
 vi.mock("@/components/SelectionPopover", () => ({
@@ -184,8 +195,8 @@ vi.mock("@/components/ui/StatusPill", () => ({
   default: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
-vi.mock("@/components/LibraryTargetPicker", () => ({
-  default: () => <div data-testid="library-target-picker" />,
+vi.mock("@/components/LibraryMembershipPanel", () => ({
+  default: () => <div data-testid="library-membership-panel" />,
 }));
 
 vi.mock("@/components/workspace/DocumentViewport", () => ({
@@ -195,7 +206,7 @@ vi.mock("@/components/workspace/DocumentViewport", () => ({
 }));
 
 vi.mock("./MediaHighlightsPaneBody", () => ({
-  default: () => <div data-testid="highlights-pane-body">Highlights pane</div>,
+  default: (props: Record<string, unknown>) => mockMediaHighlightsPaneBody(props),
 }));
 
 vi.mock("./TranscriptMediaPane", () => ({
@@ -239,22 +250,16 @@ function buildViewState(overrides: Record<string, unknown> = {}): Record<string,
     isMobileViewport: false,
     highlights: [],
     pdfPageHighlights: [],
-    pdfDocumentHighlights: [],
     highlightsVersion: 0,
     pdfHighlightsVersion: 0,
     pdfActivePage: 1,
-    pdfHighlightsHasMore: false,
-    pdfHighlightsLoading: false,
-    handleLoadMorePdfHighlights: vi.fn(),
-    highlightMutationEpoch: 0,
     contentRef: { current: document.createElement("div") as HTMLDivElement | null },
     pdfContentRef: { current: null as HTMLDivElement | null },
     focusState: { focusedId: null, editingBounds: false },
     focusHighlight: vi.fn(),
-    handleNavigatePdfHighlight: vi.fn(),
-    handleNavigateToFragment: vi.fn(),
-    handleHighlightsViewChange: vi.fn(),
+    clearFocus: vi.fn(),
     handleSendToChat: vi.fn(),
+    handleDelete: vi.fn(async () => {}),
     handleQuoteSelectionToNewChat: vi.fn(),
     prepareQuoteSelectionForChat: vi.fn(async () => null),
     handleAnnotationSave: vi.fn(async () => {}),
@@ -278,16 +283,15 @@ function buildViewState(overrides: Record<string, unknown> = {}): Record<string,
     readerResumeState: null,
     readerResumeStateLoading: false,
     saveReaderResumeState: vi.fn(),
-    defaultLibraryId: null,
-    mediaInDefaultLibrary: false,
+    libraryPickerLibraries: [],
+    libraryPickerLoading: false,
+    libraryPickerError: null,
     libraryMembershipBusy: false,
-    handleAddToDefaultLibrary: vi.fn(),
-    handleRemoveFromDefaultLibrary: vi.fn(),
+    loadLibraryPickerLibraries: vi.fn(async () => {}),
+    handleAddToLibrary: vi.fn(async () => {}),
+    handleRemoveFromLibrary: vi.fn(async () => {}),
     pdfRefreshToken: 0,
     handlePdfPageHighlightsChange: vi.fn(),
-    pdfNavigationTarget: null,
-    setPdfNavigationTarget: vi.fn(),
-    schedulePdfHighlightsRefresh: vi.fn(),
     setPdfControlsState: vi.fn(),
     pdfControlsRef: { current: null },
     pdfControlsState: null,
@@ -362,12 +366,32 @@ function getLatestSelectionPopoverProps(): Record<string, unknown> {
   return latest;
 }
 
+function getLatestPdfReaderProps(): Record<string, unknown> {
+  const latest = mockPdfReader.mock.calls.at(-1)?.[0] as
+    | Record<string, unknown>
+    | undefined;
+  if (!latest) {
+    throw new Error("Expected PdfReader to be rendered");
+  }
+  return latest;
+}
+
 function getLatestChatComposerProps(): Record<string, unknown> {
   const latest = mockChatComposer.mock.calls.at(-1)?.[0] as
     | Record<string, unknown>
     | undefined;
   if (!latest) {
     throw new Error("Expected ChatComposer to be rendered");
+  }
+  return latest;
+}
+
+function getLatestHighlightsPaneBodyProps(): Record<string, unknown> {
+  const latest = mockMediaHighlightsPaneBody.mock.calls.at(-1)?.[0] as
+    | Record<string, unknown>
+    | undefined;
+  if (!latest) {
+    throw new Error("Expected MediaHighlightsPaneBody to be rendered");
   }
   return latest;
 }
@@ -415,6 +439,7 @@ describe("MediaPaneBody highlights shell", () => {
     mockSetTrack.mockReset();
     mockSelectionPopover.mockReset();
     mockSelectionPopover.mockImplementation(renderSelectionPopover);
+    mockPdfReader.mockClear();
     mockChatComposer.mockReset();
     mockChatComposer.mockImplementation(renderChatComposer);
     mockTranscriptMediaPane.mockReset();
@@ -423,6 +448,10 @@ describe("MediaPaneBody highlights shell", () => {
     mockReaderContentArea.mockImplementation(
       ({ children }: { children: ReactNode }) => children
     );
+    mockMediaHighlightsPaneBody.mockReset();
+    mockMediaHighlightsPaneBody.mockImplementation((_props: Record<string, unknown>) => (
+      <div data-testid="highlights-pane-body">Highlights pane</div>
+    ));
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "id" ? "media-1" : null
     );
@@ -435,11 +464,79 @@ describe("MediaPaneBody highlights shell", () => {
     document.body.style.overflow = "";
   });
 
-  it("keeps the desktop highlights column visible without a pane chrome toggle", () => {
+  it("renders the desktop highlights pane at the fixed cutover width and forwards detail callbacks", () => {
+    const clearFocus = vi.fn();
+    const handleDelete = vi.fn(async () => {});
+    const startEditBounds = vi.fn();
+    const cancelEditBounds = vi.fn();
+    currentViewState = buildViewState({
+      highlights: [{ id: "fragment-highlight-1" }],
+      clearFocus,
+      handleDelete,
+      startEditBounds,
+      cancelEditBounds,
+      focusState: { focusedId: "fragment-highlight-1", editingBounds: true },
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
     render(<MediaPaneBody />);
 
-    expect(screen.getByTestId("highlights-pane-body")).toBeInTheDocument();
+    const pane = screen.getByTestId("highlights-pane-body");
+    expect(pane).toBeInTheDocument();
+    expect(pane.parentElement).toHaveStyle({
+      width: "400px",
+      flex: "0 0 400px",
+    });
+    expect(getLatestHighlightsPaneBodyProps()).toMatchObject({
+      isMobile: false,
+      fragmentHighlights: [{ id: "fragment-highlight-1" }],
+      onClearFocus: clearFocus,
+      onDelete: handleDelete,
+      onStartEditBounds: startEditBounds,
+      onCancelEditBounds: cancelEditBounds,
+      isEditingBounds: true,
+      onCloseMobileDrawer: undefined,
+    });
     expect(getLatestHighlightsAction()).toBeNull();
+  });
+
+  it("forwards active-page PDF highlights into the contextual pane body", () => {
+    currentViewState = buildViewState({
+      isPdf: true,
+      media: {
+        id: "media-1",
+        kind: "pdf",
+        title: "Example media",
+        processing_status: "ready_for_reading",
+        canonical_source_url: null,
+        podcast_title: null,
+        podcast_image_url: null,
+        authors: [],
+        published_date: null,
+        publisher: null,
+        language: null,
+        chapters: [],
+        description: null,
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        episode_state: null,
+        last_error_code: null,
+      },
+      pdfPageHighlights: [{ id: "pdf-page-highlight-1" }],
+      pdfActivePage: 4,
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+
+    expect(getLatestHighlightsPaneBodyProps()).toMatchObject({
+      isPdf: true,
+      isMobile: false,
+      pdfPageHighlights: [{ id: "pdf-page-highlight-1" }],
+      pdfActivePage: 4,
+    });
   });
 
   it("suppresses the highlights pane and action when highlights are unavailable", () => {
@@ -526,6 +623,34 @@ describe("MediaPaneBody highlights shell", () => {
     expect(screen.queryByRole("dialog", { name: "Highlights" })).not.toBeInTheDocument();
     expect(document.body.style.overflow).toBe("");
     expect(getLatestHighlightsAction()).toBeNull();
+  });
+
+  it("passes a mobile drawer close handler into the highlights pane body", () => {
+    currentViewState = buildViewState({ isMobileViewport: true, showHighlightsPane: true });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+
+    const action = getLatestHighlightsAction();
+    expect(action).not.toBeNull();
+
+    act(() => {
+      action?.props.onClick();
+    });
+
+    expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
+
+    const onCloseMobileDrawer = getLatestHighlightsPaneBodyProps().onCloseMobileDrawer as
+      | (() => void)
+      | undefined;
+    expect(onCloseMobileDrawer).toBeTypeOf("function");
+
+    act(() => {
+      onCloseMobileDrawer?.();
+    });
+
+    expect(screen.queryByRole("dialog", { name: "Highlights" })).not.toBeInTheDocument();
+    expect(document.body.style.overflow).toBe("");
   });
 
   it("opens the mobile Highlights drawer when tapping a content highlight", async () => {
@@ -730,6 +855,44 @@ describe("MediaPaneBody highlights shell", () => {
     expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
   });
 
+  it("passes the nested PDF locator through to PdfReader and saves page updates as a locator object", () => {
+    const saveReaderResumeState = vi.fn();
+    currentViewState = buildViewState({
+      isPdf: true,
+      readerResumeState: {
+        locator: {
+          kind: "pdf_page",
+          page: 7,
+          zoom: 1.5,
+        },
+      },
+      saveReaderResumeState,
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+
+    expect(getLatestPdfReaderProps()).toMatchObject({
+      startPageNumber: 7,
+      startZoom: 1.5,
+    });
+
+    const onResumeStateChange = getLatestPdfReaderProps().onResumeStateChange as
+      | ((pageNumber: number, zoom: number) => void)
+      | undefined;
+    expect(onResumeStateChange).toBeTypeOf("function");
+
+    onResumeStateChange?.(9, 2);
+
+    expect(saveReaderResumeState).toHaveBeenCalledWith({
+      locator: {
+        kind: "pdf_page",
+        page: 9,
+        zoom: 2,
+      },
+    });
+  });
+
   it("publishes compact PDF controls into pane chrome", () => {
     const goToPreviousPage = vi.fn();
     const goToNextPage = vi.fn();
@@ -801,6 +964,35 @@ describe("MediaPaneBody highlights shell", () => {
     expect(screen.getByRole("button", { name: "More actions" })).toBeInTheDocument();
   });
 
+  it("publishes Libraries… into the pane header options", () => {
+    currentViewState = buildViewState({
+      media: {
+        id: "media-1",
+        kind: "web",
+        title: "Example media",
+        processing_status: "ready_for_reading",
+        canonical_source_url: "https://example.com/source",
+        podcast_title: null,
+        podcast_image_url: null,
+        chapters: [],
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        last_error_code: null,
+      },
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+
+    expect(getLatestChromeOverride().options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "libraries", label: "Libraries…" }),
+      ])
+    );
+  });
+
   it("publishes EPUB controls and reader options into pane chrome", () => {
     currentViewState = buildViewState({
       isEpub: true,
@@ -847,6 +1039,7 @@ describe("MediaPaneBody highlights shell", () => {
         expect.objectContaining({ id: "toggle-toc" }),
         expect.objectContaining({ id: "theme-light" }),
         expect.objectContaining({ id: "theme-dark" }),
+        expect.objectContaining({ id: "libraries", label: "Libraries…" }),
       ])
     );
   });

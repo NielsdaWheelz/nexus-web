@@ -1,4 +1,4 @@
-"""Reader profile and per-media resume service layer."""
+"""Reader profile and per-media state service layer."""
 
 from datetime import UTC, datetime
 from uuid import UUID
@@ -7,13 +7,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import ReaderMediaState, ReaderProfile
-from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.db.models import Fragment, ReaderMediaState, ReaderProfile
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.reader import (
+    ReaderMediaStateOut,
+    ReaderMediaStatePut,
     ReaderProfileOut,
     ReaderProfilePatch,
-    ReaderResumeStateOut,
-    ReaderResumeStatePatch,
 )
 
 DEFAULT_THEME = "light"
@@ -66,8 +66,8 @@ def patch_reader_profile(db: Session, user_id: UUID, patch: ReaderProfilePatch) 
     return ReaderProfileOut.model_validate(profile)
 
 
-def get_reader_resume_state(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderResumeStateOut:
-    """Get per-media reader resume state."""
+def get_reader_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderMediaStateOut:
+    """Get per-media reader state."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
@@ -81,75 +81,67 @@ def get_reader_resume_state(db: Session, viewer_id: UUID, media_id: UUID) -> Rea
     )
 
     if not state:
-        return ReaderResumeStateOut(
-            locator_kind=None,
-            fragment_id=None,
-            offset=None,
-            section_id=None,
-            page=None,
-            zoom=None,
-            updated_at=datetime.now(UTC),
-        )
+        return ReaderMediaStateOut(media_id=media_id, locator=None)
 
-    return ReaderResumeStateOut.model_validate(state)
+    return ReaderMediaStateOut.model_validate(state)
 
 
-def patch_reader_resume_state(
-    db: Session, viewer_id: UUID, media_id: UUID, patch: ReaderResumeStatePatch
-) -> ReaderResumeStateOut:
-    """Update per-media reader resume state (upsert)."""
+def put_reader_media_state(
+    db: Session, viewer_id: UUID, media_id: UUID, body: ReaderMediaStatePut
+) -> ReaderMediaStateOut:
+    """Replace per-media reader state (upsert)."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    # Ensure a row exists in a single SQL statement so concurrent first writes
-    # cannot race into duplicate-key failures.
-    db.execute(
-        pg_insert(ReaderMediaState)
-        .values(user_id=viewer_id, media_id=media_id)
-        .on_conflict_do_nothing(
-            index_elements=[ReaderMediaState.user_id, ReaderMediaState.media_id]
+    if body.locator is not None and body.locator.type == "fragment_offset":
+        if body.locator.fragment_id is not None:
+            fragment_exists = (
+                db.query(Fragment.id)
+                .filter(
+                    Fragment.id == body.locator.fragment_id,
+                    Fragment.media_id == media_id,
+                )
+                .first()
+            )
+            if not fragment_exists:
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST,
+                    "fragment_id must reference a fragment on this media",
+                )
+
+    current_time = datetime.now(UTC)
+    locator_payload = None
+    if body.locator is not None:
+        locator_payload = body.locator.model_dump(mode="json", exclude_none=True)
+
+    row = (
+        db.execute(
+            pg_insert(ReaderMediaState)
+            .values(
+                user_id=viewer_id,
+                media_id=media_id,
+                locator=locator_payload,
+                created_at=current_time,
+                updated_at=current_time,
+            )
+            .on_conflict_do_update(
+                index_elements=[ReaderMediaState.user_id, ReaderMediaState.media_id],
+                set_={
+                    ReaderMediaState.locator.key: locator_payload,
+                    ReaderMediaState.updated_at.key: current_time,
+                },
+            )
+            .returning(
+                ReaderMediaState.id,
+                ReaderMediaState.media_id,
+                ReaderMediaState.locator,
+                ReaderMediaState.created_at,
+                ReaderMediaState.updated_at,
+            )
         )
-    )
-    state = (
-        db.query(ReaderMediaState)
-        .filter(
-            ReaderMediaState.user_id == viewer_id,
-            ReaderMediaState.media_id == media_id,
-        )
+        .mappings()
         .one()
     )
-    provided = patch.model_fields_set
-
-    if "locator_kind" in provided:
-        if patch.locator_kind is None:
-            state.locator_kind = None
-            state.fragment_id = None
-            state.offset = None
-            state.section_id = None
-            state.page = None
-            state.zoom = None
-        else:
-            state.locator_kind = patch.locator_kind
-            if patch.locator_kind == "fragment_offset":
-                state.fragment_id = patch.fragment_id
-                state.offset = patch.offset
-                state.section_id = None
-                state.page = None
-                state.zoom = None
-            elif patch.locator_kind == "epub_section":
-                state.fragment_id = None
-                state.offset = None
-                state.section_id = patch.section_id
-                state.page = None
-                state.zoom = None
-            elif patch.locator_kind == "pdf_page":
-                state.fragment_id = None
-                state.offset = None
-                state.section_id = None
-                state.page = patch.page
-                state.zoom = patch.zoom
 
     db.commit()
-    db.refresh(state)
-
-    return ReaderResumeStateOut.model_validate(state)
+    return ReaderMediaStateOut.model_validate(row)

@@ -31,7 +31,7 @@ from nexus.schemas.media import (
     TranscriptRequestResponse,
     UploadInitRequest,
 )
-from nexus.schemas.reader import ReaderResumeStatePatch
+from nexus.schemas.reader import ReaderMediaStatePut
 from nexus.services import epub_lifecycle, epub_read, image_proxy
 from nexus.services import libraries as libraries_service
 from nexus.services import media as media_service
@@ -271,20 +271,20 @@ def get_reader_state(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get per-media reader resume state."""
-    result = reader_service.get_reader_resume_state(db, viewer.user_id, media_id)
+    """Get per-media reader state."""
+    result = reader_service.get_reader_media_state(db, viewer.user_id, media_id)
     return success_response(result.model_dump(mode="json"))
 
 
-@router.patch("/media/{media_id}/reader-state")
-def patch_reader_state(
+@router.put("/media/{media_id}/reader-state")
+def put_reader_state(
     media_id: UUID,
-    body: ReaderResumeStatePatch,
+    body: ReaderMediaStatePut,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Update per-media reader resume state (partial)."""
-    result = reader_service.patch_reader_resume_state(db, viewer.user_id, media_id, body)
+    """Replace per-media reader state."""
+    result = reader_service.put_reader_media_state(db, viewer.user_id, media_id, body)
     return success_response(result.model_dump(mode="json"))
 
 
@@ -495,61 +495,20 @@ def get_epub_asset(
 
 
 # =============================================================================
-# EPUB Chapter + TOC Read Endpoints (S5 PR-04)
+# EPUB Read Endpoints
 # =============================================================================
 
 
-@router.get("/media/{media_id}/chapters")
-def get_epub_chapters(
+@router.get("/media/{media_id}/sections/{section_id:path}")
+def get_epub_section(
     media_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    limit: int = 100,
-    cursor: int | None = None,
-) -> dict:
-    """Get paginated chapter manifest for an EPUB media item.
-
-    Returns metadata-only chapter summaries ordered by idx ASC.
-    Does not include html_sanitized or canonical_text.
-
-    Paginated response follows L0 convention:
-    { "data": [...], "page": { "next_cursor": ..., "has_more": ... } }
-    """
-    result = epub_read.list_epub_chapters_for_viewer(
-        db, viewer.user_id, media_id, limit=limit, cursor=cursor
-    )
-    return result.model_dump(mode="json")
-
-
-@router.get("/media/{media_id}/chapters/{idx}")
-def get_epub_chapter(
-    media_id: UUID,
-    idx: int,
+    section_id: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get a single EPUB chapter with content and navigation pointers.
-
-    Returns full chapter payload scoped to the requested idx only.
-    """
-    result = epub_read.get_epub_chapter_for_viewer(db, viewer.user_id, media_id, idx)
+    """Get a canonical EPUB section by encoded section id."""
+    result = epub_read.get_epub_section_for_viewer(db, viewer.user_id, media_id, section_id)
     return success_response(result.model_dump(mode="json"))
-
-
-@router.get("/media/{media_id}/toc")
-def get_epub_toc(
-    media_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Get the persisted TOC tree for an EPUB media item.
-
-    Returns a nested tree with deterministic ordering by order_key.
-    EPUBs without TOC entries return an empty nodes list.
-    """
-    result = epub_read.get_epub_toc_for_viewer(db, viewer.user_id, media_id)
-    return success_response(result.model_dump(mode="json"))
-
 
 @router.get("/media/{media_id}/navigation")
 def get_epub_navigation(
@@ -557,7 +516,7 @@ def get_epub_navigation(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get unified EPUB navigation payload (sections + TOC links)."""
+    """Get canonical EPUB navigation payload (persisted sections + TOC links)."""
     result = epub_read.get_epub_navigation_for_viewer(db, viewer.user_id, media_id)
     return success_response(result.model_dump(mode="json"))
 

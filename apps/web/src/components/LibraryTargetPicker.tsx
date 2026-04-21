@@ -32,8 +32,6 @@ interface LibraryTargetPickerProps {
   selectedLibraryId?: string | null;
   onOpen?: () => void;
   onSelectLibrary?: (libraryId: string | null) => void;
-  onAddToLibrary?: (libraryId: string) => void;
-  onRemoveFromLibrary?: (libraryId: string) => void;
 }
 
 export default function LibraryTargetPicker({
@@ -47,8 +45,6 @@ export default function LibraryTargetPicker({
   selectedLibraryId = null,
   onOpen,
   onSelectLibrary,
-  onAddToLibrary,
-  onRemoveFromLibrary,
 }: LibraryTargetPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -61,8 +57,6 @@ export default function LibraryTargetPicker({
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelId = useId();
-  const selectionMode = Boolean(onSelectLibrary);
-  const membershipMode = !selectionMode;
   const selectedLibraryName =
     libraries.find((library) => library.id === selectedLibraryId)?.name ?? null;
 
@@ -137,9 +131,7 @@ export default function LibraryTargetPicker({
     };
   }, [open]);
 
-  const triggerText = selectionMode
-    ? selectedLibraryName ?? label
-    : label;
+  const triggerText = selectedLibraryName ?? label;
 
   const panel =
     open && panelStyle
@@ -169,14 +161,59 @@ export default function LibraryTargetPicker({
               />
             </div>
 
-            {selectionMode ? (
-              <div className={styles.list} role="listbox" aria-label={label}>
-                {allowNoLibrary ? (
+            <div className={styles.list} role="listbox" aria-label={label}>
+              {allowNoLibrary ? (
+                <div
+                  role="option"
+                  tabIndex={disabled ? -1 : 0}
+                  className={styles.item}
+                  aria-selected={selectedLibraryId === null}
+                  aria-disabled={disabled || undefined}
+                  onClick={(event) => {
+                    if (disabled) {
+                      return;
+                    }
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onSelectLibrary?.(null);
+                    setOpen(false);
+                    setPanelStyle(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (disabled) {
+                      return;
+                    }
+                    if (event.key !== "Enter" && event.key !== " ") {
+                      return;
+                    }
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onSelectLibrary?.(null);
+                    setOpen(false);
+                    setPanelStyle(null);
+                  }}
+                >
+                  <span className={styles.itemText}>
+                    <span className={styles.itemName}>{noLibraryLabel}</span>
+                  </span>
+                  {selectedLibraryId === null ? (
+                    <Check size={16} aria-hidden="true" />
+                  ) : null}
+                </div>
+              ) : null}
+
+              {loading ? (
+                <div className={styles.emptyState}>Loading libraries...</div>
+              ) : filteredLibraries.length === 0 ? (
+                <div className={styles.emptyState}>{emptyMessage}</div>
+              ) : (
+                filteredLibraries.map((library) => (
                   <div
+                    key={library.id}
                     role="option"
                     tabIndex={disabled ? -1 : 0}
                     className={styles.item}
-                    aria-selected={selectedLibraryId === null}
+                    aria-selected={selectedLibraryId === library.id}
                     aria-disabled={disabled || undefined}
                     onClick={(event) => {
                       if (disabled) {
@@ -184,7 +221,7 @@ export default function LibraryTargetPicker({
                       }
                       event.preventDefault();
                       event.stopPropagation();
-                      onSelectLibrary?.(null);
+                      onSelectLibrary?.(library.id);
                       setOpen(false);
                       setPanelStyle(null);
                     }}
@@ -197,131 +234,30 @@ export default function LibraryTargetPicker({
                       }
                       event.preventDefault();
                       event.stopPropagation();
-                      onSelectLibrary?.(null);
+                      onSelectLibrary?.(library.id);
                       setOpen(false);
                       setPanelStyle(null);
                     }}
                   >
                     <span className={styles.itemText}>
-                      <span className={styles.itemName}>{noLibraryLabel}</span>
+                      <span className={styles.itemName}>
+                        {library.color ? (
+                          <span
+                            className={styles.colorDot}
+                            style={{ backgroundColor: library.color }}
+                            aria-hidden="true"
+                          />
+                        ) : null}
+                        {library.name}
+                      </span>
                     </span>
-                    {selectedLibraryId === null ? (
+                    {selectedLibraryId === library.id ? (
                       <Check size={16} aria-hidden="true" />
                     ) : null}
                   </div>
-                ) : null}
-
-                {loading ? (
-                  <div className={styles.emptyState}>Loading libraries...</div>
-                ) : filteredLibraries.length === 0 ? (
-                  <div className={styles.emptyState}>{emptyMessage}</div>
-                ) : (
-                  filteredLibraries.map((library) => (
-                    <div
-                      key={library.id}
-                      role="option"
-                      tabIndex={disabled ? -1 : 0}
-                      className={styles.item}
-                      aria-selected={selectedLibraryId === library.id}
-                      aria-disabled={disabled || undefined}
-                      onClick={(event) => {
-                        if (disabled) {
-                          return;
-                        }
-                        event.preventDefault();
-                        event.stopPropagation();
-                        onSelectLibrary?.(library.id);
-                        setOpen(false);
-                        setPanelStyle(null);
-                      }}
-                      onKeyDown={(event) => {
-                        if (disabled) {
-                          return;
-                        }
-                        if (event.key !== "Enter" && event.key !== " ") {
-                          return;
-                        }
-                        event.preventDefault();
-                        event.stopPropagation();
-                        onSelectLibrary?.(library.id);
-                        setOpen(false);
-                        setPanelStyle(null);
-                      }}
-                    >
-                      <span className={styles.itemText}>
-                        <span className={styles.itemName}>
-                          {library.color ? (
-                            <span
-                              className={styles.colorDot}
-                              style={{ backgroundColor: library.color }}
-                              aria-hidden="true"
-                            />
-                          ) : null}
-                          {library.name}
-                        </span>
-                      </span>
-                      {selectedLibraryId === library.id ? (
-                        <Check size={16} aria-hidden="true" />
-                      ) : null}
-                    </div>
-                  ))
-                )}
-              </div>
-            ) : null}
-
-            {membershipMode ? (
-              <div className={styles.list}>
-                {loading ? (
-                  <div className={styles.emptyState}>Loading libraries...</div>
-                ) : filteredLibraries.length === 0 ? (
-                  <div className={styles.emptyState}>{emptyMessage}</div>
-                ) : (
-                  filteredLibraries.map((library) => {
-                    const rowDisabled = library.isInLibrary
-                      ? !library.canRemove
-                      : !library.canAdd;
-                    return (
-                      <button
-                        key={library.id}
-                        type="button"
-                        className={styles.item}
-                        disabled={rowDisabled}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          if (library.isInLibrary) {
-                            onRemoveFromLibrary?.(library.id);
-                            return;
-                          }
-                          onAddToLibrary?.(library.id);
-                        }}
-                      >
-                        <span className={styles.itemText}>
-                          <span className={styles.itemName}>
-                            {library.color ? (
-                              <span
-                                className={styles.colorDot}
-                                style={{ backgroundColor: library.color }}
-                                aria-hidden="true"
-                              />
-                            ) : null}
-                            {library.name}
-                          </span>
-                          <span className={styles.itemMeta}>
-                            {library.isInLibrary
-                              ? "Remove from library"
-                              : "Add to library"}
-                          </span>
-                        </span>
-                        {library.isInLibrary ? (
-                          <Check size={16} aria-hidden="true" />
-                        ) : null}
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            ) : null}
+                ))
+              )}
+            </div>
           </div>,
           document.body
         )

@@ -5,13 +5,10 @@ import {
 } from "@/lib/highlights/canonicalCursor";
 import { codepointToUtf16 } from "@/lib/highlights/selectionToOffsets";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
-import { type Highlight } from "@/components/HighlightEditor";
-import { type PdfHighlightOut } from "@/components/PdfReader";
 import { type GlobalPlayerChapter } from "@/lib/player/globalPlayer";
 import {
-  type EpubChapter,
-  type EpubChapterSummary,
   type EpubNavigationSection,
+  type EpubSectionContent,
 } from "@/lib/media/epubReader";
 
 // =============================================================================
@@ -119,6 +116,26 @@ export interface TranscriptRequestForecast {
   fitsBudget: boolean;
 }
 
+export interface Highlight {
+  id: string;
+  fragment_id: string;
+  start_offset: number;
+  end_offset: number;
+  color: HighlightColor;
+  exact: string;
+  prefix: string;
+  suffix: string;
+  created_at: string;
+  updated_at: string;
+  annotation: {
+    id: string;
+    body: string;
+    created_at: string;
+    updated_at: string;
+  } | null;
+  linked_conversations?: { conversation_id: string; title: string }[];
+}
+
 export interface MeResponse {
   user_id: string;
   default_library_id: string | null;
@@ -137,18 +154,15 @@ export interface ActiveContent {
   canonicalText: string;
 }
 
-export type PdfDocumentHighlight = PdfHighlightOut;
-
-export type PdfHighlightNavigationTarget = {
-  highlightId: string;
-  pageNumber: number;
-  quads: PdfHighlightOut["anchor"]["quads"];
-};
-
 export interface NavigationTocNodeLike {
   section_id: string | null;
   href: string | null;
   children: NavigationTocNodeLike[];
+}
+
+export interface EpubInternalLinkTarget {
+  sectionId: string;
+  anchorId: string | null;
 }
 
 // =============================================================================
@@ -159,6 +173,10 @@ export const TEXT_ANCHOR_TOP_PADDING_PX = 56;
 export const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
 export const DOCUMENT_PROCESSING_POLL_INTERVAL_MS = 3000;
 export const LIBRARY_ENTRY_PAGE_SIZE = 200;
+export const READER_POSITION_BUCKET_CP = 1024;
+
+const READER_QUOTE_EXACT_CP = 48;
+const READER_QUOTE_CONTEXT_CP = 24;
 
 // =============================================================================
 // DOM / Utility helpers
@@ -381,6 +399,110 @@ export function scrollToCanonicalTextAnchor(
   return false;
 }
 
+export function buildCanonicalQuoteWindow(
+  canonicalText: string,
+  canonicalOffset: number
+): {
+  quote: string | null;
+  quotePrefix: string | null;
+  quoteSuffix: string | null;
+} {
+  const chars = [...canonicalText];
+  if (chars.length === 0) {
+    return { quote: null, quotePrefix: null, quoteSuffix: null };
+  }
+
+  const clampedOffset = Math.max(0, Math.min(Math.floor(canonicalOffset), chars.length - 1));
+  const quoteStart = Math.min(
+    clampedOffset,
+    Math.max(0, chars.length - READER_QUOTE_EXACT_CP)
+  );
+  const quoteEnd = Math.min(chars.length, quoteStart + READER_QUOTE_EXACT_CP);
+  const prefixStart = Math.max(0, quoteStart - READER_QUOTE_CONTEXT_CP);
+  const suffixEnd = Math.min(chars.length, quoteEnd + READER_QUOTE_CONTEXT_CP);
+
+  const quote = chars.slice(quoteStart, quoteEnd).join("");
+  const quotePrefix = chars.slice(prefixStart, quoteStart).join("");
+  const quoteSuffix = chars.slice(quoteEnd, suffixEnd).join("");
+
+  return {
+    quote: quote.length > 0 ? quote : null,
+    quotePrefix: quotePrefix.length > 0 ? quotePrefix : null,
+    quoteSuffix: quoteSuffix.length > 0 ? quoteSuffix : null,
+  };
+}
+
+export function findCanonicalOffsetFromQuote(
+  canonicalText: string,
+  quote: string | null,
+  quotePrefix: string | null,
+  quoteSuffix: string | null
+): number | null {
+  if (!quote) {
+    return null;
+  }
+
+  const chars = [...canonicalText];
+  const quoteChars = [...quote];
+  const prefixChars = quotePrefix ? [...quotePrefix] : [];
+  const suffixChars = quoteSuffix ? [...quoteSuffix] : [];
+  if (quoteChars.length === 0 || chars.length < quoteChars.length) {
+    return null;
+  }
+
+  let bestOffset: number | null = null;
+  let bestScore = -1;
+
+  for (let start = 0; start <= chars.length - quoteChars.length; start += 1) {
+    let matchesQuote = true;
+    for (let idx = 0; idx < quoteChars.length; idx += 1) {
+      if (chars[start + idx] !== quoteChars[idx]) {
+        matchesQuote = false;
+        break;
+      }
+    }
+    if (!matchesQuote) {
+      continue;
+    }
+
+    let score = 0;
+    if (prefixChars.length > 0 && start >= prefixChars.length) {
+      let matchesPrefix = true;
+      for (let idx = 0; idx < prefixChars.length; idx += 1) {
+        if (chars[start - prefixChars.length + idx] !== prefixChars[idx]) {
+          matchesPrefix = false;
+          break;
+        }
+      }
+      if (matchesPrefix) {
+        score += 2;
+      }
+    }
+    if (suffixChars.length > 0 && start + quoteChars.length + suffixChars.length <= chars.length) {
+      let matchesSuffix = true;
+      for (let idx = 0; idx < suffixChars.length; idx += 1) {
+        if (chars[start + quoteChars.length + idx] !== suffixChars[idx]) {
+          matchesSuffix = false;
+          break;
+        }
+      }
+      if (matchesSuffix) {
+        score += 1;
+      }
+    }
+
+    if (bestOffset === null || score > bestScore) {
+      bestOffset = start;
+      bestScore = score;
+      if (score === 3) {
+        break;
+      }
+    }
+  }
+
+  return bestOffset;
+}
+
 // =============================================================================
 // API functions
 // =============================================================================
@@ -391,33 +513,6 @@ export async function fetchHighlights(fragmentId: string): Promise<Highlight[]> 
     { cache: "no-store" }
   );
   return response.data.highlights;
-}
-
-export async function fetchPdfHighlightsIndex(
-  mediaId: string,
-  cursor: string | null,
-  limit = 100
-): Promise<{ highlights: PdfDocumentHighlight[]; hasMore: boolean; nextCursor: string | null }> {
-  const params = new URLSearchParams({
-    limit: String(limit),
-    mine_only: "false",
-  });
-  if (cursor) {
-    params.set("cursor", cursor);
-  }
-
-  const response = await apiFetch<{
-    data: {
-      highlights: PdfDocumentHighlight[];
-      page: { has_more: boolean; next_cursor: string | null };
-    };
-  }>(`/api/media/${mediaId}/pdf-highlights/index?${params.toString()}`);
-
-  return {
-    highlights: response.data.highlights,
-    hasMore: response.data.page.has_more,
-    nextCursor: response.data.page.next_cursor,
-  };
 }
 
 export async function createHighlight(
@@ -480,13 +575,13 @@ export async function deleteAnnotation(highlightId: string): Promise<void> {
   });
 }
 
-export async function fetchChapterDetail(
+export async function fetchEpubSectionContent(
   mediaId: string,
-  idx: number,
+  sectionId: string,
   signal?: AbortSignal
-): Promise<EpubChapter> {
-  const resp = await apiFetch<{ data: EpubChapter }>(
-    `/api/media/${mediaId}/chapters/${idx}`,
+): Promise<EpubSectionContent> {
+  const resp = await apiFetch<{ data: EpubSectionContent }>(
+    `/api/media/${mediaId}/sections/${encodeURIComponent(sectionId)}`,
     signal ? { signal } : {}
   );
   return resp.data;
@@ -495,20 +590,6 @@ export async function fetchChapterDetail(
 // =============================================================================
 // EPUB navigation helpers
 // =============================================================================
-
-export function buildManifestFallbackSections(
-  manifest: EpubChapterSummary[]
-): EpubNavigationSection[] {
-  return manifest.map((chapter, ordinal) => ({
-    section_id: `frag-${chapter.idx}`,
-    label: chapter.title,
-    fragment_idx: chapter.idx,
-    anchor_id: null,
-    source_node_id: chapter.primary_toc_node_id,
-    source: "fragment_fallback",
-    ordinal,
-  }));
-}
 
 export function parseAnchorIdFromHref(href: string | null): string | null {
   if (!href || !href.includes("#")) {
@@ -555,4 +636,126 @@ export function resolveSectionAnchorId(
   }
 
   return null;
+}
+
+export function buildEpubLocationHref(
+  mediaId: string,
+  sectionId: string,
+  options?: {
+    fragmentId?: string | null;
+    highlightId?: string | null;
+  }
+): string {
+  const params = new URLSearchParams();
+  params.set("loc", sectionId);
+  if (options?.fragmentId) {
+    params.set("fragment", options.fragmentId);
+  }
+  if (options?.highlightId) {
+    params.set("highlight", options.highlightId);
+  }
+  return `/media/${mediaId}?${params.toString()}`;
+}
+
+const EPUB_LINK_ORIGIN = "https://epub.local";
+const URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
+
+function decodeEpubHrefPart(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeEpubHref(
+  href: string,
+  baseHref: string | null
+): { path: string | null; anchorId: string | null } | null {
+  const trimmed = href.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith("#")) {
+    return {
+      path: null,
+      anchorId: decodeEpubHrefPart(trimmed.slice(1)) || null,
+    };
+  }
+
+  if (trimmed.startsWith("/") || trimmed.startsWith("?") || URI_SCHEME_RE.test(trimmed)) {
+    return null;
+  }
+
+  if (!baseHref) {
+    return null;
+  }
+
+  try {
+    const baseUrl = new URL(baseHref, `${EPUB_LINK_ORIGIN}/`);
+    const resolved = new URL(trimmed, baseUrl);
+    return {
+      path: resolved.pathname.replace(/^\/+/, "") || null,
+      anchorId: resolved.hash ? decodeEpubHrefPart(resolved.hash.slice(1)) || null : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function resolveEpubInternalLinkTarget(
+  href: string | null,
+  currentSectionId: string | null,
+  sections: EpubNavigationSection[] | null
+): EpubInternalLinkTarget | null {
+  if (!href) {
+    return null;
+  }
+
+  const currentSection =
+    currentSectionId && sections
+      ? sections.find((section) => section.section_id === currentSectionId) ?? null
+      : null;
+  const target = normalizeEpubHref(href, currentSection?.href_path ?? "index.xhtml");
+  if (!target) {
+    return null;
+  }
+
+  if (target.path === null) {
+    return currentSectionId
+      ? {
+          sectionId: currentSectionId,
+          anchorId: target.anchorId,
+        }
+      : null;
+  }
+
+  if (!sections || sections.length === 0) {
+    return null;
+  }
+
+  let pathMatch: EpubInternalLinkTarget | null = null;
+
+  for (const section of sections) {
+    if (!section.href_path || section.href_path !== target.path) {
+      continue;
+    }
+
+    if (target.anchorId && section.anchor_id === target.anchorId) {
+      return {
+        sectionId: section.section_id,
+        anchorId: target.anchorId,
+      };
+    }
+
+    if (pathMatch === null) {
+      pathMatch = {
+        sectionId: section.section_id,
+        anchorId: target.anchorId ?? section.anchor_id,
+      };
+    }
+  }
+
+  return pathMatch;
 }

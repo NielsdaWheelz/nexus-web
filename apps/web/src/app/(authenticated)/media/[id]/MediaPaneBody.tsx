@@ -15,17 +15,15 @@ import ChatComposer from "@/components/ChatComposer";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import PdfReader from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
-import HighlightEditPopover from "@/components/HighlightEditPopover";
 import { useToast } from "@/components/Toast";
 import type { ContextItem } from "@/lib/api/sse";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import { DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX } from "@/lib/panes/paneRouteRegistry";
 import MediaHighlightsPaneBody from "./MediaHighlightsPaneBody";
 import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
-import LibraryTargetPicker from "@/components/LibraryTargetPicker";
+import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import DocumentViewport from "@/components/workspace/DocumentViewport";
 import { usePaneParam, usePaneRouter } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
@@ -42,6 +40,8 @@ import {
 import useMediaViewState from "./useMediaViewState";
 import { PanelRight } from "lucide-react";
 import styles from "./page.module.css";
+
+const HIGHLIGHTS_PANE_WIDTH_PX = 400;
 
 export default function MediaPaneBody() {
   const id = usePaneParam("id");
@@ -66,6 +66,9 @@ export default function MediaPaneBody() {
     targetPaneId: string | null;
     targetConversationId: string | null;
   } | null>(null);
+  const [libraryPanelOpen, setLibraryPanelOpen] = useState(false);
+  const [libraryPanelAnchorEl, setLibraryPanelAnchorEl] =
+    useState<HTMLElement | null>(null);
   const resumeNoticeMediaIdRef = useRef<string | null>(null);
   const seededPodcastTrackRef = useRef<string | null>(null);
 
@@ -140,6 +143,10 @@ export default function MediaPaneBody() {
   ]);
 
   const isReflowableReader = mv.canRead && !mv.isPdf;
+  const pdfResumeLocator =
+    mv.readerResumeState?.locator?.kind === "pdf_page"
+      ? mv.readerResumeState.locator
+      : null;
   const mediaAuthorMeta = formatMediaAuthors(mv.media?.authors, 2);
   const mediaHeaderMeta = (
     <div className={styles.metadata}>
@@ -189,6 +196,19 @@ export default function MediaPaneBody() {
       label: readerProfile.theme === "dark" ? "Dark theme (current)" : "Dark theme",
       disabled: readerProfile.theme === "dark",
       onSelect: () => updateTheme("dark"),
+    });
+  }
+
+  if (mv.media) {
+    mediaHeaderOptions.push({
+      id: "libraries",
+      label: "Libraries…",
+      restoreFocusOnClose: false,
+      onSelect: ({ triggerEl }) => {
+        setLibraryPanelAnchorEl(triggerEl);
+        setLibraryPanelOpen(true);
+        void mv.loadLibraryPickerLibraries();
+      },
     });
   }
 
@@ -333,38 +353,20 @@ export default function MediaPaneBody() {
     toolbar: mediaToolbar,
     options: mediaHeaderOptions,
     meta: mediaHeaderMeta,
-    actions: (
-      <div className={styles.paneActionGroup}>
-        {mv.media ? (
-          <LibraryTargetPicker
-            label="Libraries"
-            libraries={mv.libraryPickerLibraries}
-            loading={mv.libraryPickerLoading}
-            disabled={mv.libraryMembershipBusy}
-            onAddToLibrary={(libraryId) => {
-              void mv.handleAddToLibrary(libraryId);
-            }}
-            onRemoveFromLibrary={(libraryId) => {
-              void mv.handleRemoveFromLibrary(libraryId);
-            }}
-            emptyMessage="No non-default libraries available."
-          />
-        ) : null}
-        {mv.showHighlightsPane ? (
-          mv.isMobileViewport ? (
-            <button
-              type="button"
-              className={styles.paneActionButton}
-              onClick={() => setHighlightsDrawerOpen((v) => !v)}
-              aria-label="Highlights"
-              aria-expanded={highlightsDrawerOpen}
-            >
-              <PanelRight size={18} />
-            </button>
-          ) : null
-        ) : null}
-      </div>
-    ),
+    actions:
+      mv.showHighlightsPane && mv.isMobileViewport ? (
+        <div className={styles.paneActionGroup}>
+          <button
+            type="button"
+            className={styles.paneActionButton}
+            onClick={() => setHighlightsDrawerOpen((v) => !v)}
+            aria-label="Highlights"
+            aria-expanded={highlightsDrawerOpen}
+          >
+            <PanelRight size={18} />
+          </button>
+        </div>
+      ) : undefined,
   });
 
   useEffect(() => {
@@ -408,6 +410,14 @@ export default function MediaPaneBody() {
       setQuoteDrawerState(null);
     }
   }, [mv.isMobileViewport, quoteDrawerState]);
+
+  useEffect(() => {
+    if (mv.media) {
+      return;
+    }
+    setLibraryPanelOpen(false);
+    setLibraryPanelAnchorEl(null);
+  }, [mv.media]);
 
   useEffect(() => {
     if (!mv.media || !mv.isTranscriptMedia) {
@@ -521,37 +531,47 @@ export default function MediaPaneBody() {
 
   const highlightsContent = mv.showHighlightsPane ? (
     <MediaHighlightsPaneBody
-      mediaId={mv.media.id}
       isPdf={mv.isPdf}
       isEpub={mv.isEpub}
       isMobile={mv.isMobileViewport}
       fragmentHighlights={mv.highlights}
       pdfPageHighlights={mv.pdfPageHighlights}
-      pdfDocumentHighlights={mv.pdfDocumentHighlights}
       highlightsVersion={mv.highlightsVersion}
       pdfHighlightsVersion={mv.pdfHighlightsVersion}
       pdfActivePage={mv.pdfActivePage}
-      pdfHighlightsHasMore={mv.pdfHighlightsHasMore}
-      pdfHighlightsLoading={mv.pdfHighlightsLoading}
-      onLoadMorePdfHighlights={mv.handleLoadMorePdfHighlights}
-      highlightMutationToken={mv.highlightMutationEpoch}
       contentRef={mv.isPdf ? mv.pdfContentRef : mv.contentRef}
       focusedId={mv.focusState.focusedId}
       onFocusHighlight={mv.focusHighlight}
-      onNavigatePdfHighlight={mv.handleNavigatePdfHighlight}
-      onNavigateToFragment={mv.handleNavigateToFragment}
-      onHighlightsViewChange={mv.handleHighlightsViewChange}
       onSendToChat={mv.handleSendToChat}
       onAnnotationSave={mv.handleAnnotationSave}
       onAnnotationDelete={mv.handleAnnotationDelete}
-      buildRowOptions={mv.buildRowOptions}
       onOpenConversation={mv.handleOpenConversation}
+      buildRowOptions={mv.buildRowOptions}
     />
   ) : null;
   const showDesktopHighlightsPane = !mv.isMobileViewport && highlightsContent !== null;
 
   return (
     <>
+      {mv.media ? (
+        <LibraryMembershipPanel
+          open={libraryPanelOpen}
+          title="Libraries"
+          anchorEl={libraryPanelAnchorEl}
+          libraries={mv.libraryPickerLibraries}
+          loading={mv.libraryPickerLoading}
+          busy={mv.libraryMembershipBusy}
+          error={mv.libraryPickerError}
+          emptyMessage="No non-default libraries available."
+          onClose={() => setLibraryPanelOpen(false)}
+          onAddToLibrary={(libraryId) => {
+            void mv.handleAddToLibrary(libraryId);
+          }}
+          onRemoveFromLibrary={(libraryId) => {
+            void mv.handleRemoveFromLibrary(libraryId);
+          }}
+        />
+      ) : null}
       <div className={styles.splitLayout}>
         <div className={styles.readerColumn}>
           {!mv.isPdf && mv.isMismatchDisabled && (
@@ -626,33 +646,21 @@ export default function MediaPaneBody() {
                 }
                 highlightRefreshToken={mv.pdfRefreshToken}
                 onPageHighlightsChange={mv.handlePdfPageHighlightsChange}
-                navigateToHighlight={mv.pdfNavigationTarget}
-                onHighlightNavigationComplete={() => mv.setPdfNavigationTarget(null)}
-                onHighlightsMutated={mv.schedulePdfHighlightsRefresh}
                 onHighlightTap={mv.isMobileViewport ? handlePdfHighlightTap : undefined}
                 onQuoteToChat={mv.media.capabilities?.can_quote ? mv.handleSendToChat : undefined}
                 onControlsStateChange={mv.setPdfControlsState}
                 onControlsReady={(controls) => {
                   mv.pdfControlsRef.current = controls;
                 }}
-                startPageNumber={
-                  mv.readerResumeState?.locator_kind === "pdf_page"
-                    ? mv.readerResumeState.page ?? undefined
-                    : undefined
-                }
-                startZoom={
-                  mv.readerResumeState?.locator_kind === "pdf_page"
-                    ? mv.readerResumeState.zoom ?? undefined
-                    : undefined
-                }
+                startPageNumber={pdfResumeLocator?.page ?? undefined}
+                startZoom={pdfResumeLocator?.zoom ?? undefined}
                 onResumeStateChange={(pageNumber, zoom) =>
                   mv.saveReaderResumeState({
-                    locator_kind: "pdf_page",
-                    page: pageNumber,
-                    zoom,
-                    fragment_id: null,
-                    offset: null,
-                    section_id: null,
+                    locator: {
+                      kind: "pdf_page",
+                      page: pageNumber,
+                      zoom,
+                    },
                   })
                 }
               />
@@ -702,8 +710,8 @@ export default function MediaPaneBody() {
           <div
             className={styles.highlightsColumn}
             style={{
-              width: DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX,
-              flex: `0 0 ${DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX}px`,
+              width: HIGHLIGHTS_PANE_WIDTH_PX,
+              flex: `0 0 ${HIGHLIGHTS_PANE_WIDTH_PX}px`,
             }}
           >
             {highlightsContent}
@@ -763,20 +771,6 @@ export default function MediaPaneBody() {
           </aside>
         </div>
       ) : null}
-
-      {mv.editPopoverHighlight && mv.editPopoverAnchorRect && (
-        <HighlightEditPopover
-          highlight={mv.editPopoverHighlight}
-          anchorRect={mv.editPopoverAnchorRect}
-          isEditingBounds={mv.focusState.editingBounds}
-          onStartEditBounds={mv.startEditBounds}
-          onCancelEditBounds={mv.cancelEditBounds}
-          onColorChange={mv.handleColorChange}
-          onAnnotationSave={mv.handleAnnotationSave}
-          onAnnotationDelete={mv.handleAnnotationDelete}
-          onDismiss={mv.dismissEditPopover}
-        />
-      )}
 
       {!mv.isPdf && mv.selection && !mv.focusState.editingBounds && mv.contentRef.current && (
         <SelectionPopover
