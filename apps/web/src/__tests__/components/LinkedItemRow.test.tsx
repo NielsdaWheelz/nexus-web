@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import LinkedItemRow from "@/components/LinkedItemRow";
 
@@ -130,7 +134,6 @@ describe("LinkedItemRow", () => {
 
   it("enters inline edit on annotation click and saves on blur", async () => {
     const onAnnotationSave = vi.fn().mockResolvedValue(undefined);
-    const user = userEvent.setup();
 
     render(
       <LinkedItemRow
@@ -149,22 +152,18 @@ describe("LinkedItemRow", () => {
     );
 
     // Click placeholder to edit
-    await user.click(screen.getByText("Add a note\u2026"));
+    fireEvent.click(screen.getByText("Add a note\u2026"));
 
     const textarea = screen.getByLabelText("Annotation");
-    expect(textarea).toBeInTheDocument();
+    fireEvent.change(textarea, { target: { value: "My note" } });
+    fireEvent.blur(textarea);
 
-    await user.type(textarea, "My note");
-    await user.tab();
-
-    await waitFor(() => {
-      expect(onAnnotationSave).toHaveBeenCalledWith("h-4", "My note");
-    });
+    expect(screen.queryByLabelText("Annotation")).not.toBeInTheDocument();
+    expect(onAnnotationSave).toHaveBeenCalledWith("h-4", "My note");
   });
 
-  it("cancels inline edit on Escape", async () => {
+  it("cancels inline edit on Escape without triggering blur save", async () => {
     const onAnnotationSave = vi.fn().mockResolvedValue(undefined);
-    const user = userEvent.setup();
 
     render(
       <LinkedItemRow
@@ -183,23 +182,19 @@ describe("LinkedItemRow", () => {
     );
 
     // Click annotation to edit
-    await user.click(screen.getByText("existing note"));
+    fireEvent.click(screen.getByText("existing note"));
 
     const textarea = screen.getByLabelText("Annotation");
-    await user.clear(textarea);
-    await user.type(textarea, "changed");
-    await user.keyboard("{Escape}");
+    fireEvent.change(textarea, { target: { value: "changed" } });
+    fireEvent.keyDown(textarea, { key: "Escape" });
 
-    // Should not save, and textarea should be gone
     expect(onAnnotationSave).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Annotation")).not.toBeInTheDocument();
-    // Original text is restored
     expect(screen.getByText("existing note")).toBeInTheDocument();
   });
 
   it("saves on Cmd+Enter", async () => {
     const onAnnotationSave = vi.fn().mockResolvedValue(undefined);
-    const user = userEvent.setup();
 
     render(
       <LinkedItemRow
@@ -217,14 +212,13 @@ describe("LinkedItemRow", () => {
       />
     );
 
-    await user.click(screen.getByText("Add a note\u2026"));
+    fireEvent.click(screen.getByText("Add a note\u2026"));
     const textarea = screen.getByLabelText("Annotation");
-    await user.type(textarea, "quick note");
-    await user.keyboard("{Meta>}{Enter}{/Meta}");
+    fireEvent.change(textarea, { target: { value: "quick note" } });
+    fireEvent.keyDown(textarea, { key: "Enter", metaKey: true });
 
-    await waitFor(() => {
-      expect(onAnnotationSave).toHaveBeenCalledWith("h-6", "quick note");
-    });
+    expect(screen.queryByLabelText("Annotation")).not.toBeInTheDocument();
+    expect(onAnnotationSave).toHaveBeenCalledWith("h-6", "quick note");
   });
 
   it("renders linked conversations and opens selected conversation", async () => {
