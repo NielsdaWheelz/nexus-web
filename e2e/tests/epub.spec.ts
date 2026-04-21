@@ -36,23 +36,64 @@ async function upsertHighlightAnnotation(
   expect(response.ok()).toBeTruthy();
 }
 
-interface ReaderLocator {
-  source?: string | null;
-  anchor?: string | null;
-  text_offset?: number | null;
-  quote?: string | null;
-  quote_prefix?: string | null;
-  quote_suffix?: string | null;
-  progression?: number | null;
-  total_progression?: number | null;
-  position?: number | null;
-  page?: number | null;
-  page_progression?: number | null;
-  zoom?: number | null;
+interface ReaderTextLocations {
+  text_offset: number | null;
+  progression: number | null;
+  total_progression: number | null;
+  position: number | null;
 }
 
+interface ReaderTextQuote {
+  quote: string | null;
+  quote_prefix: string | null;
+  quote_suffix: string | null;
+}
+
+interface WebReaderResumeState {
+  kind: "web";
+  target: {
+    fragment_id: string;
+  };
+  locations: ReaderTextLocations;
+  text: ReaderTextQuote;
+}
+
+interface TranscriptReaderResumeState {
+  kind: "transcript";
+  target: {
+    fragment_id: string;
+  };
+  locations: ReaderTextLocations;
+  text: ReaderTextQuote;
+}
+
+interface EpubReaderResumeState {
+  kind: "epub";
+  target: {
+    section_id: string;
+    href_path: string;
+    anchor_id: string | null;
+  };
+  locations: ReaderTextLocations;
+  text: ReaderTextQuote;
+}
+
+interface PdfReaderResumeState {
+  kind: "pdf";
+  page: number;
+  page_progression: number | null;
+  zoom: number | null;
+  position: number | null;
+}
+
+type ReaderResumeState =
+  | WebReaderResumeState
+  | TranscriptReaderResumeState
+  | EpubReaderResumeState
+  | PdfReaderResumeState;
+
 interface ReaderStateResponse {
-  data: ReaderLocator | null;
+  data: ReaderResumeState | null;
 }
 
 interface EpubNavigationResponse {
@@ -79,7 +120,7 @@ async function findSectionByLabel(
 ): Promise<{
   section_id: string;
   label: string;
-  href_path: string | null;
+  href_path: string;
   anchor_id: string | null;
 }> {
   const navigation = await fetchEpubNavigation(page, mediaId);
@@ -88,7 +129,76 @@ async function findSectionByLabel(
   if (!section) {
     throw new Error(`Expected navigation section with label "${label}".`);
   }
-  return section;
+  expect(section.href_path).toBeTruthy();
+  if (!section.href_path) {
+    throw new Error(`Expected navigation section "${label}" to expose href_path.`);
+  }
+  return {
+    section_id: section.section_id,
+    label: section.label,
+    href_path: section.href_path,
+    anchor_id: section.anchor_id,
+  };
+}
+
+function buildEmptyReaderTextLocations(): ReaderTextLocations {
+  return {
+    text_offset: null,
+    progression: null,
+    total_progression: null,
+    position: null,
+  };
+}
+
+function buildEmptyReaderTextQuote(): ReaderTextQuote {
+  return {
+    quote: null,
+    quote_prefix: null,
+    quote_suffix: null,
+  };
+}
+
+function buildEpubReaderState(
+  section: {
+    section_id: string;
+    href_path: string;
+  },
+  overrides: {
+    anchor_id?: string | null;
+    locations?: Partial<ReaderTextLocations>;
+    text?: Partial<ReaderTextQuote>;
+  } = {}
+): EpubReaderResumeState {
+  return {
+    kind: "epub",
+    target: {
+      section_id: section.section_id,
+      href_path: section.href_path,
+      anchor_id: overrides.anchor_id ?? null,
+    },
+    locations: {
+      ...buildEmptyReaderTextLocations(),
+      ...overrides.locations,
+    },
+    text: {
+      ...buildEmptyReaderTextQuote(),
+      ...overrides.text,
+    },
+  };
+}
+
+function isEpubReaderResumeState(
+  state: ReaderResumeState | null
+): state is EpubReaderResumeState {
+  return state?.kind === "epub";
+}
+
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolver) => {
+    resolve = resolver;
+  });
+  return { promise, resolve };
 }
 
 async function fetchEpubSectionDetail(
@@ -225,47 +335,63 @@ async function readAlignmentMetrics(
   }, highlightIds);
 }
 
-async function expectRailRowToStayCompact(row: Locator, hiddenText: string): Promise<void> {
-  await expect(row).toBeVisible();
-  await expect(row.getByText(hiddenText, { exact: true })).toHaveCount(0);
-  await expect(row.getByRole("button", { name: "Send to chat" })).toHaveCount(0);
-  await expect(row.getByRole("button", { name: "Actions" })).toHaveCount(0);
+function rowAskInChatButton(row: Locator): Locator {
+  return row.getByRole("button", { name: /ask in chat|send to chat/i });
 }
 
-async function expectSelectedNote(page: Page, noteText: string): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        const noteTextLocator = page.getByText(noteText, { exact: true }).first();
-        if (
-          (await noteTextLocator.count()) > 0 &&
-          (await noteTextLocator.isVisible().catch(() => false))
-        ) {
-          return true;
-        }
+function rowActionsButton(row: Locator): Locator {
+  return row.getByRole("button", { name: "Actions" });
+}
 
-        return page.evaluate((expectedValue) => {
-          const inputs = Array.from(
-            document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-              'input[type="text"], textarea'
-            )
-          );
-          return inputs.some((input) => {
-            const rect = input.getBoundingClientRect();
-            const style = window.getComputedStyle(input);
-            return (
-              input.value === expectedValue &&
-              rect.width > 0 &&
-              rect.height > 0 &&
-              style.display !== "none" &&
-              style.visibility !== "hidden"
-            );
-          });
-        }, noteText);
-      },
-      { timeout: 10_000 }
-    )
+async function rowContainsVisibleTextOrFieldValue(
+  row: Locator,
+  expectedValue: string
+): Promise<boolean> {
+  return row.evaluate((element, expected) => {
+    const root = element as HTMLElement;
+    if (root.innerText.includes(expected)) {
+      return true;
+    }
+
+    const fields = Array.from(
+      root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+        'input[type="text"], textarea'
+      )
+    );
+    return fields.some((field) => {
+      const rect = field.getBoundingClientRect();
+      const style = window.getComputedStyle(field);
+      return (
+        field.value === expected &&
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden"
+      );
+    });
+  }, expectedValue);
+}
+
+async function expectHighlightRowToStayCollapsed(
+  row: Locator,
+  hiddenText: string
+): Promise<void> {
+  await expect(row).toBeVisible();
+  await expect.poll(() => rowContainsVisibleTextOrFieldValue(row, hiddenText)).toBe(false);
+  await expect(rowAskInChatButton(row)).toHaveCount(0);
+  await expect(rowActionsButton(row)).toHaveCount(0);
+}
+
+async function expectHighlightRowToBeExpanded(
+  row: Locator,
+  noteText: string
+): Promise<void> {
+  await expect(row).toBeVisible();
+  await expect
+    .poll(() => rowContainsVisibleTextOrFieldValue(row, noteText), { timeout: 10_000 })
     .toBe(true);
+  await expect(rowAskInChatButton(row)).toHaveCount(1);
+  await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
 async function readAnchorCenterOffset(page: Page, highlightId: string): Promise<number | null> {
@@ -302,6 +428,62 @@ async function readAnchorCenterOffset(page: Page, highlightId: string): Promise<
   }, highlightId);
 }
 
+async function readEpubContentScrollTop(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    const contentRoot = document.querySelector<HTMLElement>('div[class*="fragments"]');
+    if (!contentRoot) {
+      return null;
+    }
+
+    let scroller: HTMLElement | null = contentRoot.parentElement;
+    while (scroller && scroller !== document.body) {
+      const computed = window.getComputedStyle(scroller);
+      const canScrollY =
+        /(auto|scroll)/.test(computed.overflowY) &&
+        scroller.scrollHeight > scroller.clientHeight;
+      if (canScrollY) {
+        return scroller.scrollTop;
+      }
+      scroller = scroller.parentElement;
+    }
+
+    return null;
+  });
+}
+
+async function isLocatorInViewport(locator: Locator): Promise<boolean> {
+  if ((await locator.count()) === 0) {
+    return false;
+  }
+  return locator
+    .first()
+    .evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.bottom > 0 && rect.top < window.innerHeight;
+    })
+    .catch(() => false);
+}
+
+async function wheelUntilLocatorInViewport(
+  page: Page,
+  locator: Locator,
+  maxAttempts = 12
+): Promise<void> {
+  const contentRoot = page.locator('div[class*="fragments"]').first();
+  await expect(contentRoot).toBeVisible({ timeout: 15_000 });
+  await contentRoot.hover();
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (await isLocatorInViewport(locator)) {
+      return;
+    }
+    await page.mouse.wheel(0, 700);
+    await page.waitForTimeout(75);
+  }
+
+  await expect(locator).toBeInViewport();
+}
+
 function readSeededEpubMedia(): SeededEpubMedia {
   const seedPath = path.join(__dirname, "..", ".seed", "epub-media.json");
   return JSON.parse(readFileSync(seedPath, "utf-8"));
@@ -310,7 +492,7 @@ function readSeededEpubMedia(): SeededEpubMedia {
 async function putReaderState(
   page: Parameters<typeof test>[0]["page"],
   mediaId: string,
-  locator: ReaderLocator | null
+  locator: ReaderResumeState | null
 ): Promise<void> {
   const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
     data: locator,
@@ -321,11 +503,32 @@ async function putReaderState(
 async function fetchReaderState(
   page: Parameters<typeof test>[0]["page"],
   mediaId: string
-): Promise<ReaderLocator | null> {
+): Promise<ReaderResumeState | null> {
   const response = await page.request.get(`/api/media/${mediaId}/reader-state`);
   expect(response.ok()).toBeTruthy();
   const payload = (await response.json()) as ReaderStateResponse;
   return payload.data;
+}
+
+async function seedBaselineEpubReaderState(
+  page: Parameters<typeof test>[0]["page"],
+  mediaId: string
+): Promise<void> {
+  const navigation = await fetchEpubNavigation(page, mediaId);
+  const firstNavigableSection = navigation.data.sections.find((section) => section.href_path);
+  expect(firstNavigableSection).toBeTruthy();
+  if (!firstNavigableSection?.href_path) {
+    throw new Error(`Expected a navigable EPUB section for ${mediaId}.`);
+  }
+
+  await putReaderState(
+    page,
+    mediaId,
+    buildEpubReaderState({
+      section_id: firstNavigableSection.section_id,
+      href_path: firstNavigableSection.href_path,
+    })
+  );
 }
 
 async function resetEpubReaderState(
@@ -350,10 +553,30 @@ async function resetEpubReaderState(
       )
       .toBe(true);
     return;
-  } catch (error) {
-    throw new Error(
-      `Failed to reset EPUB reader state for ${mediaId}. cause=${error instanceof Error ? error.message : String(error)}`
-    );
+  } catch (clearError) {
+    try {
+      await expect
+        .poll(
+          async () => {
+            try {
+              await seedBaselineEpubReaderState(page, mediaId);
+              return true;
+            } catch {
+              return false;
+            }
+          },
+          {
+            timeout: 4_000,
+            intervals: [100, 200, 400, 800],
+          },
+        )
+        .toBe(true);
+      return;
+    } catch (seedError) {
+      throw new Error(
+        `Failed to reset EPUB reader state for ${mediaId}. null_clear=${clearError instanceof Error ? clearError.message : String(clearError)} fallback_seed=${seedError instanceof Error ? seedError.message : String(seedError)}`
+      );
+    }
   }
 }
 
@@ -462,10 +685,7 @@ test.describe("epub", () => {
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
     const secondSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[1]);
 
-    expect(secondSection.href_path).toBeTruthy();
-    expect(firstSection.href_path).toBeTruthy();
-
-    await putReaderState(page, seed.media_id, { source: secondSection.href_path });
+    await putReaderState(page, seed.media_id, buildEpubReaderState(secondSection));
 
     await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
     await expect(
@@ -477,14 +697,93 @@ test.describe("epub", () => {
     await expect
       .poll(async () => {
         const locator = await fetchReaderState(page, seed.media_id);
-        return locator?.source ?? null;
+        return isEpubReaderResumeState(locator) ? locator.target.section_id : null;
       })
-      .toBe(firstSection.href_path);
+      .toBe(firstSection.section_id);
+
+    const savedLocator = await fetchReaderState(page, seed.media_id);
+    expect(isEpubReaderResumeState(savedLocator)).toBe(true);
+    if (!isEpubReaderResumeState(savedLocator)) {
+      throw new Error("Expected an EPUB reader resume state.");
+    }
+    expect(savedLocator.target).toEqual({
+      section_id: firstSection.section_id,
+      href_path: firstSection.href_path,
+      anchor_id: null,
+    });
 
     await page.reload();
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("manual scroll before delayed EPUB restore settles does not snap back late", async ({
+    page,
+  }) => {
+    const seed = readSeededEpubMedia();
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    const sectionDetail = await fetchEpubSectionDetail(page, seed.media_id, firstSection.section_id);
+    const restoreQuote = "introduction chapter of the E2E test EPUB";
+    const manualScrollQuote = "Deterministic post-anchor filler paragraph 8 for E2E.";
+    const restoreOffset = sectionDetail.data.canonical_text.indexOf(restoreQuote);
+
+    expect(restoreOffset).toBeGreaterThanOrEqual(0);
+
+    const readerStateRequested = createDeferred<void>();
+    const releaseReaderState = createDeferred<void>();
+    let interceptedReaderStateRequest = false;
+
+    await page.route(`**/api/media/${seed.media_id}/reader-state`, async (route) => {
+      if (route.request().method() !== "GET" || interceptedReaderStateRequest) {
+        await route.continue();
+        return;
+      }
+
+      interceptedReaderStateRequest = true;
+      readerStateRequested.resolve();
+      await releaseReaderState.promise;
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: buildEpubReaderState(firstSection, {
+            locations: {
+              text_offset: restoreOffset,
+            },
+            text: {
+              quote: restoreQuote,
+            },
+          }),
+        }),
+      });
+    });
+
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    await readerStateRequested.promise;
+    await expect(
+      page.getByRole("heading", { name: seed.chapter_titles[0] })
+    ).toBeVisible({ timeout: 15_000 });
+
+    const manualScrollTarget = page.getByText(manualScrollQuote, { exact: true }).first();
+    await wheelUntilLocatorInViewport(page, manualScrollTarget);
+    await expect(manualScrollTarget).toBeInViewport();
+
+    const manualScrollTop = await readEpubContentScrollTop(page);
+    expect(manualScrollTop).not.toBeNull();
+    expect(manualScrollTop ?? 0).toBeGreaterThan(200);
+
+    releaseReaderState.resolve();
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await page.waitForTimeout(200);
+      const currentScrollTop = await readEpubContentScrollTop(page);
+      expect(currentScrollTop).not.toBeNull();
+      expect(currentScrollTop ?? 0).toBeGreaterThan((manualScrollTop ?? 0) - 120);
+    }
+
+    await expect(manualScrollTarget).toBeInViewport();
   });
 
   test("toc leaf with anchor lands at exact in-fragment target", async ({
@@ -616,7 +915,7 @@ test.describe("epub", () => {
     }
   });
 
-  test("section-scoped rail stays contextual while inspector tracks rail and source selection", async ({
+  test("section-scoped highlights expand inline while context and source focus stay in sync", async ({
     page,
   }) => {
     const seed = readSeededEpubMedia();
@@ -704,19 +1003,26 @@ test.describe("epub", () => {
     await expect(chapter1PrimaryRow).toBeVisible({ timeout: 15_000 });
     await expect(chapter1SecondaryRow).toBeVisible({ timeout: 15_000 });
     await expect(chapter2Row).toHaveCount(0);
-    await expectRailRowToStayCompact(
+    await expectHighlightRowToBeExpanded(
       chapter1PrimaryRow,
       "EPUB chapter one inspector note alpha."
     );
-    await expectRailRowToStayCompact(
+    await expectHighlightRowToStayCollapsed(
       chapter1SecondaryRow,
       "EPUB chapter one inspector note omega."
     );
-    await expect(page.getByRole("button", { name: /send to chat/i })).toHaveCount(1);
-    await expectSelectedNote(page, "EPUB chapter one inspector note alpha.");
+    await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
 
     await chapter1SecondaryRow.click();
-    await expectSelectedNote(page, "EPUB chapter one inspector note omega.");
+    await expectHighlightRowToBeExpanded(
+      chapter1SecondaryRow,
+      "EPUB chapter one inspector note omega."
+    );
+    await expectHighlightRowToStayCollapsed(
+      chapter1PrimaryRow,
+      "EPUB chapter one inspector note alpha."
+    );
     await expect
       .poll(
         async () =>
@@ -732,7 +1038,14 @@ test.describe("epub", () => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
     });
     await chapter1PrimaryAnchor.click();
-    await expectSelectedNote(page, "EPUB chapter one inspector note alpha.");
+    await expectHighlightRowToBeExpanded(
+      chapter1PrimaryRow,
+      "EPUB chapter one inspector note alpha."
+    );
+    await expectHighlightRowToStayCollapsed(
+      chapter1SecondaryRow,
+      "EPUB chapter one inspector note omega."
+    );
 
     await selectSectionByLabel(page, seed.chapter_titles[1]);
     await expect(
@@ -742,11 +1055,9 @@ test.describe("epub", () => {
     await expect(chapter1SecondaryRow).toHaveCount(0);
     const chapter2RowInView = chapter2Row.first();
     await expect(chapter2RowInView).toBeVisible({ timeout: 15_000 });
-    await expectRailRowToStayCompact(chapter2RowInView, "EPUB chapter two inspector note.");
-    await expect(page.getByRole("button", { name: /send to chat/i })).toHaveCount(1);
-    await expect(page.getByText("EPUB chapter one inspector note omega.", { exact: true })).toHaveCount(0);
+    await expectHighlightRowToBeExpanded(chapter2RowInView, "EPUB chapter two inspector note.");
 
     await chapter2RowInView.click();
-    await expectSelectedNote(page, "EPUB chapter two inspector note.");
+    await expectHighlightRowToBeExpanded(chapter2RowInView, "EPUB chapter two inspector note.");
   });
 });

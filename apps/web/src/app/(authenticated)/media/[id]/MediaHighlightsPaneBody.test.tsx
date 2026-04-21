@@ -24,36 +24,16 @@ const mockHighlightsPane = vi.fn((props: Record<string, unknown>) => {
   );
 });
 
-const mockHighlightDetailPane = vi.fn((props: Record<string, unknown>) => {
-  const highlight = props.highlight as { id: string; exact: string } | null | undefined;
-  return (
-    <div data-testid="highlight-detail-pane">
-      <div data-testid="detail-highlight-id">{highlight?.id ?? ""}</div>
-      <div data-testid="detail-exact">{highlight?.exact ?? ""}</div>
-      {typeof props.onShowInDocument === "function" ? (
-        <button
-          type="button"
-          onClick={() =>
-            (props.onShowInDocument as (highlightId: string) => void)(highlight?.id ?? "")
-          }
-        >
-          Show in document
-        </button>
-      ) : null}
-    </div>
-  );
-});
-
 vi.mock("@/components/LinkedItemsPane", () => ({
   default: (props: Record<string, unknown>) => mockHighlightsPane(props),
 }));
 
-vi.mock("./HighlightDetailPane", () => ({
-  default: (props: Record<string, unknown>) => mockHighlightDetailPane(props),
-}));
-
 vi.mock("@/components/ui/StatusPill", () => ({
   default: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock("@/components/Toast", () => ({
+  useToast: () => ({ toast: vi.fn() }),
 }));
 
 function makeHighlight(overrides: Partial<Highlight> = {}): Highlight {
@@ -131,8 +111,6 @@ function buildProps(overrides: Record<string, unknown> = {}) {
     onAnnotationSave: vi.fn(async () => {}),
     onAnnotationDelete: vi.fn(async () => {}),
     onOpenConversation: vi.fn(),
-    onCloseMobileDrawer: vi.fn(),
-    mobileDetailRequestKey: 0,
     ...overrides,
   };
 }
@@ -150,25 +128,14 @@ function getRenderedHighlightIds(): string[] {
   return highlights?.map((highlight) => highlight.id) ?? [];
 }
 
-function getLatestDetailProps(): Record<string, unknown> {
-  const latest = mockHighlightDetailPane.mock.calls.at(-1)?.[0] as
-    | Record<string, unknown>
-    | undefined;
-  if (!latest) {
-    throw new Error("Expected highlight detail pane to render");
-  }
-  return latest;
-}
-
 describe("MediaHighlightsPaneBody", () => {
   beforeEach(() => {
     mockHighlightsPane.mockClear();
-    mockHighlightDetailPane.mockClear();
   });
 
-  it("shows the selected desktop highlight in the detail inspector with no all-highlights toggle", () => {
+  it("renders desktop highlights in contextual order and keeps the focused row selected", () => {
     const exact =
-      "This is a deliberately long highlight quote that should stay fully readable in the inspector.";
+      "This is a deliberately long highlight quote that should stay fully readable when expanded inline.";
 
     render(
       <MediaHighlightsPaneBody
@@ -186,14 +153,10 @@ describe("MediaHighlightsPaneBody", () => {
     expect(screen.queryByRole("button", { name: "All highlights" })).not.toBeInTheDocument();
     expect(getRenderedHighlightIds()).toEqual(["highlight-1", "highlight-2"]);
     expect(getLatestPaneProps().alignToContent).toBe(true);
-    expect(getLatestDetailProps().highlight).toMatchObject({
-      id: "highlight-2",
-      exact,
-    });
-    expect(screen.getByTestId("detail-exact")).toHaveTextContent(exact);
+    expect(getLatestPaneProps().focusedId).toBe("highlight-2");
   });
 
-  it("re-resolves EPUB selection to the first contextual highlight when focus is out of scope", async () => {
+  it("re-resolves EPUB focus to the first contextual highlight when the prior focus is out of scope", async () => {
     const onFocusHighlight = vi.fn();
 
     render(
@@ -217,9 +180,7 @@ describe("MediaHighlightsPaneBody", () => {
       expect(onFocusHighlight).toHaveBeenCalledWith("early-highlight");
     });
 
-    expect(getLatestDetailProps().highlight).toMatchObject({
-      id: "early-highlight",
-    });
+    expect(getLatestPaneProps().focusedId).toBe("early-highlight");
   });
 
   it("clears focus when the contextual set becomes empty", async () => {
@@ -239,10 +200,11 @@ describe("MediaHighlightsPaneBody", () => {
       expect(onClearFocus).toHaveBeenCalledTimes(1);
     });
 
-    expect(getLatestDetailProps().highlight).toBeNull();
+    expect(getLatestPaneProps().highlights).toEqual([]);
+    expect(getLatestPaneProps().focusedId).toBeNull();
   });
 
-  it("opens a mobile detail sheet for the tapped contextual highlight", async () => {
+  it("updates the focused mobile row when a contextual highlight is tapped", async () => {
     const user = userEvent.setup();
     const onFocusHighlight = vi.fn();
     const props = buildProps({
@@ -271,18 +233,14 @@ describe("MediaHighlightsPaneBody", () => {
 
     render(<MobileHarness />);
 
-    expect(screen.queryByRole("dialog", { name: "Highlight details" })).not.toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: "highlight-2" }));
 
     expect(onFocusHighlight).toHaveBeenCalledWith("highlight-2");
-    expect(screen.getByRole("dialog", { name: "Highlight details" })).toBeInTheDocument();
-    expect(screen.getByTestId("detail-highlight-id")).toHaveTextContent("highlight-2");
-    expect(screen.getByTestId("detail-exact")).toHaveTextContent("Second quote");
     expect(getLatestPaneProps().alignToContent).toBe(false);
+    expect(getLatestPaneProps().focusedId).toBe("highlight-2");
   });
 
-  it("keeps PDF highlights scoped to the active page and mirrors the selection in the inspector", async () => {
+  it("keeps PDF highlights scoped to the active page and mirrors the selection in the inline list", async () => {
     const user = userEvent.setup();
     const onFocusHighlight = vi.fn();
 
@@ -326,10 +284,7 @@ describe("MediaHighlightsPaneBody", () => {
     expect(screen.queryByRole("button", { name: "All highlights" })).not.toBeInTheDocument();
     expect(getRenderedHighlightIds()).toEqual(["pdf-page-1", "pdf-page-1b"]);
     expect(getLatestPaneProps().alignToContent).toBe(true);
-    expect(getLatestDetailProps().highlight).toMatchObject({
-      id: "pdf-page-1b",
-      exact: "Page one second",
-    });
+    expect(getLatestPaneProps().focusedId).toBe("pdf-page-1b");
 
     await user.click(screen.getByRole("button", { name: "pdf-page-1" }));
 

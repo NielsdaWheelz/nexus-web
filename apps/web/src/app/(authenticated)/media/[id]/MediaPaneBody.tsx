@@ -61,7 +61,6 @@ export default function MediaPaneBody() {
   // ==========================================================================
 
   const [highlightsDrawerOpen, setHighlightsDrawerOpen] = useState(false);
-  const [mobileDetailRequestKey, setMobileDetailRequestKey] = useState(0);
   const [quoteDrawerState, setQuoteDrawerState] = useState<{
     context: ContextItem;
     targetPaneId: string | null;
@@ -78,7 +77,6 @@ export default function MediaPaneBody() {
       const highlightId = mv.handleContentClick(e);
       if (mv.isMobileViewport && mv.showHighlightsPane && highlightId) {
         setHighlightsDrawerOpen(true);
-        setMobileDetailRequestKey((value) => value + 1);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- property-level deps are intentional; mv is a new object each render
@@ -90,7 +88,6 @@ export default function MediaPaneBody() {
       mv.focusHighlight(highlightId);
       if (mv.isMobileViewport && mv.showHighlightsPane) {
         setHighlightsDrawerOpen(true);
-        setMobileDetailRequestKey((value) => value + 1);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- property-level deps are intentional; mv is a new object each render
@@ -550,8 +547,6 @@ export default function MediaPaneBody() {
       onAnnotationSave={mv.handleAnnotationSave}
       onAnnotationDelete={mv.handleAnnotationDelete}
       onOpenConversation={mv.handleOpenConversation}
-      onCloseMobileDrawer={mv.isMobileViewport ? () => setHighlightsDrawerOpen(false) : undefined}
-      mobileDetailRequestKey={mv.isMobileViewport ? mobileDetailRequestKey : 0}
     />
   ) : null;
   const showDesktopHighlightsPane = !mv.isMobileViewport && highlightsContent !== null;
@@ -657,9 +652,9 @@ export default function MediaPaneBody() {
                 onControlsReady={(controls) => {
                   mv.pdfControlsRef.current = controls;
                 }}
-                startPageNumber={mv.readerResumeState?.page ?? undefined}
-                startPageProgression={mv.readerResumeState?.page_progression ?? undefined}
-                startZoom={mv.readerResumeState?.zoom ?? undefined}
+                startPageNumber={mv.pdfReaderResumeState?.page ?? undefined}
+                startPageProgression={mv.pdfReaderResumeState?.page_progression ?? undefined}
+                startZoom={mv.pdfReaderResumeState?.zoom ?? undefined}
                 onResumeStateChange={mv.saveReaderResumeState}
               />
             )

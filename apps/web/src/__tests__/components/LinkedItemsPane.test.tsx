@@ -4,6 +4,10 @@ import userEvent from "@testing-library/user-event";
 import type { RefObject } from "react";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
 
+vi.mock("@/components/Toast", () => ({
+  useToast: () => ({ toast: vi.fn() }),
+}));
+
 const scrollHosts: HTMLDivElement[] = [];
 
 function getRowButtons(): HTMLButtonElement[] {
@@ -236,17 +240,17 @@ describe("LinkedItemsPane", () => {
     expect(onHighlightClick).toHaveBeenCalledWith("h-2");
   });
 
-  it("keeps rail rows compact without inline note, chat, or conversation chrome", async () => {
+  it("keeps collapsed rows compact without inline note, chat, or conversation chrome", async () => {
     render(
       <LinkedItemsPane
         highlights={[
           {
             id: "compact-h1",
-            exact: "compact rail preview",
+            exact: "compact row preview",
             color: "yellow",
             annotation: {
               id: "annotation-1",
-              body: "This note should move to the detail inspector.",
+              body: "This note should stay hidden while the row is collapsed.",
             },
             linked_conversations: [
               {
@@ -272,9 +276,9 @@ describe("LinkedItemsPane", () => {
     });
 
     const row = screen.getByTestId("linked-item-row-compact-h1");
-    expect(within(row).getByText("compact rail preview")).toBeInTheDocument();
+    expect(within(row).getByText("compact row preview")).toBeInTheDocument();
     expect(
-      within(row).queryByText("This note should move to the detail inspector.")
+      within(row).queryByText("This note should stay hidden while the row is collapsed.")
     ).not.toBeInTheDocument();
     expect(within(row).queryByText("Add a note…")).not.toBeInTheDocument();
     expect(within(row).queryByText("Context thread")).not.toBeInTheDocument();
@@ -282,7 +286,7 @@ describe("LinkedItemsPane", () => {
     expect(within(row).queryByRole("button", { name: "Actions" })).not.toBeInTheDocument();
   });
 
-  it("scrolls focused row into view in list mode", async () => {
+  it("marks only the focused row selected and scrolls it into view in list mode", async () => {
     const scrollIntoViewSpy = vi
       .spyOn(HTMLElement.prototype, "scrollIntoView")
       .mockImplementation(() => undefined);
@@ -321,11 +325,19 @@ describe("LinkedItemsPane", () => {
     await waitFor(() => {
       expect(getRowButtons()).toHaveLength(2);
     });
+
+    expect(screen.getByRole("button", { pressed: true })).toHaveTextContent("focus row 2");
+    expect(
+      within(screen.getByTestId("linked-item-row-focus-1")).getByRole("button", { pressed: false })
+    ).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
     expect(scrollIntoViewSpy).toHaveBeenCalled();
     scrollIntoViewSpy.mockRestore();
   });
 
-  it("has scrollable container in list mode (overflow-y: auto)", async () => {
+  it("keeps the single-pane list scrollable in list mode (overflow-y: auto)", async () => {
     render(
       <div style={{ height: "200px" }}>
         <LinkedItemsPane
@@ -361,7 +373,7 @@ describe("LinkedItemsPane", () => {
     ).toBe("auto");
   });
 
-  it("has non-scrollable container in aligned mode (overflow: hidden)", async () => {
+  it("keeps the aligned desktop list clipped to the pane (overflow: hidden)", async () => {
     const { host, contentRef } = createScrollableContent(
       '<p><span data-highlight-anchor="clip-h1"></span>clipped item</p>'
     );

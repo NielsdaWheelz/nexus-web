@@ -1,8 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
+import { MessageSquare, NotebookPen } from "lucide-react";
 import StateMessage from "@/components/ui/StateMessage";
-import LinkedItemRow, { type LinkedItemRowHighlight } from "./LinkedItemRow";
+import HighlightSnippet from "@/components/ui/HighlightSnippet";
+import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import { useToast } from "@/components/Toast";
+import { COLOR_LABELS } from "@/lib/highlights/colors";
+import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights/segmenter";
+import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import {
   normalizeQuarterTurnRotation,
   projectPdfQuadToViewportRect,
@@ -10,7 +25,7 @@ import {
 } from "@/lib/highlights/coordinateTransforms";
 import styles from "./LinkedItemsPane.module.css";
 
-const ROW_HEIGHT = 44;
+const COLLAPSED_ROW_HEIGHT = 44;
 const ROW_GAP = 4;
 const MEASURE_DEBOUNCE_MS = 75;
 
@@ -72,12 +87,38 @@ function readPdfPageViewportTransform(pageElement: HTMLElement): PdfPageViewport
 }
 
 interface LinkedItemsPaneProps {
-  highlights: LinkedItemRowHighlight[];
+  highlights: Array<{
+    id: string;
+    exact: string;
+    color: HighlightColor;
+    annotation?: { id: string; body: string } | null;
+    start_offset?: number;
+    end_offset?: number;
+    created_at?: string;
+    updated_at?: string;
+    prefix?: string;
+    suffix?: string;
+    fragment_idx?: number;
+    stable_order_key?: string;
+    linked_conversations?: { conversation_id: string; title: string }[];
+    page_number?: number;
+    quads?: PdfHighlightQuad[];
+    is_owner?: boolean;
+  }>;
   contentRef: RefObject<HTMLElement | null>;
   focusedId: string | null;
   onHighlightClick: (highlightId: string) => void;
   highlightsVersion?: number;
   alignToContent?: boolean;
+  isEditingBounds: boolean;
+  onSendToChat: (highlightId: string) => void;
+  onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
+  onDelete: (highlightId: string) => Promise<void>;
+  onStartEditBounds: () => void;
+  onCancelEditBounds: () => void;
+  onAnnotationSave: (highlightId: string, body: string) => Promise<void>;
+  onAnnotationDelete: (highlightId: string) => Promise<void>;
+  onOpenConversation: (conversationId: string, title: string) => void;
 }
 
 export default function LinkedItemsPane({
@@ -87,16 +128,84 @@ export default function LinkedItemsPane({
   onHighlightClick,
   highlightsVersion = 0,
   alignToContent = true,
+  isEditingBounds,
+  onSendToChat,
+  onColorChange,
+  onDelete,
+  onStartEditBounds,
+  onCancelEditBounds,
+  onAnnotationSave,
+  onAnnotationDelete,
+  onOpenConversation,
 }: LinkedItemsPaneProps) {
+  const { toast } = useToast();
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollParentRef = useRef<HTMLElement | null>(null);
-  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const measureTimerRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const [anchorPositions, setAnchorPositions] = useState(new Map<string, number>());
   const [alignedRows, setAlignedRows] = useState<Array<{ id: string; top: number }>>([]);
+  const [rowHeights, setRowHeights] = useState(new Map<string, number>());
   const [overflowCount, setOverflowCount] = useState(0);
   const [missingAnchors, setMissingAnchors] = useState<string[]>([]);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const [changingColor, setChangingColor] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const orderedHighlights = useMemo(() => {
+    const sorted = [...highlights];
+    sorted.sort((left, right) => {
+      if (
+        left.stable_order_key &&
+        right.stable_order_key &&
+        left.stable_order_key !== right.stable_order_key
+      ) {
+        return left.stable_order_key.localeCompare(right.stable_order_key);
+      }
+      if (left.stable_order_key && !right.stable_order_key) {
+        return -1;
+      }
+      if (!left.stable_order_key && right.stable_order_key) {
+        return 1;
+      }
+
+      const leftFragment = left.fragment_idx ?? 0;
+      const rightFragment = right.fragment_idx ?? 0;
+      if (leftFragment !== rightFragment) {
+        return leftFragment - rightFragment;
+      }
+
+      const leftStart = left.start_offset ?? 0;
+      const rightStart = right.start_offset ?? 0;
+      if (leftStart !== rightStart) {
+        return leftStart - rightStart;
+      }
+
+      const leftEnd = left.end_offset ?? 0;
+      const rightEnd = right.end_offset ?? 0;
+      if (leftEnd !== rightEnd) {
+        return leftEnd - rightEnd;
+      }
+
+      const leftCreatedAt = Date.parse(left.created_at ?? "");
+      const rightCreatedAt = Date.parse(right.created_at ?? "");
+      const leftCreatedAtMs = Number.isNaN(leftCreatedAt) ? 0 : leftCreatedAt;
+      const rightCreatedAtMs = Number.isNaN(rightCreatedAt) ? 0 : rightCreatedAt;
+      if (leftCreatedAtMs !== rightCreatedAtMs) {
+        return leftCreatedAtMs - rightCreatedAtMs;
+      }
+
+      return left.id.localeCompare(right.id);
+    });
+    return sorted;
+  }, [highlights]);
+
+  const focusedHighlight = useMemo(
+    () => orderedHighlights.find((highlight) => highlight.id === focusedId) ?? null,
+    [focusedId, orderedHighlights]
+  );
 
   const measureAnchors = useCallback(() => {
     if (!alignToContent || !contentRef.current) {
@@ -112,7 +221,7 @@ export default function LinkedItemsPane({
     const positions = new Map<string, number>();
     const nextMissingAnchors: string[] = [];
 
-    for (const highlight of highlights) {
+    for (const highlight of orderedHighlights) {
       if (highlight.page_number && highlight.quads?.length) {
         let pageElement = pageElements.get(highlight.page_number);
         if (pageElement === undefined) {
@@ -157,7 +266,7 @@ export default function LinkedItemsPane({
 
     setAnchorPositions(positions);
     setMissingAnchors(nextMissingAnchors);
-  }, [alignToContent, contentRef, highlights]);
+  }, [alignToContent, contentRef, orderedHighlights]);
 
   const scheduleMeasure = useCallback(() => {
     if (measureTimerRef.current != null) {
@@ -182,14 +291,12 @@ export default function LinkedItemsPane({
     const scrollParent = scrollParentRef.current ?? findScrollParent(contentElement);
     scrollParentRef.current = scrollParent;
 
-    const baseline = scrollParent.getBoundingClientRect().top - containerRef.current.getBoundingClientRect().top;
+    const baseline =
+      scrollParent.getBoundingClientRect().top - containerRef.current.getBoundingClientRect().top;
     const scrollTop = scrollParent.scrollTop;
-    const rows: Array<{
-      highlight: LinkedItemRowHighlight;
-      desiredTop: number;
-    }> = [];
+    const rows: Array<{ highlight: (typeof orderedHighlights)[number]; desiredTop: number }> = [];
 
-    for (const highlight of highlights) {
+    for (const highlight of orderedHighlights) {
       const anchorTop = anchorPositions.get(highlight.id);
       if (anchorTop === undefined) {
         continue;
@@ -233,23 +340,22 @@ export default function LinkedItemsPane({
     for (const row of rows) {
       const top = Math.max(row.desiredTop, previousBottom + ROW_GAP);
       nextAlignedRows.push({ id: row.highlight.id, top });
-      previousBottom = top + ROW_HEIGHT;
+      previousBottom = top + (rowHeights.get(row.highlight.id) ?? COLLAPSED_ROW_HEIGHT);
     }
 
     setAlignedRows(nextAlignedRows);
 
     let nextOverflowCount = 0;
     for (const row of nextAlignedRows) {
-      if (row.top + ROW_HEIGHT > containerRef.current.clientHeight) {
+      if (
+        row.top + (rowHeights.get(row.id) ?? COLLAPSED_ROW_HEIGHT) >
+        containerRef.current.clientHeight
+      ) {
         nextOverflowCount += 1;
       }
     }
     setOverflowCount(nextOverflowCount);
-
-    for (const row of nextAlignedRows) {
-      rowRefs.current.get(row.id)?.style.setProperty("transform", `translateY(${row.top}px)`);
-    }
-  }, [alignToContent, anchorPositions, contentRef, highlights]);
+  }, [alignToContent, anchorPositions, contentRef, orderedHighlights, rowHeights]);
 
   useEffect(() => {
     return () => {
@@ -261,6 +367,46 @@ export default function LinkedItemsPane({
       }
     };
   }, []);
+
+  useLayoutEffect(() => {
+    if (!alignToContent) {
+      return;
+    }
+
+    setRowHeights((previousHeights) => {
+      const nextHeights = new Map<string, number>();
+      for (const highlight of orderedHighlights) {
+        nextHeights.set(
+          highlight.id,
+          Math.ceil(
+            rowRefs.current.get(highlight.id)?.getBoundingClientRect().height ?? COLLAPSED_ROW_HEIGHT
+          )
+        );
+      }
+
+      if (previousHeights.size === nextHeights.size) {
+        let same = true;
+        for (const [highlightId, height] of nextHeights) {
+          if (previousHeights.get(highlightId) !== height) {
+            same = false;
+            break;
+          }
+        }
+        if (same) {
+          return previousHeights;
+        }
+      }
+
+      return nextHeights;
+    });
+  }, [alignToContent, focusedId, isEditingBounds, noteDraft, orderedHighlights, savingNote]);
+
+  useEffect(() => {
+    setNoteDraft(focusedHighlight?.annotation?.body ?? "");
+    setSavingNote(false);
+    setChangingColor(false);
+    setDeleting(false);
+  }, [focusedHighlight?.annotation?.body, focusedHighlight?.id, focusedHighlight?.updated_at]);
 
   useEffect(() => {
     if (!alignToContent) {
@@ -309,7 +455,7 @@ export default function LinkedItemsPane({
         scrollFrameRef.current = null;
       }
     };
-  }, [alignRows, alignToContent, contentRef, highlights.length, highlightsVersion]);
+  }, [alignRows, alignToContent, contentRef, orderedHighlights.length, highlightsVersion]);
 
   useEffect(() => {
     if (!alignToContent || typeof ResizeObserver === "undefined") {
@@ -338,7 +484,7 @@ export default function LinkedItemsPane({
     }
 
     return () => observer.disconnect();
-  }, [alignToContent, contentRef, highlights.length, highlightsVersion, scheduleMeasure]);
+  }, [alignToContent, contentRef, orderedHighlights.length, highlightsVersion, scheduleMeasure]);
 
   useEffect(() => {
     if (!alignToContent || !contentRef.current) {
@@ -416,63 +562,15 @@ export default function LinkedItemsPane({
   }, [contentRef]);
 
   const setRowRef = useCallback(
-    (highlightId: string) => (element: HTMLButtonElement | null) => {
+    (highlightId: string) => (element: HTMLDivElement | null) => {
       if (element) {
         rowRefs.current.set(highlightId, element);
-      } else {
-        rowRefs.current.delete(highlightId);
+        return;
       }
+      rowRefs.current.delete(highlightId);
     },
     []
   );
-
-  const listHighlights = useMemo(() => {
-    if (alignToContent) {
-      return [];
-    }
-
-    const sorted = [...highlights];
-    sorted.sort((left, right) => {
-      if (left.stable_order_key && right.stable_order_key && left.stable_order_key !== right.stable_order_key) {
-        return left.stable_order_key.localeCompare(right.stable_order_key);
-      }
-      if (left.stable_order_key && !right.stable_order_key) {
-        return -1;
-      }
-      if (!left.stable_order_key && right.stable_order_key) {
-        return 1;
-      }
-
-      const leftFragment = left.fragment_idx ?? 0;
-      const rightFragment = right.fragment_idx ?? 0;
-      if (leftFragment !== rightFragment) {
-        return leftFragment - rightFragment;
-      }
-
-      const leftStart = left.start_offset ?? 0;
-      const rightStart = right.start_offset ?? 0;
-      if (leftStart !== rightStart) {
-        return leftStart - rightStart;
-      }
-
-      const leftEnd = left.end_offset ?? 0;
-      const rightEnd = right.end_offset ?? 0;
-      if (leftEnd !== rightEnd) {
-        return leftEnd - rightEnd;
-      }
-
-      const leftCreatedAt = Date.parse(left.created_at ?? "");
-      const rightCreatedAt = Date.parse(right.created_at ?? "");
-      const leftCreatedAtMs = Number.isNaN(leftCreatedAt) ? 0 : leftCreatedAt;
-      const rightCreatedAtMs = Number.isNaN(rightCreatedAt) ? 0 : rightCreatedAt;
-      if (leftCreatedAtMs !== rightCreatedAtMs) {
-        return leftCreatedAtMs - rightCreatedAtMs;
-      }
-
-      return left.id.localeCompare(right.id);
-    });
-    return sorted;
-  }, [alignToContent, highlights]);
 
   useEffect(() => {
     if (alignToContent || !focusedId) {
@@ -480,6 +578,265 @@ export default function LinkedItemsPane({
     }
     rowRefs.current.get(focusedId)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [alignToContent, focusedId, highlightsVersion]);
+
+  const handleNoteBlur = useCallback(async () => {
+    if (!focusedHighlight || focusedHighlight.is_owner === false || savingNote) {
+      return;
+    }
+
+    const trimmed = noteDraft.trim();
+    if (trimmed === (focusedHighlight.annotation?.body ?? "")) {
+      return;
+    }
+
+    setSavingNote(true);
+    try {
+      if (trimmed) {
+        await onAnnotationSave(focusedHighlight.id, trimmed);
+      } else {
+        await onAnnotationDelete(focusedHighlight.id);
+      }
+    } catch (error) {
+      toast({ variant: "error", message: "Failed to save note" });
+      console.error("linked_items_note_save_failed", error);
+    } finally {
+      setSavingNote(false);
+    }
+  }, [
+    focusedHighlight,
+    noteDraft,
+    onAnnotationDelete,
+    onAnnotationSave,
+    savingNote,
+    toast,
+  ]);
+
+  const handleDelete = useCallback(
+    async (highlight: (typeof orderedHighlights)[number]) => {
+      if (highlight.is_owner === false || deleting) {
+        return;
+      }
+      if (!window.confirm("Delete this highlight?")) {
+        return;
+      }
+
+      setDeleting(true);
+      try {
+        await onDelete(highlight.id);
+      } catch (error) {
+        toast({ variant: "error", message: "Failed to delete highlight" });
+        console.error("linked_items_delete_failed", error);
+        setDeleting(false);
+      }
+    },
+    [deleting, onDelete, toast]
+  );
+
+  const handleColorChange = useCallback(
+    async (highlight: (typeof orderedHighlights)[number], color: HighlightColor) => {
+      if (highlight.is_owner === false || changingColor || highlight.color === color) {
+        return;
+      }
+
+      setChangingColor(true);
+      try {
+        await onColorChange(highlight.id, color);
+      } catch (error) {
+        toast({ variant: "error", message: "Failed to change color" });
+        console.error("linked_items_color_change_failed", error);
+      } finally {
+        setChangingColor(false);
+      }
+    },
+    [changingColor, onColorChange, toast]
+  );
+
+  const renderRow = useCallback(
+    (
+      highlight: (typeof orderedHighlights)[number],
+      className: string,
+      style?: CSSProperties
+    ) => {
+      const isFocused = focusedId === highlight.id;
+      const canEdit = highlight.is_owner !== false;
+      const hasAnnotation = Boolean(highlight.annotation?.body.trim());
+      const linkedConversationCount = highlight.linked_conversations?.length ?? 0;
+      const menuOptions: ActionMenuOption[] = [];
+
+      if (isFocused && canEdit) {
+        menuOptions.push({
+          id: isEditingBounds ? "cancel-edit-bounds" : "edit-bounds",
+          label: isEditingBounds ? "Cancel edit bounds" : "Edit bounds",
+          onSelect: () => {
+            if (isEditingBounds) {
+              onCancelEditBounds();
+              return;
+            }
+            onStartEditBounds();
+          },
+        });
+        for (const color of HIGHLIGHT_COLORS) {
+          menuOptions.push({
+            id: `color-${color}`,
+            label:
+              highlight.color === color
+                ? `Color: ${COLOR_LABELS[color]} (current)`
+                : `Color: ${COLOR_LABELS[color]}`,
+            disabled: changingColor || highlight.color === color,
+            onSelect: () => {
+              void handleColorChange(highlight, color);
+            },
+          });
+        }
+        menuOptions.push({
+          id: "delete-highlight",
+          label: deleting ? "Deleting..." : "Delete highlight",
+          tone: "danger",
+          disabled: deleting,
+          onSelect: () => {
+            void handleDelete(highlight);
+          },
+        });
+      }
+
+      return (
+        <div
+          key={highlight.id}
+          ref={setRowRef(highlight.id)}
+          data-highlight-id={highlight.id}
+          data-testid={`linked-item-row-${highlight.id}`}
+          className={`${styles.linkedItemRow} ${className} ${
+            isFocused ? styles.rowFocused : ""
+          }`.trim()}
+          style={style}
+          onMouseEnter={() => handleRowMouseEnter(highlight.id)}
+          onMouseLeave={handleRowMouseLeave}
+        >
+          <div className={styles.rowTop}>
+            <button
+              type="button"
+              className={styles.rowPreviewButton}
+              onClick={() => handleRowClick(highlight.id)}
+              aria-pressed={isFocused}
+              aria-expanded={isFocused}
+            >
+              <span
+                className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
+                aria-hidden="true"
+              />
+              <HighlightSnippet
+                exact={highlight.exact}
+                color={highlight.color}
+                compact
+                className={styles.previewText}
+              />
+              <span className={styles.rowMeta} aria-hidden="true">
+                {hasAnnotation ? (
+                  <span className={styles.metaBadge} title="Has note">
+                    <NotebookPen size={12} />
+                  </span>
+                ) : null}
+                {linkedConversationCount > 0 ? (
+                  <span className={styles.metaBadge} title={`${linkedConversationCount} linked chats`}>
+                    <MessageSquare size={12} />
+                    <span>{linkedConversationCount}</span>
+                  </span>
+                ) : null}
+              </span>
+            </button>
+
+            {isFocused ? (
+              <div className={styles.rowActions}>
+                <button
+                  type="button"
+                  className={styles.chatButton}
+                  aria-label="Ask in chat"
+                  onClick={() => onSendToChat(highlight.id)}
+                >
+                  <MessageSquare size={14} aria-hidden="true" />
+                </button>
+                {menuOptions.length > 0 ? <ActionMenu options={menuOptions} /> : null}
+              </div>
+            ) : null}
+          </div>
+
+          {isFocused ? (
+            <div className={styles.rowExpanded}>
+              <div className={styles.quoteCard}>
+                <HighlightSnippet
+                  prefix={highlight.prefix}
+                  exact={highlight.exact}
+                  suffix={highlight.suffix}
+                  color={highlight.color}
+                />
+              </div>
+
+              {isEditingBounds ? (
+                <p className={styles.editHint}>
+                  Select new text in the reader to replace this highlight.
+                </p>
+              ) : null}
+
+              {canEdit ? (
+                <textarea
+                  className={styles.noteEditor}
+                  value={noteDraft}
+                  onChange={(event) => setNoteDraft(event.target.value)}
+                  onBlur={() => {
+                    void handleNoteBlur();
+                  }}
+                  placeholder="Add a note about this highlight..."
+                  rows={3}
+                  maxLength={10000}
+                  aria-label="Note"
+                  disabled={savingNote}
+                />
+              ) : highlight.annotation?.body?.trim() ? (
+                <div className={styles.noteReadOnly}>{highlight.annotation.body}</div>
+              ) : null}
+
+              {highlight.linked_conversations && highlight.linked_conversations.length > 0 ? (
+                <div className={styles.conversationList}>
+                  {highlight.linked_conversations.map((conversation) => (
+                    <button
+                      key={conversation.conversation_id}
+                      type="button"
+                      className={styles.conversationButton}
+                      onClick={() =>
+                        onOpenConversation(conversation.conversation_id, conversation.title)
+                      }
+                    >
+                      <MessageSquare size={14} />
+                      <span>{conversation.title}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      );
+    },
+    [
+      changingColor,
+      deleting,
+      focusedId,
+      handleColorChange,
+      handleDelete,
+      handleNoteBlur,
+      handleRowClick,
+      handleRowMouseEnter,
+      handleRowMouseLeave,
+      isEditingBounds,
+      noteDraft,
+      onCancelEditBounds,
+      onOpenConversation,
+      onSendToChat,
+      onStartEditBounds,
+      savingNote,
+      setRowRef,
+    ]
+  );
 
   if (highlights.length === 0) {
     return (
@@ -498,23 +855,12 @@ export default function LinkedItemsPane({
         className={`${styles.linkedItemsContainer} ${styles.listMode}`}
         data-testid="linked-items-container"
       >
-        {listHighlights.map((highlight) => (
-          <LinkedItemRow
-            key={highlight.id}
-            ref={setRowRef(highlight.id)}
-            highlight={highlight}
-            isFocused={focusedId === highlight.id}
-            onClick={handleRowClick}
-            onMouseEnter={handleRowMouseEnter}
-            onMouseLeave={handleRowMouseLeave}
-            className={styles.listModeRow}
-          />
-        ))}
+        {orderedHighlights.map((highlight) => renderRow(highlight, styles.listModeRow))}
       </div>
     );
   }
 
-  const highlightMap = new Map(highlights.map((highlight) => [highlight.id, highlight]));
+  const highlightMap = new Map(orderedHighlights.map((highlight) => [highlight.id, highlight]));
 
   return (
     <div
@@ -527,19 +873,7 @@ export default function LinkedItemsPane({
         if (!highlight) {
           return null;
         }
-
-        return (
-          <LinkedItemRow
-            key={row.id}
-            ref={setRowRef(row.id)}
-            highlight={highlight}
-            isFocused={focusedId === row.id}
-            onClick={handleRowClick}
-            onMouseEnter={handleRowMouseEnter}
-            onMouseLeave={handleRowMouseLeave}
-            style={{ transform: `translateY(${row.top}px)` }}
-          />
-        );
+        return renderRow(highlight, "", { transform: `translateY(${row.top}px)` });
       })}
       {overflowCount > 0 ? (
         <div className={styles.overflowIndicator}>+{overflowCount} more below</div>

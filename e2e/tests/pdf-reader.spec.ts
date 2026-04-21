@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -28,17 +28,10 @@ interface LayerAlignmentSnapshot {
   bottomOffsetDrift: number;
 }
 
-interface ReaderLocator {
-  source?: string | null;
-  anchor?: string | null;
-  text_offset?: number | null;
-  quote?: string | null;
-  quote_prefix?: string | null;
-  quote_suffix?: string | null;
-  progression?: number | null;
-  total_progression?: number | null;
-  position?: number | null;
-  page?: number | null;
+interface PdfReaderResumeState {
+  kind: "pdf";
+  position: number | null;
+  page: number;
   page_progression?: number | null;
   zoom?: number | null;
 }
@@ -71,7 +64,11 @@ function extractHighlightIdFromDataTestId(dataTestId: string | null): string {
   return match[1];
 }
 
-async function putReaderState(page: Page, mediaId: string, locator: ReaderLocator | null) {
+async function putReaderState(
+  page: Page,
+  mediaId: string,
+  locator: PdfReaderResumeState | null,
+) {
   const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
     data: locator,
   });
@@ -157,6 +154,20 @@ async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Pro
   }
 
   throw new Error(`Missing PDF controls action: ${ariaLabel}`);
+}
+
+function rowAskInChatButton(row: Locator): Locator {
+  return row.getByRole("button", { name: /ask in chat|send to chat/i });
+}
+
+function rowActionsButton(row: Locator): Locator {
+  return row.getByRole("button", { name: "Actions" });
+}
+
+async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
+  await expect(row).toBeVisible();
+  await expect(rowAskInChatButton(row)).toHaveCount(1);
+  await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
 async function readCreateTelemetry(page: Page): Promise<CreateTelemetrySnapshot> {
@@ -276,6 +287,7 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
         async () => {
           try {
             await putReaderState(page, mediaId, {
+              kind: "pdf",
               position: 1,
               page: 1,
               zoom: 1,
@@ -421,8 +433,10 @@ test.describe("pdf reader", () => {
       const linkedRow = page.locator(`[data-highlight-id="${createdHighlightId}"]`).first();
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await linkedRow.click();
-      const chatButton = page.getByRole("button", { name: "Send to chat" }).first();
-      await expect(chatButton).toBeVisible();
+      await expectHighlightRowToBeExpanded(linkedRow);
+      await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
+      const chatButton = rowAskInChatButton(linkedRow);
       const conversationTabCountBefore = await page
         .getByRole("tab", { name: /chat/i })
         .count();
@@ -519,12 +533,15 @@ test.describe("pdf reader", () => {
       });
       expect(createPageTwo.ok()).toBe(true);
       pageTwoHighlightId = (await createPageTwo.json()).data.id as string;
+      if (!pageOneHighlightId || !pageTwoHighlightId) {
+        throw new Error("Expected created PDF highlight ids for active-page scoping coverage");
+      }
 
       await page.goto(`/media/${mediaId}`);
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
 
-      const onPageRow = page.locator('[class*="linkedItemRow"]', { hasText: pageOneExact }).first();
-      const offPageRow = page.locator('[class*="linkedItemRow"]', { hasText: pageTwoExact }).first();
+      const onPageRow = page.locator(`[data-highlight-id="${pageOneHighlightId}"]`).first();
+      const offPageRow = page.locator(`[data-highlight-id="${pageTwoHighlightId}"]`).first();
       await expect(onPageRow).toBeVisible({ timeout: 10_000 });
       await expect(offPageRow).toHaveCount(0);
 

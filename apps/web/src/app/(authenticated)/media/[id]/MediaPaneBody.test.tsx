@@ -4,7 +4,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MediaPaneBody from "./MediaPaneBody";
@@ -276,7 +276,7 @@ function buildViewState(overrides: Record<string, unknown> = {}): Record<string,
     handleTranscriptSegmentSelect: vi.fn(),
     handleContentClick: vi.fn(),
     fragments: [{ id: "fragment-1" }],
-    readerResumeState: null,
+    pdfReaderResumeState: null,
     readerResumeStateLoading: false,
     saveReaderResumeState: vi.fn(),
     libraryPickerLibraries: [],
@@ -457,7 +457,7 @@ describe("MediaPaneBody highlights shell", () => {
     document.body.style.overflow = "";
   });
 
-  it("renders the desktop highlights pane at the fixed cutover width and forwards detail callbacks", () => {
+  it("renders a single desktop highlights column at 400px and forwards inline-row callbacks", () => {
     const focusHighlight = vi.fn();
     const clearFocus = vi.fn();
     const handleSendToChat = vi.fn();
@@ -486,7 +486,8 @@ describe("MediaPaneBody highlights shell", () => {
 
     render(<MediaPaneBody />);
 
-    expect(screen.getByTestId("highlights-pane-body")).toBeInTheDocument();
+    const highlightsPaneBody = screen.getByTestId("highlights-pane-body");
+    expect(highlightsPaneBody).toBeInTheDocument();
     expect(getLatestHighlightsPaneBodyProps()).toMatchObject({
       isMobile: false,
       fragmentHighlights: [{ id: "fragment-highlight-1" }],
@@ -504,6 +505,10 @@ describe("MediaPaneBody highlights shell", () => {
       onOpenConversation: handleOpenConversation,
     });
     expect(getLatestHighlightsAction()).toBeNull();
+    expect(highlightsPaneBody.parentElement).toHaveStyle({
+      width: "400px",
+      flex: "0 0 400px",
+    });
   });
 
   it("forwards active-page PDF highlights into the contextual pane body", () => {
@@ -616,6 +621,7 @@ describe("MediaPaneBody highlights shell", () => {
     });
 
     expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
     expect(document.body.style.overflow).toBe("hidden");
 
     currentViewState = buildViewState({
@@ -631,7 +637,8 @@ describe("MediaPaneBody highlights shell", () => {
     expect(getLatestHighlightsAction()).toBeNull();
   });
 
-  it("passes a mobile drawer close handler into the highlights pane body", () => {
+  it("closes the mobile Highlights drawer from shell chrome", async () => {
+    const user = userEvent.setup();
     currentViewState = buildViewState({ isMobileViewport: true, showHighlightsPane: true });
     mockUseMediaViewState.mockImplementation(() => currentViewState);
 
@@ -645,19 +652,8 @@ describe("MediaPaneBody highlights shell", () => {
     });
 
     expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
-    act(() => {
-      const onCloseMobileDrawer = getLatestHighlightsPaneBodyProps()
-        .onCloseMobileDrawer as (() => void) | undefined;
-      onCloseMobileDrawer?.();
-    });
-    expect(screen.queryByRole("dialog", { name: "Highlights" })).not.toBeInTheDocument();
-
-    act(() => {
-      action?.props.onClick();
-    });
-
-    expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Close" }));
 
     expect(screen.queryByRole("dialog", { name: "Highlights" })).not.toBeInTheDocument();
     expect(document.body.style.overflow).toBe("");
@@ -679,6 +675,7 @@ describe("MediaPaneBody highlights shell", () => {
 
     expect(handleContentClick).toHaveBeenCalled();
     expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
   });
 
   it("passes selection line rects into the reflowable selection popup", () => {
@@ -860,21 +857,15 @@ describe("MediaPaneBody highlights shell", () => {
 
     expect(focusHighlight).toHaveBeenCalledWith("pdf-highlight-1");
     expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
   });
 
-  it("passes the flat PDF locator through to PdfReader and saves page updates as a locator object", () => {
+  it("passes the PDF resume state through to PdfReader and saves page updates as a typed resume state", () => {
     const saveReaderResumeState = vi.fn();
     currentViewState = buildViewState({
       isPdf: true,
-      readerResumeState: {
-        source: null,
-        anchor: null,
-        text_offset: null,
-        quote: null,
-        quote_prefix: null,
-        quote_suffix: null,
-        progression: null,
-        total_progression: null,
+      pdfReaderResumeState: {
+        kind: "pdf",
         position: 7,
         page: 7,
         page_progression: 0.25,
@@ -898,14 +889,7 @@ describe("MediaPaneBody highlights shell", () => {
     expect(onResumeStateChange).toBeTypeOf("function");
 
     onResumeStateChange?.({
-      source: null,
-      anchor: null,
-      text_offset: null,
-      quote: null,
-      quote_prefix: null,
-      quote_suffix: null,
-      progression: null,
-      total_progression: null,
+      kind: "pdf",
       position: 9,
       page: 9,
       page_progression: 0.6,
@@ -913,14 +897,7 @@ describe("MediaPaneBody highlights shell", () => {
     });
 
     expect(saveReaderResumeState).toHaveBeenCalledWith({
-      source: null,
-      anchor: null,
-      text_offset: null,
-      quote: null,
-      quote_prefix: null,
-      quote_suffix: null,
-      progression: null,
-      total_progression: null,
+      kind: "pdf",
       position: 9,
       page: 9,
       page_progression: 0.6,

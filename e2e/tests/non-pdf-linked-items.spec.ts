@@ -34,8 +34,8 @@ function readSeededNonPdfMedia(): SeededNonPdfMedia {
   return parsed;
 }
 
-function linkedItemRowByText(text: string): string {
-  return `[class*="linkedItemRow"]:has-text("${text}")`;
+function linkedItemRowByHighlightId(highlightId: string): string {
+  return `[data-highlight-id="${highlightId}"]`;
 }
 
 function distanceOutsideViewport(top: number, viewportHeight: number): number {
@@ -48,47 +48,63 @@ function distanceOutsideViewport(top: number, viewportHeight: number): number {
   return 0;
 }
 
-async function expectRailRowToStayCompact(row: Locator, hiddenText: string): Promise<void> {
-  await expect(row).toBeVisible();
-  await expect(row.getByText(hiddenText, { exact: true })).toHaveCount(0);
-  await expect(row.getByRole("button", { name: "Send to chat" })).toHaveCount(0);
-  await expect(row.getByRole("button", { name: "Actions" })).toHaveCount(0);
+function rowAskInChatButton(row: Locator): Locator {
+  return row.getByRole("button", { name: /ask in chat|send to chat/i });
 }
 
-async function expectSelectedNote(page: Page, noteText: string): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        const noteTextLocator = page.getByText(noteText, { exact: true }).first();
-        if (
-          (await noteTextLocator.count()) > 0 &&
-          (await noteTextLocator.isVisible().catch(() => false))
-        ) {
-          return true;
-        }
+function rowActionsButton(row: Locator): Locator {
+  return row.getByRole("button", { name: "Actions" });
+}
 
-        return page.evaluate((expectedValue) => {
-          const inputs = Array.from(
-            document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-              'input[type="text"], textarea'
-            )
-          );
-          return inputs.some((input) => {
-            const rect = input.getBoundingClientRect();
-            const style = window.getComputedStyle(input);
-            return (
-              input.value === expectedValue &&
-              rect.width > 0 &&
-              rect.height > 0 &&
-              style.display !== "none" &&
-              style.visibility !== "hidden"
-            );
-          });
-        }, noteText);
-      },
-      { timeout: 10_000 }
-    )
+async function rowContainsVisibleTextOrFieldValue(
+  row: Locator,
+  expectedValue: string
+): Promise<boolean> {
+  return row.evaluate((element, expected) => {
+    const root = element as HTMLElement;
+    if (root.innerText.includes(expected)) {
+      return true;
+    }
+
+    const fields = Array.from(
+      root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+        'input[type="text"], textarea'
+      )
+    );
+    return fields.some((field) => {
+      const rect = field.getBoundingClientRect();
+      const style = window.getComputedStyle(field);
+      return (
+        field.value === expected &&
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden"
+      );
+    });
+  }, expectedValue);
+}
+
+async function expectHighlightRowToStayCollapsed(
+  row: Locator,
+  hiddenText: string
+): Promise<void> {
+  await expect(row).toBeVisible();
+  await expect.poll(() => rowContainsVisibleTextOrFieldValue(row, hiddenText)).toBe(false);
+  await expect(rowAskInChatButton(row)).toHaveCount(0);
+  await expect(rowActionsButton(row)).toHaveCount(0);
+}
+
+async function expectHighlightRowToBeExpanded(
+  row: Locator,
+  noteText: string
+): Promise<void> {
+  await expect(row).toBeVisible();
+  await expect
+    .poll(() => rowContainsVisibleTextOrFieldValue(row, noteText), { timeout: 10_000 })
     .toBe(true);
+  await expect(rowAskInChatButton(row)).toHaveCount(1);
+  await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
 async function readAttachedHighlightId(page: Page): Promise<string | null> {
@@ -118,7 +134,7 @@ async function switchBackToMediaTab(page: Page): Promise<void> {
 }
 
 test.describe("non-pdf linked-items", () => {
-  test("contextual rail stays compact while inspector owns note/chat and tracks rail + source focus", async ({
+  test("contextual highlights expand inline and keep row-local chat + source focus in sync", async ({
     page,
   }) => {
     const seeded = readSeededNonPdfMedia();
@@ -130,21 +146,23 @@ test.describe("non-pdf linked-items", () => {
     await page.goto(mediaUrl);
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
-    const quoteRow = page.locator(linkedItemRowByText(seeded.quote_exact)).first();
-    const focusRow = page.locator(linkedItemRowByText(seeded.focus_exact)).first();
+    const quoteRow = page.locator(linkedItemRowByHighlightId(seeded.quote_highlight_id)).first();
+    const focusRow = page.locator(linkedItemRowByHighlightId(seeded.focus_highlight_id)).first();
     await expect(quoteRow).toBeVisible({ timeout: 10_000 });
     await expect(focusRow).toBeVisible({ timeout: 10_000 });
-    await expectRailRowToStayCompact(quoteRow, quoteNote);
-    await expectRailRowToStayCompact(focusRow, focusNote);
+    await expectHighlightRowToStayCollapsed(quoteRow, quoteNote);
+    await expectHighlightRowToStayCollapsed(focusRow, focusNote);
+    await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
 
     await focusRow.click();
-    await expectSelectedNote(page, focusNote);
-    const inspectorChatButton = page.getByRole("button", { name: /send to chat/i });
-    await expect(inspectorChatButton).toHaveCount(1);
+    await expectHighlightRowToBeExpanded(focusRow, focusNote);
+    await expectHighlightRowToStayCollapsed(quoteRow, quoteNote);
+    const focusRowChatButton = rowAskInChatButton(focusRow);
     const conversationTabCountBefore = await page
       .getByRole("tab", { name: /chat/i })
       .count();
-    await inspectorChatButton.click();
+    await focusRowChatButton.click();
 
     await expect
       .poll(
@@ -209,7 +227,8 @@ test.describe("non-pdf linked-items", () => {
     }
     await expect(focusedSegment).toBeVisible();
     await expect(focusedSegment).toHaveClass(/hl-focused/);
-    await expectSelectedNote(page, focusNote);
+    await expectHighlightRowToBeExpanded(focusRow, focusNote);
+    await expectHighlightRowToStayCollapsed(quoteRow, quoteNote);
 
     const quoteSegment = contentPane
       .locator(`[data-active-highlight-ids~="${seeded.quote_highlight_id}"]`)
@@ -218,9 +237,10 @@ test.describe("non-pdf linked-items", () => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
     });
     await quoteSegment.click();
-    await expectSelectedNote(page, quoteNote);
+    await expectHighlightRowToBeExpanded(quoteRow, quoteNote);
+    await expectHighlightRowToStayCollapsed(focusRow, focusNote);
 
-    await inspectorChatButton.click();
+    await rowAskInChatButton(quoteRow).click();
     await expect
       .poll(
         async () => page.getByRole("tab", { name: /chat/i }).count(),

@@ -13,28 +13,21 @@
   position: absolute;
   left: 0;
   right: 0;
-  height: 44px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-2);
-  padding: 0 var(--space-2);
+  padding: var(--space-2);
   border: 1px solid transparent;
   border-radius: 8px;
   background: var(--color-bg);
   color: inherit;
-  cursor: pointer;
-  overflow: hidden;
+  overflow: visible;
   text-align: left;
   will-change: transform;
 }
 
 .linkedItemRow:hover {
   background: var(--color-surface);
-}
-
-.linkedItemRow:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: -2px;
 }
 
 .listModeRow {
@@ -45,6 +38,36 @@
 .rowFocused {
   border-color: var(--color-border-subtle);
   background: var(--color-bg-secondary);
+}
+
+.rowTop {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-height: 28px;
+}
+
+.rowPreviewButton {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.rowPreviewButton:focus-visible,
+.chatButton:focus-visible,
+.conversationButton:focus-visible,
+.noteEditor:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .colorSwatch {
@@ -102,6 +125,98 @@
 
 .metaBadge span {
   line-height: 1;
+}
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+}
+
+.chatButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.rowExpanded {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.quoteCard {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  background: var(--color-bg-panel);
+  padding: var(--space-3);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.editHint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.noteEditor {
+  width: 100%;
+  min-height: 88px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  font: inherit;
+  line-height: 1.5;
+  padding: var(--space-3);
+  resize: vertical;
+}
+
+.noteReadOnly {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  background: var(--color-bg-panel);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  padding: var(--space-3);
+  white-space: pre-wrap;
+}
+
+.conversationList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.conversationButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0 var(--space-3);
+  font: inherit;
+  cursor: pointer;
+}
+
+.conversationButton span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .overflowIndicator {

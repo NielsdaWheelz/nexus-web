@@ -1,11 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import type { PdfHighlightOut } from "@/components/PdfReader";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
-import HighlightDetailPane from "./HighlightDetailPane";
 import type { Highlight } from "./mediaHelpers";
-import { escapeAttrValue } from "./mediaHelpers";
 import StatusPill from "@/components/ui/StatusPill";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import styles from "./page.module.css";
@@ -32,8 +30,6 @@ interface MediaHighlightsPaneBodyProps {
   onAnnotationSave: (id: string, body: string) => Promise<void>;
   onAnnotationDelete: (id: string) => Promise<void>;
   onOpenConversation: (conversationId: string, title: string) => void;
-  onCloseMobileDrawer?: () => void;
-  mobileDetailRequestKey?: number;
 }
 
 export default function MediaHighlightsPaneBody({
@@ -58,12 +54,10 @@ export default function MediaHighlightsPaneBody({
   onAnnotationSave,
   onAnnotationDelete,
   onOpenConversation,
-  onCloseMobileDrawer,
-  mobileDetailRequestKey = 0,
 }: MediaHighlightsPaneBodyProps) {
-  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const lastResolvedIndexRef = useRef(0);
 
-  const detailHighlights = useMemo(() => {
+  const contextualHighlights = useMemo(() => {
     if (isPdf) {
       return [...pdfPageHighlights].sort((left, right) => {
         const leftTop = left.anchor.quads[0]?.y1 ?? 0;
@@ -110,9 +104,9 @@ export default function MediaHighlightsPaneBody({
     });
   }, [fragmentHighlights, isPdf, pdfPageHighlights]);
 
-  const railHighlights = useMemo(() => {
+  const paneHighlights = useMemo(() => {
     if (isPdf) {
-      return detailHighlights.map((highlight) => {
+      return contextualHighlights.map((highlight) => {
         const pdfHighlight = highlight as PdfHighlightOut;
         const quad = pdfHighlight.anchor.quads[0];
         const top = quad?.y1 ?? 0;
@@ -124,6 +118,10 @@ export default function MediaHighlightsPaneBody({
           color: pdfHighlight.color,
           annotation: pdfHighlight.annotation,
           created_at: pdfHighlight.created_at,
+          updated_at: pdfHighlight.updated_at,
+          prefix: pdfHighlight.prefix,
+          suffix: pdfHighlight.suffix,
+          is_owner: pdfHighlight.is_owner,
           linked_conversations: pdfHighlight.linked_conversations,
           page_number: pdfHighlight.anchor.page_number,
           quads: pdfHighlight.anchor.quads,
@@ -138,12 +136,15 @@ export default function MediaHighlightsPaneBody({
       });
     }
 
-    return (detailHighlights as Highlight[]).map((highlight, index) => ({
+    return (contextualHighlights as Highlight[]).map((highlight, index) => ({
       id: highlight.id,
       exact: highlight.exact,
       color: highlight.color,
       annotation: highlight.annotation,
       created_at: highlight.created_at,
+      updated_at: highlight.updated_at,
+      prefix: highlight.prefix,
+      suffix: highlight.suffix,
       start_offset: highlight.start_offset,
       end_offset: highlight.end_offset,
       fragment_idx: index,
@@ -156,75 +157,53 @@ export default function MediaHighlightsPaneBody({
         highlight.id,
       ].join(":"),
     }));
-  }, [detailHighlights, isPdf]);
+  }, [contextualHighlights, isPdf]);
 
   const selectedHighlight = useMemo(() => {
-    if (detailHighlights.length === 0) {
+    if (contextualHighlights.length === 0) {
       return null;
     }
     if (focusedId) {
-      const focusedHighlight = detailHighlights.find((highlight) => highlight.id === focusedId);
+      const focusedHighlight = contextualHighlights.find((highlight) => highlight.id === focusedId);
       if (focusedHighlight) {
         return focusedHighlight;
       }
     }
-    return detailHighlights[0];
-  }, [detailHighlights, focusedId]);
+    return contextualHighlights[Math.min(lastResolvedIndexRef.current, contextualHighlights.length - 1)];
+  }, [contextualHighlights, focusedId]);
 
   useEffect(() => {
-    if (detailHighlights.length === 0) {
+    if (!selectedHighlight) {
+      return;
+    }
+    const selectedIndex = contextualHighlights.findIndex(
+      (highlight) => highlight.id === selectedHighlight.id
+    );
+    if (selectedIndex >= 0) {
+      lastResolvedIndexRef.current = selectedIndex;
+    }
+  }, [contextualHighlights, selectedHighlight]);
+
+  useEffect(() => {
+    if (contextualHighlights.length === 0) {
       if (focusedId !== null) {
         onClearFocus();
       }
       return;
     }
 
-    if (focusedId && detailHighlights.some((highlight) => highlight.id === focusedId)) {
+    if (!selectedHighlight || focusedId === selectedHighlight.id) {
       return;
     }
 
-    onFocusHighlight(detailHighlights[0].id);
-  }, [detailHighlights, focusedId, onClearFocus, onFocusHighlight]);
+    onFocusHighlight(selectedHighlight.id);
+  }, [contextualHighlights, focusedId, onClearFocus, onFocusHighlight, selectedHighlight]);
 
-  useEffect(() => {
-    if (!selectedHighlight) {
-      setMobileDetailOpen(false);
-    }
-  }, [selectedHighlight]);
-
-  useEffect(() => {
-    if (!isMobile || !selectedHighlight || mobileDetailRequestKey === 0) {
-      return;
-    }
-    setMobileDetailOpen(true);
-  }, [isMobile, mobileDetailRequestKey, selectedHighlight]);
-
-  const handleRailClick = useCallback(
+  const handleHighlightClick = useCallback(
     (highlightId: string) => {
       onFocusHighlight(highlightId);
-      if (isMobile) {
-        setMobileDetailOpen(true);
-      }
     },
-    [isMobile, onFocusHighlight]
-  );
-
-  const handleShowInDocument = useCallback(
-    (highlightId: string) => {
-      onFocusHighlight(highlightId);
-
-      const escapedId = escapeAttrValue(highlightId);
-      const anchor =
-        contentRef.current?.querySelector<HTMLElement>(`[data-highlight-anchor="${escapedId}"]`) ??
-        contentRef.current?.querySelector<HTMLElement>(`[data-active-highlight-ids~="${escapedId}"]`);
-      anchor?.scrollIntoView({ behavior: "smooth", block: "center" });
-
-      if (isMobile) {
-        setMobileDetailOpen(false);
-        onCloseMobileDrawer?.();
-      }
-    },
-    [contentRef, isMobile, onCloseMobileDrawer, onFocusHighlight]
+    [onFocusHighlight]
   );
 
   const paneTitle = isPdf ? "Page highlights" : isEpub ? "Section highlights" : "Highlights";
@@ -233,22 +212,6 @@ export default function MediaHighlightsPaneBody({
     : isEpub
       ? "Showing highlights in the active section."
       : "Showing highlights in the current content.";
-
-  const detailPane = (
-    <HighlightDetailPane
-      highlight={selectedHighlight}
-      isEditingBounds={isEditingBounds}
-      onShowInDocument={handleShowInDocument}
-      onSendToChat={onSendToChat}
-      onColorChange={onColorChange}
-      onDelete={onDelete}
-      onStartEditBounds={onStartEditBounds}
-      onCancelEditBounds={onCancelEditBounds}
-      onAnnotationSave={onAnnotationSave}
-      onAnnotationDelete={onAnnotationDelete}
-      onOpenConversation={onOpenConversation}
-    />
-  );
 
   return (
     <div className={styles.highlightsPaneRoot}>
@@ -264,54 +227,25 @@ export default function MediaHighlightsPaneBody({
         ) : null}
       </header>
 
-      {isMobile ? (
-        <div className={styles.mobileHighlightsPane}>
-          <LinkedItemsPane
-            highlights={railHighlights}
-            contentRef={contentRef}
-            focusedId={selectedHighlight?.id ?? null}
-            onHighlightClick={handleRailClick}
-            highlightsVersion={isPdf ? pdfHighlightsVersion : highlightsVersion}
-            alignToContent={false}
-          />
-          {selectedHighlight && mobileDetailOpen ? (
-            <div
-              className={styles.mobileHighlightDetailBackdrop}
-              onClick={() => setMobileDetailOpen(false)}
-            >
-              <aside
-                className={styles.mobileHighlightDetailSheet}
-                role="dialog"
-                aria-modal="true"
-                aria-label="Highlight details"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <header className={styles.mobileHighlightDetailHeader}>
-                  <h3>Highlight details</h3>
-                  <button type="button" onClick={() => setMobileDetailOpen(false)}>
-                    Close
-                  </button>
-                </header>
-                <div className={styles.mobileHighlightDetailBody}>{detailPane}</div>
-              </aside>
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <div className={styles.highlightsPaneDesktopBody}>
-          <div className={styles.highlightsRailColumn}>
-            <LinkedItemsPane
-              highlights={railHighlights}
-              contentRef={contentRef}
-              focusedId={selectedHighlight?.id ?? null}
-              onHighlightClick={handleRailClick}
-              highlightsVersion={isPdf ? pdfHighlightsVersion : highlightsVersion}
-              alignToContent
-            />
-          </div>
-          <div className={styles.highlightsDetailColumn}>{detailPane}</div>
-        </div>
-      )}
+      <div className={styles.highlightsPaneBody}>
+        <LinkedItemsPane
+          highlights={paneHighlights}
+          contentRef={contentRef}
+          focusedId={selectedHighlight?.id ?? null}
+          onHighlightClick={handleHighlightClick}
+          highlightsVersion={isPdf ? pdfHighlightsVersion : highlightsVersion}
+          alignToContent={!isMobile}
+          isEditingBounds={isEditingBounds}
+          onSendToChat={onSendToChat}
+          onColorChange={onColorChange}
+          onDelete={onDelete}
+          onStartEditBounds={onStartEditBounds}
+          onCancelEditBounds={onCancelEditBounds}
+          onAnnotationSave={onAnnotationSave}
+          onAnnotationDelete={onAnnotationDelete}
+          onOpenConversation={onOpenConversation}
+        />
+      </div>
     </div>
   );
 }
