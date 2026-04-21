@@ -97,7 +97,7 @@ describe("library detail mixed-entry cutover", () => {
                   { id: "author-1", name: "Ada Lovelace", role: "author" },
                   { id: "author-2", name: "Grace Hopper", role: null },
                 ],
-                published_date: "1843",
+                published_date: "2024-02-03T14:15:16Z",
                 publisher: "Analytical Engine Press",
                 canonical_source_url: "https://example.com/systems.pdf",
                 processing_status: "ready_for_reading",
@@ -118,7 +118,7 @@ describe("library detail mixed-entry cutover", () => {
 
     expect(await screen.findByText("Football Ramble")).toBeInTheDocument();
     expect(screen.getByText("Intro to systems")).toBeInTheDocument();
-    expect(screen.getByText("Ada Lovelace +1 · 1843")).toBeInTheDocument();
+    expect(screen.getByText("Ada Lovelace +1 · 2024-02-03")).toBeInTheDocument();
     expect(screen.queryByText("ready_for_reading")).not.toBeInTheDocument();
     expect(screen.queryByText(/^Updated\b/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^pdf$/i)).not.toBeInTheDocument();

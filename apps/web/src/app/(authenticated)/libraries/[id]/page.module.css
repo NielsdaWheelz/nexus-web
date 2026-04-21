@@ -16,12 +16,12 @@
 
 .mediaRow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-2);
+  gap: var(--space-3);
   border: 1px solid var(--color-border-subtle);
   border-radius: 10px;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3);
   background: var(--color-surface);
 }
 
@@ -31,13 +31,14 @@
 
 .mediaRowMain {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  align-items: flex-start;
+  gap: var(--space-3);
   min-width: 0;
   flex: 1;
 }
 
 .dragHandle {
+  flex-shrink: 0;
   border: 1px solid var(--color-border);
   background: var(--color-bg-panel);
   color: var(--color-text-muted);
@@ -59,33 +60,81 @@
 }
 
 .mediaLink {
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   color: inherit;
   text-decoration: none;
 }
 
 .mediaTitleRow {
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  align-items: flex-start;
   gap: var(--space-2);
   min-width: 0;
 }
 
+.mediaTitleRow > :first-child {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 .mediaTitle {
+  display: block;
+  min-width: 0;
   font-weight: 600;
+  line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.mediaMetaRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .mediaMeta {
   font-size: var(--font-size-xs);
+  line-height: 1.4;
   color: var(--color-text-muted);
+}
+
+.mediaStatus {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-panel);
+}
+
+.mediaStatus[data-status="pending"] {
+  color: var(--color-text-muted);
+}
+
+.mediaStatus[data-status="extracting"],
+.mediaStatus[data-status="embedding"] {
+  color: var(--color-accent);
+  border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
+}
+
+.mediaStatus[data-status="failed"] {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 35%, var(--color-border));
 }
 
 .rowActionMenu {
   flex-shrink: 0;
+  align-self: flex-start;
 }
