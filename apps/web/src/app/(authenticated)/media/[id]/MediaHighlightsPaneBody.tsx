@@ -207,11 +207,17 @@ export default function MediaHighlightsPaneBody({
   );
 
   const paneTitle = isPdf ? "Page highlights" : isEpub ? "Section highlights" : "Highlights";
-  const paneDescription = isPdf
-    ? "Showing highlights for the active page."
-    : isEpub
-      ? "Showing highlights in the active section."
-      : "Showing highlights in the current content.";
+  const paneDescription = isMobile
+    ? isPdf
+      ? "Showing visible highlights on the active page."
+      : isEpub
+        ? "Showing visible highlights in the active section."
+        : "Showing visible highlights in the current content."
+    : isPdf
+      ? "Showing highlights for the active page."
+      : isEpub
+        ? "Showing highlights in the active section."
+        : "Showing highlights in the current content.";
 
   return (
     <div className={styles.highlightsPaneRoot}>
@@ -234,7 +240,7 @@ export default function MediaHighlightsPaneBody({
           focusedId={selectedHighlight?.id ?? null}
           onHighlightClick={handleHighlightClick}
           highlightsVersion={isPdf ? pdfHighlightsVersion : highlightsVersion}
-          alignToContent={!isMobile}
+          isMobile={isMobile}
           isEditingBounds={isEditingBounds}
           onSendToChat={onSendToChat}
           onColorChange={onColorChange}

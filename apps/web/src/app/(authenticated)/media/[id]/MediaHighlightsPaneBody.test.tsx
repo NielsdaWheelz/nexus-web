@@ -152,7 +152,6 @@ describe("MediaHighlightsPaneBody", () => {
     expect(screen.getByRole("heading", { name: "Highlights" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "All highlights" })).not.toBeInTheDocument();
     expect(getRenderedHighlightIds()).toEqual(["highlight-1", "highlight-2"]);
-    expect(getLatestPaneProps().alignToContent).toBe(true);
     expect(getLatestPaneProps().focusedId).toBe("highlight-2");
   });
 
@@ -204,7 +203,7 @@ describe("MediaHighlightsPaneBody", () => {
     expect(getLatestPaneProps().focusedId).toBeNull();
   });
 
-  it("updates the focused mobile row when a contextual highlight is tapped", async () => {
+  it("uses visible-highlights copy on mobile and updates the focused row when tapped", async () => {
     const user = userEvent.setup();
     const onFocusHighlight = vi.fn();
     const props = buildProps({
@@ -233,10 +232,11 @@ describe("MediaHighlightsPaneBody", () => {
 
     render(<MobileHarness />);
 
+    expect(screen.getByText(/visible highlights/i)).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: "highlight-2" }));
 
     expect(onFocusHighlight).toHaveBeenCalledWith("highlight-2");
-    expect(getLatestPaneProps().alignToContent).toBe(false);
     expect(getLatestPaneProps().focusedId).toBe("highlight-2");
   });
 
@@ -283,7 +283,6 @@ describe("MediaHighlightsPaneBody", () => {
     expect(screen.getByText("Active page: 1")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "All highlights" })).not.toBeInTheDocument();
     expect(getRenderedHighlightIds()).toEqual(["pdf-page-1", "pdf-page-1b"]);
-    expect(getLatestPaneProps().alignToContent).toBe(true);
     expect(getLatestPaneProps().focusedId).toBe("pdf-page-1b");
 
     await user.click(screen.getByRole("button", { name: "pdf-page-1" }));

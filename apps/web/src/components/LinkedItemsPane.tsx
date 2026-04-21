@@ -28,6 +28,7 @@ import styles from "./LinkedItemsPane.module.css";
 const COLLAPSED_ROW_HEIGHT = 44;
 const ROW_GAP = 4;
 const MEASURE_DEBOUNCE_MS = 75;
+const VIEWPORT_BUFFER_PX = 24;
 
 function escapeAttrValue(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
@@ -109,7 +110,7 @@ interface LinkedItemsPaneProps {
   focusedId: string | null;
   onHighlightClick: (highlightId: string) => void;
   highlightsVersion?: number;
-  alignToContent?: boolean;
+  isMobile: boolean;
   isEditingBounds: boolean;
   onSendToChat: (highlightId: string) => void;
   onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
@@ -127,7 +128,7 @@ export default function LinkedItemsPane({
   focusedId,
   onHighlightClick,
   highlightsVersion = 0,
-  alignToContent = true,
+  isMobile,
   isEditingBounds,
   onSendToChat,
   onColorChange,
@@ -144,11 +145,14 @@ export default function LinkedItemsPane({
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const measureTimerRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
-  const [anchorPositions, setAnchorPositions] = useState(new Map<string, number>());
+  const [anchorBounds, setAnchorBounds] = useState(
+    new Map<string, { top: number; bottom: number }>()
+  );
   const [alignedRows, setAlignedRows] = useState<Array<{ id: string; top: number }>>([]);
   const [rowHeights, setRowHeights] = useState(new Map<string, number>());
   const [overflowCount, setOverflowCount] = useState(0);
   const [missingAnchors, setMissingAnchors] = useState<string[]>([]);
+  const [viewportState, setViewportState] = useState({ scrollTop: 0, clientHeight: 0 });
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [changingColor, setChangingColor] = useState(false);
@@ -207,18 +211,50 @@ export default function LinkedItemsPane({
     [focusedId, orderedHighlights]
   );
 
+  const findHighlightAnchorElement = useCallback(
+    (highlightId: string) => {
+      if (!contentRef.current) {
+        return null;
+      }
+
+      const escapedId = escapeAttrValue(highlightId);
+      return (
+        contentRef.current.querySelector<HTMLElement>(`[data-highlight-anchor="${escapedId}"]`) ??
+        contentRef.current.querySelector<HTMLElement>(`[data-active-highlight-ids~="${escapedId}"]`)
+      );
+    },
+    [contentRef]
+  );
+
+  const syncViewportState = useCallback((scrollParent: HTMLElement) => {
+    setViewportState((previous) => {
+      if (
+        previous.scrollTop === scrollParent.scrollTop &&
+        previous.clientHeight === scrollParent.clientHeight
+      ) {
+        return previous;
+      }
+
+      return {
+        scrollTop: scrollParent.scrollTop,
+        clientHeight: scrollParent.clientHeight,
+      };
+    });
+  }, []);
+
   const measureAnchors = useCallback(() => {
-    if (!alignToContent || !contentRef.current) {
+    if (!contentRef.current) {
       return;
     }
 
     const scrollParent = findScrollParent(contentRef.current);
     scrollParentRef.current = scrollParent;
+    syncViewportState(scrollParent);
 
     const viewerRect = scrollParent.getBoundingClientRect();
     const viewerScrollTop = scrollParent.scrollTop;
     const pageElements = new Map<number, HTMLElement | null>();
-    const positions = new Map<string, number>();
+    const positions = new Map<string, { top: number; bottom: number }>();
     const nextMissingAnchors: string[] = [];
 
     for (const highlight of orderedHighlights) {
@@ -247,26 +283,25 @@ export default function LinkedItemsPane({
 
         const rect = projectPdfQuadToViewportRect(highlight.quads[0], transform);
         const pageRect = pageElement.getBoundingClientRect();
-        positions.set(highlight.id, pageRect.top - viewerRect.top + viewerScrollTop + rect.top);
+        const top = pageRect.top - viewerRect.top + viewerScrollTop + rect.top;
+        positions.set(highlight.id, { top, bottom: top + rect.height });
         continue;
       }
 
-      const escapedId = escapeAttrValue(highlight.id);
-      const anchor =
-        contentRef.current.querySelector<HTMLElement>(`[data-highlight-anchor="${escapedId}"]`) ??
-        contentRef.current.querySelector<HTMLElement>(`[data-active-highlight-ids~="${escapedId}"]`);
+      const anchor = findHighlightAnchorElement(highlight.id);
       if (!anchor) {
         nextMissingAnchors.push(highlight.id);
         continue;
       }
 
       const anchorRect = anchor.getBoundingClientRect();
-      positions.set(highlight.id, anchorRect.top - viewerRect.top + viewerScrollTop);
+      const top = anchorRect.top - viewerRect.top + viewerScrollTop;
+      positions.set(highlight.id, { top, bottom: top + anchorRect.height });
     }
 
-    setAnchorPositions(positions);
+    setAnchorBounds(positions);
     setMissingAnchors(nextMissingAnchors);
-  }, [alignToContent, contentRef, orderedHighlights]);
+  }, [contentRef, findHighlightAnchorElement, orderedHighlights, syncViewportState]);
 
   const scheduleMeasure = useCallback(() => {
     if (measureTimerRef.current != null) {
@@ -279,7 +314,7 @@ export default function LinkedItemsPane({
   }, [measureAnchors]);
 
   const alignRows = useCallback(() => {
-    if (!alignToContent || !containerRef.current) {
+    if (isMobile || !containerRef.current) {
       return;
     }
 
@@ -297,13 +332,13 @@ export default function LinkedItemsPane({
     const rows: Array<{ highlight: (typeof orderedHighlights)[number]; desiredTop: number }> = [];
 
     for (const highlight of orderedHighlights) {
-      const anchorTop = anchorPositions.get(highlight.id);
-      if (anchorTop === undefined) {
+      const bounds = anchorBounds.get(highlight.id);
+      if (!bounds) {
         continue;
       }
       rows.push({
         highlight,
-        desiredTop: anchorTop - scrollTop + baseline,
+        desiredTop: bounds.top - scrollTop + baseline,
       });
     }
 
@@ -355,7 +390,7 @@ export default function LinkedItemsPane({
       }
     }
     setOverflowCount(nextOverflowCount);
-  }, [alignToContent, anchorPositions, contentRef, orderedHighlights, rowHeights]);
+  }, [anchorBounds, contentRef, isMobile, orderedHighlights, rowHeights]);
 
   useEffect(() => {
     return () => {
@@ -369,7 +404,7 @@ export default function LinkedItemsPane({
   }, []);
 
   useLayoutEffect(() => {
-    if (!alignToContent) {
+    if (isMobile) {
       return;
     }
 
@@ -399,7 +434,7 @@ export default function LinkedItemsPane({
 
       return nextHeights;
     });
-  }, [alignToContent, focusedId, isEditingBounds, noteDraft, orderedHighlights, savingNote]);
+  }, [focusedId, isEditingBounds, isMobile, noteDraft, orderedHighlights, savingNote]);
 
   useEffect(() => {
     setNoteDraft(focusedHighlight?.annotation?.body ?? "");
@@ -409,33 +444,34 @@ export default function LinkedItemsPane({
   }, [focusedHighlight?.annotation?.body, focusedHighlight?.id, focusedHighlight?.updated_at]);
 
   useEffect(() => {
-    if (!alignToContent) {
+    setAnchorBounds(new Map());
+    setMissingAnchors([]);
+    if (!isMobile) {
       setAlignedRows([]);
       setOverflowCount(0);
-      setMissingAnchors([]);
-      return;
     }
 
     const frameId = window.requestAnimationFrame(() => {
       measureAnchors();
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [alignToContent, highlightsVersion, measureAnchors]);
+  }, [highlightsVersion, isMobile, measureAnchors]);
 
   useEffect(() => {
-    if (!alignToContent || anchorPositions.size === 0) {
+    if (isMobile || anchorBounds.size === 0) {
       return;
     }
     alignRows();
-  }, [alignRows, alignToContent, anchorPositions]);
+  }, [alignRows, anchorBounds, isMobile]);
 
   useEffect(() => {
-    if (!alignToContent || !contentRef.current) {
+    if (!contentRef.current) {
       return;
     }
 
     const scrollParent = findScrollParent(contentRef.current);
     scrollParentRef.current = scrollParent;
+    syncViewportState(scrollParent);
 
     const handleScroll = () => {
       if (scrollFrameRef.current != null) {
@@ -443,6 +479,10 @@ export default function LinkedItemsPane({
       }
       scrollFrameRef.current = window.requestAnimationFrame(() => {
         scrollFrameRef.current = null;
+        if (isMobile) {
+          syncViewportState(scrollParent);
+          return;
+        }
         alignRows();
       });
     };
@@ -455,10 +495,10 @@ export default function LinkedItemsPane({
         scrollFrameRef.current = null;
       }
     };
-  }, [alignRows, alignToContent, contentRef, orderedHighlights.length, highlightsVersion]);
+  }, [alignRows, contentRef, highlightsVersion, isMobile, orderedHighlights.length, syncViewportState]);
 
   useEffect(() => {
-    if (!alignToContent || typeof ResizeObserver === "undefined") {
+    if (typeof ResizeObserver === "undefined") {
       return;
     }
 
@@ -484,10 +524,10 @@ export default function LinkedItemsPane({
     }
 
     return () => observer.disconnect();
-  }, [alignToContent, contentRef, orderedHighlights.length, highlightsVersion, scheduleMeasure]);
+  }, [contentRef, orderedHighlights.length, highlightsVersion, scheduleMeasure]);
 
   useEffect(() => {
-    if (!alignToContent || !contentRef.current) {
+    if (!contentRef.current) {
       return;
     }
 
@@ -507,30 +547,82 @@ export default function LinkedItemsPane({
         image.removeEventListener("error", handleImageLoad);
       }
     };
-  }, [alignToContent, contentRef, highlightsVersion, scheduleMeasure]);
+  }, [contentRef, highlightsVersion, scheduleMeasure]);
 
   useEffect(() => {
-    if (!alignToContent || missingAnchors.length === 0) {
+    if (missingAnchors.length === 0) {
       return;
     }
     console.warn("highlight_anchor_missing", { highlightIds: missingAnchors });
-  }, [alignToContent, missingAnchors]);
+  }, [missingAnchors]);
+
+  const mobileHighlightsState = useMemo(() => {
+    if (!isMobile) {
+      return {
+        visibleHighlights: [] as typeof orderedHighlights,
+        aboveCount: 0,
+        belowCount: 0,
+        nearestAboveId: null as string | null,
+        nearestBelowId: null as string | null,
+      };
+    }
+
+    const visibleHighlights: typeof orderedHighlights = [];
+    let aboveCount = 0;
+    let belowCount = 0;
+    let nearestAboveId: string | null = null;
+    let nearestBelowId: string | null = null;
+    const viewportTop = viewportState.scrollTop;
+    const viewportBottom = viewportTop + viewportState.clientHeight;
+
+    for (const highlight of orderedHighlights) {
+      const bounds = anchorBounds.get(highlight.id);
+      if (!bounds) {
+        continue;
+      }
+
+      if (bounds.bottom < viewportTop - VIEWPORT_BUFFER_PX) {
+        aboveCount += 1;
+        nearestAboveId = highlight.id;
+        continue;
+      }
+
+      if (bounds.top > viewportBottom + VIEWPORT_BUFFER_PX) {
+        belowCount += 1;
+        if (!nearestBelowId) {
+          nearestBelowId = highlight.id;
+        }
+        continue;
+      }
+
+      visibleHighlights.push(highlight);
+    }
+
+    return {
+      visibleHighlights,
+      aboveCount,
+      belowCount,
+      nearestAboveId,
+      nearestBelowId,
+    };
+  }, [anchorBounds, isMobile, orderedHighlights, viewportState]);
+
+  const hasMeasuredAnchors = anchorBounds.size > 0 || missingAnchors.length > 0;
+
+  const focusAndScrollToHighlight = useCallback(
+    (highlightId: string) => {
+      onHighlightClick(highlightId);
+      const anchor = findHighlightAnchorElement(highlightId);
+      anchor?.scrollIntoView({ behavior: "auto", block: "center" });
+    },
+    [findHighlightAnchorElement, onHighlightClick]
+  );
 
   const handleRowClick = useCallback(
     (highlightId: string) => {
-      onHighlightClick(highlightId);
-
-      if (!contentRef.current) {
-        return;
-      }
-
-      const escapedId = escapeAttrValue(highlightId);
-      const anchor =
-        contentRef.current.querySelector<HTMLElement>(`[data-highlight-anchor="${escapedId}"]`) ??
-        contentRef.current.querySelector<HTMLElement>(`[data-active-highlight-ids~="${escapedId}"]`);
-      anchor?.scrollIntoView({ behavior: "auto", block: "center" });
+      focusAndScrollToHighlight(highlightId);
     },
-    [contentRef, onHighlightClick]
+    [focusAndScrollToHighlight]
   );
 
   const handleRowMouseEnter = useCallback(
@@ -571,13 +663,6 @@ export default function LinkedItemsPane({
     },
     []
   );
-
-  useEffect(() => {
-    if (alignToContent || !focusedId) {
-      return;
-    }
-    rowRefs.current.get(focusedId)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [alignToContent, focusedId, highlightsVersion]);
 
   const handleNoteBlur = useCallback(async () => {
     if (!focusedHighlight || focusedHighlight.is_owner === false || savingNote) {
@@ -848,14 +933,50 @@ export default function LinkedItemsPane({
     );
   }
 
-  if (!alignToContent) {
+  if (isMobile) {
     return (
       <div
         ref={containerRef}
-        className={`${styles.linkedItemsContainer} ${styles.listMode}`}
+        className={`${styles.linkedItemsContainer} ${styles.mobileVisibleContainer}`}
         data-testid="linked-items-container"
       >
-        {orderedHighlights.map((highlight) => renderRow(highlight, styles.listModeRow))}
+        {mobileHighlightsState.aboveCount > 0 ? (
+          <button
+            type="button"
+            className={styles.mobileIndicator}
+            onClick={() => {
+              if (mobileHighlightsState.nearestAboveId) {
+                focusAndScrollToHighlight(mobileHighlightsState.nearestAboveId);
+              }
+            }}
+          >
+            {mobileHighlightsState.aboveCount} above
+          </button>
+        ) : null}
+
+        {mobileHighlightsState.visibleHighlights.map((highlight) =>
+          renderRow(highlight, styles.flowRow)
+        )}
+
+        {mobileHighlightsState.visibleHighlights.length === 0 && hasMeasuredAnchors ? (
+          <div className={styles.mobileStateMessage}>
+            <StateMessage variant="empty">No highlights in view.</StateMessage>
+          </div>
+        ) : null}
+
+        {mobileHighlightsState.belowCount > 0 ? (
+          <button
+            type="button"
+            className={styles.mobileIndicator}
+            onClick={() => {
+              if (mobileHighlightsState.nearestBelowId) {
+                focusAndScrollToHighlight(mobileHighlightsState.nearestBelowId);
+              }
+            }}
+          >
+            {mobileHighlightsState.belowCount} below
+          </button>
+        ) : null}
       </div>
     );
   }

@@ -343,6 +343,19 @@ function rowActionsButton(row: Locator): Locator {
   return row.getByRole("button", { name: "Actions" });
 }
 
+const MOBILE_VIEWPORT = { width: 390, height: 844 };
+
+async function setMobileViewport(page: Page): Promise<void> {
+  await page.setViewportSize(MOBILE_VIEWPORT);
+}
+
+async function closeMobileHighlightsDrawer(page: Page): Promise<void> {
+  const drawer = page.getByRole("dialog", { name: "Highlights" }).first();
+  await expect(drawer).toBeVisible();
+  await drawer.getByRole("button", { name: "Close" }).click();
+  await expect(drawer).toBeHidden();
+}
+
 async function rowContainsVisibleTextOrFieldValue(
   row: Locator,
   expectedValue: string
@@ -482,6 +495,12 @@ async function wheelUntilLocatorInViewport(
   }
 
   await expect(locator).toBeInViewport();
+}
+
+async function scrollLocatorIntoCenteredView(locator: Locator): Promise<void> {
+  await locator.evaluate((element) => {
+    (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+  });
 }
 
 function readSeededEpubMedia(): SeededEpubMedia {
@@ -793,6 +812,7 @@ test.describe("epub", () => {
   }) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
 
     await expect(
@@ -831,6 +851,16 @@ test.describe("epub", () => {
         }, seed.toc_anchor_target_id);
       })
       .toBe(true);
+    const chrome = page.locator('[data-testid="pane-shell-chrome"]').first();
+    const target = page.locator(`#${seed.toc_anchor_target_id}`).first();
+    await expect(chrome).toBeVisible();
+    const chromeBox = await chrome.boundingBox();
+    const targetBox = await target.boundingBox();
+    expect(chromeBox).not.toBeNull();
+    expect(targetBox).not.toBeNull();
+    if (chromeBox && targetBox) {
+      expect(targetBox.y).toBeGreaterThanOrEqual(chromeBox.y + chromeBox.height - 8);
+    }
   });
 
   test("create highlight in epub", async ({ page }) => {
@@ -913,6 +943,79 @@ test.describe("epub", () => {
         expect(delta).toBeLessThan(100);
       }
     }
+  });
+
+  test("mobile section highlights drawer only shows visible rows and uses explicit offscreen indicators", async ({
+    page,
+  }) => {
+    const seed = readSeededEpubMedia();
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    const section = await fetchEpubSectionDetail(page, seed.media_id, firstSection.section_id);
+    const topNeedle = "introduction chapter of the E2E test EPUB";
+    const bottomNeedle = "Deterministic post-anchor filler paragraph 8 for E2E.";
+    const topStart = section.data.canonical_text.indexOf(topNeedle);
+    const bottomStart = section.data.canonical_text.indexOf(bottomNeedle);
+    expect(topStart).toBeGreaterThanOrEqual(0);
+    expect(bottomStart).toBeGreaterThanOrEqual(0);
+
+    const topHighlight = await ensureFragmentHighlight(
+      page,
+      section.data.fragment_id,
+      topStart,
+      topStart + topNeedle.length,
+      "yellow"
+    );
+    const bottomHighlight = await ensureFragmentHighlight(
+      page,
+      section.data.fragment_id,
+      bottomStart,
+      bottomStart + bottomNeedle.length,
+      "green"
+    );
+
+    await setMobileViewport(page);
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    await expect(
+      page.getByRole("heading", { name: seed.chapter_titles[0] })
+    ).toBeVisible({ timeout: 15_000 });
+
+    const topAnchor = page
+      .locator(`[data-active-highlight-ids~="${topHighlight.id}"]`)
+      .first();
+    const bottomAnchor = page
+      .locator(`[data-active-highlight-ids~="${bottomHighlight.id}"]`)
+      .first();
+    const topRow = page.locator(`[data-highlight-id="${topHighlight.id}"]`).first();
+    const bottomRow = page.locator(`[data-highlight-id="${bottomHighlight.id}"]`).first();
+
+    await expect(topAnchor).toBeAttached({ timeout: 15_000 });
+    await expect(bottomAnchor).toBeAttached({ timeout: 15_000 });
+
+    await scrollLocatorIntoCenteredView(topAnchor);
+    await topAnchor.click({ force: true });
+    const drawer = page.getByRole("dialog", { name: "Highlights" }).first();
+    await expect(drawer).toBeVisible();
+    await expect(topRow).toBeVisible({ timeout: 15_000 });
+    await expect(bottomRow).toHaveCount(0);
+    await expect(drawer.getByText(/^\d+ below$/)).toBeVisible();
+    await expect(drawer.getByText("No highlights in view.")).toHaveCount(0);
+
+    const midpointTarget = page
+      .getByText("Anchor target landing paragraph for deterministic E2E checks.")
+      .first();
+    await scrollLocatorIntoCenteredView(midpointTarget);
+    await expect(topRow).toHaveCount(0);
+    await expect(bottomRow).toHaveCount(0);
+    await expect(drawer.getByText("No highlights in view.")).toBeVisible();
+    await expect(drawer.getByText(/^\d+ above$/)).toBeVisible();
+    await expect(drawer.getByText(/^\d+ below$/)).toBeVisible();
+
+    await scrollLocatorIntoCenteredView(bottomAnchor);
+    await expect(topRow).toHaveCount(0);
+    await expect(bottomRow).toBeVisible({ timeout: 15_000 });
+    await expect(drawer.getByText(/^\d+ above$/)).toBeVisible();
+    await expect(drawer.getByText("No highlights in view.")).toHaveCount(0);
+    await closeMobileHighlightsDrawer(page);
   });
 
   test("section-scoped highlights expand inline while context and source focus stay in sync", async ({
