@@ -4,9 +4,6 @@ type BrandedNumber<Tag extends string> = number & { readonly __brand: Tag };
 
 export type PageSpaceX = BrandedNumber<"page-space-x">;
 export type PageSpaceY = BrandedNumber<"page-space-y">;
-export type ViewerScrollY = BrandedNumber<"viewer-scroll-y">;
-export type ViewerViewportY = BrandedNumber<"viewer-viewport-y">;
-export type PaneY = BrandedNumber<"pane-y">;
 
 export interface PdfPageViewportTransform {
   scale: number;
@@ -38,48 +35,12 @@ function toPageSpaceY(value: number): PageSpaceY {
   return value as PageSpaceY;
 }
 
-function toViewerScrollY(value: number): ViewerScrollY {
-  return value as ViewerScrollY;
-}
-
-export function toViewerViewportY(value: number): ViewerViewportY {
-  return value as ViewerViewportY;
-}
-
-function toPaneY(value: number): PaneY {
-  return value as PaneY;
-}
-
 export function normalizeQuarterTurnRotation(rotation: number): 0 | 90 | 180 | 270 {
   const normalized = ((Math.round(rotation / 90) * 90) % 360 + 360) % 360;
   if (normalized === 90 || normalized === 180 || normalized === 270) {
     return normalized;
   }
   return 0;
-}
-
-export function viewerScrollYFromClientY(
-  clientY: number,
-  viewerTopClientY: number,
-  viewerScrollTop: number
-): ViewerScrollY {
-  return toViewerScrollY(clientY - viewerTopClientY + viewerScrollTop);
-}
-
-export function paneBaselineOffsetFromContainers(
-  viewerScrollContainer: HTMLElement,
-  paneContainer: HTMLElement
-): number {
-  const viewerRect = viewerScrollContainer.getBoundingClientRect();
-  const paneRect = paneContainer.getBoundingClientRect();
-  return viewerRect.top - paneRect.top;
-}
-
-export function paneYFromViewerViewportY(
-  viewerViewportY: ViewerViewportY,
-  paneBaselineOffset: number
-): PaneY {
-  return toPaneY((viewerViewportY as number) + paneBaselineOffset);
 }
 
 export function pagePointToViewportPoint(
@@ -177,4 +138,3 @@ export function projectPdfQuadToViewportRect(
     height: Math.max(bottom - top, MIN_RECT_SIZE),
   };
 }
-

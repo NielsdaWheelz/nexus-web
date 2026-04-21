@@ -145,10 +145,7 @@ export default function MediaPaneBody() {
   ]);
 
   const isReflowableReader = mv.canRead && !mv.isPdf;
-  const pdfResumeLocator =
-    mv.readerResumeState !== null && mv.readerResumeState?.page !== null
-      ? mv.readerResumeState
-      : null;
+  const pdfResumeLocator = mv.readerResumeState?.page != null ? mv.readerResumeState : null;
   const mediaAuthorMeta = formatMediaAuthors(mv.media?.authors, 2);
   const mediaHeaderMeta = (
     <div className={styles.metadata}>

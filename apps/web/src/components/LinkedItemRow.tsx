@@ -1,29 +1,10 @@
-/**
- * LinkedItemRow - Individual row component for linked-items pane.
- *
- * Each row represents one highlight with two lines:
- * - Line 1: Color swatch + full highlight text (via HighlightSnippet) + ActionMenu
- * - Line 2: Annotation body or "Add a note…" placeholder (click to edit inline)
- *
- * @see docs/v1/s2/s2_prs/s2_pr10.md §6
- */
-
 "use client";
 
-import {
-  forwardRef,
-  useCallback,
-  useRef,
-  useState,
-} from "react";
-import { MessageSquare } from "lucide-react";
-import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import { forwardRef, useCallback } from "react";
+import { MessageSquare, NotebookPen } from "lucide-react";
+import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import styles from "./LinkedItemsPane.module.css";
-
-// =============================================================================
-// Types
-// =============================================================================
 
 export interface LinkedItemRowHighlight {
   id: string;
@@ -33,257 +14,78 @@ export interface LinkedItemRowHighlight {
   start_offset?: number;
   end_offset?: number;
   created_at?: string;
-  fragment_id?: string;
   fragment_idx?: number;
   stable_order_key?: string;
   linked_conversations?: { conversation_id: string; title: string }[];
+  page_number?: number;
+  quads?: PdfHighlightQuad[];
 }
 
-export interface LinkedItemRowProps {
-  /** The highlight data to display */
+interface LinkedItemRowProps {
   highlight: LinkedItemRowHighlight;
-  /** Whether this row is currently focused */
   isFocused: boolean;
-  /** Callback when row is clicked */
   onClick: (highlightId: string) => void;
-  /** Callback when mouse enters row (for hover outline) */
   onMouseEnter: (highlightId: string) => void;
-  /** Callback when mouse leaves row */
   onMouseLeave: () => void;
-  /** Callback when "send to chat" is clicked (quote-to-chat). */
-  onSendToChat?: (highlightId: string) => void;
-  /** Optional style override for positioned rows. */
   style?: React.CSSProperties;
-  /** Optional class name for mode-specific row styling. */
   className?: string;
-  /** Optional action menu options for the row. */
-  options?: ActionMenuOption[];
-  /** Save annotation callback. Empty body on existing annotation triggers delete. */
-  onAnnotationSave?: (highlightId: string, body: string) => Promise<void>;
-  /** Delete annotation callback. */
-  onAnnotationDelete?: (highlightId: string) => Promise<void>;
-  /** Callback when a linked conversation is clicked. */
-  onOpenConversation?: (conversationId: string, title: string) => void;
 }
 
-// =============================================================================
-// Component
-// =============================================================================
+const LinkedItemRow = forwardRef<HTMLButtonElement, LinkedItemRowProps>(function LinkedItemRow(
+  { highlight, isFocused, onClick, onMouseEnter, onMouseLeave, style, className },
+  ref
+) {
+  const handleClick = useCallback(() => {
+    onClick(highlight.id);
+  }, [highlight.id, onClick]);
 
-const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
-  function LinkedItemRow(
-    {
-      highlight,
-      isFocused,
-      onClick,
-      onMouseEnter,
-      onMouseLeave,
-      onSendToChat,
-      style,
-      className,
-      options: optionsProp,
-      onAnnotationSave,
-      onAnnotationDelete,
-      onOpenConversation,
-    },
-    ref
-  ) {
-    const [isEditingAnnotation, setIsEditingAnnotation] = useState(false);
-    const [annotationDraft, setAnnotationDraft] = useState(
-      highlight.annotation?.body ?? ""
-    );
-    const isSavingRef = useRef(false);
-    const skipBlurSaveRef = useRef(false);
+  const handleMouseEnter = useCallback(() => {
+    onMouseEnter(highlight.id);
+  }, [highlight.id, onMouseEnter]);
 
-    const handleClick = useCallback(() => {
-      onClick(highlight.id);
-    }, [onClick, highlight.id]);
+  const linkedConversationCount = highlight.linked_conversations?.length ?? 0;
+  const hasAnnotation = Boolean(highlight.annotation?.body.trim());
 
-    const handleMouseEnter = useCallback(() => {
-      onMouseEnter(highlight.id);
-    }, [onMouseEnter, highlight.id]);
-
-    const handleAnnotationClick = useCallback(
-      (e: React.MouseEvent) => {
-        e.stopPropagation();
-        if (onAnnotationSave && !isSavingRef.current) {
-          skipBlurSaveRef.current = false;
-          setAnnotationDraft(highlight.annotation?.body ?? "");
-          setIsEditingAnnotation(true);
-        }
-      },
-      [highlight.annotation?.body, onAnnotationSave]
-    );
-
-    const handleSaveAnnotation = useCallback(async () => {
-      if (isSavingRef.current) return;
-      const trimmed = annotationDraft.trim();
-
-      if (trimmed === (highlight.annotation?.body ?? "")) {
-        setIsEditingAnnotation(false);
-        return;
-      }
-
-      isSavingRef.current = true;
-      setIsEditingAnnotation(false);
-      try {
-        if (trimmed === "" && highlight.annotation) {
-          await onAnnotationDelete?.(highlight.id);
-        } else if (trimmed !== "") {
-          await onAnnotationSave?.(highlight.id, trimmed);
-        }
-      } finally {
-        isSavingRef.current = false;
-      }
-    }, [
-      annotationDraft,
-      highlight.annotation,
-      highlight.id,
-      onAnnotationDelete,
-      onAnnotationSave,
-    ]);
-
-    const handleCancelAnnotation = useCallback(() => {
-      skipBlurSaveRef.current = true;
-      setIsEditingAnnotation(false);
-    }, []);
-
-    const handleTextareaBlur = useCallback(() => {
-      if (skipBlurSaveRef.current) {
-        skipBlurSaveRef.current = false;
-        return;
-      }
-
-      void handleSaveAnnotation();
-    }, [handleSaveAnnotation]);
-
-    const handleTextareaKeyDown = useCallback(
-      (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          handleCancelAnnotation();
-        } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-          e.preventDefault();
-          e.stopPropagation();
-          skipBlurSaveRef.current = true;
-          void handleSaveAnnotation();
-        }
-      },
-      [handleCancelAnnotation, handleSaveAnnotation]
-    );
-
-    const handleSendToChat = useCallback(
-      (e: React.MouseEvent) => {
-        e.stopPropagation();
-        onSendToChat?.(highlight.id);
-      },
-      [onSendToChat, highlight.id]
-    );
-
-    const annotationBody = highlight.annotation?.body;
-
-    return (
-      <div
-        ref={ref}
-        data-highlight-id={highlight.id}
-        data-testid={`linked-item-row-${highlight.id}`}
-        className={`${styles.linkedItemRow} ${isFocused ? styles.rowFocused : ""} ${
-          isEditingAnnotation ? styles.annotationEditing : ""
-        } ${className ?? ""}`.trim()}
-        style={style}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={onMouseLeave}
-      >
-        {/* Line 1: swatch + text + actions */}
-        <div className={styles.linkedItemRowMain}>
-          <div
-            className={styles.linkedItemPrimary}
-            onClick={handleClick}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                handleClick();
-              }
-            }}
-            role="button"
-            tabIndex={0}
-            aria-pressed={isFocused}
-          >
-            <span
-              className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
-              aria-hidden="true"
-            />
-            <HighlightSnippet exact={highlight.exact} color={highlight.color} compact className={styles.previewText} />
-          </div>
-          {onSendToChat && (
-            <button
-              type="button"
-              className={styles.chatButton}
-              onClick={handleSendToChat}
-              aria-label="Send to chat"
-            >
-              <MessageSquare size={14} />
-            </button>
-          )}
-          {optionsProp && optionsProp.length > 0 && (
-            <ActionMenu
-              options={optionsProp}
-              className={styles.actionMenu}
-            />
-          )}
-        </div>
-
-        {/* Line 2: annotation or placeholder */}
-        {isEditingAnnotation ? (
-          <textarea
-            className={styles.annotationTextarea}
-            value={annotationDraft}
-            onChange={(e) => setAnnotationDraft(e.target.value)}
-            onBlur={handleTextareaBlur}
-            onKeyDown={handleTextareaKeyDown}
-            onClick={(e) => e.stopPropagation()}
-            rows={2}
-            aria-label="Annotation"
-            autoFocus
-          />
-        ) : (
-          <span
-            className={`${styles.annotationLine} ${
-              !annotationBody ? styles.annotationPlaceholder : ""
-            }`}
-            onClick={handleAnnotationClick}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                handleAnnotationClick(e as unknown as React.MouseEvent);
-              }
-            }}
-            role="button"
-            tabIndex={0}
-          >
-            {annotationBody || "Add a note\u2026"}
+  return (
+    <button
+      ref={ref}
+      type="button"
+      data-highlight-id={highlight.id}
+      data-testid={`linked-item-row-${highlight.id}`}
+      className={`${styles.linkedItemRow} ${isFocused ? styles.rowFocused : ""} ${
+        className ?? ""
+      }`.trim()}
+      style={style}
+      onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={onMouseLeave}
+      aria-pressed={isFocused}
+    >
+      <span
+        className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
+        aria-hidden="true"
+      />
+      <HighlightSnippet
+        exact={highlight.exact}
+        color={highlight.color}
+        compact
+        className={styles.previewText}
+      />
+      <span className={styles.rowMeta} aria-hidden="true">
+        {hasAnnotation ? (
+          <span className={styles.metaBadge} title="Has note">
+            <NotebookPen size={12} />
           </span>
-        )}
-
-        {/* Line 3: linked conversations */}
-        {highlight.linked_conversations?.map((conv) => (
-          <button
-            key={conv.conversation_id}
-            type="button"
-            className={styles.linkedConversationLine}
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenConversation?.(conv.conversation_id, conv.title);
-            }}
-          >
-            <MessageSquare size={10} />
-            <span>{conv.title}</span>
-          </button>
-        ))}
-      </div>
-    );
-  }
-);
+        ) : null}
+        {linkedConversationCount > 0 ? (
+          <span className={styles.metaBadge} title={`${linkedConversationCount} linked chats`}>
+            <MessageSquare size={12} />
+            <span>{linkedConversationCount}</span>
+          </span>
+        ) : null}
+      </span>
+    </button>
+  );
+});
 
 export default LinkedItemRow;

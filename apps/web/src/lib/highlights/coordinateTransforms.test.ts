@@ -2,10 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeQuarterTurnRotation,
   pagePointToViewportPoint,
-  paneYFromViewerViewportY,
   projectPdfQuadToViewportRect,
-  toViewerViewportY,
-  viewerScrollYFromClientY,
   viewportPointToPagePoint,
   type PdfPageViewportTransform,
 } from "./coordinateTransforms";
@@ -25,16 +22,6 @@ describe("coordinateTransforms", () => {
     expect(normalizeQuarterTurnRotation(360)).toBe(0);
     expect(normalizeQuarterTurnRotation(-90)).toBe(270);
     expect(normalizeQuarterTurnRotation(91)).toBe(90);
-  });
-
-  it("converts client Y to viewer-scroll Y deterministically", () => {
-    const viewerY = viewerScrollYFromClientY(420, 200, 1000);
-    expect(viewerY as number).toBe(1220);
-  });
-
-  it("converts viewer-viewport Y into pane space using explicit baseline", () => {
-    const paneY = paneYFromViewerViewportY(toViewerViewportY(160), 52);
-    expect(paneY as number).toBe(212);
   });
 
   it("keeps projection invariant across equivalent zoom*dpi products", () => {
@@ -87,4 +74,3 @@ describe("coordinateTransforms", () => {
     }
   });
 });
-

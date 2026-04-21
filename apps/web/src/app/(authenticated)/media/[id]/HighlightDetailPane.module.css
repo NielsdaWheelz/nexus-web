@@ -1,0 +1,187 @@
+.detailPane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+}
+
+.emptyState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: var(--space-6);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.emptyState p {
+  margin: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.quoteCard {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  background: var(--color-bg-panel);
+  padding: var(--space-3);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.primaryButton,
+.secondaryButton,
+.dangerButton,
+.conversationButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.primaryButton,
+.secondaryButton,
+.dangerButton {
+  border: 1px solid var(--color-border);
+  padding: 0 var(--space-3);
+}
+
+.primaryButton {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-contrast, #fff);
+}
+
+.secondaryButton {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.dangerButton {
+  background: transparent;
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 40%, var(--color-border));
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.dangerButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.editHint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.colorRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.colorButton {
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.colorButtonSelected {
+  box-shadow: 0 0 0 2px var(--color-bg-panel), 0 0 0 4px var(--color-text);
+}
+
+.color-yellow {
+  background: var(--highlight-yellow);
+}
+
+.color-green {
+  background: var(--highlight-green);
+}
+
+.color-blue {
+  background: var(--highlight-blue);
+}
+
+.color-pink {
+  background: var(--highlight-pink);
+}
+
+.color-purple {
+  background: var(--highlight-purple);
+}
+
+.noteTextarea {
+  width: 100%;
+  min-height: 120px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  font: inherit;
+  line-height: 1.5;
+  padding: var(--space-3);
+  resize: vertical;
+}
+
+.readOnlyNote {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  background: var(--color-bg-panel);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  padding: var(--space-3);
+  white-space: pre-wrap;
+}
+
+.conversationList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.conversationButton {
+  justify-content: flex-start;
+  width: 100%;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0 var(--space-3);
+}
+
+.conversationButton span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

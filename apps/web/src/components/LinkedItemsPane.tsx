@@ -1,47 +1,18 @@
-/**
- * LinkedItemsPane - Container for vertically aligned linked-items.
- *
- * This pane displays highlight rows that align vertically with their
- * corresponding highlight anchors in the content pane.
- *
- * The alignment works in two phases:
- * 1. Measurement (expensive, debounced): Measure anchor positions in document space
- * 2. Scroll alignment (cheap, per-frame): Position rows based on cached positions
- *
- * Key invariants:
- * - Rows never overlap (collision resolution pushes down)
- * - Alignment is deterministic (sorted by visual position, then canonical)
- * - No layout reads during scroll (all reads in measurement phase)
- *
- * @see docs/v1/s2/s2_prs/s2_pr10.md
- */
-
 "use client";
 
-import { useRef, useEffect, useState, useCallback, useMemo, type RefObject } from "react";
-import LinkedItemRow, { type LinkedItemRowHighlight } from "./LinkedItemRow";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
-import {
-  computeAlignedRows,
-  createMeasureScheduler,
-  createScrollHandler,
-  findScrollParent,
-  ROW_HEIGHT,
-  type AlignmentHighlight,
-  type AlignedRow,
-} from "@/lib/highlights/alignmentEngine";
-import {
-  DEFAULT_HTML_ANCHOR_PROVIDER,
-  type AnchorDescriptor,
-  type AnchorProvider,
-} from "@/lib/highlights/anchorProviders";
-import {
-  paneBaselineOffsetFromContainers,
-  paneYFromViewerViewportY,
-  toViewerViewportY,
-} from "@/lib/highlights/coordinateTransforms";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import StateMessage from "@/components/ui/StateMessage";
+import LinkedItemRow, { type LinkedItemRowHighlight } from "./LinkedItemRow";
+import {
+  normalizeQuarterTurnRotation,
+  projectPdfQuadToViewportRect,
+  type PdfPageViewportTransform,
+} from "@/lib/highlights/coordinateTransforms";
 import styles from "./LinkedItemsPane.module.css";
+
+const ROW_HEIGHT = 44;
+const ROW_GAP = 4;
+const MEASURE_DEBOUNCE_MS = 75;
 
 function escapeAttrValue(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
@@ -50,42 +21,64 @@ function escapeAttrValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-// =============================================================================
-// Types
-// =============================================================================
-
-export interface LinkedItemsPaneProps {
-  /** Highlights to display in the pane */
-  highlights: LinkedItemRowHighlight[];
-  /** Ref to the content pane's scroll container */
-  contentRef: RefObject<HTMLElement | null>;
-  /** Currently focused highlight ID */
-  focusedId: string | null;
-  /** Callback when a highlight is clicked */
-  onHighlightClick: (highlightId: string) => void;
-  /** Version number that changes when highlights change (triggers re-measurement) */
-  highlightsVersion?: number;
-  /** Callback for quote-to-chat trigger (S3 PR-07). */
-  onSendToChat?: (highlightId: string) => void;
-  /** Layout strategy: anchor alignment (chapter) or static list (book index). */
-  layoutMode?: "aligned" | "list";
-  /** Optional explicit anchor descriptors for provider-driven alignment. */
-  anchorDescriptors?: AnchorDescriptor[];
-  /** Renderer-specific anchor provider. Defaults to HTML anchor lookup. */
-  anchorProvider?: AnchorProvider;
-  /** Save annotation inline. */
-  onAnnotationSave?: (highlightId: string, body: string) => Promise<void>;
-  /** Delete annotation inline. */
-  onAnnotationDelete?: (highlightId: string) => Promise<void>;
-  /** Per-row action menu options builder. */
-  rowOptions?: (highlightId: string) => ActionMenuOption[];
-  /** Callback when a linked conversation is opened from a highlight row. */
-  onOpenConversation?: (conversationId: string, title: string) => void;
+function findScrollParent(element: HTMLElement): HTMLElement {
+  let parent = element.parentElement;
+  while (parent) {
+    const style = getComputedStyle(parent);
+    if (style.overflowY === "auto" || style.overflowY === "scroll") {
+      return parent;
+    }
+    parent = parent.parentElement;
+  }
+  return document.documentElement;
 }
 
-// =============================================================================
-// Component
-// =============================================================================
+function readPdfPageViewportTransform(pageElement: HTMLElement): PdfPageViewportTransform | null {
+  const scale = Number.parseFloat(pageElement.getAttribute("data-nexus-page-scale") ?? "");
+  const viewportWidth = Number.parseFloat(
+    pageElement.getAttribute("data-nexus-page-viewport-width") ?? ""
+  );
+  const viewportHeight = Number.parseFloat(
+    pageElement.getAttribute("data-nexus-page-viewport-height") ?? ""
+  );
+  const dpiScale = Number.parseFloat(pageElement.getAttribute("data-nexus-page-dpi-scale") ?? "1");
+
+  if (
+    !Number.isFinite(scale) ||
+    scale <= 0 ||
+    !Number.isFinite(viewportWidth) ||
+    viewportWidth <= 0 ||
+    !Number.isFinite(viewportHeight) ||
+    viewportHeight <= 0 ||
+    !Number.isFinite(dpiScale) ||
+    dpiScale <= 0
+  ) {
+    return null;
+  }
+
+  const rotation = normalizeQuarterTurnRotation(
+    Number.parseInt(pageElement.getAttribute("data-nexus-page-rotation") ?? "0", 10)
+  );
+
+  return {
+    scale,
+    rotation,
+    dpiScale,
+    pageWidthPoints:
+      rotation === 90 || rotation === 270 ? viewportHeight / scale : viewportWidth / scale,
+    pageHeightPoints:
+      rotation === 90 || rotation === 270 ? viewportWidth / scale : viewportHeight / scale,
+  };
+}
+
+interface LinkedItemsPaneProps {
+  highlights: LinkedItemRowHighlight[];
+  contentRef: RefObject<HTMLElement | null>;
+  focusedId: string | null;
+  onHighlightClick: (highlightId: string) => void;
+  highlightsVersion?: number;
+  alignToContent?: boolean;
+}
 
 export default function LinkedItemsPane({
   highlights,
@@ -93,299 +86,339 @@ export default function LinkedItemsPane({
   focusedId,
   onHighlightClick,
   highlightsVersion = 0,
-  onSendToChat,
-  layoutMode = "aligned",
-  anchorDescriptors,
-  anchorProvider,
-  onAnnotationSave,
-  onAnnotationDelete,
-  rowOptions,
-  onOpenConversation,
+  alignToContent = true,
 }: LinkedItemsPaneProps) {
-  const isAlignedMode = layoutMode === "aligned";
-  const resolvedAnchorProvider = anchorProvider ?? DEFAULT_HTML_ANCHOR_PROVIDER;
-
-  // Container ref for sizing calculations
   const containerRef = useRef<HTMLDivElement>(null);
-
-  // Resolved scroll parent (nearest ancestor with overflow-y: auto/scroll)
   const scrollParentRef = useRef<HTMLElement | null>(null);
-
-  // Row refs for direct DOM manipulation during scroll
-  const rowRefs = useRef(new Map<string, HTMLDivElement>());
-
-  // Cached anchor positions (document space)
-  const [anchorPositions, setAnchorPositions] = useState<Map<string, number>>(
-    new Map()
-  );
-
-  // Aligned rows state (for initial render and re-renders)
-  const [alignedRows, setAlignedRows] = useState<AlignedRow[]>([]);
-
-  // Missing anchors (for debugging/logging)
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const measureTimerRef = useRef<number | null>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const [anchorPositions, setAnchorPositions] = useState(new Map<string, number>());
+  const [alignedRows, setAlignedRows] = useState<Array<{ id: string; top: number }>>([]);
+  const [overflowCount, setOverflowCount] = useState(0);
   const [missingAnchors, setMissingAnchors] = useState<string[]>([]);
 
-  // Hovered highlight ID (for outline effect) - stored in ref since only used for DOM manipulation
-  const hoveredIdRef = useRef<string | null>(null);
-
-  // Count of rows below visible area
-  const [overflowCount, setOverflowCount] = useState(0);
-
-  // ==========================================================================
-  // Measurement Phase
-  // ==========================================================================
-
-  /**
-   * Measure anchor positions from the content pane.
-   * This is the "expensive" operation that reads layout from DOM.
-   */
-  const measure = useCallback(() => {
-    if (!isAlignedMode || !contentRef.current) return;
-
-    // Resolve scroll parent on first measurement (or if contentRef changed)
-    if (!scrollParentRef.current) {
-      scrollParentRef.current = findScrollParent(contentRef.current as HTMLElement);
+  const measureAnchors = useCallback(() => {
+    if (!alignToContent || !contentRef.current) {
+      return;
     }
 
-    const descriptors =
-      anchorDescriptors ??
-      highlights.map((highlight) => ({
-        kind: "html" as const,
-        id: highlight.id,
-      }));
-    const positions = resolvedAnchorProvider.measureViewerAnchorPositions(descriptors, {
-      contentRoot: contentRef.current,
-      viewerScrollContainer: scrollParentRef.current,
-    });
+    const scrollParent = findScrollParent(contentRef.current);
+    scrollParentRef.current = scrollParent;
+
+    const viewerRect = scrollParent.getBoundingClientRect();
+    const viewerScrollTop = scrollParent.scrollTop;
+    const pageElements = new Map<number, HTMLElement | null>();
+    const positions = new Map<string, number>();
+    const nextMissingAnchors: string[] = [];
+
+    for (const highlight of highlights) {
+      if (highlight.page_number && highlight.quads?.length) {
+        let pageElement = pageElements.get(highlight.page_number);
+        if (pageElement === undefined) {
+          pageElement =
+            contentRef.current.querySelector<HTMLElement>(
+              `.page[data-page-number="${highlight.page_number}"]`
+            ) ??
+            contentRef.current.querySelectorAll<HTMLElement>(".page")[highlight.page_number - 1] ??
+            null;
+          pageElements.set(highlight.page_number, pageElement);
+        }
+
+        if (!pageElement) {
+          nextMissingAnchors.push(highlight.id);
+          continue;
+        }
+
+        const transform = readPdfPageViewportTransform(pageElement);
+        if (!transform) {
+          nextMissingAnchors.push(highlight.id);
+          continue;
+        }
+
+        const rect = projectPdfQuadToViewportRect(highlight.quads[0], transform);
+        const pageRect = pageElement.getBoundingClientRect();
+        positions.set(highlight.id, pageRect.top - viewerRect.top + viewerScrollTop + rect.top);
+        continue;
+      }
+
+      const escapedId = escapeAttrValue(highlight.id);
+      const anchor =
+        contentRef.current.querySelector<HTMLElement>(`[data-highlight-anchor="${escapedId}"]`) ??
+        contentRef.current.querySelector<HTMLElement>(`[data-active-highlight-ids~="${escapedId}"]`);
+      if (!anchor) {
+        nextMissingAnchors.push(highlight.id);
+        continue;
+      }
+
+      const anchorRect = anchor.getBoundingClientRect();
+      positions.set(highlight.id, anchorRect.top - viewerRect.top + viewerScrollTop);
+    }
 
     setAnchorPositions(positions);
-  }, [anchorDescriptors, contentRef, highlights, isAlignedMode, resolvedAnchorProvider]);
+    setMissingAnchors(nextMissingAnchors);
+  }, [alignToContent, contentRef, highlights]);
 
-  // Create debounced measurement scheduler
-  const measureScheduler = useRef(createMeasureScheduler(measure));
+  const scheduleMeasure = useCallback(() => {
+    if (measureTimerRef.current != null) {
+      window.clearTimeout(measureTimerRef.current);
+    }
+    measureTimerRef.current = window.setTimeout(() => {
+      measureTimerRef.current = null;
+      measureAnchors();
+    }, MEASURE_DEBOUNCE_MS);
+  }, [measureAnchors]);
 
-  // Re-create scheduler when measure function changes
-  useEffect(() => {
-    measureScheduler.current.cancel();
-    measureScheduler.current = createMeasureScheduler(measure);
-    return () => measureScheduler.current.cancel();
-  }, [measure]);
-
-  // ==========================================================================
-  // Scroll Alignment Phase
-  // ==========================================================================
-
-  /**
-   * Align rows based on current scroll position.
-   * This is the "cheap" operation that only does math and DOM writes.
-   */
   const alignRows = useCallback(() => {
-    if (!isAlignedMode || !scrollParentRef.current || anchorPositions.size === 0) return;
-
-    const scrollTop = scrollParentRef.current.scrollTop;
-    const containerHeight = containerRef.current?.clientHeight ?? 0;
-    const paneBaselineOffset =
-      containerRef.current
-        ? paneBaselineOffsetFromContainers(scrollParentRef.current, containerRef.current)
-        : 0;
-
-    // Convert highlights to alignment format with full data
-    const alignmentHighlights: AlignmentHighlight[] = highlights.map((h) => ({
-      id: h.id,
-      start_offset: h.start_offset ?? 0,
-      end_offset: h.end_offset ?? 0,
-      created_at: h.created_at ?? "",
-    }));
-
-    // Compute aligned rows
-    const result = computeAlignedRows(
-      alignmentHighlights,
-      anchorPositions,
-      scrollTop
-    );
-    const rowsInPaneSpace = result.rows.map((row) => ({
-      ...row,
-      top: paneYFromViewerViewportY(toViewerViewportY(row.top), paneBaselineOffset) as number,
-    }));
-
-    // Update state for initial render
-    setAlignedRows(rowsInPaneSpace);
-    setMissingAnchors(result.missingAnchorIds);
-
-    // Count overflow
-    let overflow = 0;
-    for (const row of rowsInPaneSpace) {
-      if (row.top + ROW_HEIGHT > containerHeight) {
-        overflow++;
-      }
+    if (!alignToContent || !containerRef.current) {
+      return;
     }
-    setOverflowCount(overflow);
 
-    // Direct DOM manipulation for smooth scroll
-    for (const row of rowsInPaneSpace) {
-      const el = rowRefs.current.get(row.highlight.id);
-      if (el) {
-        el.style.transform = `translateY(${row.top}px)`;
-      }
+    const contentElement = contentRef.current;
+    if (!contentElement) {
+      return;
     }
-  }, [anchorPositions, highlights, isAlignedMode]);
 
-  // Create RAF-throttled scroll handler
-  const scrollHandler = useRef(createScrollHandler(alignRows));
+    const scrollParent = scrollParentRef.current ?? findScrollParent(contentElement);
+    scrollParentRef.current = scrollParent;
 
-  // Re-create scroll handler when alignRows changes
-  useEffect(() => {
-    scrollHandler.current.cancel();
-    scrollHandler.current = createScrollHandler(alignRows);
-    return () => scrollHandler.current.cancel();
-  }, [alignRows]);
+    const baseline = scrollParent.getBoundingClientRect().top - containerRef.current.getBoundingClientRect().top;
+    const scrollTop = scrollParent.scrollTop;
+    const rows: Array<{
+      highlight: LinkedItemRowHighlight;
+      desiredTop: number;
+    }> = [];
 
-  // ==========================================================================
-  // Event Handlers
-  // ==========================================================================
-
-  // Initial measurement and on highlight changes
-  useEffect(() => {
-    if (!isAlignedMode) return;
-
-    // Measure on mount and after render stabilizes
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        measure();
+    for (const highlight of highlights) {
+      const anchorTop = anchorPositions.get(highlight.id);
+      if (anchorTop === undefined) {
+        continue;
+      }
+      rows.push({
+        highlight,
+        desiredTop: anchorTop - scrollTop + baseline,
       });
+    }
+
+    rows.sort((left, right) => {
+      if (left.desiredTop !== right.desiredTop) {
+        return left.desiredTop - right.desiredTop;
+      }
+
+      const leftStart = left.highlight.start_offset ?? 0;
+      const rightStart = right.highlight.start_offset ?? 0;
+      if (leftStart !== rightStart) {
+        return leftStart - rightStart;
+      }
+
+      const leftEnd = left.highlight.end_offset ?? 0;
+      const rightEnd = right.highlight.end_offset ?? 0;
+      if (leftEnd !== rightEnd) {
+        return leftEnd - rightEnd;
+      }
+
+      const leftCreatedAt = Date.parse(left.highlight.created_at ?? "");
+      const rightCreatedAt = Date.parse(right.highlight.created_at ?? "");
+      const leftCreatedAtMs = Number.isNaN(leftCreatedAt) ? 0 : leftCreatedAt;
+      const rightCreatedAtMs = Number.isNaN(rightCreatedAt) ? 0 : rightCreatedAt;
+      if (leftCreatedAtMs !== rightCreatedAtMs) {
+        return leftCreatedAtMs - rightCreatedAtMs;
+      }
+
+      return left.highlight.id.localeCompare(right.highlight.id);
     });
-  }, [measure, highlightsVersion, isAlignedMode]);
 
-  // Align after measurement completes
-  useEffect(() => {
-    if (isAlignedMode && anchorPositions.size > 0) {
-      alignRows();
+    let previousBottom = Number.NEGATIVE_INFINITY;
+    const nextAlignedRows: Array<{ id: string; top: number }> = [];
+    for (const row of rows) {
+      const top = Math.max(row.desiredTop, previousBottom + ROW_GAP);
+      nextAlignedRows.push({ id: row.highlight.id, top });
+      previousBottom = top + ROW_HEIGHT;
     }
-  }, [anchorPositions, alignRows, isAlignedMode]);
 
-  // Resolve scroll parent when contentRef becomes available
-  useEffect(() => {
-    if (!isAlignedMode) return;
-    if (contentRef.current) {
-      scrollParentRef.current = findScrollParent(contentRef.current as HTMLElement);
+    setAlignedRows(nextAlignedRows);
+
+    let nextOverflowCount = 0;
+    for (const row of nextAlignedRows) {
+      if (row.top + ROW_HEIGHT > containerRef.current.clientHeight) {
+        nextOverflowCount += 1;
+      }
     }
-  }, [contentRef, highlightsVersion, isAlignedMode, highlights.length]);
+    setOverflowCount(nextOverflowCount);
 
-  // Scroll event listener on the actual scrolling ancestor
-  useEffect(() => {
-    if (!isAlignedMode) return;
-    if (contentRef.current) {
-      scrollParentRef.current = findScrollParent(contentRef.current as HTMLElement);
+    for (const row of nextAlignedRows) {
+      rowRefs.current.get(row.id)?.style.setProperty("transform", `translateY(${row.top}px)`);
     }
-    const scrollEl = scrollParentRef.current;
-    if (!scrollEl) return;
+  }, [alignToContent, anchorPositions, contentRef, highlights]);
 
-    const handleScroll = () => scrollHandler.current.handleScroll();
-    scrollEl.addEventListener("scroll", handleScroll, { passive: true });
-
+  useEffect(() => {
     return () => {
-      scrollEl.removeEventListener("scroll", handleScroll);
+      if (measureTimerRef.current != null) {
+        window.clearTimeout(measureTimerRef.current);
+      }
+      if (scrollFrameRef.current != null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
     };
-  }, [contentRef, highlightsVersion, isAlignedMode, highlights.length]);
+  }, []);
 
-  // ResizeObserver for content, scroll parent, and container
   useEffect(() => {
-    if (!isAlignedMode) return;
-    const contentEl = contentRef.current;
-    const containerEl = containerRef.current;
-    const scrollEl = scrollParentRef.current;
-    if (!contentEl && !containerEl) return;
+    if (!alignToContent) {
+      setAlignedRows([]);
+      setOverflowCount(0);
+      setMissingAnchors([]);
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      measureAnchors();
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [alignToContent, highlightsVersion, measureAnchors]);
+
+  useEffect(() => {
+    if (!alignToContent || anchorPositions.size === 0) {
+      return;
+    }
+    alignRows();
+  }, [alignRows, alignToContent, anchorPositions]);
+
+  useEffect(() => {
+    if (!alignToContent || !contentRef.current) {
+      return;
+    }
+
+    const scrollParent = findScrollParent(contentRef.current);
+    scrollParentRef.current = scrollParent;
+
+    const handleScroll = () => {
+      if (scrollFrameRef.current != null) {
+        return;
+      }
+      scrollFrameRef.current = window.requestAnimationFrame(() => {
+        scrollFrameRef.current = null;
+        alignRows();
+      });
+    };
+
+    scrollParent.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      scrollParent.removeEventListener("scroll", handleScroll);
+      if (scrollFrameRef.current != null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = null;
+      }
+    };
+  }, [alignRows, alignToContent, contentRef, highlights.length, highlightsVersion]);
+
+  useEffect(() => {
+    if (!alignToContent || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const contentElement = contentRef.current;
+    const containerElement = containerRef.current;
+    const scrollParent = scrollParentRef.current;
+    if (!contentElement && !containerElement) {
+      return;
+    }
 
     const observer = new ResizeObserver(() => {
-      measureScheduler.current.schedule();
+      scheduleMeasure();
     });
 
-    if (contentEl) observer.observe(contentEl);
-    if (containerEl) observer.observe(containerEl);
-    if (scrollEl && scrollEl !== contentEl) observer.observe(scrollEl);
+    if (contentElement) {
+      observer.observe(contentElement);
+    }
+    if (containerElement) {
+      observer.observe(containerElement);
+    }
+    if (scrollParent && scrollParent !== contentElement) {
+      observer.observe(scrollParent);
+    }
 
     return () => observer.disconnect();
-  }, [contentRef, isAlignedMode, highlightsVersion, highlights.length]);
+  }, [alignToContent, contentRef, highlights.length, highlightsVersion, scheduleMeasure]);
 
-  // Image load listeners
   useEffect(() => {
-    if (!isAlignedMode) return;
-    const contentEl = contentRef.current;
-    if (!contentEl) return;
+    if (!alignToContent || !contentRef.current) {
+      return;
+    }
 
-    const images = contentEl.querySelectorAll("img");
-    const handleImageLoad = () => measureScheduler.current.schedule();
+    const images = contentRef.current.querySelectorAll("img");
+    const handleImageLoad = () => {
+      scheduleMeasure();
+    };
 
-    images.forEach((img) => {
-      img.addEventListener("load", handleImageLoad);
-      img.addEventListener("error", handleImageLoad);
-    });
+    for (const image of images) {
+      image.addEventListener("load", handleImageLoad);
+      image.addEventListener("error", handleImageLoad);
+    }
 
     return () => {
-      images.forEach((img) => {
-        img.removeEventListener("load", handleImageLoad);
-        img.removeEventListener("error", handleImageLoad);
-      });
+      for (const image of images) {
+        image.removeEventListener("load", handleImageLoad);
+        image.removeEventListener("error", handleImageLoad);
+      }
     };
-  }, [contentRef, highlightsVersion, isAlignedMode]);
+  }, [alignToContent, contentRef, highlightsVersion, scheduleMeasure]);
 
-  // ==========================================================================
-  // Interaction Handlers
-  // ==========================================================================
+  useEffect(() => {
+    if (!alignToContent || missingAnchors.length === 0) {
+      return;
+    }
+    console.warn("highlight_anchor_missing", { highlightIds: missingAnchors });
+  }, [alignToContent, missingAnchors]);
 
   const handleRowClick = useCallback(
     (highlightId: string) => {
       onHighlightClick(highlightId);
 
-      const contentEl = contentRef.current;
-      if (!contentEl) {
+      if (!contentRef.current) {
         return;
       }
 
-      // Prefer anchor.scrollIntoView so the nearest real scroll container moves,
-      // even when contentRef itself is not the element with overflow scrolling.
       const escapedId = escapeAttrValue(highlightId);
       const anchor =
-        contentEl.querySelector<HTMLElement>(`[data-highlight-anchor="${escapedId}"]`) ??
-        contentEl.querySelector<HTMLElement>(`[data-active-highlight-ids~="${escapedId}"]`);
-      if (anchor) {
-        anchor.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
+        contentRef.current.querySelector<HTMLElement>(`[data-highlight-anchor="${escapedId}"]`) ??
+        contentRef.current.querySelector<HTMLElement>(`[data-active-highlight-ids~="${escapedId}"]`);
+      anchor?.scrollIntoView({ behavior: "smooth", block: "center" });
     },
-    [onHighlightClick, contentRef]
+    [contentRef, onHighlightClick]
   );
 
   const handleRowMouseEnter = useCallback(
     (highlightId: string) => {
-      hoveredIdRef.current = highlightId;
+      if (!contentRef.current) {
+        return;
+      }
 
-      // Apply hover outline to content pane highlights
-      if (contentRef.current) {
-        const escapedId = escapeAttrValue(highlightId);
-        const selector = `[data-active-highlight-ids~="${escapedId}"]`;
-        const segments = contentRef.current.querySelectorAll(selector);
-        segments.forEach((el) => el.classList.add("hl-hover-outline"));
+      const escapedId = escapeAttrValue(highlightId);
+      const segments = contentRef.current.querySelectorAll(
+        `[data-active-highlight-ids~="${escapedId}"]`
+      );
+      for (const segment of segments) {
+        segment.classList.add("hl-hover-outline");
       }
     },
     [contentRef]
   );
 
   const handleRowMouseLeave = useCallback(() => {
-    hoveredIdRef.current = null;
+    if (!contentRef.current) {
+      return;
+    }
 
-    // Remove hover outline from content pane
-    if (contentRef.current) {
-      const outlinedElements =
-        contentRef.current.querySelectorAll(".hl-hover-outline");
-      outlinedElements.forEach((el) => el.classList.remove("hl-hover-outline"));
+    const outlinedElements = contentRef.current.querySelectorAll(".hl-hover-outline");
+    for (const outlinedElement of outlinedElements) {
+      outlinedElement.classList.remove("hl-hover-outline");
     }
   }, [contentRef]);
 
-  // Register row ref
   const setRowRef = useCallback(
-    (highlightId: string) => (el: HTMLDivElement | null) => {
-      if (el) {
-        rowRefs.current.set(highlightId, el);
+    (highlightId: string) => (element: HTMLButtonElement | null) => {
+      if (element) {
+        rowRefs.current.set(highlightId, element);
       } else {
         rowRefs.current.delete(highlightId);
       }
@@ -393,116 +426,95 @@ export default function LinkedItemsPane({
     []
   );
 
-  // ==========================================================================
-  // Render
-  // ==========================================================================
-
-  // Log missing anchors in development
-  useEffect(() => {
-    if (isAlignedMode && missingAnchors.length > 0) {
-      console.warn("highlight_anchor_missing", { highlightIds: missingAnchors });
+  const listHighlights = useMemo(() => {
+    if (alignToContent) {
+      return [];
     }
-  }, [missingAnchors, isAlignedMode]);
 
-  useEffect(() => {
-    if (isAlignedMode || !focusedId) {
-      return;
-    }
-    const focusedRow = rowRefs.current.get(focusedId);
-    if (focusedRow) {
-      focusedRow.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
-  }, [focusedId, highlightsVersion, isAlignedMode]);
-
-  // Build a map for fast lookup
-  const highlightMap = new Map(highlights.map((h) => [h.id, h]));
-
-  const listModeHighlights = useMemo(() => {
-    if (isAlignedMode) return [];
     const sorted = [...highlights];
-    sorted.sort((a, b) => {
-      const aStableKey = a.stable_order_key;
-      const bStableKey = b.stable_order_key;
-      if (aStableKey && bStableKey && aStableKey !== bStableKey) {
-        return aStableKey.localeCompare(bStableKey);
+    sorted.sort((left, right) => {
+      if (left.stable_order_key && right.stable_order_key && left.stable_order_key !== right.stable_order_key) {
+        return left.stable_order_key.localeCompare(right.stable_order_key);
       }
-      if (aStableKey && !bStableKey) {
+      if (left.stable_order_key && !right.stable_order_key) {
         return -1;
       }
-      if (!aStableKey && bStableKey) {
+      if (!left.stable_order_key && right.stable_order_key) {
         return 1;
       }
 
-      const aFragmentIdx = a.fragment_idx ?? 0;
-      const bFragmentIdx = b.fragment_idx ?? 0;
-      if (aFragmentIdx !== bFragmentIdx) {
-        return aFragmentIdx - bFragmentIdx;
+      const leftFragment = left.fragment_idx ?? 0;
+      const rightFragment = right.fragment_idx ?? 0;
+      if (leftFragment !== rightFragment) {
+        return leftFragment - rightFragment;
       }
 
-      const aStart = a.start_offset ?? 0;
-      const bStart = b.start_offset ?? 0;
-      if (aStart !== bStart) {
-        return aStart - bStart;
+      const leftStart = left.start_offset ?? 0;
+      const rightStart = right.start_offset ?? 0;
+      if (leftStart !== rightStart) {
+        return leftStart - rightStart;
       }
 
-      const aEnd = a.end_offset ?? 0;
-      const bEnd = b.end_offset ?? 0;
-      if (aEnd !== bEnd) {
-        return aEnd - bEnd;
+      const leftEnd = left.end_offset ?? 0;
+      const rightEnd = right.end_offset ?? 0;
+      if (leftEnd !== rightEnd) {
+        return leftEnd - rightEnd;
       }
 
-      const aMs = Date.parse(a.created_at ?? "");
-      const bMs = Date.parse(b.created_at ?? "");
-      const normalizedAMs = Number.isNaN(aMs) ? 0 : aMs;
-      const normalizedBMs = Number.isNaN(bMs) ? 0 : bMs;
-      if (normalizedAMs !== normalizedBMs) {
-        return normalizedAMs - normalizedBMs;
+      const leftCreatedAt = Date.parse(left.created_at ?? "");
+      const rightCreatedAt = Date.parse(right.created_at ?? "");
+      const leftCreatedAtMs = Number.isNaN(leftCreatedAt) ? 0 : leftCreatedAt;
+      const rightCreatedAtMs = Number.isNaN(rightCreatedAt) ? 0 : rightCreatedAt;
+      if (leftCreatedAtMs !== rightCreatedAtMs) {
+        return leftCreatedAtMs - rightCreatedAtMs;
       }
 
-      return a.id.localeCompare(b.id);
+      return left.id.localeCompare(right.id);
     });
     return sorted;
-  }, [highlights, isAlignedMode]);
+  }, [alignToContent, highlights]);
+
+  useEffect(() => {
+    if (alignToContent || !focusedId) {
+      return;
+    }
+    rowRefs.current.get(focusedId)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [alignToContent, focusedId, highlightsVersion]);
 
   if (highlights.length === 0) {
     return (
       <div className={styles.linkedItemsContainer} data-testid="linked-items-container">
         <div className={styles.emptyStateMessage}>
-          <StateMessage variant="empty">
-            No highlights yet. Select text to create one.
-          </StateMessage>
+          <StateMessage variant="empty">No highlights in this context.</StateMessage>
         </div>
       </div>
     );
   }
 
-  if (!isAlignedMode) {
+  if (!alignToContent) {
     return (
       <div
         ref={containerRef}
         className={`${styles.linkedItemsContainer} ${styles.listMode}`}
         data-testid="linked-items-container"
       >
-        {listModeHighlights.map((highlight) => (
+        {listHighlights.map((highlight) => (
           <LinkedItemRow
             key={highlight.id}
             ref={setRowRef(highlight.id)}
             highlight={highlight}
-            className={styles.listModeRow}
             isFocused={focusedId === highlight.id}
             onClick={handleRowClick}
             onMouseEnter={handleRowMouseEnter}
             onMouseLeave={handleRowMouseLeave}
-            onSendToChat={onSendToChat}
-            onAnnotationSave={onAnnotationSave}
-            onAnnotationDelete={onAnnotationDelete}
-            options={rowOptions?.(highlight.id)}
-            onOpenConversation={onOpenConversation}
+            className={styles.listModeRow}
           />
         ))}
       </div>
     );
   }
+
+  const highlightMap = new Map(highlights.map((highlight) => [highlight.id, highlight]));
 
   return (
     <div
@@ -511,32 +523,27 @@ export default function LinkedItemsPane({
       data-testid="linked-items-container"
     >
       {alignedRows.map((row) => {
-        const highlight = highlightMap.get(row.highlight.id);
-        if (!highlight) return null;
+        const highlight = highlightMap.get(row.id);
+        if (!highlight) {
+          return null;
+        }
 
         return (
           <LinkedItemRow
-            key={row.highlight.id}
-            ref={setRowRef(row.highlight.id)}
+            key={row.id}
+            ref={setRowRef(row.id)}
             highlight={highlight}
-            style={{ transform: `translateY(${row.top}px)` }}
-            isFocused={focusedId === row.highlight.id}
+            isFocused={focusedId === row.id}
             onClick={handleRowClick}
             onMouseEnter={handleRowMouseEnter}
             onMouseLeave={handleRowMouseLeave}
-            onSendToChat={onSendToChat}
-            onAnnotationSave={onAnnotationSave}
-            onAnnotationDelete={onAnnotationDelete}
-            options={rowOptions?.(row.highlight.id)}
-            onOpenConversation={onOpenConversation}
+            style={{ transform: `translateY(${row.top}px)` }}
           />
         );
       })}
-      {overflowCount > 0 && (
-        <div className={styles.overflowIndicator}>
-          {overflowCount} more below
-        </div>
-      )}
+      {overflowCount > 0 ? (
+        <div className={styles.overflowIndicator}>+{overflowCount} more below</div>
+      ) : null}
     </div>
   );
 }

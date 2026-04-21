@@ -1,77 +1,55 @@
-import { describe, it, expect, vi } from "vitest";
-import {
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import LinkedItemRow from "@/components/LinkedItemRow";
 
 describe("LinkedItemRow", () => {
-  it("keeps focus/scroll/quote hooks intact for shared row interactions", async () => {
+  it("keeps the row itself clickable and hoverable", async () => {
     const onClick = vi.fn();
     const onMouseEnter = vi.fn();
     const onMouseLeave = vi.fn();
-    const onSendToChat = vi.fn();
+    const user = userEvent.setup();
 
     render(
       <LinkedItemRow
         highlight={{
-          id: "h-1",
+          id: "highlight-1",
           color: "yellow",
           exact: "Highlighted passage from the article",
-          annotation: { id: "ann-1", body: "has note" },
+          annotation: null,
         }}
         isFocused={false}
         onClick={onClick}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
-        onSendToChat={onSendToChat}
       />
     );
 
-    const user = userEvent.setup();
-    const row = screen
-      .getAllByRole("button")
-      .find((element) => element.getAttribute("aria-pressed") !== null);
-    if (!row) {
-      throw new Error("Expected linked-item row button to be rendered");
-    }
-
-    expect(screen.getByText("Highlighted passage from the article")).toBeInTheDocument();
-    expect(screen.getByText("has note")).toBeInTheDocument();
+    const row = screen.getByRole("button", { pressed: false });
+    expect(row).toHaveTextContent("Highlighted passage from the article");
 
     await user.hover(row);
-    expect(onMouseEnter).toHaveBeenCalledWith("h-1");
+    expect(onMouseEnter).toHaveBeenCalledWith("highlight-1");
 
     await user.click(row);
-    expect(onClick).toHaveBeenCalledTimes(1);
-    expect(onClick).toHaveBeenCalledWith("h-1");
-
-    row.focus();
-    await user.keyboard("{Enter}");
-    expect(onClick).toHaveBeenCalledTimes(2);
+    expect(onClick).toHaveBeenCalledWith("highlight-1");
 
     await user.unhover(row);
     expect(onMouseLeave).toHaveBeenCalledTimes(1);
-
-    // Quote-to-chat is a visible icon button on the row
-    const chatButton = screen.getByRole("button", { name: "Send to chat" });
-    await user.click(chatButton);
-
-    expect(onSendToChat).toHaveBeenCalledTimes(1);
-    expect(onSendToChat).toHaveBeenCalledWith("h-1");
-    expect(onClick).toHaveBeenCalledTimes(2);
   });
 
-  it("omits action menu when no callbacks or options given", () => {
+  it("shows compact status affordances for note and linked chats", () => {
     render(
       <LinkedItemRow
         highlight={{
-          id: "h-2",
+          id: "highlight-2",
           color: "blue",
-          exact: "Short exact text",
-          annotation: null,
+          exact: "Compact preview",
+          annotation: { id: "annotation-1", body: "has note" },
+          linked_conversations: [
+            { conversation_id: "conversation-1", title: "Open thread" },
+            { conversation_id: "conversation-2", title: "Follow-up" },
+          ],
         }}
         isFocused
         onClick={vi.fn()}
@@ -80,19 +58,20 @@ describe("LinkedItemRow", () => {
       />
     );
 
-    expect(
-      screen.queryByRole("button", { name: "Actions" })
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { pressed: true })).toHaveTextContent("Compact preview");
+    expect(screen.getByTitle("Has note")).toBeInTheDocument();
+    expect(screen.getByTitle("2 linked chats")).toHaveTextContent("2");
   });
 
-  it("shows placeholder when no annotation", () => {
+  it("does not render inline note text, linked conversation rows, or row action chrome", () => {
     render(
       <LinkedItemRow
         highlight={{
-          id: "h-3",
+          id: "highlight-3",
           color: "green",
-          exact: "Some text",
-          annotation: null,
+          exact: "Clean rail row",
+          annotation: { id: "annotation-3", body: "This note moved to the inspector." },
+          linked_conversations: [{ conversation_id: "conversation-3", title: "Context thread" }],
         }}
         isFocused={false}
         onClick={vi.fn()}
@@ -101,152 +80,10 @@ describe("LinkedItemRow", () => {
       />
     );
 
-    expect(screen.getByText("Add a note\u2026")).toBeInTheDocument();
-  });
-
-  it("does not trigger row click when clicking chat button", async () => {
-    const onClick = vi.fn();
-    const onSendToChat = vi.fn();
-    const user = userEvent.setup();
-
-    render(
-      <LinkedItemRow
-        highlight={{
-          id: "h-keyboard-actions",
-          color: "yellow",
-          exact: "Keyboard action row",
-          annotation: null,
-        }}
-        isFocused={false}
-        onClick={onClick}
-        onMouseEnter={vi.fn()}
-        onMouseLeave={vi.fn()}
-        onSendToChat={onSendToChat}
-      />
-    );
-
-    const chatButton = screen.getByRole("button", { name: "Send to chat" });
-    await user.click(chatButton);
-
-    expect(onClick).not.toHaveBeenCalled();
-    expect(onSendToChat).toHaveBeenCalledWith("h-keyboard-actions");
-  });
-
-  it("enters inline edit on annotation click and saves on blur", async () => {
-    const onAnnotationSave = vi.fn().mockResolvedValue(undefined);
-
-    render(
-      <LinkedItemRow
-        highlight={{
-          id: "h-4",
-          color: "yellow",
-          exact: "Some text",
-          annotation: null,
-        }}
-        isFocused={false}
-        onClick={vi.fn()}
-        onMouseEnter={vi.fn()}
-        onMouseLeave={vi.fn()}
-        onAnnotationSave={onAnnotationSave}
-      />
-    );
-
-    // Click placeholder to edit
-    fireEvent.click(screen.getByText("Add a note\u2026"));
-
-    const textarea = screen.getByLabelText("Annotation");
-    fireEvent.change(textarea, { target: { value: "My note" } });
-    fireEvent.blur(textarea);
-
-    expect(screen.queryByLabelText("Annotation")).not.toBeInTheDocument();
-    expect(onAnnotationSave).toHaveBeenCalledWith("h-4", "My note");
-  });
-
-  it("cancels inline edit on Escape without triggering blur save", async () => {
-    const onAnnotationSave = vi.fn().mockResolvedValue(undefined);
-
-    render(
-      <LinkedItemRow
-        highlight={{
-          id: "h-5",
-          color: "pink",
-          exact: "Some text",
-          annotation: { id: "ann-5", body: "existing note" },
-        }}
-        isFocused={false}
-        onClick={vi.fn()}
-        onMouseEnter={vi.fn()}
-        onMouseLeave={vi.fn()}
-        onAnnotationSave={onAnnotationSave}
-      />
-    );
-
-    // Click annotation to edit
-    fireEvent.click(screen.getByText("existing note"));
-
-    const textarea = screen.getByLabelText("Annotation");
-    fireEvent.change(textarea, { target: { value: "changed" } });
-    fireEvent.keyDown(textarea, { key: "Escape" });
-
-    expect(onAnnotationSave).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText("Annotation")).not.toBeInTheDocument();
-    expect(screen.getByText("existing note")).toBeInTheDocument();
-  });
-
-  it("saves on Cmd+Enter", async () => {
-    const onAnnotationSave = vi.fn().mockResolvedValue(undefined);
-
-    render(
-      <LinkedItemRow
-        highlight={{
-          id: "h-6",
-          color: "blue",
-          exact: "Some text",
-          annotation: null,
-        }}
-        isFocused={false}
-        onClick={vi.fn()}
-        onMouseEnter={vi.fn()}
-        onMouseLeave={vi.fn()}
-        onAnnotationSave={onAnnotationSave}
-      />
-    );
-
-    fireEvent.click(screen.getByText("Add a note\u2026"));
-    const textarea = screen.getByLabelText("Annotation");
-    fireEvent.change(textarea, { target: { value: "quick note" } });
-    fireEvent.keyDown(textarea, { key: "Enter", metaKey: true });
-
-    expect(screen.queryByLabelText("Annotation")).not.toBeInTheDocument();
-    expect(onAnnotationSave).toHaveBeenCalledWith("h-6", "quick note");
-  });
-
-  it("renders linked conversations and opens selected conversation", async () => {
-    const onOpenConversation = vi.fn();
-    const user = userEvent.setup();
-
-    render(
-      <LinkedItemRow
-        highlight={{
-          id: "h-7",
-          color: "yellow",
-          exact: "Some text",
-          annotation: null,
-          linked_conversations: [
-            { conversation_id: "conv-1", title: "Open thread" },
-            { conversation_id: "conv-2", title: "Follow-up" },
-          ],
-        }}
-        isFocused={false}
-        onClick={vi.fn()}
-        onMouseEnter={vi.fn()}
-        onMouseLeave={vi.fn()}
-        onOpenConversation={onOpenConversation}
-      />
-    );
-
-    await user.click(screen.getByRole("button", { name: "Open thread" }));
-    expect(onOpenConversation).toHaveBeenCalledWith("conv-1", "Open thread");
-    expect(screen.getByRole("button", { name: "Follow-up" })).toBeInTheDocument();
+    expect(screen.getByText("Clean rail row")).toBeInTheDocument();
+    expect(screen.queryByText("This note moved to the inspector.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Context thread")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send to chat" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Actions" })).not.toBeInTheDocument();
   });
 });

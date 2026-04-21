@@ -476,6 +476,53 @@ export default function useMediaViewState(id: string) {
     return activeContent?.fragmentId ?? null;
   }, [activeContent?.fragmentId, activeEpubSection?.href_path, isEpub, isPdf]);
 
+  const activeTextAnchor = useMemo(() => {
+    if (isPdf) {
+      return null;
+    }
+    if (isEpub) {
+      return activeEpubSection?.section_id ?? activeSectionId ?? null;
+    }
+    return activeContent?.fragmentId ?? null;
+  }, [
+    activeContent?.fragmentId,
+    activeEpubSection?.section_id,
+    activeSectionId,
+    isEpub,
+    isPdf,
+  ]);
+
+  const activeTextStartOffset = useMemo(() => {
+    if (isPdf || isEpub || !activeContent) {
+      return 0;
+    }
+
+    let offset = 0;
+    for (const fragment of fragments) {
+      if (fragment.id === activeContent.fragmentId) {
+        break;
+      }
+      offset += canonicalCpLength(fragment.canonical_text);
+    }
+    return offset;
+  }, [activeContent, fragments, isEpub, isPdf]);
+
+  const totalTextLength = useMemo(() => {
+    if (isPdf) {
+      return 0;
+    }
+    if (isEpub) {
+      return activeEpubSection ? canonicalCpLength(activeEpubSection.canonical_text) : 0;
+    }
+    if (fragments.length > 0) {
+      return fragments.reduce(
+        (sum, fragment) => sum + canonicalCpLength(fragment.canonical_text),
+        0
+      );
+    }
+    return activeContent ? canonicalCpLength(activeContent.canonicalText) : 0;
+  }, [activeContent, activeEpubSection, fragments, isEpub, isPdf]);
+
   useEffect(() => {
     // Reset PDF-specific pane state whenever media identity/type changes.
     // This prevents stale cross-document rows from flashing during navigation.
@@ -1759,8 +1806,6 @@ export default function useMediaViewState(id: string) {
         const clickData = parseHighlightElement(highlightEl);
         if (clickData) {
           handleHighlightClick(clickData);
-          setEditPopoverHighlightId(null);
-          setEditPopoverAnchorRect(null);
           return clickData.topmostId;
         }
       }
@@ -1768,8 +1813,6 @@ export default function useMediaViewState(id: string) {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) {
         clearFocus();
-        setEditPopoverHighlightId(null);
-        setEditPopoverAnchorRect(null);
       }
       return null;
     },

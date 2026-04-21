@@ -6,10 +6,10 @@ import LinkedItemsPane from "@/components/LinkedItemsPane";
 
 const scrollHosts: HTMLDivElement[] = [];
 
-function getRowButtons(): HTMLDivElement[] {
+function getRowButtons(): HTMLButtonElement[] {
   return screen
     .getAllByRole("button")
-    .filter((el) => el.getAttribute("aria-pressed") !== null) as HTMLDivElement[];
+    .filter((el) => el.getAttribute("aria-pressed") !== null) as HTMLButtonElement[];
 }
 
 function createScrollableContent(innerHtml: string): {
@@ -223,7 +223,7 @@ describe("LinkedItemsPane", () => {
         contentRef={{ current: null }}
         focusedId={null}
         onHighlightClick={onHighlightClick}
-        layoutMode="list"
+        alignToContent={false}
       />
     );
 
@@ -234,6 +234,52 @@ describe("LinkedItemsPane", () => {
 
     await user.click(rows[1]);
     expect(onHighlightClick).toHaveBeenCalledWith("h-2");
+  });
+
+  it("keeps rail rows compact without inline note, chat, or conversation chrome", async () => {
+    render(
+      <LinkedItemsPane
+        highlights={[
+          {
+            id: "compact-h1",
+            exact: "compact rail preview",
+            color: "yellow",
+            annotation: {
+              id: "annotation-1",
+              body: "This note should move to the detail inspector.",
+            },
+            linked_conversations: [
+              {
+                conversation_id: "conversation-1",
+                title: "Context thread",
+              },
+            ],
+            fragment_idx: 0,
+            start_offset: 0,
+            end_offset: 20,
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        ] as never}
+        contentRef={{ current: null }}
+        focusedId={null}
+        onHighlightClick={vi.fn()}
+        alignToContent={false}
+      />
+    );
+
+    await waitFor(() => {
+      expect(getRowButtons()).toHaveLength(1);
+    });
+
+    const row = screen.getByTestId("linked-item-row-compact-h1");
+    expect(within(row).getByText("compact rail preview")).toBeInTheDocument();
+    expect(
+      within(row).queryByText("This note should move to the detail inspector.")
+    ).not.toBeInTheDocument();
+    expect(within(row).queryByText("Add a note…")).not.toBeInTheDocument();
+    expect(within(row).queryByText("Context thread")).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Send to chat" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Actions" })).not.toBeInTheDocument();
   });
 
   it("scrolls focused row into view in list mode", async () => {
@@ -268,7 +314,7 @@ describe("LinkedItemsPane", () => {
         contentRef={{ current: null }}
         focusedId="focus-2"
         onHighlightClick={vi.fn()}
-        layoutMode="list"
+        alignToContent={false}
       />
     );
 
@@ -298,7 +344,7 @@ describe("LinkedItemsPane", () => {
           contentRef={{ current: null }}
           focusedId={null}
           onHighlightClick={vi.fn()}
-          layoutMode="list"
+          alignToContent={false}
         />
       </div>
     );
@@ -337,7 +383,7 @@ describe("LinkedItemsPane", () => {
         contentRef={contentRef}
         focusedId={null}
         onHighlightClick={vi.fn()}
-        layoutMode="aligned"
+        alignToContent
       />
     );
 
@@ -383,7 +429,7 @@ describe("LinkedItemsPane", () => {
         contentRef={{ current: null }}
         focusedId={null}
         onHighlightClick={vi.fn()}
-        layoutMode="list"
+        alignToContent={false}
       />
     );
 

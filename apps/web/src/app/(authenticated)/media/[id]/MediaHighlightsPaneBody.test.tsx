@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,7 +33,9 @@ const mockHighlightDetailPane = vi.fn((props: Record<string, unknown>) => {
       {typeof props.onShowInDocument === "function" ? (
         <button
           type="button"
-          onClick={() => (props.onShowInDocument as () => void)()}
+          onClick={() =>
+            (props.onShowInDocument as (highlightId: string) => void)(highlight?.id ?? "")
+          }
         >
           Show in document
         </button>
@@ -121,15 +123,16 @@ function buildProps(overrides: Record<string, unknown> = {}) {
     onFocusHighlight: vi.fn(),
     onClearFocus: vi.fn(),
     onSendToChat: vi.fn(),
+    onColorChange: vi.fn(async () => {}),
     onDelete: vi.fn(async () => {}),
     onStartEditBounds: vi.fn(),
     onCancelEditBounds: vi.fn(),
     isEditingBounds: false,
     onAnnotationSave: vi.fn(async () => {}),
     onAnnotationDelete: vi.fn(async () => {}),
-    buildRowOptions: vi.fn(() => []),
     onOpenConversation: vi.fn(),
     onCloseMobileDrawer: vi.fn(),
+    mobileDetailRequestKey: 0,
     ...overrides,
   };
 }
@@ -182,6 +185,7 @@ describe("MediaHighlightsPaneBody", () => {
     expect(screen.getByRole("heading", { name: "Highlights" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "All highlights" })).not.toBeInTheDocument();
     expect(getRenderedHighlightIds()).toEqual(["highlight-1", "highlight-2"]);
+    expect(getLatestPaneProps().alignToContent).toBe(true);
     expect(getLatestDetailProps().highlight).toMatchObject({
       id: "highlight-2",
       exact,
@@ -206,7 +210,7 @@ describe("MediaHighlightsPaneBody", () => {
       />
     );
 
-    expect(screen.getByRole("heading", { name: "Chapter highlights" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Section highlights" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "All highlights" })).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -235,26 +239,37 @@ describe("MediaHighlightsPaneBody", () => {
       expect(onClearFocus).toHaveBeenCalledTimes(1);
     });
 
-    expect(screen.queryByTestId("highlight-detail-pane")).not.toBeInTheDocument();
+    expect(getLatestDetailProps().highlight).toBeNull();
   });
 
   it("opens a mobile detail sheet for the tapped contextual highlight", async () => {
     const user = userEvent.setup();
     const onFocusHighlight = vi.fn();
+    const props = buildProps({
+      isMobile: true,
+      focusedId: "highlight-1",
+      onFocusHighlight,
+      fragmentHighlights: [
+        makeHighlight({ id: "highlight-1", exact: "First quote" }),
+        makeHighlight({ id: "highlight-2", exact: "Second quote" }),
+      ],
+    });
 
-    render(
-      <MediaHighlightsPaneBody
-        {...buildProps({
-          isMobile: true,
-          focusedId: "highlight-1",
-          onFocusHighlight,
-          fragmentHighlights: [
-            makeHighlight({ id: "highlight-1", exact: "First quote" }),
-            makeHighlight({ id: "highlight-2", exact: "Second quote" }),
-          ],
-        })}
-      />
-    );
+    function MobileHarness() {
+      const [focusedId, setFocusedId] = useState<string | null>("highlight-1");
+      return (
+        <MediaHighlightsPaneBody
+          {...props}
+          focusedId={focusedId}
+          onFocusHighlight={(highlightId) => {
+            onFocusHighlight(highlightId);
+            setFocusedId(highlightId);
+          }}
+        />
+      );
+    }
+
+    render(<MobileHarness />);
 
     expect(screen.queryByRole("dialog", { name: "Highlight details" })).not.toBeInTheDocument();
 
@@ -264,6 +279,7 @@ describe("MediaHighlightsPaneBody", () => {
     expect(screen.getByRole("dialog", { name: "Highlight details" })).toBeInTheDocument();
     expect(screen.getByTestId("detail-highlight-id")).toHaveTextContent("highlight-2");
     expect(screen.getByTestId("detail-exact")).toHaveTextContent("Second quote");
+    expect(getLatestPaneProps().alignToContent).toBe(false);
   });
 
   it("keeps PDF highlights scoped to the active page and mirrors the selection in the inspector", async () => {
@@ -309,6 +325,7 @@ describe("MediaHighlightsPaneBody", () => {
     expect(screen.getByText("Active page: 1")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "All highlights" })).not.toBeInTheDocument();
     expect(getRenderedHighlightIds()).toEqual(["pdf-page-1", "pdf-page-1b"]);
+    expect(getLatestPaneProps().alignToContent).toBe(true);
     expect(getLatestDetailProps().highlight).toMatchObject({
       id: "pdf-page-1b",
       exact: "Page one second",
