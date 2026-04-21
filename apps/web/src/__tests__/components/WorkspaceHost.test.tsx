@@ -4,7 +4,10 @@ import userEvent from "@testing-library/user-event";
 
 const mockIsMobileViewport = vi.hoisted(() => ({ value: false }));
 
-const { paneShellSpy, mockStore } = vi.hoisted(() => ({
+const { paneRuntimeHooks, paneShellSpy, mockStore } = vi.hoisted(() => ({
+  paneRuntimeHooks: {
+    usePaneParam: (_paramName: string) => null as string | null,
+  },
   paneShellSpy: vi.fn(),
   mockStore: {
     state: {
@@ -93,13 +96,9 @@ vi.mock("@/lib/workspace/telemetry", () => ({
   emitWorkspaceTelemetry: vi.fn(),
 }));
 
-vi.mock("@/lib/panes/paneRouteRegistry", async () => {
-  const { usePaneParam } = await vi.importActual<typeof import("@/lib/panes/paneRuntime")>(
-    "@/lib/panes/paneRuntime"
-  );
-
+vi.mock("@/lib/panes/paneRouteRegistry", () => {
   function ConversationRouteProbe() {
-    const id = usePaneParam("id");
+    const id = paneRuntimeHooks.usePaneParam("id");
     if (!id) {
       throw new Error("conversation route requires an id");
     }
@@ -206,7 +205,8 @@ function latestPaneShellProps() {
 }
 
 describe("WorkspaceHost", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    paneRuntimeHooks.usePaneParam = (await import("@/lib/panes/paneRuntime")).usePaneParam;
     paneShellSpy.mockClear();
     mockIsMobileViewport.value = false;
     mockStore.state = {

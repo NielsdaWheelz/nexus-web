@@ -392,13 +392,13 @@ describe("PodcastDetailPaneBody", () => {
       "Unsubscribe",
     ]);
 
-    const optionsView = renderLatestPaneOptionsMenu();
+    const view = renderLatestPaneOptionsMenu();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Options" }));
     await user.click(await screen.findByRole("menuitem", { name: "Libraries…" }));
     const librariesDialog = await screen.findByRole("dialog", { name: "Libraries" });
     expect(within(librariesDialog).getByRole("button", { name: "Sports" })).toBeInTheDocument();
-    optionsView.unmount();
+    view.unmount();
   });
 
   it("opens and closes the mobile episodes drawer from the pane header action", async () => {

@@ -410,7 +410,7 @@ describe("podcasts product flows", () => {
     expect(screen.queryByRole("button", { name: "Libraries" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Unsubscribe" })).not.toBeInTheDocument();
 
-    const optionsView = renderLatestPaneOptionsMenu();
+    const view = renderLatestPaneOptionsMenu();
     await user.click(screen.getByRole("button", { name: "Options" }));
     await user.click(await screen.findByRole("menuitem", { name: "Unsubscribe" }));
 
@@ -429,7 +429,7 @@ describe("podcasts product flows", () => {
       ).toBe(true);
     });
 
-    optionsView.unmount();
+    view.unmount();
   });
 
   it("shows episode library controls from the detail drawer", async () => {

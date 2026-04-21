@@ -492,13 +492,13 @@ describe("podcast ui cutover", () => {
       "Unsubscribe",
     ]);
 
-    const optionsView = renderLatestPaneOptionsMenu();
+    const view = renderLatestPaneOptionsMenu();
     await user.click(screen.getByRole("button", { name: "Options" }));
     expect(await screen.findByRole("menuitem", { name: "Libraries…" })).toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: "Libraries…" }));
     expect(await screen.findByRole("dialog", { name: "Libraries" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
-    optionsView.unmount();
+    view.unmount();
 
     renderLatestPaneActions();
     await user.click(screen.getByRole("button", { name: "Episodes" }));

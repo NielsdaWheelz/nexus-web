@@ -1639,7 +1639,7 @@ export default function PodcastDetailPaneBody() {
           label: "Libraries…",
           restoreFocusOnClose: false,
           disabled: unsubscribeBusy,
-          onSelect: ({ triggerEl }) => {
+          onSelect: ({ triggerEl }: { triggerEl: HTMLButtonElement | null }) => {
             setEpisodeMembershipPanelMediaId(null);
             setEpisodeMembershipPanelTriggerEl(null);
             setPodcastMembershipPanelOpen(true);
@@ -1801,7 +1801,7 @@ export default function PodcastDetailPaneBody() {
                 label: "Libraries…",
                 restoreFocusOnClose: false,
                 disabled: busy,
-                onSelect: ({ triggerEl }) => {
+                onSelect: ({ triggerEl }: { triggerEl: HTMLButtonElement | null }) => {
                   setPodcastMembershipPanelOpen(false);
                   setPodcastMembershipPanelTriggerEl(null);
                   setEpisodeMembershipPanelMediaId(episode.id);
