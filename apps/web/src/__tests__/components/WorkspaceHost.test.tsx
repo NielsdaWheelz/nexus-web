@@ -31,15 +31,16 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => mockIsMobileViewport.value,
 }));
 
-vi.mock("@/lib/panes/paneRuntime", () => ({
-  PaneRuntimeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  PaneRootNavigationProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  usePaneRuntime: () => null,
-  usePaneRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  usePaneSearchParams: () => new URLSearchParams(),
-  usePaneParam: () => null,
-  useSetPaneTitle: () => {},
-}));
+vi.mock("@/lib/panes/paneRuntime", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/panes/paneRuntime")>(
+    "@/lib/panes/paneRuntime"
+  );
+
+  return {
+    ...actual,
+    PaneRootNavigationProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  };
+});
 
 vi.mock("@/components/workspace/PaneShell", () => ({
   default: (props: { paneId: string; title: string; children: React.ReactNode; isMobile?: boolean; isActive?: boolean; widthPx: number; minWidthPx: number; maxWidthPx: number; bodyMode: string; onResizePane: () => void }) => {
@@ -91,6 +92,108 @@ vi.mock("@/lib/workspace/store", () => ({
 vi.mock("@/lib/workspace/telemetry", () => ({
   emitWorkspaceTelemetry: vi.fn(),
 }));
+
+vi.mock("@/lib/panes/paneRouteRegistry", async () => {
+  const { usePaneParam } = await vi.importActual<typeof import("@/lib/panes/paneRuntime")>(
+    "@/lib/panes/paneRuntime"
+  );
+
+  function ConversationRouteProbe() {
+    const id = usePaneParam("id");
+    if (!id) {
+      throw new Error("conversation route requires an id");
+    }
+
+    return <div data-testid="conversation-route-probe">{id}</div>;
+  }
+
+  function LibrariesRouteProbe() {
+    return <div data-testid="libraries-route-probe">libraries</div>;
+  }
+
+  function SearchRouteProbe() {
+    return <div data-testid="search-route-probe">search</div>;
+  }
+
+  const standardRouteDefinition = {
+    bodyMode: "standard" as const,
+    minWidthPx: 320,
+    maxWidthPx: 1400,
+  };
+
+  return {
+    getParentHref: (route: { id: string }) => (route.id === "conversation" ? "/conversations" : null),
+    resolvePaneRoute: (href: string) => {
+      const { pathname } = new URL(href, "http://localhost");
+
+      if (pathname === "/libraries") {
+        return {
+          id: "libraries",
+          pathname,
+          params: {},
+          staticTitle: "Libraries",
+          resourceRef: null,
+          render: () => <LibrariesRouteProbe />,
+          definition: {
+            ...standardRouteDefinition,
+            id: "libraries",
+            render: () => <LibrariesRouteProbe />,
+            getChrome: () => ({ title: "Libraries" }),
+          },
+        };
+      }
+
+      if (pathname === "/search") {
+        return {
+          id: "search",
+          pathname,
+          params: {},
+          staticTitle: "Search",
+          resourceRef: null,
+          render: () => <SearchRouteProbe />,
+          definition: {
+            ...standardRouteDefinition,
+            id: "search",
+            render: () => <SearchRouteProbe />,
+            getChrome: () => ({ title: "Search" }),
+          },
+        };
+      }
+
+      const conversationMatch = pathname.match(/^\/conversations\/([^/]+)$/);
+      if (conversationMatch) {
+        const id = conversationMatch[1];
+        return {
+          id: "conversation",
+          pathname,
+          params: { id },
+          staticTitle: "Chat",
+          resourceRef: `conversation:${id}`,
+          render: () => <ConversationRouteProbe />,
+          definition: {
+            ...standardRouteDefinition,
+            id: "conversation",
+            render: () => <ConversationRouteProbe />,
+            getChrome: () => ({
+              title: "Chat",
+              subtitle: "Conversation transcript and composer.",
+            }),
+          },
+        };
+      }
+
+      return {
+        id: "unsupported",
+        pathname,
+        params: {},
+        staticTitle: "Pane",
+        resourceRef: null,
+        render: null,
+        definition: null,
+      };
+    },
+  };
+});
 
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 

@@ -13,7 +13,6 @@
 import {
   forwardRef,
   useCallback,
-  useEffect,
   useRef,
   useState,
 } from "react";
@@ -93,23 +92,8 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
     const [annotationDraft, setAnnotationDraft] = useState(
       highlight.annotation?.body ?? ""
     );
-    const [isSaving, setIsSaving] = useState(false);
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-    // Sync draft from prop when not editing
-    useEffect(() => {
-      const nextDraft = highlight.annotation?.body ?? "";
-      if (!isEditingAnnotation && annotationDraft !== nextDraft) {
-        setAnnotationDraft(nextDraft);
-      }
-    }, [annotationDraft, highlight.annotation?.body, isEditingAnnotation]);
-
-    // Auto-focus textarea on edit start
-    useEffect(() => {
-      if (isEditingAnnotation) {
-        textareaRef.current?.focus();
-      }
-    }, [isEditingAnnotation]);
+    const isSavingRef = useRef(false);
+    const skipBlurSaveRef = useRef(false);
 
     const handleClick = useCallback(() => {
       onClick(highlight.id);
@@ -122,15 +106,17 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
     const handleAnnotationClick = useCallback(
       (e: React.MouseEvent) => {
         e.stopPropagation();
-        if (onAnnotationSave) {
+        if (onAnnotationSave && !isSavingRef.current) {
+          skipBlurSaveRef.current = false;
+          setAnnotationDraft(highlight.annotation?.body ?? "");
           setIsEditingAnnotation(true);
         }
       },
-      [onAnnotationSave]
+      [highlight.annotation?.body, onAnnotationSave]
     );
 
     const handleSaveAnnotation = useCallback(async () => {
-      if (isSaving) return;
+      if (isSavingRef.current) return;
       const trimmed = annotationDraft.trim();
 
       if (trimmed === (highlight.annotation?.body ?? "")) {
@@ -138,7 +124,8 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
         return;
       }
 
-      setIsSaving(true);
+      isSavingRef.current = true;
+      setIsEditingAnnotation(false);
       try {
         if (trimmed === "" && highlight.annotation) {
           await onAnnotationDelete?.(highlight.id);
@@ -146,22 +133,29 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
           await onAnnotationSave?.(highlight.id, trimmed);
         }
       } finally {
-        setIsSaving(false);
-        setIsEditingAnnotation(false);
+        isSavingRef.current = false;
       }
     }, [
       annotationDraft,
       highlight.annotation,
       highlight.id,
-      isSaving,
       onAnnotationDelete,
       onAnnotationSave,
     ]);
 
     const handleCancelAnnotation = useCallback(() => {
-      setAnnotationDraft(highlight.annotation?.body ?? "");
+      skipBlurSaveRef.current = true;
       setIsEditingAnnotation(false);
-    }, [highlight.annotation?.body]);
+    }, []);
+
+    const handleTextareaBlur = useCallback(() => {
+      if (skipBlurSaveRef.current) {
+        skipBlurSaveRef.current = false;
+        return;
+      }
+
+      void handleSaveAnnotation();
+    }, [handleSaveAnnotation]);
 
     const handleTextareaKeyDown = useCallback(
       (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -172,6 +166,7 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
         } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
           e.stopPropagation();
+          skipBlurSaveRef.current = true;
           void handleSaveAnnotation();
         }
       },
@@ -242,16 +237,15 @@ const LinkedItemRow = forwardRef<HTMLDivElement, LinkedItemRowProps>(
         {/* Line 2: annotation or placeholder */}
         {isEditingAnnotation ? (
           <textarea
-            ref={textareaRef}
             className={styles.annotationTextarea}
             value={annotationDraft}
             onChange={(e) => setAnnotationDraft(e.target.value)}
-            onBlur={() => void handleSaveAnnotation()}
+            onBlur={handleTextareaBlur}
             onKeyDown={handleTextareaKeyDown}
             onClick={(e) => e.stopPropagation()}
-            disabled={isSaving}
             rows={2}
             aria-label="Annotation"
+            autoFocus
           />
         ) : (
           <span
