@@ -69,6 +69,7 @@ class SearchResultFragmentOut(BaseModel):
     score: float
     snippet: str
     fragment_idx: int
+    section_id: str | None = None
     source: SearchResultSourceOut
 
     model_config = ConfigDict(extra="forbid")
@@ -84,6 +85,7 @@ class SearchResultAnnotationOut(BaseModel):
     highlight_id: UUID
     fragment_id: UUID
     fragment_idx: int
+    section_id: str | None = None
     annotation_body: str
     highlight: SearchResultHighlightOut
     source: SearchResultSourceOut

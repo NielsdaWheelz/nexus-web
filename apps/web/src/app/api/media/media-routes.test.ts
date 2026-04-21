@@ -64,15 +64,18 @@ describe("media BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/reader-state");
   });
 
-  it("PATCH /api/media/[id]/reader-state proxies to /media/{id}/reader-state", async () => {
-    const { PATCH } = await import("./[id]/reader-state/route");
+  it("PUT /api/media/[id]/reader-state proxies to /media/{id}/reader-state", async () => {
+    const { PUT } = await import("./[id]/reader-state/route");
     const req = new Request("http://localhost/api/media/mid-123/reader-state", {
-      method: "PATCH",
+      method: "PUT",
       body: JSON.stringify({
-        locator: { type: "pdf_page", page: 3, zoom: 1.25 },
+        page: 3,
+        position: 3,
+        page_progression: 0.4,
+        zoom: 1.25,
       }),
     });
-    await PATCH(req, { params: Promise.resolve({ id: "mid-123" }) });
+    await PUT(req, { params: Promise.resolve({ id: "mid-123" }) });
     expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/reader-state");
   });

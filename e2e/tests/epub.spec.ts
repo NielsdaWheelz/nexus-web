@@ -37,7 +37,6 @@ async function upsertHighlightAnnotation(
 }
 
 type LocatorType = "fragment_offset" | "epub_section" | "pdf_page";
-type LocatorDiscriminatorKey = "type" | "kind";
 type ReaderLocator =
   | {
       type: "fragment_offset";
@@ -55,15 +54,7 @@ type ReaderLocator =
     };
 
 interface ReaderStateResponse {
-  data: {
-    locator?: Record<string, unknown> | null;
-    locator_kind?: LocatorType | null;
-    fragment_id?: string | null;
-    offset?: number | null;
-    section_id?: string | null;
-    page?: number | null;
-    zoom?: number | null;
-  };
+  data: Record<string, unknown> | null;
 }
 
 interface EpubNavigationResponse {
@@ -311,141 +302,88 @@ function readSeededEpubMedia(): SeededEpubMedia {
   return JSON.parse(readFileSync(seedPath, "utf-8"));
 }
 
-function readLocatorType(raw: unknown): LocatorType | null {
-  if (
-    raw === "fragment_offset" ||
-    raw === "epub_section" ||
-    raw === "pdf_page"
-  ) {
-    return raw;
-  }
-  return null;
-}
-
 function normalizeReaderLocator(data: ReaderStateResponse["data"]): ReaderLocator | null {
-  if ("locator" in data) {
-    const locator = data.locator;
-    if (locator == null) {
-      return null;
-    }
-    const type = readLocatorType(locator.type ?? locator.kind);
-    if (type === "fragment_offset" && typeof locator.offset === "number") {
-      return {
-        type,
-        fragment_id: typeof locator.fragment_id === "string" ? locator.fragment_id : null,
-        offset: locator.offset,
-      };
-    }
-    if (type === "epub_section" && typeof locator.section_id === "string") {
-      return { type, section_id: locator.section_id };
-    }
-    if (type === "pdf_page" && typeof locator.page === "number") {
-      return {
-        type,
-        page: locator.page,
-        zoom: typeof locator.zoom === "number" ? locator.zoom : null,
-      };
-    }
+  if (data === null) {
+    return null;
   }
-
-  const legacyKind = readLocatorType(data.locator_kind ?? null);
-  if (legacyKind === "fragment_offset" && typeof data.offset === "number") {
+  if (typeof data.page === "number") {
     return {
-      type: legacyKind,
-      fragment_id: typeof data.fragment_id === "string" ? data.fragment_id : null,
-      offset: data.offset,
-    };
-  }
-  if (legacyKind === "epub_section" && typeof data.section_id === "string") {
-    return { type: legacyKind, section_id: data.section_id };
-  }
-  if (legacyKind === "pdf_page" && typeof data.page === "number") {
-    return {
-      type: legacyKind,
+      type: "pdf_page",
       page: data.page,
       zoom: typeof data.zoom === "number" ? data.zoom : null,
     };
   }
+  if (typeof data.source === "string" && typeof data.text_offset === "number") {
+    if (/^[0-9a-f]{8}-[0-9a-f-]{28}$/i.test(data.source)) {
+      return {
+        type: "fragment_offset",
+        fragment_id: data.source,
+        offset: data.text_offset,
+      };
+    }
+    return {
+      type: "epub_section",
+      section_id: data.source,
+    };
+  }
+  if (typeof data.source === "string") {
+    return { type: "epub_section", section_id: data.source };
+  }
   return null;
 }
 
-function buildLegacyReaderStatePatch(locator: ReaderLocator | null): Record<string, unknown> {
+function buildReaderStatePut(locator: ReaderLocator | null): Record<string, unknown> | null {
   if (locator === null) {
-    return {
-      locator_kind: null,
-      fragment_id: null,
-      offset: null,
-      section_id: null,
-      page: null,
-      zoom: null,
-    };
+    return null;
   }
 
   if (locator.type === "fragment_offset") {
     return {
-      locator_kind: locator.type,
-      fragment_id: locator.fragment_id,
-      offset: locator.offset,
-      section_id: null,
+      source: locator.fragment_id,
+      anchor: null,
+      text_offset: locator.offset,
+      quote: null,
+      quote_prefix: null,
+      quote_suffix: null,
+      progression: null,
+      total_progression: null,
+      position: Math.floor(locator.offset / 1024) + 1,
       page: null,
+      page_progression: null,
       zoom: null,
     };
   }
 
   if (locator.type === "epub_section") {
     return {
-      locator_kind: locator.type,
-      fragment_id: null,
-      offset: null,
-      section_id: locator.section_id,
+      source: locator.section_id,
+      anchor: null,
+      text_offset: 0,
+      quote: null,
+      quote_prefix: null,
+      quote_suffix: null,
+      progression: 0,
+      total_progression: 0,
+      position: 1,
       page: null,
+      page_progression: null,
       zoom: null,
     };
   }
 
   return {
-    locator_kind: locator.type,
-    fragment_id: null,
-    offset: null,
-    section_id: null,
+    source: null,
+    anchor: null,
+    text_offset: null,
+    quote: null,
+    quote_prefix: null,
+    quote_suffix: null,
+    progression: null,
+    total_progression: null,
+    position: locator.page,
     page: locator.page,
+    page_progression: null,
     zoom: locator.zoom,
-  };
-}
-
-function buildModernReaderStatePatch(
-  locator: ReaderLocator | null,
-  discriminator: LocatorDiscriminatorKey
-): Record<string, unknown> {
-  if (locator === null) {
-    return { locator: null };
-  }
-
-  if (locator.type === "fragment_offset") {
-    return {
-      locator: {
-        [discriminator]: locator.type,
-        fragment_id: locator.fragment_id,
-        offset: locator.offset,
-      },
-    };
-  }
-
-  if (locator.type === "epub_section") {
-    return {
-      locator: {
-        [discriminator]: locator.type,
-        section_id: locator.section_id,
-      },
-    };
-  }
-
-  return {
-    locator: {
-      [discriminator]: locator.type,
-      page: locator.page,
-      zoom: locator.zoom,
-    },
   };
 }
 
@@ -454,24 +392,10 @@ async function patchReaderLocator(
   mediaId: string,
   locator: ReaderLocator | null
 ): Promise<void> {
-  const attempts = [
-    buildModernReaderStatePatch(locator, "type"),
-    buildModernReaderStatePatch(locator, "kind"),
-    buildLegacyReaderStatePatch(locator),
-  ];
-  const failures: string[] = [];
-
-  for (const data of attempts) {
-    const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, { data });
-    if (response.ok()) {
-      return;
-    }
-    failures.push(`status=${response.status()} body=${await response.text()}`);
-  }
-
-  throw new Error(
-    `Failed to patch reader locator for ${mediaId}. ${failures.join(" | ")}`
-  );
+  const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
+    data: buildReaderStatePut(locator),
+  });
+  expect(response.ok()).toBeTruthy();
 }
 
 async function fetchReaderLocator(

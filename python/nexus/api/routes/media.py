@@ -11,7 +11,7 @@ No domain logic or raw DB access in routes.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
@@ -31,7 +31,7 @@ from nexus.schemas.media import (
     TranscriptRequestResponse,
     UploadInitRequest,
 )
-from nexus.schemas.reader import ReaderMediaStatePut
+from nexus.schemas.reader import ReaderLocator
 from nexus.services import epub_lifecycle, epub_read, image_proxy
 from nexus.services import libraries as libraries_service
 from nexus.services import media as media_service
@@ -273,19 +273,19 @@ def get_reader_state(
 ) -> dict:
     """Get per-media reader state."""
     result = reader_service.get_reader_media_state(db, viewer.user_id, media_id)
-    return success_response(result.model_dump(mode="json"))
+    return success_response(result.model_dump(mode="json", exclude_none=True) if result else None)
 
 
 @router.put("/media/{media_id}/reader-state")
 def put_reader_state(
     media_id: UUID,
-    body: ReaderMediaStatePut,
+    body: Annotated[ReaderLocator | None, Body()],
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Replace per-media reader state."""
     result = reader_service.put_reader_media_state(db, viewer.user_id, media_id, body)
-    return success_response(result.model_dump(mode="json"))
+    return success_response(result.model_dump(mode="json", exclude_none=True) if result else None)
 
 
 @router.get("/media/{media_id}/listening-state")

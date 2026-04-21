@@ -73,6 +73,7 @@ describe("adaptSearchResultRow", () => {
       highlight_id: "hl-1",
       fragment_id: "frag-12",
       fragment_idx: 12,
+      section_id: null,
       source: {
         media_id: "media-1",
         media_kind: "web_article",
@@ -104,13 +105,14 @@ describe("adaptSearchResultRow", () => {
     expect(row.annotationBody).toBe("annotation body text");
   });
 
-  it("builds epub fragment links with chapter context", () => {
+  it("builds epub fragment links with canonical loc context", () => {
     const result: SearchApiResult = {
       type: "fragment",
       id: "frag-7",
       score: 0.5,
-      snippet: "chapter text",
+      snippet: "section text",
       fragment_idx: 7,
+      section_id: "OPS/nav/intro",
       source: {
         media_id: "media-epub-1",
         media_kind: "epub",
@@ -121,7 +123,38 @@ describe("adaptSearchResultRow", () => {
     };
 
     const row = adaptSearchResultRow(result);
-    expect(row.href).toBe("/media/media-epub-1?fragment=frag-7&chapter=7");
+    expect(row.href).toBe("/media/media-epub-1?loc=OPS%2Fnav%2Fintro&fragment=frag-7");
+  });
+
+  it("builds epub annotation links with canonical loc context", () => {
+    const result: SearchApiResult = {
+      type: "annotation",
+      id: "ann-epub-1",
+      score: 0.77,
+      snippet: "annotation text",
+      highlight_id: "hl-epub-1",
+      fragment_id: "frag-7",
+      fragment_idx: 7,
+      section_id: "OPS/nav/intro",
+      source: {
+        media_id: "media-epub-1",
+        media_kind: "epub",
+        title: "EPUB Source",
+        authors: [],
+        published_date: null,
+      },
+      highlight: {
+        prefix: "before",
+        exact: "quoted text",
+        suffix: "after",
+      },
+      annotation_body: "reader note",
+    };
+
+    const row = adaptSearchResultRow(result);
+    expect(row.href).toBe(
+      "/media/media-epub-1?loc=OPS%2Fnav%2Fintro&fragment=frag-7&highlight=hl-epub-1"
+    );
   });
 
   it("uses message sequence metadata and snippet fallback", () => {
@@ -309,6 +342,7 @@ describe("normalizeSearchResult", () => {
       score: 0.5,
       snippet: "text",
       fragment_idx: 3,
+      section_id: "OPS/nav/part-1",
       source: {
         media_id: "m-1",
         media_kind: "epub",
@@ -321,6 +355,9 @@ describe("normalizeSearchResult", () => {
     expect(result).not.toBeNull();
     expect(result!.type).toBe("fragment");
     expect((result as Extract<SearchApiResult, { type: "fragment" }>).fragment_idx).toBe(3);
+    expect((result as Extract<SearchApiResult, { type: "fragment" }>).section_id).toBe(
+      "OPS/nav/part-1"
+    );
     expect((result as Extract<SearchApiResult, { type: "fragment" }>).source.media_id).toBe("m-1");
   });
 
@@ -447,6 +484,7 @@ describe("normalizeSearchResult", () => {
         highlight_id: "h-1",
         fragment_id: "f-1",
         fragment_idx: 0,
+        section_id: "OPS/nav/ch-1",
         annotation_body: "note",
         highlight: { bogus: true }, // missing exact/prefix/suffix
         source: {
@@ -457,6 +495,25 @@ describe("normalizeSearchResult", () => {
           published_date: null,
         },
       }),
+    ).toBeNull();
+  });
+
+  it("rejects epub fragment rows that omit section_id after cutover", () => {
+    expect(
+      normalizeSearchResult({
+        type: "fragment",
+        id: "f-1",
+        score: 0.5,
+        snippet: "text",
+        fragment_idx: 3,
+        source: {
+          media_id: "m-1",
+          media_kind: "epub",
+          title: "Title",
+          authors: [],
+          published_date: null,
+        },
+      })
     ).toBeNull();
   });
 

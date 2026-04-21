@@ -558,6 +558,7 @@ def _search_fragments(
             f.id,
             f.media_id,
             f.idx,
+            nav.location_id AS section_id,
             m.kind,
             m.title,
             m.published_date,
@@ -570,6 +571,14 @@ def _search_fragments(
         JOIN visible_media vm ON vm.media_id = f.media_id
         LEFT JOIN media_transcript_states mts ON mts.media_id = f.media_id
         LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
+        LEFT JOIN LATERAL (
+            SELECT location_id
+            FROM epub_nav_locations
+            WHERE media_id = f.media_id
+              AND fragment_idx = f.idx
+            ORDER BY ordinal ASC
+            LIMIT 1
+        ) nav ON m.kind = 'epub'
         WHERE f.canonical_text_tsv @@ websearch_to_tsquery('english', :query)
           AND (
               f.transcript_version_id IS NULL
@@ -590,15 +599,16 @@ def _search_fragments(
             "type": "fragment",
             "id": row[0],
             "fragment_idx": row[2],
+            "section_id": row[3],
             "source": {
                 "media_id": row[1],
-                "media_kind": row[3],
-                "title": row[4],
-                "authors": list(row[6]) if row[6] else [],
-                "published_date": row[5],
+                "media_kind": row[4],
+                "title": row[5],
+                "authors": list(row[7]) if row[7] else [],
+                "published_date": row[6],
             },
-            "raw_score": float(row[7]) if row[7] else 0.0,
-            "snippet": _truncate_snippet(row[8] or ""),
+            "raw_score": float(row[8]) if row[8] else 0.0,
+            "snippet": _truncate_snippet(row[9] or ""),
         }
         for row in rows
     ]
@@ -649,6 +659,7 @@ def _search_annotations(
             f.media_id,
             COALESCE(f_active.id, f.id) AS fragment_id,
             COALESCE(f_active.idx, f.idx) AS fragment_idx,
+            nav.location_id AS section_id,
             h.exact,
             h.prefix,
             h.suffix,
@@ -699,6 +710,14 @@ def _search_annotations(
             LIMIT 1
         ) f_active ON TRUE
         LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
+        LEFT JOIN LATERAL (
+            SELECT location_id
+            FROM epub_nav_locations
+            WHERE media_id = f.media_id
+              AND fragment_idx = COALESCE(f_active.idx, f.idx)
+            ORDER BY ordinal ASC
+            LIMIT 1
+        ) nav ON m.kind = 'epub'
         WHERE a.body_tsv @@ websearch_to_tsquery('english', :query)
           AND {transcript_media_filter}
           AND EXISTS (
@@ -726,21 +745,22 @@ def _search_annotations(
             "highlight_id": row[1],
             "fragment_id": row[3],
             "fragment_idx": row[4],
+            "section_id": row[5],
             "highlight": {
-                "exact": row[5],
-                "prefix": row[6],
-                "suffix": row[7],
+                "exact": row[6],
+                "prefix": row[7],
+                "suffix": row[8],
             },
-            "annotation_body": row[8],
+            "annotation_body": row[9],
             "source": {
                 "media_id": row[2],
-                "media_kind": row[9],
-                "title": row[10],
-                "authors": list(row[12]) if row[12] else [],
-                "published_date": row[11],
+                "media_kind": row[10],
+                "title": row[11],
+                "authors": list(row[13]) if row[13] else [],
+                "published_date": row[12],
             },
-            "raw_score": float(row[13]) if row[13] else 0.0,
-            "snippet": _truncate_snippet(row[14] or ""),
+            "raw_score": float(row[14]) if row[14] else 0.0,
+            "snippet": _truncate_snippet(row[15] or ""),
         }
         for row in rows
     ]
@@ -1036,6 +1056,7 @@ def _result_to_out(result: dict) -> SearchResultOut:
         return SearchResultFragmentOut(
             type="fragment",
             fragment_idx=result["fragment_idx"],
+            section_id=result.get("section_id"),
             source=SearchResultSourceOut.model_validate(result["source"]),
             **base_payload,
         )
@@ -1046,6 +1067,7 @@ def _result_to_out(result: dict) -> SearchResultOut:
             highlight_id=result["highlight_id"],
             fragment_id=result["fragment_id"],
             fragment_idx=result["fragment_idx"],
+            section_id=result.get("section_id"),
             annotation_body=result["annotation_body"],
             highlight=SearchResultHighlightOut.model_validate(result["highlight"]),
             source=SearchResultSourceOut.model_validate(result["source"]),

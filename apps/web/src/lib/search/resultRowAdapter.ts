@@ -36,6 +36,7 @@ export interface SearchMediaResult extends SearchBaseResult {
 export interface SearchFragmentResult extends SearchBaseResult {
   type: "fragment";
   fragment_idx: number;
+  section_id: string | null;
   source: SearchSourceMetadata;
 }
 
@@ -44,6 +45,7 @@ export interface SearchAnnotationResult extends SearchBaseResult {
   highlight_id: string;
   fragment_id: string;
   fragment_idx: number;
+  section_id: string | null;
   annotation_body: string;
   highlight: SearchHighlightContext;
   source: SearchSourceMetadata;
@@ -175,18 +177,32 @@ export function normalizeSearchResult(
       if (!source) return null;
       if (typeof r.fragment_idx !== "number") return null;
       const fragment_idx = r.fragment_idx;
-      return { ...base, type: "fragment", fragment_idx, source };
+      const section_id =
+        typeof r.section_id === "string" && r.section_id.length > 0
+          ? r.section_id
+          : source.media_kind === "epub"
+            ? null
+            : null;
+      if (source.media_kind === "epub" && section_id === null) return null;
+      return { ...base, type: "fragment", fragment_idx, section_id, source };
     }
     case "annotation": {
       const source = resolveSource(r);
       if (!source) return null;
       if (typeof r.fragment_idx !== "number") return null;
       const fragment_idx = r.fragment_idx;
+      const section_id =
+        typeof r.section_id === "string" && r.section_id.length > 0
+          ? r.section_id
+          : source.media_kind === "epub"
+            ? null
+            : null;
       if (
         typeof r.highlight_id !== "string" ||
         typeof r.fragment_id !== "string" ||
         typeof r.annotation_body !== "string" ||
-        !isValidHighlight(r.highlight)
+        !isValidHighlight(r.highlight) ||
+        (source.media_kind === "epub" && section_id === null)
       )
         return null;
       return {
@@ -195,6 +211,7 @@ export function normalizeSearchResult(
         highlight_id: r.highlight_id,
         fragment_id: r.fragment_id,
         fragment_idx,
+        section_id,
         annotation_body: r.annotation_body,
         highlight: r.highlight,
         source,
@@ -324,10 +341,10 @@ function buildResultHref(result: SearchApiResult): string {
       return `/media/${result.id}`;
     case "fragment": {
       const params = new URLSearchParams();
-      params.set("fragment", result.id);
       if (result.source.media_kind === "epub") {
-        params.set("chapter", String(result.fragment_idx));
+        params.set("loc", result.section_id ?? "");
       }
+      params.set("fragment", result.id);
       const query = params.toString();
       return query
         ? `/media/${result.source.media_id}?${query}`
@@ -335,10 +352,10 @@ function buildResultHref(result: SearchApiResult): string {
     }
     case "annotation": {
       const params = new URLSearchParams();
-      params.set("fragment", result.fragment_id);
       if (result.source.media_kind === "epub") {
-        params.set("chapter", String(result.fragment_idx));
+        params.set("loc", result.section_id ?? "");
       }
+      params.set("fragment", result.fragment_id);
       params.set("highlight", result.highlight_id);
       const query = params.toString();
       return query

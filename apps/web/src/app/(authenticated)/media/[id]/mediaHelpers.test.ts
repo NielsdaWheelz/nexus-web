@@ -43,18 +43,28 @@ describe("epub navigation helpers", () => {
     ).toBe("/media/media-1?loc=OPS%2Fnav%2Fchapter-1&fragment=frag-1&highlight=hl-1");
   });
 
-  it("resolves internal chapter links through section ids", () => {
+  it("resolves internal section links through section ids", () => {
     expect(
-      resolveEpubInternalLinkTarget("../chapter-2.xhtml#anchor-2", "OPS/nav/chapter-1", [
+      resolveEpubInternalLinkTarget("chapter-2.xhtml#anchor-2", "OPS/nav/chapter-1", [
         {
           section_id: "OPS/nav/chapter-1",
-          href: "Text/chapter-1.xhtml",
-          children: [],
+          label: "Chapter 1",
+          fragment_idx: 0,
+          href_path: "OPS/Text/chapter-1.xhtml",
+          anchor_id: null,
+          source_node_id: "node-1",
+          source: "toc",
+          ordinal: 0,
         },
         {
           section_id: "OPS/nav/chapter-2",
-          href: "Text/chapter-2.xhtml#anchor-2",
-          children: [],
+          label: "Chapter 2",
+          fragment_idx: 1,
+          href_path: "OPS/Text/chapter-2.xhtml",
+          anchor_id: "anchor-2",
+          source_node_id: "node-2",
+          source: "toc",
+          ordinal: 1,
         },
       ])
     ).toEqual({
@@ -68,8 +78,13 @@ describe("epub navigation helpers", () => {
       resolveEpubInternalLinkTarget("#notes", "OPS/nav/chapter-1", [
         {
           section_id: "OPS/nav/chapter-1",
-          href: "Text/chapter-1.xhtml",
-          children: [],
+          label: "Chapter 1",
+          fragment_idx: 0,
+          href_path: "OPS/Text/chapter-1.xhtml",
+          anchor_id: null,
+          source_node_id: "node-1",
+          source: "toc",
+          ordinal: 0,
         },
       ])
     ).toEqual({

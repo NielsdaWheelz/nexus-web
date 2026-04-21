@@ -37,11 +37,11 @@ intentionally stays with two reader themes: light and dark.
 ### per-media resume
 
 - `reader_media_state` stores resume only
-- locator kinds are:
-  - `fragment_offset` for web article/transcript resume
-  - `epub_section` for epub section/anchor resume
-  - `pdf_page` for pdf page + zoom resume
-- `locator_kind: null` clears the stored resume state for that media
+- the post-cutover API shape is a single nullable flat locator object
+- `null` clears stored resume for that media
+- text readers persist `source`, `text_offset`, quote context,
+  `progression`, `total_progression`, and coarse `position`
+- pdf persists `page`, `page_progression`, `zoom`, and coarse `position`
 
 ### reflow-safe web resume
 
@@ -55,19 +55,36 @@ pixels.
 this makes resume resilient to font-size, line-height, and column-width
 changes.
 
-### epub and pdf resume
+### layered epub/web/pdf resume
 
-- epub stores section ids and restores to the resolved section
-- pdf stores page and zoom with bounded validation
+- epub resolves in this order:
+  `?loc` deep link -> saved `source` match -> coarse fallback -> first section
+- once the section is open, epub restores by exact text offset,
+  then quote context, then progression, then anchor
+- web/transcript pick explicit fragment/time targets first and fall back
+  to the saved text locator otherwise
+- pdf restores saved page, intra-page progression, and zoom on open and
+  persists later page changes without reopening the document file
+
+### epub request surface
+
+- epub navigation is sourced from `GET /api/media/{id}/navigation`
+- epub section content is sourced from
+  `GET /api/media/{id}/sections/{section_id}`
+- `section_id` is path-encoded and may contain `/`
+- `?loc={section_id}` is the canonical deep-link shape
+- the reader no longer depends on legacy chapter manifests or toc fetches
 
 ## regression strategy
 
 required automated coverage includes:
 
 - reader settings persistence
-- web article resume after profile typography reflow
-- epub chapter resume after reload
-- pdf page + zoom resume after reload
+- web article canonical locator resume after profile typography reflow
+- epub `?loc` precedence over saved resume
+- epub intra-section locator resume after reload
+- pdf page + zoom + intra-page locator resume after reload
+- pdf in-session page persistence without file reopen
 
 ## validation commands
 

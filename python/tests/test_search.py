@@ -81,6 +81,118 @@ class TestBasicSearch:
 
         assert response.status_code in (400, 422)  # FastAPI validation
 
+    def test_epub_fragment_and_annotation_results_include_section_id(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """EPUB search hits expose canonical section ids for reader deep links."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        fragment_id = uuid4()
+
+        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("epub_nav_locations", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with direct_db.session() as session:
+            default_library_id = get_user_default_library(session, user_id)
+            assert default_library_id is not None
+
+            session.execute(
+                text("""
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'epub', :title, 'ready_for_reading', :user_id)
+                """),
+                {
+                    "id": media_id,
+                    "title": "EPUB Search Contract",
+                    "user_id": user_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, :canonical_text, :html_sanitized)
+                """),
+                {
+                    "id": fragment_id,
+                    "media_id": media_id,
+                    "canonical_text": "Unique EPUB fragment needle for section deep link coverage.",
+                    "html_sanitized": "<h1>Chapter 1</h1><p>Unique EPUB fragment needle.</p>",
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO epub_nav_locations (
+                        media_id, location_id, ordinal, source_node_id, label,
+                        fragment_idx, href_path, href_fragment, source
+                    )
+                    VALUES (
+                        :media_id, :location_id, 0, NULL, :label,
+                        0, :href_path, NULL, 'spine'
+                    )
+                """),
+                {
+                    "media_id": media_id,
+                    "location_id": "text/chapter1.xhtml",
+                    "label": "Chapter 1",
+                    "href_path": "text/chapter1.xhtml",
+                },
+            )
+            session.commit()
+
+        auth_client.post(
+            f"/libraries/{default_library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        with direct_db.session() as session:
+            highlight_id, annotation_id = create_test_annotation(
+                session,
+                user_id,
+                media_id,
+                body="Unique EPUB annotation needle for section deep link coverage.",
+            )
+
+        direct_db.register_cleanup("annotations", "id", annotation_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+
+        fragment_response = auth_client.get(
+            "/search?q=unique+epub+fragment+needle&types=fragment",
+            headers=auth_headers(user_id),
+        )
+        assert fragment_response.status_code == 200, (
+            f"Expected fragment search to succeed, got {fragment_response.status_code}: "
+            f"{fragment_response.text}"
+        )
+        fragment_rows = fragment_response.json()["results"]
+        epub_fragment_row = next(
+            row
+            for row in fragment_rows
+            if row["type"] == "fragment" and row["source"]["media_id"] == str(media_id)
+        )
+        assert epub_fragment_row["section_id"] == "text/chapter1.xhtml"
+
+        annotation_response = auth_client.get(
+            "/search?q=unique+epub+annotation+needle&types=annotation",
+            headers=auth_headers(user_id),
+        )
+        assert annotation_response.status_code == 200, (
+            f"Expected annotation search to succeed, got {annotation_response.status_code}: "
+            f"{annotation_response.text}"
+        )
+        annotation_rows = annotation_response.json()["results"]
+        epub_annotation_row = next(
+            row
+            for row in annotation_rows
+            if row["type"] == "annotation" and row["source"]["media_id"] == str(media_id)
+        )
+        assert epub_annotation_row["section_id"] == "text/chapter1.xhtml"
+
     def test_search_finds_media_by_title(self, auth_client, direct_db: DirectSessionManager):
         """Search finds media by matching title."""
         user_id = create_test_user_id()

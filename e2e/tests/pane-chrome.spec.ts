@@ -102,16 +102,16 @@ test.describe("pane chrome", () => {
     ).toBeVisible();
 
     await page.goto(`/media/${epubSeed.media_id}`);
-    await expect(page.getByRole("button", { name: "Previous chapter" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Next chapter" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Previous section" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Next section" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Previous page" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Next page" })).toHaveCount(0);
 
     await page.goto(`/media/${youtubeSeed.media_id}`);
     await expect(page.getByRole("button", { name: "Previous page" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Next page" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Previous chapter" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Next chapter" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Previous section" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Next section" })).toHaveCount(0);
   });
 
   test("clears reader toolbar when same-pane navigation leaves media", async ({ page }) => {

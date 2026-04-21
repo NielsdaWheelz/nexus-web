@@ -25,13 +25,45 @@ this records the current reader model and the constraints we actively ship.
 ### per-media resume
 
 - `reader_media_state` stores resume only
-- locator kinds are:
-  - `fragment_offset` for web article/transcript resume
-  - `epub_section` for epub section/anchor resume
-  - `pdf_page` for pdf page + zoom resume
-- `locator_kind: null` clears the stored resume state for that media
-- patch schemas reject unknown fields
-- db constraints enforce safe locator bounds (`offset`, `page`, `zoom`)
+- the contract is a single nullable flat locator on
+  `GET/PUT /api/media/{id}/reader-state`
+- `null` clears the stored resume state for that media
+- the stored locator fields are:
+  - text flow: `source`, `anchor`, `text_offset`,
+    `quote`, `quote_prefix`, `quote_suffix`,
+    `progression`, `total_progression`, `position`
+  - pdf: `page`, `page_progression`, `zoom`, `position`
+- the backend rejects unknown fields, blank string anchors,
+  empty locators, and impossible text-vs-pdf field mixes
+
+### layered restore order
+
+- epub restores in this order:
+  `?loc` deep link -> saved `source` match -> `total_progression`/`position`
+  fallback -> first navigation section
+- once the section is open, epub restores by
+  `text_offset` -> quote match -> `progression`/`total_progression`
+  -> anchor fallback
+- epub keeps `?loc` synchronized after resolution so browser back/forward
+  and persisted resume converge on the same navigation section
+- web article/transcript restore uses explicit target params first
+  (`fragment_id`, `start`) and falls back to saved locator `source`
+  when no explicit target is present
+- web article/transcript visual restore uses
+  `text_offset` -> quote match -> `progression` -> `total_progression`
+  after layout settles
+- pdf applies saved `page`, `page_progression`, and `zoom` on open,
+  then persists later page, intra-page scroll, and zoom changes in place
+  without reopening the file
+
+### epub reader surface
+
+- epub reader bootstraps from `GET /api/media/{id}/navigation`
+- active epub content loads from
+  `GET /api/media/{id}/sections/{section_id}`
+- `section_id` is treated as a path-encoded identifier and may contain `/`
+- the frontend canonical deep-link is `?loc={section_id}`
+- legacy `chapters` and `toc` reader routes are removed from the client surface
 
 ### reader theme quick-switch
 
@@ -72,9 +104,11 @@ this keeps resume robust when typography changes.
 required e2e coverage includes:
 
 - reader settings persistence
-- web text-anchor resume after reflow from profile typography changes
-- epub chapter resume after reload
-- pdf page + zoom resume after reload
+- web canonical locator resume after reflow from profile typography changes
+- epub `?loc` deep link precedence over saved resume
+- epub intra-section locator resume after reload
+- pdf page + zoom + intra-page locator resume after reload
+- pdf page changes persisting without reopening the file
 
 supporting test infra:
 

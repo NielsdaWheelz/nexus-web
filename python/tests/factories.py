@@ -681,6 +681,7 @@ def create_ready_epub_with_chapters(
                 order_key=f"{i + 1:04d}",
             )
             session.add(node)
+        session.flush()
 
     for i in range(num_chapters):
         href_path = f"ch{i}.xhtml"
