@@ -36,25 +36,23 @@ async function upsertHighlightAnnotation(
   expect(response.ok()).toBeTruthy();
 }
 
-type LocatorType = "fragment_offset" | "epub_section" | "pdf_page";
-type ReaderLocator =
-  | {
-      type: "fragment_offset";
-      fragment_id: string | null;
-      offset: number;
-    }
-  | {
-      type: "epub_section";
-      section_id: string;
-    }
-  | {
-      type: "pdf_page";
-      page: number;
-      zoom: number | null;
-    };
+interface ReaderLocator {
+  source?: string | null;
+  anchor?: string | null;
+  text_offset?: number | null;
+  quote?: string | null;
+  quote_prefix?: string | null;
+  quote_suffix?: string | null;
+  progression?: number | null;
+  total_progression?: number | null;
+  position?: number | null;
+  page?: number | null;
+  page_progression?: number | null;
+  zoom?: number | null;
+}
 
 interface ReaderStateResponse {
-  data: Record<string, unknown> | null;
+  data: ReaderLocator | null;
 }
 
 interface EpubNavigationResponse {
@@ -62,6 +60,8 @@ interface EpubNavigationResponse {
     sections: Array<{
       section_id: string;
       label: string;
+      href_path: string | null;
+      anchor_id: string | null;
     }>;
   };
 }
@@ -76,7 +76,12 @@ async function findSectionByLabel(
   page: Page,
   mediaId: string,
   label: string
-): Promise<{ section_id: string; label: string }> {
+): Promise<{
+  section_id: string;
+  label: string;
+  href_path: string | null;
+  anchor_id: string | null;
+}> {
   const navigation = await fetchEpubNavigation(page, mediaId);
   const section = navigation.data.sections.find((item) => item.label === label);
   expect(section).toBeTruthy();
@@ -302,110 +307,25 @@ function readSeededEpubMedia(): SeededEpubMedia {
   return JSON.parse(readFileSync(seedPath, "utf-8"));
 }
 
-function normalizeReaderLocator(data: ReaderStateResponse["data"]): ReaderLocator | null {
-  if (data === null) {
-    return null;
-  }
-  if (typeof data.page === "number") {
-    return {
-      type: "pdf_page",
-      page: data.page,
-      zoom: typeof data.zoom === "number" ? data.zoom : null,
-    };
-  }
-  if (typeof data.source === "string" && typeof data.text_offset === "number") {
-    if (/^[0-9a-f]{8}-[0-9a-f-]{28}$/i.test(data.source)) {
-      return {
-        type: "fragment_offset",
-        fragment_id: data.source,
-        offset: data.text_offset,
-      };
-    }
-    return {
-      type: "epub_section",
-      section_id: data.source,
-    };
-  }
-  if (typeof data.source === "string") {
-    return { type: "epub_section", section_id: data.source };
-  }
-  return null;
-}
-
-function buildReaderStatePut(locator: ReaderLocator | null): Record<string, unknown> | null {
-  if (locator === null) {
-    return null;
-  }
-
-  if (locator.type === "fragment_offset") {
-    return {
-      source: locator.fragment_id,
-      anchor: null,
-      text_offset: locator.offset,
-      quote: null,
-      quote_prefix: null,
-      quote_suffix: null,
-      progression: null,
-      total_progression: null,
-      position: Math.floor(locator.offset / 1024) + 1,
-      page: null,
-      page_progression: null,
-      zoom: null,
-    };
-  }
-
-  if (locator.type === "epub_section") {
-    return {
-      source: locator.section_id,
-      anchor: null,
-      text_offset: 0,
-      quote: null,
-      quote_prefix: null,
-      quote_suffix: null,
-      progression: 0,
-      total_progression: 0,
-      position: 1,
-      page: null,
-      page_progression: null,
-      zoom: null,
-    };
-  }
-
-  return {
-    source: null,
-    anchor: null,
-    text_offset: null,
-    quote: null,
-    quote_prefix: null,
-    quote_suffix: null,
-    progression: null,
-    total_progression: null,
-    position: locator.page,
-    page: locator.page,
-    page_progression: null,
-    zoom: locator.zoom,
-  };
-}
-
-async function patchReaderLocator(
+async function putReaderState(
   page: Parameters<typeof test>[0]["page"],
   mediaId: string,
   locator: ReaderLocator | null
 ): Promise<void> {
   const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
-    data: buildReaderStatePut(locator),
+    data: locator,
   });
   expect(response.ok()).toBeTruthy();
 }
 
-async function fetchReaderLocator(
+async function fetchReaderState(
   page: Parameters<typeof test>[0]["page"],
   mediaId: string
 ): Promise<ReaderLocator | null> {
   const response = await page.request.get(`/api/media/${mediaId}/reader-state`);
   expect(response.ok()).toBeTruthy();
   const payload = (await response.json()) as ReaderStateResponse;
-  return normalizeReaderLocator(payload.data);
+  return payload.data;
 }
 
 async function resetEpubReaderState(
@@ -417,7 +337,7 @@ async function resetEpubReaderState(
       .poll(
         async () => {
           try {
-            await patchReaderLocator(page, mediaId, null);
+            await putReaderState(page, mediaId, null);
             return true;
           } catch {
             return false;
@@ -542,10 +462,10 @@ test.describe("epub", () => {
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
     const secondSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[1]);
 
-    await patchReaderLocator(page, seed.media_id, {
-      type: "epub_section",
-      section_id: secondSection.section_id,
-    });
+    expect(secondSection.href_path).toBeTruthy();
+    expect(firstSection.href_path).toBeTruthy();
+
+    await putReaderState(page, seed.media_id, { source: secondSection.href_path });
 
     await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
     await expect(
@@ -556,10 +476,10 @@ test.describe("epub", () => {
       .toBe(firstSection.section_id);
     await expect
       .poll(async () => {
-        const locator = await fetchReaderLocator(page, seed.media_id);
-        return locator?.type === "epub_section" ? locator.section_id : null;
+        const locator = await fetchReaderState(page, seed.media_id);
+        return locator?.source ?? null;
       })
-      .toBe(firstSection.section_id);
+      .toBe(firstSection.href_path);
 
     await page.reload();
     await expect(

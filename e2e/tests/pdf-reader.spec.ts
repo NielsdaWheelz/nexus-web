@@ -28,6 +28,21 @@ interface LayerAlignmentSnapshot {
   bottomOffsetDrift: number;
 }
 
+interface ReaderLocator {
+  source?: string | null;
+  anchor?: string | null;
+  text_offset?: number | null;
+  quote?: string | null;
+  quote_prefix?: string | null;
+  quote_suffix?: string | null;
+  progression?: number | null;
+  total_progression?: number | null;
+  position?: number | null;
+  page?: number | null;
+  page_progression?: number | null;
+  zoom?: number | null;
+}
+
 function readSeededPdfMedia(): SeededPdfMedia {
   const seedPath = path.join(process.cwd(), ".seed", "pdf-media.json");
   const raw = readFileSync(seedPath, "utf-8");
@@ -54,6 +69,13 @@ function extractHighlightIdFromDataTestId(dataTestId: string | null): string {
     throw new Error(`Unexpected PDF highlight test id: ${dataTestId}`);
   }
   return match[1];
+}
+
+async function putReaderState(page: Page, mediaId: string, locator: ReaderLocator | null) {
+  const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
+    data: locator,
+  });
+  expect(response.ok()).toBeTruthy();
 }
 
 async function listVisibleHighlightIds(page: Page): Promise<string[]> {
@@ -248,29 +270,20 @@ async function ensureOnPage(page: Page, targetPage: number, pageCount: number): 
 }
 
 async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
-  let lastStatus: number | null = null;
-  let lastBody = "";
-
   try {
     await expect
       .poll(
         async () => {
-          const response = await page.request.patch(`/api/media/${mediaId}/reader-state`, {
-            data: {
-              locator_kind: "pdf_page",
+          try {
+            await putReaderState(page, mediaId, {
+              position: 1,
               page: 1,
               zoom: 1,
-              fragment_id: null,
-              offset: null,
-              section_id: null,
-            },
-          });
-          if (response.ok()) {
+            });
             return true;
+          } catch {
+            return false;
           }
-          lastStatus = response.status();
-          lastBody = await response.text();
-          return false;
         },
         {
           timeout: 4_000,
@@ -281,7 +294,7 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
     return;
   } catch (error) {
     throw new Error(
-      `Failed to reset PDF reader state for ${mediaId}. Last status=${lastStatus}, body=${lastBody}, cause=${error instanceof Error ? error.message : String(error)}`,
+      `Failed to reset PDF reader state for ${mediaId}. cause=${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

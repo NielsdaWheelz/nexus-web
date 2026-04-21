@@ -10,8 +10,6 @@ import StatusPill from "@/components/ui/StatusPill";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import styles from "./page.module.css";
 
-type DetailHighlight = Highlight | PdfHighlightOut;
-
 interface MediaHighlightsPaneBodyProps {
   isPdf: boolean;
   isEpub: boolean;

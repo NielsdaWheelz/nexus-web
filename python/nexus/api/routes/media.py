@@ -279,9 +279,9 @@ def get_reader_state(
 @router.put("/media/{media_id}/reader-state")
 def put_reader_state(
     media_id: UUID,
-    body: Annotated[ReaderLocator | None, Body()],
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    body: Annotated[ReaderLocator | None, Body()] = None,
 ) -> dict:
     """Replace per-media reader state."""
     result = reader_service.put_reader_media_state(db, viewer.user_id, media_id, body)
@@ -509,6 +509,7 @@ def get_epub_section(
     """Get a canonical EPUB section by encoded section id."""
     result = epub_read.get_epub_section_for_viewer(db, viewer.user_id, media_id, section_id)
     return success_response(result.model_dump(mode="json"))
+
 
 @router.get("/media/{media_id}/navigation")
 def get_epub_navigation(

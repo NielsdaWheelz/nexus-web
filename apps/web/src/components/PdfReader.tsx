@@ -9,6 +9,7 @@ import {
   type MutableRefObject,
 } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import type { ReaderLocator } from "@/lib/reader";
 import SelectionPopover from "./SelectionPopover";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
@@ -220,10 +221,12 @@ interface PdfReaderProps {
   onQuoteToChat?: (highlightId: string) => void;
   /** Resume seed: page (1-based) to open when this media loads */
   startPageNumber?: number;
+  /** Resume seed: intra-page scroll progression to apply after first render */
+  startPageProgression?: number;
   /** Resume seed: zoom scale to apply when this media loads */
   startZoom?: number;
   /** Called when page or zoom changes for progress persistence */
-  onResumeStateChange?: (pageNumber: number, zoom: number) => void;
+  onResumeStateChange?: (locator: ReaderLocator | null) => void;
 }
 
 interface SelectionState {
@@ -622,6 +625,7 @@ export default function PdfReader({
   onHighlightTap,
   onQuoteToChat,
   startPageNumber,
+  startPageProgression,
   startZoom,
   onResumeStateChange,
 }: PdfReaderProps) {
@@ -629,6 +633,7 @@ export default function PdfReader({
   const isMobileRef = useRef(isMobile);
   const initialMobileFitDoneRef = useRef(false);
   const startPageNumberRef = useRef(startPageNumber);
+  const startPageProgressionRef = useRef(startPageProgression);
   const startZoomRef = useRef(startZoom);
 
   const [loading, setLoading] = useState(true);
@@ -666,6 +671,7 @@ export default function PdfReader({
   const zoomRef = useRef(startZoomRef.current ?? 1);
   const runRef = useRef(0);
   const pageNumberRef = useRef(startPageNumberRef.current ?? 1);
+  const pendingStartPageProgressionRef = useRef(startPageProgressionRef.current ?? null);
   const pageScaleByNumberRef = useRef<Map<number, number>>(new Map());
   const pageGeometryReliabilityRef = useRef<Map<number, boolean>>(new Map());
   const pendingViewerPageRef = useRef<number | null>(null);
@@ -702,11 +708,25 @@ export default function PdfReader({
     onResumeStateChangeRef.current = onResumeStateChange;
   }, [onResumeStateChange]);
 
-  useEffect(() => {
-    if (onResumeStateChangeRef.current && numPages > 0) {
-      onResumeStateChangeRef.current(pageNumber, zoom);
-    }
-  }, [pageNumber, zoom, numPages]);
+  const publishResumeLocator = useCallback(
+    (nextPageNumber: number, nextZoom: number, nextPageProgression: number | null) => {
+      onResumeStateChangeRef.current?.({
+        source: null,
+        anchor: null,
+        text_offset: null,
+        quote: null,
+        quote_prefix: null,
+        quote_suffix: null,
+        progression: null,
+        total_progression: null,
+        position: nextPageNumber,
+        page: nextPageNumber,
+        page_progression: nextPageProgression,
+        zoom: nextZoom,
+      });
+    },
+    []
+  );
 
   const setContentNode = useCallback(
     (node: HTMLDivElement | null) => {
@@ -753,6 +773,98 @@ export default function PdfReader({
     const fallback = root.querySelectorAll<HTMLElement>(".page")[targetPage - 1];
     return fallback ?? null;
   }, []);
+
+  const readPageMetrics = useCallback(
+    (targetPage: number): { pageTop: number; pageHeight: number } | null => {
+      const pageElement = getPageElement(targetPage);
+      if (!pageElement) {
+        return null;
+      }
+
+      const pageHeight =
+        pageElement.getBoundingClientRect().height ||
+        pageElement.scrollHeight ||
+        pageElement.clientHeight ||
+        Number.parseFloat(pageElement.style.height) ||
+        0;
+      const pageTop =
+        pageElement.offsetTop || (pageHeight > 0 ? (targetPage - 1) * pageHeight : 0);
+
+      return pageHeight > 0 ? { pageTop, pageHeight } : null;
+    },
+    [getPageElement]
+  );
+
+  const readCurrentPageProgression = useCallback((): number | null => {
+    const container = viewerContainerRef.current;
+    if (!container) {
+      return null;
+    }
+    const metrics = readPageMetrics(pageNumberRef.current);
+    if (!metrics) {
+      return null;
+    }
+    const localScrollTop = Math.max(0, container.scrollTop - metrics.pageTop);
+    const maxLocalScroll = Math.max(0, metrics.pageHeight - container.clientHeight);
+    if (maxLocalScroll === 0) {
+      return 0;
+    }
+    return Math.max(0, Math.min(1, localScrollTop / maxLocalScroll));
+  }, [readPageMetrics]);
+
+  const applyStartPageProgression = useCallback(() => {
+    const targetProgression = pendingStartPageProgressionRef.current;
+    if (targetProgression === null) {
+      return;
+    }
+    const container = viewerContainerRef.current;
+    if (!container) {
+      return;
+    }
+    const metrics = readPageMetrics(pageNumberRef.current);
+    if (!metrics) {
+      return;
+    }
+    const maxLocalScroll = Math.max(0, metrics.pageHeight - container.clientHeight);
+    container.scrollTop =
+      metrics.pageTop + maxLocalScroll * Math.max(0, Math.min(1, targetProgression));
+    pendingStartPageProgressionRef.current = null;
+  }, [readPageMetrics]);
+
+  useEffect(() => {
+    if (onResumeStateChangeRef.current && numPages > 0) {
+      publishResumeLocator(pageNumber, zoom, readCurrentPageProgression());
+    }
+  }, [numPages, pageNumber, publishResumeLocator, readCurrentPageProgression, zoom]);
+
+  useEffect(() => {
+    const container = viewerContainerRef.current;
+    if (!container || !onResumeStateChangeRef.current || numPages <= 0) {
+      return;
+    }
+
+    let rafId = 0;
+    const handleScroll = () => {
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+      }
+      rafId = window.requestAnimationFrame(() => {
+        publishResumeLocator(
+          pageNumberRef.current,
+          zoomRef.current,
+          readCurrentPageProgression()
+        );
+      });
+    };
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+      }
+    };
+  }, [numPages, publishResumeLocator, readCurrentPageProgression]);
 
   const getTextLayerRootForPage = useCallback(
     (targetPage: number): HTMLElement | null => {
@@ -1114,6 +1226,7 @@ export default function PdfReader({
             if (runId !== runRef.current) {
               return;
             }
+            applyStartPageProgression();
             setTextLayerUsable(isTextLayerUsableForPage(renderedPage));
             setTextGeometryReliable(evaluatePageGeometryReliability(renderedPage));
             setPageRenderEpoch((value) => value + 1);
@@ -1164,6 +1277,7 @@ export default function PdfReader({
       };
     },
     [
+      applyStartPageProgression,
       clearSelection,
       evaluatePageGeometryReliability,
       ensurePdfJsViewer,
@@ -1813,6 +1927,7 @@ export default function PdfReader({
     const pageGeometryReliability = pageGeometryReliabilityRef.current;
 
     const startPage = startPageNumberRef.current ?? 1;
+    const startPageProgress = startPageProgressionRef.current ?? null;
     const startZoomLevel = startZoomRef.current ?? 1;
     setLoading(true);
     setNavigating(false);
@@ -1831,6 +1946,7 @@ export default function PdfReader({
     setCreateTelemetry(createInitialCreateTelemetry());
     pageNumberRef.current = startPage;
     zoomRef.current = startZoomLevel;
+    pendingStartPageProgressionRef.current = startPageProgress;
     pageScaleCache.clear();
     pageGeometryReliability.clear();
     pendingViewerPageRef.current = null;

@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.media import EpubNavigationOut, EpubNavigationSectionOut, EpubNavigationTocNodeOut, EpubSectionOut
+from nexus.schemas.media import (
+    EpubNavigationOut,
+    EpubNavigationSectionOut,
+    EpubNavigationTocNodeOut,
+    EpubSectionOut,
+)
 
 _READABLE_STATUSES = frozenset({"ready_for_reading", "embedding", "ready"})
 
@@ -67,11 +72,21 @@ def get_epub_navigation_for_viewer(
 
     section_rows = db.execute(
         text("""
-            SELECT location_id, label, fragment_idx, href_path, href_fragment,
-                   source_node_id, source, ordinal
-            FROM epub_nav_locations
-            WHERE media_id = :mid
-            ORDER BY ordinal ASC
+            SELECT n.location_id,
+                   n.label,
+                   n.fragment_idx,
+                   n.href_path,
+                   n.href_fragment,
+                   n.source_node_id,
+                   n.source,
+                   n.ordinal,
+                   char_length(f.canonical_text)
+            FROM epub_nav_locations n
+            JOIN fragments f
+              ON f.media_id = n.media_id
+             AND f.idx = n.fragment_idx
+            WHERE n.media_id = :mid
+            ORDER BY n.ordinal ASC
         """),
         {"mid": media_id},
     ).fetchall()
@@ -87,6 +102,7 @@ def get_epub_navigation_for_viewer(
             source_node_id=row[5],
             source=row[6],
             ordinal=row[7],
+            char_count=row[8],
         )
         for row in section_rows
     ]

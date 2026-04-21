@@ -18,6 +18,7 @@ describe("resolveInitialEpubSectionId", () => {
       source_node_id: "node-1",
       source: "toc",
       ordinal: 0,
+      char_count: 1200,
     },
     {
       section_id: "OPS/nav/chapter-2",
@@ -28,6 +29,7 @@ describe("resolveInitialEpubSectionId", () => {
       source_node_id: "node-2",
       source: "toc",
       ordinal: 1,
+      char_count: 1800,
     },
   ];
 

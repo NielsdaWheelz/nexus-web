@@ -1,15 +1,21 @@
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError } from "@/lib/api/client";
 import { useReaderResumeState } from "./useReaderResumeState";
-import type { ReaderResumeState } from "./types";
+import type { ReaderLocator } from "./types";
 
-const PDF_READER_RESUME_STATE: ReaderResumeState = {
-  locator: {
-    kind: "pdf_page",
-    page: 2,
-    zoom: 1.25,
-  },
+const PDF_LOCATOR: ReaderLocator = {
+  source: null,
+  anchor: null,
+  text_offset: null,
+  quote: null,
+  quote_prefix: null,
+  quote_suffix: null,
+  progression: null,
+  total_progression: null,
+  position: 2,
+  page: 2,
+  page_progression: 0.4,
+  zoom: 1.25,
 };
 
 describe("useReaderResumeState", () => {
@@ -17,88 +23,13 @@ describe("useReaderResumeState", () => {
     vi.useRealTimers();
   });
 
-  it("does not save when the next whole-state locator matches the current state", async () => {
+  it("does not save when the next locator matches the current state", async () => {
     const apiFetchImpl = async <T,>(path: string, init?: RequestInit): Promise<T> => {
       if (path === "/api/media/media-1/reader-state" && !init) {
-        return { data: PDF_READER_RESUME_STATE } as T;
+        return { data: PDF_LOCATOR } as T;
       }
       if (path === "/api/media/media-1/reader-state" && init?.method === "PUT") {
-        return { data: PDF_READER_RESUME_STATE } as T;
-      }
-      throw new Error(`Unexpected request: ${path}`);
-    };
-    const apiFetch = vi.fn(apiFetchImpl);
-
-    const { result } = renderHook(() =>
-      useReaderResumeState({
-        mediaId: "media-1",
-        apiFetch: apiFetch as typeof apiFetchImpl,
-        debounceMs: 0,
-      })
-    );
-
-    await waitFor(() => {
-      expect(result.current.state).toEqual(PDF_READER_RESUME_STATE);
-    });
-
-    vi.useFakeTimers();
-
-    act(() => {
-      result.current.save({
-        locator: {
-          kind: "pdf_page",
-          page: 2,
-          zoom: 1.25,
-        },
-      });
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-
-    expect(apiFetch).toHaveBeenCalledTimes(1);
-    expect(apiFetch).toHaveBeenCalledWith("/api/media/media-1/reader-state");
-  });
-
-  it("normalizes legacy GET responses and falls back to PATCH when PUT is unavailable", async () => {
-    const apiFetchImpl = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-      if (path === "/api/media/media-1/reader-state" && !init) {
-        return {
-          data: {
-            locator_kind: "fragment_offset",
-            fragment_id: "fragment-1",
-            offset: 42,
-            section_id: null,
-            page: null,
-            zoom: null,
-          },
-        } as T;
-      }
-      if (path === "/api/media/media-1/reader-state" && init?.method === "PUT") {
-        throw new ApiError(405, "E_METHOD_NOT_ALLOWED", "Method not allowed");
-      }
-      if (path === "/api/media/media-1/reader-state" && init?.method === "PATCH") {
-        expect(init.body).toBe(
-          JSON.stringify({
-            locator_kind: "epub_section",
-            fragment_id: null,
-            offset: null,
-            section_id: "chapter-2",
-            page: null,
-            zoom: null,
-          })
-        );
-        return {
-          data: {
-            locator_kind: "epub_section",
-            fragment_id: null,
-            offset: null,
-            section_id: "chapter-2",
-            page: null,
-            zoom: null,
-          },
-        } as T;
+        return { data: PDF_LOCATOR } as T;
       }
       throw new Error(`Unexpected request: ${path}`);
     };
@@ -113,52 +44,77 @@ describe("useReaderResumeState", () => {
     );
 
     await waitFor(() => {
-      expect(result.current.state).toEqual({
-        locator: {
-          kind: "fragment_offset",
-          fragment_id: "fragment-1",
-          offset: 42,
-        },
-      });
+      expect(result.current.state).toEqual(PDF_LOCATOR);
+    });
+
+    vi.useFakeTimers();
+
+    act(() => {
+      result.current.save({ ...PDF_LOCATOR });
     });
 
     act(() => {
-      result.current.save({
-        locator: {
-          kind: "epub_section",
-          section_id: "chapter-2",
-        },
-      });
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(apiFetch).toHaveBeenCalledWith("/api/media/media-1/reader-state");
+  });
+
+  it("flushes the latest pending locator on pagehide", async () => {
+    const nextLocator: ReaderLocator = {
+      source: "fragment-2",
+      anchor: null,
+      text_offset: 84,
+      quote: "second fragment quote",
+      quote_prefix: "before ",
+      quote_suffix: " after",
+      progression: 0.35,
+      total_progression: 0.7,
+      position: 2,
+      page: null,
+      page_progression: null,
+      zoom: null,
+    };
+    const apiFetchImpl = async <T,>(path: string, init?: RequestInit): Promise<T> => {
+      if (path === "/api/media/media-1/reader-state" && !init) {
+        return { data: null } as T;
+      }
+      if (path === "/api/media/media-1/reader-state" && init?.method === "PUT") {
+        expect(init.body).toBe(JSON.stringify(nextLocator));
+        return { data: nextLocator } as T;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    };
+    const apiFetch = vi.fn(apiFetchImpl);
+
+    const { result } = renderHook(() =>
+      useReaderResumeState({
+        mediaId: "media-1",
+        apiFetch: apiFetch as typeof apiFetchImpl,
+        debounceMs: 10_000,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.state).toBeNull();
+    });
+
+    act(() => {
+      result.current.save(nextLocator);
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("pagehide"));
     });
 
     await waitFor(() => {
-      expect(result.current.state).toEqual({
-        locator: {
-          kind: "epub_section",
-          section_id: "chapter-2",
-        },
-      });
+      expect(result.current.state).toEqual(nextLocator);
     });
 
     expect(apiFetch).toHaveBeenNthCalledWith(2, "/api/media/media-1/reader-state", {
       method: "PUT",
-      body: JSON.stringify({
-        locator: {
-          kind: "epub_section",
-          section_id: "chapter-2",
-        },
-      }),
-    });
-    expect(apiFetch).toHaveBeenNthCalledWith(3, "/api/media/media-1/reader-state", {
-      method: "PATCH",
-      body: JSON.stringify({
-        locator_kind: "epub_section",
-        fragment_id: null,
-        offset: null,
-        section_id: "chapter-2",
-        page: null,
-        zoom: null,
-      }),
+      body: JSON.stringify(nextLocator),
     });
   });
 });

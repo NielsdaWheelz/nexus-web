@@ -4429,3 +4429,190 @@ class TestProjectGutenbergCatalogMigration:
         index_names = {row[0] for row in indexes}
         assert "ix_project_gutenberg_catalog_language" in index_names
         assert "ix_project_gutenberg_catalog_title" in index_names
+
+
+class TestEpubNavSourceCutoverMigration:
+    """Data migration coverage for EPUB nav source cutover."""
+
+    @pytest.fixture(autouse=True)
+    def isolate_migration(self):
+        run_alembic_command("downgrade base")
+        yield
+        run_alembic_command("downgrade base")
+        run_alembic_command("upgrade head")
+
+    @pytest.fixture
+    def migration_engine(self):
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+
+    def test_upgrade_0051_to_0052_rewrites_fragment_fallback_rows(self, migration_engine):
+        result = run_alembic_command("upgrade 0052")
+        assert result.returncode == 0, f"upgrade 0052 failed: {result.stderr}"
+
+        user_id = uuid4()
+        media_id = uuid4()
+        fragment_id = uuid4()
+
+        with Session(migration_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'epub', 'Migration EPUB', 'ready_for_reading', :user_id)
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'Chapter text', '<p>Chapter text</p>')
+                    """
+                ),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_nav_locations (
+                        media_id,
+                        location_id,
+                        ordinal,
+                        source_node_id,
+                        label,
+                        fragment_idx,
+                        href_path,
+                        href_fragment,
+                        source
+                    ) VALUES (
+                        :media_id,
+                        'frag-000001',
+                        0,
+                        NULL,
+                        'Chapter 1',
+                        0,
+                        NULL,
+                        NULL,
+                        'spine'
+                    )
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+        result = run_alembic_command("downgrade 0051")
+        assert result.returncode == 0, f"downgrade 0051 failed: {result.stderr}"
+
+        with Session(migration_engine) as session:
+            source = session.execute(
+                text(
+                    """
+                    SELECT source
+                    FROM epub_nav_locations
+                    WHERE media_id = :media_id
+                      AND location_id = 'frag-000001'
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+
+        assert source == "fragment_fallback"
+
+        result = run_alembic_command("upgrade 0052")
+        assert result.returncode == 0, f"upgrade 0052 failed: {result.stderr}"
+
+        with Session(migration_engine) as session:
+            source = session.execute(
+                text(
+                    """
+                    SELECT source
+                    FROM epub_nav_locations
+                    WHERE media_id = :media_id
+                      AND location_id = 'frag-000001'
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+
+        assert source == "spine"
+
+    def test_downgrade_0052_to_0051_rewrites_spine_rows(self, migration_engine):
+        result = run_alembic_command("upgrade 0052")
+        assert result.returncode == 0, f"upgrade 0052 failed: {result.stderr}"
+
+        user_id = uuid4()
+        media_id = uuid4()
+        fragment_id = uuid4()
+
+        with Session(migration_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'epub', 'Migration EPUB', 'ready_for_reading', :user_id)
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'Chapter text', '<p>Chapter text</p>')
+                    """
+                ),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_nav_locations (
+                        media_id,
+                        location_id,
+                        ordinal,
+                        source_node_id,
+                        label,
+                        fragment_idx,
+                        href_path,
+                        href_fragment,
+                        source
+                    ) VALUES (
+                        :media_id,
+                        'frag-000001',
+                        0,
+                        NULL,
+                        'Chapter 1',
+                        0,
+                        NULL,
+                        NULL,
+                        'spine'
+                    )
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+        result = run_alembic_command("downgrade 0051")
+        assert result.returncode == 0, f"downgrade 0051 failed: {result.stderr}"
+
+        with Session(migration_engine) as session:
+            source = session.execute(
+                text(
+                    """
+                    SELECT source
+                    FROM epub_nav_locations
+                    WHERE media_id = :media_id
+                      AND location_id = 'frag-000001'
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+
+        assert source == "fragment_fallback"

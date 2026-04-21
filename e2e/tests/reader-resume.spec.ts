@@ -22,25 +22,33 @@ interface ReaderProfileResponse {
   };
 }
 
-type LocatorType = "fragment_offset" | "epub_section" | "pdf_page";
-type ReaderLocator =
-  | {
-      type: "fragment_offset";
-      fragment_id: string | null;
-      offset: number;
-    }
-  | {
-      type: "epub_section";
-      section_id: string;
-    }
-  | {
-      type: "pdf_page";
-      page: number;
-      zoom: number | null;
-    };
+interface ReaderLocator {
+  source?: string | null;
+  anchor?: string | null;
+  text_offset?: number | null;
+  quote?: string | null;
+  quote_prefix?: string | null;
+  quote_suffix?: string | null;
+  progression?: number | null;
+  total_progression?: number | null;
+  position?: number | null;
+  page?: number | null;
+  page_progression?: number | null;
+  zoom?: number | null;
+}
 
 interface ReaderStateResponse {
-  data: Record<string, unknown> | null;
+  data: ReaderLocator | null;
+}
+
+interface EpubNavigationResponse {
+  data: {
+    sections: Array<{
+      section_id: string;
+      label: string;
+      href_path: string | null;
+    }>;
+  };
 }
 
 function readReaderResumeSeed(): ReaderResumeSeed {
@@ -73,107 +81,34 @@ async function fetchReaderState(
   return payload.data;
 }
 
-function normalizeReaderLocator(data: ReaderStateResponse["data"]): ReaderLocator | null {
-  if (data === null) {
-    return null;
-  }
-  if (typeof data.page === "number") {
-    return {
-      type: "pdf_page",
-      page: data.page,
-      zoom: typeof data.zoom === "number" ? data.zoom : null,
-    };
-  }
-  if (typeof data.source === "string" && typeof data.text_offset === "number") {
-    if (/^[0-9a-f]{8}-[0-9a-f-]{28}$/i.test(data.source)) {
-      return {
-        type: "fragment_offset",
-        fragment_id: data.source,
-        offset: data.text_offset,
-      };
-    }
-    return {
-      type: "epub_section",
-      section_id: data.source,
-    };
-  }
-  if (typeof data.source === "string") {
-    return { type: "epub_section", section_id: data.source };
-  }
-  return null;
-}
-
-async function fetchReaderLocator(
-  request: APIRequestContext,
-  mediaId: string
-): Promise<ReaderLocator | null> {
-  return normalizeReaderLocator(await fetchReaderState(request, mediaId));
-}
-
-function buildReaderStatePut(locator: ReaderLocator | null): Record<string, unknown> | null {
-  if (locator === null) {
-    return null;
-  }
-
-  if (locator.type === "fragment_offset") {
-    return {
-      source: locator.fragment_id,
-      anchor: null,
-      text_offset: locator.offset,
-      quote: null,
-      quote_prefix: null,
-      quote_suffix: null,
-      progression: null,
-      total_progression: null,
-      position: Math.floor(locator.offset / 1024) + 1,
-      page: null,
-      page_progression: null,
-      zoom: null,
-    };
-  }
-
-  if (locator.type === "epub_section") {
-    return {
-      source: locator.section_id,
-      anchor: null,
-      text_offset: 0,
-      quote: null,
-      quote_prefix: null,
-      quote_suffix: null,
-      progression: 0,
-      total_progression: 0,
-      position: 1,
-      page: null,
-      page_progression: null,
-      zoom: null,
-    };
-  }
-
-  return {
-    source: null,
-    anchor: null,
-    text_offset: null,
-    quote: null,
-    quote_prefix: null,
-    quote_suffix: null,
-    progression: null,
-    total_progression: null,
-    position: locator.page,
-    page: locator.page,
-    page_progression: null,
-    zoom: locator.zoom,
-  };
-}
-
-async function patchReaderLocator(
+async function putReaderState(
   request: APIRequestContext,
   mediaId: string,
   locator: ReaderLocator | null
 ): Promise<void> {
   const response = await request.put(`/api/media/${mediaId}/reader-state`, {
-    data: buildReaderStatePut(locator),
+    data: locator,
   });
   expect(response.ok()).toBeTruthy();
+}
+
+async function findEpubSectionIdByLabel(
+  request: APIRequestContext,
+  mediaId: string,
+  label: string
+): Promise<{ section_id: string; href_path: string | null }> {
+  const response = await request.get(`/api/media/${mediaId}/navigation`);
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as EpubNavigationResponse;
+  const section = payload.data.sections.find((item) => item.label === label);
+  expect(section).toBeTruthy();
+  if (!section) {
+    throw new Error(`Expected EPUB section with label "${label}".`);
+  }
+  return {
+    section_id: section.section_id,
+    href_path: section.href_path,
+  };
 }
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
@@ -261,17 +196,14 @@ test.describe("reader settings + resume", () => {
 
       await expect
         .poll(async () => {
-          const locator = await fetchReaderLocator(page.request, mediaId);
-          if (locator?.type !== "fragment_offset") {
-            return null;
-          }
-          return locator.offset;
+          const locator = await fetchReaderState(page.request, mediaId);
+          return locator?.text_offset ?? null;
         })
         .not.toBeNull();
 
-      const savedLocator = await fetchReaderLocator(page.request, mediaId);
-      expect(savedLocator?.type).toBe("fragment_offset");
-      expect(savedLocator?.offset ?? 0).toBeGreaterThan(0);
+      const savedLocator = await fetchReaderState(page.request, mediaId);
+      expect(savedLocator?.source).toBeTruthy();
+      expect(savedLocator?.text_offset ?? 0).toBeGreaterThan(0);
 
       await patchReaderProfile(page.request, { font_size_px: targetFontSize });
       await page.reload();
@@ -290,6 +222,11 @@ test.describe("reader settings + resume", () => {
     const seed = readReaderResumeSeed();
     const mediaId = seed.epub_media_id;
     const chapterTwo = seed.epub_chapter_titles[1];
+    const chapterTwoSection = await findEpubSectionIdByLabel(
+      page.request,
+      mediaId,
+      chapterTwo
+    );
 
     await page.goto(`/media/${mediaId}`);
     const sectionSelect = page.getByLabel("Select section");
@@ -299,14 +236,13 @@ test.describe("reader settings + resume", () => {
 
     await expect
       .poll(async () => {
-        const locator = await fetchReaderLocator(page.request, mediaId);
-        return locator?.type === "epub_section" ? locator.section_id : null;
+        const locator = await fetchReaderState(page.request, mediaId);
+        return locator?.source ?? null;
       })
-      .not.toBeNull();
+      .toBe(chapterTwoSection.href_path);
 
-    const savedLocator = await fetchReaderLocator(page.request, mediaId);
-    expect(savedLocator?.type).toBe("epub_section");
-    expect(savedLocator?.section_id).toBeTruthy();
+    const savedLocator = await fetchReaderState(page.request, mediaId);
+    expect(savedLocator?.source).toBe(chapterTwoSection.href_path);
 
     await page.reload();
     await expect(page.getByRole("heading", { name: chapterTwo })).toBeVisible({ timeout: 15_000 });
@@ -317,8 +253,8 @@ test.describe("reader settings + resume", () => {
     const mediaId = seed.pdf_media_id;
     const expectedPageCount = seed.pdf_page_count;
 
-    await patchReaderLocator(page.request, mediaId, {
-      type: "pdf_page",
+    await putReaderState(page.request, mediaId, {
+      position: 1,
       page: 1,
       zoom: 1,
     });
@@ -346,8 +282,8 @@ test.describe("reader settings + resume", () => {
 
     await expect
       .poll(async () => {
-        const locator = await fetchReaderLocator(page.request, mediaId);
-        if (locator?.type !== "pdf_page" || locator.zoom === null) {
+        const locator = await fetchReaderState(page.request, mediaId);
+        if (locator?.page == null || locator.zoom == null) {
           return null;
         }
         return { page: locator.page, zoom: locator.zoom };
@@ -380,8 +316,8 @@ test.describe("reader settings + resume", () => {
       }
     });
 
-    await patchReaderLocator(page.request, mediaId, {
-      type: "pdf_page",
+    await putReaderState(page.request, mediaId, {
+      position: 1,
       page: 1,
       zoom: 1,
     });
@@ -398,8 +334,8 @@ test.describe("reader settings + resume", () => {
 
     await expect
       .poll(async () => {
-        const locator = await fetchReaderLocator(page.request, mediaId);
-        return locator?.type === "pdf_page" ? locator.page : null;
+        const locator = await fetchReaderState(page.request, mediaId);
+        return locator?.page ?? null;
       })
       .toBe(2);
 

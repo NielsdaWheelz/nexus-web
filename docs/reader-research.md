@@ -37,7 +37,7 @@ intentionally stays with two reader themes: light and dark.
 ### per-media resume
 
 - `reader_media_state` stores resume only
-- the post-cutover API shape is a single nullable flat locator object
+- the reader-state API is `ReaderLocator | null`
 - `null` clears stored resume for that media
 - text readers persist `source`, `text_offset`, quote context,
   `progression`, `total_progression`, and coarse `position`

@@ -145,7 +145,6 @@ export default function MediaPaneBody() {
   ]);
 
   const isReflowableReader = mv.canRead && !mv.isPdf;
-  const pdfResumeLocator = mv.readerResumeState?.page != null ? mv.readerResumeState : null;
   const mediaAuthorMeta = formatMediaAuthors(mv.media?.authors, 2);
   const mediaHeaderMeta = (
     <div className={styles.metadata}>
@@ -658,25 +657,10 @@ export default function MediaPaneBody() {
                 onControlsReady={(controls) => {
                   mv.pdfControlsRef.current = controls;
                 }}
-                startPageNumber={pdfResumeLocator?.page ?? undefined}
-                startPageProgression={pdfResumeLocator?.page_progression ?? undefined}
-                startZoom={pdfResumeLocator?.zoom ?? undefined}
-                onResumeStateChange={(pageNumber, zoom, pageProgression) =>
-                  mv.saveReaderResumeState({
-                    source: null,
-                    anchor: null,
-                    text_offset: null,
-                    quote: null,
-                    quote_prefix: null,
-                    quote_suffix: null,
-                    progression: null,
-                    total_progression: null,
-                    position: pageNumber,
-                    page: pageNumber,
-                    page_progression: pageProgression,
-                    zoom,
-                  })
-                }
+                startPageNumber={mv.readerResumeState?.page ?? undefined}
+                startPageProgression={mv.readerResumeState?.page_progression ?? undefined}
+                startZoom={mv.readerResumeState?.zoom ?? undefined}
+                onResumeStateChange={mv.saveReaderResumeState}
               />
             )
           ) : mv.isEpub ? (

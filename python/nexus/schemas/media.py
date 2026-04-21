@@ -344,6 +344,7 @@ class EpubNavigationSectionOut(BaseModel):
     source_node_id: str | None
     source: Literal["toc", "spine"]
     ordinal: int
+    char_count: int
 
 
 class EpubNavigationTocNodeOut(BaseModel):

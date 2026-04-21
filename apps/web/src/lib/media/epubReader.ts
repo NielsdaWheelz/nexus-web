@@ -33,6 +33,7 @@ export interface EpubNavigationSection {
   source_node_id: string | null;
   source: "toc" | "spine";
   ordinal: number;
+  char_count: number;
 }
 
 export interface EpubNavigationTocNode {

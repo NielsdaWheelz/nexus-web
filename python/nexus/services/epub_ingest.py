@@ -1055,6 +1055,8 @@ def _epub_sanitize(html: str) -> str:
             _sanitize_epub_element(child)
 
     result = tostring(body, encoding="unicode", method="html")
+    if isinstance(result, bytes):
+        result = result.decode("utf-8")
     if result.startswith("<body>") and result.endswith("</body>"):
         result = result[6:-7]
     return result
@@ -1524,9 +1526,7 @@ def _resolve_nav_target(
 
     path_part = unquote(parsed.path or "")
     anchor = parsed.fragment or None
-    resolved_path = (
-        posixpath.normpath(posixpath.join(base_dir, path_part)) if path_part else None
-    )
+    resolved_path = posixpath.normpath(posixpath.join(base_dir, path_part)) if path_part else None
     canonical_href = resolved_path
     if canonical_href and anchor:
         canonical_href = f"{canonical_href}#{anchor}"

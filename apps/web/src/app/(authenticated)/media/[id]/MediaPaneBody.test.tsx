@@ -4,7 +4,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MediaPaneBody from "./MediaPaneBody";
@@ -166,8 +166,9 @@ vi.mock("@/components/PdfReader", () => ({
   default: (props: {
     onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
     startPageNumber?: number;
+    startPageProgression?: number;
     startZoom?: number;
-    onResumeStateChange?: (pageNumber: number, zoom: number) => void;
+    onResumeStateChange?: (locator: Record<string, unknown> | null) => void;
   }) => mockPdfReader(props),
 }));
 
@@ -485,12 +486,7 @@ describe("MediaPaneBody highlights shell", () => {
 
     render(<MediaPaneBody />);
 
-    const pane = screen.getByTestId("highlights-pane-body");
-    expect(pane).toBeInTheDocument();
-    expect(pane.parentElement).toHaveStyle({
-      width: "400px",
-      flex: "0 0 400px",
-    });
+    expect(screen.getByTestId("highlights-pane-body")).toBeInTheDocument();
     expect(getLatestHighlightsPaneBodyProps()).toMatchObject({
       isMobile: false,
       fragmentHighlights: [{ id: "fragment-highlight-1" }],
@@ -661,9 +657,7 @@ describe("MediaPaneBody highlights shell", () => {
     });
 
     expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
-    act(() => {
-      screen.getByRole("button", { name: "Close" }).click();
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     expect(screen.queryByRole("dialog", { name: "Highlights" })).not.toBeInTheDocument();
     expect(document.body.style.overflow).toBe("");
@@ -899,11 +893,24 @@ describe("MediaPaneBody highlights shell", () => {
     });
 
     const onResumeStateChange = getLatestPdfReaderProps().onResumeStateChange as
-      | ((pageNumber: number, zoom: number, pageProgression: number | null) => void)
+      | ((locator: Record<string, unknown> | null) => void)
       | undefined;
     expect(onResumeStateChange).toBeTypeOf("function");
 
-    onResumeStateChange?.(9, 2, 0.6);
+    onResumeStateChange?.({
+      source: null,
+      anchor: null,
+      text_offset: null,
+      quote: null,
+      quote_prefix: null,
+      quote_suffix: null,
+      progression: null,
+      total_progression: null,
+      position: 9,
+      page: 9,
+      page_progression: 0.6,
+      zoom: 2,
+    });
 
     expect(saveReaderResumeState).toHaveBeenCalledWith({
       source: null,

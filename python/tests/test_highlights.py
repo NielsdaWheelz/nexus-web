@@ -1967,4 +1967,3 @@ class TestS6PR02DormantWindowRepair:
                 {"id": h_id},
             ).fetchone()
             assert fa_row is not None
-

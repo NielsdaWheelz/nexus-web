@@ -16,17 +16,17 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.drop_constraint(
+        "ck_epub_nav_locations_source_valid",
+        "epub_nav_locations",
+        type_="check",
+    )
     op.execute(
         """
         UPDATE epub_nav_locations
         SET source = 'spine'
         WHERE source = 'fragment_fallback'
         """
-    )
-    op.drop_constraint(
-        "ck_epub_nav_locations_source_valid",
-        "epub_nav_locations",
-        type_="check",
     )
     op.create_check_constraint(
         "ck_epub_nav_locations_source_valid",
@@ -36,17 +36,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_constraint(
+        "ck_epub_nav_locations_source_valid",
+        "epub_nav_locations",
+        type_="check",
+    )
     op.execute(
         """
         UPDATE epub_nav_locations
         SET source = 'fragment_fallback'
         WHERE source = 'spine'
         """
-    )
-    op.drop_constraint(
-        "ck_epub_nav_locations_source_valid",
-        "epub_nav_locations",
-        type_="check",
     )
     op.create_check_constraint(
         "ck_epub_nav_locations_source_valid",

@@ -2119,7 +2119,9 @@ class TestGetEpubSectionReturnsPayloadAndNavigation:
 
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        resp = auth_client.get(f"/media/{media_id}/sections/ch1.xhtml", headers=auth_headers(user_id))
+        resp = auth_client.get(
+            f"/media/{media_id}/sections/ch1.xhtml", headers=auth_headers(user_id)
+        )
         assert resp.status_code == 200
         section = resp.json()["data"]
         assert "Sentinel content for chapter 1" in section["canonical_text"]

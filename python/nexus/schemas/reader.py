@@ -1,18 +1,12 @@
-"""Reader profile and per-media reader state schemas."""
+"""Reader profile and per-media reader locator schemas."""
 
 from datetime import datetime
-from typing import Annotated, Literal
-from uuid import UUID
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ThemeValue = Literal["light", "dark"]
 FontFamilyValue = Literal["serif", "sans"]
-
-
-# =============================================================================
-# Reader Profile (per-user defaults)
-# =============================================================================
 
 
 class ReaderProfileOut(BaseModel):
@@ -57,82 +51,70 @@ class ReaderProfilePatch(BaseModel):
         return self
 
 
-# =============================================================================
-# Reader Media State (per user + media)
-# =============================================================================
+class ReaderLocator(BaseModel):
+    """Flat layered locator stored in reader_media_state.locator."""
 
-
-class FragmentOffsetLocator(BaseModel):
-    """Canonical fragment-offset resume locator."""
-
-    type: Literal["fragment_offset"] = "fragment_offset"
-    fragment_id: UUID | None = None
-    offset: int = Field(ge=0)
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def reject_null_fragment_id(self) -> "FragmentOffsetLocator":
-        """Explicit null should be omitted instead of serialized."""
-        if "fragment_id" in self.model_fields_set and self.fragment_id is None:
-            raise ValueError("fragment_id cannot be null")
-        return self
-
-
-class EpubSectionLocator(BaseModel):
-    """EPUB navigation resume locator."""
-
-    type: Literal["epub_section"] = "epub_section"
-    section_id: str = Field(min_length=1)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class PdfPageLocator(BaseModel):
-    """PDF page resume locator."""
-
-    type: Literal["pdf_page"] = "pdf_page"
-    page: int = Field(ge=1)
+    source: str | None = None
+    anchor: str | None = None
+    text_offset: int | None = Field(default=None, ge=0)
+    quote: str | None = None
+    quote_prefix: str | None = None
+    quote_suffix: str | None = None
+    progression: float | None = Field(default=None, ge=0.0, le=1.0)
+    total_progression: float | None = Field(default=None, ge=0.0, le=1.0)
+    position: int | None = Field(default=None, ge=1)
+    page: int | None = Field(default=None, ge=1)
+    page_progression: float | None = Field(default=None, ge=0.0, le=1.0)
     zoom: float | None = Field(default=None, ge=0.25, le=4.0)
 
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
-    def reject_null_zoom(self) -> "PdfPageLocator":
-        """Explicit null should be omitted instead of serialized."""
-        if "zoom" in self.model_fields_set and self.zoom is None:
-            raise ValueError("zoom cannot be null")
+    def validate_locator(self) -> "ReaderLocator":
+        """Reject blank or internally inconsistent locator payloads."""
+        if not any(
+            getattr(self, field_name) is not None
+            for field_name in (
+                "source",
+                "anchor",
+                "text_offset",
+                "quote",
+                "quote_prefix",
+                "quote_suffix",
+                "progression",
+                "total_progression",
+                "position",
+                "page",
+                "page_progression",
+                "zoom",
+            )
+        ):
+            raise ValueError("locator cannot be empty; send null to clear reader state")
+
+        for field_name in ("source", "anchor", "quote", "quote_prefix", "quote_suffix"):
+            value = getattr(self, field_name)
+            if field_name in self.model_fields_set and value is not None and not value.strip():
+                raise ValueError(f"{field_name} cannot be blank")
+
+        if self.quote is None and (self.quote_prefix is not None or self.quote_suffix is not None):
+            raise ValueError("quote_prefix and quote_suffix require quote")
+
+        if self.page is None and (self.page_progression is not None or self.zoom is not None):
+            raise ValueError("page is required when page_progression or zoom is provided")
+
+        text_locator_fields_present = any(
+            value is not None
+            for value in (
+                self.anchor,
+                self.text_offset,
+                self.quote,
+                self.quote_prefix,
+                self.quote_suffix,
+                self.progression,
+                self.total_progression,
+            )
+        ) or (self.position is not None and self.page is None)
+        if text_locator_fields_present and self.source is None:
+            raise ValueError("source is required for text locators")
+
         return self
-
-
-ReaderLocator = Annotated[
-    FragmentOffsetLocator | EpubSectionLocator | PdfPageLocator,
-    Field(discriminator="type"),
-]
-
-
-class ReaderMediaStateOut(BaseModel):
-    """Response schema for per-media reader state."""
-
-    id: UUID | None = None
-    media_id: UUID
-    locator: ReaderLocator | None = None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-    @field_serializer("locator", when_used="json")
-    def serialize_locator(self, locator: ReaderLocator | None) -> dict | None:
-        """Emit compact typed locator payloads without null-only keys."""
-        if locator is None:
-            return None
-        return locator.model_dump(mode="json", exclude_none=True)
-
-
-class ReaderMediaStatePut(BaseModel):
-    """PUT body for per-media reader state."""
-
-    locator: ReaderLocator | None
-
-    model_config = ConfigDict(extra="forbid")

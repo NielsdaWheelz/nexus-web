@@ -25,10 +25,9 @@ this records the current reader model and the constraints we actively ship.
 ### per-media resume
 
 - `reader_media_state` stores resume only
-- the contract is a single nullable flat locator on
-  `GET/PUT /api/media/{id}/reader-state`
+- `GET/PUT /api/media/{id}/reader-state` uses `ReaderLocator | null`
 - `null` clears the stored resume state for that media
-- the stored locator fields are:
+- `ReaderLocator` stores:
   - text flow: `source`, `anchor`, `text_offset`,
     `quote`, `quote_prefix`, `quote_suffix`,
     `progression`, `total_progression`, `position`
