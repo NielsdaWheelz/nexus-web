@@ -47,7 +47,6 @@ describe("library detail mixed-entry cutover", () => {
 
   it("shows ready document metadata and keeps the media row action menu working", async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/libraries/lib-1" && (init?.method ?? "GET") === "GET") {
@@ -111,6 +110,28 @@ describe("library detail mixed-entry cutover", () => {
       if (url.pathname === "/api/libraries/lib-1/media/media-1" && init?.method === "DELETE") {
         return jsonResponse({ data: { ok: true } });
       }
+      if (url.pathname === "/api/media/media-1/libraries" && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({
+          data: [
+            {
+              id: "lib-1",
+              name: "Systems Library",
+              color: "#0ea5e9",
+              is_in_library: true,
+              can_add: false,
+              can_remove: true,
+            },
+            {
+              id: "lib-2",
+              name: "Work Library",
+              color: "#22c55e",
+              is_in_library: false,
+              can_add: true,
+              can_remove: false,
+            },
+          ],
+        });
+      }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
@@ -126,10 +147,14 @@ describe("library detail mixed-entry cutover", () => {
     expect(screen.queryByText("Items")).not.toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: "Actions" })[1]);
-    await user.click(await screen.findByRole("menuitem", { name: "Remove from library" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Libraries…" }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Systems Library Remove from library",
+      })
+    );
 
     await waitFor(() => {
-      expect(confirmSpy).toHaveBeenCalledWith('Remove "Intro to systems" from the library?');
       expect(
         fetchSpy.mock.calls.some(([url, init]) => {
           const parsed = new URL(String(url), "http://localhost");
@@ -137,6 +162,7 @@ describe("library detail mixed-entry cutover", () => {
         })
       ).toBe(true);
     });
+    expect(screen.queryByRole("dialog", { name: "Libraries" })).not.toBeInTheDocument();
   });
 
   it("shows exceptional document status and falls back to publisher when author and date are missing", async () => {

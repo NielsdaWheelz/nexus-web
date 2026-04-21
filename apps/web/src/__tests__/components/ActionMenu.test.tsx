@@ -47,4 +47,33 @@ describe("ActionMenu", () => {
       ).not.toBeInTheDocument();
     });
   });
+
+  it("passes the trigger to onSelect and can skip focus restore for panel handoff", async () => {
+    const user = userEvent.setup();
+    const handleSelect = vi.fn();
+
+    render(
+      <ActionMenu
+        options={[
+          {
+            id: "libraries",
+            label: "Libraries…",
+            restoreFocusOnClose: false,
+            onSelect: handleSelect,
+          },
+        ]}
+      />
+    );
+
+    const trigger = screen.getByRole("button", { name: "Actions" });
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Libraries…" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: "Libraries…" })).not.toBeInTheDocument();
+    });
+
+    expect(handleSelect).toHaveBeenCalledWith({ triggerEl: trigger });
+    expect(trigger).not.toHaveFocus();
+  });
 });

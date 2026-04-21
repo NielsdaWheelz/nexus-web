@@ -1,13 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { BookOpen, FileText, Globe, Mic, Radio, Video } from "lucide-react";
+import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import StateMessage from "@/components/ui/StateMessage";
 import ActionMenu from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
 import SortableList from "@/components/sortable/SortableList";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
+import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
 import type {
   LibraryForEdit,
   LibraryMember,
@@ -83,6 +86,7 @@ export default function LibraryPaneBody() {
   const router = usePaneRouter();
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
+  const [removedEntryIds, setRemovedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
@@ -91,6 +95,17 @@ export default function LibraryPaneBody() {
   const [editOpen, setEditOpen] = useState(false);
   const [editMembers, setEditMembers] = useState<LibraryMember[]>([]);
   const [editInvites, setEditInvites] = useState<LibraryInvite[]>([]);
+  const [libraryPanelEntry, setLibraryPanelEntry] = useState<LibraryEntry | null>(null);
+  const [libraryPanelAnchorEl, setLibraryPanelAnchorEl] =
+    useState<HTMLElement | null>(null);
+  const [libraryPanelLibraries, setLibraryPanelLibraries] = useState<
+    LibraryTargetPickerItem[]
+  >([]);
+  const [libraryPanelLoading, setLibraryPanelLoading] = useState(false);
+  const [libraryPanelBusy, setLibraryPanelBusy] = useState(false);
+  const [libraryPanelError, setLibraryPanelError] = useState<string | null>(null);
+  const libraryPanelRequestIdRef = useRef(0);
+  const libraryPanelEntryIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -109,6 +124,7 @@ export default function LibraryPaneBody() {
         }
         setLibrary(libraryResp.data);
         setEntries(entriesResp.data);
+        setRemovedEntryIds(new Set());
         setError(null);
       } catch (err) {
         if (isApiError(err)) {
@@ -130,47 +146,273 @@ export default function LibraryPaneBody() {
     void fetchData();
   }, [id, router]);
 
-  const handleRemoveEntry = async (entry: LibraryEntry) => {
-    const entryTitle = entry.kind === "podcast" ? entry.podcast?.title : entry.media?.title;
-    if (!entryTitle) {
-      return;
-    }
-    if (!confirm(`Remove "${entryTitle}" from the library?`)) {
-      return;
-    }
+  const closeLibraryPanel = useCallback(() => {
+    libraryPanelRequestIdRef.current += 1;
+    libraryPanelEntryIdRef.current = null;
+    setLibraryPanelEntry(null);
+    setLibraryPanelAnchorEl(null);
+    setLibraryPanelLibraries([]);
+    setLibraryPanelLoading(false);
+    setLibraryPanelBusy(false);
+    setLibraryPanelError(null);
+  }, []);
 
-    try {
-      if (entry.kind === "podcast") {
-        if (!entry.podcast) {
-          throw new Error("Library entry is missing podcast payload");
+  const openLibraryPanel = useCallback(
+    async (entry: LibraryEntry, triggerEl: HTMLElement | null) => {
+      const requestId = libraryPanelRequestIdRef.current + 1;
+      libraryPanelRequestIdRef.current = requestId;
+      libraryPanelEntryIdRef.current = entry.id;
+      setLibraryPanelEntry(entry);
+      setLibraryPanelAnchorEl(triggerEl);
+      setLibraryPanelLibraries([]);
+      setLibraryPanelLoading(true);
+      setLibraryPanelBusy(false);
+      setLibraryPanelError(null);
+
+      try {
+        if (entry.kind === "podcast") {
+          if (!entry.podcast) {
+            throw new Error("Library entry is missing podcast payload");
+          }
+          const response = await apiFetch<{
+            data: Array<{
+              id: string;
+              name: string;
+              color: string | null;
+              is_in_library: boolean;
+              can_add: boolean;
+              can_remove: boolean;
+            }>;
+          }>(`/api/podcasts/${entry.podcast.id}/libraries`);
+          if (libraryPanelRequestIdRef.current !== requestId) {
+            return;
+          }
+          setLibraryPanelLibraries(
+            response.data.map((library) => ({
+              id: library.id,
+              name: library.name,
+              color: library.color,
+              isInLibrary: library.is_in_library,
+              canAdd: library.can_add,
+              canRemove: library.can_remove,
+            }))
+          );
+          return;
         }
-        await apiFetch(`/api/libraries/${id}/podcasts/${entry.podcast.id}`, {
-          method: "DELETE",
-        });
-        setEntries((prev) => prev.filter((candidate) => candidate.id !== entry.id));
+
+        if (entry.kind === "media") {
+          if (!entry.media) {
+            throw new Error("Library entry is missing media payload");
+          }
+          const response = await apiFetch<{
+            data: Array<{
+              id: string;
+              name: string;
+              color: string | null;
+              is_in_library: boolean;
+              can_add: boolean;
+              can_remove: boolean;
+            }>;
+          }>(`/api/media/${entry.media.id}/libraries`);
+          if (libraryPanelRequestIdRef.current !== requestId) {
+            return;
+          }
+          setLibraryPanelLibraries(
+            response.data.map((library) => ({
+              id: library.id,
+              name: library.name,
+              color: library.color,
+              isInLibrary: library.is_in_library,
+              canAdd: library.can_add,
+              canRemove: library.can_remove,
+            }))
+          );
+          return;
+        }
+
+        const unsupportedKind: never = entry.kind;
+        throw new Error(`Unsupported library entry kind: ${unsupportedKind}`);
+      } catch (err) {
+        if (libraryPanelRequestIdRef.current !== requestId) {
+          return;
+        }
+        if (isApiError(err)) {
+          setLibraryPanelError(err.message);
+        } else if (err instanceof Error) {
+          setLibraryPanelError(err.message);
+        } else {
+          setLibraryPanelError("Failed to load libraries");
+        }
+      } finally {
+        if (libraryPanelRequestIdRef.current === requestId) {
+          setLibraryPanelLoading(false);
+        }
+      }
+    },
+    []
+  );
+
+  const handleAddToLibrary = useCallback(
+    async (libraryId: string) => {
+      if (!libraryPanelEntry || libraryPanelBusy) {
         return;
       }
-      if (entry.kind === "media") {
-        if (!entry.media) {
-          throw new Error("Library entry is missing media payload");
+      setLibraryPanelBusy(true);
+      setLibraryPanelError(null);
+      try {
+        if (libraryPanelEntry.kind === "podcast") {
+          if (!libraryPanelEntry.podcast) {
+            throw new Error("Library entry is missing podcast payload");
+          }
+          await apiFetch(`/api/libraries/${libraryId}/podcasts`, {
+            method: "POST",
+            body: JSON.stringify({ podcast_id: libraryPanelEntry.podcast.id }),
+          });
+        } else if (libraryPanelEntry.kind === "media") {
+          if (!libraryPanelEntry.media) {
+            throw new Error("Library entry is missing media payload");
+          }
+          await apiFetch(`/api/libraries/${libraryId}/media`, {
+            method: "POST",
+            body: JSON.stringify({ media_id: libraryPanelEntry.media.id }),
+          });
+        } else {
+          const unsupportedKind: never = libraryPanelEntry.kind;
+          throw new Error(`Unsupported library entry kind: ${unsupportedKind}`);
         }
-        await apiFetch(`/api/libraries/${id}/media/${entry.media.id}`, {
-          method: "DELETE",
-        });
-        setEntries((prev) => prev.filter((candidate) => candidate.id !== entry.id));
+
+        if (libraryPanelEntryIdRef.current === libraryPanelEntry.id) {
+          setLibraryPanelLibraries((current) =>
+            current.map((library) =>
+              library.id === libraryId
+                ? {
+                    ...library,
+                    isInLibrary: true,
+                    canAdd: false,
+                    canRemove: true,
+                  }
+                : library
+            )
+          );
+        }
+      } catch (err) {
+        if (isApiError(err)) {
+          setLibraryPanelError(err.message);
+        } else if (err instanceof Error) {
+          setLibraryPanelError(err.message);
+        } else {
+          setLibraryPanelError("Failed to add item to library");
+        }
+      } finally {
+        setLibraryPanelBusy(false);
+      }
+    },
+    [libraryPanelBusy, libraryPanelEntry]
+  );
+
+  const handleRemoveFromLibrary = useCallback(
+    async (libraryId: string) => {
+      if (!libraryPanelEntry || libraryPanelBusy) {
         return;
       }
+      const entry = libraryPanelEntry;
+      const removingCurrentEntry = libraryId === id;
+      const previousEntries = entries;
+      const previousRemovedEntryIds = removedEntryIds;
+      setLibraryPanelBusy(true);
+      setLibraryPanelError(null);
 
-      const unsupportedKind: never = entry.kind;
-      throw new Error(`Unsupported library entry kind: ${unsupportedKind}`);
-    } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      } else {
-        setError("Failed to remove library entry");
+      if (removingCurrentEntry) {
+        setRemovedEntryIds((current) => {
+          const next = new Set(current);
+          next.add(entry.id);
+          return next;
+        });
+        flushSync(() => {
+          setEntries((current) =>
+            current.filter((candidate) => {
+              if (candidate.id === entry.id) {
+                return false;
+              }
+              if (
+                entry.kind === "media" &&
+                entry.media &&
+                candidate.kind === "media" &&
+                candidate.media?.id === entry.media.id
+              ) {
+                return false;
+              }
+              if (
+                entry.kind === "podcast" &&
+                entry.podcast &&
+                candidate.kind === "podcast" &&
+                candidate.podcast?.id === entry.podcast.id
+              ) {
+                return false;
+              }
+              return true;
+            })
+          );
+        });
+        closeLibraryPanel();
       }
-    }
-  };
+
+      try {
+        if (entry.kind === "podcast") {
+          if (!entry.podcast) {
+            throw new Error("Library entry is missing podcast payload");
+          }
+          await apiFetch(`/api/libraries/${libraryId}/podcasts/${entry.podcast.id}`, {
+            method: "DELETE",
+          });
+        } else if (entry.kind === "media") {
+          if (!entry.media) {
+            throw new Error("Library entry is missing media payload");
+          }
+          await apiFetch(`/api/libraries/${libraryId}/media/${entry.media.id}`, {
+            method: "DELETE",
+          });
+        } else {
+          const unsupportedKind: never = entry.kind;
+          throw new Error(`Unsupported library entry kind: ${unsupportedKind}`);
+        }
+
+        if (removingCurrentEntry) {
+          return;
+        }
+
+        if (libraryPanelEntryIdRef.current === entry.id) {
+          setLibraryPanelLibraries((current) =>
+            current.map((library) =>
+              library.id === libraryId
+                ? {
+                    ...library,
+                    isInLibrary: false,
+                    canAdd: true,
+                    canRemove: false,
+                  }
+                : library
+            )
+          );
+        }
+      } catch (err) {
+        if (removingCurrentEntry) {
+          setEntries(previousEntries);
+          setRemovedEntryIds(previousRemovedEntryIds);
+        }
+        if (isApiError(err)) {
+          setLibraryPanelError(err.message);
+        } else if (err instanceof Error) {
+          setLibraryPanelError(err.message);
+        } else {
+          setLibraryPanelError("Failed to remove item from library");
+        }
+      } finally {
+        setLibraryPanelBusy(false);
+      }
+    },
+    [closeLibraryPanel, entries, id, libraryPanelBusy, libraryPanelEntry, removedEntryIds]
+  );
 
   const handleDeleteLibrary = async () => {
     if (!library || library.is_default) {
@@ -375,20 +617,39 @@ export default function LibraryPaneBody() {
     role: library.role,
     owner_user_id: library.owner_user_id,
   };
+  const visibleEntries = entries.filter((entry) => !removedEntryIds.has(entry.id));
 
   return (
     <>
+      <LibraryMembershipPanel
+        open={libraryPanelEntry !== null}
+        title="Libraries"
+        anchorEl={libraryPanelAnchorEl}
+        libraries={libraryPanelLibraries}
+        loading={libraryPanelLoading}
+        busy={libraryPanelBusy}
+        error={libraryPanelError}
+        emptyMessage="No non-default libraries available."
+        onClose={closeLibraryPanel}
+        onAddToLibrary={(libraryId) => {
+          void handleAddToLibrary(libraryId);
+        }}
+        onRemoveFromLibrary={(libraryId) => {
+          void handleRemoveFromLibrary(libraryId);
+        }}
+      />
       <SectionCard>
         <div className={styles.content}>
           {error && <StateMessage variant="error">{error}</StateMessage>}
 
-          {entries.length === 0 ? (
+          {visibleEntries.length === 0 ? (
             <StateMessage variant="empty">No podcasts or media in this library yet.</StateMessage>
           ) : (
             <SortableList
+              key={visibleEntries.map((entry) => entry.id).join(":")}
               className={styles.mediaList}
               itemClassName={styles.mediaListItem}
-              items={entries}
+              items={visibleEntries}
               getItemId={(entry) => entry.id}
               onReorder={handleReorderEntries}
               renderItem={({ item, handleProps, isDragging }) => {
@@ -403,11 +664,11 @@ export default function LibraryPaneBody() {
                   library.role === "admin"
                     ? [
                         {
-                          id: "remove-from-library",
-                          label: "Remove from library",
-                          tone: "danger" as const,
-                          onSelect: () => {
-                            void handleRemoveEntry(item);
+                          id: "libraries",
+                          label: "Libraries…",
+                          restoreFocusOnClose: false,
+                          onSelect: ({ triggerEl }: { triggerEl: HTMLButtonElement | null }) => {
+                            void openLibraryPanel(item, triggerEl);
                           },
                         },
                       ]

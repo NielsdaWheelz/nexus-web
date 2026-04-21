@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import PodcastsPage from "./page";
 import PodcastDetailPage from "./[podcastId]/page";
+import ActionMenu from "@/components/ui/ActionMenu";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 
 const mockUsePaneParam = vi.fn<(param: string) => string | null>();
@@ -11,6 +12,41 @@ const mockPush = vi.fn<(href: string) => void>();
 const mockUsePaneChromeOverride = vi.fn<(overrides: Record<string, unknown>) => void>();
 const mockViewportState = { isMobile: false };
 const mockRequestOpenInAppPane = vi.fn();
+const mockLibraryMembershipPanel = vi.fn(
+  (props: {
+    open?: boolean;
+    loading?: boolean;
+    libraries?: Array<{ id: string; name: string; isInLibrary: boolean }>;
+    onClose?: () => void;
+    onAddToLibrary?: (libraryId: string) => void;
+    onRemoveFromLibrary?: (libraryId: string) => void;
+  }) => {
+    if (!props.open) {
+      return null;
+    }
+    return (
+      <div role="dialog" aria-label="Libraries">
+        {props.loading ? <div>Loading libraries...</div> : null}
+        {(props.libraries ?? []).map((library) => (
+          <button
+            key={library.id}
+            type="button"
+            onClick={() =>
+              library.isInLibrary
+                ? props.onRemoveFromLibrary?.(library.id)
+                : props.onAddToLibrary?.(library.id)
+            }
+          >
+            {library.name}
+          </button>
+        ))}
+        <button type="button" onClick={() => props.onClose?.()}>
+          Close
+        </button>
+      </div>
+    );
+  }
+);
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
@@ -76,6 +112,11 @@ vi.mock("@/lib/panes/paneRouteRegistry", () => ({
   getParentHref: () => null,
   DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX: 360,
   DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX: 360,
+}));
+
+vi.mock("@/components/LibraryMembershipPanel", () => ({
+  default: (props: Parameters<typeof mockLibraryMembershipPanel>[0]) =>
+    mockLibraryMembershipPanel(props),
 }));
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -175,12 +216,35 @@ function renderLatestPaneActions() {
   return render(<>{actions}</>);
 }
 
+function renderLatestPaneOptionsMenu() {
+  const options = getLatestPaneOptions();
+  if (options.length === 0) {
+    throw new Error("Expected pane options override to be present");
+  }
+  return render(<ActionMenu label="Options" options={options as never} />);
+}
+
+function getLatestPaneOptions() {
+  const options = getLatestChromeOverride().options;
+  if (!Array.isArray(options)) {
+    return [];
+  }
+  return options as Array<{
+    id: string;
+    label: string;
+    tone?: "default" | "danger";
+    disabled?: boolean;
+    onSelect?: (context?: { triggerEl?: HTMLElement | null }) => void;
+  }>;
+}
+
 describe("podcasts product flows", () => {
   beforeEach(() => {
     mockUsePaneParam.mockReset();
     mockPush.mockReset();
     mockUsePaneChromeOverride.mockReset();
     mockRequestOpenInAppPane.mockReset();
+    mockLibraryMembershipPanel.mockClear();
     mockViewportState.isMobile = false;
     vi.restoreAllMocks();
   });
@@ -342,8 +406,13 @@ describe("podcasts product flows", () => {
       )
     );
 
-    expect((await screen.findAllByRole("button", { name: "Libraries" })).length).toBeGreaterThan(0);
-    await user.click(screen.getByRole("button", { name: "Unsubscribe" }));
+    expect(await screen.findByRole("heading", { name: "Systems Podcast" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Libraries" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unsubscribe" })).not.toBeInTheDocument();
+
+    const optionsView = renderLatestPaneOptionsMenu();
+    await user.click(screen.getByRole("button", { name: "Options" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Unsubscribe" }));
 
     await waitFor(() => {
       expect(confirmSpy).toHaveBeenCalledWith(
@@ -359,6 +428,8 @@ describe("podcasts product flows", () => {
         })
       ).toBe(true);
     });
+
+    optionsView.unmount();
   });
 
   it("shows episode library controls from the detail drawer", async () => {
@@ -413,7 +484,18 @@ describe("podcasts product flows", () => {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/media/media-0/libraries") {
-        return jsonResponse({ data: [] });
+        return jsonResponse({
+          data: [
+            {
+              id: "library-sports",
+              name: "Sports",
+              color: null,
+              is_in_library: false,
+              can_add: true,
+              can_remove: false,
+            },
+          ],
+        });
       }
       if (url.pathname === "/api/playback/queue") {
         return jsonResponse({ data: [] });
@@ -450,7 +532,11 @@ describe("podcasts product flows", () => {
 
     const episodeDrawer = await screen.findByRole("dialog", { name: "Episodes" });
     expect(within(episodeDrawer).getByText("Episode 0")).toBeInTheDocument();
-    expect(within(episodeDrawer).getByRole("button", { name: "Libraries" })).toBeVisible();
+    expect(within(episodeDrawer).queryByRole("button", { name: "Libraries" })).not.toBeInTheDocument();
+    await user.click(within(episodeDrawer).getByRole("button", { name: "Actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Libraries…" }));
+    const librariesDialog = await screen.findByRole("dialog", { name: "Libraries" });
+    expect(within(librariesDialog).getByRole("button", { name: "Sports" })).toBeInTheDocument();
   });
 
   it("routes the empty subscriptions state to browse", async () => {

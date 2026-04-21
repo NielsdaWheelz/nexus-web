@@ -3,11 +3,47 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ReactNode } from "react";
 import PodcastDetailPaneBody from "./PodcastDetailPaneBody";
+import ActionMenu from "@/components/ui/ActionMenu";
 
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 const mockUsePaneChromeOverride = vi.fn<(overrides: Record<string, unknown>) => void>();
 const mockViewportState = { isMobile: false };
 const mockRequestOpenInAppPane = vi.fn();
+const mockLibraryMembershipPanel = vi.fn(
+  (props: {
+    open?: boolean;
+    loading?: boolean;
+    libraries?: Array<{ id: string; name: string; isInLibrary: boolean }>;
+    onClose?: () => void;
+    onAddToLibrary?: (libraryId: string) => void;
+    onRemoveFromLibrary?: (libraryId: string) => void;
+  }) => {
+    if (!props.open) {
+      return null;
+    }
+    return (
+      <div role="dialog" aria-label="Libraries">
+        {props.loading ? <div>Loading libraries...</div> : null}
+        {(props.libraries ?? []).map((library) => (
+          <button
+            key={library.id}
+            type="button"
+            onClick={() =>
+              library.isInLibrary
+                ? props.onRemoveFromLibrary?.(library.id)
+                : props.onAddToLibrary?.(library.id)
+            }
+          >
+            {library.name}
+          </button>
+        ))}
+        <button type="button" onClick={() => props.onClose?.()}>
+          Close
+        </button>
+      </div>
+    );
+  }
+);
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
@@ -60,6 +96,11 @@ vi.mock("@/lib/panes/paneRouteRegistry", () => ({
   DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX: 360,
 }));
 
+vi.mock("@/components/LibraryMembershipPanel", () => ({
+  default: (props: Parameters<typeof mockLibraryMembershipPanel>[0]) =>
+    mockLibraryMembershipPanel(props),
+}));
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -83,6 +124,14 @@ function renderLatestPaneActions() {
   return render(<>{actions}</>);
 }
 
+function renderLatestPaneOptionsMenu() {
+  const options = getLatestPaneOptions();
+  if (options.length === 0) {
+    throw new Error("Expected pane options override to be present");
+  }
+  return render(<ActionMenu label="Options" options={options as never} />);
+}
+
 function getLatestPaneOptions() {
   const options = getLatestChromeOverride().options;
   if (!Array.isArray(options)) {
@@ -93,7 +142,7 @@ function getLatestPaneOptions() {
     label: string;
     tone?: "default" | "danger";
     disabled?: boolean;
-    onSelect?: () => void;
+    onSelect?: (context?: { triggerEl?: HTMLElement | null }) => void;
   }>;
 }
 
@@ -143,6 +192,7 @@ describe("PodcastDetailPaneBody", () => {
     mockUsePaneChromeOverride.mockReset();
     mockRequestOpenInAppPane.mockReset();
     mockRequestOpenInAppPane.mockReturnValue(false);
+    mockLibraryMembershipPanel.mockClear();
     mockViewportState.isMobile = false;
     vi.restoreAllMocks();
     mockUsePaneParam.mockImplementation((paramName) =>
@@ -306,7 +356,18 @@ describe("PodcastDetailPaneBody", () => {
         return jsonResponse({ data: [buildEpisode()] });
       }
       if (url.pathname === "/api/podcasts/podcast-1/libraries") {
-        return jsonResponse({ data: [] });
+        return jsonResponse({
+          data: [
+            {
+              id: "library-sports",
+              name: "Sports",
+              color: null,
+              is_in_library: false,
+              can_add: true,
+              can_remove: false,
+            },
+          ],
+        });
       }
       if (url.pathname === "/api/libraries") {
         return jsonResponse({ data: [] });
@@ -320,11 +381,24 @@ describe("PodcastDetailPaneBody", () => {
     render(<PodcastDetailPaneBody />);
 
     expect(await screen.findByRole("heading", { name: "Systems Podcast" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Libraries" }).length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Refresh sync" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Unsubscribe" })).toBeInTheDocument();
-    expect(getLatestPaneOptions()).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Libraries" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refresh sync" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unsubscribe" })).not.toBeInTheDocument();
+    expect(getLatestPaneOptions().map((option) => option.label)).toEqual([
+      "Libraries…",
+      "Settings",
+      "Refresh sync",
+      "Unsubscribe",
+    ]);
+
+    const optionsView = renderLatestPaneOptionsMenu();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Options" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Libraries…" }));
+    const librariesDialog = await screen.findByRole("dialog", { name: "Libraries" });
+    expect(within(librariesDialog).getByRole("button", { name: "Sports" })).toBeInTheDocument();
+    optionsView.unmount();
   });
 
   it("opens and closes the mobile episodes drawer from the pane header action", async () => {

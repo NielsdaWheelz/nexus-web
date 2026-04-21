@@ -16,7 +16,6 @@ import {
   type PdfReaderControlsState,
 } from "@/components/PdfReader";
 import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import { useToast } from "@/components/Toast";
 import {
   applyHighlightsToHtml,
@@ -50,11 +49,9 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useReaderContext, useReaderResumeState } from "@/lib/reader";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import {
-  fetchAllEpubChapterSummaries,
   normalizeEpubNavigationToc,
   resolveInitialEpubSectionId,
   isReadableStatus,
-  type EpubChapterSummary,
   type EpubNavigationResponse,
   type EpubNavigationSection,
   type EpubSectionContent,
@@ -155,9 +152,6 @@ export default function useMediaViewState(id: string) {
   const readerResumeProgression = readerLocator?.progression ?? null;
   const readerResumeTotalProgression = readerLocator?.total_progression ?? null;
   const readerResumePosition = readerLocator?.position ?? null;
-  const readerResumePage = readerLocator?.page ?? null;
-  const readerResumePageProgression = readerLocator?.page_progression ?? null;
-  const readerResumeZoom = readerLocator?.zoom ?? null;
   const scrollRestoreAppliedRef = useRef(false);
   const lastSavedTextAnchorOffsetRef = useRef<number | null>(null);
   const [textRestoreSettled, setTextRestoreSettled] = useState(false);
@@ -184,9 +178,6 @@ export default function useMediaViewState(id: string) {
     useState<TranscriptRequestForecast | null>(null);
 
   // ---- EPUB state ----
-  const [epubChapterSummaries, setEpubChapterSummaries] = useState<EpubChapterSummary[] | null>(
-    null
-  );
   const [epubSections, setEpubSections] = useState<EpubNavigationSection[] | null>(null);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [pendingAnchorId, setPendingAnchorId] = useState<string | null>(null);
@@ -484,54 +475,6 @@ export default function useMediaViewState(id: string) {
     }
     return activeContent?.fragmentId ?? null;
   }, [activeContent?.fragmentId, activeEpubSection?.href_path, isEpub, isPdf]);
-
-  const activeTextAnchor = useMemo(() => {
-    if (!isEpub) {
-      return null;
-    }
-    return activeEpubSection?.anchor_id ?? null;
-  }, [activeEpubSection?.anchor_id, isEpub]);
-
-  const totalTextLength = useMemo(() => {
-    if (isPdf) {
-      return 0;
-    }
-    if (isEpub) {
-      return (
-        epubChapterSummaries?.reduce((sum, chapter) => sum + chapter.char_count, 0) ??
-        (activeContent ? canonicalCpLength(activeContent.canonicalText) : 0)
-      );
-    }
-    return fragments.reduce((sum, fragment) => sum + canonicalCpLength(fragment.canonical_text), 0);
-  }, [activeContent, epubChapterSummaries, fragments, isEpub, isPdf]);
-
-  const activeTextStartOffset = useMemo(() => {
-    if (!activeContent || isPdf) {
-      return 0;
-    }
-    if (isEpub && activeEpubSection) {
-      if (!epubChapterSummaries) {
-        return 0;
-      }
-      let total = 0;
-      for (const chapter of epubChapterSummaries) {
-        if (chapter.idx >= activeEpubSection.fragment_idx) {
-          break;
-        }
-        total += chapter.char_count;
-      }
-      return total;
-    }
-
-    let total = 0;
-    for (const fragment of fragments) {
-      if (fragment.id === activeContent.fragmentId) {
-        break;
-      }
-      total += canonicalCpLength(fragment.canonical_text);
-    }
-    return total;
-  }, [activeContent, activeEpubSection, epubChapterSummaries, fragments, isEpub, isPdf]);
 
   useEffect(() => {
     // Reset PDF-specific pane state whenever media identity/type changes.
@@ -846,12 +789,8 @@ export default function useMediaViewState(id: string) {
 
     const loadEpub = async () => {
       try {
-        const [sections, chapters] = await Promise.all([
-          loadEpubNavigation(),
-          fetchAllEpubChapterSummaries(apiFetch, id),
-        ]);
+        const sections = await loadEpubNavigation();
         if (cancelled) return;
-        setEpubChapterSummaries(chapters);
 
         let resolvedSectionId = requestedEpubLoc;
 
@@ -868,28 +807,13 @@ export default function useMediaViewState(id: string) {
           resolvedSectionId = sourceSection?.section_id ?? null;
         }
 
-        if (!resolvedSectionId && readerResumeTotalProgression !== null && chapters.length > 0) {
+        if (!resolvedSectionId && readerResumeTotalProgression !== null && sections.length > 0) {
           const clampedProgression = Math.max(0, Math.min(readerResumeTotalProgression, 1));
-          const totalChars = chapters.reduce((sum, chapter) => sum + chapter.char_count, 0);
-          let targetIdx = chapters[0]?.idx ?? null;
-
-          if (totalChars > 0) {
-            const targetOffset = Math.floor(totalChars * clampedProgression);
-            let walked = 0;
-            for (const chapter of chapters) {
-              const nextWalked = walked + chapter.char_count;
-              if (targetOffset <= nextWalked) {
-                targetIdx = chapter.idx;
-                break;
-              }
-              walked = nextWalked;
-            }
-          }
-
-          if (targetIdx !== null) {
-            const progressionSection = sections.find((section) => section.fragment_idx === targetIdx);
-            resolvedSectionId = progressionSection?.section_id ?? null;
-          }
+          const targetOrdinal = Math.min(
+            sections.length - 1,
+            Math.floor(clampedProgression * sections.length)
+          );
+          resolvedSectionId = sections[targetOrdinal]?.section_id ?? null;
         }
 
         if (!resolvedSectionId && readerResumePosition !== null) {
@@ -1015,26 +939,15 @@ export default function useMediaViewState(id: string) {
     setPendingAnchorId(section.anchor_id ?? section.section_id);
   }, [isEpub, epubSections, requestedEpubLoc, activeSectionId]);
 
-  // EPUB: persist section for resume
-  useEffect(() => {
-    if (!isEpub || !activeSectionId || readerResumeStateLoading) return;
-    saveReaderResumeState({
-      locator: {
-        kind: "epub_section",
-        section_id: activeSectionId,
-      },
-    });
-  }, [isEpub, activeSectionId, readerResumeStateLoading, saveReaderResumeState]);
-
   useEffect(() => {
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
     setTextRestoreSettled(false);
   }, [id, isEpub, isPdf, activeContent?.fragmentId]);
 
-  // Web article/transcript: restore canonical text-anchor from reader state.
+  // Restore text locators for web, transcript, and EPUB content.
   useEffect(() => {
-    if (isPdf || isEpub || !activeContent) {
+    if (isPdf || !activeContent) {
       setTextRestoreSettled(false);
       return;
     }
@@ -1045,25 +958,47 @@ export default function useMediaViewState(id: string) {
       setTextRestoreSettled(true);
       return;
     }
-    if (
-      readerLocator?.kind !== "fragment_offset" ||
-      scrollRestoreAppliedRef.current
-    ) {
+    if (scrollRestoreAppliedRef.current) {
       setTextRestoreSettled(true);
       return;
     }
-    if (
-      readerResumeFragmentId &&
-      readerResumeFragmentId !== activeContent.fragmentId
-    ) {
+    if (readerResumeSource && activeTextSource && readerResumeSource !== activeTextSource) {
       setTextRestoreSettled(true);
       return;
     }
-    if (readerResumeOffset === null) {
+
+    let resumeOffset = readerResumeTextOffset;
+    if (resumeOffset === null) {
+      resumeOffset = findCanonicalOffsetFromQuote(
+        activeContent.canonicalText,
+        readerResumeQuote,
+        readerResumeQuotePrefix,
+        readerResumeQuoteSuffix
+      );
+    }
+    if (resumeOffset === null && readerResumeProgression !== null) {
+      resumeOffset = Math.floor(
+        canonicalCpLength(activeContent.canonicalText) *
+          Math.max(0, Math.min(readerResumeProgression, 1))
+      );
+    }
+    if (resumeOffset === null && readerResumeTotalProgression !== null && totalTextLength > 0) {
+      const totalOffset = Math.floor(
+        totalTextLength * Math.max(0, Math.min(readerResumeTotalProgression, 1))
+      );
+      const localOffset = totalOffset - activeTextStartOffset;
+      const localLength = canonicalCpLength(activeContent.canonicalText);
+      if (localOffset >= 0 && localOffset <= localLength) {
+        resumeOffset = localOffset;
+      }
+    }
+    if (resumeOffset === null) {
+      if (isEpub && pendingAnchorId) {
+        return;
+      }
       setTextRestoreSettled(true);
       return;
     }
-    const resumeOffset = readerResumeOffset;
 
     const container = getPaneScrollContainer(contentRef.current);
     if (!container) {
@@ -1110,19 +1045,27 @@ export default function useMediaViewState(id: string) {
     isPdf,
     isEpub,
     activeContent,
-    readerLocator?.kind,
-    readerResumeFragmentId,
-    readerResumeOffset,
+    activeTextSource,
+    activeTextStartOffset,
+    pendingAnchorId,
+    readerResumeProgression,
+    readerResumeQuote,
+    readerResumeQuotePrefix,
+    readerResumeQuoteSuffix,
     readerResumeStateLoading,
+    readerResumeSource,
+    readerResumeTextOffset,
+    readerResumeTotalProgression,
     isMismatchDisabled,
+    totalTextLength,
   ]);
 
-  // Web article/transcript: persist canonical text-anchor for resume.
+  // Persist text locators for web, transcript, and EPUB content.
   useEffect(() => {
     if (
       isPdf ||
-      isEpub ||
       !activeContent ||
+      !activeTextSource ||
       isMismatchDisabled ||
       readerResumeStateLoading ||
       !textRestoreSettled
@@ -1152,12 +1095,27 @@ export default function useMediaViewState(id: string) {
           return;
         }
         lastSavedTextAnchorOffsetRef.current = anchorOffset;
+        const quoteWindow = buildCanonicalQuoteWindow(
+          activeContent.canonicalText,
+          anchorOffset
+        );
+        const activeLength = canonicalCpLength(activeContent.canonicalText);
+        const absoluteOffset = activeTextStartOffset + anchorOffset;
         saveReaderResumeState({
-          locator: {
-            kind: "fragment_offset",
-            fragment_id: activeContent.fragmentId,
-            offset: anchorOffset,
-          },
+          source: activeTextSource,
+          anchor: activeTextAnchor,
+          text_offset: anchorOffset,
+          quote: quoteWindow.quote,
+          quote_prefix: quoteWindow.quotePrefix,
+          quote_suffix: quoteWindow.quoteSuffix,
+          progression:
+            activeLength > 0 ? Math.min(1, anchorOffset / activeLength) : 0,
+          total_progression:
+            totalTextLength > 0 ? Math.min(1, absoluteOffset / totalTextLength) : 0,
+          position: Math.floor(absoluteOffset / READER_POSITION_BUCKET_CP) + 1,
+          page: null,
+          page_progression: null,
+          zoom: null,
         });
       });
     };
@@ -1171,12 +1129,15 @@ export default function useMediaViewState(id: string) {
     };
   }, [
     isPdf,
-    isEpub,
     activeContent,
+    activeTextAnchor,
+    activeTextSource,
+    activeTextStartOffset,
     saveReaderResumeState,
     isMismatchDisabled,
     readerResumeStateLoading,
     textRestoreSettled,
+    totalTextLength,
   ]);
 
   // Scroll to anchor target after section content loads.
@@ -1255,11 +1216,13 @@ export default function useMediaViewState(id: string) {
       if (target) {
         target.scrollIntoView({ block: "start", behavior: "auto" });
         setPendingAnchorId(null);
+        setTextRestoreSettled(true);
         return;
       }
 
       if (attempt >= MAX_ATTEMPTS) {
         setPendingAnchorId(null);
+        setTextRestoreSettled(true);
         return;
       }
 
@@ -1770,7 +1733,7 @@ export default function useMediaViewState(id: string) {
         const linkTarget = resolveEpubInternalLinkTarget(
           anchorEl.getAttribute("href"),
           activeSectionId,
-          epubToc
+          epubSections
         );
         if (linkTarget) {
           e.preventDefault();
@@ -1814,7 +1777,6 @@ export default function useMediaViewState(id: string) {
       activeSectionId,
       clearFocus,
       epubSections,
-      epubToc,
       handleHighlightClick,
       id,
       router,
@@ -2150,71 +2112,6 @@ export default function useMediaViewState(id: string) {
     [router]
   );
 
-  // ---- Edit Popover state ----
-  const [editPopoverHighlightId, setEditPopoverHighlightId] = useState<string | null>(null);
-  const [editPopoverAnchorRect, setEditPopoverAnchorRect] = useState<DOMRect | null>(null);
-
-  const editPopoverHighlight = useMemo(() => {
-    if (!editPopoverHighlightId) return null;
-    const id = editPopoverHighlightId;
-    const highlight =
-      highlights.find((item) => item.id === id) ??
-      pdfPageHighlights.find((item) => item.id === id);
-    if (!highlight) {
-      return null;
-    }
-    return {
-      id: highlight.id,
-      color: highlight.color,
-      annotationBody: highlight.annotation?.body ?? null,
-    };
-  }, [editPopoverHighlightId, highlights, pdfPageHighlights]);
-
-  const dismissEditPopover = useCallback(() => {
-    setEditPopoverHighlightId(null);
-    setEditPopoverAnchorRect(null);
-    cancelEditBounds();
-  }, [cancelEditBounds]);
-
-  const buildRowOptions = useCallback(
-    (highlightId: string): ActionMenuOption[] => {
-      const items: ActionMenuOption[] = [];
-      items.push({
-        id: "edit-highlight",
-        label: "Edit highlight",
-        onSelect: () => {
-          const contentEl = (isPdf ? pdfContentRef : contentRef).current;
-          const rowEl = contentEl
-            ? contentEl.querySelector<HTMLElement>(
-                `[data-highlight-id="${escapeAttrValue(highlightId)}"]`
-              )
-            : document.querySelector<HTMLElement>(
-                `[data-highlight-id="${escapeAttrValue(highlightId)}"]`
-              );
-          if (rowEl) {
-            setEditPopoverAnchorRect(rowEl.getBoundingClientRect());
-          } else {
-            setEditPopoverAnchorRect(new DOMRect(200, 200, 200, 44));
-          }
-          setEditPopoverHighlightId(highlightId);
-          focusHighlight(highlightId);
-        },
-      });
-      items.push({
-        id: "delete-highlight",
-        label: "Delete",
-        tone: "danger",
-        onSelect: () => {
-          if (window.confirm("Delete this highlight?")) {
-            void handleDelete(highlightId);
-          }
-        },
-      });
-      return items;
-    },
-    [contentRef, focusHighlight, handleDelete, isPdf, pdfContentRef]
-  );
-
   // ==========================================================================
   // EPUB Section Navigation
   // ==========================================================================
@@ -2369,14 +2266,6 @@ export default function useMediaViewState(id: string) {
     handleRequestTranscript,
     transcriptRequestInFlight,
     transcriptRequestForecast,
-
-    // Edit popover
-    editPopoverAnchorRect,
-    editPopoverHighlight,
-    dismissEditPopover,
-
-    // Row options
-    buildRowOptions,
     // Viewport
     isMobileViewport,
   };

@@ -61,6 +61,7 @@ export default function MediaPaneBody() {
   // ==========================================================================
 
   const [highlightsDrawerOpen, setHighlightsDrawerOpen] = useState(false);
+  const [mobileDetailRequestKey, setMobileDetailRequestKey] = useState(0);
   const [quoteDrawerState, setQuoteDrawerState] = useState<{
     context: ContextItem;
     targetPaneId: string | null;
@@ -77,6 +78,7 @@ export default function MediaPaneBody() {
       const highlightId = mv.handleContentClick(e);
       if (mv.isMobileViewport && mv.showHighlightsPane && highlightId) {
         setHighlightsDrawerOpen(true);
+        setMobileDetailRequestKey((value) => value + 1);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- property-level deps are intentional; mv is a new object each render
@@ -85,14 +87,14 @@ export default function MediaPaneBody() {
 
   const handlePdfHighlightTap = useCallback(
     (highlightId: string, _anchorRect: DOMRect) => {
-      mv.dismissEditPopover();
       mv.focusHighlight(highlightId);
       if (mv.isMobileViewport && mv.showHighlightsPane) {
         setHighlightsDrawerOpen(true);
+        setMobileDetailRequestKey((value) => value + 1);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- property-level deps are intentional; mv is a new object each render
-    [mv.dismissEditPopover, mv.focusHighlight, mv.isMobileViewport, mv.showHighlightsPane]
+    [mv.focusHighlight, mv.isMobileViewport, mv.showHighlightsPane]
   );
 
   const handleQuoteToChat = useCallback(
@@ -144,8 +146,8 @@ export default function MediaPaneBody() {
 
   const isReflowableReader = mv.canRead && !mv.isPdf;
   const pdfResumeLocator =
-    mv.readerResumeState?.locator?.kind === "pdf_page"
-      ? mv.readerResumeState.locator
+    mv.readerResumeState !== null && mv.readerResumeState?.page !== null
+      ? mv.readerResumeState
       : null;
   const mediaAuthorMeta = formatMediaAuthors(mv.media?.authors, 2);
   const mediaHeaderMeta = (
@@ -294,7 +296,7 @@ export default function MediaPaneBody() {
               }
             }}
             disabled={!mv.prevSection}
-            aria-label="Previous chapter"
+            aria-label="Previous section"
           >
             Prev
           </button>
@@ -317,7 +319,7 @@ export default function MediaPaneBody() {
               }
             }}
             disabled={!mv.nextSection}
-            aria-label="Next chapter"
+            aria-label="Next section"
           >
             Next
           </button>
@@ -332,7 +334,7 @@ export default function MediaPaneBody() {
                 }
               }}
               className={styles.mediaToolbarSelect}
-              aria-label="Select chapter"
+              aria-label="Select section"
             >
               {mv.epubSections.map((section) => (
                 <option key={section.section_id} value={section.section_id}>
@@ -542,11 +544,18 @@ export default function MediaPaneBody() {
       contentRef={mv.isPdf ? mv.pdfContentRef : mv.contentRef}
       focusedId={mv.focusState.focusedId}
       onFocusHighlight={mv.focusHighlight}
+      onClearFocus={mv.clearFocus}
       onSendToChat={mv.handleSendToChat}
+      onColorChange={mv.handleColorChange}
+      onDelete={mv.handleDelete}
+      onStartEditBounds={mv.startEditBounds}
+      onCancelEditBounds={mv.cancelEditBounds}
+      isEditingBounds={mv.focusState.editingBounds}
       onAnnotationSave={mv.handleAnnotationSave}
       onAnnotationDelete={mv.handleAnnotationDelete}
       onOpenConversation={mv.handleOpenConversation}
-      buildRowOptions={mv.buildRowOptions}
+      onCloseMobileDrawer={mv.isMobileViewport ? () => setHighlightsDrawerOpen(false) : undefined}
+      mobileDetailRequestKey={mv.isMobileViewport ? mobileDetailRequestKey : 0}
     />
   ) : null;
   const showDesktopHighlightsPane = !mv.isMobileViewport && highlightsContent !== null;
@@ -646,21 +655,29 @@ export default function MediaPaneBody() {
                 }
                 highlightRefreshToken={mv.pdfRefreshToken}
                 onPageHighlightsChange={mv.handlePdfPageHighlightsChange}
-                onHighlightTap={mv.isMobileViewport ? handlePdfHighlightTap : undefined}
+                onHighlightTap={handlePdfHighlightTap}
                 onQuoteToChat={mv.media.capabilities?.can_quote ? mv.handleSendToChat : undefined}
                 onControlsStateChange={mv.setPdfControlsState}
                 onControlsReady={(controls) => {
                   mv.pdfControlsRef.current = controls;
                 }}
                 startPageNumber={pdfResumeLocator?.page ?? undefined}
+                startPageProgression={pdfResumeLocator?.page_progression ?? undefined}
                 startZoom={pdfResumeLocator?.zoom ?? undefined}
-                onResumeStateChange={(pageNumber, zoom) =>
+                onResumeStateChange={(pageNumber, zoom, pageProgression) =>
                   mv.saveReaderResumeState({
-                    locator: {
-                      kind: "pdf_page",
-                      page: pageNumber,
-                      zoom,
-                    },
+                    source: null,
+                    anchor: null,
+                    text_offset: null,
+                    quote: null,
+                    quote_prefix: null,
+                    quote_suffix: null,
+                    progression: null,
+                    total_progression: null,
+                    position: pageNumber,
+                    page: pageNumber,
+                    page_progression: pageProgression,
+                    zoom,
                   })
                 }
               />

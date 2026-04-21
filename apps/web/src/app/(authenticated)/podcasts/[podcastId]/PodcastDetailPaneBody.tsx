@@ -21,6 +21,7 @@ import {
 import LibraryTargetPicker, {
   type LibraryTargetPickerItem,
 } from "@/components/LibraryTargetPicker";
+import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -442,6 +443,14 @@ export default function PodcastDetailPaneBody() {
   >(new Set());
   const [busyMediaIds, setBusyMediaIds] = useState<Set<string>>(new Set());
   const [busyPodcastLibraryKeys, setBusyPodcastLibraryKeys] = useState<Set<string>>(new Set());
+  const [podcastMembershipPanelOpen, setPodcastMembershipPanelOpen] = useState(false);
+  const [podcastMembershipPanelTriggerEl, setPodcastMembershipPanelTriggerEl] =
+    useState<HTMLElement | null>(null);
+  const [episodeMembershipPanelMediaId, setEpisodeMembershipPanelMediaId] = useState<
+    string | null
+  >(null);
+  const [episodeMembershipPanelTriggerEl, setEpisodeMembershipPanelTriggerEl] =
+    useState<HTMLElement | null>(null);
   const [markingEpisodeIds, setMarkingEpisodeIds] = useState<Set<string>>(new Set());
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const [batchTranscriptBusy, setBatchTranscriptBusy] = useState(false);
@@ -1042,6 +1051,10 @@ export default function PodcastDetailPaneBody() {
       });
       setDetail((prev) => (prev ? { ...prev, subscription: null } : prev));
       setPodcastLibraries(retainedLibraries);
+      setPodcastMembershipPanelOpen(false);
+      setPodcastMembershipPanelTriggerEl(null);
+      setEpisodeMembershipPanelMediaId(null);
+      setEpisodeMembershipPanelTriggerEl(null);
     } catch (unsubscribeError) {
       if (isApiError(unsubscribeError)) {
         setError(unsubscribeError.message);
@@ -1603,6 +1616,62 @@ export default function PodcastDetailPaneBody() {
     return new Set(queueItems.map((item) => item.media_id));
   }, [queueItems]);
   const activeSubscription = detail?.subscription ?? null;
+  const podcastMembershipBusy = busyPodcastLibraryKeys.size > 0;
+  const podcastMembershipLibraries = podcastLibraries.map((library) => ({
+    ...library,
+    canAdd: podcastMembershipBusy ? false : library.canAdd,
+    canRemove: podcastMembershipBusy ? false : library.canRemove,
+  }));
+  const episodeMembershipBusy = episodeMembershipPanelMediaId
+    ? busyMediaIds.has(episodeMembershipPanelMediaId)
+    : false;
+  const episodeMembershipLibraries = episodeMembershipPanelMediaId
+    ? (episodeLibrariesById[episodeMembershipPanelMediaId] ?? []).map((library) => ({
+        ...library,
+        canAdd: episodeMembershipBusy ? false : library.canAdd,
+        canRemove: episodeMembershipBusy ? false : library.canRemove,
+      }))
+    : [];
+  const paneOptions = activeSubscription
+    ? [
+        {
+          id: "libraries",
+          label: "Libraries…",
+          restoreFocusOnClose: false,
+          disabled: unsubscribeBusy,
+          onSelect: ({ triggerEl }) => {
+            setEpisodeMembershipPanelMediaId(null);
+            setEpisodeMembershipPanelTriggerEl(null);
+            setPodcastMembershipPanelOpen(true);
+            setPodcastMembershipPanelTriggerEl(triggerEl);
+            void loadPodcastLibraries();
+          },
+        },
+        {
+          id: "settings",
+          label: "Settings",
+          disabled: unsubscribeBusy,
+          onSelect: () => openSettingsModal(),
+        },
+        {
+          id: "refresh-sync",
+          label: refreshSyncBusy ? "Refreshing..." : "Refresh sync",
+          disabled: refreshSyncBusy,
+          onSelect: () => {
+            void handleRefreshSync();
+          },
+        },
+        {
+          id: "unsubscribe",
+          label: unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe",
+          tone: "danger" as const,
+          disabled: unsubscribeBusy,
+          onSelect: () => {
+            void handleUnsubscribe();
+          },
+        },
+      ]
+    : [];
 
   usePaneChromeOverride({
     actions: isMobileViewport ? (
@@ -1616,20 +1685,10 @@ export default function PodcastDetailPaneBody() {
         Episodes
       </button>
     ) : undefined,
+    options: paneOptions,
   });
 
   const podcastLibraryCount = podcastLibraries.filter((library) => library.isInLibrary).length;
-  const podcastPickerLibraries = podcastLibraries.map((library) => {
-    const busyKey = `${library.id}:${podcastId}`;
-    if (!busyPodcastLibraryKeys.has(busyKey)) {
-      return library;
-    }
-    return {
-      ...library,
-      canAdd: false,
-      canRemove: false,
-    };
-  });
   const episodePaneContent = (
     <div className={styles.episodePaneContent}>
       <div className={styles.episodePaneHeaderRow}>
@@ -1713,16 +1772,6 @@ export default function PodcastDetailPaneBody() {
         <AppList>
           {episodes.map((episode) => {
             const busy = busyMediaIds.has(episode.id);
-            const pickerLibraries = (episodeLibrariesById[episode.id] ?? []).map((library) => {
-              if (!busy) {
-                return library;
-              }
-              return {
-                ...library,
-                canAdd: false,
-                canRemove: false,
-              };
-            });
             const episodeState = deriveEpisodeState(episode);
             const episodeProgressPercent = getEpisodeProgressPercent(episode);
             const canRequestTranscript =
@@ -1747,6 +1796,19 @@ export default function PodcastDetailPaneBody() {
                 ? `${episode.title} · ${authorSummary}`
                 : episode.title;
             const rowOptions = [
+              {
+                id: "libraries",
+                label: "Libraries…",
+                restoreFocusOnClose: false,
+                disabled: busy,
+                onSelect: ({ triggerEl }) => {
+                  setPodcastMembershipPanelOpen(false);
+                  setPodcastMembershipPanelTriggerEl(null);
+                  setEpisodeMembershipPanelMediaId(episode.id);
+                  setEpisodeMembershipPanelTriggerEl(triggerEl);
+                  void loadEpisodeLibraries(episode.id);
+                },
+              },
               {
                 id: "toggle-played",
                 label: episodeState === "played" ? "Mark as unplayed" : "Mark as played",
@@ -1858,22 +1920,6 @@ export default function PodcastDetailPaneBody() {
                     >
                       Add to queue
                     </button>
-                    <LibraryTargetPicker
-                      label="Libraries"
-                      libraries={pickerLibraries}
-                      loading={loadingEpisodeLibraryMediaIds.has(episode.id)}
-                      disabled={busy}
-                      onOpen={() => {
-                        void loadEpisodeLibraries(episode.id);
-                      }}
-                      onAddToLibrary={(libraryId) => {
-                        void handleAddToLibrary(episode.id, libraryId);
-                      }}
-                      onRemoveFromLibrary={(libraryId) => {
-                        void handleRemoveFromLibrary(episode.id, libraryId);
-                      }}
-                      emptyMessage="No non-default libraries available."
-                    />
                     {inQueue && <span className={styles.queueBadge}>In Queue</span>}
                     {canRequestTranscript && !expandedTranscriptMediaIds.has(episode.id) && (
                       <button
@@ -2001,49 +2047,7 @@ export default function PodcastDetailPaneBody() {
                 Podcasts
               </Link>
               <div className={styles.headerButtons}>
-                {activeSubscription ? (
-                  <div className={styles.subscriptionActions}>
-                    <LibraryTargetPicker
-                      label="Libraries"
-                      libraries={podcastPickerLibraries}
-                      loading={podcastLibrariesLoading}
-                      onOpen={() => {
-                        void loadPodcastLibraries();
-                      }}
-                      onAddToLibrary={(libraryId) => {
-                        void handleAddPodcastToLibrary(libraryId);
-                      }}
-                      onRemoveFromLibrary={(libraryId) => {
-                        void handleRemovePodcastFromLibrary(libraryId);
-                      }}
-                      emptyMessage="No non-default libraries available."
-                    />
-                    <button
-                      type="button"
-                      className={styles.settingsButton}
-                      onClick={openSettingsModal}
-                      disabled={unsubscribeBusy}
-                    >
-                      Settings
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.syncButton}
-                      onClick={() => void handleRefreshSync()}
-                      disabled={refreshSyncBusy}
-                    >
-                      {refreshSyncBusy ? "Refreshing..." : "Refresh sync"}
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.unsubscribeButton}
-                      onClick={() => void handleUnsubscribe()}
-                      disabled={unsubscribeBusy}
-                    >
-                      {unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe"}
-                    </button>
-                  </div>
-                ) : (
+                {activeSubscription ? null : (
                   <div className={styles.subscriptionActions}>
                     <button
                       type="button"
@@ -2179,6 +2183,56 @@ export default function PodcastDetailPaneBody() {
           </aside>
         ) : null}
       </div>
+
+      <LibraryMembershipPanel
+        open={podcastMembershipPanelOpen}
+        title="Libraries"
+        anchorEl={podcastMembershipPanelTriggerEl}
+        libraries={podcastMembershipLibraries}
+        loading={podcastLibrariesLoading}
+        busy={podcastMembershipBusy}
+        error={error}
+        emptyMessage="No non-default libraries available."
+        onClose={() => {
+          setPodcastMembershipPanelOpen(false);
+          setPodcastMembershipPanelTriggerEl(null);
+        }}
+        onAddToLibrary={(libraryId: string) => {
+          void handleAddPodcastToLibrary(libraryId);
+        }}
+        onRemoveFromLibrary={(libraryId: string) => {
+          void handleRemovePodcastFromLibrary(libraryId);
+        }}
+      />
+
+      <LibraryMembershipPanel
+        open={episodeMembershipPanelMediaId !== null}
+        title="Libraries"
+        anchorEl={episodeMembershipPanelTriggerEl}
+        libraries={episodeMembershipLibraries}
+        loading={
+          episodeMembershipPanelMediaId
+            ? loadingEpisodeLibraryMediaIds.has(episodeMembershipPanelMediaId)
+            : false
+        }
+        busy={episodeMembershipBusy}
+        error={error}
+        emptyMessage="No non-default libraries available."
+        onClose={() => {
+          setEpisodeMembershipPanelMediaId(null);
+          setEpisodeMembershipPanelTriggerEl(null);
+        }}
+        onAddToLibrary={(libraryId: string) => {
+          if (episodeMembershipPanelMediaId) {
+            void handleAddToLibrary(episodeMembershipPanelMediaId, libraryId);
+          }
+        }}
+        onRemoveFromLibrary={(libraryId: string) => {
+          if (episodeMembershipPanelMediaId) {
+            void handleRemoveFromLibrary(episodeMembershipPanelMediaId, libraryId);
+          }
+        }}
+      />
 
       {settingsModalOpen && detail && activeSubscription && (
         <div

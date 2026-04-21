@@ -8,9 +8,8 @@ import {
 } from "@/lib/player/subscriptionPlaybackSpeed";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import LibraryTargetPicker, {
-  type LibraryTargetPickerItem,
-} from "@/components/LibraryTargetPicker";
+import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
+import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import ActionMenu from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
@@ -134,6 +133,10 @@ export default function PodcastsPaneBody() {
   );
   const [busyLibraryMembershipKeys, setBusyLibraryMembershipKeys] = useState<Set<string>>(
     new Set()
+  );
+  const [membershipPanelPodcastId, setMembershipPanelPodcastId] = useState<string | null>(null);
+  const [membershipPanelTriggerEl, setMembershipPanelTriggerEl] = useState<HTMLElement | null>(
+    null
   );
   const [settingsPodcastId, setSettingsPodcastId] = useState<string | null>(null);
   const [settingsDefaultSpeed, setSettingsDefaultSpeed] = useState("default");
@@ -408,6 +411,10 @@ export default function PodcastsPaneBody() {
           method: "DELETE",
         });
         setRows((prev) => prev.filter((candidate) => candidate.podcast_id !== row.podcast_id));
+        if (membershipPanelPodcastId === row.podcast_id) {
+          setMembershipPanelPodcastId(null);
+          setMembershipPanelTriggerEl(null);
+        }
         setLibrariesByPodcastId((prev) => {
           const next = { ...prev };
           delete next[row.podcast_id];
@@ -427,7 +434,7 @@ export default function PodcastsPaneBody() {
         });
       }
     },
-    [loadPodcastLibraries]
+    [loadPodcastLibraries, membershipPanelPodcastId]
   );
 
   const handleRefreshSync = useCallback(async (podcastId: string) => {
@@ -530,6 +537,18 @@ export default function PodcastsPaneBody() {
   const settingsRow = rows.find((row) => row.podcast_id === settingsPodcastId) ?? null;
   const hasActiveFilters =
     appliedSearch.length > 0 || subscriptionFilter !== "all" || selectedLibraryId.length > 0;
+  const membershipPanelBusy = membershipPanelPodcastId
+    ? Array.from(busyLibraryMembershipKeys).some((key) =>
+        key.endsWith(`:${membershipPanelPodcastId}`)
+      )
+    : false;
+  const membershipPanelLibraries = membershipPanelPodcastId
+    ? (librariesByPodcastId[membershipPanelPodcastId] ?? []).map((library) => ({
+        ...library,
+        canAdd: membershipPanelBusy ? false : library.canAdd,
+        canRemove: membershipPanelBusy ? false : library.canRemove,
+      }))
+    : [];
 
   return (
     <>
@@ -682,19 +701,6 @@ export default function PodcastsPaneBody() {
               {rows.map((row) => {
                 const rowBusy = busyPodcastIds.has(row.podcast_id);
                 const rowRefreshing = refreshingPodcastIds.has(row.podcast_id);
-                const pickerLibraries = (librariesByPodcastId[row.podcast_id] ?? []).map(
-                  (library) => {
-                    const busyKey = `${library.id}:${row.podcast_id}`;
-                    if (!busyLibraryMembershipKeys.has(busyKey)) {
-                      return library;
-                    }
-                    return {
-                      ...library,
-                      canAdd: false,
-                      canRemove: false,
-                    };
-                  }
-                );
 
                 return (
                   <AppListItem
@@ -777,21 +783,6 @@ export default function PodcastsPaneBody() {
                     }
                     actions={
                       <>
-                        <LibraryTargetPicker
-                          label="Libraries"
-                          libraries={pickerLibraries}
-                          loading={loadingLibraryPodcastIds.has(row.podcast_id)}
-                          onOpen={() => {
-                            void loadPodcastLibraries(row.podcast_id);
-                          }}
-                          onAddToLibrary={(libraryId) => {
-                            void handleAddPodcastToLibrary(row.podcast_id, libraryId);
-                          }}
-                          onRemoveFromLibrary={(libraryId) => {
-                            void handleRemovePodcastFromLibrary(row.podcast_id, libraryId);
-                          }}
-                          emptyMessage="No non-default libraries available."
-                        />
                         <button
                           type="button"
                           className={styles.rowActionButton}
@@ -805,6 +796,17 @@ export default function PodcastsPaneBody() {
                       </>
                     }
                     options={[
+                      {
+                        id: "libraries",
+                        label: "Libraries…",
+                        restoreFocusOnClose: false,
+                        disabled: rowBusy,
+                        onSelect: ({ triggerEl }) => {
+                          setMembershipPanelPodcastId(row.podcast_id);
+                          setMembershipPanelTriggerEl(triggerEl);
+                          void loadPodcastLibraries(row.podcast_id);
+                        },
+                      },
                       {
                         id: "settings",
                         label: "Settings",
@@ -840,6 +842,35 @@ export default function PodcastsPaneBody() {
           ) : null}
         </div>
       </SectionCard>
+
+      <LibraryMembershipPanel
+        open={membershipPanelPodcastId !== null}
+        title="Libraries"
+        anchorEl={membershipPanelTriggerEl}
+        libraries={membershipPanelLibraries}
+        loading={
+          membershipPanelPodcastId
+            ? loadingLibraryPodcastIds.has(membershipPanelPodcastId)
+            : false
+        }
+        busy={membershipPanelBusy}
+        error={error}
+        emptyMessage="No non-default libraries available."
+        onClose={() => {
+          setMembershipPanelPodcastId(null);
+          setMembershipPanelTriggerEl(null);
+        }}
+        onAddToLibrary={(libraryId: string) => {
+          if (membershipPanelPodcastId) {
+            void handleAddPodcastToLibrary(membershipPanelPodcastId, libraryId);
+          }
+        }}
+        onRemoveFromLibrary={(libraryId: string) => {
+          if (membershipPanelPodcastId) {
+            void handleRemovePodcastFromLibrary(membershipPanelPodcastId, libraryId);
+          }
+        }}
+      />
 
       {settingsRow ? (
         <div className={styles.modalBackdrop} role="presentation" onClick={closeSettingsModal}>

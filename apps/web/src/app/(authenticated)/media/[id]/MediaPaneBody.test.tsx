@@ -183,10 +183,6 @@ vi.mock("@/components/ChatComposer", () => ({
   }) => mockChatComposer(props),
 }));
 
-vi.mock("@/components/HighlightEditPopover", () => ({
-  default: () => <div data-testid="highlight-edit-popover" />,
-}));
-
 vi.mock("@/components/ui/StateMessage", () => ({
   default: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
@@ -465,16 +461,28 @@ describe("MediaPaneBody highlights shell", () => {
   });
 
   it("renders the desktop highlights pane at the fixed cutover width and forwards detail callbacks", () => {
+    const focusHighlight = vi.fn();
     const clearFocus = vi.fn();
+    const handleSendToChat = vi.fn();
+    const handleColorChange = vi.fn(async () => {});
     const handleDelete = vi.fn(async () => {});
     const startEditBounds = vi.fn();
     const cancelEditBounds = vi.fn();
+    const handleAnnotationSave = vi.fn(async () => {});
+    const handleAnnotationDelete = vi.fn(async () => {});
+    const handleOpenConversation = vi.fn();
     currentViewState = buildViewState({
       highlights: [{ id: "fragment-highlight-1" }],
+      focusHighlight,
       clearFocus,
+      handleSendToChat,
+      handleColorChange,
       handleDelete,
       startEditBounds,
       cancelEditBounds,
+      handleAnnotationSave,
+      handleAnnotationDelete,
+      handleOpenConversation,
       focusState: { focusedId: "fragment-highlight-1", editingBounds: true },
     });
     mockUseMediaViewState.mockImplementation(() => currentViewState);
@@ -490,12 +498,18 @@ describe("MediaPaneBody highlights shell", () => {
     expect(getLatestHighlightsPaneBodyProps()).toMatchObject({
       isMobile: false,
       fragmentHighlights: [{ id: "fragment-highlight-1" }],
+      focusedId: "fragment-highlight-1",
+      onFocusHighlight: focusHighlight,
       onClearFocus: clearFocus,
+      onSendToChat: handleSendToChat,
+      onColorChange: handleColorChange,
       onDelete: handleDelete,
       onStartEditBounds: startEditBounds,
       onCancelEditBounds: cancelEditBounds,
       isEditingBounds: true,
-      onCloseMobileDrawer: undefined,
+      onAnnotationSave: handleAnnotationSave,
+      onAnnotationDelete: handleAnnotationDelete,
+      onOpenConversation: handleOpenConversation,
     });
     expect(getLatestHighlightsAction()).toBeNull();
   });
@@ -639,14 +653,20 @@ describe("MediaPaneBody highlights shell", () => {
     });
 
     expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
-
-    const onCloseMobileDrawer = getLatestHighlightsPaneBodyProps().onCloseMobileDrawer as
-      | (() => void)
-      | undefined;
-    expect(onCloseMobileDrawer).toBeTypeOf("function");
+    act(() => {
+      const onCloseMobileDrawer = getLatestHighlightsPaneBodyProps()
+        .onCloseMobileDrawer as (() => void) | undefined;
+      onCloseMobileDrawer?.();
+    });
+    expect(screen.queryByRole("dialog", { name: "Highlights" })).not.toBeInTheDocument();
 
     act(() => {
-      onCloseMobileDrawer?.();
+      action?.props.onClick();
+    });
+
+    expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
+    act(() => {
+      screen.getByRole("button", { name: "Close" }).click();
     });
 
     expect(screen.queryByRole("dialog", { name: "Highlights" })).not.toBeInTheDocument();
@@ -821,7 +841,6 @@ describe("MediaPaneBody highlights shell", () => {
   it("opens the mobile Highlights drawer when tapping a PDF highlight", async () => {
     const user = userEvent.setup();
     const focusHighlight = vi.fn();
-    const dismissEditPopover = vi.fn();
     currentViewState = buildViewState({
       isMobileViewport: true,
       isPdf: true,
@@ -841,7 +860,6 @@ describe("MediaPaneBody highlights shell", () => {
         last_error_code: null,
       },
       focusHighlight,
-      dismissEditPopover,
     });
     mockUseMediaViewState.mockImplementation(() => currentViewState);
 
@@ -850,21 +868,27 @@ describe("MediaPaneBody highlights shell", () => {
 
     await user.click(screen.getByRole("button", { name: "Tap PDF highlight" }));
 
-    expect(dismissEditPopover).toHaveBeenCalledTimes(1);
     expect(focusHighlight).toHaveBeenCalledWith("pdf-highlight-1");
     expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
   });
 
-  it("passes the nested PDF locator through to PdfReader and saves page updates as a locator object", () => {
+  it("passes the flat PDF locator through to PdfReader and saves page updates as a locator object", () => {
     const saveReaderResumeState = vi.fn();
     currentViewState = buildViewState({
       isPdf: true,
       readerResumeState: {
-        locator: {
-          kind: "pdf_page",
-          page: 7,
-          zoom: 1.5,
-        },
+        source: null,
+        anchor: null,
+        text_offset: null,
+        quote: null,
+        quote_prefix: null,
+        quote_suffix: null,
+        progression: null,
+        total_progression: null,
+        position: 7,
+        page: 7,
+        page_progression: 0.25,
+        zoom: 1.5,
       },
       saveReaderResumeState,
     });
@@ -874,22 +898,30 @@ describe("MediaPaneBody highlights shell", () => {
 
     expect(getLatestPdfReaderProps()).toMatchObject({
       startPageNumber: 7,
+      startPageProgression: 0.25,
       startZoom: 1.5,
     });
 
     const onResumeStateChange = getLatestPdfReaderProps().onResumeStateChange as
-      | ((pageNumber: number, zoom: number) => void)
+      | ((pageNumber: number, zoom: number, pageProgression: number | null) => void)
       | undefined;
     expect(onResumeStateChange).toBeTypeOf("function");
 
-    onResumeStateChange?.(9, 2);
+    onResumeStateChange?.(9, 2, 0.6);
 
     expect(saveReaderResumeState).toHaveBeenCalledWith({
-      locator: {
-        kind: "pdf_page",
-        page: 9,
-        zoom: 2,
-      },
+      source: null,
+      anchor: null,
+      text_offset: null,
+      quote: null,
+      quote_prefix: null,
+      quote_suffix: null,
+      progression: null,
+      total_progression: null,
+      position: 9,
+      page: 9,
+      page_progression: 0.6,
+      zoom: 2,
     });
   });
 
@@ -1028,10 +1060,10 @@ describe("MediaPaneBody highlights shell", () => {
     renderLatestToolbar();
 
     expect(screen.getByRole("toolbar", { name: "EPUB controls" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Previous chapter" })).toHaveTextContent("Prev");
-    expect(screen.getByRole("button", { name: "Next chapter" })).toHaveTextContent("Next");
+    expect(screen.getByRole("button", { name: "Previous section" })).toHaveTextContent("Prev");
+    expect(screen.getByRole("button", { name: "Next section" })).toHaveTextContent("Next");
     expect(screen.getByText("1 / 2")).toHaveAttribute("aria-label", "Section 1 of 2");
-    expect(screen.getByRole("combobox", { name: "Select chapter" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Select section" })).toBeInTheDocument();
 
     expect(getLatestChromeOverride().options).toEqual(
       expect.arrayContaining([

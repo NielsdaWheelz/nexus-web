@@ -4,12 +4,48 @@ import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import PodcastsPage from "./page";
 import PodcastDetailPage from "./[podcastId]/page";
+import ActionMenu from "@/components/ui/ActionMenu";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 
 const mockUsePaneParam = vi.fn<(param: string) => string | null>();
 const mockPush = vi.fn<(href: string) => void>();
 const mockUsePaneChromeOverride = vi.fn<(overrides: Record<string, unknown>) => void>();
 const mockViewportState = { isMobile: false };
+const mockLibraryMembershipPanel = vi.fn(
+  (props: {
+    open?: boolean;
+    loading?: boolean;
+    libraries?: Array<{ id: string; name: string; isInLibrary: boolean }>;
+    onClose?: () => void;
+    onAddToLibrary?: (libraryId: string) => void;
+    onRemoveFromLibrary?: (libraryId: string) => void;
+  }) => {
+    if (!props.open) {
+      return null;
+    }
+    return (
+      <div role="dialog" aria-label="Libraries">
+        {props.loading ? <div>Loading libraries...</div> : null}
+        {(props.libraries ?? []).map((library) => (
+          <button
+            key={library.id}
+            type="button"
+            onClick={() =>
+              library.isInLibrary
+                ? props.onRemoveFromLibrary?.(library.id)
+                : props.onAddToLibrary?.(library.id)
+            }
+          >
+            {library.name}
+          </button>
+        ))}
+        <button type="button" onClick={() => props.onClose?.()}>
+          Close
+        </button>
+      </div>
+    );
+  }
+);
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
@@ -75,6 +111,11 @@ vi.mock("@/lib/panes/paneRouteRegistry", () => ({
   getParentHref: () => null,
   DEFAULT_LINKED_ITEMS_PANE_WIDTH_PX: 360,
   DEFAULT_HIGHLIGHTS_PANE_WIDTH_PX: 360,
+}));
+
+vi.mock("@/components/LibraryMembershipPanel", () => ({
+  default: (props: Parameters<typeof mockLibraryMembershipPanel>[0]) =>
+    mockLibraryMembershipPanel(props),
 }));
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -173,6 +214,14 @@ function renderLatestPaneActions() {
   return render(<>{actions}</>);
 }
 
+function renderLatestPaneOptionsMenu() {
+  const options = getLatestPaneOptions();
+  if (options.length === 0) {
+    throw new Error("Expected pane options override to be present");
+  }
+  return render(<ActionMenu label="Options" options={options as never} />);
+}
+
 function getLatestPaneOptions() {
   const options = getLatestChromeOverride().options;
   if (!Array.isArray(options)) {
@@ -182,6 +231,8 @@ function getLatestPaneOptions() {
     id: string;
     label: string;
     tone?: "default" | "danger";
+    disabled?: boolean;
+    onSelect?: (context?: { triggerEl?: HTMLElement | null }) => void;
   }>;
 }
 
@@ -190,6 +241,7 @@ describe("podcast ui cutover", () => {
     mockUsePaneParam.mockReset();
     mockPush.mockReset();
     mockUsePaneChromeOverride.mockReset();
+    mockLibraryMembershipPanel.mockClear();
     mockViewportState.isMobile = false;
     vi.restoreAllMocks();
   });
@@ -272,7 +324,7 @@ describe("podcast ui cutover", () => {
     expect(within(episodeDrawer).getByText("Episode 0")).toBeInTheDocument();
   });
 
-  it("keeps subscription library membership in the libraries picker and removes category controls from subscriptions", async () => {
+  it("moves subscription library membership behind a Libraries menu item and removes category controls from subscriptions", async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, _init) => {
       const url = new URL(String(input), "http://localhost");
@@ -305,13 +357,15 @@ describe("podcast ui cutover", () => {
     expect(screen.queryByLabelText("Subscription category")).not.toBeInTheDocument();
     expect(screen.queryByText("New category")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Unsubscribe" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Libraries" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Libraries…" })).toBeInTheDocument();
     expect(await screen.findByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Refresh sync" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Unsubscribe" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Libraries" }));
+    await user.click(screen.getByRole("menuitem", { name: "Libraries…" }));
     const librariesDialog = await screen.findByRole("dialog", { name: "Libraries" });
     expect(await within(librariesDialog).findByRole("button", { name: /Sports/i })).toBeInTheDocument();
   });
@@ -426,11 +480,25 @@ describe("podcast ui cutover", () => {
       )
     );
 
-    expect((await screen.findAllByRole("button", { name: "Libraries" })).length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Refresh sync" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Settings" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Unsubscribe" })).toBeVisible();
-    expect(getLatestPaneOptions()).toEqual([]);
+    expect(await screen.findByRole("heading", { name: "Systems Podcast" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Libraries" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refresh sync" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unsubscribe" })).not.toBeInTheDocument();
+    expect(getLatestPaneOptions().map((option) => option.label)).toEqual([
+      "Libraries…",
+      "Settings",
+      "Refresh sync",
+      "Unsubscribe",
+    ]);
+
+    const optionsView = renderLatestPaneOptionsMenu();
+    await user.click(screen.getByRole("button", { name: "Options" }));
+    expect(await screen.findByRole("menuitem", { name: "Libraries…" })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Libraries…" }));
+    expect(await screen.findByRole("dialog", { name: "Libraries" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    optionsView.unmount();
 
     renderLatestPaneActions();
     await user.click(screen.getByRole("button", { name: "Episodes" }));
@@ -441,11 +509,16 @@ describe("podcast ui cutover", () => {
     expect(
       within(episodeDrawer).getByRole("button", { name: "Add Episode 0 to queue" })
     ).toBeVisible();
-    expect(within(episodeDrawer).getByRole("button", { name: "Libraries" })).toBeVisible();
+    expect(within(episodeDrawer).queryByRole("button", { name: "Libraries" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Subscription category")).not.toBeInTheDocument();
 
     await user.click(within(episodeDrawer).getByRole("button", { name: "Actions" }));
-    expect(await screen.findByRole("menuitem", { name: "Mark as played" })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Libraries…" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Mark as played" })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Libraries…" }));
+    const librariesDialog = await screen.findByRole("dialog", { name: "Libraries" });
+    expect(within(librariesDialog).getByRole("button", { name: "Sports" })).toBeInTheDocument();
+    expect(within(librariesDialog).getByRole("button", { name: "History" })).toBeInTheDocument();
   });
 
 });

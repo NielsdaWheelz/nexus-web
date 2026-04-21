@@ -15,10 +15,11 @@ import styles from "./ActionMenu.module.css";
 export interface ActionMenuOption {
   id: string;
   label: string;
-  onSelect?: () => void;
+  onSelect?: (detail: { triggerEl: HTMLButtonElement | null }) => void;
   href?: string;
   disabled?: boolean;
   tone?: "default" | "danger";
+  restoreFocusOnClose?: boolean;
 }
 
 interface ActionMenuProps {
@@ -50,9 +51,12 @@ export default function ActionMenu({
     );
   }, []);
 
-  const closeAndRestoreFocus = useCallback(() => {
+  const closeMenu = useCallback((restoreFocus: boolean = true) => {
     setMenuOpen(false);
     setMenuPos(null);
+    if (!restoreFocus) {
+      return;
+    }
     requestAnimationFrame(() => {
       toggleRef.current?.focus();
     });
@@ -91,7 +95,7 @@ export default function ActionMenu({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        closeAndRestoreFocus();
+        closeMenu();
       }
     };
 
@@ -105,7 +109,7 @@ export default function ActionMenu({
       window.removeEventListener("scroll", updateMenuPos, true);
       window.removeEventListener("resize", updateMenuPos);
     };
-  }, [closeAndRestoreFocus, getFocusableItems, menuOpen]);
+  }, [closeMenu, getFocusableItems, menuOpen]);
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLUListElement>) => {
     event.stopPropagation();
@@ -160,7 +164,7 @@ export default function ActionMenu({
 
     if (event.key === "Escape") {
       event.preventDefault();
-      closeAndRestoreFocus();
+      closeMenu();
     }
   };
 
@@ -210,8 +214,8 @@ export default function ActionMenu({
                     event.preventDefault();
                     return;
                   }
-                  option.onSelect?.();
-                  closeAndRestoreFocus();
+                  option.onSelect?.({ triggerEl: toggleRef.current });
+                  closeMenu(option.restoreFocusOnClose !== false);
                 }}
               >
                 {option.label}
@@ -226,8 +230,8 @@ export default function ActionMenu({
                 disabled={option.disabled}
                 onClick={(e) => {
                   e.stopPropagation();
-                  option.onSelect?.();
-                  closeAndRestoreFocus();
+                  option.onSelect?.({ triggerEl: toggleRef.current });
+                  closeMenu(option.restoreFocusOnClose !== false);
                 }}
               >
                 {option.label}
