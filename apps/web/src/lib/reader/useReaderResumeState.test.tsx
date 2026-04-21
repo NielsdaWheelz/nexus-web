@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useReaderResumeState } from "./useReaderResumeState";
 import type { ReaderResumeState } from "./types";
 
+type ApiFetch = NonNullable<Parameters<typeof useReaderResumeState>[0]["apiFetch"]>;
+
 const PDF_RESUME_STATE: ReaderResumeState = {
   kind: "pdf",
   position: 2,
@@ -17,18 +19,16 @@ describe("useReaderResumeState", () => {
   });
 
   it("starts loading for an active media id until the first state load resolves", async () => {
-    let resolveFetch: ((value: { data: ReaderResumeState | null }) => void) | null = null;
-    const apiFetch = vi.fn(
-      () =>
-        new Promise<{ data: ReaderResumeState | null }>((resolve) => {
-          resolveFetch = resolve;
-        })
-    );
+    let resolveFetch: ((value: unknown) => void) | null = null;
+    const apiFetch: ApiFetch = async <T,>() =>
+      new Promise<T>((resolve) => {
+        resolveFetch = resolve as (value: unknown) => void;
+      });
 
     const { result } = renderHook(() =>
       useReaderResumeState({
         mediaId: "media-1",
-        apiFetch: apiFetch as unknown as typeof apiFetch,
+        apiFetch,
       })
     );
 
@@ -46,34 +46,36 @@ describe("useReaderResumeState", () => {
   });
 
   it("returns to loading and clears stale state when the media id changes", async () => {
-    const apiFetchImpl = vi
-      .fn<
-        (path: string) => Promise<{ data: ReaderResumeState | null }>
-      >()
-      .mockResolvedValueOnce({ data: PDF_RESUME_STATE })
-      .mockResolvedValueOnce({
-        data: {
-          kind: "web",
-          target: { fragment_id: "fragment-2" },
-          locations: {
-            text_offset: 84,
-            progression: 0.35,
-            total_progression: 0.7,
-            position: 2,
-          },
-          text: {
-            quote: "second fragment quote",
-            quote_prefix: "before ",
-            quote_suffix: " after",
-          },
-        },
-      });
+    const nextTextState: ReaderResumeState = {
+      kind: "web",
+      target: { fragment_id: "fragment-2" },
+      locations: {
+        text_offset: 84,
+        progression: 0.35,
+        total_progression: 0.7,
+        position: 2,
+      },
+      text: {
+        quote: "second fragment quote",
+        quote_prefix: "before ",
+        quote_suffix: " after",
+      },
+    };
+    const apiFetchImpl: ApiFetch = async <T,>(path: string) => {
+      if (path === "/api/media/media-1/reader-state") {
+        return { data: PDF_RESUME_STATE } as T;
+      }
+      if (path === "/api/media/media-2/reader-state") {
+        return { data: nextTextState } as T;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    };
 
     const { result, rerender } = renderHook(
       ({ mediaId }: { mediaId: string | null }) =>
         useReaderResumeState({
           mediaId,
-          apiFetch: apiFetchImpl as unknown as typeof apiFetchImpl,
+          apiFetch: apiFetchImpl,
         }),
       {
         initialProps: { mediaId: "media-1" },

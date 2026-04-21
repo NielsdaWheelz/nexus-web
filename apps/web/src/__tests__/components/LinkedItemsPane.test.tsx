@@ -9,6 +9,17 @@ vi.mock("@/components/Toast", () => ({
 }));
 
 const scrollHosts: HTMLDivElement[] = [];
+const linkedItemsPaneBaseProps = {
+  isEditingBounds: false,
+  onSendToChat: vi.fn(),
+  onColorChange: vi.fn(async () => undefined),
+  onDelete: vi.fn(async () => undefined),
+  onStartEditBounds: vi.fn(),
+  onCancelEditBounds: vi.fn(),
+  onAnnotationSave: vi.fn(async () => undefined),
+  onAnnotationDelete: vi.fn(async () => undefined),
+  onOpenConversation: vi.fn(),
+} as const;
 
 function getRowButtons(): HTMLButtonElement[] {
   return screen
@@ -92,6 +103,7 @@ describe("LinkedItemsPane", () => {
 
     const { rerender } = render(
       <LinkedItemsPane
+        {...linkedItemsPaneBaseProps}
         highlights={highlights as never}
         contentRef={contentRef}
         focusedId={null}
@@ -120,6 +132,7 @@ describe("LinkedItemsPane", () => {
 
     rerender(
       <LinkedItemsPane
+        {...linkedItemsPaneBaseProps}
         highlights={highlights as never}
         contentRef={contentRef}
         focusedId={null}
@@ -174,6 +187,7 @@ describe("LinkedItemsPane", () => {
 
     render(
       <LinkedItemsPane
+        {...linkedItemsPaneBaseProps}
         highlights={highlights as never}
         contentRef={contentRef}
         focusedId={null}
@@ -203,6 +217,7 @@ describe("LinkedItemsPane", () => {
 
     render(
       <LinkedItemsPane
+        {...linkedItemsPaneBaseProps}
         highlights={[
           {
             id: "pdf-h1",
@@ -248,6 +263,7 @@ describe("LinkedItemsPane", () => {
 
     render(
       <LinkedItemsPane
+        {...linkedItemsPaneBaseProps}
         highlights={[
           {
             id: "above-h",
@@ -310,6 +326,7 @@ describe("LinkedItemsPane", () => {
 
     render(
       <LinkedItemsPane
+        {...linkedItemsPaneBaseProps}
         highlights={[
           {
             id: "compact-h1",
@@ -370,6 +387,7 @@ describe("LinkedItemsPane", () => {
 
     render(
       <LinkedItemsPane
+        {...linkedItemsPaneBaseProps}
         highlights={[
           {
             id: "above-h",
@@ -450,6 +468,7 @@ describe("LinkedItemsPane", () => {
 
     render(
       <LinkedItemsPane
+        {...linkedItemsPaneBaseProps}
         highlights={[
           {
             id: "far-above-h",
@@ -509,6 +528,7 @@ describe("LinkedItemsPane", () => {
 
     render(
       <LinkedItemsPane
+        {...linkedItemsPaneBaseProps}
         highlights={[
           {
             id: "clip-h1",
@@ -554,6 +574,7 @@ describe("LinkedItemsPane", () => {
 
     render(
       <LinkedItemsPane
+        {...linkedItemsPaneBaseProps}
         highlights={[
           {
             id: "h-b",

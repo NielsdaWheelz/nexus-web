@@ -735,6 +735,7 @@ export default function MediaPaneBody() {
         {showDesktopHighlightsPane && (
           <div
             className={styles.highlightsColumn}
+            data-testid="desktop-highlights-column"
             style={{
               width: HIGHLIGHTS_PANE_WIDTH_PX,
               flex: `0 0 ${HIGHLIGHTS_PANE_WIDTH_PX}px`,

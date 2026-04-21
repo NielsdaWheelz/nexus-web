@@ -236,10 +236,6 @@ export default function useMediaViewState(id: string) {
     initialTextResumeState?.kind === "epub"
       ? initialTextResumeState.target.href_path
       : initialTextResumeState?.target.fragment_id ?? null;
-  const readerResumeAnchor =
-    initialTextResumeState?.kind === "epub"
-      ? initialTextResumeState.target.anchor_id
-      : null;
   const readerResumeTextOffset = initialTextResumeState?.locations.text_offset ?? null;
   const readerResumeQuote = initialTextResumeState?.text.quote ?? null;
   const readerResumeQuotePrefix = initialTextResumeState?.text.quote_prefix ?? null;
@@ -1220,8 +1216,10 @@ export default function useMediaViewState(id: string) {
     setTextRestoreSettled(false);
   }, [activeContent?.fragmentId]);
 
+  const activeFragmentId = activeContent?.fragmentId ?? null;
+
   useEffect(() => {
-    if (isPdf || !activeContent || readerProfileLoading) {
+    if (isPdf || !activeFragmentId || readerProfileLoading) {
       setReaderLayoutReady(false);
       return;
     }
@@ -1244,7 +1242,7 @@ export default function useMediaViewState(id: string) {
         window.cancelAnimationFrame(secondFrame);
       }
     };
-  }, [activeContent?.fragmentId, id, isPdf, readerLayoutKey, readerProfileLoading]);
+  }, [activeFragmentId, id, isPdf, readerLayoutKey, readerProfileLoading]);
 
   useEffect(() => {
     if (

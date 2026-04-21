@@ -143,9 +143,7 @@ describe("PaneShell", () => {
     );
 
     const body = screen.getByTestId("pane-shell-body");
-    const shell = body.closest<HTMLElement>('[data-pane-shell="true"]');
-
-    expect(shell).not.toBeNull();
+    const shell = screen.getByTestId("pane-shell-root");
 
     expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "false");
 
@@ -177,9 +175,7 @@ describe("PaneShell", () => {
     );
 
     const viewport = screen.getByTestId("document-viewport");
-    const shell = viewport.closest<HTMLElement>('[data-pane-shell="true"]');
-
-    expect(shell).not.toBeNull();
+    const shell = screen.getByTestId("pane-shell-root");
 
     expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "false");
 
@@ -217,9 +213,7 @@ describe("PaneShell", () => {
     );
 
     const viewport = screen.getByTestId("document-viewport");
-    const shell = viewport.closest<HTMLElement>('[data-pane-shell="true"]');
-
-    expect(shell).not.toBeNull();
+    const shell = screen.getByTestId("pane-shell-root");
 
     Object.defineProperty(viewport, "scrollTop", {
       configurable: true,
@@ -270,9 +264,7 @@ describe("PaneShell", () => {
     );
 
     const viewport = screen.getByTestId("document-viewport");
-    const shell = viewport.closest<HTMLElement>('[data-pane-shell="true"]');
-
-    expect(shell).not.toBeNull();
+    const shell = screen.getByTestId("pane-shell-root");
 
     Object.defineProperty(viewport, "scrollTop", {
       configurable: true,

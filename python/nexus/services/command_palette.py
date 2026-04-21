@@ -151,7 +151,9 @@ def record_recent_for_viewer(
                 .all()
             )
             if trim_ids:
-                db.execute(delete(CommandPaletteRecent).where(CommandPaletteRecent.id.in_(trim_ids)))
+                db.execute(
+                    delete(CommandPaletteRecent).where(CommandPaletteRecent.id.in_(trim_ids))
+                )
     except IntegrityError:
         with transaction(db):
             current_time = db.execute(select(func.now())).scalar_one()
@@ -187,7 +189,9 @@ def record_recent_for_viewer(
                 .all()
             )
             if trim_ids:
-                db.execute(delete(CommandPaletteRecent).where(CommandPaletteRecent.id.in_(trim_ids)))
+                db.execute(
+                    delete(CommandPaletteRecent).where(CommandPaletteRecent.id.in_(trim_ids))
+                )
 
     return CommandPaletteRecentOut.model_validate(row)
 

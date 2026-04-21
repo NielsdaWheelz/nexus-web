@@ -1,6 +1,5 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createElement } from "react";
 import userEvent from "@testing-library/user-event";
 import PdfReader, {
   type PdfReaderControlActions,
@@ -1818,21 +1817,19 @@ describe("PdfReader", () => {
     const onResizePane = vi.fn();
 
     try {
-      const { container } = render(
-        createElement(
-          PaneShell,
-          {
-            paneId: "pane-mobile-chrome",
-            title: "Reader",
-            widthPx: 480,
-            minWidthPx: 280,
-            maxWidthPx: 900,
-            bodyMode: "document",
-            onResizePane,
-            isMobile: true,
-          },
-          createElement(PdfReader, { mediaId: "media-mobile-chrome", deps })
-        )
+      render(
+        <PaneShell
+          paneId="pane-mobile-chrome"
+          title="Reader"
+          widthPx={480}
+          minWidthPx={280}
+          maxWidthPx={900}
+          bodyMode="document"
+          onResizePane={onResizePane}
+          isMobile
+        >
+          <PdfReader mediaId="media-mobile-chrome" deps={deps} />
+        </PaneShell>
       );
 
       const viewerContainer = await screen.findByLabelText("PDF document");
@@ -1840,7 +1837,7 @@ describe("PdfReader", () => {
       fireEvent.scroll(viewerContainer);
 
       await waitFor(() => {
-        expect(container.querySelector('[data-pane-shell="true"]')).toHaveAttribute(
+        expect(screen.getByTestId("pane-shell-root")).toHaveAttribute(
           "data-mobile-chrome-hidden",
           "true"
         );
@@ -1866,26 +1863,24 @@ describe("PdfReader", () => {
     const onResizePane = vi.fn();
 
     try {
-      const { container } = render(
-        createElement(
-          PaneShell,
-          {
-            paneId: "pane-reduced-motion",
-            title: "Reader",
-            widthPx: 480,
-            minWidthPx: 280,
-            maxWidthPx: 900,
-            bodyMode: "document",
-            onResizePane,
-            isMobile: true,
-          },
-          createElement(PdfReader, { mediaId: "media-reduced-motion", deps })
-        )
+      render(
+        <PaneShell
+          paneId="pane-reduced-motion"
+          title="Reader"
+          widthPx={480}
+          minWidthPx={280}
+          maxWidthPx={900}
+          bodyMode="document"
+          onResizePane={onResizePane}
+          isMobile
+        >
+          <PdfReader mediaId="media-reduced-motion" deps={deps} />
+        </PaneShell>
       );
 
       await screen.findByLabelText("PDF document");
       await waitFor(() => {
-        expect(container.querySelector('[data-pane-shell="true"]')).toHaveAttribute(
+        expect(screen.getByTestId("pane-shell-root")).toHaveAttribute(
           "data-mobile-chrome-hidden",
           "false"
         );
@@ -1895,7 +1890,7 @@ describe("PdfReader", () => {
       viewerContainer.scrollTop = 280;
       fireEvent.scroll(viewerContainer);
 
-      expect(container.querySelector('[data-pane-shell="true"]')).toHaveAttribute(
+      expect(screen.getByTestId("pane-shell-root")).toHaveAttribute(
         "data-mobile-chrome-hidden",
         "false"
       );

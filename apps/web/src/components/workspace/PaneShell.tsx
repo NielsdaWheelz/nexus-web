@@ -253,6 +253,7 @@ export default function PaneShell({
   return (
     <section
       className={shellClass}
+      data-testid="pane-shell-root"
       data-pane-shell="true"
       data-active={isActive ? "true" : "false"}
       data-mobile-chrome-hidden={

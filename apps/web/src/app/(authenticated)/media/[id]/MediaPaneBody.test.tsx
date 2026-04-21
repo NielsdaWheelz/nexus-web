@@ -514,7 +514,7 @@ describe("MediaPaneBody highlights shell", () => {
       onOpenConversation: handleOpenConversation,
     });
     expect(getLatestHighlightsAction()).toBeNull();
-    expect(highlightsPaneBody.parentElement).toHaveStyle({
+    expect(screen.getByTestId("desktop-highlights-column")).toHaveStyle({
       width: "400px",
       flex: "0 0 400px",
     });
