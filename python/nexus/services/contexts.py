@@ -93,7 +93,7 @@ def resolve_media_id_for_context(
     """Resolve the media_id for a context target.
 
     Uses highlight_kernel for anchor-kind-aware media resolution (S6 PR-02).
-    Side-effect-free: does not repair dormant-window rows.
+    Side-effect-free: requires canonical highlight rows.
 
     Args:
         db: Database session.
@@ -126,7 +126,7 @@ def resolve_media_id_for_context(
         if highlight is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Highlight not found")
         resolution = resolve_highlight(highlight)
-        if resolution.state == ResolverState.mismatch:
+        if resolution.state != ResolverState.ok:
             map_mismatch(resolution, MappingClass.internal_error, "resolve_media_id_for_context")
         return resolution.anchor_media_id
 
@@ -138,7 +138,7 @@ def resolve_media_id_for_context(
         if highlight is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Annotation not found")
         resolution = resolve_highlight(highlight)
-        if resolution.state == ResolverState.mismatch:
+        if resolution.state != ResolverState.ok:
             map_mismatch(resolution, MappingClass.internal_error, "resolve_media_id_for_context")
         return resolution.anchor_media_id
 
@@ -301,8 +301,7 @@ def recompute_conversation_media(db: Session, conversation_id: UUID) -> None:
     Idempotent repair helper. Safe to call anytime.
 
     S6 PR-02: uses hybrid batch strategy with highlight_kernel resolver semantics
-    instead of fragment-only SQL joins. Tolerates dormant_repairable rows without
-    hidden repair writes. Raises internal integrity failure on mismatches.
+    instead of fragment-only SQL joins. Rejects non-canonical highlight rows.
 
     This function:
     1. Bulk-loads message_context references and referenced highlights/annotations
@@ -373,7 +372,7 @@ def _resolve_context_media_via_kernel(db, ctx, resolve_highlight_fn, map_mismatc
         if highlight is None:
             return None
         resolution = resolve_highlight_fn(highlight)
-        if resolution.state == ResolverState.mismatch:
+        if resolution.state != ResolverState.ok:
             map_mismatch_fn(resolution, MappingClass.internal_error, "recompute_conversation_media")
         return resolution.anchor_media_id
 
@@ -385,7 +384,7 @@ def _resolve_context_media_via_kernel(db, ctx, resolve_highlight_fn, map_mismatc
         if highlight is None:
             return None
         resolution = resolve_highlight_fn(highlight)
-        if resolution.state == ResolverState.mismatch:
+        if resolution.state != ResolverState.ok:
             map_mismatch_fn(resolution, MappingClass.internal_error, "recompute_conversation_media")
         return resolution.anchor_media_id
 

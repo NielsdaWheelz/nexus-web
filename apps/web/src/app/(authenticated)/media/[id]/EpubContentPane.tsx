@@ -4,6 +4,7 @@ import {
   type EpubSectionContent,
   type NormalizedNavigationTocNode,
 } from "@/lib/media/epubReader";
+import { parseAnchorIdFromHref } from "./mediaHelpers";
 import styles from "./page.module.css";
 
 export default function EpubContentPane({
@@ -92,21 +93,6 @@ export default function EpubContentPane({
       ) : null}
     </div>
   );
-}
-
-function parseAnchorIdFromHref(href: string | null): string | null {
-  if (!href || !href.includes("#")) {
-    return null;
-  }
-  const fragment = href.split("#", 2)[1];
-  if (!fragment) {
-    return null;
-  }
-  try {
-    return decodeURIComponent(fragment) || null;
-  } catch {
-    return fragment;
-  }
 }
 
 function TocNodeList({

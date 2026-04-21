@@ -14,7 +14,6 @@ import {
   _shouldForwardRequestHeader,
   _getOrGenerateRequestId,
   _isTextContentType,
-  _isStreamingResponse,
 } from "./proxy";
 
 /**
@@ -217,27 +216,9 @@ describe("proxy helper functions", () => {
       expect(_isTextContentType(null)).toBe(false);
     });
 
-    it("returns false for text/event-stream (handled by streaming path)", () => {
-      expect(_isTextContentType("text/event-stream")).toBe(false);
-      expect(_isTextContentType("text/event-stream; charset=utf-8")).toBe(false);
-    });
-  });
-
-  describe("_isStreamingResponse", () => {
-    it("returns true when expectStream is true", () => {
-      expect(_isStreamingResponse(null, true)).toBe(true);
-      expect(_isStreamingResponse("application/json", true)).toBe(true);
-    });
-
-    it("returns true for text/event-stream content type", () => {
-      expect(_isStreamingResponse("text/event-stream", false)).toBe(true);
-      expect(_isStreamingResponse("text/event-stream; charset=utf-8", false)).toBe(true);
-    });
-
-    it("returns false for non-SSE content types without hint", () => {
-      expect(_isStreamingResponse("application/json", false)).toBe(false);
-      expect(_isStreamingResponse("text/plain", false)).toBe(false);
-      expect(_isStreamingResponse(null, false)).toBe(false);
+    it("returns true for text/event-stream now that the BFF no longer proxies streams", () => {
+      expect(_isTextContentType("text/event-stream")).toBe(true);
+      expect(_isTextContentType("text/event-stream; charset=utf-8")).toBe(true);
     });
   });
 

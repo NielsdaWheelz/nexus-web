@@ -10,7 +10,10 @@ import httpx
 import pytest
 
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.services.podcasts import PODCAST_PROVIDER_MAX_ATTEMPTS, PodcastIndexClient
+from nexus.services.podcasts.provider import (
+    PODCAST_PROVIDER_MAX_ATTEMPTS,
+    PodcastIndexClient,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -54,7 +57,7 @@ def _install_sequence_get(
             raise next_item
         return next_item
 
-    monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_get)
+    monkeypatch.setattr("nexus.services.podcasts.provider.httpx.get", fake_get)
     return calls
 
 
@@ -64,7 +67,7 @@ def _capture_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     def fake_sleep(seconds: float) -> None:
         delays.append(float(seconds))
 
-    monkeypatch.setattr("nexus.services.podcasts.time.sleep", fake_sleep)
+    monkeypatch.setattr("nexus.services.podcasts.provider.time.sleep", fake_sleep)
     return delays
 
 

@@ -143,12 +143,7 @@ class UploadInitResponse(BaseModel):
 
 
 class IngestResponse(BaseModel):
-    """Response schema for POST /media/{id}/ingest.
-
-    Extended in S5 PR-03 with processing_status and ingest_enqueued.
-    Defaults preserve backward compatibility: clients reading only
-    media_id and duplicate remain valid.
-    """
+    """Response schema for POST /media/{id}/ingest."""
 
     media_id: str
     duplicate: bool

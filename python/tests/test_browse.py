@@ -142,7 +142,7 @@ class TestBrowse:
             ),
         )
         monkeypatch.setattr(
-            browse_service.podcast_service,
+            browse_service.podcast_catalog_service,
             "discover_podcasts",
             lambda db, query, limit: [
                 PodcastDiscoveryOut(
@@ -158,7 +158,7 @@ class TestBrowse:
             ],
         )
         monkeypatch.setattr(
-            browse_service.podcast_service,
+            browse_service.podcast_provider_service,
             "get_podcast_index_client",
             lambda: _FakePodcastClient(
                 {
@@ -254,12 +254,12 @@ class TestBrowse:
         )
         monkeypatch.setattr(browse_service, "_search_video_rows", fake_videos)
         monkeypatch.setattr(
-            browse_service.podcast_service,
+            browse_service.podcast_catalog_service,
             "discover_podcasts",
             fake_discover_podcasts,
         )
         monkeypatch.setattr(
-            browse_service.podcast_service,
+            browse_service.podcast_provider_service,
             "get_podcast_index_client",
             lambda: _FakePodcastClient({provider_podcast_id: []}),
         )
@@ -356,7 +356,7 @@ class TestBrowse:
         )
         monkeypatch.setattr(browse_service, "_search_video_rows", fake_videos)
         monkeypatch.setattr(
-            browse_service.podcast_service,
+            browse_service.podcast_catalog_service,
             "discover_podcasts",
             fake_discover_podcasts,
         )
@@ -423,12 +423,12 @@ class TestBrowse:
             lambda query, *, limit, page_token: ([], None),
         )
         monkeypatch.setattr(
-            browse_service.podcast_service,
+            browse_service.podcast_catalog_service,
             "discover_podcasts",
             lambda db, query, limit: [],
         )
         monkeypatch.setattr(
-            browse_service.podcast_service,
+            browse_service.podcast_provider_service,
             "get_podcast_index_client",
             lambda: _FakePodcastClient({}),
         )

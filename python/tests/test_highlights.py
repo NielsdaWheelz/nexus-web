@@ -419,7 +419,13 @@ class TestUpdateHighlight:
         # Update to "World"
         update_resp = auth_client.patch(
             f"/highlights/{highlight_id}",
-            json={"start_offset": 6, "end_offset": 11},
+            json={
+                "anchor": {
+                    "type": "fragment_offsets",
+                    "start_offset": 6,
+                    "end_offset": 11,
+                }
+            },
             headers=auth_headers(user_id),
         )
 
@@ -460,7 +466,13 @@ class TestUpdateHighlight:
         # Try to update highlight2 to same range as highlight1
         update_resp = auth_client.patch(
             f"/highlights/{highlight2_id}",
-            json={"start_offset": 0, "end_offset": 5},
+            json={
+                "anchor": {
+                    "type": "fragment_offsets",
+                    "start_offset": 0,
+                    "end_offset": 5,
+                }
+            },
             headers=auth_headers(user_id),
         )
 
@@ -996,41 +1008,6 @@ def create_shared_library_with_media(
     return lib_id
 
 
-def create_highlight_directly(
-    session: Session,
-    user_id: UUID,
-    fragment_id: UUID,
-    start_offset: int = 0,
-    end_offset: int = 5,
-    color: str = "yellow",
-) -> UUID:
-    """Insert a highlight row directly and return its id."""
-    h_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
-                                    color, exact, prefix, suffix)
-            VALUES (:id, :user_id, :fragment_id, :start_offset, :end_offset,
-                    :color, 'Hello', '', ' World')
-        """),
-        {
-            "id": h_id,
-            "user_id": user_id,
-            "fragment_id": fragment_id,
-            "start_offset": start_offset,
-            "end_offset": end_offset,
-            "color": color,
-        },
-    )
-    session.commit()
-    return h_id
-
-
-# =============================================================================
-# PR-07 Tests: Highlight Shared-Read Contract
-# =============================================================================
-
-
 class TestHighlightSharedRead:
     """PR-07: Shared-read tests for highlights across shared library members."""
 
@@ -1481,6 +1458,7 @@ class TestHighlightSharedRead:
             media_id, fragment_id = create_media_and_fragment(session)
 
         direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1553,12 +1531,34 @@ class TestHighlightSharedRead:
                     text("""
                         INSERT INTO highlights
                             (id, user_id, fragment_id, start_offset, end_offset,
+                             anchor_kind, anchor_media_id,
                              color, exact, prefix, suffix, created_at)
                         VALUES
-                            (:id, :uid, :fid, 0, :end_offset, 'yellow', 'Hello', '', ' World',
+                            (:id, :uid, :fid, 0, :end_offset,
+                             'fragment_offsets', :media_id,
+                             'yellow', 'Hello', '', ' World',
                              '2026-01-01 00:00:00+00')
                     """),
-                    {"id": h_id, "uid": user_id, "fid": fragment_id, "end_offset": end},
+                    {
+                        "id": h_id,
+                        "uid": user_id,
+                        "fid": fragment_id,
+                        "media_id": media_id,
+                        "end_offset": end,
+                    },
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO highlight_fragment_anchors
+                            (highlight_id, fragment_id, start_offset, end_offset)
+                        VALUES
+                            (:highlight_id, :fragment_id, 0, :end_offset)
+                    """),
+                    {
+                        "highlight_id": h_id,
+                        "fragment_id": fragment_id,
+                        "end_offset": end,
+                    },
                 )
             session.commit()
 
@@ -1823,7 +1823,7 @@ class TestS6PR02DualWrite:
     def test_pr02_update_highlight_offsets_syncs_subtype_row(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """PATCH offsets updates both legacy bridge and fragment_anchor subtype."""
+        """PATCH offsets updates the canonical fragment anchor subtype."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
@@ -1846,7 +1846,13 @@ class TestS6PR02DualWrite:
 
         update_resp = auth_client.patch(
             f"/highlights/{h_id}",
-            json={"start_offset": 6, "end_offset": 11},
+            json={
+                "anchor": {
+                    "type": "fragment_offsets",
+                    "start_offset": 6,
+                    "end_offset": 11,
+                }
+            },
             headers=auth_headers(user_id),
         )
         assert update_resp.status_code == 200
@@ -1910,60 +1916,3 @@ class TestS6PR02ResponseContract:
             elif isinstance(data, dict):
                 assert "anchor_kind" not in data
                 assert "anchor_media_id" not in data
-
-
-class TestS6PR02DormantWindowRepair:
-    """PR-02: Dormant-window highlights are repaired on author-write paths."""
-
-    def test_pr02_dormant_highlight_repaired_on_update(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """PATCH on a dormant-window highlight repairs it before applying update."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id, fragment_id = create_media_and_fragment(session)
-
-        add_media_to_library(auth_client, user_id, media_id)
-
-        # Insert dormant-window highlight directly (pr-01 shape)
-        h_id = uuid4()
-        with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
-                                            color, exact, prefix, suffix)
-                    VALUES (:id, :uid, :fid, 0, 5, 'yellow', 'Hello', '', ' World')
-                """),
-                {"id": h_id, "uid": user_id, "fid": fragment_id},
-            )
-            session.commit()
-
-        direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", h_id)
-        direct_db.register_cleanup("highlights", "id", h_id)
-        direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        # Patch color — should trigger dormant repair
-        update_resp = auth_client.patch(
-            f"/highlights/{h_id}",
-            json={"color": "green"},
-            headers=auth_headers(user_id),
-        )
-        assert update_resp.status_code == 200
-
-        # Verify repair occurred
-        with direct_db.session() as session:
-            row = session.execute(
-                text("SELECT anchor_kind, anchor_media_id FROM highlights WHERE id = :id"),
-                {"id": h_id},
-            ).fetchone()
-            assert row[0] == "fragment_offsets"
-            assert str(row[1]) == str(media_id)
-
-            fa_row = session.execute(
-                text("SELECT 1 FROM highlight_fragment_anchors WHERE highlight_id = :id"),
-                {"id": h_id},
-            ).fetchone()
-            assert fa_row is not None

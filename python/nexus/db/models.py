@@ -1527,12 +1527,9 @@ class Highlight(Base):
     - fragment_offsets: half-open [start_offset, end_offset) over canonical_text
     - pdf_page_geometry: page-space geometry (quads/rects) on a PDF page
 
-    Legacy fragment columns (fragment_id, start_offset, end_offset) are a
-    transitional nullable bridge.  For fragment-backed highlights all three
-    are non-NULL; for non-fragment highlights all three are NULL.
-
-    The anchor_kind / anchor_media_id fields are dormant until pr-02 kernel
-    adoption and are NULL for rows created through legacy fragment codepaths.
+    The fragment_id/start_offset/end_offset columns remain as a nullable bridge
+    while the schema still stores the historical fragment shape. Runtime code
+    now requires typed anchor rows for all highlight reads.
     """
 
     __tablename__ = "highlights"
@@ -1548,7 +1545,7 @@ class Highlight(Base):
         nullable=False,
     )
 
-    # Legacy fragment columns — nullable bridge (S6 pr-01)
+    # Nullable bridge columns retained while the schema still carries fragment offsets.
     fragment_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("fragments.id", ondelete="CASCADE"),
@@ -1557,7 +1554,7 @@ class Highlight(Base):
     start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
     end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # S6 typed-highlight logical fields (dormant until pr-02)
+    # Canonical typed-anchor fields used by all runtime highlight reads.
     anchor_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
     anchor_media_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),

@@ -1,26 +1,4 @@
-"""Highlight and Annotation service layer.
-
-Read visibility: shared read allowed under canonical highlight visibility predicate
-(media readable + library intersection between author and viewer per S4 spec §5.2).
-Write boundary: author-only for all mutation operations.
-
-Error masking: E_MEDIA_NOT_FOUND consistently for all 404s (prevent probing attacks).
-Mutation guard: media ready status required for create/update/upsert; list/get/delete
-allowed even if media status drifts.
-
-Helper split (S4):
-- get_highlight_for_visible_read_or_404: read path (visibility predicate)
-- get_highlight_for_author_write_or_404: write path (author-only)
-
-S6 PR-02 adoption:
-- Fragment create/update uses transactional dual-write (canonical subtype + legacy bridge)
-- Read paths use highlight_kernel for anchor-kind-aware media resolution
-- Dormant-window fragment rows are repaired in explicit write-capable paths
-- Mismatch handling follows D03 path-specific mapping via highlight_kernel
-
-Service functions correspond 1:1 with route handlers.
-Routes are transport-only and call exactly one service function.
-"""
+"""Highlight and annotation service layer."""
 
 from uuid import UUID
 
@@ -49,18 +27,14 @@ from nexus.schemas.highlights import (
     HighlightOut,
     LinkedConversationRef,
     PdfAnchorOut,
+    PdfBoundsUpdate,
     PdfQuadOut,
     TypedHighlightOut,
     UpdateHighlightRequest,
     UpsertAnnotationRequest,
 )
 from nexus.services.highlight_kernel import (
-    HighlightKernelIntegrityError,
-    MappingClass,
     ResolverState,
-    build_internal_view,
-    map_mismatch,
-    repair_fragment_highlight,
     resolve_highlight,
 )
 
@@ -178,16 +152,23 @@ def get_highlight_for_visible_read_or_404(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     if not can_read_highlight(db, viewer_id, highlight_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    _resolve_canonical_highlight_or_404(highlight)
     return highlight
+
+
+def _resolve_canonical_highlight_or_404(highlight: Highlight):
+    """Require a highlight to be in the canonical typed state."""
+
+    resolution = resolve_highlight(highlight)
+    if resolution.state != ResolverState.ok:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    return resolution
 
 
 def get_highlight_for_author_write_or_404(
     db: Session, viewer_id: UUID, highlight_id: UUID
 ) -> Highlight:
     """Load highlight with relationships, enforce author-only write access.
-
-    Uses highlight_kernel for anchor-kind-aware media resolution (S6 PR-02).
-    Repairs dormant-window fragment highlights transactionally before returning.
 
     Raises:
         NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not authored by viewer,
@@ -197,18 +178,7 @@ def get_highlight_for_author_write_or_404(
     if highlight is None or highlight.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
-    resolution = resolve_highlight(highlight)
-
-    if resolution.state == ResolverState.mismatch:
-        map_mismatch(resolution, MappingClass.masked_not_found, "get_highlight_for_author_write")
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-
-    if resolution.state == ResolverState.dormant_repairable:
-        try:
-            resolution = repair_fragment_highlight(db, highlight)
-        except HighlightKernelIntegrityError:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found") from None
-
+    resolution = _resolve_canonical_highlight_or_404(highlight)
     media_id = resolution.anchor_media_id
     if media_id is None or not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
@@ -218,7 +188,7 @@ def get_highlight_for_author_write_or_404(
 def _require_media_ready_for_highlight(db: Session, highlight: Highlight) -> None:
     """Resolve media for a highlight via kernel and check processing status."""
 
-    resolution = resolve_highlight(highlight)
+    resolution = _resolve_canonical_highlight_or_404(highlight)
     media_id = resolution.anchor_media_id
 
     if highlight.fragment and highlight.fragment.media:
@@ -270,13 +240,19 @@ def _batch_linked_conversations(
     return result
 
 
-def _highlight_fields(highlight: Highlight, viewer_id: UUID) -> dict:
-    """Common ORM-to-schema fields shared by highlight read responses."""
+def _fragment_highlight_fields(highlight: Highlight, viewer_id: UUID) -> dict:
+    """Canonical fragment-anchor fields for fragment collection responses."""
+
+    resolution = _resolve_canonical_highlight_or_404(highlight)
+    fragment_anchor = resolution.fragment_anchor
+    if resolution.anchor_kind != "fragment_offsets" or fragment_anchor is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+
     return dict(
         id=highlight.id,
-        fragment_id=highlight.fragment_id,
-        start_offset=highlight.start_offset,
-        end_offset=highlight.end_offset,
+        fragment_id=fragment_anchor.fragment_id,
+        start_offset=fragment_anchor.start_offset,
+        end_offset=fragment_anchor.end_offset,
         color=highlight.color,
         exact=highlight.exact,
         prefix=highlight.prefix,
@@ -291,10 +267,12 @@ def _highlight_fields(highlight: Highlight, viewer_id: UUID) -> dict:
 
 def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighlightOut:
     """Convert Highlight ORM model to anchor-discriminated TypedHighlightOut."""
-    resolution = resolve_highlight(highlight)
-    view = build_internal_view(highlight, resolution)
+    resolution = _resolve_canonical_highlight_or_404(highlight)
 
-    if view.anchor_kind == "pdf_page_geometry" and view.pdf_anchor is not None:
+    if resolution.anchor_kind == "pdf_page_geometry":
+        pdf_anchor = highlight.pdf_anchor
+        if pdf_anchor is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
         quads_out = []
         if highlight.pdf_quads:
             sorted_quads = sorted(highlight.pdf_quads, key=lambda q: q.quad_idx)
@@ -313,26 +291,20 @@ def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighl
             ]
         anchor = PdfAnchorOut(
             type="pdf_page_geometry",
-            media_id=view.pdf_anchor.media_id,
-            page_number=view.pdf_anchor.page_number,
+            media_id=pdf_anchor.media_id,
+            page_number=pdf_anchor.page_number,
             quads=quads_out,
         )
-    elif view.fragment_anchor is not None:
+    elif resolution.anchor_kind == "fragment_offsets" and resolution.fragment_anchor is not None:
         anchor = FragmentAnchorOut(
             type="fragment_offsets",
-            media_id=view.fragment_anchor.media_id,
-            fragment_id=view.fragment_anchor.fragment_id,
-            start_offset=view.fragment_anchor.start_offset,
-            end_offset=view.fragment_anchor.end_offset,
+            media_id=resolution.fragment_anchor.media_id,
+            fragment_id=resolution.fragment_anchor.fragment_id,
+            start_offset=resolution.fragment_anchor.start_offset,
+            end_offset=resolution.fragment_anchor.end_offset,
         )
     else:
-        anchor = FragmentAnchorOut(
-            type="fragment_offsets",
-            media_id=view.anchor_media_id,
-            fragment_id=highlight.fragment_id or view.anchor_media_id,
-            start_offset=highlight.start_offset or 0,
-            end_offset=highlight.end_offset or 0,
-        )
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
     return TypedHighlightOut(
         id=highlight.id,
@@ -388,7 +360,7 @@ def create_highlight_for_fragment(
         fragment.canonical_text, req.start_offset, req.end_offset
     )
 
-    # 5. Create highlight with typed logical fields (S6 PR-02 dual-write)
+    # 5. Create highlight row plus canonical fragment anchor
     highlight = Highlight(
         user_id=viewer_id,
         fragment_id=fragment_id,
@@ -402,7 +374,7 @@ def create_highlight_for_fragment(
         suffix=suffix,
     )
 
-    # 6. Persist with integrity error handling + fragment anchor subtype
+    # 6. Persist with integrity error handling
     try:
         db.add(highlight)
         db.flush()
@@ -457,12 +429,12 @@ def create_highlight_for_fragment(
         db.rollback()
         raise map_integrity_error(e) from e
 
-    # 7. Return HighlightOut with annotation=None
+    # 7. Return fragment collection response
     return HighlightOut(
         id=highlight.id,
-        fragment_id=highlight.fragment_id,
-        start_offset=highlight.start_offset,
-        end_offset=highlight.end_offset,
+        fragment_id=fragment_id,
+        start_offset=req.start_offset,
+        end_offset=req.end_offset,
         color=highlight.color,
         exact=highlight.exact,
         prefix=highlight.prefix,
@@ -497,7 +469,14 @@ def list_highlights_for_fragment(
     """
     fragment = get_fragment_for_viewer_or_404(db, viewer_id, fragment_id)
 
-    query = db.query(Highlight).filter(Highlight.fragment_id == fragment_id)
+    query = (
+        db.query(Highlight)
+        .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
+        .filter(
+            Highlight.anchor_kind == "fragment_offsets",
+            HighlightFragmentAnchor.fragment_id == fragment_id,
+        )
+    )
 
     if mine_only:
         query = query.filter(Highlight.user_id == viewer_id)
@@ -505,7 +484,7 @@ def list_highlights_for_fragment(
         query = query.filter(highlight_visibility_filter(viewer_id, fragment.media_id))
 
     highlights = query.order_by(
-        Highlight.start_offset.asc(),
+        HighlightFragmentAnchor.start_offset.asc(),
         Highlight.created_at.asc(),
         Highlight.id.asc(),
     ).all()
@@ -513,7 +492,7 @@ def list_highlights_for_fragment(
     conv_map = _batch_linked_conversations(db, [h.id for h in highlights], viewer_id)
     return [
         HighlightOut(
-            **_highlight_fields(h, viewer_id),
+            **_fragment_highlight_fields(h, viewer_id),
             linked_conversations=conv_map.get(h.id, []),
         )
         for h in highlights
@@ -541,39 +520,38 @@ def update_highlight(
     Returns TypedHighlightOut with anchor discriminator.
     """
     highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
+    resolution = _resolve_canonical_highlight_or_404(highlight)
+    anchor_kind = resolution.anchor_kind
+    anchor_update = req.anchor
 
-    # D16: anchor-kind mismatch rejection
-    resolution = resolve_highlight(highlight)
-    anchor_kind = resolution.anchor_kind or "fragment_offsets"
-
-    has_fragment_offsets = req.start_offset is not None or req.end_offset is not None
-    has_pdf_bounds = req.pdf_bounds is not None
-
-    if has_pdf_bounds and anchor_kind != "pdf_page_geometry":
+    if anchor_update is not None and anchor_update.type != anchor_kind:
+        if anchor_update.type == "pdf_page_geometry":
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "pdf_page_geometry anchor updates are not valid for non-PDF highlights",
+            )
         raise ApiError(
             ApiErrorCode.E_INVALID_REQUEST,
-            "pdf_bounds is not valid for non-PDF highlights",
-        )
-    if has_fragment_offsets and anchor_kind == "pdf_page_geometry":
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Fragment offset fields are not valid for PDF highlights",
+            "fragment_offsets anchor updates are not valid for PDF highlights",
         )
 
-    # PDF bounds update: delegate to pdf_highlights
-    if has_pdf_bounds and anchor_kind == "pdf_page_geometry":
+    if anchor_update is not None and anchor_kind == "pdf_page_geometry":
         from nexus.services.pdf_highlights import update_pdf_highlight_bounds
 
         return update_pdf_highlight_bounds(
             db,
             viewer_id,
             highlight,
-            req.pdf_bounds,
+            PdfBoundsUpdate(
+                page_number=anchor_update.page_number,
+                quads=anchor_update.quads,
+                exact=req.exact or "",
+            ),
             req.color,
         )
 
     # PDF color-only update
-    if anchor_kind == "pdf_page_geometry" and not has_pdf_bounds and not has_fragment_offsets:
+    if anchor_kind == "pdf_page_geometry" and anchor_update is None:
         if req.color is not None and req.color != highlight.color:
             _require_media_ready_for_highlight(db, highlight)
             stmt = (
@@ -587,14 +565,18 @@ def update_highlight(
             db.refresh(highlight)
         return _highlight_to_typed_out(highlight, viewer_id)
 
-    # Fragment update path (unchanged logic)
+    if resolution.fragment_anchor is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+
     _require_media_ready_for_highlight(db, highlight)
 
-    final_start = req.start_offset if req.start_offset is not None else highlight.start_offset
-    final_end = req.end_offset if req.end_offset is not None else highlight.end_offset
+    current_start = resolution.fragment_anchor.start_offset
+    current_end = resolution.fragment_anchor.end_offset
+    final_start = anchor_update.start_offset if anchor_update is not None else current_start
+    final_end = anchor_update.end_offset if anchor_update is not None else current_end
     final_color = req.color if req.color is not None else highlight.color
 
-    offsets_changed = final_start != highlight.start_offset or final_end != highlight.end_offset
+    offsets_changed = final_start != current_start or final_end != current_end
     color_changed = final_color != highlight.color
 
     if not offsets_changed and not color_changed:

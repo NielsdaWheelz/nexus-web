@@ -15,7 +15,6 @@ vi.mock("@/lib/panes/openInAppPane", () => ({
   NEXUS_OPEN_PANE_EVENT: "nexus:open-pane",
   consumePendingPaneOpenQueue: () => [],
   isOpenInAppPaneMessage: () => false,
-  normalizePaneHref: (href: string) => href,
   setPaneGraphReady: (...args: unknown[]) => mockSetPaneGraphReady(...args),
 }));
 

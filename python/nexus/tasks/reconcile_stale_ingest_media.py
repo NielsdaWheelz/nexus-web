@@ -34,7 +34,9 @@ def _mark_stale_media_failed(
     error_message: str,
 ) -> None:
     if media.kind == "podcast_episode":
-        from nexus.services.podcasts import mark_podcast_transcription_failure_for_recovery
+        from nexus.services.podcasts.transcripts import (
+            mark_podcast_transcription_failure_for_recovery,
+        )
 
         mark_podcast_transcription_failure_for_recovery(
             db,
@@ -205,7 +207,9 @@ def reconcile_stale_ingest_media_job(
         ).fetchall()
         semantic_scanned = len(semantic_candidates)
         if semantic_candidates:
-            from nexus.services.podcasts import repair_podcast_transcript_semantic_index_now
+            from nexus.services.podcasts.transcripts import (
+                repair_podcast_transcript_semantic_index_now,
+            )
 
             for row in semantic_candidates:
                 media_id = row[0]

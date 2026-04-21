@@ -467,8 +467,8 @@ class TestCanReadHighlightKernelAware:
         hl_id = create_normalized_fragment_highlight(db_session, user_id, frag_id, media_id, 0, 10)
         assert can_read_highlight(db_session, user_id, hl_id) is True
 
-    def test_can_read_highlight_dormant_fragment_true(self, db_session: Session):
-        """Dormant-window fragment highlight is still readable (resolver resolves media)."""
+    def test_can_read_highlight_bridge_only_fragment_false(self, db_session: Session):
+        """Bridge-only fragment highlight is rejected after the hard cutover."""
         from nexus.auth.permissions import can_read_highlight
         from tests.factories import (
             create_dormant_fragment_highlight,
@@ -483,7 +483,7 @@ class TestCanReadHighlightKernelAware:
         media_id = create_test_media_in_library(db_session, user_id, lib_id)
         frag_id = create_test_fragment(db_session, media_id, content="y" * 30)
         hl_id = create_dormant_fragment_highlight(db_session, user_id, frag_id, 0, 10)
-        assert can_read_highlight(db_session, user_id, hl_id) is True
+        assert can_read_highlight(db_session, user_id, hl_id) is False
 
     def test_can_read_highlight_mismatch_returns_false(self, db_session: Session):
         """Mismatched highlight returns False (bool_fail_closed), no existence leak."""

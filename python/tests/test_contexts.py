@@ -103,11 +103,51 @@ def media_with_highlight(db_session: Session, user_with_library: tuple) -> tuple
     highlight_id = uuid4()
     db_session.execute(
         text("""
-            INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
-                                   color, exact, prefix, suffix)
-            VALUES (:id, :user_id, :fragment_id, 0, 4, 'yellow', 'Test', '', ' canonical')
+            INSERT INTO highlights (
+                id,
+                user_id,
+                fragment_id,
+                start_offset,
+                end_offset,
+                anchor_kind,
+                anchor_media_id,
+                color,
+                exact,
+                prefix,
+                suffix
+            )
+            VALUES (
+                :id,
+                :user_id,
+                :fragment_id,
+                0,
+                4,
+                'fragment_offsets',
+                :media_id,
+                'yellow',
+                'Test',
+                '',
+                ' canonical'
+            )
         """),
-        {"id": highlight_id, "user_id": user_id, "fragment_id": fragment_id},
+        {
+            "id": highlight_id,
+            "user_id": user_id,
+            "fragment_id": fragment_id,
+            "media_id": media_id,
+        },
+    )
+    db_session.execute(
+        text("""
+            INSERT INTO highlight_fragment_anchors (
+                highlight_id,
+                fragment_id,
+                start_offset,
+                end_offset
+            )
+            VALUES (:highlight_id, :fragment_id, 0, 4)
+        """),
+        {"highlight_id": highlight_id, "fragment_id": fragment_id},
     )
 
     # Create annotation

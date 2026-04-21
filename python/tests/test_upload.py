@@ -940,65 +940,6 @@ class TestEpubIngestLifecycle:
         fake_storage.put_object(d["storage_path"], content, "application/epub+zip")
         return mid, d["storage_path"]
 
-    def test_ingest_epub_response_includes_dispatch_status_compat_fields(
-        self,
-        upload_client,
-        fake_storage,
-        direct_db,
-        monkeypatch,
-    ):
-        user_id = create_test_user_id()
-        upload_client.get("/me", headers=auth_headers(user_id))
-
-        monkeypatch.setattr(
-            "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
-        )
-        monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
-
-        mid, _ = self._init_and_store_epub(
-            upload_client, fake_storage, direct_db, user_id, EPUB_CONTENT
-        )
-
-        resp = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-
-        assert "media_id" in data
-        assert "duplicate" in data
-        assert "processing_status" in data
-        assert "ingest_enqueued" in data
-
-    def test_ingest_epub_duplicate_preserves_compat_and_sets_ingest_enqueued_false(
-        self,
-        upload_client,
-        fake_storage,
-        direct_db,
-        monkeypatch,
-    ):
-        user_id = create_test_user_id()
-        upload_client.get("/me", headers=auth_headers(user_id))
-
-        monkeypatch.setattr(
-            "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
-        )
-        monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
-
-        mid1, _ = self._init_and_store_epub(
-            upload_client, fake_storage, direct_db, user_id, EPUB_CONTENT
-        )
-        upload_client.post(f"/media/{mid1}/ingest", headers=auth_headers(user_id))
-
-        mid2, _ = self._init_and_store_epub(
-            upload_client, fake_storage, direct_db, user_id, EPUB_CONTENT
-        )
-        resp = upload_client.post(f"/media/{mid2}/ingest", headers=auth_headers(user_id))
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-
-        assert data["duplicate"] is True
-        assert data["media_id"] == mid1
-        assert data["ingest_enqueued"] is False
-
     def test_ingest_epub_archive_unsafe_fails_preflight_without_dispatch(
         self,
         upload_client,
@@ -1155,50 +1096,6 @@ class TestEpubIngestLifecycle:
             assert row[0] != "extracting"
 
 
-class TestIngestResponseBackwardCompatibility:
-    """S5 PR-03: response extends with new fields while keeping legacy semantics."""
-
-    def test_ingest_response_backward_compat(
-        self, upload_client, fake_storage, direct_db, monkeypatch
-    ):
-        """Legacy clients reading only media_id and duplicate remain valid."""
-        user_id = create_test_user_id()
-
-        monkeypatch.setattr(
-            "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
-        )
-        monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
-
-        resp = upload_client.post(
-            "/media/upload/init",
-            json={
-                "kind": "epub",
-                "filename": "shape_test.epub",
-                "content_type": "application/epub+zip",
-                "size_bytes": len(EPUB_CONTENT),
-            },
-            headers=auth_headers(user_id),
-        )
-        assert resp.status_code == 200
-        init_data = resp.json()["data"]
-        media_id = init_data["media_id"]
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        fake_storage.put_object(init_data["storage_path"], EPUB_CONTENT, "application/epub+zip")
-
-        resp = upload_client.post(f"/media/{media_id}/ingest", headers=auth_headers(user_id))
-        assert resp.status_code == 200
-
-        data = resp.json()["data"]
-        assert "media_id" in data
-        assert "duplicate" in data
-        assert isinstance(data["media_id"], str)
-        assert isinstance(data["duplicate"], bool)
-
-
 class TestPdfIngestLifecycle:
     """S6 PR-03: PDF ingest dispatch and lifecycle tests."""
 
@@ -1249,31 +1146,6 @@ class TestPdfIngestLifecycle:
         assert data["processing_status"] == "extracting"
         assert data["ingest_enqueued"] is True
         assert _count_jobs_for_media(direct_db, kind="ingest_pdf", media_id=str(mid)) == 1
-
-    def test_pr03_ingest_pdf_confirm_preserves_compat_response_fields(
-        self,
-        upload_client,
-        fake_storage,
-        direct_db,
-        monkeypatch,
-    ):
-        user_id = create_test_user_id()
-        upload_client.get("/me", headers=auth_headers(user_id))
-
-        monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: fake_storage)
-
-        mid, _ = self._init_and_store_pdf(
-            upload_client, fake_storage, direct_db, user_id, PDF_CONTENT
-        )
-
-        resp = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_id))
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-
-        assert "media_id" in data
-        assert "duplicate" in data
-        assert "processing_status" in data
-        assert "ingest_enqueued" in data
 
     def test_pr03_ingest_pdf_confirm_non_creator_forbidden(
         self,

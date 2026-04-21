@@ -167,7 +167,7 @@ def _render_highlight_context(db: Session, highlight_id: UUID) -> str | None:
         return None
 
     resolution = resolve_highlight(highlight)
-    if resolution.state == ResolverState.mismatch:
+    if resolution.state != ResolverState.ok:
         logger.warning(
             "context_render_highlight_mismatch",
             highlight_id=str(highlight_id),
@@ -487,7 +487,7 @@ def _render_annotation_context(db: Session, annotation_id: UUID) -> str | None:
         return None
 
     resolution = resolve_highlight(highlight)
-    if resolution.state == ResolverState.mismatch:
+    if resolution.state != ResolverState.ok:
         logger.warning(
             "context_render_annotation_mismatch",
             annotation_id=str(annotation_id),

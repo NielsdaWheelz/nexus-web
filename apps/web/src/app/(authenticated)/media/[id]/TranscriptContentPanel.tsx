@@ -4,26 +4,12 @@ import type { MouseEvent, RefObject } from "react";
 import ReaderContentArea from "@/components/ReaderContentArea";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import {
+  formatTranscriptTimestampMs,
   normalizeTranscriptChapters,
   type TranscriptChapter,
   type TranscriptFragment,
 } from "./mediaHelpers";
 import styles from "./page.module.css";
-
-function formatTimestampMs(timestampMs: number | null | undefined): string | null {
-  if (timestampMs == null || timestampMs < 0) {
-    return null;
-  }
-
-  const totalSeconds = Math.floor(timestampMs / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  return `${hours.toString().padStart(2, "0")}:${minutes
-    .toString()
-    .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
-}
 
 interface TranscriptContentPanelProps {
   transcriptState:
@@ -126,7 +112,9 @@ export default function TranscriptContentPanel({
           <div className={styles.transcriptSegments}>
             {timeline.map((entry) => {
               if (entry.kind === "chapter") {
-                const chapterTimestamp = formatTimestampMs(entry.chapterStartMs);
+                const chapterTimestamp = formatTranscriptTimestampMs(
+                  entry.chapterStartMs
+                );
                 return (
                   <div
                     key={`inline-chapter-${entry.chapterIdx}-${entry.chapterStartMs}`}
@@ -144,7 +132,7 @@ export default function TranscriptContentPanel({
                 );
               }
 
-              const timestamp = formatTimestampMs(entry.fragment.t_start_ms);
+              const timestamp = formatTranscriptTimestampMs(entry.fragment.t_start_ms);
               const isActive = entry.fragment.id === activeFragment?.id;
 
               return (

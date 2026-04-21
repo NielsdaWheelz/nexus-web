@@ -34,8 +34,10 @@ import {
 import { useReaderContext } from "@/lib/reader";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import TranscriptMediaPane from "./TranscriptMediaPane";
 import EpubContentPane from "./EpubContentPane";
+import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
+import TranscriptContentPanel from "./TranscriptContentPanel";
+import TranscriptStatePanel from "./TranscriptStatePanel";
 import {
   formatMediaAuthors,
   formatResumeTime,
@@ -55,12 +57,89 @@ export default function MediaPaneBody() {
 
   const router = usePaneRouter();
   const { navigatePane } = useWorkspaceStore();
-  const mv = useMediaViewState(id);
+  const {
+    media,
+    loading,
+    error,
+    fragments,
+    isEpub,
+    isPdf,
+    isTranscriptMedia,
+    canRead,
+    transcriptState,
+    transcriptCoverage,
+    playbackSource,
+    isPlaybackOnlyTranscript,
+    focusModeEnabled,
+    showHighlightsPane,
+    pdfReaderResumeState,
+    readerResumeStateLoading,
+    saveReaderResumeState,
+    libraryPickerLibraries,
+    libraryPickerLoading,
+    libraryPickerError,
+    libraryMembershipBusy,
+    loadLibraryPickerLibraries,
+    handleAddToLibrary,
+    handleRemoveFromLibrary,
+    activeChapter,
+    activeSectionId,
+    epubSections,
+    epubToc,
+    tocWarning,
+    chapterLoading,
+    epubError,
+    epubTocExpanded,
+    setEpubTocExpanded,
+    navigateToSection,
+    activeSectionPosition,
+    prevSection,
+    nextSection,
+    hasEpubToc,
+    pdfControlsState,
+    setPdfControlsState,
+    pdfControlsRef,
+    pdfPageHighlights,
+    pdfActivePage,
+    pdfRefreshToken,
+    pdfHighlightsVersion,
+    handlePdfPageHighlightsChange,
+    highlights,
+    highlightsVersion,
+    focusState,
+    focusHighlight,
+    clearFocus,
+    startEditBounds,
+    cancelEditBounds,
+    isMismatchDisabled,
+    activeTranscriptFragment,
+    renderedHtml,
+    contentRef,
+    pdfContentRef,
+    selection,
+    isCreating,
+    handleCreateHighlight,
+    handleDismissPopover,
+    handleColorChange,
+    handleDelete,
+    handleAnnotationSave,
+    handleAnnotationDelete,
+    handleSendToChat,
+    handleOpenConversation,
+    prepareQuoteSelectionForChat,
+    handleQuoteSelectionToNewChat,
+    handleContentClick: handleMediaContentClick,
+    handleTranscriptSegmentSelect,
+    handleRequestTranscript,
+    transcriptRequestInFlight,
+    transcriptRequestForecast,
+    isMobileViewport,
+  } = useMediaViewState(id);
   const paneChromeScrollHandler = usePaneChromeScrollHandler();
   const paneMobileChrome = usePaneMobileChromeVisibility();
   const { toast } = useToast();
   const { profile: readerProfile, updateTheme } = useReaderContext();
-  const { setTrack } = useGlobalPlayer();
+  const { setTrack, seekToMs, play } = useGlobalPlayer();
 
   // ==========================================================================
   // Highlights pane state
@@ -75,49 +154,43 @@ export default function MediaPaneBody() {
   const [libraryPanelOpen, setLibraryPanelOpen] = useState(false);
   const [libraryPanelAnchorEl, setLibraryPanelAnchorEl] =
     useState<HTMLElement | null>(null);
+  const [videoSeekTargetMs, setVideoSeekTargetMs] = useState<number | null>(null);
   const resumeNoticeMediaIdRef = useRef<string | null>(null);
   const seededPodcastTrackRef = useRef<string | null>(null);
 
   const handleContentClick = useCallback(
     (e: React.MouseEvent) => {
-      const highlightId = mv.handleContentClick(e);
-      if (mv.isMobileViewport && mv.showHighlightsPane && highlightId) {
+      const highlightId = handleMediaContentClick(e);
+      if (isMobileViewport && showHighlightsPane && highlightId) {
         setHighlightsDrawerOpen(true);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- property-level deps are intentional; mv is a new object each render
-    [mv.handleContentClick, mv.isMobileViewport, mv.showHighlightsPane]
+    [handleMediaContentClick, isMobileViewport, showHighlightsPane]
   );
 
   const handlePdfHighlightTap = useCallback(
     (highlightId: string, _anchorRect: DOMRect) => {
-      mv.focusHighlight(highlightId);
-      if (mv.isMobileViewport && mv.showHighlightsPane) {
+      focusHighlight(highlightId);
+      if (isMobileViewport && showHighlightsPane) {
         setHighlightsDrawerOpen(true);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- property-level deps are intentional; mv is a new object each render
-    [mv.focusHighlight, mv.isMobileViewport, mv.showHighlightsPane]
+    [focusHighlight, isMobileViewport, showHighlightsPane]
   );
 
   const handleQuoteToChat = useCallback(
     async (color: HighlightColor) => {
-      if (!mv.isMobileViewport) {
-        await mv.handleQuoteSelectionToNewChat(color);
+      if (!isMobileViewport) {
+        await handleQuoteSelectionToNewChat(color);
         return;
       }
-      const prepared = await mv.prepareQuoteSelectionForChat(color);
+      const prepared = await prepareQuoteSelectionForChat(color);
       if (!prepared) {
         return;
       }
       setQuoteDrawerState(prepared);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- property-level deps are intentional; mv is a new object each render
-    [
-      mv.handleQuoteSelectionToNewChat,
-      mv.isMobileViewport,
-      mv.prepareQuoteSelectionForChat,
-    ]
+    [handleQuoteSelectionToNewChat, isMobileViewport, prepareQuoteSelectionForChat]
   );
 
   const handleQuoteDrawerConversationCreated = useCallback(
@@ -147,15 +220,15 @@ export default function MediaPaneBody() {
     quoteDrawerState?.targetPaneId,
   ]);
 
-  const isReflowableReader = mv.canRead && !mv.isPdf;
-  const mediaAuthorMeta = formatMediaAuthors(mv.media?.authors, 2);
+  const isReflowableReader = canRead && !isPdf;
+  const mediaAuthorMeta = formatMediaAuthors(media?.authors, 2);
   const mediaHeaderMeta = (
     <div className={styles.metadata}>
-      <span className={styles.kind}>{mv.media?.kind}</span>
+      <span className={styles.kind}>{media?.kind}</span>
       {mediaAuthorMeta ? <span className={styles.authorMeta}>{mediaAuthorMeta}</span> : null}
-      {mv.media?.canonical_source_url ? (
+      {media?.canonical_source_url ? (
         <a
-          href={mv.media.canonical_source_url}
+          href={media.canonical_source_url}
           target="_blank"
           rel="noopener noreferrer"
           className={styles.sourceLink}
@@ -168,19 +241,19 @@ export default function MediaPaneBody() {
 
   const mediaHeaderOptions: ActionMenuOption[] = [];
 
-  if (mv.media?.canonical_source_url) {
+  if (media?.canonical_source_url) {
     mediaHeaderOptions.push({
       id: "open-source",
       label: "Open source",
-      href: mv.media.canonical_source_url,
+      href: media.canonical_source_url,
     });
   }
 
-  if (mv.isEpub && mv.canRead && (mv.hasEpubToc || mv.tocWarning)) {
+  if (isEpub && canRead && (hasEpubToc || tocWarning)) {
     mediaHeaderOptions.push({
       id: "toggle-toc",
-      label: mv.epubTocExpanded ? "Hide table of contents" : "Show table of contents",
-      onSelect: () => mv.setEpubTocExpanded((value) => !value),
+      label: epubTocExpanded ? "Hide table of contents" : "Show table of contents",
+      onSelect: () => setEpubTocExpanded((value) => !value),
     });
   }
 
@@ -200,7 +273,7 @@ export default function MediaPaneBody() {
     });
   }
 
-  if (mv.media) {
+  if (media) {
     mediaHeaderOptions.push({
       id: "libraries",
       label: "Libraries…",
@@ -208,37 +281,35 @@ export default function MediaPaneBody() {
       onSelect: ({ triggerEl }) => {
         setLibraryPanelAnchorEl(triggerEl);
         setLibraryPanelOpen(true);
-        void mv.loadLibraryPickerLibraries();
+        void loadLibraryPickerLibraries();
       },
     });
   }
 
   const mediaToolbar =
-    mv.isPdf && mv.canRead && mv.pdfControlsState ? (
+    isPdf && canRead && pdfControlsState ? (
       <div className={styles.mediaToolbar} role="toolbar" aria-label="PDF controls">
         <div className={styles.mediaToolbarRow}>
           <button
             type="button"
             className={styles.mediaToolbarButton}
-            onClick={() => mv.pdfControlsRef.current?.goToPreviousPage()}
-            disabled={!mv.pdfControlsState.canGoPrev}
+            onClick={() => pdfControlsRef.current?.goToPreviousPage()}
+            disabled={!pdfControlsState.canGoPrev}
             aria-label="Previous page"
           >
             Prev
           </button>
           <span
             className={styles.mediaToolbarStatus}
-            aria-label={`Page ${mv.pdfControlsState.pageNumber} of ${
-              mv.pdfControlsState.numPages || 0
-            }`}
+            aria-label={`Page ${pdfControlsState.pageNumber} of ${pdfControlsState.numPages || 0}`}
           >
-            {mv.pdfControlsState.pageNumber} / {mv.pdfControlsState.numPages || 0}
+            {pdfControlsState.pageNumber} / {pdfControlsState.numPages || 0}
           </span>
           <button
             type="button"
             className={styles.mediaToolbarButton}
-            onClick={() => mv.pdfControlsRef.current?.goToNextPage()}
-            disabled={!mv.pdfControlsState.canGoNext}
+            onClick={() => pdfControlsRef.current?.goToNextPage()}
+            disabled={!pdfControlsState.canGoNext}
             aria-label="Next page"
           >
             Next
@@ -248,18 +319,18 @@ export default function MediaPaneBody() {
             className={styles.mediaToolbarButton}
             onMouseDown={(event) => {
               event.preventDefault();
-              mv.pdfControlsRef.current?.captureSelectionSnapshot();
+              pdfControlsRef.current?.captureSelectionSnapshot();
             }}
-            onClick={() => mv.pdfControlsRef.current?.createHighlight("yellow")}
-            disabled={!mv.pdfControlsState.canCreateHighlight || mv.pdfControlsState.isCreating}
+            onClick={() => pdfControlsRef.current?.createHighlight("yellow")}
+            disabled={!pdfControlsState.canCreateHighlight || pdfControlsState.isCreating}
             aria-label="Highlight selection"
-            data-create-attempts={mv.pdfControlsState.createTelemetry.attempts}
-            data-create-post-requests={mv.pdfControlsState.createTelemetry.postRequests}
-            data-create-patch-requests={mv.pdfControlsState.createTelemetry.patchRequests}
-            data-create-successes={mv.pdfControlsState.createTelemetry.successes}
-            data-create-errors={mv.pdfControlsState.createTelemetry.errors}
-            data-create-last-outcome={mv.pdfControlsState.createTelemetry.lastOutcome}
-            data-page-render-epoch={mv.pdfControlsState.pageRenderEpoch}
+            data-create-attempts={pdfControlsState.createTelemetry.attempts}
+            data-create-post-requests={pdfControlsState.createTelemetry.postRequests}
+            data-create-patch-requests={pdfControlsState.createTelemetry.patchRequests}
+            data-create-successes={pdfControlsState.createTelemetry.successes}
+            data-create-errors={pdfControlsState.createTelemetry.errors}
+            data-create-last-outcome={pdfControlsState.createTelemetry.lastOutcome}
+            data-page-render-epoch={pdfControlsState.pageRenderEpoch}
             data-selection-popover-ignore-outside="true"
           >
             Highlight
@@ -270,72 +341,70 @@ export default function MediaPaneBody() {
               {
                 id: "zoom-out",
                 label: "Zoom out",
-                disabled: !mv.pdfControlsState.canZoomOut,
-                onSelect: () => mv.pdfControlsRef.current?.zoomOut(),
+                disabled: !pdfControlsState.canZoomOut,
+                onSelect: () => pdfControlsRef.current?.zoomOut(),
               },
               {
                 id: "zoom-in",
                 label: "Zoom in",
-                disabled: !mv.pdfControlsState.canZoomIn,
-                onSelect: () => mv.pdfControlsRef.current?.zoomIn(),
+                disabled: !pdfControlsState.canZoomIn,
+                onSelect: () => pdfControlsRef.current?.zoomIn(),
               },
             ]}
           />
         </div>
       </div>
-    ) : mv.isEpub && mv.canRead ? (
+    ) : isEpub && canRead ? (
       <div className={styles.mediaToolbar} role="toolbar" aria-label="EPUB controls">
         <div className={styles.mediaToolbarRow}>
           <button
             type="button"
             className={styles.mediaToolbarButton}
             onClick={() => {
-              if (mv.prevSection) {
-                mv.navigateToSection(mv.prevSection.section_id);
+              if (prevSection) {
+                navigateToSection(prevSection.section_id);
               }
             }}
-            disabled={!mv.prevSection}
+            disabled={!prevSection}
             aria-label="Previous section"
           >
             Prev
           </button>
-          {mv.activeSectionPosition >= 0 && mv.epubSections ? (
+          {activeSectionPosition >= 0 && epubSections ? (
             <span
               className={styles.mediaToolbarStatus}
-              aria-label={`Section ${mv.activeSectionPosition + 1} of ${
-                mv.epubSections.length
-              }`}
+              aria-label={`Section ${activeSectionPosition + 1} of ${epubSections.length}`}
             >
-              {mv.activeSectionPosition + 1} / {mv.epubSections.length}
+              {activeSectionPosition + 1} / {epubSections.length}
             </span>
           ) : null}
           <button
             type="button"
             className={styles.mediaToolbarButton}
             onClick={() => {
-              if (mv.nextSection) {
-                mv.navigateToSection(mv.nextSection.section_id);
+              if (nextSection) {
+                navigateToSection(nextSection.section_id);
               }
             }}
-            disabled={!mv.nextSection}
+            disabled={!nextSection}
             aria-label="Next section"
           >
             Next
           </button>
         </div>
-        {mv.epubSections ? (
+        {epubSections ? (
           <div className={styles.mediaToolbarRow}>
             <select
-              value={mv.activeSectionId ?? ""}
+              value={activeSectionId ?? ""}
               onChange={(event) => {
                 if (event.target.value) {
-                  mv.navigateToSection(event.target.value);
+                  navigateToSection(event.target.value);
                 }
               }}
               className={styles.mediaToolbarSelect}
               aria-label="Select section"
             >
-              {mv.epubSections.map((section) => (
+              {epubSections.map((section) => (
                 <option key={section.section_id} value={section.section_id}>
                   {section.label}
                 </option>
@@ -355,7 +424,7 @@ export default function MediaPaneBody() {
     options: mediaHeaderOptions,
     meta: mediaHeaderMeta,
     actions:
-      mv.showHighlightsPane && mv.isMobileViewport ? (
+      showHighlightsPane && isMobileViewport ? (
         <div className={styles.paneActionGroup}>
           <button
             type="button"
@@ -385,10 +454,10 @@ export default function MediaPaneBody() {
   }, [highlightsDrawerOpen]);
 
   useEffect(() => {
-    if (highlightsDrawerOpen && (!mv.isMobileViewport || !mv.showHighlightsPane)) {
+    if (highlightsDrawerOpen && (!isMobileViewport || !showHighlightsPane)) {
       setHighlightsDrawerOpen(false);
     }
-  }, [highlightsDrawerOpen, mv.isMobileViewport, mv.showHighlightsPane]);
+  }, [highlightsDrawerOpen, isMobileViewport, showHighlightsPane]);
 
   useEffect(() => {
     if (!quoteDrawerState) return;
@@ -407,20 +476,37 @@ export default function MediaPaneBody() {
   }, [quoteDrawerState]);
 
   useEffect(() => {
-    if (quoteDrawerState && !mv.isMobileViewport) {
+    if (quoteDrawerState && !isMobileViewport) {
       setQuoteDrawerState(null);
     }
-  }, [mv.isMobileViewport, quoteDrawerState]);
+  }, [isMobileViewport, quoteDrawerState]);
 
   useEffect(() => {
-    if (!paneMobileChrome || !mv.isMobileViewport) {
+    setVideoSeekTargetMs(null);
+  }, [media?.kind, playbackSource?.embed_url, playbackSource?.kind, playbackSource?.source_url]);
+
+  const handleTranscriptSeek = useCallback(
+    (timestampMs: number | null | undefined) => {
+      if (media?.kind === "video") {
+        setVideoSeekTargetMs(timestampMs ?? null);
+        return;
+      }
+
+      seekToMs(timestampMs);
+      play();
+    },
+    [media?.kind, play, seekToMs]
+  );
+
+  useEffect(() => {
+    if (!paneMobileChrome || !isMobileViewport) {
       return;
     }
     const lockVisible = Boolean(
       highlightsDrawerOpen ||
         quoteDrawerState ||
         libraryPanelOpen ||
-        (mv.selection && !mv.focusState.editingBounds)
+        (selection && !focusState.editingBounds)
     );
     if (lockVisible) {
       paneMobileChrome.showMobileChrome();
@@ -432,42 +518,41 @@ export default function MediaPaneBody() {
   }, [
     highlightsDrawerOpen,
     libraryPanelOpen,
-    mv.focusState.editingBounds,
-    mv.isMobileViewport,
-    mv.selection,
+    focusState.editingBounds,
+    isMobileViewport,
     paneMobileChrome,
     quoteDrawerState,
+    selection,
   ]);
 
   useEffect(() => {
-    if (mv.media) {
+    if (media) {
       return;
     }
     setLibraryPanelOpen(false);
     setLibraryPanelAnchorEl(null);
-  }, [mv.media]);
+  }, [media]);
 
   useEffect(() => {
-    if (!mv.media || !mv.isTranscriptMedia) {
+    if (!media || !isTranscriptMedia) {
       seededPodcastTrackRef.current = null;
       return;
     }
-    if (mv.media.kind !== "podcast_episode" || mv.playbackSource?.kind !== "external_audio") {
+    if (media.kind !== "podcast_episode" || playbackSource?.kind !== "external_audio") {
       seededPodcastTrackRef.current = null;
       return;
     }
 
-    const listeningState = mv.media.listening_state;
+    const listeningState = media.listening_state;
     const seededTrackKey = JSON.stringify({
-      mediaId: mv.media.id,
-      streamUrl: mv.playbackSource.stream_url,
-      sourceUrl: mv.playbackSource.source_url,
-      podcastTitle: mv.media.podcast_title ?? null,
-      imageUrl: mv.media.podcast_image_url ?? null,
-      chapters: mv.media.chapters ?? [],
+      mediaId: media.id,
+      streamUrl: playbackSource.stream_url,
+      sourceUrl: playbackSource.source_url,
+      podcastTitle: media.podcast_title ?? null,
+      imageUrl: media.podcast_image_url ?? null,
+      chapters: media.chapters ?? [],
       positionMs: listeningState?.position_ms ?? null,
-      playbackSpeed:
-        listeningState?.playback_speed ?? mv.media.subscription_default_playback_speed ?? null,
+      playbackSpeed: listeningState?.playback_speed ?? media.subscription_default_playback_speed ?? null,
     });
     if (seededPodcastTrackRef.current === seededTrackKey) {
       return;
@@ -483,19 +568,19 @@ export default function MediaPaneBody() {
     if (listeningState) {
       trackOptions.seek_seconds = Math.max(0, Math.floor(listeningState.position_ms / 1000));
       trackOptions.playback_rate = listeningState.playback_speed;
-    } else if (mv.media.subscription_default_playback_speed != null) {
-      trackOptions.playback_rate = mv.media.subscription_default_playback_speed;
+    } else if (media.subscription_default_playback_speed != null) {
+      trackOptions.playback_rate = media.subscription_default_playback_speed;
     }
 
     setTrack(
       {
-        media_id: mv.media.id,
-        title: mv.media.title,
-        stream_url: mv.playbackSource.stream_url,
-        source_url: mv.playbackSource.source_url,
-        podcast_title: mv.media.podcast_title ?? undefined,
-        image_url: mv.media.podcast_image_url ?? undefined,
-        chapters: normalizeTranscriptChapters(mv.media.chapters),
+        media_id: media.id,
+        title: media.title,
+        stream_url: playbackSource.stream_url,
+        source_url: playbackSource.source_url,
+        podcast_title: media.podcast_title ?? undefined,
+        image_url: media.podcast_image_url ?? undefined,
+        chapters: normalizeTranscriptChapters(media.chapters),
       },
       trackOptions
     );
@@ -503,29 +588,29 @@ export default function MediaPaneBody() {
     if (!listeningState || listeningState.position_ms <= 0) {
       return;
     }
-    if (resumeNoticeMediaIdRef.current === mv.media.id) {
+    if (resumeNoticeMediaIdRef.current === media.id) {
       return;
     }
 
-    resumeNoticeMediaIdRef.current = mv.media.id;
+    resumeNoticeMediaIdRef.current = media.id;
     toast({
       variant: "info",
       message: `Resuming from ${formatResumeTime(listeningState.position_ms)}`,
     });
   }, [
-    mv.isTranscriptMedia,
-    mv.media,
-    mv.media?.chapters,
-    mv.media?.id,
-    mv.media?.kind,
-    mv.media?.listening_state,
-    mv.media?.podcast_image_url,
-    mv.media?.podcast_title,
-    mv.media?.subscription_default_playback_speed,
-    mv.media?.title,
-    mv.playbackSource?.kind,
-    mv.playbackSource?.source_url,
-    mv.playbackSource?.stream_url,
+    isTranscriptMedia,
+    media,
+    media?.chapters,
+    media?.id,
+    media?.kind,
+    media?.listening_state,
+    media?.podcast_image_url,
+    media?.podcast_title,
+    media?.subscription_default_playback_speed,
+    media?.title,
+    playbackSource?.kind,
+    playbackSource?.source_url,
+    playbackSource?.stream_url,
     setTrack,
     toast,
   ]);
@@ -534,85 +619,112 @@ export default function MediaPaneBody() {
   // Render
   // ==========================================================================
 
-  if (mv.loading) {
+  if (loading) {
     return <StateMessage variant="loading">Loading media...</StateMessage>;
   }
 
-  if (mv.error || !mv.media) {
+  if (error || !media) {
     return (
       <div className={styles.errorContainer}>
-        <StateMessage variant="error">{mv.error || "Media not found"}</StateMessage>
+        <StateMessage variant="error">{error || "Media not found"}</StateMessage>
       </div>
     );
   }
 
-  if (mv.isEpub && mv.epubError === "processing" && !mv.canRead && mv.media.processing_status !== "failed") {
+  if (isEpub && epubError === "processing" && !canRead && media.processing_status !== "failed") {
     return (
       <div className={styles.content}>
         <div className={styles.notReady}>
           <p>This EPUB is still being processed.</p>
-          <p>Status: {mv.media.processing_status}</p>
+          <p>Status: {media.processing_status}</p>
         </div>
       </div>
     );
   }
 
-  const highlightsContent = mv.showHighlightsPane ? (
+  const highlightsContent = showHighlightsPane ? (
     <MediaHighlightsPaneBody
-      isPdf={mv.isPdf}
-      isEpub={mv.isEpub}
-      isMobile={mv.isMobileViewport}
-      fragmentHighlights={mv.highlights}
-      pdfPageHighlights={mv.pdfPageHighlights}
-      highlightsVersion={mv.highlightsVersion}
-      pdfHighlightsVersion={mv.pdfHighlightsVersion}
-      pdfActivePage={mv.pdfActivePage}
-      contentRef={mv.isPdf ? mv.pdfContentRef : mv.contentRef}
-      focusedId={mv.focusState.focusedId}
-      onFocusHighlight={mv.focusHighlight}
-      onClearFocus={mv.clearFocus}
-      onSendToChat={mv.handleSendToChat}
-      onColorChange={mv.handleColorChange}
-      onDelete={mv.handleDelete}
-      onStartEditBounds={mv.startEditBounds}
-      onCancelEditBounds={mv.cancelEditBounds}
-      isEditingBounds={mv.focusState.editingBounds}
-      onAnnotationSave={mv.handleAnnotationSave}
-      onAnnotationDelete={mv.handleAnnotationDelete}
-      onOpenConversation={mv.handleOpenConversation}
+      isPdf={isPdf}
+      isEpub={isEpub}
+      isMobile={isMobileViewport}
+      fragmentHighlights={highlights}
+      pdfPageHighlights={pdfPageHighlights}
+      highlightsVersion={highlightsVersion}
+      pdfHighlightsVersion={pdfHighlightsVersion}
+      pdfActivePage={pdfActivePage}
+      contentRef={isPdf ? pdfContentRef : contentRef}
+      focusedId={focusState.focusedId}
+      onFocusHighlight={focusHighlight}
+      onClearFocus={clearFocus}
+      onSendToChat={handleSendToChat}
+      onColorChange={handleColorChange}
+      onDelete={handleDelete}
+      onStartEditBounds={startEditBounds}
+      onCancelEditBounds={cancelEditBounds}
+      isEditingBounds={focusState.editingBounds}
+      onAnnotationSave={handleAnnotationSave}
+      onAnnotationDelete={handleAnnotationDelete}
+      onOpenConversation={handleOpenConversation}
     />
   ) : null;
-  const showDesktopHighlightsPane = !mv.isMobileViewport && highlightsContent !== null;
+  const showDesktopHighlightsPane = !isMobileViewport && highlightsContent !== null;
+  const transcriptMediaKind = media.kind === "video" ? "video" : "podcast_episode";
+  const transcriptPaneBody = isPlaybackOnlyTranscript ? (
+    <div className={styles.notReady}>
+      <p>Transcript unavailable for this episode.</p>
+      <p>Error: E_TRANSCRIPT_UNAVAILABLE</p>
+    </div>
+  ) : !canRead ? (
+    <TranscriptStatePanel
+      processingStatus={media.processing_status}
+      transcriptState={transcriptState}
+      transcriptCoverage={transcriptCoverage}
+      transcriptRequestInFlight={transcriptRequestInFlight}
+      transcriptRequestForecast={transcriptRequestForecast}
+      onRequestTranscript={handleRequestTranscript}
+    />
+  ) : (
+    <TranscriptContentPanel
+      transcriptState={transcriptState}
+      transcriptCoverage={transcriptCoverage}
+      chapters={media.chapters ?? []}
+      fragments={fragments}
+      activeFragment={activeTranscriptFragment}
+      renderedHtml={renderedHtml}
+      contentRef={contentRef}
+      onSegmentSelect={handleTranscriptSegmentSelect}
+      onSeek={handleTranscriptSeek}
+      onContentClick={handleContentClick}
+    />
+  );
 
   return (
     <>
-      {mv.media ? (
-        <LibraryMembershipPanel
-          open={libraryPanelOpen}
-          title="Libraries"
-          anchorEl={libraryPanelAnchorEl}
-          libraries={mv.libraryPickerLibraries}
-          loading={mv.libraryPickerLoading}
-          busy={mv.libraryMembershipBusy}
-          error={mv.libraryPickerError}
-          emptyMessage="No non-default libraries available."
-          onClose={() => setLibraryPanelOpen(false)}
-          onAddToLibrary={(libraryId) => {
-            void mv.handleAddToLibrary(libraryId);
-          }}
-          onRemoveFromLibrary={(libraryId) => {
-            void mv.handleRemoveFromLibrary(libraryId);
-          }}
-        />
-      ) : null}
+      <LibraryMembershipPanel
+        open={libraryPanelOpen}
+        title="Libraries"
+        anchorEl={libraryPanelAnchorEl}
+        libraries={libraryPickerLibraries}
+        loading={libraryPickerLoading}
+        busy={libraryMembershipBusy}
+        error={libraryPickerError}
+        emptyMessage="No non-default libraries available."
+        onClose={() => setLibraryPanelOpen(false)}
+        onAddToLibrary={(libraryId) => {
+          void handleAddToLibrary(libraryId);
+        }}
+        onRemoveFromLibrary={(libraryId) => {
+          void handleRemoveFromLibrary(libraryId);
+        }}
+      />
       <div className={styles.splitLayout}>
         <div className={styles.readerColumn}>
-          {!mv.isPdf && mv.isMismatchDisabled && (
+          {!isPdf && isMismatchDisabled && (
             <div className={styles.mismatchBanner}>
               Highlights disabled due to content mismatch. Try reloading.
             </div>
           )}
-          {mv.focusModeEnabled && (
+          {focusModeEnabled && (
             <div className={styles.focusModeBanner}>
               <StatusPill variant="info">
                 Focus mode enabled: highlights pane hidden.
@@ -620,97 +732,86 @@ export default function MediaPaneBody() {
             </div>
           )}
 
-          {mv.isTranscriptMedia ? (
+          {isTranscriptMedia ? (
             <DocumentViewport onScroll={paneChromeScrollHandler ?? undefined}>
-              <TranscriptMediaPane
-                mediaId={mv.media.id}
-                mediaKind={mv.media.kind === "video" ? "video" : "podcast_episode"}
-                playbackSource={mv.playbackSource}
-                canonicalSourceUrl={mv.media.canonical_source_url}
-                isPlaybackOnlyTranscript={mv.isPlaybackOnlyTranscript}
-                canRead={mv.canRead}
-                processingStatus={mv.media.processing_status}
-                transcriptState={mv.transcriptState}
-                transcriptCoverage={mv.transcriptCoverage}
-                transcriptRequestInFlight={mv.transcriptRequestInFlight}
-                transcriptRequestForecast={mv.transcriptRequestForecast}
-                chapters={mv.media.chapters ?? []}
-                descriptionHtml={mv.media.description_html ?? null}
-                descriptionText={mv.media.description_text ?? null}
-                onRequestTranscript={mv.handleRequestTranscript}
-                fragments={mv.fragments}
-                activeFragment={mv.activeTranscriptFragment}
-                renderedHtml={mv.renderedHtml}
-                contentRef={mv.contentRef}
-                onSegmentSelect={mv.handleTranscriptSegmentSelect}
-                onContentClick={handleContentClick}
-              />
+              <div className={styles.transcriptPane}>
+                <TranscriptPlaybackPanel
+                  mediaId={media.id}
+                  mediaKind={transcriptMediaKind}
+                  playbackSource={playbackSource}
+                  canonicalSourceUrl={media.canonical_source_url}
+                  chapters={media.chapters ?? []}
+                  descriptionHtml={media.description_html ?? null}
+                  descriptionText={media.description_text ?? null}
+                  videoSeekTargetMs={videoSeekTargetMs}
+                  onSeek={handleTranscriptSeek}
+                />
+                {transcriptPaneBody}
+              </div>
             </DocumentViewport>
-          ) : !mv.canRead ? (
+          ) : !canRead ? (
             <div className={styles.notReady}>
-              {mv.media.processing_status === "failed" ? (
+              {media.processing_status === "failed" ? (
                 <>
-                  {mv.isPdf && mv.media.last_error_code === "E_PDF_PASSWORD_REQUIRED" ? (
+                  {isPdf && media.last_error_code === "E_PDF_PASSWORD_REQUIRED" ? (
                     <p>This PDF is password-protected and cannot be opened in v1.</p>
                   ) : (
                     <p>This media cannot be opened right now.</p>
                   )}
-                  {mv.media.last_error_code && <p>Error: {mv.media.last_error_code}</p>}
+                  {media.last_error_code && <p>Error: {media.last_error_code}</p>}
                 </>
               ) : (
                 <>
                   <p>This media is still being processed.</p>
-                  <p>Status: {mv.media.processing_status}</p>
+                  <p>Status: {media.processing_status}</p>
                 </>
               )}
             </div>
-          ) : mv.isPdf ? (
-            mv.readerResumeStateLoading ? (
+          ) : isPdf ? (
+            readerResumeStateLoading ? (
               <div className={styles.notReady}>
                 <p>Loading reader state...</p>
               </div>
             ) : (
               <PdfReader
                 mediaId={id}
-                contentRef={mv.pdfContentRef}
-                focusedHighlightId={mv.focusState.focusedId}
-                editingHighlightId={
-                  mv.focusState.editingBounds ? mv.focusState.focusedId : null
-                }
-                highlightRefreshToken={mv.pdfRefreshToken}
-                onPageHighlightsChange={mv.handlePdfPageHighlightsChange}
+                contentRef={pdfContentRef}
+                focusedHighlightId={focusState.focusedId}
+                editingHighlightId={focusState.editingBounds ? focusState.focusedId : null}
+                highlightRefreshToken={pdfRefreshToken}
+                onPageHighlightsChange={handlePdfPageHighlightsChange}
                 onHighlightTap={handlePdfHighlightTap}
-                onQuoteToChat={mv.media.capabilities?.can_quote ? mv.handleSendToChat : undefined}
-                onControlsStateChange={mv.setPdfControlsState}
+                onQuoteToChat={media.capabilities?.can_quote ? handleSendToChat : undefined}
+                onControlsStateChange={setPdfControlsState}
                 onControlsReady={(controls) => {
-                  mv.pdfControlsRef.current = controls;
+                  pdfControlsRef.current = controls;
                 }}
-                startPageNumber={mv.pdfReaderResumeState?.page ?? undefined}
-                startPageProgression={mv.pdfReaderResumeState?.page_progression ?? undefined}
-                startZoom={mv.pdfReaderResumeState?.zoom ?? undefined}
-                onResumeStateChange={mv.saveReaderResumeState}
+                startPageNumber={pdfReaderResumeState?.page ?? undefined}
+                startPageProgression={pdfReaderResumeState?.page_progression ?? undefined}
+                startZoom={pdfReaderResumeState?.zoom ?? undefined}
+                onResumeStateChange={saveReaderResumeState}
               />
             )
-          ) : mv.isEpub ? (
+          ) : isEpub ? (
             <DocumentViewport onScroll={paneChromeScrollHandler ?? undefined}>
               <ReaderContentArea>
                 <EpubContentPane
-                  sections={mv.epubSections}
-                  activeChapter={mv.activeChapter}
-                  activeSectionId={mv.activeSectionId}
-                  chapterLoading={mv.chapterLoading}
-                  epubError={mv.epubError}
-                  toc={mv.epubToc}
-                  tocWarning={mv.tocWarning}
-                  tocExpanded={mv.epubTocExpanded}
-                  contentRef={mv.contentRef}
-                  renderedHtml={mv.renderedHtml}
+                  sections={epubSections}
+                  activeChapter={activeChapter}
+                  activeSectionId={activeSectionId}
+                  chapterLoading={chapterLoading}
+                  epubError={epubError}
+                  toc={epubToc}
+                  tocWarning={tocWarning}
+                  tocExpanded={epubTocExpanded}
+                  contentRef={contentRef}
+                  renderedHtml={renderedHtml}
                   onContentClick={handleContentClick}
-                  onNavigate={mv.navigateToSection}
+                  onNavigate={navigateToSection}
                 />
               </ReaderContentArea>
             </DocumentViewport>
-          ) : mv.fragments.length === 0 ? (
+          ) : fragments.length === 0 ? (
             <div className={styles.empty}>
               <p>No content available for this media.</p>
             </div>
@@ -718,12 +819,12 @@ export default function MediaPaneBody() {
             <DocumentViewport onScroll={paneChromeScrollHandler ?? undefined}>
               <ReaderContentArea>
                 <div
-                  ref={mv.contentRef}
+                  ref={contentRef}
                   className={styles.fragments}
                   onClick={handleContentClick}
                 >
                   <HtmlRenderer
-                    htmlSanitized={mv.renderedHtml}
+                    htmlSanitized={renderedHtml}
                     className={styles.fragment}
                   />
                 </div>
@@ -746,7 +847,7 @@ export default function MediaPaneBody() {
         )}
       </div>
 
-      {mv.isMobileViewport && highlightsDrawerOpen && highlightsContent && (
+      {isMobileViewport && highlightsDrawerOpen && highlightsContent && (
         <div
           className={styles.highlightsBackdrop}
           onClick={() => setHighlightsDrawerOpen(false)}
@@ -769,7 +870,7 @@ export default function MediaPaneBody() {
         </div>
       )}
 
-      {mv.isMobileViewport && quoteDrawerState ? (
+      {isMobileViewport && quoteDrawerState ? (
         <div
           className={styles.quoteBackdrop}
           onClick={() => setQuoteDrawerState(null)}
@@ -799,15 +900,15 @@ export default function MediaPaneBody() {
         </div>
       ) : null}
 
-      {!mv.isPdf && mv.selection && !mv.focusState.editingBounds && mv.contentRef.current && (
+      {!isPdf && selection && !focusState.editingBounds && contentRef.current && (
         <SelectionPopover
-          selectionRect={mv.selection.rect}
-          selectionLineRects={mv.selection.lineRects}
-          containerRef={mv.contentRef}
-          onCreateHighlight={mv.handleCreateHighlight}
-          onQuoteToChat={mv.media.capabilities?.can_quote ? handleQuoteToChat : undefined}
-          onDismiss={mv.handleDismissPopover}
-          isCreating={mv.isCreating}
+          selectionRect={selection.rect}
+          selectionLineRects={selection.lineRects}
+          containerRef={contentRef}
+          onCreateHighlight={handleCreateHighlight}
+          onQuoteToChat={media.capabilities?.can_quote ? handleQuoteToChat : undefined}
+          onDismiss={handleDismissPopover}
+          isCreating={isCreating}
         />
       )}
     </>

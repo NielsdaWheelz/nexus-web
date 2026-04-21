@@ -498,6 +498,35 @@ class TestListMessages:
 
 
 # =============================================================================
+# Legacy Streaming Route Removal Tests
+# =============================================================================
+
+
+class TestLegacyStreamingRoutesRemoved:
+    """Old conversation-scoped streaming routes are gone after the cutover."""
+
+    def test_new_conversation_stream_route_returns_404(self, auth_client):
+        user_id = create_test_user_id()
+
+        response = auth_client.post(
+            "/conversations/messages/stream",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 404
+
+    def test_existing_conversation_stream_route_returns_404(self, auth_client):
+        user_id = create_test_user_id()
+
+        response = auth_client.post(
+            f"/conversations/{uuid4()}/messages/stream",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 404
+
+
+# =============================================================================
 # Message Delete Tests
 # =============================================================================
 

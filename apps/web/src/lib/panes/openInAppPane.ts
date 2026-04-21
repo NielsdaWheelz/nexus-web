@@ -1,6 +1,7 @@
 "use client";
 
 import { normalizePaneTitle, normalizeResourceRef } from "@/lib/workspace/paneDescriptor";
+import { normalizeWorkspaceHref } from "@/lib/workspace/schema";
 
 export const NEXUS_OPEN_PANE_EVENT = "nexus:open-pane";
 export const NEXUS_OPEN_PANE_MESSAGE_TYPE = "nexus:open-pane";
@@ -46,7 +47,7 @@ function sanitizeOpenPaneDetail(detail: unknown): OpenInAppPaneDetail | null {
   if (typeof candidate.href !== "string") {
     return null;
   }
-  const href = normalizePaneHref(candidate.href);
+  const href = normalizeWorkspaceHref(candidate.href);
   if (!href) {
     return null;
   }
@@ -95,34 +96,6 @@ export function consumePendingPaneOpenQueue(): OpenInAppPaneDetail[] {
     .filter((item): item is OpenInAppPaneDetail => Boolean(item));
   currentWindow[NEXUS_PENDING_PANE_OPEN_QUEUE_KEY] = [];
   return queued;
-}
-
-export function normalizePaneHref(href: string): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  try {
-    const runtimeOrigin =
-      window.location.origin && window.location.origin !== "null"
-        ? window.location.origin
-        : null;
-
-    if (!runtimeOrigin) {
-      if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(href) || href.startsWith("//")) {
-        return null;
-      }
-      const parsed = new URL(href, "http://localhost");
-      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-    }
-
-    const parsed = new URL(href, runtimeOrigin);
-    if (parsed.origin !== runtimeOrigin) {
-      return null;
-    }
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  } catch {
-    return null;
-  }
 }
 
 export function isOpenInAppPaneMessage(value: unknown): value is OpenInAppPaneMessage {

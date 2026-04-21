@@ -31,7 +31,6 @@ import {
   consumePendingPaneOpenQueue,
   isOpenInAppPaneMessage,
   NEXUS_OPEN_PANE_EVENT,
-  normalizePaneHref,
   setPaneGraphReady,
   type OpenInAppPaneDetail,
 } from "@/lib/panes/openInAppPane";
@@ -318,7 +317,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     };
 
     const handleOpenPaneDetail = (detail: OpenInAppPaneDetail) => {
-      const href = normalizePaneHref(detail.href) ?? normalizeWorkspaceHref(detail.href);
+      const href = normalizeWorkspaceHref(detail.href);
       if (!href) return;
       const panes = buildPanesForOpen(href);
       const targetPaneId = panes[0]!.id;

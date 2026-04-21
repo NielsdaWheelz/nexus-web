@@ -19,18 +19,15 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Response
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db, get_llm_router
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.config import get_settings
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.errors import ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.conversation import SendMessageRequest, SetConversationSharesRequest
 from nexus.services import conversations as conversations_service
 from nexus.services import send_message as send_message_service
-from nexus.services import send_message_stream
 from nexus.services import shares as shares_service
 from nexus.services.llm import LLMRouter
 
@@ -351,107 +348,3 @@ async def send_message_existing_conversation(
     )
 
     return success_response(result.model_dump(mode="json"))
-
-
-# =============================================================================
-# Streaming Endpoints (Feature-Flagged)
-# =============================================================================
-
-
-@router.post("/conversations/messages/stream")
-def send_message_stream_new(
-    body: SendMessageRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> StreamingResponse:
-    """Send a message with streaming response (new conversation).
-
-    Creates a new conversation and streams the assistant response via SSE.
-
-    Requires ENABLE_STREAMING=true in environment.
-
-    SSE Events:
-    - meta: Initial metadata (conversation_id, message IDs, model, provider)
-    - delta: Incremental content chunks
-    - done: Final status and usage
-
-    Errors:
-        E_FORBIDDEN (403): Streaming is disabled.
-        (Same errors as non-streaming endpoint)
-    """
-    settings = get_settings()
-    if not settings.enable_streaming:
-        raise ApiError(ApiErrorCode.E_FORBIDDEN, "Streaming is disabled")
-
-    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
-
-    return StreamingResponse(
-        send_message_stream.stream_send_message(
-            db=db,
-            viewer_id=viewer.user_id,
-            conversation_id=None,
-            content=body.content,
-            model_id=body.model_id,
-            reasoning=body.reasoning,
-            key_mode=body.key_mode,
-            contexts=contexts,
-            idempotency_key=idempotency_key,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
-        },
-    )
-
-
-@router.post("/conversations/{conversation_id}/messages/stream")
-def send_message_stream_existing(
-    conversation_id: UUID,
-    body: SendMessageRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> StreamingResponse:
-    """Send a message with streaming response (existing conversation).
-
-    Streams the assistant response via SSE in an existing conversation.
-
-    Requires ENABLE_STREAMING=true in environment.
-
-    SSE Events:
-    - meta: Initial metadata (conversation_id, message IDs, model, provider)
-    - delta: Incremental content chunks
-    - done: Final status and usage
-
-    Errors:
-        E_FORBIDDEN (403): Streaming is disabled.
-        (Same errors as non-streaming endpoint)
-    """
-    settings = get_settings()
-    if not settings.enable_streaming:
-        raise ApiError(ApiErrorCode.E_FORBIDDEN, "Streaming is disabled")
-
-    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
-
-    return StreamingResponse(
-        send_message_stream.stream_send_message(
-            db=db,
-            viewer_id=viewer.user_id,
-            conversation_id=conversation_id,
-            content=body.content,
-            model_id=body.model_id,
-            reasoning=body.reasoning,
-            key_mode=body.key_mode,
-            contexts=contexts,
-            idempotency_key=idempotency_key,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )

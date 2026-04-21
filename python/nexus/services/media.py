@@ -94,7 +94,6 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "m.created_at",
     "m.updated_at",
     "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
-    "EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) AS has_fragments",
     "m.published_date",
     "m.publisher",
     "m.language",
@@ -349,7 +348,6 @@ def _media_out_from_row(
         last_error_code=row["last_error_code"],
         media_file_exists=bool(row["has_file"]),
         external_playback_url_exists=row["external_playback_url"] is not None,
-        has_fragments=bool(row["has_fragments"]),
         pdf_quote_text_ready=pdf_quote_ready,
         transcript_state=row["transcript_state"],
         transcript_coverage=row["transcript_coverage"],
@@ -748,43 +746,6 @@ def can_read_media(db: Session, viewer_id: UUID, media_id: UUID) -> bool:
         True if viewer can read the media, False otherwise.
     """
     return _can_read_media(db, viewer_id, media_id)
-
-
-def get_media_for_viewer_or_404(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> Media:
-    """Get media by ID if readable by viewer, return the ORM model.
-
-    Internal helper for service functions that need the ORM model.
-    Returns Media row if readable by viewer.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        media_id: The ID of the media to fetch.
-
-    Returns:
-        The Media ORM model if found and viewer can read it.
-
-    Raises:
-        NotFoundError: If media does not exist or viewer cannot read it.
-    """
-    if not _can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    result = db.execute(
-        text("SELECT * FROM media WHERE id = :media_id"),
-        {"media_id": media_id},
-    )
-    row = result.fetchone()
-
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    # Query returns all columns, map to Media model
-    return db.get(Media, media_id)
 
 
 def _remote_file_kind_from_url(url: str) -> str | None:
@@ -1594,32 +1555,6 @@ def create_or_reuse_youtube_video(
         idempotency_outcome="created" if created else "reused",
         processing_status=processing_status,
         ingest_enqueued=ingest_enqueued,
-    )
-
-
-def enqueue_web_article_from_url(
-    db: Session,
-    viewer_id: UUID,
-    url: str,
-    request_id: str | None = None,
-) -> FromUrlResponse:
-    """Create a provisional web_article and enqueue ingestion.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer creating the media.
-        url: The URL to ingest.
-        request_id: Optional request ID for task correlation.
-
-    Returns:
-        FromUrlResponse with ingest_enqueued=True.
-    """
-    return create_provisional_web_article(
-        db,
-        viewer_id,
-        url,
-        enqueue_task=True,
-        request_id=request_id,
     )
 
 

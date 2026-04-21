@@ -1,98 +1,86 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildCompactMediaPaneTitle,
-  buildEpubLocationHref,
-  formatMediaAuthors,
-  resolveEpubInternalLinkTarget,
+  formatTranscriptTimestampMs,
+  resolveActiveTranscriptFragment,
+  type Fragment,
 } from "./mediaHelpers";
 
-describe("media author formatting", () => {
-  it("compacts extra author names for dense labels", () => {
-    expect(
-      formatMediaAuthors(
-        [
-          { id: "author-1", name: "Ada Lovelace", role: "author" },
-          { id: "author-2", name: "Grace Hopper", role: "editor" },
-          { id: "author-3", name: "Katherine Johnson", role: null },
-        ],
-        2
-      )
-    ).toBe("Ada Lovelace, Grace Hopper +1");
+function buildFragment(
+  id: string,
+  startMs: number | null,
+  endMs: number | null
+): Fragment {
+  return {
+    id,
+    media_id: "media-1",
+    idx: 0,
+    html_sanitized: `<p>${id}</p>`,
+    canonical_text: id,
+    t_start_ms: startMs,
+    t_end_ms: endMs,
+    speaker_label: null,
+    created_at: "2026-04-01T00:00:00Z",
+  };
+}
+
+const FRAGMENTS = [
+  buildFragment("frag-1", 0, 5_000),
+  buildFragment("frag-2", 12_000, 20_000),
+  buildFragment("frag-3", 30_000, 40_000),
+];
+
+describe("formatTranscriptTimestampMs", () => {
+  it("formats positive timestamps as zero-padded hh:mm:ss", () => {
+    expect(formatTranscriptTimestampMs(12_345)).toBe("00:00:12");
+    expect(formatTranscriptTimestampMs(3_723_000)).toBe("01:02:03");
   });
 
-  it("builds a compact pane title from the first author", () => {
-    expect(
-      buildCompactMediaPaneTitle({
-        title: "Computing Notes",
-        authors: [
-          { id: "author-1", name: "Ada Lovelace", role: "author" },
-          { id: "author-2", name: "Grace Hopper", role: "editor" },
-        ],
-      })
-    ).toBe("Computing Notes · Ada Lovelace +1");
+  it("returns null for missing or negative timestamps", () => {
+    expect(formatTranscriptTimestampMs(null)).toBeNull();
+    expect(formatTranscriptTimestampMs(undefined)).toBeNull();
+    expect(formatTranscriptTimestampMs(-1)).toBeNull();
   });
 });
 
-describe("epub navigation helpers", () => {
-  it("builds canonical epub loc hrefs", () => {
+describe("resolveActiveTranscriptFragment", () => {
+  it("prefers the active fragment when it is still present", () => {
     expect(
-      buildEpubLocationHref("media-1", "OPS/nav/chapter-1", {
-        fragmentId: "frag-1",
-        highlightId: "hl-1",
+      resolveActiveTranscriptFragment(FRAGMENTS, {
+        activeFragmentId: "frag-2",
+        requestedFragmentId: "frag-3",
+      })?.id
+    ).toBe("frag-2");
+  });
+
+  it("resolves a requested start time to the containing fragment or nearest start", () => {
+    expect(
+      resolveActiveTranscriptFragment(FRAGMENTS, {
+        requestedStartMs: 15_000,
+      })?.id
+    ).toBe("frag-2");
+
+    expect(
+      resolveActiveTranscriptFragment(FRAGMENTS, {
+        requestedStartMs: 26_000,
+      })?.id
+    ).toBe("frag-3");
+  });
+
+  it("waits for initial resume state before defaulting when there is no explicit selection", () => {
+    expect(
+      resolveActiveTranscriptFragment(FRAGMENTS, {
+        waitForInitialResumeState: true,
       })
-    ).toBe("/media/media-1?loc=OPS%2Fnav%2Fchapter-1&fragment=frag-1&highlight=hl-1");
+    ).toBeNull();
   });
 
-  it("resolves internal section links through section ids", () => {
+  it("falls back to the resume fragment and then the first fragment", () => {
     expect(
-      resolveEpubInternalLinkTarget("chapter-2.xhtml#anchor-2", "OPS/nav/chapter-1", [
-        {
-          section_id: "OPS/nav/chapter-1",
-          label: "Chapter 1",
-          fragment_idx: 0,
-          href_path: "OPS/Text/chapter-1.xhtml",
-          anchor_id: null,
-          source_node_id: "node-1",
-          source: "toc",
-          ordinal: 0,
-          char_count: 1200,
-        },
-        {
-          section_id: "OPS/nav/chapter-2",
-          label: "Chapter 2",
-          fragment_idx: 1,
-          href_path: "OPS/Text/chapter-2.xhtml",
-          anchor_id: "anchor-2",
-          source_node_id: "node-2",
-          source: "toc",
-          ordinal: 1,
-          char_count: 1800,
-        },
-      ])
-    ).toEqual({
-      sectionId: "OPS/nav/chapter-2",
-      anchorId: "anchor-2",
-    });
-  });
+      resolveActiveTranscriptFragment(FRAGMENTS, {
+        readerResumeFragmentId: "frag-3",
+      })?.id
+    ).toBe("frag-3");
 
-  it("keeps in-section anchor links on the current section", () => {
-    expect(
-      resolveEpubInternalLinkTarget("#notes", "OPS/nav/chapter-1", [
-        {
-          section_id: "OPS/nav/chapter-1",
-          label: "Chapter 1",
-          fragment_idx: 0,
-          href_path: "OPS/Text/chapter-1.xhtml",
-          anchor_id: null,
-          source_node_id: "node-1",
-          source: "toc",
-          ordinal: 0,
-          char_count: 1200,
-        },
-      ])
-    ).toEqual({
-      sectionId: "OPS/nav/chapter-1",
-      anchorId: "notes",
-    });
+    expect(resolveActiveTranscriptFragment(FRAGMENTS, {})?.id).toBe("frag-1");
   });
 });

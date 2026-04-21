@@ -362,18 +362,33 @@ def create_test_highlight(
     exact: str = "highlighted text",
 ) -> UUID:
     """Create a test highlight on a fragment."""
+    fragment = session.get(Fragment, fragment_id)
+    assert fragment is not None
+
+    end_offset = len(exact)
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,
         fragment_id=fragment_id,
         start_offset=0,
-        end_offset=20,
+        end_offset=end_offset,
+        anchor_kind="fragment_offsets",
+        anchor_media_id=fragment.media_id,
         color="yellow",
         exact=exact,
         prefix="",
         suffix="",
     )
     session.add(highlight)
+    session.flush()
+    session.add(
+        HighlightFragmentAnchor(
+            highlight_id=highlight.id,
+            fragment_id=fragment_id,
+            start_offset=0,
+            end_offset=end_offset,
+        )
+    )
     session.commit()
     return highlight.id
 
@@ -777,11 +792,7 @@ def create_dormant_fragment_highlight(
     end_offset: int = 20,
     exact: str = "highlighted text",
 ) -> UUID:
-    """Create a highlight in pr-01 dormant-window shape.
-
-    Legacy bridge fields populated, anchor_kind/anchor_media_id NULL,
-    no highlight_fragment_anchors subtype row.
-    """
+    """Create a legacy bridge-only highlight for rejection-path tests."""
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,

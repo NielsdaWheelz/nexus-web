@@ -389,13 +389,15 @@ def _mock_podcast_index(
             "error_message": "Transcript unavailable",
         }
 
-    monkeypatch.setattr("nexus.services.podcasts.PodcastIndexClient.search_podcasts", fake_search)
     monkeypatch.setattr(
-        "nexus.services.podcasts.PodcastIndexClient.fetch_recent_episodes",
+        "nexus.services.podcasts.provider.PodcastIndexClient.search_podcasts", fake_search
+    )
+    monkeypatch.setattr(
+        "nexus.services.podcasts.provider.PodcastIndexClient.fetch_recent_episodes",
         fake_fetch,
     )
     monkeypatch.setattr(
-        "nexus.services.podcasts._transcribe_podcast_audio",
+        "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
         fake_transcribe,
         raising=False,
     )
@@ -421,11 +423,11 @@ def _run_subscription_sync(
     run_transcription_jobs: bool = True,
     stub_enqueue: bool = True,
 ) -> dict:
-    from nexus.services import podcasts as podcast_service
+    from nexus.services.podcasts import transcripts as podcast_transcript_service
     from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
     from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
 
-    original_enqueue = podcast_service._enqueue_podcast_transcription_job
+    original_enqueue = podcast_transcript_service._enqueue_podcast_transcription_job
 
     def _enqueue_stub(
         _db,
@@ -438,7 +440,7 @@ def _run_subscription_sync(
         return True
 
     if stub_enqueue:
-        podcast_service._enqueue_podcast_transcription_job = _enqueue_stub
+        podcast_transcript_service._enqueue_podcast_transcription_job = _enqueue_stub
 
     try:
         with direct_db.session() as session:
@@ -463,7 +465,7 @@ def _run_subscription_sync(
                     {"podcast_id": podcast_id},
                 ).fetchall()
                 for row in episode_media_ids:
-                    podcast_service.request_podcast_transcript_for_viewer(
+                    podcast_transcript_service.request_podcast_transcript_for_viewer(
                         session,
                         viewer_id=user_id,
                         media_id=row[0],
@@ -493,7 +495,7 @@ def _run_subscription_sync(
             session.commit()
         return result
     finally:
-        podcast_service._enqueue_podcast_transcription_job = original_enqueue
+        podcast_transcript_service._enqueue_podcast_transcription_job = original_enqueue
 
 
 def _podcast_payload(provider_podcast_id: str, title: str) -> dict:
@@ -908,7 +910,7 @@ class TestPodcastSubscriptionSyncLifecycle:
             raise AssertionError("subscribe request path must not fetch episodes directly")
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.PodcastIndexClient.fetch_recent_episodes",
+            "nexus.services.podcasts.provider.PodcastIndexClient.fetch_recent_episodes",
             fail_if_called,
         )
 
@@ -1229,7 +1231,7 @@ class TestPodcastSubscriptionSyncLifecycle:
             _ = kwargs
             return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
 
-        monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
 
         subscribe = auth_client.post(
             "/podcasts/subscriptions",
@@ -1303,10 +1305,10 @@ class TestPodcastSubscribeIngest:
             ]
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.PodcastIndexClient.search_podcasts", fake_search
+            "nexus.services.podcasts.provider.PodcastIndexClient.search_podcasts", fake_search
         )
         monkeypatch.setattr(
-            "nexus.services.podcasts.PodcastIndexClient.fetch_recent_episodes", fake_fetch
+            "nexus.services.podcasts.provider.PodcastIndexClient.fetch_recent_episodes", fake_fetch
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
@@ -1361,7 +1363,7 @@ class TestPodcastSubscribeIngest:
             return old_provider_rows
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.PodcastIndexClient.fetch_recent_episodes", fake_fetch
+            "nexus.services.podcasts.provider.PodcastIndexClient.fetch_recent_episodes", fake_fetch
         )
 
         page1_url = payload["feed_url"]
@@ -1406,7 +1408,7 @@ class TestPodcastSubscribeIngest:
                 return httpx.Response(200, text=page2_xml, request=httpx.Request("GET", url))
             raise AssertionError(f"unexpected feed page url: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
         _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
@@ -1611,10 +1613,10 @@ class TestPodcastSubscribeIngest:
             ]
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.PodcastIndexClient.search_podcasts", fake_search
+            "nexus.services.podcasts.provider.PodcastIndexClient.search_podcasts", fake_search
         )
         monkeypatch.setattr(
-            "nexus.services.podcasts.PodcastIndexClient.fetch_recent_episodes", fake_fetch
+            "nexus.services.podcasts.provider.PodcastIndexClient.fetch_recent_episodes", fake_fetch
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
@@ -2066,8 +2068,9 @@ class TestPodcastBillingQuota:
             def today(cls):
                 return wrong_local_today
 
-        monkeypatch.setattr("nexus.services.podcasts.datetime", FixedDatetime)
-        monkeypatch.setattr("nexus.services.podcasts.date", WrongLocalDate)
+        monkeypatch.setattr("nexus.services.podcasts.sync.datetime", FixedDatetime)
+        monkeypatch.setattr("nexus.services.podcasts.transcripts.datetime", FixedDatetime)
+        monkeypatch.setattr("nexus.services.podcasts.transcripts.date", WrongLocalDate)
 
         _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
 
@@ -2558,7 +2561,7 @@ class TestPodcastTranscriptRequestAdmission:
         )
 
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "completed",
                 "segments": [
@@ -2619,7 +2622,7 @@ class TestPodcastTranscriptRequestAdmission:
         )
 
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "failed",
                 "error_code": "E_TRANSCRIPT_UNAVAILABLE",
@@ -2699,7 +2702,7 @@ class TestPodcastTranscriptRequestAdmission:
         user_id = seeded["user_id"]
         media_id = seeded["media_id"]
         monkeypatch.setattr(
-            "nexus.services.podcasts._enqueue_podcast_transcription_job",
+            "nexus.services.podcasts.transcripts._enqueue_podcast_transcription_job",
             lambda _db, **_kwargs: False,
         )
 
@@ -3132,7 +3135,7 @@ class TestPodcastTranscriptRequestAdmission:
         assert admitted.status_code == 202
 
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "failed",
                 "error_code": "E_TRANSCRIPTION_FAILED",
@@ -3306,7 +3309,7 @@ class TestPodcastTranscriptPersistence:
             }
         ]
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "completed",
                 "segments": provider_segments,
@@ -3524,7 +3527,7 @@ class TestPodcastTranscriptPersistence:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "completed",
                 "segments": [
@@ -3622,7 +3625,7 @@ class TestPodcastTranscriptPersistence:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "failed",
                 "error_code": terminal_error_code,
@@ -3725,7 +3728,7 @@ class TestPodcastTranscriptPersistence:
             episodes_by_podcast={provider_podcast_id: episodes},
         )
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "completed",
                 "segments": raw_segments,
@@ -3858,7 +3861,7 @@ class TestPodcastEpisodeMetadataPersistence:
 
 
 def _run_active_subscription_poll(direct_db: DirectSessionManager, *, limit: int = 100) -> dict:
-    from nexus.services.podcasts import poll_active_subscriptions_once
+    from nexus.services.podcasts.sync import poll_active_subscriptions_once
 
     with direct_db.session() as session:
         result = poll_active_subscriptions_once(session, limit=limit)
@@ -5096,7 +5099,7 @@ class TestPodcastApiSurface:
         assert removed_field.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_episode_from_feed_item_extracts_rss_transcript_refs_with_relative_url_resolution(self):
-        from nexus.services import podcasts as podcast_service
+        from nexus.services.podcasts import sync as podcast_sync_service
 
         item_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <item xmlns:podcast="https://podcastindex.org/namespace/1.0">
@@ -5119,7 +5122,7 @@ class TestPodcastApiSurface:
 """
 
         item = etree.fromstring(item_xml.encode("utf-8"))
-        episode = podcast_service._episode_from_feed_item(
+        episode = podcast_sync_service._episode_from_feed_item(
             item,
             base_url="https://feeds.example.com/show/feed.xml",
         )
@@ -5147,7 +5150,7 @@ class TestPodcastApiSurface:
             </item>
             """
         )
-        no_transcript_episode = podcast_service._episode_from_feed_item(
+        no_transcript_episode = podcast_sync_service._episode_from_feed_item(
             no_transcript_item,
             base_url="https://feeds.example.com/show/feed.xml",
         )
@@ -5224,7 +5227,7 @@ class TestPodcastApiSurface:
                 )
             raise AssertionError(f"unexpected RSS transcript test fetch URL: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
         monkeypatch.setattr("nexus.services.rss_transcript_fetch.httpx.get", fake_http_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
@@ -5407,7 +5410,7 @@ upgrade now
                 )
             raise AssertionError(f"unexpected RSS transcript upgrade fetch URL: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
         monkeypatch.setattr("nexus.services.rss_transcript_fetch.httpx.get", fake_http_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
@@ -5572,7 +5575,7 @@ upgrade now
                 )
             raise AssertionError(f"unexpected chapter fetch url: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
         podcast_id = UUID(subscribe_data["podcast_id"])
@@ -5704,7 +5707,7 @@ upgrade now
                 return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
             raise AssertionError(f"unexpected feed fetch url: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
         podcast_id = UUID(subscribe_data["podcast_id"])
@@ -6269,7 +6272,7 @@ upgrade now
                 raise httpx.TimeoutException("timeout")
             return _FakeResponse()
 
-        monkeypatch.setattr("nexus.services.podcasts.httpx.get", flaky_get)
+        monkeypatch.setattr("nexus.services.podcasts.provider.httpx.get", flaky_get)
         response = auth_client.get(
             "/podcasts/discover?q=retry&limit=10", headers=auth_headers(user_id)
         )
@@ -6316,7 +6319,7 @@ class TestPodcastOpmlImportExport:
             return None
 
         monkeypatch.setattr(
-            "nexus.services.podcasts.PodcastIndexClient.lookup_podcast_by_feed_url",
+            "nexus.services.podcasts.provider.PodcastIndexClient.lookup_podcast_by_feed_url",
             fake_lookup,
             raising=False,
         )
@@ -6689,10 +6692,10 @@ class TestPodcastTranscriptionAsyncLifecycle:
             assert media_id is not None
 
         if not run_transcription_jobs:
-            from nexus.services import podcasts as podcast_service
+            from nexus.services.podcasts import transcripts as podcast_transcript_service
 
             with direct_db.session() as session:
-                podcast_service.request_podcast_transcript_for_viewer(
+                podcast_transcript_service.request_podcast_transcript_for_viewer(
                     session,
                     viewer_id=user_id,
                     media_id=media_id,
@@ -6759,7 +6762,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
         user_id = seeded["user_id"]
 
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "completed",
                 "segments": [
@@ -6866,7 +6869,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
             session.commit()
 
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "completed",
                 "segments": [{"t_start_ms": 0, "t_end_ms": 900, "text": "stale reclaim"}],
@@ -6937,7 +6940,9 @@ class TestPodcastTranscriptionAsyncLifecycle:
                 "segments": [{"t_start_ms": 0, "t_end_ms": 1000, "text": "heartbeat guard"}],
             }
 
-        monkeypatch.setattr("nexus.services.podcasts._transcribe_podcast_audio", slow_transcribe)
+        monkeypatch.setattr(
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio", slow_transcribe
+        )
         from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
 
         def run_first_worker() -> None:
@@ -7010,7 +7015,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
         user_id = seeded["user_id"]
 
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "completed",
                 "segments": [{"t_start_ms": 0, "t_end_ms": 600, "text": "single"}],
@@ -7063,7 +7068,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
         user_id = seeded["user_id"]
 
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "failed",
                 "error_code": "E_TRANSCRIPTION_FAILED",
@@ -7237,7 +7242,7 @@ class TestPodcastShowNotesAndBatchCutover:
                 return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
             raise AssertionError(f"unexpected feed fetch url: {url}")
 
-        monkeypatch.setattr("nexus.services.podcasts.httpx.get", fake_http_get)
+        monkeypatch.setattr("nexus.services.podcasts.sync.httpx.get", fake_http_get)
         subscribe_data = _subscribe(auth_client, user_id, payload)
         podcast_id = UUID(subscribe_data["podcast_id"])
         _run_subscription_sync(
@@ -7701,7 +7706,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         segments: list[dict[str, object]],
     ) -> dict:
         monkeypatch.setattr(
-            "nexus.services.podcasts._transcribe_podcast_audio",
+            "nexus.services.podcasts.transcripts._transcribe_podcast_audio",
             lambda _audio_url: {
                 "status": "completed",
                 "segments": segments,
@@ -8047,7 +8052,13 @@ class TestPodcastTranscriptStateVersioningAndAudit:
 
         update_response = auth_client.patch(
             f"/highlights/{highlight_id}",
-            json={"start_offset": 2, "end_offset": 8},
+            json={
+                "anchor": {
+                    "type": "fragment_offsets",
+                    "start_offset": 2,
+                    "end_offset": 8,
+                }
+            },
             headers=auth_headers(user_id),
         )
         assert update_response.status_code == 200, (

@@ -1,9 +1,8 @@
-"""Typed-highlight kernel — shared resolver, repair, and mismatch infrastructure.
+"""Typed-highlight kernel — shared resolver and mismatch infrastructure.
 
 Introduced in S6 PR-02. This module is the canonical internal seam for:
 - Side-effect-free logical highlight resolution across anchor kinds
 - Structured mismatch classification for path-specific fail-safe mapping
-- Explicit transactional fragment repair for dormant-window rows
 - Centralized mismatch logging (one canonical event per mapping decision)
 - Internal typed highlight view construction for service serialization
 
@@ -16,9 +15,7 @@ from dataclasses import dataclass
 from enum import Enum as PyEnum
 from uuid import UUID
 
-from sqlalchemy.orm import Session
-
-from nexus.db.models import Highlight, HighlightFragmentAnchor
+from nexus.db.models import Highlight
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
 
@@ -34,7 +31,6 @@ class ResolverState(str, PyEnum):
     """Classification of a highlight's typed-anchor data consistency."""
 
     ok = "ok"
-    dormant_repairable = "dormant_repairable"
     mismatch = "mismatch"
 
 
@@ -198,72 +194,26 @@ def resolve_highlight(highlight: Highlight) -> HighlightResolution:
             mismatch_code=None,
         )
 
-    # --- Case C: dormant-window fragment (no logical/subtype, bridge valid) ---
-    if not has_logical and not has_frag_subtype and has_bridge:
-        frag = highlight.fragment
-        if frag is None:
-            return HighlightResolution(
-                state=ResolverState.mismatch,
-                highlight_id=hid,
-                anchor_kind=None,
-                anchor_media_id=None,
-                fragment_anchor=None,
-                mismatch_code=MismatchCode.missing_fragment_relationship,
-            )
-        frag_media_id = frag.media_id
+    # --- Case C: fragment logical state without subtype is non-canonical ---
+    if has_logical and highlight.anchor_kind == "fragment_offsets" and not has_frag_subtype:
         return HighlightResolution(
-            state=ResolverState.dormant_repairable,
+            state=ResolverState.mismatch,
             highlight_id=hid,
             anchor_kind="fragment_offsets",
-            anchor_media_id=frag_media_id,
-            fragment_anchor=FragmentAnchorData(
-                fragment_id=highlight.fragment_id,
-                media_id=frag_media_id,
-                start_offset=highlight.start_offset,
-                end_offset=highlight.end_offset,
-            ),
-            mismatch_code=None,
+            anchor_media_id=highlight.anchor_media_id,
+            fragment_anchor=None,
+            mismatch_code=MismatchCode.no_anchor_data,
         )
 
-    # --- Case D: logical set but subtype missing, bridge available (partial dormant) ---
-    if (
-        has_logical
-        and highlight.anchor_kind == "fragment_offsets"
-        and not has_frag_subtype
-        and has_bridge
-    ):
-        frag = highlight.fragment
-        if frag is None:
-            return HighlightResolution(
-                state=ResolverState.mismatch,
-                highlight_id=hid,
-                anchor_kind="fragment_offsets",
-                anchor_media_id=highlight.anchor_media_id,
-                fragment_anchor=None,
-                mismatch_code=MismatchCode.missing_fragment_relationship,
-            )
-        frag_media_id = frag.media_id
-        if highlight.anchor_media_id != frag_media_id:
-            return HighlightResolution(
-                state=ResolverState.mismatch,
-                highlight_id=hid,
-                anchor_kind="fragment_offsets",
-                anchor_media_id=highlight.anchor_media_id,
-                fragment_anchor=None,
-                mismatch_code=MismatchCode.anchor_media_id_conflict,
-            )
+    # --- Case D: bridge-only fragment rows are no longer accepted ---
+    if has_bridge and (not has_logical or not has_frag_subtype):
         return HighlightResolution(
-            state=ResolverState.dormant_repairable,
+            state=ResolverState.mismatch,
             highlight_id=hid,
-            anchor_kind="fragment_offsets",
-            anchor_media_id=frag_media_id,
-            fragment_anchor=FragmentAnchorData(
-                fragment_id=highlight.fragment_id,
-                media_id=frag_media_id,
-                start_offset=highlight.start_offset,
-                end_offset=highlight.end_offset,
-            ),
-            mismatch_code=None,
+            anchor_kind=highlight.anchor_kind,
+            anchor_media_id=highlight.anchor_media_id,
+            fragment_anchor=None,
+            mismatch_code=MismatchCode.no_anchor_data,
         )
 
     # --- Case E: anchor_kind present but wrong subtype ---
@@ -311,85 +261,9 @@ def resolve_anchor_media_id(highlight: Highlight) -> UUID | None:
     detail should use resolve_highlight directly.
     """
     resolution = resolve_highlight(highlight)
-    if resolution.state == ResolverState.mismatch:
+    if resolution.state != ResolverState.ok:
         return None
     return resolution.anchor_media_id
-
-
-# ---------------------------------------------------------------------------
-# Explicit transactional fragment repair helper
-# ---------------------------------------------------------------------------
-
-
-def repair_fragment_highlight(session: Session, highlight: Highlight) -> HighlightResolution:
-    """Repair a dormant-window fragment highlight transactionally.
-
-    Populates/synchronizes:
-    - highlights.anchor_kind = 'fragment_offsets'
-    - highlights.anchor_media_id = fragment.media_id
-    - highlight_fragment_anchors subtype row (create if missing, sync if present)
-
-    Does NOT commit or rollback — leaves transaction control to the caller.
-
-    Raises HighlightKernelIntegrityError if the highlight is in an
-    irreconcilable state that cannot be repaired.
-    """
-    resolution = resolve_highlight(highlight)
-
-    if resolution.state == ResolverState.ok:
-        return resolution
-
-    if resolution.state == ResolverState.mismatch:
-        raise HighlightKernelIntegrityError(
-            mismatch_code=resolution.mismatch_code or MismatchCode.no_anchor_data,
-            highlight_id=highlight.id,
-            consumer_operation="repair_fragment_highlight",
-            mapping_class=MappingClass.internal_error,
-            diagnostics={
-                "anchor_kind": highlight.anchor_kind,
-                "anchor_media_id": str(highlight.anchor_media_id)
-                if highlight.anchor_media_id
-                else None,
-                "has_bridge": highlight.fragment_id is not None,
-            },
-        )
-
-    # state == dormant_repairable
-    fa_data = resolution.fragment_anchor
-    if fa_data is None:
-        raise HighlightKernelIntegrityError(
-            mismatch_code=MismatchCode.no_anchor_data,
-            highlight_id=highlight.id,
-            consumer_operation="repair_fragment_highlight",
-            mapping_class=MappingClass.internal_error,
-        )
-
-    highlight.anchor_kind = "fragment_offsets"
-    highlight.anchor_media_id = fa_data.media_id
-
-    if highlight.fragment_anchor is None:
-        subtype = HighlightFragmentAnchor(
-            highlight_id=highlight.id,
-            fragment_id=fa_data.fragment_id,
-            start_offset=fa_data.start_offset,
-            end_offset=fa_data.end_offset,
-        )
-        session.add(subtype)
-    else:
-        highlight.fragment_anchor.fragment_id = fa_data.fragment_id
-        highlight.fragment_anchor.start_offset = fa_data.start_offset
-        highlight.fragment_anchor.end_offset = fa_data.end_offset
-
-    session.flush()
-
-    return HighlightResolution(
-        state=ResolverState.ok,
-        highlight_id=highlight.id,
-        anchor_kind="fragment_offsets",
-        anchor_media_id=fa_data.media_id,
-        fragment_anchor=fa_data,
-        mismatch_code=None,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -409,8 +283,7 @@ def map_mismatch(
         - For masked_not_found: returns None (caller raises NotFoundError)
         - For internal_error: raises HighlightKernelIntegrityError
 
-    Only call when resolution.state == mismatch. For ok/dormant_repairable,
-    this function should not be invoked.
+    Only call when resolution.state == mismatch.
     """
     mismatch_code = resolution.mismatch_code or MismatchCode.no_anchor_data
 
@@ -485,7 +358,7 @@ def build_internal_view(
 ) -> InternalHighlightView:
     """Build an internal typed view from a highlight and its resolution.
 
-    Requires resolution.state in (ok, dormant_repairable).
+    Requires resolution.state == ok.
     Supports both fragment and PDF anchor branches.
     """
     pdf_anchor_data = None

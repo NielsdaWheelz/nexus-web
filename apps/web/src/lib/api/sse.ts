@@ -1,18 +1,12 @@
 /**
- * SSE client parser for streaming LLM responses.
+ * SSE parser and direct browser -> FastAPI stream client for chat responses.
  *
- * Framing rules (binding per s3_pr07 §5.3):
- * 1. Only process `event:` + `data:` lines (standard SSE format).
+ * Framing rules:
+ * 1. Only process `event:` + `data:` lines.
  * 2. Ignore comment lines (`:`) and unknown event types.
- * 3. `data:` payload is JSON, one object per event. No multi-line JSON.
+ * 3. `data:` payload is JSON, one object per event.
  * 4. Max event size: 256 KB. Exceeding this is a stream error.
  * 5. If JSON parse fails on a `data:` line: stream error.
- * 6. Backend uses `event:` field to distinguish event types (meta, delta, done).
- * 7. Sets `Accept: text/event-stream` request header.
- *
- * Security:
- * - Never logs API key material from events.
- * - Fails fast on malformed events.
  */
 
 /** Maximum single event payload size (256 KB). */
@@ -21,9 +15,6 @@ const MAX_EVENT_SIZE_BYTES = 256 * 1024;
 // ============================================================================
 // Types
 // ============================================================================
-
-/** SSE event types from the backend streaming protocol. */
-export type SSEEventType = "meta" | "delta" | "done";
 
 /** Meta event: initial IDs and model info. */
 export interface SSEMetaEvent {
@@ -57,11 +48,8 @@ export interface SSEDoneEvent {
 
 export type SSEEvent = SSEMetaEvent | SSEDeltaEvent | SSEDoneEvent;
 
-/** Callback invoked for each parsed SSE event. */
-export type SSEEventHandler = (event: SSEEvent) => void;
-
-/** Error callback invoked on stream failures. */
-export type SSEErrorHandler = (error: Error) => void;
+type SSEEventHandler = (event: SSEEvent) => void;
+type SSEErrorHandler = (error: Error) => void;
 
 // ============================================================================
 // Request payload types
@@ -88,9 +76,14 @@ export interface ContextItem {
  * Strip client-side enriched fields from a ContextItem before sending to the API.
  * Only keeps the wire-format fields that the backend expects.
  */
+export type SendMessageContext = Pick<
+  ContextItem,
+  "type" | "id" | "color" | "preview" | "exact" | "mediaId" | "mediaTitle"
+>;
+
 export function toWireContextItem(
   item: ContextItem,
-): Pick<ContextItem, "type" | "id" | "color" | "preview" | "exact" | "mediaId" | "mediaTitle"> {
+): SendMessageContext {
   return {
     type: item.type,
     id: item.id,
@@ -107,95 +100,7 @@ export interface SendMessageRequest {
   model_id: string;
   reasoning: "none" | "minimal" | "low" | "medium" | "high" | "max";
   key_mode?: "auto" | "byok_only" | "platform_only";
-  contexts?: ContextItem[];
-}
-
-// ============================================================================
-// SSE Client
-// ============================================================================
-
-/**
- * Send a message and parse the SSE response stream.
- *
- * @param url - The BFF endpoint URL (e.g., `/api/conversations/{id}/messages/stream`)
- * @param body - The send message request body
- * @param handlers - Event callbacks
- * @param options - Optional fetch options (signal for abort, idempotency key)
- * @returns Cleanup function to abort the stream
- */
-export function sseClient(
-  url: string,
-  body: SendMessageRequest,
-  handlers: {
-    onEvent: SSEEventHandler;
-    onError: SSEErrorHandler;
-    onComplete?: () => void;
-  },
-  options?: {
-    signal?: AbortSignal;
-    idempotencyKey?: string;
-  }
-): () => void {
-  const controller = new AbortController();
-  const combinedSignal = options?.signal
-    ? combineSignals(options.signal, controller.signal)
-    : controller.signal;
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-  };
-
-  if (options?.idempotencyKey) {
-    headers["Idempotency-Key"] = options.idempotencyKey;
-  }
-
-  // Start the fetch + parse pipeline
-  (async () => {
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: combinedSignal,
-      });
-
-      if (!response.ok) {
-        // Non-streaming error — parse the JSON error body
-        let errorMessage = `Request failed with status ${response.status}`;
-        try {
-          const errorBody = await response.json();
-          if (errorBody?.error?.message) {
-            errorMessage = errorBody.error.message;
-          }
-        } catch {
-          // ignore parse failures on error body
-        }
-        handlers.onError(new Error(errorMessage));
-        return;
-      }
-
-      if (!response.body) {
-        handlers.onError(new Error("Response body is null"));
-        return;
-      }
-
-      await parseSSEStream(response.body, handlers.onEvent, handlers.onError);
-      handlers.onComplete?.();
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        // Expected on user-initiated abort
-        handlers.onComplete?.();
-        return;
-      }
-      handlers.onError(
-        err instanceof Error ? err : new Error("Unknown SSE error")
-      );
-    }
-  })();
-
-  // Return cleanup function
-  return () => controller.abort();
+  contexts?: SendMessageContext[];
 }
 
 // ============================================================================
@@ -329,7 +234,7 @@ function processEvent(
  * Per PR-08 spec §11.1:
  * 1. Uses stream_base_url + token from fetchStreamToken()
  * 2. Sends to /stream/conversations/{id}/messages or /stream/conversations/messages
- * 3. Same event parsing as sseClient
+ * 3. Parses the shared SSE event format from `/stream/*`
  *
  * @param streamBaseUrl - The fastapi base URL for streaming
  * @param streamToken - The short-lived stream JWT

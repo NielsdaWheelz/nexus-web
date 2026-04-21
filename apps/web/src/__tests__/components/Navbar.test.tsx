@@ -1,3 +1,4 @@
+import type { AnchorHTMLAttributes, ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -38,15 +39,20 @@ vi.mock("@/lib/workspace/store", () => ({
   useWorkspaceStore: () => MOCK_STORE,
 }));
 
-// Mock next/navigation (needed by next/link internally)
-vi.mock("next/navigation", () => ({
-  usePathname: () => "/libraries",
-  useRouter: () => ({
-    push: vi.fn(),
-    replace: vi.fn(),
-  }),
-  useSearchParams: () => new URLSearchParams(),
-  useParams: () => ({}),
+vi.mock("next/link", () => ({
+  __esModule: true,
+  default: ({
+    href,
+    children,
+    ...props
+  }: {
+    href: string | URL;
+    children: ReactNode;
+  } & AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a href={typeof href === "string" ? href : String(href)} {...props}>
+      {children}
+    </a>
+  ),
 }));
 
 import Navbar from "@/components/Navbar";

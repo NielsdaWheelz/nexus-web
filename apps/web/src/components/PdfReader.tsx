@@ -1753,10 +1753,11 @@ export default function PdfReader({
           await apiFetchDep(`/api/highlights/${editingHighlightId}`, {
             method: "PATCH",
             body: JSON.stringify({
-              pdf_bounds: {
+              exact,
+              anchor: {
+                type: "pdf_page_geometry",
                 page_number: activeSelection.pageNumber,
                 quads,
-                exact,
               },
             }),
           });

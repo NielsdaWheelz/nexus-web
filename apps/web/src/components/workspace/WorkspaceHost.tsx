@@ -1,7 +1,6 @@
 "use client";
 
 import { Component, memo, useCallback, useEffect, useMemo, useRef } from "react";
-import { normalizePaneHref } from "@/lib/panes/openInAppPane";
 import { resolvePaneRoute, getParentHref, type ResolvedPaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { PaneRuntimeProvider, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import PaneShell, { type PaneBodyMode } from "@/components/workspace/PaneShell";
@@ -12,6 +11,7 @@ import type { SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import {
   MAX_STANDARD_PANE_WIDTH_PX,
   MIN_PANE_WIDTH_PX,
+  normalizeWorkspaceHref,
   type WorkspacePaneStateV3,
 } from "@/lib/workspace/schema";
 import { resolvePaneDescriptor } from "@/lib/workspace/paneDescriptor";
@@ -120,7 +120,7 @@ function PaneRouteBoundary({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const normalizedHref = normalizePaneHref(hrefAttr);
+      const normalizedHref = normalizeWorkspaceHref(hrefAttr);
       if (!normalizedHref) {
         return;
       }

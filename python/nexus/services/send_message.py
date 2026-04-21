@@ -334,7 +334,7 @@ def _validate_context_visibility(
     """Validate that viewer can see the context target.
 
     Uses highlight_kernel for anchor-kind-aware media resolution (S6 PR-02).
-    Side-effect-free: does not repair dormant-window rows.
+    Side-effect-free: requires canonical highlight rows.
     Mismatch in highlight/annotation visibility resolution is treated as
     masked not-found per D03.
 
@@ -361,7 +361,7 @@ def _validate_context_visibility(
         if not highlight:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
         resolution = resolve_highlight(highlight)
-        if resolution.state == ResolverState.mismatch:
+        if resolution.state != ResolverState.ok:
             map_mismatch(
                 resolution,
                 MappingClass.masked_not_found,
@@ -380,7 +380,7 @@ def _validate_context_visibility(
         if not highlight:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
         resolution = resolve_highlight(highlight)
-        if resolution.state == ResolverState.mismatch:
+        if resolution.state != ResolverState.ok:
             map_mismatch(
                 resolution,
                 MappingClass.masked_not_found,

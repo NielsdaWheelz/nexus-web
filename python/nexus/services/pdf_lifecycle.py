@@ -54,7 +54,7 @@ def retry_for_viewer_unified(
     if media is not None and media.kind == "pdf":
         return retry_pdf_ingest_for_viewer(db, viewer_id, media_id, request_id=request_id)
     if media is not None and media.kind in {"podcast_episode", "video"}:
-        from nexus.services.podcasts import retry_transcript_media_for_viewer
+        from nexus.services.podcasts.transcripts import retry_transcript_media_for_viewer
 
         return retry_transcript_media_for_viewer(
             db,

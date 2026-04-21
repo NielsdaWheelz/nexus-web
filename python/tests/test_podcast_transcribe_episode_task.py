@@ -16,7 +16,7 @@ def test_podcast_transcribe_episode_task_rejects_invalid_media_id(monkeypatch):
         raise AssertionError("service should not run for invalid media id")
 
     monkeypatch.setattr(
-        "nexus.tasks.podcast_transcribe_episode.podcast_service.run_podcast_transcription_now",
+        "nexus.tasks.podcast_transcribe_episode.run_podcast_transcription_now_service",
         fail_if_called,
     )
 
@@ -46,7 +46,7 @@ def test_podcast_transcribe_episode_task_ignores_invalid_requested_by_user_id(mo
         fake_session_factory,
     )
     monkeypatch.setattr(
-        "nexus.tasks.podcast_transcribe_episode.podcast_service.run_podcast_transcription_now",
+        "nexus.tasks.podcast_transcribe_episode.run_podcast_transcription_now_service",
         fake_run,
     )
 

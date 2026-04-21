@@ -1,8 +1,8 @@
-"""Streaming send message service — async generator implementation.
+"""Streaming send message service for the canonical /stream/* transport.
 
-PR-08 rewrite: converts from sync generator with daemon-thread bridge to a
-proper async generator. This enables:
-- Natural disconnect detection (ASGI stops iterating → finally runs)
+Implemented as an async generator so the ASGI server owns iteration directly.
+This enables:
+- Natural disconnect detection (ASGI stops iterating -> finally runs)
 - Provider connection close on disconnect (async with client.stream())
 - Keepalive pings during idle periods
 - Liveness markers for sweeper + replay logic
@@ -17,6 +17,7 @@ SSE Events:
 Sync DB access uses run_in_threadpool (starlette) to avoid blocking the event loop.
 """
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -772,70 +773,3 @@ async def stream_send_message_async(
                 "final_chars": len(full_content),
             },
         )
-
-
-# Keep backward compat: sync generator for old BFF-proxied streaming routes
-def stream_send_message(
-    db: Session,
-    viewer_id: UUID,
-    conversation_id: UUID | None,
-    content: str,
-    model_id: UUID,
-    reasoning: str,
-    key_mode: str = "auto",
-    contexts: list[dict] | None = None,
-    idempotency_key: str | None = None,
-):
-    """Sync generator wrapper — deprecated, kept for old /conversations/.../stream routes.
-
-    Will be removed when old BFF streaming routes are deleted.
-    """
-    import asyncio as _asyncio
-    import queue
-    import threading
-
-    contexts = contexts or []
-
-    from nexus.db.session import get_session_factory
-
-    db_factory = get_session_factory()
-
-    result_queue: queue.Queue[str | None | Exception] = queue.Queue()
-
-    async def _run():
-        try:
-            async for event in stream_send_message_async(
-                db_factory=db_factory,
-                viewer_id=viewer_id,
-                conversation_id=conversation_id,
-                content=content,
-                model_id=model_id,
-                reasoning=reasoning,
-                key_mode=key_mode,
-                contexts=contexts,
-                idempotency_key=idempotency_key,
-            ):
-                result_queue.put(event)
-            result_queue.put(None)
-        except Exception as e:
-            result_queue.put(e)
-
-    thread = threading.Thread(target=lambda: _asyncio.run(_run()), daemon=True)
-    thread.start()
-
-    while True:
-        try:
-            item = result_queue.get(timeout=60)
-            if item is None:
-                break
-            if isinstance(item, Exception):
-                yield format_sse_event("done", {"status": "error", "error_code": "E_INTERNAL"})
-                break
-            yield item
-        except queue.Empty:
-            yield format_sse_event("done", {"status": "error", "error_code": "E_LLM_TIMEOUT"})
-            break
-
-
-# Import asyncio for CancelledError handling
-import asyncio  # noqa: E402

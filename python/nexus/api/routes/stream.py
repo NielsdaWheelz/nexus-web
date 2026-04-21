@@ -17,12 +17,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
-from nexus.api.deps import get_session_factory
+from nexus.api.deps import get_llm_router, get_session_factory
 from nexus.auth.stream_token import verify_stream_token
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger, set_stream_jti
 from nexus.schemas.conversation import SendMessageRequest
+from nexus.services.llm import LLMRouter
 from nexus.services.send_message_stream import stream_send_message_async
 
 logger = get_logger(__name__)
@@ -65,8 +66,8 @@ def get_stream_viewer(request: Request) -> UUID:
 async def stream_send_existing(
     conversation_id: UUID,
     body: SendMessageRequest,
-    request: Request,
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
+    llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> StreamingResponse:
     """Send a message with SSE streaming in an existing conversation.
@@ -79,7 +80,6 @@ async def stream_send_existing(
 
     contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
     db_factory = get_session_factory()
-    llm_router = getattr(request.app.state, "llm_router", None)
 
     return StreamingResponse(
         stream_send_message_async(
@@ -105,8 +105,8 @@ async def stream_send_existing(
 @router.post("/conversations/messages")
 async def stream_send_new(
     body: SendMessageRequest,
-    request: Request,
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
+    llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> StreamingResponse:
     """Send a message with SSE streaming, creating a new conversation.
@@ -119,7 +119,6 @@ async def stream_send_new(
 
     contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
     db_factory = get_session_factory()
-    llm_router = getattr(request.app.state, "llm_router", None)
 
     return StreamingResponse(
         stream_send_message_async(

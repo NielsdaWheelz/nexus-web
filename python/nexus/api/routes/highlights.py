@@ -1,13 +1,4 @@
-"""Highlights API routes.
-
-Route handlers for highlight and annotation CRUD operations.
-Routes are transport-only: each calls exactly one service function.
-
-S6 PR-04 additions:
-- POST /media/{media_id}/pdf-highlights (PDF highlight create)
-- GET /media/{media_id}/pdf-highlights (PDF highlight page-scoped list)
-- Generic routes extended to return TypedHighlightOut for detail/update
-"""
+"""Highlight and annotation API routes."""
 
 from typing import Annotated
 from uuid import UUID
@@ -150,7 +141,7 @@ def get_highlight(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get a single highlight by ID (anchor-discriminated typed output)."""
+    """Get a single highlight by ID."""
     result = highlights_service.get_highlight(
         db=db,
         viewer_id=viewer.user_id,
@@ -166,7 +157,7 @@ def update_highlight(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Update a highlight (unified PATCH for fragment + PDF)."""
+    """Update a highlight with the canonical typed PATCH contract."""
     result = highlights_service.update_highlight(
         db=db,
         viewer_id=viewer.user_id,

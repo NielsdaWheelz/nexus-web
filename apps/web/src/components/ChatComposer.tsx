@@ -1,8 +1,8 @@
 /**
  * ChatComposer — message input with model picker, context chips, and streaming send.
  *
- * Handles both streaming (SSE) and non-streaming send paths.
- * Streaming is default when NEXT_PUBLIC_ENABLE_STREAMING=1.
+ * Uses the direct `/stream/*` transport when streaming is enabled.
+ * Falls back to non-stream send only when streaming is unavailable.
  *
  * Per s3_pr07:
  * - Streaming path uses temporary IDs, patches on meta event.
@@ -395,6 +395,7 @@ export default function ChatComposer({
         const finish = (ok: boolean) => {
           if (settled) return;
           settled = true;
+          abortRef.current = null;
           resolve(ok);
         };
 

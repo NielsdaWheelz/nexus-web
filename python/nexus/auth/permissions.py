@@ -294,7 +294,7 @@ def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUI
 
     resolution = resolve_highlight(highlight)
 
-    if resolution.state == ResolverState.mismatch:
+    if resolution.state != ResolverState.ok:
         map_mismatch(resolution, MappingClass.bool_fail_closed, "can_read_highlight")
         return False
 

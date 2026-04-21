@@ -2667,37 +2667,6 @@ class TestPdfRetry:
             assert job_row[1] == "ingest_pdf"
             assert job_row[2] == "false"
 
-    def test_pr03_retry_pdf_route_preserves_compat_response_shape_without_mode_parameter(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Public retry uses no retry-mode parameter; response is RetryResponse-compatible."""
-        with direct_db.session() as session:
-            media_id, user_id = _create_pdf_media_with_state(
-                session,
-                processing_status="failed",
-                failure_stage="extract",
-                last_error_code="E_INGEST_FAILED",
-            )
-
-        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
-        direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        from unittest.mock import patch
-
-        with patch("nexus.services.pdf_lifecycle.get_storage_client") as mock_storage:
-            mock_storage.return_value.head_object.return_value = True
-            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
-
-        assert resp.status_code == 202
-        data = resp.json()["data"]
-        assert "media_id" in data
-        assert "processing_status" in data
-        assert "retry_enqueued" in data
-
     def test_pr03_retry_pdf_embed_failure_uses_embedding_only_retry_inference_path(
         self, auth_client, direct_db: DirectSessionManager
     ):

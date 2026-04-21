@@ -140,10 +140,6 @@ function isBrowseSectionType(value: string): value is BrowseSectionType {
 
 function parseVisibleTypes(searchParams: URLSearchParams): BrowseSectionType[] {
   if (!searchParams.has("types")) {
-    const legacyType = searchParams.get("type");
-    if (legacyType && isBrowseSectionType(legacyType)) {
-      return [legacyType];
-    }
     return [...BROWSE_TYPES];
   }
   const raw = searchParams.getAll("types").join(",");

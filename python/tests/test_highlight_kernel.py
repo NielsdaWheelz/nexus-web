@@ -1,4 +1,4 @@
-"""Unit/service-level tests for the highlight_kernel module (S6 PR-02).
+"""Unit/service-level tests for the highlight_kernel module.
 
 Tests cover internal seam contracts:
 - Structured resolver result typing and state classification
@@ -6,7 +6,6 @@ Tests cover internal seam contracts:
 - Mismatch classification
 - Centralized mismatch mapping/logging helpers
 - Internal integrity exception diagnostics
-- Explicit repair-helper transactional behavior
 """
 
 from uuid import uuid4
@@ -23,7 +22,6 @@ from nexus.services.highlight_kernel import (
     ResolverState,
     build_internal_view,
     map_mismatch,
-    repair_fragment_highlight,
     resolve_anchor_media_id,
     resolve_highlight,
 )
@@ -58,7 +56,7 @@ class TestResolverStructuredStates:
         assert res.fragment_anchor.fragment_id == frag_id
         assert res.mismatch_code is None
 
-    def test_dormant_fragment_resolves_dormant_repairable(self, db_session, bootstrapped_user):
+    def test_bridge_only_fragment_resolves_mismatch(self, db_session, bootstrapped_user):
         lib_id = get_user_default_library(db_session, bootstrapped_user)
         media_id = create_test_media_in_library(db_session, bootstrapped_user, lib_id)
         frag_id = create_test_fragment(db_session, media_id, content="y" * 30)
@@ -67,11 +65,8 @@ class TestResolverStructuredStates:
         )
         hl = db_session.get(Highlight, hl_id)
         res = resolve_highlight(hl)
-        assert res.state == ResolverState.dormant_repairable
-        assert res.anchor_kind == "fragment_offsets"
-        assert res.anchor_media_id == media_id
-        assert res.fragment_anchor is not None
-        assert res.mismatch_code is None
+        assert res.state == ResolverState.mismatch
+        assert res.mismatch_code == MismatchCode.no_anchor_data
 
     def test_mismatched_fragment_resolves_mismatch(self, db_session, bootstrapped_user):
         lib_id = get_user_default_library(db_session, bootstrapped_user)
@@ -88,74 +83,6 @@ class TestResolverStructuredStates:
         res = resolve_highlight(hl)
         assert res.state == ResolverState.mismatch
         assert res.mismatch_code == MismatchCode.anchor_media_id_conflict
-
-
-class TestDormantRepairableResolution:
-    """test_pr02_highlight_kernel_dormant_repairable_returns_resolved_data_without_mutation"""
-
-    def test_dormant_returns_data_no_mutation(self, db_session, bootstrapped_user):
-        lib_id = get_user_default_library(db_session, bootstrapped_user)
-        media_id = create_test_media_in_library(db_session, bootstrapped_user, lib_id)
-        frag_id = create_test_fragment(db_session, media_id, content="z" * 30)
-        hl_id = create_dormant_fragment_highlight(db_session, bootstrapped_user, frag_id, 0, 10)
-        hl = db_session.get(Highlight, hl_id)
-
-        res = resolve_highlight(hl)
-        assert res.state == ResolverState.dormant_repairable
-        assert res.anchor_media_id == media_id
-        assert res.fragment_anchor.fragment_id == frag_id
-
-        db_session.refresh(hl)
-        assert hl.anchor_kind is None
-        assert hl.anchor_media_id is None
-        assert hl.fragment_anchor is None
-
-
-class TestRepairHelper:
-    """test_pr02_highlight_kernel_repair_helper_is_explicit_and_no_implicit_commit"""
-
-    def test_repair_populates_fields(self, db_session, bootstrapped_user):
-        lib_id = get_user_default_library(db_session, bootstrapped_user)
-        media_id = create_test_media_in_library(db_session, bootstrapped_user, lib_id)
-        frag_id = create_test_fragment(db_session, media_id, content="r" * 30)
-        hl_id = create_dormant_fragment_highlight(db_session, bootstrapped_user, frag_id, 0, 10)
-        hl = db_session.get(Highlight, hl_id)
-
-        result = repair_fragment_highlight(db_session, hl)
-        assert result.state == ResolverState.ok
-        assert hl.anchor_kind == "fragment_offsets"
-        assert hl.anchor_media_id == media_id
-
-        db_session.refresh(hl)
-        assert hl.fragment_anchor is not None
-        assert hl.fragment_anchor.fragment_id == frag_id
-
-    def test_repair_mismatch_raises(self, db_session, bootstrapped_user):
-        lib_id = get_user_default_library(db_session, bootstrapped_user)
-        media_id = create_test_media_in_library(db_session, bootstrapped_user, lib_id)
-        frag1_id = create_test_fragment(db_session, media_id, content="a" * 30)
-        media_id2 = create_test_media_in_library(db_session, bootstrapped_user, lib_id, title="Oth")
-        frag2_id = create_test_fragment(db_session, media_id2, content="b" * 30)
-        hl_id = create_mismatched_fragment_highlight(
-            db_session, bootstrapped_user, frag1_id, media_id, frag2_id
-        )
-        hl = db_session.get(Highlight, hl_id)
-
-        with pytest.raises(HighlightKernelIntegrityError) as exc_info:
-            repair_fragment_highlight(db_session, hl)
-        assert exc_info.value.mapping_class == MappingClass.internal_error
-
-    def test_repair_already_ok_is_noop(self, db_session, bootstrapped_user):
-        lib_id = get_user_default_library(db_session, bootstrapped_user)
-        media_id = create_test_media_in_library(db_session, bootstrapped_user, lib_id)
-        frag_id = create_test_fragment(db_session, media_id, content="n" * 30)
-        hl_id = create_normalized_fragment_highlight(
-            db_session, bootstrapped_user, frag_id, media_id, 0, 10
-        )
-        hl = db_session.get(Highlight, hl_id)
-
-        result = repair_fragment_highlight(db_session, hl)
-        assert result.state == ResolverState.ok
 
 
 class TestInternalTypedView:
@@ -278,5 +205,13 @@ class TestResolveAnchorMediaId:
         hl_id = create_mismatched_fragment_highlight(
             db_session, bootstrapped_user, frag1_id, media_id, frag2_id
         )
+        hl = db_session.get(Highlight, hl_id)
+        assert resolve_anchor_media_id(hl) is None
+
+    def test_returns_none_for_bridge_only_row(self, db_session, bootstrapped_user):
+        lib_id = get_user_default_library(db_session, bootstrapped_user)
+        media_id = create_test_media_in_library(db_session, bootstrapped_user, lib_id)
+        frag_id = create_test_fragment(db_session, media_id, content="b" * 30)
+        hl_id = create_dormant_fragment_highlight(db_session, bootstrapped_user, frag_id, 0, 10)
         hl = db_session.get(Highlight, hl_id)
         assert resolve_anchor_media_id(hl) is None

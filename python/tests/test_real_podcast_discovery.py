@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from nexus.services.podcasts import PodcastIndexClient
+from nexus.services.podcasts.provider import PodcastIndexClient
 
 pytestmark = [
     pytest.mark.integration,

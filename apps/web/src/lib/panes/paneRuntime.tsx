@@ -2,8 +2,8 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { normalizePaneHref } from "@/lib/panes/openInAppPane";
 import { normalizePaneTitle } from "@/lib/workspace/paneDescriptor";
+import { normalizeWorkspaceHref } from "@/lib/workspace/schema";
 
 export interface PaneScopedRouter {
   push: (href: string) => void;
@@ -85,14 +85,14 @@ export function PaneRuntimeProvider({
       searchParams: parsed.searchParams,
       router: {
         push: (nextHref: string) => {
-          const normalized = normalizePaneHref(nextHref);
+          const normalized = normalizeWorkspaceHref(nextHref);
           if (!normalized) {
             return;
           }
           onNavigatePane(paneId, normalized);
         },
         replace: (nextHref: string) => {
-          const normalized = normalizePaneHref(nextHref);
+          const normalized = normalizeWorkspaceHref(nextHref);
           if (!normalized) {
             return;
           }
@@ -100,7 +100,7 @@ export function PaneRuntimeProvider({
         },
       },
       openInNewPane: (nextHref: string) => {
-        const normalized = normalizePaneHref(nextHref);
+        const normalized = normalizeWorkspaceHref(nextHref);
         if (!normalized) {
           return;
         }

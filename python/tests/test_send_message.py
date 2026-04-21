@@ -746,10 +746,12 @@ class TestSendMessageContext:
                     """
                     INSERT INTO highlights (
                         id, user_id, fragment_id, start_offset, end_offset,
+                        anchor_kind, anchor_media_id,
                         color, exact, prefix, suffix
                     )
                     VALUES (
                         :id, :user_id, :fragment_id, 0, 7,
+                        'fragment_offsets', :media_id,
                         'yellow', :exact, '', :suffix
                     )
                     """
@@ -758,9 +760,21 @@ class TestSendMessageContext:
                     "id": highlight_id,
                     "user_id": user_id,
                     "fragment_id": fragment_id,
+                    "media_id": media_id,
                     "exact": "Welcome",
                     "suffix": transcript_text[7:71],
                 },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO highlight_fragment_anchors (
+                        highlight_id, fragment_id, start_offset, end_offset
+                    )
+                    VALUES (:highlight_id, :fragment_id, 0, 7)
+                    """
+                ),
+                {"highlight_id": highlight_id, "fragment_id": fragment_id},
             )
             session.commit()
 
@@ -868,10 +882,12 @@ class TestSendMessageContext:
                     """
                     INSERT INTO highlights (
                         id, user_id, fragment_id, start_offset, end_offset,
+                        anchor_kind, anchor_media_id,
                         color, exact, prefix, suffix
                     )
                     VALUES (
                         :id, :user_id, :fragment_id, 8, 18,
+                        'fragment_offsets', :media_id,
                         'yellow', :exact, :prefix, :suffix
                     )
                     """
@@ -880,10 +896,22 @@ class TestSendMessageContext:
                     "id": highlight_id,
                     "user_id": user_id,
                     "fragment_id": fragment_id,
+                    "media_id": media_id,
                     "exact": "the transc",
                     "prefix": transcript_text[:8],
                     "suffix": transcript_text[18:],
                 },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO highlight_fragment_anchors (
+                        highlight_id, fragment_id, start_offset, end_offset
+                    )
+                    VALUES (:highlight_id, :fragment_id, 8, 18)
+                    """
+                ),
+                {"highlight_id": highlight_id, "fragment_id": fragment_id},
             )
             session.commit()
 
@@ -1863,17 +1891,54 @@ class TestSendMessageEpubQuoteToChat:
         exact_text = "UNIQUE_SENTINEL_CHAPTER_ONE"
         session.execute(
             text("""
-                INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
-                                        color, exact, prefix, suffix)
-                VALUES (:id, :user_id, :fragment_id, 0, :end_offset, 'yellow', :exact, '', :suffix)
+                INSERT INTO highlights (
+                    id,
+                    user_id,
+                    fragment_id,
+                    start_offset,
+                    end_offset,
+                    anchor_kind,
+                    anchor_media_id,
+                    color,
+                    exact,
+                    prefix,
+                    suffix
+                )
+                VALUES (
+                    :id,
+                    :user_id,
+                    :fragment_id,
+                    0,
+                    :end_offset,
+                    'fragment_offsets',
+                    :media_id,
+                    'yellow',
+                    :exact,
+                    '',
+                    :suffix
+                )
             """),
             {
                 "id": hl_id,
                 "user_id": user_id,
                 "fragment_id": frag1,
+                "media_id": media_id,
                 "end_offset": len(exact_text),
                 "exact": exact_text,
                 "suffix": EPUB_QTC_CH1[len(exact_text) : len(exact_text) + 64],
+            },
+        )
+        session.execute(
+            text("""
+                INSERT INTO highlight_fragment_anchors (
+                    highlight_id, fragment_id, start_offset, end_offset
+                )
+                VALUES (:highlight_id, :fragment_id, 0, :end_offset)
+            """),
+            {
+                "highlight_id": hl_id,
+                "fragment_id": frag1,
+                "end_offset": len(exact_text),
             },
         )
         session.commit()
@@ -2006,7 +2071,7 @@ class TestSendMessageEpubQuoteToChat:
 class TestSendMessageContextKernel:
     """PR-02: _validate_context_visibility uses kernel for highlight/annotation contexts."""
 
-    def test_send_message_with_dormant_highlight_context_succeeds(
+    def test_send_message_with_canonical_highlight_context_succeeds(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -2014,7 +2079,7 @@ class TestSendMessageContextKernel:
         platform_key_env,
         mock_openai_api,
     ):
-        """Dormant-window highlight context is resolved via kernel and accepted."""
+        """Canonical fragment highlight context is accepted."""
         _route_openai_completion(mock_openai_api)
 
         user_id = create_test_user_id()
@@ -2030,11 +2095,32 @@ class TestSendMessageContextKernel:
             hl_id = uuid4()
             session.execute(
                 text("""
-                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
-                                            color, exact, prefix, suffix)
-                    VALUES (:id, :uid, :fid, 0, 7, 'yellow', 'Dormant', '', ' highlight')
+                    INSERT INTO highlights (
+                        id, user_id, fragment_id, start_offset, end_offset,
+                        anchor_kind, anchor_media_id,
+                        color, exact, prefix, suffix
+                    )
+                    VALUES (
+                        :id, :uid, :fid, 0, 7,
+                        'fragment_offsets', :media_id,
+                        'yellow', 'Dormant', '', ' highlight'
+                    )
                 """),
-                {"id": hl_id, "uid": user_id, "fid": fragment_id},
+                {
+                    "id": hl_id,
+                    "uid": user_id,
+                    "fid": fragment_id,
+                    "media_id": media_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO highlight_fragment_anchors (
+                        highlight_id, fragment_id, start_offset, end_offset
+                    )
+                    VALUES (:highlight_id, :fragment_id, 0, 7)
+                """),
+                {"highlight_id": hl_id, "fragment_id": fragment_id},
             )
             session.commit()
 

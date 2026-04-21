@@ -1,19 +1,47 @@
-"""Capabilities derivation for media items.
+"""Capabilities derivation for media items."""
 
-Capabilities determine what actions a viewer can perform on a media item.
-They are derived from:
-- media.kind
-- processing_status
-- last_error_code
-- media_file existence (for can_download_file)
-- external_playback_url existence (for can_play)
-
-Precondition: Caller has already verified can_read_media(viewer, media).
-If that check failed, endpoint returned 404 and never calls this function.
-"""
-
-from nexus.db.models import MediaKind, ProcessingStatus
+from nexus.db.models import MediaKind, ProcessingStatus, TranscriptCoverage, TranscriptState
 from nexus.schemas.media import CapabilitiesOut
+
+_READY_PROCESSING_STATUSES = {
+    ProcessingStatus.ready_for_reading.value,
+    ProcessingStatus.embedding.value,
+    ProcessingStatus.ready.value,
+}
+_VALID_PROCESSING_STATUSES = {status.value for status in ProcessingStatus}
+_DOCUMENT_MEDIA_KINDS = {
+    MediaKind.epub.value,
+    MediaKind.web_article.value,
+}
+_TRANSCRIPT_MEDIA_KINDS = {
+    MediaKind.video.value,
+    MediaKind.podcast_episode.value,
+}
+_VALID_TRANSCRIPT_STATES = {state.value for state in TranscriptState}
+_VALID_TRANSCRIPT_COVERAGES = {coverage.value for coverage in TranscriptCoverage}
+_READABLE_TRANSCRIPT_STATES = {
+    TranscriptState.ready.value,
+    TranscriptState.partial.value,
+}
+_READABLE_TRANSCRIPT_COVERAGES = {
+    TranscriptCoverage.partial.value,
+    TranscriptCoverage.full.value,
+}
+
+
+def _validate_processing_status(processing_status: str) -> None:
+    if processing_status not in _VALID_PROCESSING_STATUSES:
+        raise ValueError(f"Unsupported processing status: {processing_status}")
+
+
+def _validate_transcript_state(transcript_state: str | None) -> None:
+    if transcript_state is not None and transcript_state not in _VALID_TRANSCRIPT_STATES:
+        raise ValueError(f"Unsupported transcript state: {transcript_state}")
+
+
+def _validate_transcript_coverage(transcript_coverage: str | None) -> None:
+    if transcript_coverage is not None and transcript_coverage not in _VALID_TRANSCRIPT_COVERAGES:
+        raise ValueError(f"Unsupported transcript coverage: {transcript_coverage}")
 
 
 def derive_capabilities(
@@ -23,101 +51,54 @@ def derive_capabilities(
     *,
     media_file_exists: bool,
     external_playback_url_exists: bool,
-    has_fragments: bool = False,
-    has_plain_text: bool = False,
     pdf_quote_text_ready: bool = False,
     transcript_state: str | None = None,
     transcript_coverage: str | None = None,
 ) -> CapabilitiesOut:
-    """Derive capabilities from media state.
+    """Derive capabilities from media state."""
+    _validate_processing_status(processing_status)
+    _validate_transcript_state(transcript_state)
+    _validate_transcript_coverage(transcript_coverage)
 
-    This is a pure function - no database access.
-
-    Args:
-        kind: Media kind (web_article, pdf, epub, video, podcast_episode).
-        processing_status: Current processing status.
-        last_error_code: Error code if failed, None otherwise.
-        media_file_exists: True if MediaFile row exists for this media.
-        external_playback_url_exists: True if external_playback_url is set.
-        has_fragments: True if media has at least one fragment.
-        has_plain_text: True if media.plain_text is set (legacy compat, non-PDF).
-        pdf_quote_text_ready: True if full S6 pdf_quote_text_ready(media)
-            predicate is satisfied (plain_text + page_count + page_spans).
-
-    Returns:
-        CapabilitiesOut with derived boolean flags.
-    """
-    # Normalize inputs
     is_pdf = kind == MediaKind.pdf.value
-    is_epub = kind == MediaKind.epub.value
-    is_web_article = kind == MediaKind.web_article.value
-    is_document = is_pdf or is_epub or is_web_article
-    is_transcript_media = kind in (MediaKind.video.value, MediaKind.podcast_episode.value)
+    is_document = kind in _DOCUMENT_MEDIA_KINDS
+    is_transcript_media = kind in _TRANSCRIPT_MEDIA_KINDS
 
-    # Status checks
-    status_ready_for_reading = processing_status in (
-        ProcessingStatus.ready_for_reading.value,
-        ProcessingStatus.embedding.value,
-        ProcessingStatus.ready.value,
-    )
+    status_ready_for_reading = processing_status in _READY_PROCESSING_STATUSES
     is_failed = processing_status == ProcessingStatus.failed.value
     is_transcript_unavailable = is_failed and last_error_code == "E_TRANSCRIPT_UNAVAILABLE"
 
     transcript_ready = status_ready_for_reading
     if is_transcript_media and transcript_state is not None:
-        is_transcript_unavailable = transcript_state == "unavailable"
-        transcript_ready = transcript_state in {"ready", "partial"} and (
-            transcript_coverage in {"partial", "full"}
+        is_transcript_unavailable = transcript_state == TranscriptState.unavailable.value
+        transcript_ready = transcript_state in _READABLE_TRANSCRIPT_STATES and (
+            transcript_coverage in _READABLE_TRANSCRIPT_COVERAGES
         )
 
-    # =========================================================================
-    # can_download_file: True iff media_file exists (for PDF/EPUB)
-    # =========================================================================
     can_download_file = media_file_exists
 
-    # =========================================================================
-    # can_play: True iff external_playback_url exists and conditions met
-    # For transcript media: allowed whenever playback URL exists.
-    # =========================================================================
     if external_playback_url_exists:
         can_play = is_transcript_media or status_ready_for_reading or is_transcript_unavailable
     else:
         can_play = False
 
-    # =========================================================================
-    # can_read: Depends on media kind
-    # =========================================================================
     if is_pdf:
-        # PDF special case: can_read if file exists (pdf.js renders directly)
         can_read = media_file_exists
     elif is_document:
-        # Other documents: require ready_for_reading (fragments exist)
         can_read = status_ready_for_reading
     elif is_transcript_media:
-        # Transcript media: require fragments (transcript segments)
-        # But NOT if transcript is unavailable
         if is_transcript_unavailable:
             can_read = False
         else:
             can_read = transcript_ready
     else:
-        # Unknown kind: default to status check
-        can_read = status_ready_for_reading
+        raise ValueError(f"Unsupported media kind: {kind}")
 
-    # =========================================================================
-    # can_highlight: Same as can_read for most types
-    # Special case: failed + transcript unavailable disables highlights
-    # =========================================================================
     if is_transcript_unavailable:
         can_highlight = False
     else:
         can_highlight = can_read
 
-    # =========================================================================
-    # can_quote: Depends on kind
-    # - PDF: requires plain_text (extracted text)
-    # - Others: same as can_read
-    # =========================================================================
     if is_pdf:
         can_quote = can_read and pdf_quote_text_ready
     elif is_transcript_unavailable:
@@ -125,9 +106,6 @@ def derive_capabilities(
     else:
         can_quote = can_read
 
-    # =========================================================================
-    # can_search: Same as can_quote (searchable requires text)
-    # =========================================================================
     can_search = can_quote
 
     return CapabilitiesOut(

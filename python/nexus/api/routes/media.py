@@ -35,9 +35,9 @@ from nexus.schemas.reader import ReaderResumeState
 from nexus.services import epub_lifecycle, epub_read, image_proxy
 from nexus.services import libraries as libraries_service
 from nexus.services import media as media_service
-from nexus.services import podcasts as podcast_service
 from nexus.services import reader as reader_service
 from nexus.services import upload as upload_service
+from nexus.services.podcasts import transcripts as podcast_transcript_service
 
 router = APIRouter()
 
@@ -424,7 +424,7 @@ def request_podcast_transcript_batch(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Admit transcript requests for multiple podcast episodes sequentially."""
-    result = podcast_service.request_podcast_transcripts_batch_for_viewer(
+    result = podcast_transcript_service.request_podcast_transcripts_batch_for_viewer(
         db=db,
         viewer_id=viewer.user_id,
         media_ids=body.media_ids,
@@ -442,7 +442,7 @@ def request_podcast_transcript(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     """Admit (or forecast) an explicit transcript request for a podcast episode."""
-    result = podcast_service.request_podcast_transcript_for_viewer(
+    result = podcast_transcript_service.request_podcast_transcript_for_viewer(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
@@ -461,7 +461,7 @@ def forecast_podcast_transcripts(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Return dry-run transcript forecasts for many visible podcast episodes."""
-    result = podcast_service.forecast_podcast_transcripts_for_viewer(
+    result = podcast_transcript_service.forecast_podcast_transcripts_for_viewer(
         db=db,
         viewer_id=viewer.user_id,
         requests=[(item.media_id, item.reason) for item in body.requests],

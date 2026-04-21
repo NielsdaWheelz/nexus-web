@@ -1,59 +1,25 @@
-import { createRef, useState, type ComponentProps, type ReactNode } from "react";
+import { createRef, useState, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import TranscriptMediaPane from "./TranscriptMediaPane";
-import { isAllowedYoutubeEmbedUrl } from "./TranscriptPlaybackPanel";
-
-type TranscriptMediaPaneProps = ComponentProps<typeof TranscriptMediaPane>;
-
-type TranscriptPlaybackSource = {
-  kind: "external_audio" | "external_video";
-  stream_url: string;
-  source_url: string;
-  provider?: string | null;
-  provider_video_id?: string | null;
-  watch_url?: string | null;
-  embed_url?: string | null;
-};
-
-type TranscriptFragment = {
-  id: string;
-  canonical_text: string;
-  t_start_ms?: number | null;
-  t_end_ms?: number | null;
-  speaker_label?: string | null;
-};
-
-type TranscriptChapter = {
-  chapter_idx: number;
-  title: string;
-  t_start_ms: number;
-  t_end_ms?: number | null;
-  url?: string | null;
-  image_url?: string | null;
-};
-
-type TranscriptState =
-  | "not_requested"
-  | "queued"
-  | "running"
-  | "failed_provider"
-  | "failed_quota"
-  | "unavailable"
-  | "ready"
-  | "partial";
-
-type TranscriptCoverage = "none" | "partial" | "full";
-
-type TranscriptRequestForecast = {
-  requiredMinutes: number;
-  remainingMinutes: number | null;
-  fitsBudget: boolean;
-};
+import TranscriptPlaybackPanel, {
+  isAllowedYoutubeEmbedUrl,
+} from "./TranscriptPlaybackPanel";
+import TranscriptContentPanel from "./TranscriptContentPanel";
+import TranscriptStatePanel from "./TranscriptStatePanel";
+import type {
+  TranscriptChapter,
+  TranscriptFragment,
+  TranscriptPlaybackSource,
+  TranscriptRequestForecast,
+} from "./mediaHelpers";
 
 const mockSeekToMs = vi.fn();
 const mockPlay = vi.fn();
+const mockAddToQueue = vi.fn(async () => []);
+const mockReaderContentArea = vi.fn(
+  ({ children }: { children: ReactNode }) => children
+);
 let mockCurrentTimeSeconds = 0;
 const mockBillingState = vi.hoisted(() => ({
   account: null as
@@ -87,10 +53,44 @@ const mockBillingState = vi.hoisted(() => ({
   error: null as string | null,
   reload: vi.fn(),
 }));
-const mockReaderContentArea = vi.fn(
-  ({ children }: { children: ReactNode }) => children
-);
-const mockAddToQueue = vi.fn(async () => []);
+
+vi.mock("next/image", () => ({
+  __esModule: true,
+  default: (props: {
+    alt?: string;
+    src?: string;
+    width?: number;
+    height?: number;
+    className?: string;
+    unoptimized?: boolean;
+  }) => {
+    const { unoptimized: _unoptimized, ...imgProps } = props;
+    // eslint-disable-next-line @next/next/no-img-element -- test double for next/image
+    return <img alt={imgProps.alt ?? ""} {...imgProps} />;
+  },
+}));
+
+vi.mock("@/components/ReaderContentArea", () => ({
+  default: (
+    props: {
+      children: ReactNode;
+      contentClassName?: string;
+    }
+  ) => mockReaderContentArea(props),
+}));
+
+vi.mock("@/components/HtmlRenderer", () => ({
+  default: ({
+    htmlSanitized,
+    className,
+  }: {
+    htmlSanitized: string;
+    className?: string;
+  }) => (
+    // eslint-disable-next-line react/no-danger -- test mock must render trusted sanitized HTML
+    <div className={className} dangerouslySetInnerHTML={{ __html: htmlSanitized }} />
+  ),
+}));
 
 vi.mock("@/lib/player/globalPlayer", () => ({
   useGlobalPlayer: () => ({
@@ -120,15 +120,6 @@ vi.mock("@/lib/player/globalPlayer", () => ({
   }),
 }));
 
-vi.mock("@/components/ReaderContentArea", () => ({
-  default: (
-    props: {
-      children: ReactNode;
-      contentClassName?: string;
-    }
-  ) => mockReaderContentArea(props),
-}));
-
 vi.mock("@/lib/billing/useBillingAccount", () => ({
   useBillingAccount: () => mockBillingState,
 }));
@@ -136,12 +127,12 @@ vi.mock("@/lib/billing/useBillingAccount", () => ({
 beforeEach(() => {
   mockSeekToMs.mockReset();
   mockPlay.mockReset();
+  mockAddToQueue.mockReset();
+  mockAddToQueue.mockResolvedValue([]);
   mockReaderContentArea.mockReset();
   mockReaderContentArea.mockImplementation(
     ({ children }: { children: ReactNode }) => children
   );
-  mockAddToQueue.mockReset();
-  mockAddToQueue.mockResolvedValue([]);
   mockCurrentTimeSeconds = 0;
   mockBillingState.account = null;
 });
@@ -198,75 +189,84 @@ const PODCAST_CHAPTERS: TranscriptChapter[] = [
   },
 ];
 
-function renderStatefulVideoPane(
-  options: {
-    playbackSource?: TranscriptPlaybackSource | null;
-    isPlaybackOnlyTranscript?: boolean;
-    canRead?: boolean;
-    processingStatus?: string;
-    fragments?: TranscriptFragment[];
-    transcriptState?: TranscriptState;
-    transcriptCoverage?: TranscriptCoverage;
-    transcriptRequestInFlight?: boolean;
-    transcriptRequestForecast?: TranscriptRequestForecast | null;
-    onRequestTranscript?: () => void;
-  } = {}
-) {
+function renderVideoPanels() {
   const onSegmentSelect = vi.fn();
   const contentRef = createRef<HTMLDivElement>();
-  const fragments = options.fragments ?? FRAGMENTS;
 
   function Harness() {
-    const [activeId, setActiveId] = useState<string | null>(fragments[0]?.id ?? null);
+    const [activeId, setActiveId] = useState<string | null>(FRAGMENTS[0]?.id ?? null);
+    const [videoSeekTargetMs, setVideoSeekTargetMs] = useState<number | null>(null);
     const activeFragment =
-      fragments.find((fragment) => fragment.id === activeId) ?? null;
-    const props = {
-      mediaId: "media-video-1",
-      mediaKind: "video",
-      playbackSource: options.playbackSource ?? VIDEO_PLAYBACK_SOURCE,
-      canonicalSourceUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-      isPlaybackOnlyTranscript: options.isPlaybackOnlyTranscript ?? false,
-      canRead: options.canRead ?? true,
-      processingStatus: options.processingStatus ?? "ready_for_reading",
-      transcriptState: options.transcriptState ?? "ready",
-      transcriptCoverage: options.transcriptCoverage ?? "full",
-      transcriptRequestInFlight: options.transcriptRequestInFlight ?? false,
-      transcriptRequestForecast: options.transcriptRequestForecast ?? null,
-      chapters: [],
-      fragments,
-      activeFragment,
-      renderedHtml: "<p>active transcript html</p>",
-      contentRef,
-      onRequestTranscript: options.onRequestTranscript ?? vi.fn(),
-      onSegmentSelect: (fragment: TranscriptFragment) => {
-        setActiveId(fragment.id);
-        onSegmentSelect(fragment);
-      },
-      onContentClick: vi.fn(),
-    } as TranscriptMediaPaneProps;
+      FRAGMENTS.find((fragment) => fragment.id === activeId) ?? null;
 
-    return <TranscriptMediaPane {...props} />;
+    return (
+      <>
+        <TranscriptPlaybackPanel
+          mediaId="media-video-1"
+          mediaKind="video"
+          playbackSource={VIDEO_PLAYBACK_SOURCE}
+          canonicalSourceUrl="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+          chapters={[]}
+          descriptionHtml={null}
+          descriptionText={null}
+          videoSeekTargetMs={videoSeekTargetMs}
+          onSeek={(timestampMs) => setVideoSeekTargetMs(timestampMs ?? null)}
+        />
+        <TranscriptContentPanel
+          transcriptState="ready"
+          transcriptCoverage="full"
+          chapters={[]}
+          fragments={FRAGMENTS}
+          activeFragment={activeFragment}
+          renderedHtml="<p>active transcript html</p>"
+          contentRef={contentRef}
+          onSegmentSelect={(fragment) => {
+            setActiveId(fragment.id);
+            onSegmentSelect(fragment);
+          }}
+          onSeek={(timestampMs) => setVideoSeekTargetMs(timestampMs ?? null)}
+          onContentClick={vi.fn()}
+        />
+      </>
+    );
   }
 
   const utils = render(<Harness />);
   return { ...utils, onSegmentSelect };
 }
 
-function renderStatefulPodcastPane(
+function renderPodcastPlaybackPanel(
   options: {
-    playbackSource?: TranscriptPlaybackSource | null;
-    isPlaybackOnlyTranscript?: boolean;
-    canRead?: boolean;
-    processingStatus?: string;
-    fragments?: TranscriptFragment[];
-    transcriptState?: TranscriptState;
-    transcriptCoverage?: TranscriptCoverage;
-    transcriptRequestInFlight?: boolean;
-    transcriptRequestForecast?: TranscriptRequestForecast | null;
     chapters?: TranscriptChapter[];
     descriptionHtml?: string | null;
     descriptionText?: string | null;
-    onRequestTranscript?: () => void;
+    playbackSource?: TranscriptPlaybackSource | null;
+  } = {}
+) {
+  return render(
+    <TranscriptPlaybackPanel
+      mediaId="media-podcast-1"
+      mediaKind="podcast_episode"
+      playbackSource={options.playbackSource ?? PODCAST_PLAYBACK_SOURCE}
+      canonicalSourceUrl="https://example.com/podcasts/e2e-episode"
+      chapters={options.chapters ?? []}
+      descriptionHtml={options.descriptionHtml ?? null}
+      descriptionText={options.descriptionText ?? null}
+      videoSeekTargetMs={null}
+      onSeek={(timestampMs) => {
+        mockSeekToMs(timestampMs);
+        mockPlay();
+      }}
+    />
+  );
+}
+
+function renderPodcastContentPanel(
+  options: {
+    transcriptState?: "ready" | "partial" | null;
+    transcriptCoverage?: "none" | "partial" | "full" | null;
+    chapters?: TranscriptChapter[];
+    fragments?: TranscriptFragment[];
   } = {}
 ) {
   const onSegmentSelect = vi.fn();
@@ -277,38 +277,62 @@ function renderStatefulPodcastPane(
     const [activeId, setActiveId] = useState<string | null>(fragments[0]?.id ?? null);
     const activeFragment =
       fragments.find((fragment) => fragment.id === activeId) ?? null;
-    const props = {
-      mediaId: "media-podcast-1",
-      mediaKind: "podcast_episode",
-      playbackSource: options.playbackSource ?? PODCAST_PLAYBACK_SOURCE,
-      canonicalSourceUrl: "https://example.com/podcasts/e2e-episode",
-      isPlaybackOnlyTranscript: options.isPlaybackOnlyTranscript ?? false,
-      canRead: options.canRead ?? true,
-      processingStatus: options.processingStatus ?? "ready_for_reading",
-      transcriptState: options.transcriptState ?? "ready",
-      transcriptCoverage: options.transcriptCoverage ?? "full",
-      transcriptRequestInFlight: options.transcriptRequestInFlight ?? false,
-      transcriptRequestForecast: options.transcriptRequestForecast ?? null,
-      chapters: options.chapters ?? [],
-      descriptionHtml: options.descriptionHtml ?? null,
-      descriptionText: options.descriptionText ?? null,
-      onRequestTranscript: options.onRequestTranscript ?? vi.fn(),
-      fragments,
-      activeFragment,
-      renderedHtml: "<p>active transcript html</p>",
-      contentRef,
-      onSegmentSelect: (fragment: TranscriptFragment) => {
-        setActiveId(fragment.id);
-        onSegmentSelect(fragment);
-      },
-      onContentClick: vi.fn(),
-    } as TranscriptMediaPaneProps;
 
-    return <TranscriptMediaPane {...props} />;
+    return (
+      <TranscriptContentPanel
+        transcriptState={options.transcriptState ?? "ready"}
+        transcriptCoverage={options.transcriptCoverage ?? "full"}
+        chapters={options.chapters ?? []}
+        fragments={fragments}
+        activeFragment={activeFragment}
+        renderedHtml="<p>active transcript html</p>"
+        contentRef={contentRef}
+        onSegmentSelect={(fragment) => {
+          setActiveId(fragment.id);
+          onSegmentSelect(fragment);
+        }}
+        onSeek={(timestampMs) => {
+          mockSeekToMs(timestampMs);
+          mockPlay();
+        }}
+        onContentClick={vi.fn()}
+      />
+    );
   }
 
   const utils = render(<Harness />);
   return { ...utils, onSegmentSelect };
+}
+
+function renderStatePanel(
+  options: {
+    processingStatus?: string;
+    transcriptState?:
+      | "not_requested"
+      | "queued"
+      | "running"
+      | "failed_provider"
+      | "failed_quota"
+      | "unavailable"
+      | "ready"
+      | "partial"
+      | null;
+    transcriptCoverage?: "none" | "partial" | "full" | null;
+    transcriptRequestInFlight?: boolean;
+    transcriptRequestForecast?: TranscriptRequestForecast | null;
+    onRequestTranscript?: () => void;
+  } = {}
+) {
+  return render(
+    <TranscriptStatePanel
+      processingStatus={options.processingStatus ?? "pending"}
+      transcriptState={options.transcriptState ?? "not_requested"}
+      transcriptCoverage={options.transcriptCoverage ?? "none"}
+      transcriptRequestInFlight={options.transcriptRequestInFlight ?? false}
+      transcriptRequestForecast={options.transcriptRequestForecast ?? null}
+      onRequestTranscript={options.onRequestTranscript ?? vi.fn()}
+    />
+  );
 }
 
 describe("isAllowedYoutubeEmbedUrl", () => {
@@ -337,60 +361,60 @@ describe("isAllowedYoutubeEmbedUrl", () => {
   });
 });
 
-describe("TranscriptMediaPane video playback", () => {
-  it("renders a youtube iframe and seeks deterministically on transcript click", async () => {
+describe("Transcript panels video playback", () => {
+  it("updates the youtube embed start time when a transcript segment is selected", async () => {
     const user = userEvent.setup();
-    const { onSegmentSelect } = renderStatefulVideoPane();
+    const { onSegmentSelect } = renderVideoPanels();
 
-    const iframe = screen.getByTitle("YouTube video player");
-    expect(iframe).toBeInTheDocument();
+    expect(screen.getByTitle("YouTube video player")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /deep dive segment/i }));
 
-    expect(onSegmentSelect).toHaveBeenCalledTimes(1);
     expect(onSegmentSelect).toHaveBeenCalledWith(
       expect.objectContaining({ id: "frag-2", t_start_ms: 12_000 })
     );
 
     await waitFor(() => {
-      const nextIframe = screen.getByTitle("YouTube video player") as HTMLIFrameElement;
-      const parsed = new URL(nextIframe.src);
+      const iframe = screen.getByTitle("YouTube video player") as HTMLIFrameElement;
+      const parsed = new URL(iframe.src);
       expect(parsed.searchParams.get("start")).toBe("12");
     });
   });
 
-  it("shows explicit source fallback action when embed playback errors", () => {
-    renderStatefulVideoPane();
+  it("shows the source fallback when the embedded player errors", () => {
+    render(
+      <TranscriptPlaybackPanel
+        mediaId="media-video-1"
+        mediaKind="video"
+        playbackSource={VIDEO_PLAYBACK_SOURCE}
+        canonicalSourceUrl="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        chapters={[]}
+        descriptionHtml={null}
+        descriptionText={null}
+        videoSeekTargetMs={null}
+        onSeek={vi.fn()}
+      />
+    );
 
-    const iframe = screen.getByTitle("YouTube video player");
-    fireEvent.error(iframe);
+    fireEvent.error(screen.getByTitle("YouTube video player"));
 
     expect(screen.getByRole("link", { name: /open in source/i })).toBeVisible();
-    expect(screen.getByRole("button", { name: /intro segment/i })).toBeVisible();
-  });
-
-  it("keeps transcript-dependent actions gated for playback-only transcript-unavailable video", () => {
-    renderStatefulVideoPane({
-      isPlaybackOnlyTranscript: true,
-      canRead: false,
-      processingStatus: "failed",
-      fragments: [],
-    });
-
-    expect(
-      screen.getByText("Transcript unavailable for this episode.")
-    ).toBeVisible();
-    expect(screen.queryByRole("button", { name: /segment/i })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Send to chat")).not.toBeInTheDocument();
   });
 
   it("fails closed when embed_url is missing instead of parsing watch urls client-side", () => {
-    renderStatefulVideoPane({
-      playbackSource: {
-        ...VIDEO_PLAYBACK_SOURCE,
-        embed_url: null,
-      },
-    });
+    render(
+      <TranscriptPlaybackPanel
+        mediaId="media-video-1"
+        mediaKind="video"
+        playbackSource={{ ...VIDEO_PLAYBACK_SOURCE, embed_url: null }}
+        canonicalSourceUrl="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        chapters={[]}
+        descriptionHtml={null}
+        descriptionText={null}
+        videoSeekTargetMs={null}
+        onSeek={vi.fn()}
+      />
+    );
 
     expect(screen.queryByTitle("YouTube video player")).toBeNull();
     expect(screen.getByText("In-app video playback is unavailable.")).toBeVisible();
@@ -398,27 +422,10 @@ describe("TranscriptMediaPane video playback", () => {
   });
 });
 
-describe("TranscriptMediaPane podcast playback", () => {
-  it("routes transcript click-to-seek into the global footer player", async () => {
-    const user = userEvent.setup();
-    const { onSegmentSelect } = renderStatefulPodcastPane();
-
-    expect(
-      screen.getByRole("button", { name: "Play in footer" })
-    ).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /deep dive segment/i }));
-
-    expect(onSegmentSelect).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "frag-2", t_start_ms: 12_000 })
-    );
-    expect(mockSeekToMs).toHaveBeenCalledWith(12_000);
-    expect(mockPlay).toHaveBeenCalled();
-  });
-
+describe("Transcript playback panel podcast behavior", () => {
   it("renders play-next/add-to-queue actions and delegates queue intent to the player", async () => {
     const user = userEvent.setup();
-    renderStatefulPodcastPane();
+    renderPodcastPlaybackPanel();
 
     expect(screen.getByRole("button", { name: /play next/i })).toBeVisible();
     expect(screen.getByRole("button", { name: /add to queue/i })).toBeVisible();
@@ -430,84 +437,9 @@ describe("TranscriptMediaPane podcast playback", () => {
     expect(mockAddToQueue).toHaveBeenNthCalledWith(2, "media-podcast-1", "last");
   });
 
-  it("renders the playback panel before transcript-state controls", () => {
-    renderStatefulPodcastPane({
-      canRead: false,
-      processingStatus: "pending",
-      fragments: [],
-      transcriptState: "not_requested",
-      transcriptCoverage: "none",
-    });
-
-    const playbackPanel = screen.getByText("Playback is controlled in the global player footer.");
-    const transcriptStateUi = screen.getByText("Transcript has not been requested yet.");
-    expect(
-      playbackPanel.compareDocumentPosition(transcriptStateUi) &
-        Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
-  });
-
-  it("renders the playback panel before transcript content", () => {
-    renderStatefulPodcastPane({
-      canRead: true,
-      fragments: FRAGMENTS,
-      chapters: PODCAST_CHAPTERS,
-    });
-
-    const playbackPanel = screen.getByText("Playback is controlled in the global player footer.");
-    const transcriptContent = screen.getByRole("button", { name: /intro segment/i });
-    expect(
-      playbackPanel.compareDocumentPosition(transcriptContent) &
-        Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
-  });
-
-  it("shows explicit on-demand transcription controls with budget forecast", async () => {
-    const user = userEvent.setup();
-    const onRequestTranscript = vi.fn();
-    renderStatefulPodcastPane({
-      canRead: false,
-      processingStatus: "pending",
-      fragments: [],
-      transcriptState: "not_requested",
-      transcriptCoverage: "none",
-      transcriptRequestForecast: {
-        requiredMinutes: 3,
-        remainingMinutes: 7,
-        fitsBudget: true,
-      },
-      onRequestTranscript,
-    });
-
-    expect(screen.getByRole("button", { name: /transcribe this episode/i })).toBeVisible();
-    expect(screen.getByText("Estimated cost: 3 min")).toBeVisible();
-    expect(screen.getByText("Remaining this month: 7 min")).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: /transcribe this episode/i }));
-    expect(onRequestTranscript).toHaveBeenCalledTimes(1);
-  });
-
-  it("warns when readable transcript coverage is partial", () => {
-    renderStatefulPodcastPane({
-      canRead: true,
-      processingStatus: "ready_for_reading",
-      transcriptState: "partial",
-      transcriptCoverage: "partial",
-      fragments: FRAGMENTS,
-    });
-
-    expect(
-      screen.getByText("Transcript is partial; search and highlights may miss sections.")
-    ).toBeVisible();
-  });
-
   it("renders chapter list with links/images and seeks via chapter click", async () => {
     const user = userEvent.setup();
-    renderStatefulPodcastPane({
-      canRead: true,
-      fragments: FRAGMENTS,
-      chapters: PODCAST_CHAPTERS,
-    });
+    renderPodcastPlaybackPanel({ chapters: PODCAST_CHAPTERS });
 
     expect(screen.getByRole("heading", { name: "Chapters" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Intro" })).toHaveAttribute(
@@ -521,26 +453,18 @@ describe("TranscriptMediaPane podcast playback", () => {
     expect(mockPlay).toHaveBeenCalled();
   });
 
-  it("highlights active chapter from playback time and renders inline chapter headings", () => {
+  it("highlights the active chapter from playback time", () => {
     mockCurrentTimeSeconds = 360;
-    renderStatefulPodcastPane({
-      canRead: true,
-      fragments: FRAGMENTS,
-      chapters: PODCAST_CHAPTERS,
-    });
+    renderPodcastPlaybackPanel({ chapters: PODCAST_CHAPTERS });
 
     expect(
       screen.getByRole("button", { name: "Jump to chapter 2: Deep Dive" })
     ).toHaveAttribute("aria-current", "true");
-    expect(screen.getByText("Chapter 1: Intro")).toBeVisible();
-    expect(screen.getByText("Chapter 2: Deep Dive")).toBeVisible();
   });
 
   it("renders show notes html and timestamp links seek active podcast playback", async () => {
     const user = userEvent.setup();
-    renderStatefulPodcastPane({
-      canRead: true,
-      fragments: FRAGMENTS,
+    renderPodcastPlaybackPanel({
       chapters: PODCAST_CHAPTERS,
       descriptionHtml:
         "<p>Intro starts at 00:30 and guest interview at 12:30.</p><a href=\"https://example.com/notes\" target=\"_blank\" rel=\"noopener noreferrer\">Episode Notes</a><img src=\"https://cdn.example.com/show-notes.jpg\" alt=\"cover\" />",
@@ -562,22 +486,8 @@ describe("TranscriptMediaPane podcast playback", () => {
     expect(mockSeekToMs).toHaveBeenCalledWith(750_000);
   });
 
-  it("renders active transcript html through the shared reader surface", () => {
-    renderStatefulPodcastPane({
-      canRead: true,
-      fragments: FRAGMENTS,
-      chapters: [],
-    });
-
-    expect(mockReaderContentArea).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("active transcript html")).toBeVisible();
-  });
-
   it("falls back to plain text show notes when html is absent", () => {
-    renderStatefulPodcastPane({
-      canRead: true,
-      fragments: FRAGMENTS,
-      chapters: [],
+    renderPodcastPlaybackPanel({
       descriptionHtml: null,
       descriptionText: "line one\nline two",
     });
@@ -587,84 +497,133 @@ describe("TranscriptMediaPane podcast playback", () => {
     expect(screen.getByText("line two")).toBeVisible();
   });
 
-  it("omits chapter UI when episode has no chapters", () => {
-    renderStatefulPodcastPane({
-      canRead: true,
-      fragments: FRAGMENTS,
-      chapters: [],
-    });
+  it("omits chapter UI when the episode has no chapters", () => {
+    renderPodcastPlaybackPanel({ chapters: [] });
 
     expect(screen.queryByRole("heading", { name: "Chapters" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Chapter 1: Intro")).not.toBeInTheDocument();
   });
 });
 
-describe("TranscriptMediaPane transcript states", () => {
-  it("renders queued provisioning state", () => {
-    renderStatefulPodcastPane({
-      canRead: false,
-      transcriptState: "queued",
-      transcriptCoverage: "none",
+describe("Transcript content panel", () => {
+  it("routes transcript click-to-seek into the player callback", async () => {
+    const user = userEvent.setup();
+    const { onSegmentSelect } = renderPodcastContentPanel();
+
+    await user.click(screen.getByRole("button", { name: /deep dive segment/i }));
+
+    expect(onSegmentSelect).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "frag-2", t_start_ms: 12_000 })
+    );
+    expect(mockSeekToMs).toHaveBeenCalledWith(12_000);
+    expect(mockPlay).toHaveBeenCalled();
+  });
+
+  it("warns when readable transcript coverage is partial", () => {
+    renderPodcastContentPanel({
+      transcriptState: "partial",
+      transcriptCoverage: "partial",
+    });
+
+    expect(
+      screen.getByText("Transcript is partial; search and highlights may miss sections.")
+    ).toBeVisible();
+  });
+
+  it("renders inline chapter headings from the normalized timeline", () => {
+    renderPodcastContentPanel({ chapters: PODCAST_CHAPTERS });
+
+    expect(screen.getByText("Chapter 1: Intro")).toBeVisible();
+    expect(screen.getByText("Chapter 2: Deep Dive")).toBeVisible();
+  });
+
+  it("renders active transcript html through the shared reader surface", () => {
+    renderPodcastContentPanel();
+
+    expect(mockReaderContentArea).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("active transcript html")).toBeVisible();
+  });
+});
+
+describe("Transcript state panel", () => {
+  it("shows explicit on-demand transcription controls with budget forecast", async () => {
+    const user = userEvent.setup();
+    const onRequestTranscript = vi.fn();
+    renderStatePanel({
+      transcriptRequestForecast: {
+        requiredMinutes: 3,
+        remainingMinutes: 7,
+        fitsBudget: true,
+      },
+      onRequestTranscript,
+    });
+
+    expect(screen.getByRole("button", { name: /transcribe this episode/i })).toBeVisible();
+    expect(screen.getByText("Estimated cost: 3 min")).toBeVisible();
+    expect(screen.getByText("Remaining this month: 7 min")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: /transcribe this episode/i }));
+    expect(onRequestTranscript).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders queued and running provisioning states", () => {
+    const { rerender } = renderStatePanel({
       processingStatus: "extracting",
-      fragments: [],
+      transcriptState: "queued",
     });
 
     expect(screen.getByText("Transcript request queued.")).toBeVisible();
     expect(screen.getByText("Status: extracting")).toBeVisible();
-  });
 
-  it("renders running provisioning state", () => {
-    renderStatefulPodcastPane({
-      canRead: false,
-      transcriptState: "running",
-      transcriptCoverage: "none",
-      processingStatus: "extracting",
-      fragments: [],
-    });
+    rerender(
+      <TranscriptStatePanel
+        processingStatus="extracting"
+        transcriptState="running"
+        transcriptCoverage="none"
+        transcriptRequestInFlight={false}
+        transcriptRequestForecast={null}
+        onRequestTranscript={vi.fn()}
+      />
+    );
 
     expect(screen.getByText("Transcript transcription is currently running.")).toBeVisible();
-    expect(screen.getByText("Status: extracting")).toBeVisible();
   });
 
-  it("renders failed_provider state with retry CTA", () => {
-    renderStatefulPodcastPane({
-      canRead: false,
+  it("renders failed states and disables retry when forecast exceeds quota", () => {
+    const { rerender } = renderStatePanel({
+      processingStatus: "failed",
       transcriptState: "failed_provider",
-      transcriptCoverage: "none",
-      processingStatus: "failed",
-      fragments: [],
     });
 
-    expect(screen.getByText("Previous transcription failed. You can retry on demand.")).toBeVisible();
-    expect(screen.getByRole("button", { name: /transcribe this episode/i })).toBeEnabled();
-  });
+    expect(
+      screen.getByText("Previous transcription failed. You can retry on demand.")
+    ).toBeVisible();
 
-  it("renders failed_quota state with disabled CTA when forecast exceeds quota", () => {
-    renderStatefulPodcastPane({
-      canRead: false,
-      transcriptState: "failed_quota",
-      transcriptCoverage: "none",
-      processingStatus: "failed",
-      fragments: [],
-      transcriptRequestForecast: {
-        requiredMinutes: 4,
-        remainingMinutes: 1,
-        fitsBudget: false,
-      },
-    });
+    rerender(
+      <TranscriptStatePanel
+        processingStatus="failed"
+        transcriptState="failed_quota"
+        transcriptCoverage="none"
+        transcriptRequestInFlight={false}
+        transcriptRequestForecast={{
+          requiredMinutes: 4,
+          remainingMinutes: 1,
+          fitsBudget: false,
+        }}
+        onRequestTranscript={vi.fn()}
+      />
+    );
 
-    expect(screen.getByText("Monthly transcription quota was exceeded for this episode.")).toBeVisible();
+    expect(
+      screen.getByText("Monthly transcription quota was exceeded for this episode.")
+    ).toBeVisible();
     expect(screen.getByText("Not enough monthly transcription quota for this request.")).toBeVisible();
     expect(screen.getByRole("button", { name: /transcribe this episode/i })).toBeDisabled();
   });
 
   it("renders unavailable state", () => {
-    renderStatefulPodcastPane({
-      canRead: false,
-      transcriptState: "unavailable",
-      transcriptCoverage: "none",
+    renderStatePanel({
       processingStatus: "failed",
-      fragments: [],
+      transcriptState: "unavailable",
     });
 
     expect(screen.getByText("Transcript unavailable for this episode.")).toBeVisible();
@@ -698,13 +657,7 @@ describe("TranscriptMediaPane transcript states", () => {
       },
     };
 
-    renderStatefulPodcastPane({
-      canRead: false,
-      transcriptState: "not_requested",
-      transcriptCoverage: "none",
-      processingStatus: "pending",
-      fragments: [],
-    });
+    renderStatePanel();
 
     expect(
       screen.getByText("Transcription is included with AI Plus and AI Pro.")
@@ -713,7 +666,6 @@ describe("TranscriptMediaPane transcript states", () => {
     expect(
       screen.getByText("Upgrade in Settings, then come back here to request this transcript.")
     ).toBeVisible();
-    expect(screen.queryByText(/Billing is temporarily unavailable/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /transcribe this episode/i })).not.toBeInTheDocument();
   });
 
@@ -744,13 +696,7 @@ describe("TranscriptMediaPane transcript states", () => {
       },
     };
 
-    renderStatefulPodcastPane({
-      canRead: false,
-      transcriptState: "not_requested",
-      transcriptCoverage: "none",
-      processingStatus: "pending",
-      fragments: [],
-    });
+    renderStatePanel();
 
     expect(
       screen.getByText(

@@ -89,6 +89,7 @@ import {
   findCanonicalOffsetFromQuote,
   getPaneScrollContainer,
   getPaneScrollTopPaddingPx,
+  resolveActiveTranscriptFragment,
   findFirstVisibleCanonicalOffset,
   READER_POSITION_BUCKET_CP,
   scrollToCanonicalTextAnchor,
@@ -444,61 +445,17 @@ export default function useMediaViewState(id: string) {
     media?.last_error_code === "E_TRANSCRIPT_UNAVAILABLE" &&
     canPlay;
   const activeTranscriptFragment = useMemo(() => {
-    if (!isTranscriptMedia || fragments.length === 0) {
+    if (!isTranscriptMedia) {
       return null;
     }
-    if (activeTranscriptFragmentId) {
-      const selectedFragment = fragments.find(
-        (fragment) => fragment.id === activeTranscriptFragmentId
-      );
-      if (selectedFragment) {
-        return selectedFragment;
-      }
-    }
-    if (requestedFragmentId) {
-      const requestedFragment = fragments.find(
-        (fragment) => fragment.id === requestedFragmentId
-      );
-      if (requestedFragment) {
-        return requestedFragment;
-      }
-    }
-    if (requestedStartMs != null) {
-      const containing = fragments.find((fragment) => {
-        if (fragment.t_start_ms == null || fragment.t_end_ms == null) {
-          return false;
-        }
-        return requestedStartMs >= fragment.t_start_ms && requestedStartMs <= fragment.t_end_ms;
-      });
-      if (containing) {
-        return containing;
-      }
-      const nearest = [...fragments].sort((lhs, rhs) => {
-        const lhsStart = lhs.t_start_ms ?? Number.MAX_SAFE_INTEGER;
-        const rhsStart = rhs.t_start_ms ?? Number.MAX_SAFE_INTEGER;
-        return Math.abs(lhsStart - requestedStartMs) - Math.abs(rhsStart - requestedStartMs);
-      })[0];
-      if (nearest) {
-        return nearest;
-      }
-    }
-    if (
-      activeTranscriptFragmentId === null &&
-      !requestedFragmentId &&
-      requestedStartMs == null &&
-      initialReaderResumeStateLoading
-    ) {
-      return null;
-    }
-    if (readerResumeSource) {
-      const resumedFragment = fragments.find(
-        (fragment) => fragment.id === readerResumeSource
-      );
-      if (resumedFragment) {
-        return resumedFragment;
-      }
-    }
-    return fragments[0];
+
+    return resolveActiveTranscriptFragment(fragments, {
+      activeFragmentId: activeTranscriptFragmentId,
+      requestedFragmentId,
+      requestedStartMs,
+      readerResumeFragmentId: readerResumeSource,
+      waitForInitialResumeState: initialReaderResumeStateLoading,
+    });
   }, [
     activeTranscriptFragmentId,
     fragments,
@@ -510,56 +467,17 @@ export default function useMediaViewState(id: string) {
   ]);
 
   useEffect(() => {
-    if (!isTranscriptMedia || fragments.length === 0) {
+    if (!isTranscriptMedia || !activeTranscriptFragment) {
       return;
     }
 
-    if (!requestedFragmentId && requestedStartMs == null && initialReaderResumeStateLoading) {
-      return;
-    }
-
-    let nextFragment: Fragment | null = null;
-
-    if (requestedFragmentId) {
-      nextFragment = fragments.find((fragment) => fragment.id === requestedFragmentId) ?? null;
-    }
-
-    if (!nextFragment && requestedStartMs != null) {
-      const containing = fragments.find((fragment) => {
-        if (fragment.t_start_ms == null || fragment.t_end_ms == null) {
-          return false;
-        }
-        return requestedStartMs >= fragment.t_start_ms && requestedStartMs <= fragment.t_end_ms;
-      });
-      nextFragment =
-        containing ??
-        [...fragments].sort((lhs, rhs) => {
-          const lhsStart = lhs.t_start_ms ?? Number.MAX_SAFE_INTEGER;
-          const rhsStart = rhs.t_start_ms ?? Number.MAX_SAFE_INTEGER;
-          return Math.abs(lhsStart - requestedStartMs) - Math.abs(rhsStart - requestedStartMs);
-        })[0] ??
-        null;
-    }
-
-    if (!nextFragment && readerResumeSource) {
-      nextFragment = fragments.find((fragment) => fragment.id === readerResumeSource) ?? null;
-    }
-
-    if (!nextFragment) {
-      nextFragment = fragments[0] ?? null;
-    }
-
-    if (nextFragment && activeTranscriptFragmentId !== nextFragment.id) {
-      setActiveTranscriptFragmentId(nextFragment.id);
+    if (activeTranscriptFragmentId !== activeTranscriptFragment.id) {
+      setActiveTranscriptFragmentId(activeTranscriptFragment.id);
     }
   }, [
     activeTranscriptFragmentId,
-    fragments,
-    initialReaderResumeStateLoading,
+    activeTranscriptFragment,
     isTranscriptMedia,
-    readerResumeSource,
-    requestedFragmentId,
-    requestedStartMs,
   ]);
 
   useEffect(() => {

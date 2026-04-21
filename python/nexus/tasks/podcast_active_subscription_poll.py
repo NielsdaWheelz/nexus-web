@@ -3,7 +3,7 @@
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
-from nexus.services.podcasts import (
+from nexus.services.podcasts.sync import (
     run_scheduled_active_subscription_poll as run_scheduled_active_subscription_poll_service,
 )
 

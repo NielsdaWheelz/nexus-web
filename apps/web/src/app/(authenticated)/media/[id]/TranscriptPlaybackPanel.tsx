@@ -5,6 +5,7 @@ import Image from "next/image";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import { useGlobalPlayer, type GlobalPlayerChapter } from "@/lib/player/globalPlayer";
 import {
+  formatTranscriptTimestampMs,
   normalizeTranscriptChapters,
   type TranscriptChapter,
   type TranscriptPlaybackSource,
@@ -16,21 +17,6 @@ const YOUTUBE_EMBED_HOST_ALLOWLIST = new Set([
   "www.youtube-nocookie.com",
 ]);
 const SHOW_NOTES_TIMESTAMP_REGEX = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
-
-function formatTimestampMs(timestampMs: number | null | undefined): string | null {
-  if (timestampMs == null || timestampMs < 0) {
-    return null;
-  }
-
-  const totalSeconds = Math.floor(timestampMs / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  return `${hours.toString().padStart(2, "0")}:${minutes
-    .toString()
-    .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
-}
 
 function toSeekSeconds(timestampMs: number | null | undefined): number | null {
   if (timestampMs == null || timestampMs < 0) {
@@ -423,7 +409,7 @@ export default function TranscriptPlaybackPanel({
           <h3 className={styles.chapterHeading}>Chapters</h3>
           <ol className={styles.chapterList}>
             {normalizedChapters.map((chapter) => {
-              const timestamp = formatTimestampMs(chapter.t_start_ms);
+              const timestamp = formatTranscriptTimestampMs(chapter.t_start_ms);
               const isActiveChapter = activeChapter?.chapter_idx === chapter.chapter_idx;
 
               return (

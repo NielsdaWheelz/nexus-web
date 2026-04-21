@@ -1,16 +1,7 @@
-"""Highlight and Annotation Pydantic schemas.
-
-Contains request and response models for highlight and annotation endpoints.
-
-S6 PR-04 additions:
-- Typed anchor discriminated union (fragment_offsets / pdf_page_geometry)
-- PDF highlight create/list/update request/response schemas
-- Generic PATCH extended with backward-compatible pdf_bounds field
-- Strict mutual exclusivity between fragment offset updates and pdf_bounds
-"""
+"""Highlight and annotation schemas."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -81,12 +72,7 @@ class LinkedConversationRef(BaseModel):
 
 
 class HighlightOut(BaseModel):
-    """Response schema for a fragment highlight (legacy fragment-route compat).
-
-    S4 additive fields:
-    - author_user_id: UUID of the highlight author
-    - is_owner: viewer-local convenience boolean
-    """
+    """Fragment collection response item."""
 
     id: UUID
     fragment_id: UUID
@@ -101,13 +87,13 @@ class HighlightOut(BaseModel):
     annotation: AnnotationOut | None = None
     author_user_id: UUID
     is_owner: bool
-    linked_conversations: list[LinkedConversationRef] = []
+    linked_conversations: list[LinkedConversationRef] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class TypedHighlightOut(BaseModel):
-    """Anchor-discriminated typed highlight response for generic/PDF routes."""
+    """Canonical highlight item response."""
 
     id: UUID
     anchor: FragmentAnchorOut | PdfAnchorOut
@@ -120,7 +106,7 @@ class TypedHighlightOut(BaseModel):
     annotation: AnnotationOut | None = None
     author_user_id: UUID
     is_owner: bool
-    linked_conversations: list[LinkedConversationRef] = []
+    linked_conversations: list[LinkedConversationRef] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -137,6 +123,8 @@ class CreateHighlightRequest(BaseModel):
     end_offset: int = Field(..., gt=0, description="End offset (exclusive) in codepoints")
     color: HIGHLIGHT_COLORS = Field(..., description="Highlight color from palette")
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class PdfQuadIn(BaseModel):
     """Input quad vertices in canonical page-space points."""
@@ -150,6 +138,8 @@ class PdfQuadIn(BaseModel):
     x4: float
     y4: float
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class CreatePdfHighlightRequest(BaseModel):
     """Request schema for creating a PDF geometry highlight."""
@@ -159,38 +149,73 @@ class CreatePdfHighlightRequest(BaseModel):
     exact: str = Field("", description="Text layer extracted text (may be empty)")
     color: HIGHLIGHT_COLORS = Field(..., description="Highlight color from palette")
 
+    model_config = ConfigDict(extra="forbid")
+
+
+class FragmentAnchorUpdateRequest(BaseModel):
+    """Typed fragment anchor update payload."""
+
+    type: Literal["fragment_offsets"] = "fragment_offsets"
+    start_offset: int = Field(..., ge=0, description="New start offset (inclusive) in codepoints")
+    end_offset: int = Field(..., gt=0, description="New end offset (exclusive) in codepoints")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PdfAnchorUpdateRequest(BaseModel):
+    """Typed PDF anchor update payload."""
+
+    page_number: int = Field(..., ge=1, description="1-based page number")
+    quads: list[PdfQuadIn] = Field(..., min_length=1, max_length=512)
+    type: Literal["pdf_page_geometry"] = "pdf_page_geometry"
+
+    model_config = ConfigDict(extra="forbid")
+
 
 class PdfBoundsUpdate(BaseModel):
-    """Nested PDF bounds replacement payload for generic PATCH."""
+    """Internal PDF anchor replacement payload."""
 
     page_number: int = Field(..., ge=1, description="1-based page number")
     quads: list[PdfQuadIn] = Field(..., min_length=1, max_length=512)
     exact: str = Field("", description="Replacement exact text (may be empty)")
 
+    model_config = ConfigDict(extra="forbid")
+
+
+HighlightAnchorUpdate = Annotated[
+    FragmentAnchorUpdateRequest | PdfAnchorUpdateRequest,
+    Field(discriminator="type"),
+]
+
 
 class UpdateHighlightRequest(BaseModel):
-    """Request schema for updating a highlight (backward-compatible unified PATCH).
+    """Canonical highlight PATCH payload."""
 
-    Fragment fields (start_offset, end_offset) and pdf_bounds are mutually exclusive.
-    """
-
-    start_offset: int | None = Field(
-        None, ge=0, description="New start offset (inclusive) in codepoints"
-    )
-    end_offset: int | None = Field(
-        None, gt=0, description="New end offset (exclusive) in codepoints"
-    )
     color: HIGHLIGHT_COLORS | None = Field(None, description="New highlight color from palette")
-    pdf_bounds: PdfBoundsUpdate | None = Field(
-        None, description="PDF bounds replacement (mutually exclusive with fragment offsets)"
+    exact: str | None = Field(
+        None,
+        description="Replacement exact text for PDF geometry updates. May be empty.",
     )
+    anchor: HighlightAnchorUpdate | None = Field(
+        None,
+        description="Typed anchor replacement for fragment or PDF highlights",
+    )
+
+    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
-    def validate_mutual_exclusivity(self) -> "UpdateHighlightRequest":
-        has_fragment_offsets = self.start_offset is not None or self.end_offset is not None
-        has_pdf_bounds = self.pdf_bounds is not None
-        if has_fragment_offsets and has_pdf_bounds:
-            raise ValueError("Fragment offset fields and pdf_bounds are mutually exclusive")
+    def validate_anchor_payload(self) -> "UpdateHighlightRequest":
+        if self.anchor is None:
+            if self.exact is not None:
+                raise ValueError("exact requires an anchor update")
+            return self
+
+        if self.anchor.type == "fragment_offsets" and self.exact is not None:
+            raise ValueError("exact is only valid for pdf_page_geometry anchor updates")
+
+        if self.anchor.type == "pdf_page_geometry" and self.exact is None:
+            raise ValueError("exact is required for pdf_page_geometry anchor updates")
+
         return self
 
 
@@ -198,3 +223,5 @@ class UpsertAnnotationRequest(BaseModel):
     """Request schema for creating or updating an annotation."""
 
     body: str = Field(..., min_length=1, description="Annotation text content")
+
+    model_config = ConfigDict(extra="forbid")

@@ -5,7 +5,9 @@ from uuid import UUID
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services import podcasts as podcast_service
+from nexus.services.podcasts.transcripts import (
+    repair_podcast_transcript_semantic_index_now as repair_podcast_transcript_semantic_index_now_service,
+)
 
 logger = get_logger(__name__)
 
@@ -42,7 +44,7 @@ def podcast_reindex_semantic_job(
     session_factory = get_session_factory()
     db = session_factory()
     try:
-        result = podcast_service.repair_podcast_transcript_semantic_index_now(
+        result = repair_podcast_transcript_semantic_index_now_service(
             db,
             media_id=media_uuid,
             request_reason=request_reason,

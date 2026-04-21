@@ -165,6 +165,14 @@ export interface EpubInternalLinkTarget {
   anchorId: string | null;
 }
 
+interface TranscriptFragmentSelectionOptions {
+  activeFragmentId?: string | null;
+  requestedFragmentId?: string | null;
+  requestedStartMs?: number | null;
+  readerResumeFragmentId?: string | null;
+  waitForInitialResumeState?: boolean;
+}
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -228,6 +236,114 @@ export function formatResumeTime(positionMs: number): string {
     return `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   }
   return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+export function formatTranscriptTimestampMs(
+  timestampMs: number | null | undefined
+): string | null {
+  if (timestampMs == null || timestampMs < 0) {
+    return null;
+  }
+
+  const totalSeconds = Math.floor(timestampMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${hours.toString().padStart(2, "0")}:${minutes
+    .toString()
+    .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function findNearestTranscriptFragmentByStartMs(
+  fragments: readonly Fragment[],
+  requestedStartMs: number
+): Fragment | null {
+  let nearest: Fragment | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  for (const fragment of fragments) {
+    if (fragment.t_start_ms == null) {
+      continue;
+    }
+
+    if (
+      fragment.t_end_ms != null &&
+      requestedStartMs >= fragment.t_start_ms &&
+      requestedStartMs <= fragment.t_end_ms
+    ) {
+      return fragment;
+    }
+
+    const distance = Math.abs(fragment.t_start_ms - requestedStartMs);
+    if (distance < nearestDistance) {
+      nearest = fragment;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearest;
+}
+
+export function resolveActiveTranscriptFragment(
+  fragments: readonly Fragment[],
+  {
+    activeFragmentId = null,
+    requestedFragmentId = null,
+    requestedStartMs = null,
+    readerResumeFragmentId = null,
+    waitForInitialResumeState = false,
+  }: TranscriptFragmentSelectionOptions
+): Fragment | null {
+  if (fragments.length === 0) {
+    return null;
+  }
+
+  if (activeFragmentId) {
+    const activeFragment = fragments.find((fragment) => fragment.id === activeFragmentId);
+    if (activeFragment) {
+      return activeFragment;
+    }
+  }
+
+  if (requestedFragmentId) {
+    const requestedFragment = fragments.find(
+      (fragment) => fragment.id === requestedFragmentId
+    );
+    if (requestedFragment) {
+      return requestedFragment;
+    }
+  }
+
+  if (requestedStartMs != null) {
+    const nearestFragment = findNearestTranscriptFragmentByStartMs(
+      fragments,
+      requestedStartMs
+    );
+    if (nearestFragment) {
+      return nearestFragment;
+    }
+  }
+
+  if (
+    activeFragmentId == null &&
+    !requestedFragmentId &&
+    requestedStartMs == null &&
+    waitForInitialResumeState
+  ) {
+    return null;
+  }
+
+  if (readerResumeFragmentId) {
+    const resumedFragment = fragments.find(
+      (fragment) => fragment.id === readerResumeFragmentId
+    );
+    if (resumedFragment) {
+      return resumedFragment;
+    }
+  }
+
+  return fragments[0] ?? null;
 }
 
 function getMediaAuthorNames(
@@ -556,15 +672,39 @@ export async function updateHighlight(
     end_offset?: number;
     color?: HighlightColor;
   }
-): Promise<Highlight> {
-  const response = await apiFetch<{ data: Highlight }>(
-    `/api/highlights/${highlightId}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify(updates),
-    }
-  );
-  return response.data;
+): Promise<void> {
+  const hasStartOffset = typeof updates.start_offset === "number";
+  const hasEndOffset = typeof updates.end_offset === "number";
+
+  if (hasStartOffset !== hasEndOffset) {
+    throw new Error("Fragment highlight updates require both start_offset and end_offset.");
+  }
+
+  const body: {
+    color?: HighlightColor;
+    anchor?: {
+      type: "fragment_offsets";
+      start_offset: number;
+      end_offset: number;
+    };
+  } = {};
+
+  if (updates.color !== undefined) {
+    body.color = updates.color;
+  }
+
+  if (hasStartOffset && hasEndOffset) {
+    body.anchor = {
+      type: "fragment_offsets",
+      start_offset: updates.start_offset as number,
+      end_offset: updates.end_offset as number,
+    };
+  }
+
+  await apiFetch(`/api/highlights/${highlightId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function deleteHighlight(highlightId: string): Promise<void> {

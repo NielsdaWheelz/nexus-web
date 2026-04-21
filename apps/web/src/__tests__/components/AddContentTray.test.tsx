@@ -46,22 +46,8 @@ vi.mock("@/lib/panes/openInAppPane", () => ({
   NEXUS_OPEN_PANE_MESSAGE_TYPE: "nexus:open-pane",
   consumePendingPaneOpenQueue: () => [],
   isOpenInAppPaneMessage: () => false,
-  normalizePaneHref: (href: string) => href,
   setPaneGraphReady: vi.fn(),
   requestOpenInAppPane: mockRequestOpenInAppPane,
-}));
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({
-    push: vi.fn(),
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    prefetch: vi.fn(),
-  }),
-  usePathname: () => "/libraries",
-  useSearchParams: () => new URLSearchParams(),
-  useParams: () => ({}),
 }));
 
 import AddContentTray from "@/components/AddContentTray";

@@ -731,8 +731,10 @@ class TestSearchTypeFiltering:
         for result in data["results"]:
             assert result["type"] in ("media", "fragment")
 
-    def test_unknown_types_ignored(self, auth_client, direct_db: DirectSessionManager):
-        """Unknown type values are silently ignored."""
+    def test_invalid_types_return_invalid_request(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Unknown type values fail fast instead of being ignored."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -743,17 +745,17 @@ class TestSearchTypeFiltering:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        # Include unknown type - should be ignored
         response = auth_client.get(
             "/search?q=test&types=media,invalid_type,fragment", headers=auth_headers(user_id)
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_only_unknown_types_return_no_results(
+    def test_only_invalid_types_return_invalid_request(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """When every type is unknown, search returns no results."""
+        """Reject a type filter made only of unsupported values."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -769,8 +771,8 @@ class TestSearchTypeFiltering:
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 200
-        assert response.json()["results"] == []
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_type_filter_empty_returns_no_results(
         self, auth_client, direct_db: DirectSessionManager
@@ -1908,13 +1910,9 @@ class TestSemanticTranscriptChunkSearch:
             "candidate selection"
         )
 
-    def test_semantic_search_is_not_truncated_by_python_scan_limit(
-        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    def test_semantic_search_finds_relevant_chunk_after_large_irrelevant_prefix(
+        self, auth_client, direct_db: DirectSessionManager
     ):
-        from nexus.services import search as search_service
-
-        monkeypatch.setattr(search_service, "TRANSCRIPT_CHUNK_SCAN_LIMIT", 5)
-
         user_id, media_id = self._seed_transcript_chunk_media(
             auth_client,
             direct_db,
@@ -2037,8 +2035,8 @@ class TestSemanticTranscriptChunkSearch:
         )
         chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
         assert any("transformer attention" in row["snippet"].lower() for row in chunk_results), (
-            "semantic retrieval must not silently miss relevant chunks because of a bounded "
-            "python-side candidate scan window"
+            "semantic retrieval must not silently miss relevant chunks after a large block of "
+            "irrelevant transcript rows"
         )
 
 
@@ -2237,6 +2235,8 @@ class TestSearchTranscriptVersionNavigation:
                         fragment_id,
                         start_offset,
                         end_offset,
+                        anchor_kind,
+                        anchor_media_id,
                         color,
                         exact,
                         prefix,
@@ -2249,6 +2249,8 @@ class TestSearchTranscriptVersionNavigation:
                         :fragment_id,
                         0,
                         6,
+                        'fragment_offsets',
+                        :media_id,
                         'yellow',
                         'active',
                         'before',
@@ -2261,7 +2263,30 @@ class TestSearchTranscriptVersionNavigation:
                     "highlight_id": highlight_id,
                     "user_id": user_id,
                     "fragment_id": old_fragment_id,
+                    "media_id": media_id,
                     "now_ts": now_ts,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO highlight_fragment_anchors (
+                        highlight_id,
+                        fragment_id,
+                        start_offset,
+                        end_offset
+                    )
+                    VALUES (
+                        :highlight_id,
+                        :fragment_id,
+                        0,
+                        6
+                    )
+                    """
+                ),
+                {
+                    "highlight_id": highlight_id,
+                    "fragment_id": old_fragment_id,
                 },
             )
             session.execute(

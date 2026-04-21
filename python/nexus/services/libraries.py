@@ -888,7 +888,6 @@ def _hydrate_library_entries(
                        m.external_playback_url, m.provider, m.provider_id,
                        m.created_at, m.updated_at,
                        EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file,
-                       EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) AS has_fragments,
                        m.published_date, m.publisher, m.language, m.description
                 FROM media m
                 WHERE m.id = ANY(:media_ids)
@@ -938,14 +937,13 @@ def _hydrate_library_entries(
                     last_error_code=media_row[6],
                     media_file_exists=bool(media_row[12]),
                     external_playback_url_exists=media_row[7] is not None,
-                    has_fragments=bool(media_row[13]),
                     pdf_quote_text_ready=pdf_ready,
                 ),
                 authors=authors_by_media.get(media_id, []),
-                published_date=media_row[14],
-                publisher=media_row[15],
-                language=media_row[16],
-                description=media_row[17],
+                published_date=media_row[13],
+                publisher=media_row[14],
+                language=media_row[15],
+                description=media_row[16],
                 created_at=media_row[10],
                 updated_at=media_row[11],
             )
@@ -1564,15 +1562,18 @@ def create_library_invite(
         _require_admin(lib_row[6])
         _require_non_default(lib_row[1])
 
-        # Resolve invitee: by user_id or by email
-        # Schema validation ensures at least one is provided; assert defensively.
-        assert invitee_user_id is not None or invitee_email is not None
+        normalized_invitee_email = invitee_email.strip() if invitee_email else None
+        if invitee_user_id is None and normalized_invitee_email is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Either invitee_user_id or invitee_email is required",
+            )
 
         if invitee_user_id is None:
             # Resolve email to user_id
             row = db.execute(
                 text("SELECT id FROM users WHERE email = :email"),
-                {"email": invitee_email},
+                {"email": normalized_invitee_email},
             ).fetchone()
             if row is None:
                 raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")

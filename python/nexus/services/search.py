@@ -65,14 +65,13 @@ MIN_QUERY_LENGTH = 2
 
 # Number of candidates to fetch per type before merging
 CANDIDATES_PER_TYPE = 200
-TRANSCRIPT_CHUNK_SCAN_LIMIT = 50000  # Legacy compatibility constant (unused after ANN cutover)
 TRANSCRIPT_CHUNK_MIN_ANN_CANDIDATES = 200
 TRANSCRIPT_CHUNK_ANN_CANDIDATE_MULTIPLIER = 20
 
 # Supported search result types (ordered for deterministic behavior).
 # Omitted type filters must mean "search everything the caller can ask for".
 ALL_RESULT_TYPES = ("media", "fragment", "annotation", "message", "transcript_chunk")
-VALID_RESULT_TYPES = set(ALL_RESULT_TYPES)
+VALID_RESULT_TYPES = frozenset(ALL_RESULT_TYPES)
 
 # Type weight multipliers (applied post-rank)
 TYPE_WEIGHTS = {
@@ -189,19 +188,50 @@ def authorize_scope(
         NotFoundError: If scope object is not visible to viewer.
     """
     if scope_type == "all":
-        return  # Always authorized
+        return
+
+    if scope_id is None:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Scope ID is required")
 
     if scope_type == "media":
         if not can_read_media(db, viewer_id, scope_id):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
-
     elif scope_type == "library":
         if not is_library_member(db, viewer_id, scope_id):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Library not found")
-
     elif scope_type == "conversation":
         if not can_read_conversation(db, viewer_id, scope_id):
             raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
+    else:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
+
+
+def _normalize_result_types(types: list[str] | None) -> list[str]:
+    if types is None:
+        return list(ALL_RESULT_TYPES)
+
+    normalized_types: list[str] = []
+    seen_types: set[str] = set()
+    invalid_types: list[str] = []
+    seen_invalid_types: set[str] = set()
+    for result_type in types:
+        if result_type in VALID_RESULT_TYPES:
+            if result_type not in seen_types:
+                normalized_types.append(result_type)
+                seen_types.add(result_type)
+            continue
+        if result_type not in seen_invalid_types:
+            invalid_types.append(result_type)
+            seen_invalid_types.add(result_type)
+
+    if invalid_types:
+        invalid_type_list = ", ".join(invalid_types)
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Invalid search type: {invalid_type_list}",
+        )
+
+    return normalized_types
 
 
 # =============================================================================
@@ -346,18 +376,7 @@ def search(
     scope_type, scope_id = parse_scope(scope)
     authorize_scope(db, viewer_id, scope_type, scope_id)
 
-    # Normalize types:
-    # - None means caller omitted type filtering -> search all types
-    # - [] means caller explicitly selected no types -> return no results
-    if types is None:
-        normalized_types = list(ALL_RESULT_TYPES)
-    else:
-        normalized_types: list[str] = []
-        seen_types: set[str] = set()
-        for result_type in types:
-            if result_type in VALID_RESULT_TYPES and result_type not in seen_types:
-                normalized_types.append(result_type)
-                seen_types.add(result_type)
+    normalized_types = _normalize_result_types(types)
 
     if len(normalized_types) == 0:
         _log_search(viewer_id, q, scope, normalized_types, 0, start_time)
@@ -386,7 +405,7 @@ def search(
 
     # Compute weighted scores
     for result in all_results:
-        result["weighted_score"] = result["raw_score"] * TYPE_WEIGHTS.get(result["type"], 1.0)
+        result["weighted_score"] = result["raw_score"] * TYPE_WEIGHTS[result["type"]]
 
     # Normalize scores within each type to [0, 1]
     _normalize_scores_by_type(all_results)
@@ -433,17 +452,17 @@ def _search_type(
     """
     if result_type == "media":
         return _search_media(db, viewer_id, q, scope_type, scope_id, limit)
-    elif result_type == "fragment":
+    if result_type == "fragment":
         return _search_fragments(db, viewer_id, q, scope_type, scope_id, limit)
-    elif result_type == "annotation":
+    if result_type == "annotation":
         return _search_annotations(db, viewer_id, q, scope_type, scope_id, limit)
-    elif result_type == "message":
+    if result_type == "message":
         return _search_messages(db, viewer_id, q, scope_type, scope_id, limit)
-    elif result_type == "transcript_chunk":
+    if result_type == "transcript_chunk":
         if not semantic:
             return []
         return _search_transcript_chunks(db, viewer_id, q, scope_type, scope_id, limit)
-    return []
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid search type: {result_type}")
 
 
 def _search_media(
@@ -459,7 +478,9 @@ def _search_media(
     scope_filter = ""
     params: dict = {"viewer_id": viewer_id, "query": q, "limit": limit}
 
-    if scope_type == "media":
+    if scope_type == "all":
+        pass
+    elif scope_type == "media":
         scope_filter = "AND m.id = :scope_id"
         params["scope_id"] = scope_id
     elif scope_type == "library":
@@ -475,6 +496,8 @@ def _search_media(
     elif scope_type == "conversation":
         # Media search doesn't apply to conversation scope
         return []
+    else:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
     query = f"""
         WITH
@@ -533,7 +556,9 @@ def _search_fragments(
     transcript_media_filter = transcript_media_searchable_sql("m")
     params: dict = {"viewer_id": viewer_id, "query": q, "limit": limit}
 
-    if scope_type == "media":
+    if scope_type == "all":
+        pass
+    elif scope_type == "media":
         scope_filter = "AND f.media_id = :scope_id"
         params["scope_id"] = scope_id
     elif scope_type == "library":
@@ -549,6 +574,8 @@ def _search_fragments(
     elif scope_type == "conversation":
         # Fragment search doesn't apply to conversation scope
         return []
+    else:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
     query = f"""
         WITH
@@ -633,7 +660,9 @@ def _search_annotations(
     transcript_media_filter = transcript_media_searchable_sql("m")
     params: dict = {"viewer_id": viewer_id, "query": q, "limit": limit}
 
-    if scope_type == "media":
+    if scope_type == "all":
+        pass
+    elif scope_type == "media":
         scope_filter = "AND f.media_id = :scope_id"
         params["scope_id"] = scope_id
     elif scope_type == "library":
@@ -648,6 +677,8 @@ def _search_annotations(
         params["scope_id"] = scope_id
     elif scope_type == "conversation":
         return []
+    else:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
     query = f"""
         WITH
@@ -786,7 +817,9 @@ def _search_messages(
     scope_filter = ""
     params: dict = {"viewer_id": viewer_id, "query": q, "limit": limit}
 
-    if scope_type == "media":
+    if scope_type == "all":
+        pass
+    elif scope_type == "media":
         return []
     elif scope_type == "library":
         scope_filter = """
@@ -802,6 +835,8 @@ def _search_messages(
     elif scope_type == "conversation":
         scope_filter = "AND m.conversation_id = :scope_id"
         params["scope_id"] = scope_id
+    else:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
     query = f"""
         WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
@@ -885,7 +920,9 @@ def _search_transcript_chunks(
         "embedding_model": embedding_model,
     }
 
-    if scope_type == "media":
+    if scope_type == "all":
+        pass
+    elif scope_type == "media":
         scope_filter = "AND tc.media_id = :scope_id"
         params["scope_id"] = scope_id
     elif scope_type == "library":
@@ -900,6 +937,8 @@ def _search_transcript_chunks(
         params["scope_id"] = scope_id
     elif scope_type == "conversation":
         return []
+    else:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
     query = f"""
         WITH

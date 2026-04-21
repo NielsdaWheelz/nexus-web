@@ -39,11 +39,23 @@ const mockPdfReader = vi.fn(
     </div>
   )
 );
-function renderTranscriptMediaPane(_props: Record<string, unknown>) {
-  return <div data-testid="transcript-media-pane" />;
+function renderTranscriptPlaybackPanel(_props: Record<string, unknown>) {
+  return <div data-testid="transcript-playback-panel" />;
 }
-const mockTranscriptMediaPane = vi.fn<(props: Record<string, unknown>) => ReactElement>(
-  renderTranscriptMediaPane
+const mockTranscriptPlaybackPanel = vi.fn<(props: Record<string, unknown>) => ReactElement>(
+  renderTranscriptPlaybackPanel
+);
+function renderTranscriptContentPanel(_props: Record<string, unknown>) {
+  return <div data-testid="transcript-content-panel" />;
+}
+const mockTranscriptContentPanel = vi.fn<(props: Record<string, unknown>) => ReactElement>(
+  renderTranscriptContentPanel
+);
+function renderTranscriptStatePanel(_props: Record<string, unknown>) {
+  return <div data-testid="transcript-state-panel" />;
+}
+const mockTranscriptStatePanel = vi.fn<(props: Record<string, unknown>) => ReactElement>(
+  renderTranscriptStatePanel
 );
 function renderChatComposer(props: {
   conversationId?: string | null;
@@ -213,8 +225,16 @@ vi.mock("./MediaHighlightsPaneBody", () => ({
   default: (props: Record<string, unknown>) => mockMediaHighlightsPaneBody(props),
 }));
 
-vi.mock("./TranscriptMediaPane", () => ({
-  default: (props: Record<string, unknown>) => mockTranscriptMediaPane(props),
+vi.mock("./TranscriptPlaybackPanel", () => ({
+  default: (props: Record<string, unknown>) => mockTranscriptPlaybackPanel(props),
+}));
+
+vi.mock("./TranscriptContentPanel", () => ({
+  default: (props: Record<string, unknown>) => mockTranscriptContentPanel(props),
+}));
+
+vi.mock("./TranscriptStatePanel", () => ({
+  default: (props: Record<string, unknown>) => mockTranscriptStatePanel(props),
 }));
 
 vi.mock("./EpubContentPane", () => ({
@@ -346,12 +366,12 @@ function renderLatestMeta() {
   return render(<>{meta}</>);
 }
 
-function getLatestTranscriptMediaPaneProps(): Record<string, unknown> {
-  const latest = mockTranscriptMediaPane.mock.calls.at(-1)?.[0] as
+function getLatestTranscriptPlaybackPanelProps(): Record<string, unknown> {
+  const latest = mockTranscriptPlaybackPanel.mock.calls.at(-1)?.[0] as
     | Record<string, unknown>
     | undefined;
   if (!latest) {
-    throw new Error("Expected TranscriptMediaPane to be rendered");
+    throw new Error("Expected TranscriptPlaybackPanel to be rendered");
   }
   return latest;
 }
@@ -444,8 +464,12 @@ describe("MediaPaneBody highlights shell", () => {
     mockPdfReader.mockClear();
     mockChatComposer.mockReset();
     mockChatComposer.mockImplementation(renderChatComposer);
-    mockTranscriptMediaPane.mockReset();
-    mockTranscriptMediaPane.mockImplementation(renderTranscriptMediaPane);
+    mockTranscriptPlaybackPanel.mockReset();
+    mockTranscriptPlaybackPanel.mockImplementation(renderTranscriptPlaybackPanel);
+    mockTranscriptContentPanel.mockReset();
+    mockTranscriptContentPanel.mockImplementation(renderTranscriptContentPanel);
+    mockTranscriptStatePanel.mockReset();
+    mockTranscriptStatePanel.mockImplementation(renderTranscriptStatePanel);
     mockReaderContentArea.mockReset();
     mockReaderContentArea.mockImplementation(
       ({ children }: { children: ReactNode }) => children
@@ -1213,7 +1237,7 @@ describe("MediaPaneBody highlights shell", () => {
     render(<MediaPaneBody />);
 
     expect(mockSetTrack).not.toHaveBeenCalled();
-    expect(getLatestTranscriptMediaPaneProps()).toMatchObject({
+    expect(getLatestTranscriptPlaybackPanelProps()).toMatchObject({
       mediaKind: "video",
       playbackSource: expect.objectContaining({
         kind: "external_video",
@@ -1283,7 +1307,8 @@ describe("MediaPaneBody highlights shell", () => {
     rerender(<MediaPaneBody />);
 
     expect(mockReaderContentArea).not.toHaveBeenCalled();
-    expect(screen.getByTestId("transcript-media-pane")).toBeInTheDocument();
+    expect(screen.getByTestId("transcript-playback-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("transcript-content-panel")).toBeInTheDocument();
 
     mockReaderContentArea.mockClear();
     currentViewState = buildViewState({

@@ -3,7 +3,7 @@
 Covers:
 - POST /media/{media_id}/pdf-highlights (create with geometry + match metadata)
 - GET  /media/{media_id}/pdf-highlights (page-scoped list)
-- PATCH /highlights/{id} with pdf_bounds (geometry replacement)
+- PATCH /highlights/{id} with typed PDF anchor replacement
 - PATCH /highlights/{id} color-only on PDF
 - D16: anchor-kind mismatch rejection
 - D17: duplicate detection (create and update)
@@ -666,10 +666,10 @@ class TestPdfHighlightVisibilityRegression:
 
 
 class TestUpdatePdfHighlight:
-    """Tests for PATCH /highlights/{id} with pdf_bounds or color-only."""
+    """Tests for PATCH /highlights/{id} with typed anchor updates or color-only."""
 
-    def test_update_pdf_bounds_success(self, auth_client, direct_db: DirectSessionManager):
-        """Replace geometry via pdf_bounds → new anchor data."""
+    def test_update_pdf_anchor_success(self, auth_client, direct_db: DirectSessionManager):
+        """Replace geometry via typed PDF anchor update."""
         user_id = create_test_user_id()
         media_id = _setup_pdf_media(auth_client, direct_db, user_id)
 
@@ -683,10 +683,11 @@ class TestUpdatePdfHighlight:
         update_resp = auth_client.patch(
             f"/highlights/{h_id}",
             json={
-                "pdf_bounds": {
+                "exact": "page one",
+                "anchor": {
+                    "type": "pdf_page_geometry",
                     "page_number": 1,
                     "quads": DIFFERENT_QUADS,
-                    "exact": "page one",
                 },
             },
             headers=auth_headers(user_id),
@@ -717,10 +718,10 @@ class TestUpdatePdfHighlight:
         assert update_resp.status_code == 200
         assert update_resp.json()["data"]["color"] == "green"
 
-    def test_d16_pdf_bounds_on_fragment_rejected(
+    def test_d16_pdf_anchor_on_fragment_rejected(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """pdf_bounds on fragment highlight → 400."""
+        """PDF anchor updates on fragment highlights are rejected."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -762,10 +763,11 @@ class TestUpdatePdfHighlight:
         update_resp = auth_client.patch(
             f"/highlights/{h_id}",
             json={
-                "pdf_bounds": {
+                "exact": "test",
+                "anchor": {
+                    "type": "pdf_page_geometry",
                     "page_number": 1,
                     "quads": SAMPLE_QUADS,
-                    "exact": "test",
                 },
             },
             headers=auth_headers(user_id),
@@ -775,7 +777,7 @@ class TestUpdatePdfHighlight:
     def test_d16_fragment_offsets_on_pdf_rejected(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Fragment offsets on PDF highlight → 400."""
+        """Fragment anchor updates on PDF highlights are rejected."""
         user_id = create_test_user_id()
         media_id = _setup_pdf_media(auth_client, direct_db, user_id)
 
@@ -788,7 +790,13 @@ class TestUpdatePdfHighlight:
 
         update_resp = auth_client.patch(
             f"/highlights/{h_id}",
-            json={"start_offset": 0, "end_offset": 5},
+            json={
+                "anchor": {
+                    "type": "fragment_offsets",
+                    "start_offset": 0,
+                    "end_offset": 5,
+                }
+            },
             headers=auth_headers(user_id),
         )
         assert update_resp.status_code == 400
@@ -808,10 +816,11 @@ class TestUpdatePdfHighlight:
         update_resp = auth_client.patch(
             f"/highlights/{h_id}",
             json={
-                "pdf_bounds": {
+                "exact": "page one",
+                "anchor": {
+                    "type": "pdf_page_geometry",
                     "page_number": 1,
                     "quads": SAMPLE_QUADS,
-                    "exact": "page one",
                 },
             },
             headers=auth_headers(user_id),
@@ -841,10 +850,11 @@ class TestUpdatePdfHighlight:
         update_resp = auth_client.patch(
             f"/highlights/{h_id2}",
             json={
-                "pdf_bounds": {
+                "exact": "conflict",
+                "anchor": {
+                    "type": "pdf_page_geometry",
                     "page_number": 1,
                     "quads": SAMPLE_QUADS,
-                    "exact": "conflict",
                 },
             },
             headers=auth_headers(user_id),
