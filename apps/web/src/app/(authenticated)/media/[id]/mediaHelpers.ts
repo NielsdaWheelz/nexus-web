@@ -207,6 +207,18 @@ export function getPaneScrollContainer(
   return null;
 }
 
+export function getPaneScrollTopPaddingPx(container: HTMLElement): number {
+  if (typeof window === "undefined") {
+    return TEXT_ANCHOR_TOP_PADDING_PX;
+  }
+
+  const parsed = Number.parseFloat(window.getComputedStyle(container).scrollPaddingTop);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return TEXT_ANCHOR_TOP_PADDING_PX;
+}
+
 export function formatResumeTime(positionMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(positionMs / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -320,10 +332,11 @@ export function findFirstVisibleCanonicalOffset(
   cursor: CanonicalCursorResult
 ): number | null {
   const containerRect = container.getBoundingClientRect();
+  const topPaddingPx = getPaneScrollTopPaddingPx(container);
   const probeTop =
     containerRect.top +
     Math.min(
-      TEXT_ANCHOR_TOP_PADDING_PX,
+      topPaddingPx,
       Math.max(8, Math.floor(containerRect.height * 0.12))
     );
 
@@ -384,9 +397,10 @@ export function scrollToCanonicalTextAnchor(
   range.collapse(true);
 
   const containerRect = container.getBoundingClientRect();
+  const topPaddingPx = getPaneScrollTopPaddingPx(container);
   const targetRect = range.getBoundingClientRect();
   if (targetRect.width > 0 || targetRect.height > 0) {
-    const delta = targetRect.top - containerRect.top - TEXT_ANCHOR_TOP_PADDING_PX;
+    const delta = targetRect.top - containerRect.top - topPaddingPx;
     container.scrollTop = Math.max(0, container.scrollTop + delta);
     return true;
   }

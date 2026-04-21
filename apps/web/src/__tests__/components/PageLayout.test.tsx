@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PageLayout from "@/components/ui/PageLayout";
 
@@ -26,7 +26,7 @@ describe("PageLayout", () => {
     expect(onArchive).toHaveBeenCalledTimes(1);
   });
 
-  it("hides mobile header chrome on scroll down and restores on scroll up", async () => {
+  it("keeps the mobile header pinned while scrolling", () => {
     vi.stubGlobal("innerWidth", 390);
     window.dispatchEvent(new Event("resize"));
 
@@ -40,7 +40,7 @@ describe("PageLayout", () => {
 
     expect(screen.getByRole("heading", { level: 1, name: "Mobile Layout" })).toBeInTheDocument();
     const container = screen.getByTestId("page-layout-container");
-    expect(container.className).toMatch(/mobileHeaderVisible/);
+    const initialClassName = container.className;
     Object.defineProperty(container, "scrollTop", {
       configurable: true,
       writable: true,
@@ -49,14 +49,12 @@ describe("PageLayout", () => {
 
     container.scrollTop = 280;
     fireEvent.scroll(container);
-    await waitFor(() => {
-      expect(container.className).toMatch(/mobileHeaderHidden/);
-    });
+    expect(container.className).toBe(initialClassName);
+    expect(screen.getByRole("heading", { level: 1, name: "Mobile Layout" })).toBeVisible();
 
     container.scrollTop = 8;
     fireEvent.scroll(container);
-    await waitFor(() => {
-      expect(container.className).toMatch(/mobileHeaderVisible/);
-    });
+    expect(container.className).toBe(initialClassName);
+    expect(screen.getByRole("heading", { level: 1, name: "Mobile Layout" })).toBeVisible();
   });
 });

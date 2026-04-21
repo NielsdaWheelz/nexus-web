@@ -137,41 +137,10 @@
     min-width: 0;
     max-width: none;
     border-right: none;
-    --mobile-pane-chrome-height: 0px;
-  }
-
-  .mobileChromeVisible .chrome,
-  .mobileChromeHidden .chrome {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 12;
-    padding-top: env(safe-area-inset-top);
-    transition: transform var(--transition-fast), opacity var(--transition-fast);
-    background: rgba(26, 27, 38, 0.94);
-    backdrop-filter: blur(8px);
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.26);
-    will-change: transform;
   }
 
   .content {
     padding: var(--space-2);
-  }
-
-  .mobileChromeVisible .content {
-    padding-top: calc(var(--space-2) + var(--mobile-pane-chrome-height));
-  }
-
-  .mobileChromeHidden .chrome {
-    transform: translateY(calc(-1 * var(--mobile-pane-chrome-height)));
-    opacity: 0.98;
-    visibility: hidden;
-    pointer-events: none;
-  }
-
-  .mobileChromeHidden .content {
-    padding-top: var(--space-2);
   }
 
   .resizeHandle {

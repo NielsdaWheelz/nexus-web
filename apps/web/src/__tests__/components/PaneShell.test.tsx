@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/CommandPalette";
-import PaneShell, { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import PaneShell, {
+  usePaneChromeOverride,
+  usePaneChromeScrollHandler,
+  usePaneMobileChromeVisibility,
+} from "@/components/workspace/PaneShell";
 import DocumentViewport from "@/components/workspace/DocumentViewport";
 
 describe("PaneShell", () => {
@@ -102,9 +106,9 @@ describe("PaneShell", () => {
         bodyMode="document"
         onResizePane={() => {}}
       >
-        <DocumentViewport>
+        <WiredDocumentViewport>
           <div>Document body</div>
-        </DocumentViewport>
+        </WiredDocumentViewport>
       </PaneShell>
     );
 
@@ -120,6 +124,165 @@ describe("PaneShell", () => {
     });
     expect(viewport).toHaveAttribute("data-pane-content", "true");
     expect(viewport).toHaveStyle({ overflow: "auto" });
+  });
+
+  it("keeps standard mobile panes pinned while the body scrolls", () => {
+    render(
+      <PaneShell
+        paneId="pane-standard"
+        title="Libraries"
+        widthPx={560}
+        minWidthPx={320}
+        maxWidthPx={1400}
+        bodyMode="standard"
+        onResizePane={() => {}}
+        isMobile
+      >
+        <div style={{ height: "1200px" }}>Tall body</div>
+      </PaneShell>
+    );
+
+    const body = screen.getByTestId("pane-shell-body");
+    const shell = body.closest<HTMLElement>('[data-pane-shell="true"]');
+
+    expect(shell).not.toBeNull();
+
+    expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "false");
+
+    Object.defineProperty(body, "scrollTop", {
+      configurable: true,
+      value: 200,
+    });
+    fireEvent.scroll(body);
+
+    expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "false");
+  });
+
+  it("drives mobile document chrome visibility from the document viewport scroll", () => {
+    render(
+      <PaneShell
+        paneId="pane-doc"
+        title="PDF"
+        widthPx={920}
+        minWidthPx={420}
+        maxWidthPx={1800}
+        bodyMode="document"
+        onResizePane={() => {}}
+        isMobile
+      >
+        <WiredDocumentViewport>
+          <div style={{ height: "1600px" }}>Document body</div>
+        </WiredDocumentViewport>
+      </PaneShell>
+    );
+
+    const viewport = screen.getByTestId("document-viewport");
+    const shell = viewport.closest<HTMLElement>('[data-pane-shell="true"]');
+
+    expect(shell).not.toBeNull();
+
+    expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "false");
+
+    Object.defineProperty(viewport, "scrollTop", {
+      configurable: true,
+      value: 200,
+    });
+    fireEvent.scroll(viewport);
+    expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "true");
+
+    Object.defineProperty(viewport, "scrollTop", {
+      configurable: true,
+      value: 0,
+    });
+    fireEvent.scroll(viewport);
+    expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "false");
+  });
+
+  it("hides mobile document chrome after multiple small downward scroll events", () => {
+    render(
+      <PaneShell
+        paneId="pane-doc"
+        title="Reader"
+        widthPx={920}
+        minWidthPx={420}
+        maxWidthPx={1800}
+        bodyMode="document"
+        onResizePane={() => {}}
+        isMobile
+      >
+        <WiredDocumentViewport>
+          <div style={{ height: "1600px" }}>Document body</div>
+        </WiredDocumentViewport>
+      </PaneShell>
+    );
+
+    const viewport = screen.getByTestId("document-viewport");
+    const shell = viewport.closest<HTMLElement>('[data-pane-shell="true"]');
+
+    expect(shell).not.toBeNull();
+
+    Object.defineProperty(viewport, "scrollTop", {
+      configurable: true,
+      value: 12,
+    });
+    fireEvent.scroll(viewport);
+    expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "false");
+
+    Object.defineProperty(viewport, "scrollTop", {
+      configurable: true,
+      value: 20,
+    });
+    fireEvent.scroll(viewport);
+    expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "false");
+
+    Object.defineProperty(viewport, "scrollTop", {
+      configurable: true,
+      value: 28,
+    });
+    fireEvent.scroll(viewport);
+    expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "false");
+
+    Object.defineProperty(viewport, "scrollTop", {
+      configurable: true,
+      value: 34,
+    });
+    fireEvent.scroll(viewport);
+    expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "true");
+  });
+
+  it("keeps document chrome visible while a child locks it open", () => {
+    render(
+      <PaneShell
+        paneId="pane-doc"
+        title="Reader"
+        widthPx={920}
+        minWidthPx={420}
+        maxWidthPx={1800}
+        bodyMode="document"
+        onResizePane={() => {}}
+        isMobile
+      >
+        <LockVisibleProbe />
+        <WiredDocumentViewport>
+          <div style={{ height: "1600px" }}>Document body</div>
+        </WiredDocumentViewport>
+      </PaneShell>
+    );
+
+    const viewport = screen.getByTestId("document-viewport");
+    const shell = viewport.closest<HTMLElement>('[data-pane-shell="true"]');
+
+    expect(shell).not.toBeNull();
+
+    Object.defineProperty(viewport, "scrollTop", {
+      configurable: true,
+      value: 260,
+    });
+    fireEvent.scroll(viewport);
+    expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Lock chrome" }));
+    expect(shell).toHaveAttribute("data-mobile-chrome-hidden", "false");
   });
 
   it("clears chrome overrides when an overriding child unmounts", () => {
@@ -263,4 +426,26 @@ function ChromeOverrideProbe({ shouldOverride }: { shouldOverride: boolean }) {
   );
 
   return <div>Override body</div>;
+}
+
+function LockVisibleProbe() {
+  const paneMobileChrome = usePaneMobileChromeVisibility();
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        paneMobileChrome?.showMobileChrome();
+        paneMobileChrome?.setMobileChromeLockedVisible(true);
+      }}
+    >
+      Lock chrome
+    </button>
+  );
+}
+
+function WiredDocumentViewport({ children }: { children: React.ReactNode }) {
+  const onScroll = usePaneChromeScrollHandler();
+
+  return <DocumentViewport onScroll={onScroll ?? undefined}>{children}</DocumentViewport>;
 }

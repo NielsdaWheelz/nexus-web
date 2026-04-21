@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   useCallback,
-  useEffect,
   type CSSProperties,
   type KeyboardEvent,
 } from "react";
@@ -13,8 +12,6 @@ import styles from "./Pane.module.css";
 import SurfaceHeader, {
   type SurfaceHeaderOption,
 } from "@/components/ui/SurfaceHeader";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { useMobileChromeVisibility } from "@/lib/ui/useMobileChromeVisibility";
 import { SplitSurfaceOverlayContext } from "@/components/workspace/SplitSurfaceContext";
 
 interface PaneProps {
@@ -34,9 +31,7 @@ interface PaneProps {
   fluid?: boolean;
 }
 
-type PaneStyle = CSSProperties & {
-  "--mobile-pane-chrome-height"?: string;
-};
+type PaneStyle = CSSProperties;
 
 export default function Pane({
   children,
@@ -55,32 +50,10 @@ export default function Pane({
   fluid = false,
 }: PaneProps) {
   const [width, setWidth] = useState(defaultWidth);
-  const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
-  const isMobileViewport = useIsMobileViewport();
   const insideOverlay = useContext(SplitSurfaceOverlayContext);
   const paneRef = useRef<HTMLDivElement>(null);
-  const chromeRef = useRef<HTMLDivElement>(null);
   const isResizing = useRef(false);
   const hasChrome = Boolean(header || title || toolbar) && !insideOverlay;
-  const { mobileChromeHidden, onContentScroll } = useMobileChromeVisibility(
-    isMobileViewport,
-    hasChrome,
-  );
-
-  useEffect(() => {
-    if (!isMobileViewport || !chromeRef.current || !hasChrome) {
-      setMobileChromeHeight(0);
-      return;
-    }
-    const target = chromeRef.current;
-    const update = () => {
-      setMobileChromeHeight(Math.max(0, Math.round(target.getBoundingClientRect().height)));
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [hasChrome, isMobileViewport, toolbar, title, header]);
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -129,30 +102,19 @@ export default function Pane({
     [maxWidth, minWidth]
   );
 
-  const paneClasses = `${styles.pane} ${fluid ? styles.fluid : ""} ${
-    isMobileViewport
-      ? mobileChromeHidden
-        ? styles.mobileChromeHidden
-        : styles.mobileChromeVisible
-      : ""
-  }`.trim();
+  const paneClasses = `${styles.pane} ${fluid ? styles.fluid : ""}`.trim();
 
   const paneStyle: PaneStyle = fluid ? {} : { width };
-  if (isMobileViewport && mobileChromeHeight > 0) {
-    paneStyle["--mobile-pane-chrome-height"] = `${mobileChromeHeight}px`;
-  }
 
   return (
     <div
       ref={paneRef}
       className={paneClasses}
       style={Object.keys(paneStyle).length > 0 ? paneStyle : undefined}
-      data-mobile-chrome-hidden={mobileChromeHidden ? "true" : "false"}
       data-testid="pane"
     >
       {hasChrome && (
         <div
-          ref={chromeRef}
           className={styles.chrome}
           data-pane-chrome="true"
           data-testid="pane-chrome"
@@ -189,7 +151,6 @@ export default function Pane({
         className={`${styles.content} ${contentClassName ?? ""}`.trim()}
         data-pane-content="true"
         data-testid="pane-content"
-        onScroll={onContentScroll}
       >
         {children}
       </div>

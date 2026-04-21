@@ -121,4 +121,22 @@
     height: min(78vh, 980px); /* fallback */
     height: min(78dvh, 980px); /* dynamic viewport for mobile address bar */
   }
+
+  .viewerContainer {
+    scroll-padding-top: calc(
+      env(safe-area-inset-top) + var(--mobile-pane-chrome-height, 0px) + var(--space-2)
+    );
+  }
+
+  .viewerHost :global(.page) {
+    scroll-margin-top: calc(
+      env(safe-area-inset-top) + var(--mobile-pane-chrome-height, 0px) + var(--space-2)
+    );
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewerContainer {
+    scroll-behavior: auto;
+  }
 }

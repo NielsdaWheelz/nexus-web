@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -36,6 +37,12 @@ const PaneChromeOverrideContext = createContext<
   ((overrides: PaneChromeOverrides) => void) | null
 >(null);
 
+const PaneChromeScrollContext = createContext<((scrollTop: number) => void) | null>(null);
+const PaneChromeVisibilityContext = createContext<{
+  setMobileChromeLockedVisible: (locked: boolean) => void;
+  showMobileChrome: () => void;
+} | null>(null);
+
 /**
  * Call from a body component rendered inside PaneShell to push toolbar,
  * options, meta, or actions into the pane chrome. Uses useLayoutEffect so the
@@ -52,6 +59,19 @@ export function usePaneChromeOverride(overrides: PaneChromeOverrides): void {
       setOverrides(EMPTY_PANE_CHROME_OVERRIDES);
     };
   }, [overrides, setOverrides]);
+}
+
+export function usePaneChromeScrollHandler(): ((scrollTop: number) => void) | null {
+  return useContext(PaneChromeScrollContext);
+}
+
+export function usePaneMobileChromeVisibility():
+  | {
+      setMobileChromeLockedVisible: (locked: boolean) => void;
+      showMobileChrome: () => void;
+    }
+  | null {
+  return useContext(PaneChromeVisibilityContext);
 }
 
 type PaneShellStyle = CSSProperties & {
@@ -102,7 +122,10 @@ export default function PaneShell({
   });
   const chromeRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef(0);
+  const mobileChromeScrollDirectionRef = useRef<"down" | "up" | null>(null);
+  const mobileChromeDirectionStartRef = useRef(0);
   const [mobileChromeHidden, setMobileChromeHidden] = useState(false);
+  const [mobileChromeLockedVisible, setMobileChromeLockedVisible] = useState(false);
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
   const [chromeOverrides, setChromeOverrides] = useState<PaneChromeOverrides>(
     EMPTY_PANE_CHROME_OVERRIDES
@@ -111,14 +134,28 @@ export default function PaneShell({
   const effectiveToolbar = chromeOverrides.toolbar ?? toolbar;
   const effectiveActions = chromeOverrides.actions ?? actions;
   const effectiveOptions = chromeOverrides.options ?? options;
+  const effectiveMobileChromeHidden =
+    isMobile &&
+    bodyMode === "document" &&
+    mobileChromeHidden &&
+    !mobileChromeLockedVisible;
+  const mobileChromeStateClass =
+    effectiveMobileChromeHidden
+      ? styles.mobileChromeHidden
+      : isMobile
+        ? styles.mobileChromeVisible
+        : "";
 
-  // Reset mobile chrome state when leaving mobile.
+  // Reset mobile chrome state when leaving mobile or document mode.
   useEffect(() => {
-    if (!isMobile) {
+    if (!isMobile || bodyMode !== "document") {
       setMobileChromeHidden(false);
+      setMobileChromeLockedVisible(false);
       lastScrollTopRef.current = 0;
+      mobileChromeScrollDirectionRef.current = null;
+      mobileChromeDirectionStartRef.current = 0;
     }
-  }, [isMobile]);
+  }, [bodyMode, isMobile]);
 
   // Track chrome height for padding offset.
   useEffect(() => {
@@ -137,38 +174,56 @@ export default function PaneShell({
   }, [isMobile, title, subtitle, effectiveToolbar]);
 
   // Hide chrome on scroll-down, restore on scroll-up.
-  const handleBodyScroll = useCallback(
-    (event: React.UIEvent<HTMLDivElement>) => {
-      if (!isMobile) {
+  const handleDocumentViewportScroll = useCallback(
+    (scrollTop: number) => {
+      if (!isMobile || bodyMode !== "document") {
         return;
       }
-      const scrollTop = event.currentTarget.scrollTop;
       const previous = lastScrollTopRef.current;
       const delta = scrollTop - previous;
       lastScrollTopRef.current = scrollTop;
 
       if (scrollTop <= 24) {
         setMobileChromeHidden(false);
+        mobileChromeScrollDirectionRef.current = null;
+        mobileChromeDirectionStartRef.current = scrollTop;
         return;
       }
-      if (delta >= 10) {
+
+      if (Math.abs(delta) < 1) {
+        return;
+      }
+
+      const direction = delta > 0 ? "down" : "up";
+      if (mobileChromeScrollDirectionRef.current !== direction) {
+        mobileChromeScrollDirectionRef.current = direction;
+        mobileChromeDirectionStartRef.current = previous;
+      }
+
+      const directionDistance = scrollTop - mobileChromeDirectionStartRef.current;
+
+      if (direction === "down" && directionDistance >= 10) {
         setMobileChromeHidden(true);
+        mobileChromeDirectionStartRef.current = scrollTop;
         return;
       }
-      if (delta <= -10) {
+
+      if (direction === "up" && directionDistance <= -10) {
         setMobileChromeHidden(false);
+        mobileChromeDirectionStartRef.current = scrollTop;
       }
     },
-    [isMobile]
+    [bodyMode, isMobile]
+  );
+  const showMobileChrome = useCallback(() => {
+    setMobileChromeHidden(false);
+  }, []);
+  const paneChromeVisibility = useMemo(
+    () => ({ setMobileChromeLockedVisible, showMobileChrome }),
+    [showMobileChrome]
   );
 
-  const shellClass = `${styles.paneShell} ${
-    isMobile
-      ? mobileChromeHidden
-        ? styles.mobileChromeHidden
-        : styles.mobileChromeVisible
-      : ""
-  }`.trim();
+  const shellClass = `${styles.paneShell} ${mobileChromeStateClass}`.trim();
 
   const shellStyle: PaneShellStyle = isMobile
     ? { width: "100%", minWidth: "100%", maxWidth: "100%" }
@@ -200,6 +255,9 @@ export default function PaneShell({
       className={shellClass}
       data-pane-shell="true"
       data-active={isActive ? "true" : "false"}
+      data-mobile-chrome-hidden={
+        effectiveMobileChromeHidden ? "true" : "false"
+      }
       data-mobile={isMobile ? "true" : "false"}
       style={shellStyle}
     >
@@ -247,10 +305,13 @@ export default function PaneShell({
         data-body-mode={bodyMode}
         data-pane-content="true"
         style={bodyStyle}
-        onScroll={handleBodyScroll}
       >
         <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
-          {children}
+          <PaneChromeVisibilityContext.Provider value={paneChromeVisibility}>
+            <PaneChromeScrollContext.Provider value={handleDocumentViewportScroll}>
+              {children}
+            </PaneChromeScrollContext.Provider>
+          </PaneChromeVisibilityContext.Provider>
         </PaneChromeOverrideContext.Provider>
       </div>
       <div

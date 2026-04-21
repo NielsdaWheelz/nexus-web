@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Pane from "@/components/Pane";
 
@@ -128,7 +128,7 @@ describe("Pane", () => {
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
 
-  it("hides pane chrome on mobile scroll down and restores on scroll up", async () => {
+  it("keeps pane chrome visible on mobile scroll", () => {
     vi.stubGlobal("innerWidth", 390);
     window.dispatchEvent(new Event("resize"));
 
@@ -144,28 +144,26 @@ describe("Pane", () => {
     );
 
     const paneEl = screen.getByTestId("pane");
+    const paneChrome = screen.getByTestId("pane-chrome");
     const paneContent = screen.getByTestId("pane-content");
-    expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
+    expect(paneEl).not.toHaveAttribute("data-mobile-chrome-hidden");
+    expect(paneChrome).toBeVisible();
 
     paneContent.scrollTop = 20;
     fireEvent.scroll(paneContent);
-    expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
+    expect(paneChrome).toBeVisible();
 
     paneContent.scrollTop = 27;
     fireEvent.scroll(paneContent);
-    expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
+    expect(paneChrome).toBeVisible();
 
     paneContent.scrollTop = 260;
     fireEvent.scroll(paneContent);
-    await waitFor(() => {
-      expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "true");
-    });
+    expect(paneChrome).toBeVisible();
 
     paneContent.scrollTop = 12;
     fireEvent.scroll(paneContent);
-    await waitFor(() => {
-      expect(paneEl).toHaveAttribute("data-mobile-chrome-hidden", "false");
-    });
+    expect(paneChrome).toBeVisible();
   });
 
   describe("mobile toolbar", () => {

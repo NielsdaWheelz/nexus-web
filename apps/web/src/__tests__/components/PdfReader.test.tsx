@@ -1,12 +1,18 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createElement } from "react";
 import userEvent from "@testing-library/user-event";
 import PdfReader, {
   type PdfReaderControlActions,
   type PdfReaderControlsState,
   type PdfReaderDeps,
 } from "@/components/PdfReader";
+import PaneShell from "@/components/workspace/PaneShell";
 import "pdfjs-dist/web/pdf_viewer.css";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 type HighlightColor = "yellow" | "green" | "blue" | "pink" | "purple";
 
@@ -100,6 +106,22 @@ function makePdfHighlight(
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
   };
+}
+
+function stubMatchMedia(matches: boolean) {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn((query: string) => ({
+      matches: query.includes("prefers-reduced-motion") ? matches : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+  );
 }
 
 class FakeEventBus {
@@ -1780,6 +1802,107 @@ describe("PdfReader", () => {
 
     vi.stubGlobal("innerWidth", originalInnerWidth);
     window.dispatchEvent(new Event("resize"));
+  });
+
+  it("forwards mobile PDF scroll events to the pane chrome scroll handler", async () => {
+    const originalInnerWidth = window.innerWidth;
+    vi.stubGlobal("innerWidth", 390);
+    window.dispatchEvent(new Event("resize"));
+
+    const url = "https://storage.example/signed-mobile-chrome";
+    const doc = createFakeDocument(1);
+    const { deps } = createDeps({
+      urls: [url],
+      docsByUrl: { [url]: doc },
+    });
+    const onResizePane = vi.fn();
+
+    try {
+      const { container } = render(
+        createElement(
+          PaneShell,
+          {
+            paneId: "pane-mobile-chrome",
+            title: "Reader",
+            widthPx: 480,
+            minWidthPx: 280,
+            maxWidthPx: 900,
+            bodyMode: "document",
+            onResizePane,
+            isMobile: true,
+          },
+          createElement(PdfReader, { mediaId: "media-mobile-chrome", deps })
+        )
+      );
+
+      const viewerContainer = await screen.findByLabelText("PDF document");
+      viewerContainer.scrollTop = 260;
+      fireEvent.scroll(viewerContainer);
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-pane-shell="true"]')).toHaveAttribute(
+          "data-mobile-chrome-hidden",
+          "true"
+        );
+      });
+    } finally {
+      vi.stubGlobal("innerWidth", originalInnerWidth);
+      window.dispatchEvent(new Event("resize"));
+    }
+  });
+
+  it("keeps mobile chrome visible when reduced motion is preferred", async () => {
+    const originalInnerWidth = window.innerWidth;
+    vi.stubGlobal("innerWidth", 390);
+    window.dispatchEvent(new Event("resize"));
+    stubMatchMedia(true);
+
+    const url = "https://storage.example/signed-reduced-motion";
+    const doc = createFakeDocument(1);
+    const { deps } = createDeps({
+      urls: [url],
+      docsByUrl: { [url]: doc },
+    });
+    const onResizePane = vi.fn();
+
+    try {
+      const { container } = render(
+        createElement(
+          PaneShell,
+          {
+            paneId: "pane-reduced-motion",
+            title: "Reader",
+            widthPx: 480,
+            minWidthPx: 280,
+            maxWidthPx: 900,
+            bodyMode: "document",
+            onResizePane,
+            isMobile: true,
+          },
+          createElement(PdfReader, { mediaId: "media-reduced-motion", deps })
+        )
+      );
+
+      await screen.findByLabelText("PDF document");
+      await waitFor(() => {
+        expect(container.querySelector('[data-pane-shell="true"]')).toHaveAttribute(
+          "data-mobile-chrome-hidden",
+          "false"
+        );
+      });
+
+      const viewerContainer = screen.getByLabelText("PDF document");
+      viewerContainer.scrollTop = 280;
+      fireEvent.scroll(viewerContainer);
+
+      expect(container.querySelector('[data-pane-shell="true"]')).toHaveAttribute(
+        "data-mobile-chrome-hidden",
+        "false"
+      );
+    } finally {
+      vi.stubGlobal("innerWidth", originalInnerWidth);
+      window.dispatchEvent(new Event("resize"));
+    }
   });
 
   it("applies minimum width to PDF viewport element", async () => {

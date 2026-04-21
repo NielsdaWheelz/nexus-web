@@ -12,6 +12,8 @@ import MediaPaneBody from "./MediaPaneBody";
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 const mockUseMediaViewState = vi.fn<(id: string) => Record<string, unknown>>();
 const mockUsePaneChromeOverride = vi.fn<(overrides: Record<string, unknown>) => void>();
+const mockSetMobileChromeLockedVisible = vi.fn();
+const mockShowMobileChrome = vi.fn();
 const mockNavigatePane = vi.fn();
 const mockRequestOpenInAppPane = vi.fn();
 const mockSetTrack = vi.fn();
@@ -98,6 +100,11 @@ vi.mock("@/lib/panes/openInAppPane", () => ({
 vi.mock("@/components/workspace/PaneShell", () => ({
   usePaneChromeOverride: (overrides: Record<string, unknown>) =>
     mockUsePaneChromeOverride(overrides),
+  usePaneChromeScrollHandler: () => null,
+  usePaneMobileChromeVisibility: () => ({
+    setMobileChromeLockedVisible: mockSetMobileChromeLockedVisible,
+    showMobileChrome: mockShowMobileChrome,
+  }),
 }));
 
 vi.mock("@/lib/workspace/store", () => ({
@@ -426,6 +433,8 @@ describe("MediaPaneBody highlights shell", () => {
     mockUsePaneParam.mockReset();
     mockUseMediaViewState.mockReset();
     mockUsePaneChromeOverride.mockReset();
+    mockSetMobileChromeLockedVisible.mockReset();
+    mockShowMobileChrome.mockReset();
     mockNavigatePane.mockReset();
     mockRequestOpenInAppPane.mockReset();
     mockRequestOpenInAppPane.mockReturnValue(true);
@@ -607,7 +616,7 @@ describe("MediaPaneBody highlights shell", () => {
     );
   });
 
-  it("exposes a mobile Highlights action and closes the drawer when highlights become unavailable", () => {
+  it("exposes a mobile Highlights action and closes the drawer when highlights become unavailable", async () => {
     currentViewState = buildViewState({ isMobileViewport: true, showHighlightsPane: true });
     mockUseMediaViewState.mockImplementation(() => currentViewState);
 
@@ -623,6 +632,10 @@ describe("MediaPaneBody highlights shell", () => {
     expect(screen.getByRole("dialog", { name: "Highlights" })).toBeInTheDocument();
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
     expect(document.body.style.overflow).toBe("hidden");
+    await waitFor(() => {
+      expect(mockShowMobileChrome).toHaveBeenCalled();
+      expect(mockSetMobileChromeLockedVisible).toHaveBeenLastCalledWith(true);
+    });
 
     currentViewState = buildViewState({
       isMobileViewport: true,
@@ -635,6 +648,9 @@ describe("MediaPaneBody highlights shell", () => {
     expect(screen.queryByRole("dialog", { name: "Highlights" })).not.toBeInTheDocument();
     expect(document.body.style.overflow).toBe("");
     expect(getLatestHighlightsAction()).toBeNull();
+    await waitFor(() => {
+      expect(mockSetMobileChromeLockedVisible).toHaveBeenLastCalledWith(false);
+    });
   });
 
   it("closes the mobile Highlights drawer from shell chrome", async () => {
@@ -678,10 +694,11 @@ describe("MediaPaneBody highlights shell", () => {
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
   });
 
-  it("passes selection line rects into the reflowable selection popup", () => {
+  it("passes selection line rects into the reflowable selection popup", async () => {
     const lineRects = [new DOMRect(96, 180, 120, 18), new DOMRect(102, 206, 102, 18)];
     const selectionRect = new DOMRect(96, 180, 120, 44);
     currentViewState = buildViewState({
+      isMobileViewport: true,
       selection: {
         range: document.createRange(),
         rect: selectionRect,
@@ -696,6 +713,10 @@ describe("MediaPaneBody highlights shell", () => {
     expect(getLatestSelectionPopoverProps()).toMatchObject({
       selectionRect,
       selectionLineRects: lineRects,
+    });
+    await waitFor(() => {
+      expect(mockShowMobileChrome).toHaveBeenCalled();
+      expect(mockSetMobileChromeLockedVisible).toHaveBeenLastCalledWith(true);
     });
   });
 

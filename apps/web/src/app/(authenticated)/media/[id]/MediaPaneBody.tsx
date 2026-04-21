@@ -26,7 +26,11 @@ import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import DocumentViewport from "@/components/workspace/DocumentViewport";
 import { usePaneParam, usePaneRouter } from "@/lib/panes/paneRuntime";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import {
+  usePaneChromeOverride,
+  usePaneChromeScrollHandler,
+  usePaneMobileChromeVisibility,
+} from "@/components/workspace/PaneShell";
 import { useReaderContext } from "@/lib/reader";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useWorkspaceStore } from "@/lib/workspace/store";
@@ -52,6 +56,8 @@ export default function MediaPaneBody() {
   const router = usePaneRouter();
   const { navigatePane } = useWorkspaceStore();
   const mv = useMediaViewState(id);
+  const paneChromeScrollHandler = usePaneChromeScrollHandler();
+  const paneMobileChrome = usePaneMobileChromeVisibility();
   const { toast } = useToast();
   const { profile: readerProfile, updateTheme } = useReaderContext();
   const { setTrack } = useGlobalPlayer();
@@ -407,6 +413,33 @@ export default function MediaPaneBody() {
   }, [mv.isMobileViewport, quoteDrawerState]);
 
   useEffect(() => {
+    if (!paneMobileChrome || !mv.isMobileViewport) {
+      return;
+    }
+    const lockVisible = Boolean(
+      highlightsDrawerOpen ||
+        quoteDrawerState ||
+        libraryPanelOpen ||
+        (mv.selection && !mv.focusState.editingBounds)
+    );
+    if (lockVisible) {
+      paneMobileChrome.showMobileChrome();
+    }
+    paneMobileChrome.setMobileChromeLockedVisible(lockVisible);
+    return () => {
+      paneMobileChrome.setMobileChromeLockedVisible(false);
+    };
+  }, [
+    highlightsDrawerOpen,
+    libraryPanelOpen,
+    mv.focusState.editingBounds,
+    mv.isMobileViewport,
+    mv.selection,
+    paneMobileChrome,
+    quoteDrawerState,
+  ]);
+
+  useEffect(() => {
     if (mv.media) {
       return;
     }
@@ -588,7 +621,7 @@ export default function MediaPaneBody() {
           )}
 
           {mv.isTranscriptMedia ? (
-            <DocumentViewport>
+            <DocumentViewport onScroll={paneChromeScrollHandler ?? undefined}>
               <TranscriptMediaPane
                 mediaId={mv.media.id}
                 mediaKind={mv.media.kind === "video" ? "video" : "podcast_episode"}
@@ -659,7 +692,7 @@ export default function MediaPaneBody() {
               />
             )
           ) : mv.isEpub ? (
-            <DocumentViewport>
+            <DocumentViewport onScroll={paneChromeScrollHandler ?? undefined}>
               <ReaderContentArea>
                 <EpubContentPane
                   sections={mv.epubSections}
@@ -682,7 +715,7 @@ export default function MediaPaneBody() {
               <p>No content available for this media.</p>
             </div>
           ) : (
-            <DocumentViewport>
+            <DocumentViewport onScroll={paneChromeScrollHandler ?? undefined}>
               <ReaderContentArea>
                 <div
                   ref={mv.contentRef}

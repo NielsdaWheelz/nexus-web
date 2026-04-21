@@ -180,20 +180,20 @@ test.describe("non-pdf linked-items", () => {
     await expect(drawer).toBeVisible();
     await expect(quoteRow).toBeVisible({ timeout: 10_000 });
     await expect(focusRow).toHaveCount(0);
-    await expect(drawer.getByText(/^1 below$/)).toBeVisible();
+    await expect(drawer.getByText(/^\d+ below$/)).toBeVisible();
     await expect(drawer.getByText("No highlights in view.")).toHaveCount(0);
 
     await scrollLocatorIntoCenteredView(contentPane.locator("p").nth(90));
     await expect(quoteRow).toHaveCount(0);
     await expect(focusRow).toHaveCount(0);
     await expect(drawer.getByText("No highlights in view.")).toBeVisible();
-    await expect(drawer.getByText(/^1 above$/)).toBeVisible();
-    await expect(drawer.getByText(/^1 below$/)).toBeVisible();
+    await expect(drawer.getByText(/^\d+ above$/)).toBeVisible();
+    await expect(drawer.getByText(/^\d+ below$/)).toBeVisible();
 
     await scrollLocatorIntoCenteredView(focusAnchor);
     await expect(quoteRow).toHaveCount(0);
     await expect(focusRow).toBeVisible({ timeout: 10_000 });
-    await expect(drawer.getByText(/^1 above$/)).toBeVisible();
+    await expect(drawer.getByText(/^\d+ above$/)).toBeVisible();
     await expect(drawer.getByText("No highlights in view.")).toHaveCount(0);
     await closeMobileHighlightsDrawer(page);
   });

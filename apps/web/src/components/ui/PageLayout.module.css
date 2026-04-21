@@ -61,33 +61,15 @@
 }
 
 @media (max-width: 768px) {
-  .container {
-    --mobile-page-header-height: 0px;
-  }
-
-  .mobileHeaderVisible .header,
-  .mobileHeaderHidden .header {
-    position: absolute;
+  .header {
+    position: sticky;
     top: 0;
     left: 0;
     right: 0;
     z-index: 12;
     padding-top: env(safe-area-inset-top);
-    transition: transform var(--transition-fast), opacity var(--transition-fast);
     background: rgba(36, 40, 59, 0.94);
     backdrop-filter: blur(8px);
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
-    will-change: transform;
-  }
-
-  .mobileHeaderVisible .content {
-    padding-top: var(--mobile-page-header-height);
-  }
-
-  .mobileHeaderHidden .header {
-    transform: translateY(calc(-1 * var(--mobile-page-header-height)));
-    opacity: 0.98;
-    visibility: hidden;
-    pointer-events: none;
   }
 }

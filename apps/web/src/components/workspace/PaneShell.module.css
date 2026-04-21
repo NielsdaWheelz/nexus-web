@@ -116,3 +116,11 @@
 .mobileSearchButton:active {
   background: var(--color-bg-active);
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .mobileChromeVisible .chrome,
+  .mobileChromeHidden .chrome,
+  .mobileSearchButton {
+    transition: none;
+  }
+}

@@ -9,6 +9,7 @@ this records the current reader model and the constraints we actively ship.
 - line height around 1.4-1.6
 - theme support: light and dark
 - mobile-safe reader layout and controls
+- mobile document-pane chrome policy lives in `docs/mobile-pane-chrome.md`
 - resume that survives reflow where possible
 
 ## architecture

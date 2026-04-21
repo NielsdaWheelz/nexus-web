@@ -46,6 +46,7 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { usePaneMobileChromeVisibility } from "@/components/workspace/PaneShell";
 import { stripAttachParams } from "@/lib/conversations/attachedContext";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
@@ -87,9 +88,9 @@ import {
   escapeAttrValue,
   findCanonicalOffsetFromQuote,
   getPaneScrollContainer,
+  getPaneScrollTopPaddingPx,
   findFirstVisibleCanonicalOffset,
   READER_POSITION_BUCKET_CP,
-  TEXT_ANCHOR_TOP_PADDING_PX,
   scrollToCanonicalTextAnchor,
   fetchHighlights,
   createHighlight,
@@ -173,7 +174,8 @@ function isCanonicalTextAnchorVisible(
   range.collapse(true);
 
   const containerRect = container.getBoundingClientRect();
-  const visibleTop = containerRect.top + Math.floor(TEXT_ANCHOR_TOP_PADDING_PX / 2);
+  const visibleTop =
+    containerRect.top + Math.floor(getPaneScrollTopPaddingPx(container) / 2);
   const targetRect = range.getBoundingClientRect();
   if (targetRect.width > 0 || targetRect.height > 0) {
     return targetRect.bottom > visibleTop && targetRect.top < containerRect.bottom;
@@ -195,6 +197,7 @@ export default function useMediaViewState(id: string) {
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
   const { state: workspaceState, navigatePane } = useWorkspaceStore();
+  const paneMobileChrome = usePaneMobileChromeVisibility();
   const requestedFragmentId = searchParams.get("fragment");
   const requestedHighlightId = searchParams.get("highlight");
   const requestedEpubLoc = searchParams.get("loc");
@@ -1375,6 +1378,11 @@ export default function useMediaViewState(id: string) {
       return;
     }
 
+    if (isMobileViewport && paneMobileChrome) {
+      paneMobileChrome.showMobileChrome();
+      paneMobileChrome.setMobileChromeLockedVisible(true);
+    }
+
     void updateRestorePhase(sessionId, "restoring_exact");
 
     let rafId = 0;
@@ -1420,6 +1428,9 @@ export default function useMediaViewState(id: string) {
       if (rafId) {
         window.cancelAnimationFrame(rafId);
       }
+      if (isMobileViewport && paneMobileChrome) {
+        paneMobileChrome.setMobileChromeLockedVisible(false);
+      }
     };
   }, [
     isPdf,
@@ -1440,6 +1451,8 @@ export default function useMediaViewState(id: string) {
     readerResumePosition,
     readerLayoutReady,
     readerProfileLoading,
+    isMobileViewport,
+    paneMobileChrome,
     settleRestoreSession,
     totalTextLength,
     updateRestorePhase,
@@ -1579,6 +1592,11 @@ export default function useMediaViewState(id: string) {
     let rafId = 0;
     const MAX_ATTEMPTS = 96;
 
+    if (isMobileViewport && paneMobileChrome) {
+      paneMobileChrome.showMobileChrome();
+      paneMobileChrome.setMobileChromeLockedVisible(true);
+    }
+
     const findTarget = (): HTMLElement | null => {
       const root = contentRef.current;
       if (!root) {
@@ -1637,12 +1655,17 @@ export default function useMediaViewState(id: string) {
       if (rafId) {
         window.cancelAnimationFrame(rafId);
       }
+      if (isMobileViewport && paneMobileChrome) {
+        paneMobileChrome.setMobileChromeLockedVisible(false);
+      }
     };
   }, [
     activeEpubSection,
     epubRestoreRequest,
     epubSectionLoading,
     isEpub,
+    isMobileViewport,
+    paneMobileChrome,
     readerLayoutReady,
     readerProfileLoading,
     restorePhase,
@@ -1760,11 +1783,27 @@ export default function useMediaViewState(id: string) {
     const anchor = contentRef.current.querySelector<HTMLElement>(
       `[data-highlight-anchor="${escapedId}"]`
     );
+    let unlockChromeFrame = 0;
     if (anchor) {
+      if (isMobileViewport && paneMobileChrome) {
+        paneMobileChrome.showMobileChrome();
+        paneMobileChrome.setMobileChromeLockedVisible(true);
+        unlockChromeFrame = window.requestAnimationFrame(() => {
+          paneMobileChrome.setMobileChromeLockedVisible(false);
+        });
+      }
       anchor.scrollIntoView({ behavior: "auto", block: "center" });
     }
     focusHighlight(requestedHighlightId);
     urlHighlightAppliedRef.current = requestedHighlightId;
+    return () => {
+      if (unlockChromeFrame) {
+        window.cancelAnimationFrame(unlockChromeFrame);
+      }
+      if (isMobileViewport && paneMobileChrome) {
+        paneMobileChrome.setMobileChromeLockedVisible(false);
+      }
+    };
   }, [
     requestedHighlightId,
     activeContent,
@@ -1772,6 +1811,8 @@ export default function useMediaViewState(id: string) {
     highlights,
     renderedHtml,
     focusHighlight,
+    isMobileViewport,
+    paneMobileChrome,
   ]);
 
   // ==========================================================================

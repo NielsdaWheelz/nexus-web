@@ -249,6 +249,7 @@ test.describe("reader settings + resume", () => {
     const targetFontSize = baseline.font_size_px === 24 ? 20 : 24;
 
     try {
+      await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(`/media/${mediaId}`);
       await expect(page.getByText("reader resume paragraph 001")).toBeVisible({
         timeout: 15_000,
@@ -278,6 +279,15 @@ test.describe("reader settings + resume", () => {
         timeout: 15_000,
       });
       await expect(anchor).toBeInViewport();
+      const chrome = page.locator('[data-testid="pane-shell-chrome"]').first();
+      await expect(chrome).toBeVisible();
+      const anchorBox = await anchor.boundingBox();
+      const chromeBox = await chrome.boundingBox();
+      expect(anchorBox).not.toBeNull();
+      expect(chromeBox).not.toBeNull();
+      if (anchorBox && chromeBox) {
+        expect(anchorBox.y).toBeGreaterThanOrEqual(chromeBox.y + chromeBox.height - 8);
+      }
     } finally {
       await patchReaderProfile(page.request, {
         font_size_px: baseline.font_size_px,

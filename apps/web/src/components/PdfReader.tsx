@@ -6,10 +6,12 @@ import {
   useMemo,
   useRef,
   useState,
+  type UIEvent,
   type MutableRefObject,
 } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { PdfReaderResumeState } from "@/lib/reader";
+import { usePaneMobileChromeVisibility } from "@/components/workspace/PaneShell";
 import SelectionPopover from "./SelectionPopover";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
@@ -19,6 +21,7 @@ import {
   type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { usePaneChromeScrollHandler } from "@/components/workspace/PaneShell";
 import styles from "./PdfReader.module.css";
 
 export type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
@@ -480,6 +483,13 @@ function createInitialCreateTelemetry(): CreateTelemetryState {
   };
 }
 
+function readPrefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 async function destroyPdfDocument(doc: PdfDocumentLike | null): Promise<void> {
   if (!doc?.destroy) {
     return;
@@ -630,8 +640,13 @@ export default function PdfReader({
   onResumeStateChange,
 }: PdfReaderProps) {
   const isMobile = useIsMobileViewport();
+  const paneChromeScrollHandler = usePaneChromeScrollHandler();
+  const paneMobileChrome = usePaneMobileChromeVisibility();
   const isMobileRef = useRef(isMobile);
   const initialMobileFitDoneRef = useRef(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState<boolean>(() =>
+    readPrefersReducedMotion()
+  );
   const startPageNumberRef = useRef(startPageNumber);
   const startPageProgressionRef = useRef(startPageProgression);
   const startZoomRef = useRef(startZoom);
@@ -703,6 +718,25 @@ export default function PdfReader({
     isMobileRef.current = isMobile;
   }, [isMobile]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => {
+      setPrefersReducedMotion(mediaQuery.matches);
+    };
+    update();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", update);
+      return () => mediaQuery.removeEventListener("change", update);
+    }
+    if (typeof mediaQuery.addListener === "function") {
+      mediaQuery.addListener(update);
+      return () => mediaQuery.removeListener(update);
+    }
+  }, []);
+
   const onResumeStateChangeRef = useRef(onResumeStateChange);
   useEffect(() => {
     onResumeStateChangeRef.current = onResumeStateChange;
@@ -730,6 +764,31 @@ export default function PdfReader({
     },
     [contentRef]
   );
+
+  const handleViewerContainerScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      if (!isMobile || prefersReducedMotion || !paneChromeScrollHandler) {
+        return;
+      }
+      // On mobile, the PDF viewer is the scroll owner for pane chrome visibility.
+      paneChromeScrollHandler(event.currentTarget.scrollTop);
+    },
+    [isMobile, paneChromeScrollHandler, prefersReducedMotion]
+  );
+
+  useEffect(() => {
+    if (!isMobile || !paneMobileChrome) {
+      return;
+    }
+    const lockVisible = prefersReducedMotion || selection !== null;
+    if (lockVisible) {
+      paneMobileChrome.showMobileChrome();
+    }
+    paneMobileChrome.setMobileChromeLockedVisible(lockVisible);
+    return () => {
+      paneMobileChrome.setMobileChromeLockedVisible(false);
+    };
+  }, [isMobile, paneMobileChrome, prefersReducedMotion, selection]);
 
   const ensurePdfJs = useCallback(async () => {
     if (pdfJsRef.current) {
@@ -2297,7 +2356,9 @@ export default function PdfReader({
             <div
               ref={viewerContainerRef}
               className={styles.viewerContainer}
+              data-pane-content="true"
               aria-label="PDF document"
+              onScroll={handleViewerContainerScroll}
             >
               <div ref={setContentNode} className={`pdfViewer ${styles.viewerHost}`} />
             </div>
