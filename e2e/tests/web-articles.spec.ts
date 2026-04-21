@@ -139,8 +139,10 @@ test.describe("web articles", () => {
       page.getByRole("dialog", { name: /highlight actions/i })
     ).toBeVisible({ timeout: 5_000 });
 
-    await expect(page.getByRole("button", { name: /^Green/ })).toBeEnabled();
-    await page.getByRole("button", { name: /^Green/ }).click();
+    const highlightActions = page.getByRole("dialog", { name: /highlight actions/i });
+    const greenButton = highlightActions.getByRole("button", { name: /^Green/ }).first();
+    await expect(greenButton).toBeEnabled();
+    await greenButton.click();
 
     await expect
       .poll(

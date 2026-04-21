@@ -418,14 +418,10 @@ test.describe("pdf reader", () => {
       // Normalize deterministically so this test validates highlight persistence only.
       await ensureOnPage(page, 2, expectedPageCount);
 
-      const entireDocumentScope = page.getByRole("button", { name: "Entire document" });
-      await expect(entireDocumentScope).toBeVisible();
-      await entireDocumentScope.click();
-
       const linkedRow = page.locator(`[data-highlight-id="${createdHighlightId}"]`).first();
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
-      await linkedRow.hover();
-      const chatButton = linkedRow.getByLabel("Send to chat");
+      await linkedRow.click();
+      const chatButton = page.getByRole("button", { name: "Send to chat" }).first();
       await expect(chatButton).toBeVisible();
       const conversationTabCountBefore = await page
         .getByRole("tab", { name: /chat/i })
@@ -462,7 +458,7 @@ test.describe("pdf reader", () => {
     }
   });
 
-  test("highlights on non-active page are visible immediately in document scope and click navigates to projected target", async ({
+  test("pdf highlights stay scoped to the active page and appear after page navigation", async ({
     page,
   }) => {
     const seeded = readSeededPdfMedia();
@@ -527,15 +523,17 @@ test.describe("pdf reader", () => {
       await page.goto(`/media/${mediaId}`);
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
 
-      const entireDocumentScope = page.getByRole("button", { name: "Entire document" });
-      await expect(entireDocumentScope).toBeVisible();
-      await entireDocumentScope.click();
-
+      const onPageRow = page.locator('[class*="linkedItemRow"]', { hasText: pageOneExact }).first();
       const offPageRow = page.locator('[class*="linkedItemRow"]', { hasText: pageTwoExact }).first();
+      await expect(onPageRow).toBeVisible({ timeout: 10_000 });
+      await expect(offPageRow).toHaveCount(0);
+
+      await clickToolbarButtonByAriaLabel(page, "Next page");
+      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible({ timeout: 20_000 });
+      await expect(onPageRow).toHaveCount(0);
       await expect(offPageRow).toBeVisible({ timeout: 10_000 });
       await offPageRow.click();
 
-      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible({ timeout: 20_000 });
       await expect
         .poll(
           async () => page.locator(`[data-testid^="pdf-highlight-${pageTwoHighlightId}-"]`).count(),

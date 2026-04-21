@@ -932,8 +932,8 @@ export default function useMediaViewState(id: string) {
         setActiveSectionId(resolvedSectionId);
         setPendingAnchorId(
           requestedEpubLoc === null && readerResumeSource === resolvedSection.href_path
-            ? readerResumeAnchor ?? resolvedSection.anchor_id ?? null
-            : resolvedSection.anchor_id ?? null
+            ? readerResumeAnchor ?? resolvedSection.section_id
+            : resolvedSection.section_id
         );
       } catch (err) {
         if (cancelled) return;
@@ -999,7 +999,7 @@ export default function useMediaViewState(id: string) {
               })
             );
             setActiveSectionId(resolvedSectionId);
-            setPendingAnchorId(section.anchor_id ?? section.section_id);
+            setPendingAnchorId(section.section_id);
           } else {
             setEpubError("No sections available for this EPUB.");
           }
@@ -1081,7 +1081,7 @@ export default function useMediaViewState(id: string) {
     const section = epubSections.find((item) => item.section_id === locParam);
     if (!section) return;
     setActiveSectionId(section.section_id);
-    setPendingAnchorId(section.anchor_id ?? section.section_id);
+    setPendingAnchorId(section.section_id);
   }, [isEpub, epubSections, requestedEpubLoc, activeSectionId]);
 
   useEffect(() => {
@@ -1828,7 +1828,7 @@ export default function useMediaViewState(id: string) {
           if (!section) {
             return null;
           }
-          setPendingAnchorId(linkTarget.anchorId ?? section.anchor_id ?? section.section_id);
+          setPendingAnchorId(linkTarget.anchorId ?? section.section_id);
           if (linkTarget.sectionId !== activeSectionId) {
             router.push(buildEpubLocationHref(id, linkTarget.sectionId));
             setActiveSectionId(linkTarget.sectionId);
@@ -2203,12 +2203,16 @@ export default function useMediaViewState(id: string) {
     (sectionId: string) => {
       const section = epubSections?.find((item) => item.section_id === sectionId);
       if (!section) return;
+      if (sectionId === activeSectionId) {
+        setPendingAnchorId(section.section_id);
+        return;
+      }
       router.push(buildEpubLocationHref(id, sectionId));
       setActiveSectionId(sectionId);
-      setPendingAnchorId(section.anchor_id ?? section.section_id);
+      setPendingAnchorId(section.section_id);
       setActiveEpubSection(null);
     },
-    [epubSections, id, router]
+    [activeSectionId, epubSections, id, router]
   );
 
   const activeSectionPosition = useMemo(() => {

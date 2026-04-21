@@ -382,7 +382,7 @@ export default function LinkedItemsPane({
       const anchor =
         contentRef.current.querySelector<HTMLElement>(`[data-highlight-anchor="${escapedId}"]`) ??
         contentRef.current.querySelector<HTMLElement>(`[data-active-highlight-ids~="${escapedId}"]`);
-      anchor?.scrollIntoView({ behavior: "smooth", block: "center" });
+      anchor?.scrollIntoView({ behavior: "auto", block: "center" });
     },
     [contentRef, onHighlightClick]
   );

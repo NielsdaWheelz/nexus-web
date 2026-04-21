@@ -363,7 +363,6 @@ class TestReaderState:
         ("payload", "label"),
         [
             ({"source": None, "text_offset": 12}, "explicit null source is rejected"),
-            ({"source": "frag-1"}, "text locator needs an anchor field"),
             ({"text_offset": 12}, "text locator requires source"),
             ({"source": "frag-1", "quote_prefix": "before"}, "quote_prefix requires quote"),
             ({"page_progression": 0.6}, "page_progression requires page"),
@@ -396,6 +395,27 @@ class TestReaderState:
         assert resp.status_code == 400, (
             f"Expected 400 for invalid locator payload ({label}) but got {resp.status_code}: {resp.json()}"
         )
+
+    def test_put_reader_state_allows_source_only_text_locator(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_reader_media(session, kind=MediaKind.epub.value)
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload = {"source": "chapter-2.xhtml"}
+
+        resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=payload,
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"] == payload
 
     def test_put_reader_state_rejects_text_fields_for_pdf(
         self, auth_client, direct_db: DirectSessionManager

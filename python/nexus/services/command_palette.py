@@ -4,6 +4,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import CommandPaletteRecent
@@ -104,47 +105,89 @@ def record_recent_for_viewer(
         if collapsed_title:
             normalized_title = collapsed_title[:MAX_TITLE_SNAPSHOT_LENGTH].strip()
 
-    with transaction(db):
-        current_time = db.execute(select(func.now())).scalar_one()
-        row = (
-            db.execute(
-                select(CommandPaletteRecent).where(
-                    CommandPaletteRecent.user_id == viewer_id,
-                    CommandPaletteRecent.href == canonical_href,
-                )
-            )
-            .scalars()
-            .one_or_none()
-        )
+    row: CommandPaletteRecent | None = None
 
-        if row is None:
-            row = CommandPaletteRecent(
-                user_id=viewer_id,
-                href=canonical_href,
-                title_snapshot=normalized_title,
-                created_at=current_time,
-                last_used_at=current_time,
+    try:
+        with transaction(db):
+            current_time = db.execute(select(func.now())).scalar_one()
+            row = (
+                db.execute(
+                    select(CommandPaletteRecent).where(
+                        CommandPaletteRecent.user_id == viewer_id,
+                        CommandPaletteRecent.href == canonical_href,
+                    )
+                )
+                .scalars()
+                .one_or_none()
             )
-            db.add(row)
-            db.flush()
-        else:
+
+            if row is None:
+                row = CommandPaletteRecent(
+                    user_id=viewer_id,
+                    href=canonical_href,
+                    title_snapshot=normalized_title,
+                    created_at=current_time,
+                    last_used_at=current_time,
+                )
+                db.add(row)
+                db.flush()
+            else:
+                row.last_used_at = current_time
+                if normalized_title is not None:
+                    row.title_snapshot = normalized_title
+                db.flush()
+
+            trim_ids = (
+                db.execute(
+                    select(CommandPaletteRecent.id)
+                    .where(CommandPaletteRecent.user_id == viewer_id)
+                    .order_by(
+                        CommandPaletteRecent.last_used_at.desc(),
+                        CommandPaletteRecent.id.desc(),
+                    )
+                    .offset(MAX_COMMAND_PALETTE_RECENTS)
+                )
+                .scalars()
+                .all()
+            )
+            if trim_ids:
+                db.execute(delete(CommandPaletteRecent).where(CommandPaletteRecent.id.in_(trim_ids)))
+    except IntegrityError:
+        with transaction(db):
+            current_time = db.execute(select(func.now())).scalar_one()
+            row = (
+                db.execute(
+                    select(CommandPaletteRecent).where(
+                        CommandPaletteRecent.user_id == viewer_id,
+                        CommandPaletteRecent.href == canonical_href,
+                    )
+                )
+                .scalars()
+                .one_or_none()
+            )
+            if row is None:
+                raise
+
             row.last_used_at = current_time
             if normalized_title is not None:
                 row.title_snapshot = normalized_title
             db.flush()
 
-        trim_ids = (
-            db.execute(
-                select(CommandPaletteRecent.id)
-                .where(CommandPaletteRecent.user_id == viewer_id)
-                .order_by(CommandPaletteRecent.last_used_at.desc(), CommandPaletteRecent.id.desc())
-                .offset(MAX_COMMAND_PALETTE_RECENTS)
+            trim_ids = (
+                db.execute(
+                    select(CommandPaletteRecent.id)
+                    .where(CommandPaletteRecent.user_id == viewer_id)
+                    .order_by(
+                        CommandPaletteRecent.last_used_at.desc(),
+                        CommandPaletteRecent.id.desc(),
+                    )
+                    .offset(MAX_COMMAND_PALETTE_RECENTS)
+                )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-        if trim_ids:
-            db.execute(delete(CommandPaletteRecent).where(CommandPaletteRecent.id.in_(trim_ids)))
+            if trim_ids:
+                db.execute(delete(CommandPaletteRecent).where(CommandPaletteRecent.id.in_(trim_ids)))
 
     return CommandPaletteRecentOut.model_validate(row)
 

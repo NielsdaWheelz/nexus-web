@@ -57,7 +57,7 @@ test.describe("youtube transcript media", () => {
     await expect(playerFrame).toBeVisible();
     await expect(page.locator("video")).toHaveCount(0);
 
-    await expect(page.getByText("No highlights yet. Select text to create one.")).toBeVisible();
+    await expect(page.getByText("No highlights in this context.")).toBeVisible();
     await expect(page.getByRole("link", { name: /open in source/i })).toHaveAttribute(
       "href",
       seed.watch_url

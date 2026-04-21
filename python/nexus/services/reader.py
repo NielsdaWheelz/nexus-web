@@ -130,23 +130,6 @@ def put_reader_media_state(
                     ApiErrorCode.E_INVALID_REQUEST,
                     "Text reader state cannot include PDF page fields",
                 )
-            if not any(
-                value is not None
-                for value in (
-                    locator.anchor,
-                    locator.text_offset,
-                    locator.quote,
-                    locator.quote_prefix,
-                    locator.quote_suffix,
-                    locator.progression,
-                    locator.total_progression,
-                    locator.position,
-                )
-            ):
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "Text reader state needs at least one anchor field",
-                )
 
     current_time = datetime.now(UTC)
     locator_payload = locator.model_dump(mode="json", exclude_none=True) if locator else None

@@ -726,7 +726,7 @@ test.describe("epub", () => {
       .toBeLessThan(170);
 
     const chapter1PrimaryAnchor = page
-      .locator(`[data-highlight-anchor="${chapter1PrimaryHighlight.id}"]`)
+      .locator(`[data-active-highlight-ids~="${chapter1PrimaryHighlight.id}"]`)
       .first();
     await chapter1PrimaryAnchor.evaluate((element) => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
