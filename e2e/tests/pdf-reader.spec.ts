@@ -32,8 +32,8 @@ interface PdfReaderResumeState {
   kind: "pdf";
   position: number | null;
   page: number;
-  page_progression?: number | null;
-  zoom?: number | null;
+  page_progression: number | null;
+  zoom: number | null;
 }
 
 function readSeededPdfMedia(): SeededPdfMedia {
@@ -290,6 +290,7 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
               kind: "pdf",
               position: 1,
               page: 1,
+              page_progression: null,
               zoom: 1,
             });
             return true;

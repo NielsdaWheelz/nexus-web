@@ -641,7 +641,8 @@ test.describe("epub", () => {
 
   test("open reader", async ({ page }) => {
     const seed = readSeededEpubMedia();
-    await page.goto(`/media/${seed.media_id}`);
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
     // First section heading should be visible (use heading role to avoid
     // strict mode violation with the <option> in the section selector)
     await expect(
@@ -651,7 +652,8 @@ test.describe("epub", () => {
 
   test("navigate sections", async ({ page }) => {
     const seed = readSeededEpubMedia();
-    await page.goto(`/media/${seed.media_id}`);
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
 
     // Wait for the first section to load
     await expect(
@@ -790,7 +792,8 @@ test.describe("epub", () => {
     page,
   }) => {
     const seed = readSeededEpubMedia();
-    await page.goto(`/media/${seed.media_id}`);
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
 
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[0] })
@@ -832,7 +835,8 @@ test.describe("epub", () => {
 
   test("create highlight in epub", async ({ page }) => {
     const seed = readSeededEpubMedia();
-    await page.goto(`/media/${seed.media_id}`);
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
 
     // Wait for section content to load
     await expect(
@@ -852,14 +856,11 @@ test.describe("epub", () => {
 
   test("linked-items stay aligned and ordered after reload", async ({ page }) => {
     const seed = readSeededEpubMedia();
-    await page.goto(`/media/${seed.media_id}`);
-
-    await selectSectionByLabel(page, seed.chapter_titles[0]);
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
-
-    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
     const section = await fetchEpubSectionDetail(page, seed.media_id, firstSection.section_id);
 
     const needleA = "introduction chapter of the E2E test EPUB";
@@ -888,8 +889,7 @@ test.describe("epub", () => {
     const targetIds = [highlightA.id, highlightB.id];
 
     for (let iteration = 0; iteration < 2; iteration++) {
-      await page.reload();
-      await selectSectionByLabel(page, seed.chapter_titles[0]);
+      await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
       await expect(
         page.getByRole("heading", { name: seed.chapter_titles[0] })
       ).toBeVisible({ timeout: 15_000 });
@@ -982,8 +982,7 @@ test.describe("epub", () => {
       "EPUB chapter two inspector note."
     );
 
-    await page.goto(`/media/${seed.media_id}`);
-    await selectSectionByLabel(page, seed.chapter_titles[0]);
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });

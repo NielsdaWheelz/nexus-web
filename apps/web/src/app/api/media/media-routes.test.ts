@@ -69,6 +69,7 @@ describe("media BFF proxy routes", () => {
     const req = new Request("http://localhost/api/media/mid-123/reader-state", {
       method: "PUT",
       body: JSON.stringify({
+        kind: "pdf",
         page: 3,
         position: 3,
         page_progression: 0.4,

@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import type { ReaderLocator } from "./types";
+import {
+  parseReaderResumeState,
+  readerResumeStatesEqual,
+  type ReaderResumeState,
+} from "./types";
 
 type ApiFetchFn = typeof apiFetch;
 
@@ -12,71 +16,14 @@ interface UseReaderResumeStateOptions {
   debounceMs?: number;
 }
 
-function normalizeString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null;
-}
-
-function normalizeNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function normalizeReaderLocator(value: unknown): ReaderLocator | null {
-  if (typeof value !== "object" || value === null) {
-    return null;
-  }
-
-  const record = value as Record<string, unknown>;
-  const locator: ReaderLocator = {
-    source: normalizeString(record.source),
-    anchor: normalizeString(record.anchor),
-    text_offset: normalizeNumber(record.text_offset),
-    quote: normalizeString(record.quote),
-    quote_prefix: normalizeString(record.quote_prefix),
-    quote_suffix: normalizeString(record.quote_suffix),
-    progression: normalizeNumber(record.progression),
-    total_progression: normalizeNumber(record.total_progression),
-    position: normalizeNumber(record.position),
-    page: normalizeNumber(record.page),
-    page_progression: normalizeNumber(record.page_progression),
-    zoom: normalizeNumber(record.zoom),
-  };
-
-  return Object.values(locator).some((entry) => entry !== null) ? locator : null;
-}
-
-function readerLocatorsEqual(
-  left: ReaderLocator | null,
-  right: ReaderLocator | null
-): boolean {
-  if (left === right) {
-    return true;
-  }
-  if (!left || !right) {
-    return false;
-  }
-  return (
-    left.source === right.source &&
-    left.anchor === right.anchor &&
-    left.text_offset === right.text_offset &&
-    left.quote === right.quote &&
-    left.quote_prefix === right.quote_prefix &&
-    left.quote_suffix === right.quote_suffix &&
-    left.progression === right.progression &&
-    left.total_progression === right.total_progression &&
-    left.position === right.position &&
-    left.page === right.page &&
-    left.page_progression === right.page_progression &&
-    left.zoom === right.zoom
-  );
-}
-
 export function useReaderResumeState(options: UseReaderResumeStateOptions) {
   const { mediaId, apiFetch: fetchFn = apiFetch, debounceMs = 500 } = options;
-  const [state, setState] = useState<ReaderLocator | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [state, setState] = useState<ReaderResumeState | null>(null);
+  const [loading, setLoading] = useState(Boolean(mediaId));
   const [error, setError] = useState<string | null>(null);
-  const stateRef = useRef<ReaderLocator | null>(null);
-  const pendingRef = useRef<ReaderLocator | null>(null);
+  const [resolvedMediaId, setResolvedMediaId] = useState<string | null>(null);
+  const stateRef = useRef<ReaderResumeState | null>(null);
+  const pendingRef = useRef<ReaderResumeState | null>(null);
   const hasPendingRef = useRef(false);
   const hydratedRef = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -102,7 +49,7 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
         method: "PUT",
         body: JSON.stringify(payload),
       });
-      const savedState = normalizeReaderLocator(res.data);
+      const savedState = parseReaderResumeState(res.data);
       stateRef.current = savedState;
       setState(savedState);
     } catch (err) {
@@ -123,11 +70,13 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
       }
       stateRef.current = null;
       setState(null);
+      setResolvedMediaId(null);
       setLoading(false);
       setError(null);
       return;
     }
 
+    const targetMediaId = mediaId;
     hydratedRef.current = false;
     hasPendingRef.current = false;
     pendingRef.current = null;
@@ -135,11 +84,14 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
+    stateRef.current = null;
+    setState(null);
+    setResolvedMediaId(null);
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchFn<{ data: unknown }>(`/api/media/${mediaId}/reader-state`);
-      const nextState = normalizeReaderLocator(res.data);
+      const res = await fetchFn<{ data: unknown }>(`/api/media/${targetMediaId}/reader-state`);
+      const nextState = parseReaderResumeState(res.data);
       stateRef.current = nextState;
       setState(nextState);
     } catch (err) {
@@ -151,6 +103,7 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
       }
     } finally {
       hydratedRef.current = true;
+      setResolvedMediaId(targetMediaId);
       setLoading(false);
     }
   }, [mediaId, fetchFn]);
@@ -160,14 +113,14 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
   }, [load]);
 
   const save = useCallback(
-    (nextState: ReaderLocator | null) => {
+    (nextState: ReaderResumeState | null) => {
       if (!mediaId || !hydratedRef.current) {
         return;
       }
 
-      const normalizedNextState = normalizeReaderLocator(nextState);
+      const normalizedNextState = parseReaderResumeState(nextState);
       const baseline = hasPendingRef.current ? pendingRef.current : stateRef.current;
-      if (readerLocatorsEqual(baseline, normalizedNextState)) {
+      if (readerResumeStatesEqual(baseline, normalizedNextState)) {
         return;
       }
 
@@ -203,5 +156,8 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
     };
   }, [flush]);
 
-  return { state, loading, error, load, save };
+  const activeLoading = Boolean(mediaId) && resolvedMediaId !== mediaId ? true : loading;
+  const activeState = resolvedMediaId === mediaId ? state : null;
+
+  return { state: activeState, loading: activeLoading, error, load, save };
 }

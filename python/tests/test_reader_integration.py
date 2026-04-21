@@ -3,6 +3,7 @@
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus, ReaderMediaState
 from tests.helpers import auth_headers, create_test_user_id
@@ -62,6 +63,73 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
+
+
+def _build_reader_state_payload(media_kind: str, fragment_ids: list[UUID]) -> dict:
+    """Build a valid reader-state payload for the requested media kind."""
+
+    fragment_id = str(fragment_ids[-1])
+    if media_kind == MediaKind.web_article.value:
+        return {
+            "kind": "web",
+            "target": {"fragment_id": fragment_id},
+            "locations": {
+                "text_offset": 42,
+                "progression": None,
+                "total_progression": 0.75,
+                "position": 2,
+            },
+            "text": {
+                "quote": "Reader fragment 1",
+                "quote_prefix": None,
+                "quote_suffix": " after",
+            },
+        }
+    if media_kind == MediaKind.epub.value:
+        return {
+            "kind": "epub",
+            "target": {
+                "section_id": "chapter-2",
+                "href_path": "chapter-2.xhtml",
+                "anchor_id": None,
+            },
+            "locations": {
+                "text_offset": 12,
+                "progression": 0.5,
+                "total_progression": 0.75,
+                "position": 2,
+            },
+            "text": {
+                "quote": "Reader fragment 1",
+                "quote_prefix": "before ",
+                "quote_suffix": None,
+            },
+        }
+    if media_kind == MediaKind.pdf.value:
+        return {
+            "kind": "pdf",
+            "page": 4,
+            "page_progression": None,
+            "zoom": 1.25,
+            "position": None,
+        }
+    if media_kind in {MediaKind.video.value, MediaKind.podcast_episode.value}:
+        return {
+            "kind": "transcript",
+            "target": {"fragment_id": fragment_id},
+            "locations": {
+                "text_offset": 7,
+                "progression": 0.25,
+                "total_progression": 0.4,
+                "position": 1,
+            },
+            "text": {
+                "quote": "Reader fragment 1",
+                "quote_prefix": None,
+                "quote_suffix": None,
+            },
+        }
+    raise ValueError(f"Unsupported media kind for reader-state tests: {media_kind}")
 
 
 class TestGetReaderProfile:
@@ -209,29 +277,29 @@ class TestReaderState:
         assert resp.status_code == 200
         assert resp.json()["data"] is None
 
-    def test_get_reader_state_returns_saved_flat_locator(
-        self, auth_client, direct_db: DirectSessionManager
+    @pytest.mark.parametrize(
+        "media_kind",
+        [
+            MediaKind.web_article.value,
+            MediaKind.epub.value,
+            MediaKind.pdf.value,
+            MediaKind.video.value,
+        ],
+    )
+    def test_put_reader_state_round_trips_new_resume_state(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        media_kind: str,
     ):
         user_id = create_test_user_id()
         with direct_db.session() as session:
-            media_id, fragment_ids = _create_ready_reader_media(
-                session,
-                kind=MediaKind.web_article.value,
-            )
+            media_id, fragment_ids = _create_ready_reader_media(session, kind=media_kind)
 
         _register_media_cleanup(direct_db, media_id)
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        payload = {
-            "source": str(fragment_ids[1]),
-            "text_offset": 42,
-            "quote": "Reader fragment 1",
-            "quote_prefix": "before ",
-            "quote_suffix": " after",
-            "progression": 0.5,
-            "total_progression": 0.75,
-            "position": 2,
-        }
+        payload = _build_reader_state_payload(media_kind, fragment_ids)
 
         put_resp = auth_client.put(
             f"/media/{media_id}/reader-state",
@@ -249,32 +317,6 @@ class TestReaderState:
 
         assert get_resp.status_code == 200
         assert get_resp.json()["data"] == payload
-
-    def test_put_reader_state_persists_pdf_locator(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(session, kind=MediaKind.pdf.value)
-
-        _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        payload = {
-            "page": 4,
-            "position": 4,
-            "page_progression": 0.6,
-            "zoom": 1.25,
-        }
-
-        resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-
-        assert resp.status_code == 200
-        assert resp.json()["data"] == payload
 
         with direct_db.session() as session:
             row = (
@@ -300,9 +342,10 @@ class TestReaderState:
         _register_media_cleanup(direct_db, media_id)
         _add_media_to_user_library(auth_client, user_id, media_id)
 
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         set_resp = auth_client.put(
             f"/media/{media_id}/reader-state",
-            json={"source": str(fragment_ids[0]), "text_offset": 7, "position": 1},
+            json=payload,
             headers=auth_headers(user_id),
         )
 
@@ -327,14 +370,101 @@ class TestReaderState:
                 .one()
             )
             assert row.locator is None
+            is_sql_null = session.execute(
+                text(
+                    """
+                    SELECT locator IS NULL
+                    FROM reader_media_state
+                    WHERE id = :state_id
+                    """
+                ),
+                {"state_id": row.id},
+            ).scalar_one()
+            assert is_sql_null is True
+
+    def test_get_reader_state_returns_null_for_removed_locator_payloads(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_reader_media(session, kind=MediaKind.epub.value)
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        with direct_db.session() as session:
+            session.add(
+                ReaderMediaState(
+                    user_id=user_id,
+                    media_id=media_id,
+                    locator={"source": "legacy", "text_offset": 12},
+                )
+            )
+            session.commit()
+
+        resp = auth_client.get(
+            f"/media/{media_id}/reader-state",
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"] is None
+
+    def test_get_reader_state_returns_null_for_kind_mismatched_resume_state(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        with direct_db.session() as session:
+            session.add(
+                ReaderMediaState(
+                    user_id=user_id,
+                    media_id=media_id,
+                    locator=_build_reader_state_payload(MediaKind.video.value, fragment_ids),
+                )
+            )
+            session.commit()
+
+        resp = auth_client.get(
+            f"/media/{media_id}/reader-state",
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"] is None
 
     @pytest.mark.parametrize(
         "payload",
         [
-            {"locator": {"source": "legacy", "text_offset": 12}},
-            {"locator_kind": "epub_section"},
-            {"type": "epub_section", "section_id": "ch01"},
-            {"theme": "dark"},
+            {"source": "legacy", "text_offset": 12},
+            {"page": 4, "position": 4},
+            {"locator": {"kind": "pdf", "page": 1}},
+            {"kind": "epub", "section_id": "ch01", "href_path": "ch01.xhtml"},
+            {"kind": "web", "target": {"fragment_id": "frag-1"}},
+            {
+                "kind": "transcript",
+                "target": {"fragment_id": "frag-1"},
+                "locations": {
+                    "text_offset": 12,
+                    "progression": 0.1,
+                    "total_progression": 0.2,
+                    "position": 1,
+                },
+                "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
+                "source": "legacy",
+            },
             {},
         ],
     )
@@ -346,7 +476,7 @@ class TestReaderState:
     ):
         user_id = create_test_user_id()
         with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(session)
+            media_id, _ = _create_ready_reader_media(session, kind=MediaKind.epub.value)
 
         _register_media_cleanup(direct_db, media_id)
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -360,28 +490,126 @@ class TestReaderState:
         assert resp.status_code == 400
 
     @pytest.mark.parametrize(
-        ("payload", "label"),
+        ("media_kind", "payload", "label"),
         [
-            ({"source": None, "text_offset": 12}, "explicit null source is rejected"),
-            ({"text_offset": 12}, "text locator requires source"),
-            ({"source": "frag-1", "quote_prefix": "before"}, "quote_prefix requires quote"),
-            ({"page_progression": 0.6}, "page_progression requires page"),
-            ({"zoom": 1.25}, "zoom requires page"),
-            ({"source": "frag-1", "text_offset": -1}, "negative text_offset is rejected"),
-            ({"page": 0}, "page must be positive"),
-            ({"page": 3, "zoom": 5.0}, "zoom range is enforced"),
+            (
+                MediaKind.web_article.value,
+                {
+                    "kind": "web",
+                    "target": {"fragment_id": "   "},
+                    "locations": {
+                        "text_offset": 12,
+                        "progression": 0.1,
+                        "total_progression": 0.2,
+                        "position": 1,
+                    },
+                    "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
+                },
+                "blank fragment ids are rejected",
+            ),
+            (
+                MediaKind.web_article.value,
+                {
+                    "kind": "web",
+                    "target": {"fragment_id": "frag-1"},
+                    "locations": {
+                        "text_offset": 12,
+                        "progression": 0.1,
+                        "total_progression": 0.2,
+                        "position": 1,
+                    },
+                    "text": {"quote": None, "quote_prefix": "before ", "quote_suffix": None},
+                },
+                "quote context requires quote text",
+            ),
+            (
+                MediaKind.epub.value,
+                {
+                    "kind": "epub",
+                    "target": {
+                        "section_id": "chapter-1",
+                        "href_path": "   ",
+                        "anchor_id": None,
+                    },
+                    "locations": {
+                        "text_offset": 12,
+                        "progression": 0.1,
+                        "total_progression": 0.2,
+                        "position": 1,
+                    },
+                    "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
+                },
+                "blank href_path is rejected",
+            ),
+            (
+                MediaKind.epub.value,
+                {
+                    "kind": "epub",
+                    "target": {
+                        "section_id": "chapter-1",
+                        "href_path": "chapter-1.xhtml",
+                        "anchor_id": "   ",
+                    },
+                    "locations": {
+                        "text_offset": 12,
+                        "progression": 0.1,
+                        "total_progression": 0.2,
+                        "position": 1,
+                    },
+                    "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
+                },
+                "blank anchor ids are rejected",
+            ),
+            (
+                MediaKind.video.value,
+                {
+                    "kind": "transcript",
+                    "target": {"fragment_id": "frag-1"},
+                    "locations": {
+                        "text_offset": -1,
+                        "progression": 0.1,
+                        "total_progression": 0.2,
+                        "position": 1,
+                    },
+                    "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
+                },
+                "negative text offsets are rejected",
+            ),
+            (
+                MediaKind.pdf.value,
+                {
+                    "kind": "pdf",
+                    "page": 0,
+                    "page_progression": None,
+                    "zoom": 1.25,
+                    "position": None,
+                },
+                "page must be positive",
+            ),
+            (
+                MediaKind.pdf.value,
+                {
+                    "kind": "pdf",
+                    "page": 3,
+                    "page_progression": 1.2,
+                    "zoom": 1.25,
+                    "position": None,
+                },
+                "page progression range is enforced",
+            ),
         ],
     )
-    def test_put_reader_state_rejects_invalid_flat_locator_payloads(
+    def test_put_reader_state_rejects_invalid_resume_payloads(
         self,
         auth_client,
         direct_db: DirectSessionManager,
+        media_kind: str,
         payload: dict,
         label: str,
     ):
         user_id = create_test_user_id()
         with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(session, kind=MediaKind.web_article.value)
+            media_id, _ = _create_ready_reader_media(session, kind=media_kind)
 
         _register_media_cleanup(direct_db, media_id)
         _add_media_to_user_library(auth_client, user_id, media_id)
@@ -393,62 +621,36 @@ class TestReaderState:
         )
 
         assert resp.status_code == 400, (
-            f"Expected 400 for invalid locator payload ({label}) but got {resp.status_code}: {resp.json()}"
+            f"Expected 400 for invalid reader-state payload ({label}) but got "
+            f"{resp.status_code}: {resp.json()}"
         )
 
-    def test_put_reader_state_allows_source_only_text_locator(
-        self, auth_client, direct_db: DirectSessionManager
+    @pytest.mark.parametrize(
+        ("media_kind", "payload_kind"),
+        [
+            (MediaKind.pdf.value, MediaKind.web_article.value),
+            (MediaKind.epub.value, MediaKind.pdf.value),
+            (MediaKind.video.value, MediaKind.epub.value),
+        ],
+    )
+    def test_put_reader_state_rejects_kind_mismatch_for_media(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        media_kind: str,
+        payload_kind: str,
     ):
         user_id = create_test_user_id()
         with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(session, kind=MediaKind.epub.value)
+            media_id, fragment_ids = _create_ready_reader_media(session, kind=media_kind)
 
         _register_media_cleanup(direct_db, media_id)
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        payload = {"source": "chapter-2.xhtml"}
-
+        payload = _build_reader_state_payload(payload_kind, fragment_ids)
         resp = auth_client.put(
             f"/media/{media_id}/reader-state",
             json=payload,
-            headers=auth_headers(user_id),
-        )
-
-        assert resp.status_code == 200
-        assert resp.json()["data"] == payload
-
-    def test_put_reader_state_rejects_text_fields_for_pdf(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(session, kind=MediaKind.pdf.value)
-
-        _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json={"page": 1, "source": "frag-1", "text_offset": 12},
-            headers=auth_headers(user_id),
-        )
-
-        assert resp.status_code == 400
-        assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
-
-    def test_put_reader_state_rejects_pdf_fields_for_text_media(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(session, kind=MediaKind.epub.value)
-
-        _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json={"source": "chapter-1.xhtml", "text_offset": 12, "page": 1},
             headers=auth_headers(user_id),
         )
 
@@ -460,14 +662,14 @@ class TestReaderState:
     ):
         user_id = create_test_user_id()
         with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(session)
+            media_id, fragment_ids = _create_ready_reader_media(session)
 
         _register_media_cleanup(direct_db, media_id)
         _add_media_to_user_library(auth_client, user_id, media_id)
 
         resp = auth_client.patch(
             f"/media/{media_id}/reader-state",
-            json={"source": "chapter-1.xhtml", "text_offset": 12},
+            json=_build_reader_state_payload(MediaKind.epub.value, fragment_ids),
             headers=auth_headers(user_id),
         )
 
@@ -480,7 +682,10 @@ class TestReaderState:
         user_b = create_test_user_id()
 
         with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(session, kind=MediaKind.epub.value)
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.epub.value,
+            )
 
         _register_media_cleanup(direct_db, media_id)
         _add_media_to_user_library(auth_client, user_a, media_id)
@@ -492,7 +697,7 @@ class TestReaderState:
         )
         put_resp = auth_client.put(
             f"/media/{media_id}/reader-state",
-            json={"source": "chapter-1.xhtml", "text_offset": 12},
+            json=_build_reader_state_payload(MediaKind.epub.value, fragment_ids),
             headers=auth_headers(user_b),
         )
 

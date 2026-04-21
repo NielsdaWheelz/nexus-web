@@ -31,7 +31,7 @@ export default function EpubContentPane({
   contentRef: React.RefObject<HTMLDivElement | null>;
   renderedHtml: string;
   onContentClick: (e: React.MouseEvent) => void;
-  onNavigate: (sectionId: string) => void;
+  onNavigate: (sectionId: string, anchorId?: string | null) => void;
 }) {
   if (epubError && epubError !== "processing") {
     return (
@@ -94,6 +94,21 @@ export default function EpubContentPane({
   );
 }
 
+function parseAnchorIdFromHref(href: string | null): string | null {
+  if (!href || !href.includes("#")) {
+    return null;
+  }
+  const fragment = href.split("#", 2)[1];
+  if (!fragment) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(fragment) || null;
+  } catch {
+    return fragment;
+  }
+}
+
 function TocNodeList({
   nodes,
   activeSectionId,
@@ -101,7 +116,7 @@ function TocNodeList({
 }: {
   nodes: NormalizedNavigationTocNode[];
   activeSectionId: string | null;
-  onNavigate: (sectionId: string) => void;
+  onNavigate: (sectionId: string, anchorId?: string | null) => void;
 }) {
   return (
     <ul className={styles.tocList}>
@@ -112,7 +127,10 @@ function TocNodeList({
               className={`${styles.tocLink} ${
                 node.section_id === activeSectionId ? styles.tocActive : ""
               }`}
-              onClick={() => node.section_id && onNavigate(node.section_id)}
+              onClick={() =>
+                node.section_id &&
+                onNavigate(node.section_id, parseAnchorIdFromHref(node.href))
+              }
             >
               {node.label}
             </button>

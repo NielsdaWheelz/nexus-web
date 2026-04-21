@@ -37,11 +37,12 @@ intentionally stays with two reader themes: light and dark.
 ### per-media resume
 
 - `reader_media_state` stores resume only
-- the reader-state API is `ReaderLocator | null`
+- the reader-state API is `ReaderResumeState | null`
 - `null` clears stored resume for that media
-- text readers persist `source`, `text_offset`, quote context,
-  `progression`, `total_progression`, and coarse `position`
+- text readers persist explicit targets plus `locations` and quote context
 - pdf persists `page`, `page_progression`, `zoom`, and coarse `position`
+- the shipped contract is discriminated by `kind` and rejects removed flat
+  locator bags
 
 ### reflow-safe web resume
 
@@ -58,11 +59,15 @@ changes.
 ### layered epub/web/pdf resume
 
 - epub resolves in this order:
-  `?loc` deep link -> saved `source` match -> coarse fallback -> first section
+  `?loc` deep link -> saved exact target snapshot -> coarse fallback ->
+  first section
 - once the section is open, epub restores by exact text offset,
-  then quote context, then progression, then anchor
+  then quote context, then progression, then coarse publication fallback,
+  then anchor fallback
+- restore is one-shot and abortable; user scroll cancels any pending
+  automatic restore
 - web/transcript pick explicit fragment/time targets first and fall back
-  to the saved text locator otherwise
+  to the saved explicit target otherwise
 - pdf restores saved page, intra-page progression, and zoom on open and
   persists later page changes without reopening the document file
 
@@ -82,6 +87,7 @@ required automated coverage includes:
 - reader settings persistence
 - web article canonical locator resume after profile typography reflow
 - epub `?loc` precedence over saved resume
+- epub delayed-hydration no-snap-back after manual scroll
 - epub intra-section locator resume after reload
 - pdf page + zoom + intra-page locator resume after reload
 - pdf in-session page persistence without file reopen

@@ -31,7 +31,7 @@ from nexus.schemas.media import (
     TranscriptRequestResponse,
     UploadInitRequest,
 )
-from nexus.schemas.reader import ReaderLocator
+from nexus.schemas.reader import ReaderResumeState
 from nexus.services import epub_lifecycle, epub_read, image_proxy
 from nexus.services import libraries as libraries_service
 from nexus.services import media as media_service
@@ -273,7 +273,7 @@ def get_reader_state(
 ) -> dict:
     """Get per-media reader state."""
     result = reader_service.get_reader_media_state(db, viewer.user_id, media_id)
-    return success_response(result.model_dump(mode="json", exclude_none=True) if result else None)
+    return success_response(result.model_dump(mode="json") if result else None)
 
 
 @router.put("/media/{media_id}/reader-state")
@@ -281,11 +281,11 @@ def put_reader_state(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    body: Annotated[ReaderLocator | None, Body()] = None,
+    body: Annotated[ReaderResumeState | None, Body()] = None,
 ) -> dict:
     """Replace per-media reader state."""
     result = reader_service.put_reader_media_state(db, viewer.user_id, media_id, body)
-    return success_response(result.model_dump(mode="json", exclude_none=True) if result else None)
+    return success_response(result.model_dump(mode="json") if result else None)
 
 
 @router.get("/media/{media_id}/listening-state")

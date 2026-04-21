@@ -9,7 +9,7 @@ import {
   type MutableRefObject,
 } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import type { ReaderLocator } from "@/lib/reader";
+import type { PdfReaderResumeState } from "@/lib/reader";
 import SelectionPopover from "./SelectionPopover";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
@@ -226,7 +226,7 @@ interface PdfReaderProps {
   /** Resume seed: zoom scale to apply when this media loads */
   startZoom?: number;
   /** Called when page or zoom changes for progress persistence */
-  onResumeStateChange?: (locator: ReaderLocator | null) => void;
+  onResumeStateChange?: (resumeState: PdfReaderResumeState | null) => void;
 }
 
 interface SelectionState {
@@ -711,14 +711,7 @@ export default function PdfReader({
   const publishResumeLocator = useCallback(
     (nextPageNumber: number, nextZoom: number, nextPageProgression: number | null) => {
       onResumeStateChangeRef.current?.({
-        source: null,
-        anchor: null,
-        text_offset: null,
-        quote: null,
-        quote_prefix: null,
-        quote_suffix: null,
-        progression: null,
-        total_progression: null,
+        kind: "pdf",
         position: nextPageNumber,
         page: nextPageNumber,
         page_progression: nextPageProgression,

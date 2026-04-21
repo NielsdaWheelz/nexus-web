@@ -25,31 +25,36 @@ this records the current reader model and the constraints we actively ship.
 ### per-media resume
 
 - `reader_media_state` stores resume only
-- `GET/PUT /api/media/{id}/reader-state` uses `ReaderLocator | null`
+- `GET/PUT /api/media/{id}/reader-state` uses `ReaderResumeState | null`
 - `null` clears the stored resume state for that media
-- `ReaderLocator` stores:
-  - text flow: `source`, `anchor`, `text_offset`,
-    `quote`, `quote_prefix`, `quote_suffix`,
-    `progression`, `total_progression`, `position`
-  - pdf: `page`, `page_progression`, `zoom`, `position`
-- the backend rejects unknown fields, blank string anchors,
-  empty locators, and impossible text-vs-pdf field mixes
+- `ReaderResumeState` is a discriminated union:
+  - `pdf`: `page`, `page_progression`, `zoom`, `position`
+  - `web`: `target.fragment_id`, `locations`, `text`
+  - `transcript`: `target.fragment_id`, `locations`, `text`
+  - `epub`: `target.section_id`, `target.href_path`,
+    `target.anchor_id`, `locations`, `text`
+- the backend and frontend both reject blank strings, removed flat fields,
+  unknown keys, invalid ranges, and media-kind mismatches
 
 ### layered restore order
 
 - epub restores in this order:
-  `?loc` deep link -> saved `source` match -> `total_progression`/`position`
-  fallback -> first navigation section
+  `?loc` deep link -> saved exact target snapshot ->
+  saved `total_progression`/`position` fallback -> first navigation section
 - once the section is open, epub restores by
-  `text_offset` -> quote match -> `progression`/`total_progression`
-  -> anchor fallback
+  `text_offset` -> quote match -> `progression` ->
+  `total_progression` -> `position` -> anchor fallback -> section top
+- epub restore runs once per open/navigation session and is cancelled on
+  user scroll intent
 - epub keeps `?loc` synchronized after resolution so browser back/forward
-  and persisted resume converge on the same navigation section
+  describes the active section without starting a second restore loop
 - web article/transcript restore uses explicit target params first
-  (`fragment_id`, `start`) and falls back to saved locator `source`
+  (`fragment_id`, `start`) and falls back to the saved
+  `target.fragment_id`
   when no explicit target is present
 - web article/transcript visual restore uses
-  `text_offset` -> quote match -> `progression` -> `total_progression`
+  `text_offset` -> quote match -> `progression` ->
+  `total_progression` -> `position`
   after layout settles
 - pdf applies saved `page`, `page_progression`, and `zoom` on open,
   then persists later page, intra-page scroll, and zoom changes in place
@@ -105,6 +110,7 @@ required e2e coverage includes:
 - reader settings persistence
 - web canonical locator resume after reflow from profile typography changes
 - epub `?loc` deep link precedence over saved resume
+- epub delayed hydration cancellation after manual scroll
 - epub intra-section locator resume after reload
 - pdf page + zoom + intra-page locator resume after reload
 - pdf page changes persisting without reopening the file

@@ -22,23 +22,64 @@ interface ReaderProfileResponse {
   };
 }
 
-interface ReaderLocator {
-  source?: string | null;
-  anchor?: string | null;
-  text_offset?: number | null;
-  quote?: string | null;
-  quote_prefix?: string | null;
-  quote_suffix?: string | null;
-  progression?: number | null;
-  total_progression?: number | null;
-  position?: number | null;
-  page?: number | null;
-  page_progression?: number | null;
-  zoom?: number | null;
+interface ReaderTextLocations {
+  text_offset: number | null;
+  progression: number | null;
+  total_progression: number | null;
+  position: number | null;
 }
 
+interface ReaderTextQuote {
+  quote: string | null;
+  quote_prefix: string | null;
+  quote_suffix: string | null;
+}
+
+interface WebReaderResumeState {
+  kind: "web";
+  target: {
+    fragment_id: string;
+  };
+  locations: ReaderTextLocations;
+  text: ReaderTextQuote;
+}
+
+interface TranscriptReaderResumeState {
+  kind: "transcript";
+  target: {
+    fragment_id: string;
+  };
+  locations: ReaderTextLocations;
+  text: ReaderTextQuote;
+}
+
+interface EpubReaderResumeState {
+  kind: "epub";
+  target: {
+    section_id: string;
+    href_path: string;
+    anchor_id: string | null;
+  };
+  locations: ReaderTextLocations;
+  text: ReaderTextQuote;
+}
+
+interface PdfReaderResumeState {
+  kind: "pdf";
+  page: number;
+  page_progression: number | null;
+  zoom: number | null;
+  position: number | null;
+}
+
+type ReaderResumeState =
+  | WebReaderResumeState
+  | TranscriptReaderResumeState
+  | EpubReaderResumeState
+  | PdfReaderResumeState;
+
 interface ReaderStateResponse {
-  data: ReaderLocator | null;
+  data: ReaderResumeState | null;
 }
 
 interface EpubNavigationResponse {
@@ -84,7 +125,7 @@ async function fetchReaderState(
 async function putReaderState(
   request: APIRequestContext,
   mediaId: string,
-  locator: ReaderLocator | null
+  locator: ReaderResumeState | null
 ): Promise<void> {
   const response = await request.put(`/api/media/${mediaId}/reader-state`, {
     data: locator,
@@ -96,7 +137,7 @@ async function findEpubSectionIdByLabel(
   request: APIRequestContext,
   mediaId: string,
   label: string
-): Promise<{ section_id: string; href_path: string | null }> {
+): Promise<{ section_id: string; href_path: string }> {
   const response = await request.get(`/api/media/${mediaId}/navigation`);
   expect(response.ok()).toBeTruthy();
   const payload = (await response.json()) as EpubNavigationResponse;
@@ -105,10 +146,32 @@ async function findEpubSectionIdByLabel(
   if (!section) {
     throw new Error(`Expected EPUB section with label "${label}".`);
   }
+  expect(section.href_path).toBeTruthy();
+  if (!section.href_path) {
+    throw new Error(`Expected EPUB section "${label}" to expose href_path.`);
+  }
   return {
     section_id: section.section_id,
     href_path: section.href_path,
   };
+}
+
+function isWebReaderResumeState(
+  state: ReaderResumeState | null
+): state is WebReaderResumeState {
+  return state?.kind === "web";
+}
+
+function isEpubReaderResumeState(
+  state: ReaderResumeState | null
+): state is EpubReaderResumeState {
+  return state?.kind === "epub";
+}
+
+function isPdfReaderResumeState(
+  state: ReaderResumeState | null
+): state is PdfReaderResumeState {
+  return state?.kind === "pdf";
 }
 
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
@@ -197,13 +260,17 @@ test.describe("reader settings + resume", () => {
       await expect
         .poll(async () => {
           const locator = await fetchReaderState(page.request, mediaId);
-          return locator?.text_offset ?? null;
+          return isWebReaderResumeState(locator) ? locator.locations.text_offset ?? null : null;
         })
         .not.toBeNull();
 
       const savedLocator = await fetchReaderState(page.request, mediaId);
-      expect(savedLocator?.source).toBeTruthy();
-      expect(savedLocator?.text_offset ?? 0).toBeGreaterThan(0);
+      expect(isWebReaderResumeState(savedLocator)).toBe(true);
+      if (!isWebReaderResumeState(savedLocator)) {
+        throw new Error("Expected a web reader resume state.");
+      }
+      expect(savedLocator.target.fragment_id).toBeTruthy();
+      expect(savedLocator.locations.text_offset ?? 0).toBeGreaterThan(0);
 
       await patchReaderProfile(page.request, { font_size_px: targetFontSize });
       await page.reload();
@@ -237,12 +304,20 @@ test.describe("reader settings + resume", () => {
     await expect
       .poll(async () => {
         const locator = await fetchReaderState(page.request, mediaId);
-        return locator?.source ?? null;
+        return isEpubReaderResumeState(locator) ? locator.target.section_id : null;
       })
-      .toBe(chapterTwoSection.href_path);
+      .toBe(chapterTwoSection.section_id);
 
     const savedLocator = await fetchReaderState(page.request, mediaId);
-    expect(savedLocator?.source).toBe(chapterTwoSection.href_path);
+    expect(isEpubReaderResumeState(savedLocator)).toBe(true);
+    if (!isEpubReaderResumeState(savedLocator)) {
+      throw new Error("Expected an EPUB reader resume state.");
+    }
+    expect(savedLocator.target).toEqual({
+      section_id: chapterTwoSection.section_id,
+      href_path: chapterTwoSection.href_path,
+      anchor_id: null,
+    });
 
     await page.reload();
     await expect(page.getByRole("heading", { name: chapterTwo })).toBeVisible({ timeout: 15_000 });
@@ -254,8 +329,10 @@ test.describe("reader settings + resume", () => {
     const expectedPageCount = seed.pdf_page_count;
 
     await putReaderState(page.request, mediaId, {
+      kind: "pdf",
       position: 1,
       page: 1,
+      page_progression: null,
       zoom: 1,
     });
 
@@ -283,7 +360,7 @@ test.describe("reader settings + resume", () => {
     await expect
       .poll(async () => {
         const locator = await fetchReaderState(page.request, mediaId);
-        if (locator?.page == null || locator.zoom == null) {
+        if (!isPdfReaderResumeState(locator) || locator.page == null || locator.zoom == null) {
           return null;
         }
         return { page: locator.page, zoom: locator.zoom };
@@ -317,8 +394,10 @@ test.describe("reader settings + resume", () => {
     });
 
     await putReaderState(page.request, mediaId, {
+      kind: "pdf",
       position: 1,
       page: 1,
+      page_progression: null,
       zoom: 1,
     });
 
@@ -335,7 +414,7 @@ test.describe("reader settings + resume", () => {
     await expect
       .poll(async () => {
         const locator = await fetchReaderState(page.request, mediaId);
-        return locator?.page ?? null;
+        return isPdfReaderResumeState(locator) ? locator.page ?? null : null;
       })
       .toBe(2);
 

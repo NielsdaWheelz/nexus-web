@@ -1,8 +1,9 @@
-"""Reader profile and per-media locator service layer."""
+"""Reader profile and per-media reader state service layer."""
 
 from datetime import UTC, datetime
 from uuid import UUID
 
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import Media, MediaKind, ReaderMediaState, ReaderProfile
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
-from nexus.schemas.reader import ReaderLocator, ReaderProfileOut, ReaderProfilePatch
+from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch, ReaderResumeState
 
 DEFAULT_THEME = "light"
 DEFAULT_FONT_SIZE_PX = 16
@@ -18,6 +19,58 @@ DEFAULT_LINE_HEIGHT = 1.5
 DEFAULT_FONT_FAMILY = "serif"
 DEFAULT_COLUMN_WIDTH_CH = 65
 DEFAULT_FOCUS_MODE = False
+READER_RESUME_STATE_ADAPTER = TypeAdapter(ReaderResumeState)
+
+
+def _expected_reader_state_kind(media_kind: str) -> str | None:
+    """Map a media kind to the only allowed persisted reader-state kind."""
+
+    if media_kind == MediaKind.pdf.value:
+        return "pdf"
+    if media_kind == MediaKind.epub.value:
+        return "epub"
+    if media_kind == MediaKind.web_article.value:
+        return "web"
+    if media_kind in {MediaKind.video.value, MediaKind.podcast_episode.value}:
+        return "transcript"
+    return None
+
+
+def _validate_reader_state_for_media(media_kind: str, locator: ReaderResumeState) -> None:
+    """Reject reader state kinds that do not match the media kind."""
+
+    expected_kind = _expected_reader_state_kind(media_kind)
+    if expected_kind is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Reader state is not supported for media kind '{media_kind}'",
+        )
+    if locator.kind != expected_kind:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Reader state kind '{locator.kind}' does not match media kind '{media_kind}'",
+        )
+
+
+def _deserialize_reader_state(
+    locator_payload: object | None,
+    *,
+    media_kind: str,
+) -> ReaderResumeState | None:
+    """Validate stored reader state and suppress legacy or mismatched rows."""
+
+    if locator_payload is None:
+        return None
+
+    try:
+        locator = READER_RESUME_STATE_ADAPTER.validate_python(locator_payload)
+    except ValidationError:
+        return None
+
+    expected_kind = _expected_reader_state_kind(media_kind)
+    if expected_kind is None or locator.kind != expected_kind:
+        return None
+    return locator
 
 
 def get_reader_profile(db: Session, user_id: UUID) -> ReaderProfileOut:
@@ -62,9 +115,15 @@ def patch_reader_profile(db: Session, user_id: UUID, patch: ReaderProfilePatch) 
     return ReaderProfileOut.model_validate(profile)
 
 
-def get_reader_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderLocator | None:
-    """Get per-media reader locator."""
+def get_reader_media_state(
+    db: Session, viewer_id: UUID, media_id: UUID
+) -> ReaderResumeState | None:
+    """Get per-media reader resume state."""
     if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     state = (
@@ -77,13 +136,16 @@ def get_reader_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> Read
     )
     if state is None or state.locator is None:
         return None
-    return ReaderLocator.model_validate(state.locator)
+    return _deserialize_reader_state(state.locator, media_kind=media.kind)
 
 
 def put_reader_media_state(
-    db: Session, viewer_id: UUID, media_id: UUID, locator: ReaderLocator | None
-) -> ReaderLocator | None:
-    """Replace per-media reader locator."""
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    locator: ReaderResumeState | None,
+) -> ReaderResumeState | None:
+    """Replace per-media reader resume state."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
@@ -92,47 +154,10 @@ def put_reader_media_state(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     if locator is not None:
-        if media.kind == MediaKind.pdf:
-            if locator.page is None:
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "page is required for PDF reader state",
-                )
-            if any(
-                value is not None
-                for value in (
-                    locator.source,
-                    locator.anchor,
-                    locator.text_offset,
-                    locator.quote,
-                    locator.quote_prefix,
-                    locator.quote_suffix,
-                    locator.progression,
-                    locator.total_progression,
-                )
-            ):
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "PDF reader state cannot include text locator fields",
-                )
-        else:
-            if locator.source is None:
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "source is required for text reader state",
-                )
-            if (
-                locator.page is not None
-                or locator.page_progression is not None
-                or locator.zoom is not None
-            ):
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "Text reader state cannot include PDF page fields",
-                )
+        _validate_reader_state_for_media(media.kind, locator)
 
     current_time = datetime.now(UTC)
-    locator_payload = locator.model_dump(mode="json", exclude_none=True) if locator else None
+    locator_payload = locator.model_dump(mode="json") if locator else None
     state = (
         db.query(ReaderMediaState)
         .filter(
@@ -172,9 +197,7 @@ def put_reader_media_state(
         db.add(state)
         try:
             db.commit()
-            return (
-                ReaderLocator.model_validate(state.locator) if state.locator is not None else None
-            )
+            return locator
         except IntegrityError:
             db.rollback()
             state = (
@@ -189,4 +212,4 @@ def put_reader_media_state(
     state.locator = locator_payload
     state.updated_at = current_time
     db.commit()
-    return ReaderLocator.model_validate(state.locator) if state.locator is not None else None
+    return locator
