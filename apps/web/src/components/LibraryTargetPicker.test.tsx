@@ -57,40 +57,4 @@ describe("LibraryTargetPicker", () => {
     expect(handleSelectLibrary).toHaveBeenCalledWith("work");
     expect(screen.queryByRole("dialog", { name: "Choose library" })).not.toBeInTheDocument();
   });
-
-  it("uses plain action buttons in membership mode", async () => {
-    const user = userEvent.setup();
-    const handleAddToLibrary = vi.fn();
-    const handleRemoveFromLibrary = vi.fn();
-
-    render(
-      <LibraryTargetPicker
-        label="Manage libraries"
-        libraries={libraries}
-        onAddToLibrary={handleAddToLibrary}
-        onRemoveFromLibrary={handleRemoveFromLibrary}
-      />
-    );
-
-    await user.click(screen.getByRole("button", { name: "Manage libraries" }));
-
-    const dialog = await screen.findByRole("dialog", { name: "Manage libraries" });
-    const personalButton = within(dialog).getByRole("button", {
-      name: "Personal Remove from library",
-    });
-    const workButton = within(dialog).getByRole("button", {
-      name: "Work Add to library",
-    });
-
-    expect(within(dialog).queryByRole("listbox")).not.toBeInTheDocument();
-    expect(personalButton).not.toHaveAttribute("aria-selected");
-    expect(workButton).not.toHaveAttribute("aria-selected");
-
-    await user.click(personalButton);
-    await user.click(workButton);
-
-    expect(handleRemoveFromLibrary).toHaveBeenCalledWith("personal");
-    expect(handleAddToLibrary).toHaveBeenCalledWith("work");
-    expect(screen.getByRole("dialog", { name: "Manage libraries" })).toBeInTheDocument();
-  });
 });

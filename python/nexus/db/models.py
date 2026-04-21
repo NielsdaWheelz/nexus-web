@@ -2869,7 +2869,7 @@ class EpubTocNode(Base):
 
 
 class EpubNavLocation(Base):
-    """Canonical EPUB navigation location targets.
+    """Canonical EPUB section/navigation targets.
 
     Persisted, deterministic section targets consumed by reader navigation UI.
     """
@@ -2914,7 +2914,7 @@ class EpubNavLocation(Base):
             name="ck_epub_nav_locations_ordinal_nonneg",
         ),
         CheckConstraint(
-            "source IN ('toc', 'fragment_fallback')",
+            "source IN ('toc', 'spine')",
             name="ck_epub_nav_locations_source_valid",
         ),
         UniqueConstraint("media_id", "ordinal", name="uix_epub_nav_locations_media_ordinal"),
@@ -3052,30 +3052,31 @@ class CommandPaletteRecent(Base):
 
 
 class ReaderMediaState(Base):
-    """Per user + media reader resume state."""
+    """Per user + media reader state."""
 
     __tablename__ = "reader_media_state"
 
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("media.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     )
-    locator_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
-    fragment_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("fragments.id", ondelete="SET NULL"),
-        nullable=True,
+    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
     )
-    offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    section_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    zoom: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -3083,22 +3084,15 @@ class ReaderMediaState(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint("user_id", "media_id", name="uq_reader_media_state_user_media"),
         CheckConstraint(
-            "locator_kind IS NULL OR locator_kind IN ('fragment_offset', 'epub_section', 'pdf_page')",
-            name="ck_reader_media_state_locator_kind",
+            "locator IS NULL OR "
+            "(jsonb_typeof(locator) = 'object' "
+            "AND locator ? 'type' "
+            "AND locator->>'type' IN ('fragment_offset', 'epub_section', 'pdf_page'))",
+            name="ck_reader_media_state_locator",
         ),
-        CheckConstraint(
-            '"offset" IS NULL OR "offset" >= 0',
-            name="ck_reader_media_state_offset",
-        ),
-        CheckConstraint(
-            "page IS NULL OR page >= 1",
-            name="ck_reader_media_state_page",
-        ),
-        CheckConstraint(
-            "zoom IS NULL OR (zoom BETWEEN 0.25 AND 4.0)",
-            name="ck_reader_media_state_zoom",
-        ),
+        Index("idx_reader_media_state_media", "media_id"),
     )
 
     # Relationships

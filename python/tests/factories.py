@@ -18,6 +18,7 @@ from nexus.db.models import (
     Annotation,
     Conversation,
     ConversationShare,
+    EpubNavLocation,
     DefaultLibraryIntrinsic,
     EpubTocNode,
     FailureStage,
@@ -680,6 +681,22 @@ def create_ready_epub_with_chapters(
                 order_key=f"{i + 1:04d}",
             )
             session.add(node)
+
+    for i in range(num_chapters):
+        href_path = f"ch{i}.xhtml"
+        session.add(
+            EpubNavLocation(
+                media_id=media.id,
+                location_id=href_path,
+                ordinal=i,
+                source_node_id=f"ch{i}" if with_toc else None,
+                label=f"TOC Chapter {i + 1}" if with_toc else f"Chapter {i + 1} Title",
+                fragment_idx=i,
+                href_path=href_path,
+                href_fragment=None,
+                source="toc" if with_toc else "spine",
+            )
+        )
 
     session.commit()
     return media.id, frag_ids

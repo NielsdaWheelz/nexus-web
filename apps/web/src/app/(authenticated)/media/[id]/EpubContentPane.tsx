@@ -1,5 +1,9 @@
 import HtmlRenderer from "@/components/HtmlRenderer";
-import { type EpubChapter, type EpubNavigationSection, type NormalizedNavigationTocNode } from "@/lib/media/epubReader";
+import {
+  type EpubNavigationSection,
+  type EpubSectionContent,
+  type NormalizedNavigationTocNode,
+} from "@/lib/media/epubReader";
 import styles from "./page.module.css";
 
 export default function EpubContentPane({
@@ -17,7 +21,7 @@ export default function EpubContentPane({
   onNavigate,
 }: {
   sections: EpubNavigationSection[] | null;
-  activeChapter: EpubChapter | null;
+  activeChapter: EpubSectionContent | null;
   activeSectionId: string | null;
   chapterLoading: boolean;
   epubError: string | null;
@@ -38,13 +42,13 @@ export default function EpubContentPane({
   }
 
   if (!sections) {
-    return <div className={styles.loading}>Loading chapters...</div>;
+    return <div className={styles.loading}>Loading EPUB navigation...</div>;
   }
 
   if (sections.length === 0) {
     return (
       <div className={styles.empty}>
-        <p>No chapters available for this EPUB.</p>
+        <p>No sections available for this EPUB.</p>
       </div>
     );
   }
@@ -73,7 +77,7 @@ export default function EpubContentPane({
       )}
 
       {chapterLoading ? (
-        <div className={styles.loading}>Loading chapter...</div>
+        <div className={styles.loading}>Loading section...</div>
       ) : activeChapter ? (
         <div
           ref={contentRef}

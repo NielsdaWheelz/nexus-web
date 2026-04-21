@@ -406,9 +406,10 @@ class EpubNavigationSectionOut(BaseModel):
     section_id: str
     label: str
     fragment_idx: int
+    href_path: str | None
     anchor_id: str | None
     source_node_id: str | None
-    source: Literal["toc", "fragment_fallback"]
+    source: Literal["toc", "spine"]
     ordinal: int
 
 
@@ -431,3 +432,24 @@ class EpubNavigationOut(BaseModel):
 
     sections: list[EpubNavigationSectionOut]
     toc_nodes: list[EpubNavigationTocNodeOut]
+
+
+class EpubSectionOut(BaseModel):
+    """Canonical EPUB section payload backed by a persisted nav location."""
+
+    section_id: str
+    label: str
+    fragment_id: UUID
+    fragment_idx: int
+    href_path: str | None
+    anchor_id: str | None
+    source_node_id: str | None
+    source: Literal["toc", "spine"]
+    ordinal: int
+    prev_section_id: str | None
+    next_section_id: str | None
+    html_sanitized: str
+    canonical_text: str
+    char_count: int
+    word_count: int
+    created_at: datetime

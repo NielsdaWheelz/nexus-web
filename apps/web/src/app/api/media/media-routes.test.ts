@@ -12,7 +12,7 @@ vi.mock("@/lib/api/proxy", () => ({
   proxyToFastAPI: (...args: unknown[]) => mockProxyToFastAPI(...args),
 }));
 
-describe("media EPUB BFF proxy routes", () => {
+describe("media BFF proxy routes", () => {
   beforeEach(() => {
     mockProxyToFastAPI.mockClear();
   });
@@ -35,50 +35,46 @@ describe("media EPUB BFF proxy routes", () => {
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/image");
   });
 
-  it("GET /api/media/[id]/chapters proxies to /media/{id}/chapters", async () => {
-    const { GET } = await import("./[id]/chapters/route");
-    const req = new Request("http://localhost/api/media/mid-123/chapters");
-    await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
-    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
-    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/chapters");
-  });
-
-  it("GET /api/media/[id]/chapters forwards limit/cursor query string unchanged", async () => {
-    const { GET } = await import("./[id]/chapters/route");
-    const req = new Request(
-      "http://localhost/api/media/mid-123/chapters?limit=10&cursor=5"
-    );
-    await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
-    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
-    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/chapters");
-  });
-
-  it("GET /api/media/[id]/chapters/[idx] proxies to /media/{id}/chapters/{idx}", async () => {
-    const { GET } = await import("./[id]/chapters/[idx]/route");
-    const req = new Request(
-      "http://localhost/api/media/mid-123/chapters/4"
-    );
-    await GET(req, {
-      params: Promise.resolve({ id: "mid-123", idx: "4" }),
-    });
-    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
-    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/chapters/4");
-  });
-
-  it("GET /api/media/[id]/toc proxies to /media/{id}/toc", async () => {
-    const { GET } = await import("./[id]/toc/route");
-    const req = new Request("http://localhost/api/media/mid-123/toc");
-    await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
-    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
-    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/toc");
-  });
-
   it("GET /api/media/[id]/navigation proxies to /media/{id}/navigation", async () => {
     const { GET } = await import("./[id]/navigation/route");
     const req = new Request("http://localhost/api/media/mid-123/navigation");
     await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
     expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
     expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/navigation");
+  });
+
+  it("GET /api/media/[id]/sections/[...sectionId] proxies encoded section ids to /media/{id}/sections/{section_id}", async () => {
+    const { GET } = await import("./[id]/sections/[...sectionId]/route");
+    const req = new Request("http://localhost/api/media/mid-123/sections/OPS%2Fnav%2Fintro");
+    await GET(req, {
+      params: Promise.resolve({ id: "mid-123", sectionId: ["OPS", "nav", "intro"] }),
+    });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(
+      req,
+      "/media/mid-123/sections/OPS%2Fnav%2Fintro"
+    );
+  });
+
+  it("GET /api/media/[id]/reader-state proxies to /media/{id}/reader-state", async () => {
+    const { GET } = await import("./[id]/reader-state/route");
+    const req = new Request("http://localhost/api/media/mid-123/reader-state");
+    await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/reader-state");
+  });
+
+  it("PATCH /api/media/[id]/reader-state proxies to /media/{id}/reader-state", async () => {
+    const { PATCH } = await import("./[id]/reader-state/route");
+    const req = new Request("http://localhost/api/media/mid-123/reader-state", {
+      method: "PATCH",
+      body: JSON.stringify({
+        locator: { type: "pdf_page", page: 3, zoom: 1.25 },
+      }),
+    });
+    await PATCH(req, { params: Promise.resolve({ id: "mid-123" }) });
+    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
+    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/reader-state");
   });
 
   it("GET /api/media/[id]/libraries proxies to /media/{id}/libraries", async () => {
@@ -108,29 +104,6 @@ describe("media EPUB BFF proxy routes", () => {
       req,
       "/media/mid-123/pdf-highlights"
     );
-  });
-
-  it("GET /api/media/[id]/pdf-highlights/index proxies to /media/{id}/pdf-highlights/index", async () => {
-    const { GET } = await import("./[id]/pdf-highlights/index/route");
-    const req = new Request(
-      "http://localhost/api/media/mid-123/pdf-highlights/index?limit=50&cursor=opaque&mine_only=false"
-    );
-    await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
-    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
-    expect(mockProxyToFastAPI).toHaveBeenCalledWith(
-      req,
-      "/media/mid-123/pdf-highlights/index"
-    );
-  });
-
-  it("GET /api/media/[id]/highlights proxies to /media/{id}/highlights", async () => {
-    const { GET } = await import("./[id]/highlights/route");
-    const req = new Request(
-      "http://localhost/api/media/mid-123/highlights?limit=50&cursor=opaque&mine_only=false"
-    );
-    await GET(req, { params: Promise.resolve({ id: "mid-123" }) });
-    expect(mockProxyToFastAPI).toHaveBeenCalledOnce();
-    expect(mockProxyToFastAPI).toHaveBeenCalledWith(req, "/media/mid-123/highlights");
   });
 
   it("POST /api/media/[id]/pdf-highlights proxies to /media/{id}/pdf-highlights", async () => {

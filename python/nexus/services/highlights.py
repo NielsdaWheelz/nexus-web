@@ -22,12 +22,9 @@ Service functions correspond 1:1 with route handlers.
 Routes are transport-only and call exactly one service function.
 """
 
-import base64
-import json
-from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -43,7 +40,7 @@ from nexus.db.models import (
     Message,
     MessageContext,
 )
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
     AnnotationOut,
@@ -51,8 +48,6 @@ from nexus.schemas.highlights import (
     FragmentAnchorOut,
     HighlightOut,
     LinkedConversationRef,
-    MediaHighlightOut,
-    MediaHighlightPageInfoOut,
     PdfAnchorOut,
     PdfQuadOut,
     TypedHighlightOut,
@@ -68,7 +63,6 @@ from nexus.services.highlight_kernel import (
     repair_fragment_highlight,
     resolve_highlight,
 )
-from nexus.services.media import get_media_for_viewer_or_404
 
 logger = get_logger(__name__)
 
@@ -166,48 +160,6 @@ def map_integrity_error(e: IntegrityError) -> ApiError:
     # Unknown constraint — internal error
     logger.error("unknown_integrity_error", constraint=constraint_name, error=str(e))
     return ApiError(ApiErrorCode.E_INTERNAL, "Database constraint violation")
-
-
-def encode_media_highlights_cursor(
-    fragment_idx: int,
-    start_offset: int,
-    end_offset: int,
-    created_at: datetime,
-    highlight_id: UUID,
-) -> str:
-    """Encode keyset cursor for media-wide highlight listing."""
-    payload = {
-        "fragment_idx": fragment_idx,
-        "start_offset": start_offset,
-        "end_offset": end_offset,
-        "created_at": created_at.isoformat(),
-        "id": str(highlight_id),
-    }
-    json_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    return base64.urlsafe_b64encode(json_bytes).decode("utf-8").rstrip("=")
-
-
-def decode_media_highlights_cursor(cursor: str) -> tuple[int, int, int, datetime, UUID]:
-    """Decode keyset cursor for media-wide highlight listing."""
-    try:
-        padding = 4 - len(cursor) % 4
-        if padding < 4:
-            cursor += "=" * padding
-        json_bytes = base64.urlsafe_b64decode(cursor)
-        payload = json.loads(json_bytes.decode("utf-8"))
-
-        fragment_idx = int(payload["fragment_idx"])
-        start_offset = int(payload["start_offset"])
-        end_offset = int(payload["end_offset"])
-        created_at = datetime.fromisoformat(payload["created_at"])
-        highlight_id = UUID(payload["id"])
-    except Exception:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
-
-    if fragment_idx < 0 or start_offset < 0 or end_offset < 0:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
-
-    return fragment_idx, start_offset, end_offset, created_at, highlight_id
 
 
 def get_highlight_for_visible_read_or_404(
@@ -319,7 +271,7 @@ def _batch_linked_conversations(
 
 
 def _highlight_fields(highlight: Highlight, viewer_id: UUID) -> dict:
-    """Common ORM-to-schema fields shared by HighlightOut and MediaHighlightOut."""
+    """Common ORM-to-schema fields shared by highlight read responses."""
     return dict(
         id=highlight.id,
         fragment_id=highlight.fragment_id,
@@ -566,116 +518,6 @@ def list_highlights_for_fragment(
         )
         for h in highlights
     ]
-
-
-def list_highlights_for_media(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    *,
-    limit: int = 50,
-    cursor: str | None = None,
-    mine_only: bool = True,
-) -> tuple[list[MediaHighlightOut], MediaHighlightPageInfoOut]:
-    """List highlights for a media item in deterministic chapter-local reading order.
-
-    Order key:
-      1) fragments.idx ASC
-      2) highlights.start_offset ASC
-      3) highlights.end_offset ASC
-      4) highlights.created_at ASC
-      5) highlights.id ASC
-    """
-    # Visibility/masking guard (raises masked 404 for missing/invisible media)
-    get_media_for_viewer_or_404(db, viewer_id, media_id)
-
-    query = (
-        db.query(Highlight, Fragment.idx.label("fragment_idx"))
-        .join(Fragment, Highlight.fragment_id == Fragment.id)
-        .filter(Fragment.media_id == media_id)
-    )
-
-    if mine_only:
-        query = query.filter(Highlight.user_id == viewer_id)
-    else:
-        query = query.filter(highlight_visibility_filter(viewer_id, media_id))
-
-    if cursor:
-        (
-            cursor_fragment_idx,
-            cursor_start_offset,
-            cursor_end_offset,
-            cursor_created_at,
-            cursor_id,
-        ) = decode_media_highlights_cursor(cursor)
-        query = query.filter(
-            or_(
-                Fragment.idx > cursor_fragment_idx,
-                and_(
-                    Fragment.idx == cursor_fragment_idx,
-                    Highlight.start_offset > cursor_start_offset,
-                ),
-                and_(
-                    Fragment.idx == cursor_fragment_idx,
-                    Highlight.start_offset == cursor_start_offset,
-                    Highlight.end_offset > cursor_end_offset,
-                ),
-                and_(
-                    Fragment.idx == cursor_fragment_idx,
-                    Highlight.start_offset == cursor_start_offset,
-                    Highlight.end_offset == cursor_end_offset,
-                    Highlight.created_at > cursor_created_at,
-                ),
-                and_(
-                    Fragment.idx == cursor_fragment_idx,
-                    Highlight.start_offset == cursor_start_offset,
-                    Highlight.end_offset == cursor_end_offset,
-                    Highlight.created_at == cursor_created_at,
-                    Highlight.id > cursor_id,
-                ),
-            )
-        )
-
-    rows = (
-        query.order_by(
-            Fragment.idx.asc(),
-            Highlight.start_offset.asc(),
-            Highlight.end_offset.asc(),
-            Highlight.created_at.asc(),
-            Highlight.id.asc(),
-        )
-        .limit(limit + 1)
-        .all()
-    )
-
-    has_more = len(rows) > limit
-    if has_more:
-        rows = rows[:limit]
-
-    conv_map = _batch_linked_conversations(db, [h.id for h, _ in rows], viewer_id)
-
-    highlights_out = [
-        MediaHighlightOut(
-            **_highlight_fields(highlight, viewer_id),
-            media_id=media_id,
-            fragment_idx=int(fragment_idx),
-            linked_conversations=conv_map.get(highlight.id, []),
-        )
-        for highlight, fragment_idx in rows
-    ]
-
-    next_cursor = None
-    if has_more and rows:
-        last_highlight, last_fragment_idx = rows[-1]
-        next_cursor = encode_media_highlights_cursor(
-            fragment_idx=int(last_fragment_idx),
-            start_offset=int(last_highlight.start_offset or 0),
-            end_offset=int(last_highlight.end_offset or 0),
-            created_at=last_highlight.created_at,
-            highlight_id=last_highlight.id,
-        )
-
-    return highlights_out, MediaHighlightPageInfoOut(has_more=has_more, next_cursor=next_cursor)
 
 
 def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHighlightOut:

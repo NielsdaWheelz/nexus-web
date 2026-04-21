@@ -106,27 +106,6 @@ class HighlightOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class MediaHighlightOut(HighlightOut):
-    """Response schema for media-wide highlight listing (book index mode)."""
-
-    media_id: UUID
-    fragment_idx: int
-
-
-class MediaHighlightPageInfoOut(BaseModel):
-    """Cursor pagination metadata for media-wide highlight listing."""
-
-    has_more: bool
-    next_cursor: str | None = None
-
-
-class MediaHighlightListOut(BaseModel):
-    """Envelope for media-wide highlight listing endpoint."""
-
-    highlights: list[MediaHighlightOut]
-    page: MediaHighlightPageInfoOut
-
-
 class TypedHighlightOut(BaseModel):
     """Anchor-discriminated typed highlight response for generic/PDF routes."""
 

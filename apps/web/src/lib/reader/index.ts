@@ -1,9 +1,8 @@
 export {
   DEFAULT_READER_PROFILE,
+  type ReaderLocator,
   type ReaderProfile,
-  type ReaderResumeState,
   type ReaderTheme,
-  type LocatorKind,
 } from "./types";
 export { useReaderProfile } from "./useReaderProfile";
 export { useReaderResumeState } from "./useReaderResumeState";
