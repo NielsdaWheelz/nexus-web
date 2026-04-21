@@ -100,6 +100,12 @@ interface MediaCapabilities {
   can_download_file: boolean;
 }
 
+interface PodcastEpisodeAuthor {
+  id: string;
+  name: string;
+  role: string | null;
+}
+
 interface PodcastEpisodeMedia {
   id: string;
   kind: string;
@@ -126,7 +132,7 @@ interface PodcastEpisodeMedia {
   subscription_default_playback_speed?: number | null;
   episode_state: EpisodeState | null;
   capabilities: MediaCapabilities;
-  authors: Array<{ id: string; name: string; role: string | null }>;
+  authors: PodcastEpisodeAuthor[];
   published_date: string | null;
   publisher: string | null;
   language: string | null;
@@ -272,6 +278,26 @@ function formatEpisodeTranscriptMeta(episode: PodcastEpisodeMedia): string {
   const state = episode.transcript_state ?? "unknown";
   const coverage = episode.transcript_coverage ?? "unknown";
   return `transcript ${state} (${coverage} coverage)`;
+}
+
+function formatAuthorSummary(
+  authors: PodcastEpisodeAuthor[] | null | undefined,
+  maxNames: number = 1
+): string | null {
+  if (!Array.isArray(authors) || authors.length === 0) {
+    return null;
+  }
+
+  const names = authors
+    .map((author) => author.name?.trim())
+    .filter((name): name is string => Boolean(name));
+  if (names.length === 0) {
+    return null;
+  }
+  if (names.length <= maxNames) {
+    return names.join(", ");
+  }
+  return `${names.slice(0, maxNames).join(", ")} +${names.length - maxNames}`;
 }
 
 function canRequestTranscriptForEpisode(episode: PodcastEpisodeMedia): boolean {
@@ -1715,6 +1741,11 @@ export default function PodcastDetailPaneBody() {
             const inQueue = queueMediaIds.has(episode.id);
             const showNotesText = episode.description_text?.trim() ?? "";
             const showNotesExpanded = expandedShowNotesMediaIds.has(episode.id);
+            const authorSummary = formatAuthorSummary(episode.authors);
+            const paneTitleHint =
+              authorSummary && `${episode.title} · ${authorSummary}`.length <= 56
+                ? `${episode.title} · ${authorSummary}`
+                : episode.title;
             const rowOptions = [
               {
                 id: "toggle-played",
@@ -1729,6 +1760,8 @@ export default function PodcastDetailPaneBody() {
               <AppListItem
                 key={episode.id}
                 href={`/media/${episode.id}`}
+                paneTitleHint={paneTitleHint}
+                paneResourceRef={`media:${episode.id}`}
                 title={
                   <span className={styles.episodeTitle}>
                     {episodeState === "unplayed" && (
@@ -1795,7 +1828,14 @@ export default function PodcastDetailPaneBody() {
                     )}
                   </span>
                 }
-                meta={`${episode.processing_status} · ${formatEpisodeTranscriptMeta(episode)} · ${formatEpisodeStateLabel(episodeState)}`}
+                meta={[
+                  authorSummary,
+                  episode.processing_status,
+                  formatEpisodeTranscriptMeta(episode),
+                  formatEpisodeStateLabel(episodeState),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
                 actions={
                   <div className={styles.episodeActions}>
                     <button

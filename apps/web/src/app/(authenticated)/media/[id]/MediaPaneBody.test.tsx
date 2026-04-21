@@ -218,11 +218,17 @@ function buildViewState(overrides: Record<string, unknown> = {}): Record<string,
       canonical_source_url: null,
       podcast_title: null,
       podcast_image_url: null,
+      authors: [],
+      published_date: null,
+      publisher: null,
+      language: null,
       chapters: [],
+      description: null,
       description_html: null,
       description_text: null,
       listening_state: null,
       subscription_default_playback_speed: null,
+      episode_state: null,
       last_error_code: null,
     },
     isEpub: false,
@@ -326,6 +332,14 @@ function renderLatestToolbar() {
     throw new Error("Expected toolbar override to be present");
   }
   return render(<>{toolbar}</>);
+}
+
+function renderLatestMeta() {
+  const meta = getLatestChromeOverride().meta as ReactNode;
+  if (!meta) {
+    throw new Error("Expected meta override to be present");
+  }
+  return render(<>{meta}</>);
 }
 
 function getLatestTranscriptMediaPaneProps(): Record<string, unknown> {
@@ -442,6 +456,47 @@ describe("MediaPaneBody highlights shell", () => {
     expect(
       screen.getByText("Focus mode enabled: highlights pane hidden.")
     ).toBeInTheDocument();
+  });
+
+  it("publishes author-aware metadata into pane chrome", () => {
+    currentViewState = buildViewState({
+      media: {
+        id: "media-1",
+        kind: "web_article",
+        title: "Example media",
+        processing_status: "ready_for_reading",
+        canonical_source_url: "https://example.com/articles/1",
+        podcast_title: null,
+        podcast_image_url: null,
+        authors: [
+          { id: "author-1", name: "Ada Lovelace", role: "author" },
+          { id: "author-2", name: "Grace Hopper", role: "editor" },
+          { id: "author-3", name: "Katherine Johnson", role: null },
+        ],
+        published_date: "2026-03-06",
+        publisher: "Example Publisher",
+        language: "en",
+        chapters: [],
+        description: null,
+        description_html: null,
+        description_text: null,
+        listening_state: null,
+        subscription_default_playback_speed: null,
+        episode_state: null,
+        last_error_code: null,
+      },
+    });
+    mockUseMediaViewState.mockImplementation(() => currentViewState);
+
+    render(<MediaPaneBody />);
+    renderLatestMeta();
+
+    expect(screen.getByText("web_article")).toBeInTheDocument();
+    expect(screen.getByText("Ada Lovelace, Grace Hopper +1")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View Source ↗" })).toHaveAttribute(
+      "href",
+      "https://example.com/articles/1"
+    );
   });
 
   it("exposes a mobile Highlights action and closes the drawer when highlights become unavailable", () => {

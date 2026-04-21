@@ -38,6 +38,7 @@ from nexus.db.models import (
     PodcastListeningState,
     ProcessingStatus,
 )
+from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
@@ -1058,6 +1059,8 @@ def create_captured_web_article(
         db.rollback()
         raise
 
+    _try_enrich_dispatch(str(media.id), None)
+
     return ArticleCaptureResponse(
         media_id=media.id,
         processing_status=ProcessingStatus.ready_for_reading.value,
@@ -1490,6 +1493,8 @@ def create_or_reuse_x_oembed_article(
         db.rollback()
         raise
 
+    _try_enrich_dispatch(str(media.id), None)
+
     return FromUrlResponse(
         media_id=media.id,
         idempotency_outcome="created" if created else "reused",
@@ -1654,6 +1659,24 @@ def _enqueue_ingest_task(
             ApiErrorCode.E_INTERNAL,
             "Failed to enqueue ingest_web_article job.",
         ) from exc
+
+
+def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
+    session_factory = get_session_factory()
+    db = session_factory()
+    try:
+        enqueue_job(
+            db,
+            kind="enrich_metadata",
+            payload={"media_id": media_id, "request_id": request_id},
+            max_attempts=1,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
+    finally:
+        db.close()
 
 
 def _enqueue_youtube_ingest_task(

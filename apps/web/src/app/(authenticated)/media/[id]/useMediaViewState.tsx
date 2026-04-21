@@ -80,6 +80,7 @@ import {
   type NavigationTocNodeLike,
   TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
   DOCUMENT_PROCESSING_POLL_INTERVAL_MS,
+  buildCompactMediaPaneTitle,
   escapeAttrValue,
   getPaneScrollContainer,
   findFirstVisibleCanonicalOffset,
@@ -152,7 +153,7 @@ export default function useMediaViewState(id: string) {
   >([]);
   const [libraryPickerLoading, setLibraryPickerLoading] = useState(false);
   const [libraryMembershipBusy, setLibraryMembershipBusy] = useState(false);
-  useSetPaneTitle(media?.title ?? "Media");
+  useSetPaneTitle(buildCompactMediaPaneTitle(media));
 
   // ---- Non-EPUB fragment state ----
   const [fragments, setFragments] = useState<Fragment[]>([]);

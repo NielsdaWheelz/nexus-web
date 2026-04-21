@@ -34,7 +34,11 @@ import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import TranscriptMediaPane from "./TranscriptMediaPane";
 import EpubContentPane from "./EpubContentPane";
-import { formatResumeTime, normalizeTranscriptChapters } from "./mediaHelpers";
+import {
+  formatMediaAuthors,
+  formatResumeTime,
+  normalizeTranscriptChapters,
+} from "./mediaHelpers";
 import useMediaViewState from "./useMediaViewState";
 import { PanelRight } from "lucide-react";
 import styles from "./page.module.css";
@@ -136,9 +140,11 @@ export default function MediaPaneBody() {
   ]);
 
   const isReflowableReader = mv.canRead && !mv.isPdf;
+  const mediaAuthorMeta = formatMediaAuthors(mv.media?.authors, 2);
   const mediaHeaderMeta = (
     <div className={styles.metadata}>
       <span className={styles.kind}>{mv.media?.kind}</span>
+      {mediaAuthorMeta ? <span className={styles.authorMeta}>{mediaAuthorMeta}</span> : null}
       {mv.media?.canonical_source_url ? (
         <a
           href={mv.media.canonical_source_url}

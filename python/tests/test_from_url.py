@@ -934,14 +934,18 @@ class TestFromUrlXPost:
                 """),
                 {"media_id": media_id},
             ).fetchone()
-            job_count = session.execute(
-                text("""
-                    SELECT COUNT(*)
+            job_ids = [
+                row[0]
+                for row in session.execute(
+                    text("""
+                    SELECT id
                     FROM background_jobs
                     WHERE payload->>'media_id' = :media_id
                 """),
-                {"media_id": str(media_id)},
-            ).scalar_one()
+                    {"media_id": str(media_id)},
+                ).fetchall()
+            ]
+            job_count = len(job_ids)
 
         assert media is not None
         assert media[0] == "web_article"
@@ -958,7 +962,9 @@ class TestFromUrlXPost:
         assert "<script" not in fragment[0]
         assert "Hello from X." in fragment[1]
         assert fragment[2] >= 1
-        assert job_count == 0
+        for job_id in job_ids:
+            direct_db.register_cleanup("background_jobs", "id", job_id)
+        assert job_count == 1
 
     def test_x_post_reuse_is_global_across_users(
         self, auth_client, direct_db: DirectSessionManager, remote_http

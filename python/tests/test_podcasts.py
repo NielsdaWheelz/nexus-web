@@ -3772,6 +3772,91 @@ class TestPodcastTranscriptPersistence:
         assert fragments[1]["speaker_label"] is None
 
 
+class TestPodcastEpisodeMetadataPersistence:
+    def test_sync_persists_episode_authors_and_enqueues_metadata_enrichment(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        provider_podcast_id = f"episode-authors-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Episode Metadata Podcast")
+        episodes = [
+            {
+                "provider_episode_id": "ep-authors-1",
+                "guid": "guid-authors-1",
+                "title": "Metadata-rich Episode",
+                "authors": ["Episode Host", "Guest Analyst"],
+                "audio_url": "https://cdn.example.com/episode-authors.mp3",
+                "published_at": "2026-03-02T06:00:00Z",
+                "duration_seconds": 120,
+                "description_text": "Show notes for the metadata-rich episode.",
+                "language": "en",
+                "transcript_segments": None,
+            }
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: episodes},
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
+
+        with direct_db.session() as session:
+            media_id = session.execute(
+                text(
+                    """
+                    SELECT pe.media_id
+                    FROM podcast_episodes pe
+                    WHERE pe.podcast_id = :podcast_id
+                    """
+                ),
+                {"podcast_id": podcast_id},
+            ).scalar_one()
+            job_ids = [
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT id
+                        FROM background_jobs
+                        WHERE kind = 'enrich_metadata'
+                          AND payload->>'media_id' = :media_id
+                        """
+                    ),
+                    {"media_id": str(media_id)},
+                ).fetchall()
+            ]
+
+        for job_id in job_ids:
+            direct_db.register_cleanup("background_jobs", "id", job_id)
+
+        assert job_ids, "expected podcast sync to enqueue metadata enrichment for new episodes"
+
+        media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert media_response.status_code == 200, (
+            f"expected podcast media detail 200, got {media_response.status_code}: "
+            f"{media_response.text}"
+        )
+        media = media_response.json()["data"]
+
+        assert [author["name"] for author in media["authors"]] == [
+            "Episode Host",
+            "Guest Analyst",
+        ]
+        assert media["description"] == "Show notes for the metadata-rich episode."
+        assert media["published_date"] == "2026-03-02T06:00:00Z"
+        assert media["language"] == "en"
+
+
 def _run_active_subscription_poll(direct_db: DirectSessionManager, *, limit: int = 100) -> dict:
     from nexus.services.podcasts import poll_active_subscriptions_once
 

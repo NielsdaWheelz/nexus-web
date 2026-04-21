@@ -6,12 +6,15 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import FailureStage, Media, MediaKind, ProcessingStatus
+from nexus.config import get_settings
+from nexus.db.models import FailureStage, Media, MediaAuthor, MediaKind, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
+from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.transcript_segments import (
     insert_transcript_fragments,
@@ -100,6 +103,10 @@ def _do_ingest(
         )
         return {"status": "failed", "error_code": ApiErrorCode.E_INGEST_FAILED.value}
 
+    metadata = _fetch_youtube_metadata(provider_video_id)
+    if metadata is not None:
+        _persist_youtube_metadata(db, media_id, metadata)
+
     try:
         transcript_result = _fetch_youtube_transcript(provider_video_id)
         transcript_status = str(transcript_result.get("status") or "failed")
@@ -138,6 +145,7 @@ def _do_ingest(
                 request_id=request_id,
                 segment_count=len(transcript_segments),
             )
+            _try_enrich_dispatch(str(media_id), request_id)
             return {"status": "success", "segment_count": len(transcript_segments)}
 
         if transcript_status == "completed" and not transcript_segments:
@@ -162,6 +170,7 @@ def _do_ingest(
             request_id=request_id,
             error_code=error_code,
         )
+        _try_enrich_dispatch(str(media_id), request_id)
         return {"status": "failed", "error_code": error_code}
     except Exception as exc:
         logger.exception(
@@ -173,6 +182,7 @@ def _do_ingest(
         )
         error_code = ApiErrorCode.E_TRANSCRIPTION_FAILED.value
         _mark_failed(db, media_id, error_code, "Transcription failed")
+        _try_enrich_dispatch(str(media_id), request_id)
         return {"status": "failed", "error_code": error_code}
 
 
@@ -207,6 +217,109 @@ def _normalize_terminal_error_code(raw_value: Any) -> str | None:
     return ApiErrorCode.E_TRANSCRIPTION_FAILED.value
 
 
+def _fetch_youtube_metadata(provider_video_id: str) -> dict[str, str] | None:
+    settings = get_settings()
+    if not settings.youtube_data_api_key:
+        return None
+
+    try:
+        response = httpx.get(
+            f"{settings.youtube_data_base_url.rstrip('/')}/videos",
+            params={
+                "key": settings.youtube_data_api_key,
+                "part": "snippet",
+                "id": provider_video_id,
+                "maxResults": 1,
+            },
+            headers={"Accept": "application/json"},
+            timeout=15,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        logger.warning(
+            "youtube_metadata_fetch_failed",
+            provider_video_id=provider_video_id,
+            error=str(exc),
+        )
+        return None
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        return None
+    first_item = items[0]
+    if not isinstance(first_item, dict):
+        return None
+    snippet = first_item.get("snippet")
+    if not isinstance(snippet, dict):
+        return None
+
+    metadata: dict[str, str] = {}
+    title = str(snippet.get("title") or "").strip()
+    if title:
+        metadata["title"] = title
+    description = str(snippet.get("description") or "").strip()
+    if description:
+        metadata["description"] = description
+    channel_title = str(snippet.get("channelTitle") or "").strip()
+    if channel_title:
+        metadata["author"] = channel_title
+    published_at = str(snippet.get("publishedAt") or "").strip()
+    if published_at:
+        metadata["published_date"] = published_at
+    language = str(
+        snippet.get("defaultAudioLanguage") or snippet.get("defaultLanguage") or ""
+    ).strip()
+    if language:
+        metadata["language"] = language
+    return metadata or None
+
+
+def _persist_youtube_metadata(db: Session, media_id: UUID, metadata: dict[str, str]) -> None:
+    media = db.get(Media, media_id)
+    if media is None:
+        return
+
+    title = metadata.get("title")
+    if title and str(media.title or "").startswith("YouTube Video "):
+        media.title = title[:255]
+
+    description = metadata.get("description")
+    if description and not media.description:
+        media.description = description[:2000]
+
+    published_date = metadata.get("published_date")
+    if published_date and not media.published_date:
+        media.published_date = published_date[:64]
+
+    language = metadata.get("language")
+    if language and not media.language:
+        media.language = language[:32]
+
+    author = metadata.get("author")
+    if author:
+        if not media.publisher:
+            media.publisher = author[:255]
+        db.execute(
+            text("DELETE FROM media_authors WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        )
+        db.add(
+            MediaAuthor(
+                media_id=media_id,
+                name=author[:255],
+                role="author",
+                sort_order=0,
+            )
+        )
+
+    media.updated_at = datetime.now(UTC)
+
+
 def _mark_failed(db: Session, media_id: UUID, error_code: str, message: str) -> None:
     now = datetime.now(UTC)
     db.execute(
@@ -235,6 +348,24 @@ def _mark_failed(db: Session, media_id: UUID, error_code: str, message: str) -> 
         },
     )
     db.commit()
+
+
+def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
+    session_factory = get_session_factory()
+    db = session_factory()
+    try:
+        enqueue_job(
+            db,
+            kind="enrich_metadata",
+            payload={"media_id": media_id, "request_id": request_id},
+            max_attempts=1,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
+    finally:
+        db.close()
 
 
 def _fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:

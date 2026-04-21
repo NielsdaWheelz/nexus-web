@@ -29,9 +29,11 @@ logger = get_logger(__name__)
 
 _READY_STATES = frozenset(
     {
+        ProcessingStatus.pending,
         ProcessingStatus.ready_for_reading,
         ProcessingStatus.embedding,
         ProcessingStatus.ready,
+        ProcessingStatus.failed,
     }
 )
 
@@ -43,8 +45,7 @@ def enrich_metadata(
     """Enrich media metadata using a cheap LLM call.
 
     Skips silently if:
-    - Media is not in a ready state
-    - Media is already enriched
+    - Media is still actively extracting
     - No metadata gaps detected
     - No LLM provider configured
     - LLM call fails (best-effort)
@@ -70,10 +71,6 @@ def enrich_metadata(
         if media.processing_status not in _READY_STATES:
             return {"status": "skipped", "reason": "not_ready"}
 
-        # Bail if already enriched
-        if media.metadata_enriched_at is not None:
-            return {"status": "skipped", "reason": "already_enriched"}
-
         # Detect gaps
         gaps = detect_metadata_gaps(media)
         if not has_any_gaps(gaps):
@@ -88,10 +85,7 @@ def enrich_metadata(
 
         # Build content sample and prompt
         content_sample = get_content_sample(db, media)
-        if not content_sample:
-            return {"status": "skipped", "reason": "no_content"}
-
-        prompt = build_enrichment_prompt(media, content_sample, gaps)
+        prompt = build_enrichment_prompt(db, media, content_sample, gaps)
 
         # Call LLM
         req = LLMRequest(

@@ -37,10 +37,17 @@ interface LibraryMediaEntry {
   id: string;
   kind: string;
   title: string;
+  authors: Array<{ id: string; name: string; role: string | null }>;
+  published_date: string | null;
+  publisher: string | null;
   canonical_source_url: string | null;
-  processing_status: string;
-  created_at: string;
-  updated_at: string;
+  processing_status:
+    | "pending"
+    | "extracting"
+    | "ready_for_reading"
+    | "embedding"
+    | "ready"
+    | "failed";
 }
 
 interface LibraryPodcastEntry {
@@ -51,7 +58,6 @@ interface LibraryPodcastEntry {
   website_url: string | null;
   image_url: string | null;
   unplayed_count: number;
-  updated_at: string;
 }
 
 interface LibraryPodcastSubscription {
@@ -67,12 +73,6 @@ interface LibraryEntry {
   media?: LibraryMediaEntry | null;
   podcast?: LibraryPodcastEntry | null;
   subscription?: LibraryPodcastSubscription | null;
-}
-
-function formatDate(value: string): string {
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) return "unknown date";
-  return new Date(parsed).toLocaleDateString();
 }
 
 export default function LibraryPaneBody() {
@@ -460,6 +460,40 @@ export default function LibraryPaneBody() {
                     throw new Error("Library entry is missing media payload");
                   }
                   const Icon = MEDIA_KIND_ICONS[item.media.kind] ?? Globe;
+                  const authorNames = item.media.authors
+                    .map((author) => author.name.trim())
+                    .filter((name) => name.length > 0);
+                  let authorSummary: string | null = null;
+                  if (authorNames.length === 1) {
+                    authorSummary = authorNames[0] ?? null;
+                  } else if (authorNames.length > 1) {
+                    authorSummary = `${authorNames[0]} +${authorNames.length - 1}`;
+                  }
+                  let publishedDate = item.media.published_date?.trim() || null;
+                  if (publishedDate && /^\d{4}-\d{2}-\d{2}T/.test(publishedDate)) {
+                    publishedDate = publishedDate.slice(0, 10);
+                  }
+                  const publisher = item.media.publisher?.trim() || null;
+                  const metaParts: string[] = [];
+                  if (authorSummary) {
+                    metaParts.push(authorSummary);
+                  }
+                  if (publishedDate) {
+                    metaParts.push(publishedDate);
+                  }
+                  if (metaParts.length === 0 && publisher) {
+                    metaParts.push(publisher);
+                  }
+                  let statusLabel: string | null = null;
+                  if (item.media.processing_status === "pending") {
+                    statusLabel = "Queued";
+                  } else if (item.media.processing_status === "extracting") {
+                    statusLabel = "Processing";
+                  } else if (item.media.processing_status === "embedding") {
+                    statusLabel = "Indexing";
+                  } else if (item.media.processing_status === "failed") {
+                    statusLabel = "Failed";
+                  }
                   return (
                     <div className={styles.mediaRow} data-dragging={isDragging ? "true" : "false"}>
                       <div className={styles.mediaRowMain}>
@@ -479,13 +513,21 @@ export default function LibraryPaneBody() {
                             <Icon size={18} aria-hidden="true" />
                             <span className={styles.mediaTitle}>{item.media.title}</span>
                           </span>
-                          <span className={styles.mediaMeta}>
-                            {[
-                              item.media.kind.replaceAll("_", " "),
-                              item.media.processing_status,
-                              `Updated ${formatDate(item.media.updated_at)}`,
-                            ].join(" · ")}
-                          </span>
+                          {metaParts.length > 0 || statusLabel ? (
+                            <span className={styles.mediaMetaRow}>
+                              {metaParts.length > 0 ? (
+                                <span className={styles.mediaMeta}>{metaParts.join(" · ")}</span>
+                              ) : null}
+                              {statusLabel ? (
+                                <span
+                                  className={styles.mediaStatus}
+                                  data-status={item.media.processing_status}
+                                >
+                                  {statusLabel}
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : null}
                         </a>
                       </div>
                       <ActionMenu options={rowOptions} className={styles.rowActionMenu} />

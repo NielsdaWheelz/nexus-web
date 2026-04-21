@@ -342,6 +342,11 @@ class PodcastIndexClient:
                     "provider_episode_id": provider_episode_id,
                     "guid": guid,
                     "title": str(item.get("title") or "Untitled Episode"),
+                    "authors": (
+                        [str(item.get("author")).strip()]
+                        if str(item.get("author") or "").strip()
+                        else None
+                    ),
                     "audio_url": audio_url,
                     "published_at": published_at,
                     "duration_seconds": duration_seconds,
@@ -2757,16 +2762,33 @@ def _sync_subscription_ingest(
     ingested_episode_count = 0
     reused_episode_count = 0
     ingested_media_ids: list[UUID] = []
+    enrichment_media_ids: set[UUID] = set()
     chapter_sync_rows: list[tuple[UUID, list[dict[str, Any]] | None]] = []
     transcript_sync_rows: list[dict[str, Any]] = []
+    podcast = _get_podcast_sync_metadata(db, podcast_id)
+    podcast_author = str(podcast["author"] or "").strip() or None
 
     for episode in selected_episodes:
         guid = _normalize_guid(episode.get("guid"))
         fallback_identity = _compute_fallback_identity(podcast_id, episode)
         description_html = _normalize_optional_text(episode.get("description_html"))
         description_text = _normalize_optional_text(episode.get("description_text"))
+        description = description_text[:2000] if description_text else None
         published_at = _parse_iso_datetime(episode.get("published_at"))
+        published_date = str(episode.get("published_at") or "").strip()[:64] or None
+        language = _normalize_language_tag(episode.get("language")) or _normalize_language_tag(
+            episode.get("feed_language")
+        )
         duration_seconds = _coerce_positive_int(episode.get("duration_seconds"))
+        author_names: list[str] = []
+        raw_authors = episode.get("authors")
+        if isinstance(raw_authors, list):
+            for raw_author in raw_authors:
+                name = str(raw_author or "").strip()
+                if name and name not in author_names:
+                    author_names.append(name)
+        if not author_names and podcast_author:
+            author_names.append(podcast_author)
         rss_transcript_refs = episode.get("rss_transcript_refs")
         rss_transcript_url = None
         if isinstance(rss_transcript_refs, list):
@@ -2791,6 +2813,32 @@ def _sync_subscription_ingest(
             db.execute(
                 text(
                     """
+                    UPDATE media
+                    SET
+                        title = :title,
+                        canonical_source_url = :canonical_source_url,
+                        external_playback_url = :external_playback_url,
+                        description = COALESCE(:description, description),
+                        published_date = COALESCE(:published_date, published_date),
+                        language = COALESCE(:language, language),
+                        updated_at = :updated_at
+                    WHERE id = :media_id
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "title": str(episode.get("title") or "Untitled Episode"),
+                    "canonical_source_url": feed_url,
+                    "external_playback_url": str(episode.get("audio_url") or "").strip() or None,
+                    "description": description,
+                    "published_date": published_date,
+                    "language": language,
+                    "updated_at": now,
+                },
+            )
+            db.execute(
+                text(
+                    """
                     UPDATE podcast_episodes
                     SET
                         description_html = :description_html,
@@ -2810,6 +2858,28 @@ def _sync_subscription_ingest(
                     "rss_transcript_url": rss_transcript_url,
                 },
             )
+            if author_names:
+                db.execute(
+                    text("DELETE FROM media_authors WHERE media_id = :media_id"),
+                    {"media_id": media_id},
+                )
+                for sort_order, name in enumerate(author_names):
+                    db.execute(
+                        text(
+                            """
+                            INSERT INTO media_authors (id, media_id, name, role, sort_order)
+                            VALUES (:id, :media_id, :name, 'author', :sort_order)
+                            """
+                        ),
+                        {
+                            "id": uuid4(),
+                            "media_id": media_id,
+                            "name": name[:255],
+                            "sort_order": sort_order,
+                        },
+                    )
+            else:
+                enrichment_media_ids.add(media_id)
             reused_episode_count += 1
         else:
             media_id = uuid4()
@@ -2829,6 +2899,9 @@ def _sync_subscription_ingest(
                         external_playback_url,
                         provider,
                         provider_id,
+                        description,
+                        published_date,
+                        language,
                         created_by_user_id,
                         created_at,
                         updated_at
@@ -2845,6 +2918,9 @@ def _sync_subscription_ingest(
                         :external_playback_url,
                         :provider,
                         :provider_id,
+                        :description,
+                        :published_date,
+                        :language,
                         :created_by_user_id,
                         :created_at,
                         :updated_at
@@ -2858,6 +2934,9 @@ def _sync_subscription_ingest(
                     "external_playback_url": audio_url,
                     "provider": PODCAST_PROVIDER,
                     "provider_id": str(episode.get("provider_episode_id") or ""),
+                    "description": description,
+                    "published_date": published_date,
+                    "language": language,
                     "created_by_user_id": viewer_id,
                     "created_at": now,
                     "updated_at": now,
@@ -2915,9 +2994,28 @@ def _sync_subscription_ingest(
                     "created_at": now,
                 },
             )
+            if author_names:
+                for sort_order, name in enumerate(author_names):
+                    db.execute(
+                        text(
+                            """
+                            INSERT INTO media_authors (id, media_id, name, role, sort_order)
+                            VALUES (:id, :media_id, :name, 'author', :sort_order)
+                            """
+                        ),
+                        {
+                            "id": uuid4(),
+                            "media_id": media_id,
+                            "name": name[:255],
+                            "sort_order": sort_order,
+                        },
+                    )
+            else:
+                enrichment_media_ids.add(media_id)
             _ensure_in_default_library(db, viewer_id, media_id)
             ingested_episode_count += 1
             ingested_media_ids.append(media_id)
+            enrichment_media_ids.add(media_id)
 
         chapter_sync_rows.append((media_id, episode.get("rss_chapters")))
         transcript_sync_rows.append(
@@ -3102,6 +3200,7 @@ def _sync_subscription_ingest(
             source_type=source_type,
             segment_count=len(transcript_segments),
         )
+        enrichment_media_ids.add(media_id)
 
     playback_queue_service.append_subscription_media_if_enabled(
         db,
@@ -3109,6 +3208,9 @@ def _sync_subscription_ingest(
         podcast_id=podcast_id,
         media_ids=ingested_media_ids,
     )
+
+    for media_id in enrichment_media_ids:
+        _try_enqueue_metadata_enrichment(db, media_id=media_id)
 
     return ingested_episode_count, reused_episode_count
 
@@ -3440,6 +3542,30 @@ def _enqueue_podcast_semantic_repair_job(
                 request_reason=request_reason,
             )
             return True
+        return False
+
+
+def _try_enqueue_metadata_enrichment(
+    db: Session,
+    *,
+    media_id: UUID,
+    request_id: str | None = None,
+) -> bool:
+    try:
+        enqueue_job(
+            db,
+            kind="enrich_metadata",
+            payload={"media_id": str(media_id), "request_id": request_id},
+            max_attempts=1,
+        )
+        return True
+    except Exception as exc:
+        logger.warning(
+            "metadata_enrichment_enqueue_failed",
+            media_id=str(media_id),
+            request_id=request_id,
+            error=str(exc),
+        )
         return False
 
 
@@ -3964,6 +4090,7 @@ def run_podcast_transcription_now(
         )
         _commit_reserved_usage_for_media(db, media_id=media_id, now=now)
         db.commit()
+        _try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id)
         return {
             "status": "completed",
             "segment_count": len(transcript_segments),
@@ -3980,6 +4107,7 @@ def run_podcast_transcription_now(
         now=now,
     )
     db.commit()
+    _try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id)
     return {"status": "failed", "error_code": terminal_error_code}
 
 
@@ -4304,7 +4432,7 @@ def _get_podcast_sync_metadata(db: Session, podcast_id: UUID) -> dict[str, Any]:
     row = db.execute(
         text(
             """
-            SELECT id, provider_podcast_id, feed_url
+            SELECT id, provider_podcast_id, feed_url, author
             FROM podcasts
             WHERE id = :podcast_id
             """
@@ -4317,6 +4445,7 @@ def _get_podcast_sync_metadata(db: Session, podcast_id: UUID) -> dict[str, Any]:
         "id": row[0],
         "provider_podcast_id": row[1],
         "feed_url": row[2],
+        "author": row[3],
     }
 
 
@@ -5438,6 +5567,8 @@ def _augment_provider_episodes_with_feed_pagination(
                     existing["description_html"] = episode.get("description_html")
                 if not existing.get("description_text") and episode.get("description_text"):
                     existing["description_text"] = episode.get("description_text")
+                if existing.get("authors") is None and episode.get("authors") is not None:
+                    existing["authors"] = episode.get("authors")
                 if not existing.get("language") and episode.get("language"):
                     existing["language"] = episode.get("language")
                 if not existing.get("feed_language") and episode.get("feed_language"):
@@ -5473,6 +5604,7 @@ def _hydrate_selected_episode_chapters_from_feed(
         episode.setdefault("rss_transcript_refs", None)
         episode.setdefault("description_html", None)
         episode.setdefault("description_text", None)
+        episode.setdefault("authors", None)
         episode.setdefault("language", None)
         episode.setdefault("feed_language", None)
 
@@ -5510,6 +5642,8 @@ def _hydrate_selected_episode_chapters_from_feed(
                 episode["description_html"] = feed_episode.get("description_html")
             if not episode.get("description_text"):
                 episode["description_text"] = feed_episode.get("description_text")
+            if episode.get("authors") is None:
+                episode["authors"] = feed_episode.get("authors")
             if not episode.get("language"):
                 episode["language"] = feed_episode.get("language")
             if not episode.get("feed_language"):
@@ -5686,6 +5820,30 @@ def _episode_from_feed_item(
         item,
         base_url=base_url,
     )
+    authors: list[str] = []
+    person_nodes = item.xpath(
+        "./*[local-name()='person' and namespace-uri()='https://podcastindex.org/namespace/1.0']"
+    )
+    if not person_nodes:
+        person_nodes = item.xpath(
+            "./*[local-name()='person' and namespace-uri()='https://podcastnamespace.org/podcast/1.0']"
+        )
+    for person_node in person_nodes:
+        name = str(getattr(person_node, "text", "") or "").strip()
+        if name and name not in authors:
+            authors.append(name)
+    if not authors:
+        raw_author = (
+            item.xpath("string(./author)")
+            or item.xpath(
+                "string(./*[local-name()='author' and namespace-uri()='http://www.itunes.com/dtds/podcast-1.0.dtd'])"
+            )
+            or item.xpath("string(./*[local-name()='creator'])")
+        )
+        for name in re.split(r"\s*[,;]\s*|\s+and\s+", str(raw_author or "").strip()):
+            normalized_name = name.strip()
+            if normalized_name and normalized_name not in authors:
+                authors.append(normalized_name)
 
     provider_episode_id = guid or audio_url
     if not provider_episode_id:
@@ -5700,6 +5858,7 @@ def _episode_from_feed_item(
         "provider_episode_id": provider_episode_id,
         "guid": guid,
         "title": title,
+        "authors": authors or None,
         "audio_url": audio_url,
         "published_at": published_at,
         "duration_seconds": duration_seconds,

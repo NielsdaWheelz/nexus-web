@@ -7,6 +7,7 @@ import PodcastDetailPaneBody from "./PodcastDetailPaneBody";
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 const mockUsePaneChromeOverride = vi.fn<(overrides: Record<string, unknown>) => void>();
 const mockViewportState = { isMobile: false };
+const mockRequestOpenInAppPane = vi.fn();
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
@@ -49,7 +50,7 @@ vi.mock("@/lib/player/globalPlayer", () => ({
 }));
 
 vi.mock("@/lib/panes/openInAppPane", () => ({
-  requestOpenInAppPane: () => false,
+  requestOpenInAppPane: (...args: unknown[]) => mockRequestOpenInAppPane(...args),
 }));
 
 vi.mock("@/lib/panes/paneRouteRegistry", () => ({
@@ -96,7 +97,7 @@ function getLatestPaneOptions() {
   }>;
 }
 
-function buildEpisode() {
+function buildEpisode(overrides: Record<string, unknown> = {}) {
   return {
     id: "media-0",
     kind: "podcast_episode",
@@ -132,6 +133,7 @@ function buildEpisode() {
     description_text: null,
     created_at: "2026-03-06T00:00:00Z",
     updated_at: "2026-03-06T00:00:00Z",
+    ...overrides,
   };
 }
 
@@ -139,6 +141,8 @@ describe("PodcastDetailPaneBody", () => {
   beforeEach(() => {
     mockUsePaneParam.mockReset();
     mockUsePaneChromeOverride.mockReset();
+    mockRequestOpenInAppPane.mockReset();
+    mockRequestOpenInAppPane.mockReturnValue(false);
     mockViewportState.isMobile = false;
     vi.restoreAllMocks();
     mockUsePaneParam.mockImplementation((paramName) =>
@@ -174,7 +178,16 @@ describe("PodcastDetailPaneBody", () => {
         });
       }
       if (url.pathname === "/api/podcasts/podcast-1/episodes") {
-        return jsonResponse({ data: [buildEpisode()] });
+        return jsonResponse({
+          data: [
+            buildEpisode({
+              authors: [
+                { id: "author-1", name: "Host One", role: "host" },
+                { id: "author-2", name: "Host Two", role: null },
+              ],
+            }),
+          ],
+        });
       }
       if (url.pathname === "/api/libraries") {
         return jsonResponse({ data: [] });
@@ -188,11 +201,68 @@ describe("PodcastDetailPaneBody", () => {
     render(<PodcastDetailPaneBody />);
 
     expect(await screen.findByText("Episode 0")).toBeInTheDocument();
+    expect(screen.getByText(/Host One \+1/)).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Systems Podcast" })).toBeInTheDocument();
     const episodesAside = screen.getByRole("complementary", { name: "Episodes" });
     expect(within(episodesAside).getByRole("heading", { name: "Episodes" })).toBeInTheDocument();
     expect(within(episodesAside).getByText("Episode 0")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Episodes" })).not.toBeInTheDocument();
+  });
+
+  it("uses a compact media pane title hint when opening an episode in a new pane", async () => {
+    mockRequestOpenInAppPane.mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/podcast-1") {
+        return jsonResponse({
+          data: {
+            podcast: {
+              id: "podcast-1",
+              provider: "podcast_index",
+              provider_podcast_id: "provider-1",
+              title: "Systems Podcast",
+              author: "Systems Team",
+              feed_url: "https://feeds.example.com/systems.xml",
+              website_url: null,
+              image_url: null,
+              description: "Systems thinking show",
+              created_at: "2026-03-06T00:00:00Z",
+              updated_at: "2026-03-06T00:00:00Z",
+            },
+            subscription: null,
+          },
+        });
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+        return jsonResponse({
+          data: [
+            buildEpisode({
+              authors: [
+                { id: "author-1", name: "Host One", role: "host" },
+                { id: "author-2", name: "Host Two", role: null },
+              ],
+            }),
+          ],
+        });
+      }
+      if (url.pathname === "/api/libraries") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/media/transcript/forecasts") {
+        return jsonResponse({ data: [] });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<PodcastDetailPaneBody />);
+
+    const episodeLink = await screen.findByRole("link", { name: /Episode 0/i });
+    fireEvent.click(episodeLink, { button: 0, shiftKey: true });
+
+    expect(mockRequestOpenInAppPane).toHaveBeenCalledWith("/media/media-0", {
+      titleHint: "Episode 0 · Host One +1",
+      resourceRef: "media:media-0",
+    });
   });
 
   it("moves subscribed show secondary actions into pane chrome options", async () => {

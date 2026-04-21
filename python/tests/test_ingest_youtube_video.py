@@ -4,6 +4,7 @@ import importlib
 from uuid import UUID
 
 import pytest
+from sqlalchemy import text
 
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -134,6 +135,90 @@ class TestIngestYoutubeVideo:
         assert caps["can_highlight"] is False
         assert caps["can_quote"] is False
         assert caps["can_search"] is False
+
+    def test_transcript_success_persists_source_metadata_and_enqueues_enrichment(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        create_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
+            headers=auth_headers(user_id),
+        )
+        assert create_response.status_code == 202
+        media_id = UUID(create_response.json()["data"]["media_id"])
+
+        direct_db.register_cleanup("media_authors", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        monkeypatch.setattr(
+            _youtube_ingest_module(),
+            "_fetch_youtube_metadata",
+            lambda _provider_id: {
+                "title": "Systems Thinking Video",
+                "description": "A concise systems lecture.",
+                "author": "Nexus Channel",
+                "published_date": "2026-04-01T12:00:00Z",
+                "language": "en-US",
+            },
+        )
+        monkeypatch.setattr(
+            _youtube_ingest_module(),
+            "_fetch_youtube_transcript",
+            lambda _provider_id: {
+                "status": "completed",
+                "segments": [
+                    {
+                        "t_start_ms": 0,
+                        "t_end_ms": 900,
+                        "text": "systems lecture transcript",
+                        "speaker_label": None,
+                    }
+                ],
+            },
+        )
+
+        from nexus.tasks.ingest_youtube_video import run_ingest_sync
+
+        with direct_db.session() as session:
+            result = run_ingest_sync(session, media_id, user_id)
+
+        assert result["status"] == "success"
+
+        with direct_db.session() as session:
+            job_ids = [
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT id
+                        FROM background_jobs
+                        WHERE kind = 'enrich_metadata'
+                          AND payload->>'media_id' = :media_id
+                        """
+                    ),
+                    {"media_id": str(media_id)},
+                ).fetchall()
+            ]
+        for job_id in job_ids:
+            direct_db.register_cleanup("background_jobs", "id", job_id)
+
+        assert job_ids, "expected YouTube ingest to enqueue metadata enrichment"
+
+        media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert media_response.status_code == 200
+        media = media_response.json()["data"]
+
+        assert media["title"] == "Systems Thinking Video"
+        assert media["description"] == "A concise systems lecture."
+        assert media["publisher"] == "Nexus Channel"
+        assert media["published_date"] == "2026-04-01T12:00:00Z"
+        assert media["language"] == "en-US"
+        assert [author["name"] for author in media["authors"]] == ["Nexus Channel"]
 
     def test_ingest_is_idempotent_after_success_and_does_not_refetch_transcript(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch

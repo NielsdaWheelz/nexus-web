@@ -35,6 +35,7 @@ class MetadataGaps:
 
     title_looks_like_filename: bool = False
     authors_missing: bool = False
+    publisher_missing: bool = False
     description_missing: bool = False
     published_date_missing: bool = False
     language_missing: bool = False
@@ -42,7 +43,10 @@ class MetadataGaps:
 
 def detect_metadata_gaps(media: Media) -> MetadataGaps:
     """Check which metadata fields are missing or malformed."""
-    title_looks_like_filename = bool(media.title and _FILENAME_EXTENSIONS.search(media.title))
+    title = str(media.title or "").strip()
+    title_looks_like_filename = bool(title and _FILENAME_EXTENSIONS.search(title))
+    if title.startswith("YouTube Video ") or title in {"Untitled", "Untitled Episode"}:
+        title_looks_like_filename = True
 
     # Check if authors exist via the relationship
     authors_missing = not media.authors
@@ -50,6 +54,7 @@ def detect_metadata_gaps(media: Media) -> MetadataGaps:
     return MetadataGaps(
         title_looks_like_filename=title_looks_like_filename,
         authors_missing=authors_missing,
+        publisher_missing=not media.publisher,
         description_missing=not media.description,
         published_date_missing=not media.published_date,
         language_missing=not media.language,
@@ -61,6 +66,7 @@ def has_any_gaps(gaps: MetadataGaps) -> bool:
     return (
         gaps.title_looks_like_filename
         or gaps.authors_missing
+        or gaps.publisher_missing
         or gaps.description_missing
         or gaps.published_date_missing
         or gaps.language_missing
@@ -77,11 +83,9 @@ def get_content_sample(db: Session, media: Media) -> str:
     settings = get_settings()
     max_chars = settings.metadata_enrichment_max_content_chars
 
-    # PDF: use plain_text
     if media.plain_text:
         return media.plain_text[:max_chars]
 
-    # EPUB/Web: use first fragment's canonical_text
     row = db.execute(
         text(
             "SELECT canonical_text FROM fragments WHERE media_id = :media_id ORDER BY idx LIMIT 1"
@@ -92,6 +96,17 @@ def get_content_sample(db: Session, media: Media) -> str:
     if row and row[0]:
         return row[0][:max_chars]
 
+    if media.kind == "podcast_episode":
+        row = db.execute(
+            text("SELECT description_text FROM podcast_episodes WHERE media_id = :media_id"),
+            {"media_id": media.id},
+        ).fetchone()
+        if row and row[0]:
+            return str(row[0])[:max_chars]
+
+    if media.description:
+        return media.description[:max_chars]
+
     return ""
 
 
@@ -100,13 +115,20 @@ def get_content_sample(db: Session, media: Media) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_enrichment_prompt(media: Media, content_sample: str, gaps: MetadataGaps) -> str:
+def build_enrichment_prompt(
+    db: Session,
+    media: Media,
+    content_sample: str,
+    gaps: MetadataGaps,
+) -> str:
     """Build a structured prompt requesting JSON for only the missing fields."""
     requested_fields: list[str] = []
     if gaps.title_looks_like_filename:
         requested_fields.append('"title": "the actual document title"')
     if gaps.authors_missing:
         requested_fields.append('"authors": ["Author Name", ...]')
+    if gaps.publisher_missing:
+        requested_fields.append('"publisher": "publisher, site, channel, or show name"')
     if gaps.description_missing:
         requested_fields.append('"description": "1-2 sentence summary"')
     if gaps.published_date_missing:
@@ -115,12 +137,56 @@ def build_enrichment_prompt(media: Media, content_sample: str, gaps: MetadataGap
         requested_fields.append('"language": "ISO 639-1 code like en, fr, de"')
 
     fields_str = ",\n  ".join(requested_fields)
+    metadata_lines = [
+        f"- kind: {media.kind}",
+        f'- current_title: "{media.title}"',
+    ]
+    if media.requested_url:
+        metadata_lines.append(f"- requested_url: {media.requested_url}")
+    if media.canonical_source_url:
+        metadata_lines.append(f"- canonical_source_url: {media.canonical_source_url}")
+    if media.provider:
+        metadata_lines.append(f"- provider: {media.provider}")
+    if media.provider_id:
+        metadata_lines.append(f"- provider_id: {media.provider_id}")
+    if media.publisher:
+        metadata_lines.append(f"- current_publisher: {media.publisher}")
+    if media.published_date:
+        metadata_lines.append(f"- current_published_date: {media.published_date}")
+    if media.language:
+        metadata_lines.append(f"- current_language: {media.language}")
+    if media.description:
+        metadata_lines.append(f"- current_description: {media.description}")
 
-    prompt = f"""Extract metadata from this document. The current title is: "{media.title}"
+    if media.kind == "podcast_episode":
+        row = db.execute(
+            text(
+                """
+                SELECT p.title, p.author
+                FROM podcast_episodes pe
+                JOIN podcasts p ON p.id = pe.podcast_id
+                WHERE pe.media_id = :media_id
+                """
+            ),
+            {"media_id": media.id},
+        ).fetchone()
+        if row is not None:
+            if row[0]:
+                metadata_lines.append(f"- podcast_title: {row[0]}")
+            if row[1]:
+                metadata_lines.append(f"- podcast_author: {row[1]}")
+
+    metadata_block = "\n".join(metadata_lines)
+    content_block = content_sample or "(no media text available)"
+
+    prompt = f"""Extract missing metadata for this media item.
+
+Known metadata:
+{metadata_block}
 
 Content sample:
 ---
-{content_sample}
+{content_block}
 ---
 
 Return ONLY a JSON object with these fields (include only if you can determine them with confidence):
@@ -129,7 +195,9 @@ Return ONLY a JSON object with these fields (include only if you can determine t
 }}
 
 Rules:
+- Use the known metadata first, then the content sample
 - For authors, return an array of full names
+- For publisher, prefer the site, publisher, channel, podcast, or publication name
 - For published_date, use ISO format (YYYY, YYYY-MM, or YYYY-MM-DD)
 - For language, use ISO 639-1 two-letter codes
 - For description, write 1-2 sentences summarizing the content
@@ -193,6 +261,11 @@ def merge_enrichment(
                             sort_order=i,
                         )
                     )
+
+    if gaps.publisher_missing and "publisher" in enrichment:
+        publisher = enrichment["publisher"]
+        if isinstance(publisher, str) and publisher.strip():
+            media.publisher = publisher.strip()[:255]
 
     if gaps.description_missing and "description" in enrichment:
         desc = enrichment["description"]

@@ -45,7 +45,7 @@ describe("library detail mixed-entry cutover", () => {
     mockUsePaneChromeOverride.mockReset();
   });
 
-  it("renders one mixed list of podcast and media entries and removes a podcast row through the row menu", async () => {
+  it("shows ready document metadata and keeps the media row action menu working", async () => {
     const user = userEvent.setup();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -93,6 +93,12 @@ describe("library detail mixed-entry cutover", () => {
                 id: "media-1",
                 kind: "pdf",
                 title: "Intro to systems",
+                authors: [
+                  { id: "author-1", name: "Ada Lovelace", role: "author" },
+                  { id: "author-2", name: "Grace Hopper", role: null },
+                ],
+                published_date: "1843",
+                publisher: "Analytical Engine Press",
                 canonical_source_url: "https://example.com/systems.pdf",
                 processing_status: "ready_for_reading",
                 created_at: "2026-03-01T00:00:00Z",
@@ -102,7 +108,7 @@ describe("library detail mixed-entry cutover", () => {
           ],
         });
       }
-      if (url.pathname === "/api/libraries/lib-1/podcasts/podcast-1" && init?.method === "DELETE") {
+      if (url.pathname === "/api/libraries/lib-1/media/media-1" && init?.method === "DELETE") {
         return jsonResponse({ data: { ok: true } });
       }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
@@ -112,21 +118,95 @@ describe("library detail mixed-entry cutover", () => {
 
     expect(await screen.findByText("Football Ramble")).toBeInTheDocument();
     expect(screen.getByText("Intro to systems")).toBeInTheDocument();
+    expect(screen.getByText("Ada Lovelace +1 · 1843")).toBeInTheDocument();
+    expect(screen.queryByText("ready_for_reading")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Updated\b/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^pdf$/i)).not.toBeInTheDocument();
     expect(screen.queryByText("Podcasts")).not.toBeInTheDocument();
     expect(screen.queryByText("Items")).not.toBeInTheDocument();
 
-    await user.click(screen.getAllByRole("button", { name: "Actions" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "Actions" })[1]);
     await user.click(await screen.findByRole("menuitem", { name: "Remove from library" }));
 
     await waitFor(() => {
-      expect(confirmSpy).toHaveBeenCalledWith('Remove "Football Ramble" from the library?');
+      expect(confirmSpy).toHaveBeenCalledWith('Remove "Intro to systems" from the library?');
       expect(
         fetchSpy.mock.calls.some(([url, init]) => {
           const parsed = new URL(String(url), "http://localhost");
-          return parsed.pathname === "/api/libraries/lib-1/podcasts/podcast-1" && init?.method === "DELETE";
+          return parsed.pathname === "/api/libraries/lib-1/media/media-1" && init?.method === "DELETE";
         })
       ).toBe(true);
     });
+  });
+
+  it("shows exceptional document status and falls back to publisher when author and date are missing", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/libraries/lib-1" && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({
+          data: {
+            id: "lib-1",
+            name: "Systems Library",
+            is_default: false,
+            role: "admin",
+            owner_user_id: "user-1",
+          },
+        });
+      }
+      if (url.pathname === "/api/libraries/lib-1/entries" && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({
+          data: [
+            {
+              id: "entry-media-1",
+              position: 0,
+              created_at: "2026-03-01T00:00:00Z",
+              kind: "media",
+              media: {
+                id: "media-1",
+                kind: "web_article",
+                title: "Compilers in practice",
+                authors: [{ id: "author-1", name: "Ada Lovelace", role: "author" }],
+                published_date: "1952",
+                publisher: "Systems Journal",
+                canonical_source_url: "https://example.com/compilers",
+                processing_status: "failed",
+                created_at: "2026-03-01T00:00:00Z",
+                updated_at: "2026-03-01T00:00:00Z",
+              },
+            },
+            {
+              id: "entry-media-2",
+              position: 1,
+              created_at: "2026-03-01T00:00:00Z",
+              kind: "media",
+              media: {
+                id: "media-2",
+                kind: "pdf",
+                title: "Collected essays",
+                authors: [],
+                published_date: null,
+                publisher: "Oxford University Press",
+                canonical_source_url: null,
+                processing_status: "ready_for_reading",
+                created_at: "2026-03-01T00:00:00Z",
+                updated_at: "2026-03-01T00:00:00Z",
+              },
+            },
+          ],
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(createElement(LibraryDetailPage));
+
+    expect(await screen.findByText("Compilers in practice")).toBeInTheDocument();
+    expect(screen.getByText("Ada Lovelace · 1952")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByText("Collected essays")).toBeInTheDocument();
+    expect(screen.getByText("Oxford University Press")).toBeInTheDocument();
+    expect(screen.queryByText("ready_for_reading")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Updated\b/i)).not.toBeInTheDocument();
   });
 
   it("publishes library-level actions into pane chrome and removes the duplicate body header", async () => {
@@ -155,6 +235,9 @@ describe("library detail mixed-entry cutover", () => {
                 id: "media-1",
                 kind: "pdf",
                 title: "Intro to systems",
+                authors: [{ id: "author-1", name: "Ada Lovelace", role: "author" }],
+                published_date: "1843",
+                publisher: "Analytical Engine Press",
                 canonical_source_url: "https://example.com/systems.pdf",
                 processing_status: "ready_for_reading",
                 created_at: "2026-03-01T00:00:00Z",
