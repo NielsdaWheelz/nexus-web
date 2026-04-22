@@ -19,6 +19,7 @@ const EPUB_SEED = path.join(E2E_DIR, ".seed", "epub-media.json");
 const YOUTUBE_SEED = path.join(E2E_DIR, ".seed", "youtube-media.json");
 const READER_RESUME_SEED = path.join(E2E_DIR, ".seed", "reader-resume-media.json");
 const SEED_FILES = [PDF_SEED, NON_PDF_SEED, EPUB_SEED, YOUTUBE_SEED, READER_RESUME_SEED];
+const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
 
 function loadEnvFile(filePath) {
   if (!existsSync(filePath)) {
@@ -145,6 +146,157 @@ function databaseHasSeededMedia(dbUrl) {
   }
 }
 
+function databaseHasSeededBilling(dbUrl) {
+  const probeDatabaseUrl = dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
+  const command =
+    "uv run --project python python -c " +
+    JSON.stringify(
+      "import os, psycopg;" +
+        "conn=psycopg.connect(os.environ['DATABASE_URL']);" +
+        "cur=conn.cursor();" +
+        "cur.execute(" +
+        JSON.stringify(
+          "select ba.plan_tier from billing_accounts ba join users u on u.id = ba.user_id where u.email = %s"
+        ) +
+        ", (os.environ['E2E_USER_EMAIL'],));" +
+        "row=cur.fetchone();" +
+        "print(row[0] if row else '');" +
+        "cur.close();" +
+        "conn.close()",
+    );
+
+  try {
+    const planTier = execSync(command, {
+      cwd: ROOT,
+      stdio: ["ignore", "pipe", "inherit"],
+      env: {
+        ...process.env,
+        DATABASE_URL: probeDatabaseUrl,
+        E2E_USER_EMAIL,
+      },
+    })
+      .toString()
+      .trim();
+    return planTier === "ai_plus";
+  } catch (error) {
+    throw new Error(
+      "[global-setup] Billing readiness probe failed.\n" +
+        `  Command: ${command}\n` +
+        `  CWD:     ${ROOT}\n` +
+        `  Cause:   ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function databaseHasSeededYoutubeTranscriptStates(dbUrl) {
+  if (!seedArtifactsExist()) {
+    return false;
+  }
+
+  const probeDatabaseUrl = dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
+  const youtube = readJson(YOUTUBE_SEED);
+  const command =
+    "uv run --project python python -c " +
+    JSON.stringify(
+      "import json, os, psycopg;" +
+        "seed=json.loads(os.environ['NEXUS_E2E_YOUTUBE_SEED']);" +
+        "conn=psycopg.connect(os.environ['DATABASE_URL']);" +
+        "cur=conn.cursor();" +
+        "cur.execute(" +
+        JSON.stringify(
+          "select media_id::text, transcript_state, transcript_coverage, semantic_status from media_transcript_states where media_id = any(%s::uuid[])"
+        ) +
+        ", ([seed['media_id'], seed['playback_only_media_id']],));" +
+        "rows={media_id:(state, coverage, semantic) for media_id, state, coverage, semantic in cur.fetchall()};" +
+        "ready_ok=rows.get(seed['media_id']) == ('ready', 'full', 'ready');" +
+        "playback_ok=(rows.get(seed['playback_only_media_id']) or ('', '', ''))[0] == 'unavailable';" +
+        "print('1' if ready_ok and playback_ok else '0');" +
+        "cur.close();" +
+        "conn.close()",
+    );
+
+  try {
+    const raw = execSync(command, {
+      cwd: ROOT,
+      stdio: ["ignore", "pipe", "inherit"],
+      env: {
+        ...process.env,
+        DATABASE_URL: probeDatabaseUrl,
+        NEXUS_E2E_YOUTUBE_SEED: JSON.stringify(youtube),
+      },
+    })
+      .toString()
+      .trim();
+    return raw === "1";
+  } catch (error) {
+    throw new Error(
+      "[global-setup] YouTube transcript-state readiness probe failed.\n" +
+        `  Command: ${command}\n` +
+        `  CWD:     ${ROOT}\n` +
+        `  Cause:   ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function databaseHasCleanSeededHighlightFixtures(dbUrl) {
+  if (!seedArtifactsExist()) {
+    return false;
+  }
+
+  const probeDatabaseUrl = dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
+  const nonPdf = readJson(NON_PDF_SEED);
+  const epub = readJson(EPUB_SEED);
+  const command =
+    "uv run --project python python -c " +
+    JSON.stringify(
+      "import json, os, psycopg;" +
+        "seed=json.loads(os.environ['NEXUS_E2E_HIGHLIGHT_SEED']);" +
+        "conn=psycopg.connect(os.environ['DATABASE_URL']);" +
+        "cur=conn.cursor();" +
+        "cur.execute(" +
+        JSON.stringify(
+          "select count(*), bool_and(id::text = any(%s::text[])) from highlights where id in (select h.id from highlights h join highlight_fragment_anchors hfa on hfa.highlight_id = h.id join fragments f on f.id = hfa.fragment_id where f.media_id = %s::uuid)"
+        ) +
+        ", (seed['non_pdf_highlight_ids'], seed['non_pdf_media_id']));" +
+        "non_pdf_count, non_pdf_only_seed = cur.fetchone();" +
+        "cur.execute(" +
+        JSON.stringify(
+          "select count(*) from highlights where id in (select h.id from highlights h join highlight_fragment_anchors hfa on hfa.highlight_id = h.id join fragments f on f.id = hfa.fragment_id where f.media_id = %s::uuid)"
+        ) +
+        ", (seed['epub_media_id'],));" +
+        "epub_count = cur.fetchone()[0];" +
+        "print('1' if non_pdf_count == 2 and bool(non_pdf_only_seed) and epub_count == 0 else '0');" +
+        "cur.close();" +
+        "conn.close()",
+    );
+
+  try {
+    const raw = execSync(command, {
+      cwd: ROOT,
+      stdio: ["ignore", "pipe", "inherit"],
+      env: {
+        ...process.env,
+        DATABASE_URL: probeDatabaseUrl,
+        NEXUS_E2E_HIGHLIGHT_SEED: JSON.stringify({
+          non_pdf_media_id: nonPdf.media_id,
+          non_pdf_highlight_ids: [nonPdf.quote_highlight_id, nonPdf.focus_highlight_id],
+          epub_media_id: epub.media_id,
+        }),
+      },
+    })
+      .toString()
+      .trim();
+    return raw === "1";
+  } catch (error) {
+    throw new Error(
+      "[global-setup] Highlight-fixture readiness probe failed.\n" +
+        `  Command: ${command}\n` +
+        `  CWD:     ${ROOT}\n` +
+        `  Cause:   ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 export default function globalSetup() {
   // Mirror Makefile behavior so direct `bun test` runs work too.
   loadEnvFile(path.join(ROOT, ".env"));
@@ -172,7 +324,12 @@ export default function globalSetup() {
     },
   );
 
-  if (databaseHasSeededMedia(dbUrl)) {
+  if (
+    databaseHasSeededMedia(dbUrl) &&
+    databaseHasSeededBilling(dbUrl) &&
+    databaseHasSeededYoutubeTranscriptStates(dbUrl) &&
+    databaseHasCleanSeededHighlightFixtures(dbUrl)
+  ) {
     console.log("[global-setup] Seed data already matches the database — skipping reseed.");
     return;
   }

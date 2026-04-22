@@ -341,9 +341,6 @@ def _seed_article_highlight(
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,
-        fragment_id=fragment.id,
-        start_offset=start,
-        end_offset=end,
         anchor_kind="fragment_offsets",
         anchor_media_id=media.id,
         color="yellow",

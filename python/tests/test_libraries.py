@@ -753,6 +753,250 @@ class TestListLibraryMedia:
         assert data[0]["media"]["id"] == str(media_id)
         assert data[0]["media"]["kind"] == "web_article"
 
+    def test_list_media_uses_canonical_media_hydration_for_podcast_episode(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        media_id = uuid4()
+        podcast_id = uuid4()
+        provider_podcast_id = f"library-hydration-{podcast_id}"
+        provider_episode_id = f"episode-{media_id}"
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO podcasts (
+                        id,
+                        provider,
+                        provider_podcast_id,
+                        title,
+                        author,
+                        feed_url,
+                        website_url,
+                        image_url,
+                        description
+                    ) VALUES (
+                        :podcast_id,
+                        'podcast_index',
+                        :provider_podcast_id,
+                        'Library Hydration Podcast',
+                        'Library Host',
+                        'https://example.com/library-hydration.xml',
+                        'https://example.com/library-hydration',
+                        NULL,
+                        'Podcast description'
+                    )
+                """),
+                {
+                    "podcast_id": podcast_id,
+                    "provider_podcast_id": provider_podcast_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id,
+                        kind,
+                        title,
+                        canonical_source_url,
+                        processing_status,
+                        external_playback_url,
+                        provider,
+                        provider_id
+                    ) VALUES (
+                        :media_id,
+                        'podcast_episode',
+                        'Library Hydration Episode',
+                        'https://example.com/library-hydration-episode',
+                        'ready_for_reading',
+                        'https://cdn.example.com/library-hydration-episode.mp3',
+                        'podcast_index',
+                        :provider_episode_id
+                    )
+                """),
+                {
+                    "media_id": media_id,
+                    "provider_episode_id": provider_episode_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO podcast_episodes (
+                        media_id,
+                        podcast_id,
+                        provider_episode_id,
+                        guid,
+                        fallback_identity,
+                        published_at,
+                        duration_seconds,
+                        description_html,
+                        description_text
+                    ) VALUES (
+                        :media_id,
+                        :podcast_id,
+                        :provider_episode_id,
+                        :guid,
+                        :fallback_identity,
+                        '2026-03-22T00:00:00Z',
+                        180,
+                        '<p>Episode HTML description</p>',
+                        'Episode text description'
+                    )
+                """),
+                {
+                    "media_id": media_id,
+                    "podcast_id": podcast_id,
+                    "provider_episode_id": provider_episode_id,
+                    "guid": f"guid-{provider_episode_id}",
+                    "fallback_identity": f"fallback-{provider_episode_id}",
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media_transcript_states (
+                        media_id,
+                        transcript_state,
+                        transcript_coverage,
+                        semantic_status
+                    ) VALUES (
+                        :media_id,
+                        'ready',
+                        'full',
+                        'ready'
+                    )
+                """),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO podcast_episode_chapters (
+                        media_id,
+                        chapter_idx,
+                        title,
+                        t_start_ms,
+                        t_end_ms,
+                        url,
+                        image_url,
+                        source
+                    ) VALUES
+                    (
+                        :media_id,
+                        0,
+                        'Intro',
+                        0,
+                        45000,
+                        'https://example.com/chapters/intro',
+                        NULL,
+                        'rss_podcasting20'
+                    ),
+                    (
+                        :media_id,
+                        1,
+                        'Deep Dive',
+                        45000,
+                        NULL,
+                        'https://example.com/chapters/deep-dive',
+                        'https://cdn.example.com/chapter.png',
+                        'rss_podcasting20'
+                    )
+                """),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO podcast_subscriptions (
+                        user_id,
+                        podcast_id,
+                        status,
+                        default_playback_speed,
+                        auto_queue
+                    ) VALUES (
+                        :user_id,
+                        :podcast_id,
+                        'active',
+                        1.5,
+                        false
+                    )
+                """),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO podcast_listening_states (
+                        user_id,
+                        media_id,
+                        position_ms,
+                        duration_ms,
+                        playback_speed,
+                        is_completed
+                    ) VALUES (
+                        :user_id,
+                        :media_id,
+                        12000,
+                        180000,
+                        1.25,
+                        false
+                    )
+                """),
+                {"user_id": user_id, "media_id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+        direct_db.register_cleanup("podcast_episode_chapters", "media_id", media_id)
+        direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
+        direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+
+        add_resp = auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+        assert add_resp.status_code == 201
+
+        response = _list_library_entries(auth_client, user_id, library_id)
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) == 1
+        media = data[0]["media"]
+        assert media["id"] == str(media_id)
+        assert media["transcript_state"] == "ready"
+        assert media["transcript_coverage"] == "full"
+        assert media["subscription_default_playback_speed"] == 1.5
+        assert media["description_html"] == "<p>Episode HTML description</p>"
+        assert media["description_text"] == "Episode text description"
+        assert media["listening_state"] == {
+            "position_ms": 12000,
+            "duration_ms": 180000,
+            "playback_speed": 1.25,
+            "is_completed": False,
+        }
+        assert media["chapters"] == [
+            {
+                "chapter_idx": 0,
+                "title": "Intro",
+                "t_start_ms": 0,
+                "t_end_ms": 45000,
+                "url": "https://example.com/chapters/intro",
+                "image_url": None,
+            },
+            {
+                "chapter_idx": 1,
+                "title": "Deep Dive",
+                "t_start_ms": 45000,
+                "t_end_ms": None,
+                "url": "https://example.com/chapters/deep-dive",
+                "image_url": "https://cdn.example.com/chapter.png",
+            },
+        ]
+
     def test_list_media_library_not_found(self, auth_client):
         """List media in non-existent library returns 404."""
         user_id = create_test_user_id()

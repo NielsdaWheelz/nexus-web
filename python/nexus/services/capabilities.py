@@ -65,7 +65,6 @@ def derive_capabilities(
     is_transcript_media = kind in _TRANSCRIPT_MEDIA_KINDS
 
     status_ready_for_reading = processing_status in _READY_PROCESSING_STATUSES
-    is_failed = processing_status == ProcessingStatus.failed.value
     is_transcript_unavailable = False
     transcript_ready = False
 
@@ -74,8 +73,6 @@ def derive_capabilities(
         transcript_ready = transcript_state in _READABLE_TRANSCRIPT_STATES and (
             transcript_coverage in _READABLE_TRANSCRIPT_COVERAGES
         )
-    elif is_failed and last_error_code == "E_TRANSCRIPT_UNAVAILABLE":
-        is_transcript_unavailable = True
 
     can_download_file = media_file_exists
 

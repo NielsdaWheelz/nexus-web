@@ -1,20 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 
 const apiFetchMock = vi.hoisted(() => vi.fn());
-const hydrateContextItemsMock = vi.hoisted(() => vi.fn(async (items: unknown[]) => items));
 
 vi.mock("@/lib/api/client", () => ({
   apiFetch: apiFetchMock,
   isApiError: () => false,
-}));
-
-vi.mock("@/lib/conversations/hydrateContextItems", () => ({
-  hydrateContextItems: hydrateContextItemsMock,
 }));
 
 vi.mock("@/components/ChatComposer", () => ({
@@ -114,7 +109,6 @@ function renderConversationPane(
 describe("ConversationPaneBody", () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
-    hydrateContextItemsMock.mockClear();
   });
 
   it("loads messages into a transcript scroll container and keeps composer visible", async () => {
@@ -294,7 +288,7 @@ describe("ConversationPaneBody", () => {
     );
   });
 
-  it("does not rehydrate unchanged attach context on host rerenders", async () => {
+  it("keeps URL-attached context stable across host rerenders", async () => {
     const user = userEvent.setup();
     apiFetchMock.mockImplementation(async (path: string) => {
       if (path === "/api/conversations/conv-1") {
@@ -330,13 +324,10 @@ describe("ConversationPaneBody", () => {
       </PaneRuntimeProvider>
     );
 
-    await waitFor(() => {
-      expect(hydrateContextItemsMock).toHaveBeenCalledTimes(1);
-    });
     await screen.findByTestId("chat-transcript");
     await user.click(screen.getByRole("button", { name: "Linked context" }));
     await screen.findByRole("dialog", { name: "Linked context" });
-    expect(hydrateContextItemsMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("quoted line")).toBeInTheDocument();
 
     rerender(
       <PaneRuntimeProvider
@@ -353,9 +344,7 @@ describe("ConversationPaneBody", () => {
       </PaneRuntimeProvider>
     );
 
-    await waitFor(() => {
-      expect(hydrateContextItemsMock).toHaveBeenCalledTimes(1);
-    });
+    await screen.findByText("quoted line");
   });
 
   it("renders linked context in the secondary drawer surface", async () => {

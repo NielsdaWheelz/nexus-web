@@ -369,9 +369,6 @@ def create_test_highlight(
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,
-        fragment_id=fragment_id,
-        start_offset=0,
-        end_offset=end_offset,
         anchor_kind="fragment_offsets",
         anchor_media_id=fragment.media_id,
         color="yellow",
@@ -411,9 +408,8 @@ def create_test_annotation(
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,
-        fragment_id=fragment.id,
-        start_offset=0,
-        end_offset=10,
+        anchor_kind="fragment_offsets",
+        anchor_media_id=media_id,
         color="yellow",
         exact="test exact",
         prefix="prefix",
@@ -421,6 +417,14 @@ def create_test_annotation(
     )
     session.add(highlight)
     session.flush()
+    session.add(
+        HighlightFragmentAnchor(
+            highlight_id=highlight.id,
+            fragment_id=fragment.id,
+            start_offset=0,
+            end_offset=10,
+        )
+    )
     annotation = Annotation(
         id=uuid4(),
         highlight_id=highlight.id,
@@ -793,9 +797,6 @@ def create_normalized_fragment_highlight(
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,
-        fragment_id=fragment_id,
-        start_offset=start_offset,
-        end_offset=end_offset,
         anchor_kind="fragment_offsets",
         anchor_media_id=media_id,
         color="yellow",
@@ -882,9 +883,6 @@ def create_mismatched_fragment_highlight(
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,
-        fragment_id=fragment_id,
-        start_offset=start_offset,
-        end_offset=end_offset,
         anchor_kind="fragment_offsets",
         anchor_media_id=media_id,
         color="yellow",

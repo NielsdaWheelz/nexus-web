@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,
@@ -30,7 +31,6 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionStatusOut,
     PodcastSubscriptionVisibleLibraryOut,
 )
-from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 from .provider import PODCAST_PROVIDER, get_podcast_index_client

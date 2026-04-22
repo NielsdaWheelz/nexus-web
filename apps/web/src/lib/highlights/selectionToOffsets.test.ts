@@ -6,7 +6,6 @@
  * - Whitespace trimming
  * - Length validation
  * - Code block rejection
- * - Duplicate highlight detection
  *
  * Note: Some tests that require full Range API behavior are skipped in
  * the Vitest Browser Mode environment. Integration tests cover these scenarios.
@@ -18,7 +17,6 @@ import { describe, it, expect } from "vitest";
 import {
   selectionToOffsets,
   selectionIntersectsCodeBlock,
-  findDuplicateHighlight,
   utf16ToCodepoint,
   codepointToUtf16,
   codepointLength,
@@ -190,52 +188,6 @@ describe("selectionIntersectsCodeBlock", () => {
 
     const result = selectionIntersectsCodeBlock(cursor, 0, 10);
     expect(result).toBe(false);
-  });
-});
-
-// =============================================================================
-// Tests: findDuplicateHighlight
-// =============================================================================
-
-describe("findDuplicateHighlight", () => {
-  const highlights = [
-    { id: "h1", start_offset: 0, end_offset: 10 },
-    { id: "h2", start_offset: 20, end_offset: 30 },
-    { id: "h3", start_offset: 15, end_offset: 25 },
-  ];
-
-  it("finds exact duplicate", () => {
-    const result = findDuplicateHighlight(highlights, 0, 10);
-    expect(result).toBe("h1");
-  });
-
-  it("returns null for non-duplicate", () => {
-    const result = findDuplicateHighlight(highlights, 5, 15);
-    expect(result).toBeNull();
-  });
-
-  it("returns null for partial overlap", () => {
-    // Same start, different end
-    const result = findDuplicateHighlight(highlights, 0, 5);
-    expect(result).toBeNull();
-  });
-
-  it("returns null for empty array", () => {
-    const result = findDuplicateHighlight([], 0, 10);
-    expect(result).toBeNull();
-  });
-
-  it("finds duplicate in the middle of array", () => {
-    const result = findDuplicateHighlight(highlights, 20, 30);
-    expect(result).toBe("h2");
-  });
-
-  it("handles large offset values", () => {
-    const largeHighlights = [
-      { id: "h1", start_offset: 1000000, end_offset: 1000100 },
-    ];
-    const result = findDuplicateHighlight(largeHighlights, 1000000, 1000100);
-    expect(result).toBe("h1");
   });
 });
 

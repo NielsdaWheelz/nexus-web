@@ -237,8 +237,8 @@ class TestWebArticleHighlightE2E:
 
         # Step 5: Verify highlight invariants
         for hl in [hl1, hl2]:
-            start = hl["start_offset"]
-            end = hl["end_offset"]
+            start = hl["anchor"]["start_offset"]
+            end = hl["anchor"]["end_offset"]
             exact = hl["exact"]
             prefix = hl["prefix"]
             suffix = hl["suffix"]
@@ -281,8 +281,8 @@ class TestWebArticleHighlightE2E:
         reloaded_hl1 = next(h for h in reloaded_highlights if h["id"] == hl1_id)
 
         # Verify no offset drift
-        assert reloaded_hl1["start_offset"] == hl1["start_offset"]
-        assert reloaded_hl1["end_offset"] == hl1["end_offset"]
+        assert reloaded_hl1["anchor"]["start_offset"] == hl1["anchor"]["start_offset"]
+        assert reloaded_hl1["anchor"]["end_offset"] == hl1["anchor"]["end_offset"]
         assert reloaded_hl1["exact"] == hl1["exact"]
 
         # Verify annotation still present
@@ -337,7 +337,7 @@ class TestSharedHighlightVisibility:
             )
             session.commit()
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -477,7 +477,7 @@ class TestSharedHighlightVisibility:
             )
             session.commit()
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -569,7 +569,7 @@ class TestUnicodeEmojiStability:
             )
             session.commit()
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -625,8 +625,8 @@ class TestUnicodeEmojiStability:
         for hl in reloaded:
             if hl["id"] == emoji_hl["id"]:
                 assert hl["exact"] == "🎉"
-                assert hl["start_offset"] == 6
-                assert hl["end_offset"] == 7
+                assert hl["anchor"]["start_offset"] == 6
+                assert hl["anchor"]["end_offset"] == 7
 
     def test_multiple_emoji_offsets(
         self,
@@ -664,7 +664,7 @@ class TestUnicodeEmojiStability:
             )
             session.commit()
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)

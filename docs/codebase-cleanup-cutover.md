@@ -9,6 +9,39 @@ it is a hard cutover plan. do not preserve legacy behavior, duplicate code
 paths, backward-compatibility shims, deprecated routes, deprecated schema
 fields, transition wrappers, or test-only production seams.
 
+## current status
+
+the current tree has already completed these cutovers:
+
+- dead wrappers `PageLayout`, `SplitSurface`, and `PaneStrip` are deleted
+- thin reader wrappers `DocumentViewport` and `ReaderContentArea` are deleted
+- mocked BFF proxy path tests in the cleaned web routes are deleted
+- URL-attached conversation context no longer rehydrates itself through client
+  fan-out requests
+- browse UI consumes only the grouped `sections` response shape
+- `PdfReader.tsx` no longer exposes the `deps` test seam; browser tests mock
+  module boundaries instead
+- library entry media hydration now reuses canonical media hydration
+- shared visibility SQL is imported from `nexus.auth.permissions`, not from
+  `nexus.services.search`
+- fragment highlight collection responses now use the canonical typed `anchor`
+  payload in backend and web code
+- backend highlight create, update, transcript sync, and vault sync paths now
+  use canonical anchor/subtype rows without runtime fallback through legacy
+  `highlights.fragment_id` / `start_offset` / `end_offset`
+- the physical highlight bridge columns are removed from the head schema and
+  fixture cleanup no longer targets them
+- the one-use `findDuplicateHighlight()` helper is deleted
+- stale screenshot artifacts for removed pane and transcript tests are deleted
+
+remaining cleanup should treat this document as a target-state spec, not as an
+inventory of transition scaffolding that still exists.
+
+the biggest remaining item is:
+
+- delete `useMediaRouteState.tsx` and make `MediaPaneBody.tsx` the only
+  media-route controller
+
 ## goals
 
 - collapse each capability onto one canonical production path
@@ -59,11 +92,14 @@ fields, transition wrappers, or test-only production seams.
 - `apps/web/src/components/Pane.tsx`,
   `apps/web/src/components/PaneContainer.tsx`, and
   `apps/web/src/components/workspace/index.ts` are deleted
+- `apps/web/src/components/ui/PageLayout.tsx`,
+  `apps/web/src/components/workspace/SplitSurface.tsx`, and
+  `apps/web/src/components/workspace/PaneStrip.tsx` are deleted
 - stale cutover-only test inventory is gone, including
   `apps/web/src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` is the only
   media-route controller
-- `apps/web/src/app/(authenticated)/media/[id]/useMediaViewState.tsx` is
+- `apps/web/src/app/(authenticated)/media/[id]/useMediaRouteState.tsx` is
   deleted
 - `apps/web/src/app/(authenticated)/media/[id]/mediaHelpers.ts` is deleted as
   a mixed-purpose helper dump
@@ -137,7 +173,7 @@ fields, transition wrappers, or test-only production seams.
 - `MediaPaneBody.tsx` is the only media-route controller
   reason: the current media route already has substantive leaf owners, and the
   extra god-hook layer makes control flow harder to follow
-- `useMediaViewState.tsx` is deleted, not replaced by another generic
+- `useMediaRouteState.tsx` is deleted, not replaced by another generic
   controller hook
   reason: replacing one mega-hook with another would preserve the same
   indirection problem
@@ -213,8 +249,7 @@ fields, transition wrappers, or test-only production seams.
 ### media route hard cutover
 
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
-- `apps/web/src/app/(authenticated)/media/[id]/useMediaViewState.tsx`
-- `apps/web/src/app/(authenticated)/media/[id]/mediaHelpers.ts`
+- `apps/web/src/app/(authenticated)/media/[id]/useMediaRouteState.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/EpubContentPane.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/TranscriptPlaybackPanel.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/TranscriptContentPanel.tsx`
@@ -222,8 +257,6 @@ fields, transition wrappers, or test-only production seams.
 - `apps/web/src/app/(authenticated)/media/[id]/MediaHighlightsPaneBody.tsx`
 - `apps/web/src/components/PdfReader.tsx`
 - `apps/web/src/components/LinkedItemsPane.tsx`
-- `apps/web/src/components/ReaderContentArea.tsx`
-- `apps/web/src/components/workspace/DocumentViewport.tsx`
 
 ### player, chat, auth, and workspace cleanup
 
@@ -322,16 +355,16 @@ fields, transition wrappers, or test-only production seams.
 
 ### 2. media route hard cutover
 
-- remove `useMediaViewState.tsx`
-- move route orchestration into a smaller, explicit `MediaPaneBody.tsx`
-- move behavior to the true owners instead of creating a new shared controller
-- delete `mediaHelpers.ts`
-- inline one-use media helpers, constants, and object shapes
+- remove `useMediaRouteState.tsx`
+- move the remaining route orchestration into one explicit `MediaPaneBody.tsx`
+- keep `MediaPaneBody.tsx` as the only media-route controller
+- move behavior to the true owners instead of creating another shared
+  controller
+- inline one-use media helpers, constants, and object shapes from the deleted
+  hook where they do not hide real incidental complexity
 - keep only coherent, reused local utilities where the reuse is real
-- eliminate duplicated selection snapshot utilities and DOM escape helpers
-- remove the `PdfReaderDeps` production seam
-- remove one-use wrappers such as `ReaderContentArea.tsx` or
-  `DocumentViewport.tsx` if they remain pure prop relays after the cutover
+- eliminate duplicated selection snapshot utilities, DOM escape helpers, and
+  pass-through prop bundles that exist only because the hook existed
 
 ### 3. player, chat, auth, and workspace cleanup
 
@@ -360,9 +393,8 @@ fields, transition wrappers, or test-only production seams.
 
 - make transcript capability derivation use `media_transcript_states` only
 - remove transcript readiness fallback from `processing_status`
-- delete remaining highlight bridge semantics from models and services
-- remove `ck_highlights_fragment_bridge` handling and related bridge-only
-  compatibility behavior
+- delete remaining runtime highlight bridge semantics from services and vault
+- remove any bridge-only integrity handling once the schema cleanup lands
 - delete `highlight_kernel.py`
 - delete highlight tests that exist only to preserve bridge behavior
 - keep only the typed highlight anchor model and canonical mutation contract
@@ -404,8 +436,11 @@ fields, transition wrappers, or test-only production seams.
 
 ## acceptance criteria
 
-- `apps/web/src/app/(authenticated)/media/[id]/useMediaViewState.tsx` does
+- `apps/web/src/app/(authenticated)/media/[id]/useMediaRouteState.tsx` does
   not exist
+- `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` is the only
+  media-route controller and does not consume a one-consumer controller-hook
+  prop bag
 - `apps/web/src/app/(authenticated)/media/[id]/mediaHelpers.ts` does not exist
 - `apps/web/src/components/Pane.tsx`,
   `apps/web/src/components/PaneContainer.tsx`, and
@@ -426,8 +461,9 @@ fields, transition wrappers, or test-only production seams.
   legacy routes by pathname
 - `python/nexus/services/capabilities.py` does not derive transcript media
   readability from `processing_status`
-- `python/nexus/db/models.py` does not contain highlight bridge columns or
-  bridge-only highlight constraints
+- `python/nexus/services/highlights.py` and
+  `python/nexus/services/vault.py` do not read from or write to highlight
+  bridge columns at runtime
 - `python/nexus/services/highlight_kernel.py` does not exist
 - `python/nexus/services/libraries.py` does not manually construct `MediaOut`
   from duplicated hydration logic

@@ -12,7 +12,6 @@ function planLabel(planTier: BillingPlanTier): string {
 }
 
 interface TranscriptStatePanelProps {
-  processingStatus: string;
   transcriptState:
     | "not_requested"
     | "queued"
@@ -30,7 +29,6 @@ interface TranscriptStatePanelProps {
 }
 
 export default function TranscriptStatePanel({
-  processingStatus,
   transcriptState,
   transcriptCoverage,
   transcriptRequestInFlight,
@@ -108,7 +106,6 @@ export default function TranscriptStatePanel({
             ? "Transcript request queued."
             : "Transcript transcription is currently running."}
         </p>
-        <p>Status: {processingStatus}</p>
       </div>
     );
   }
@@ -125,7 +122,6 @@ export default function TranscriptStatePanel({
   return (
     <div className={styles.notReady}>
       <p>This media is still being processed.</p>
-      <p>Status: {processingStatus}</p>
       {transcriptCoverage ? <p>Coverage: {transcriptCoverage}</p> : null}
     </div>
   );

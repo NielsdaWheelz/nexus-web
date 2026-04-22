@@ -31,9 +31,13 @@ implementation target and cutover details live in
 
 - one surface owns chrome visibility. do not stack route-level hide/show logic
   on top of shell-level hide/show logic.
+- for `/media/:id`, `MediaPaneBody.tsx` is the only route controller. do not
+  route chrome visibility through `useMediaRouteState.tsx` or a replacement
+  controller hook.
 - the controlling scroll source must be the element that actually scrolls. do
   not drive document chrome from an ancestor wrapper when the document scrolls
-  inside `DocumentViewport`, `PdfReader`, or another nested scroller.
+  inside `MediaPaneBody`, `TranscriptContentPanel`, `PdfReader`, or another
+  nested scroller.
 - standard panes do not implement scroll-reactive chrome state.
 - document panes use transform-based motion for chrome. do not animate height,
   top, padding, or other layout properties on every scroll frame.
@@ -72,7 +76,9 @@ implementation target and cutover details live in
 
 ## current implication
 
-- the current workspace shell duplicates hide/show logic and does not yet bind
-  document-pane chrome to the real nested scroller
-- follow-up implementation should move the decision to the actual document
-  scroll owner for `bodyMode: "document"` panes and keep standard panes pinned
+- standard workspace panes keep chrome pinned
+- document panes own scroll-reactive chrome at the real nested scroller
+- the media route should delete `useMediaRouteState.tsx` instead of keeping a
+  second hidden chrome owner beside `MediaPaneBody.tsx` and the real scroller
+- follow-up cleanup should delete any stale docs or tests that still describe
+  wrapper-owned document chrome

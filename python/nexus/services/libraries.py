@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,
@@ -36,11 +36,7 @@ from nexus.schemas.library import (
     LibraryPodcastSubscriptionOut,
     LibraryRole,
 )
-from nexus.schemas.media import MediaAuthorOut, MediaOut
-from nexus.services.capabilities import derive_capabilities
-from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
-from nexus.services.playback_source import derive_playback_source
-from nexus.services.search import visible_media_ids_cte_sql
+from nexus.schemas.media import MediaOut
 
 logger = logging.getLogger(__name__)
 
@@ -881,72 +877,12 @@ def _hydrate_library_entries(
 
     media_by_id: dict[UUID, MediaOut] = {}
     if media_ids:
-        media_rows = db.execute(
-            text("""
-                SELECT m.id, m.kind, m.title, m.canonical_source_url,
-                       m.processing_status, m.failure_stage, m.last_error_code,
-                       m.external_playback_url, m.provider, m.provider_id,
-                       m.created_at, m.updated_at,
-                       EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file,
-                       m.published_date, m.publisher, m.language, m.description
-                FROM media m
-                WHERE m.id = ANY(:media_ids)
-            """),
-            {"media_ids": media_ids},
-        ).fetchall()
-        pdf_media_ids = [UUID(str(row[0])) for row in media_rows if row[1] == "pdf"]
-        pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
-        author_rows = db.execute(
-            text("""
-                SELECT id, media_id, name, role
-                FROM media_authors
-                WHERE media_id = ANY(:media_ids)
-                ORDER BY sort_order
-            """),
-            {"media_ids": media_ids},
-        ).fetchall()
-        authors_by_media: dict[UUID, list[MediaAuthorOut]] = {
-            media_id: [] for media_id in media_ids
+        from nexus.services import media as media_service
+
+        media_by_id = {
+            media.id: media
+            for media in media_service.list_media_for_viewer_by_ids(db, viewer_id, media_ids)
         }
-        for author_row in author_rows:
-            author_media_id = UUID(str(author_row[1]))
-            authors_by_media.setdefault(author_media_id, []).append(
-                MediaAuthorOut(id=author_row[0], name=author_row[2], role=author_row[3])
-            )
-        for media_row in media_rows:
-            media_id = UUID(str(media_row[0]))
-            pdf_ready = pdf_readiness.get(media_id, False) if media_row[1] == "pdf" else False
-            media_by_id[media_id] = MediaOut(
-                id=media_id,
-                kind=media_row[1],
-                title=media_row[2],
-                canonical_source_url=media_row[3],
-                processing_status=media_row[4],
-                failure_stage=media_row[5],
-                last_error_code=media_row[6],
-                playback_source=derive_playback_source(
-                    kind=media_row[1],
-                    external_playback_url=media_row[7],
-                    canonical_source_url=media_row[3],
-                    provider=media_row[8],
-                    provider_id=media_row[9],
-                ),
-                capabilities=derive_capabilities(
-                    kind=media_row[1],
-                    processing_status=media_row[4],
-                    last_error_code=media_row[6],
-                    media_file_exists=bool(media_row[12]),
-                    external_playback_url_exists=media_row[7] is not None,
-                    pdf_quote_text_ready=pdf_ready,
-                ),
-                authors=authors_by_media.get(media_id, []),
-                published_date=media_row[13],
-                publisher=media_row[14],
-                language=media_row[15],
-                description=media_row[16],
-                created_at=media_row[10],
-                updated_at=media_row[11],
-            )
 
     podcast_rows_by_id: dict[UUID, tuple] = {}
     if podcast_ids:

@@ -474,7 +474,9 @@ class TestS6PR01OrmMapperCompatibility:
         h_cols = {c.name for c in Highlight.__table__.columns}
         assert "anchor_kind" in h_cols
         assert "anchor_media_id" in h_cols
-        assert "fragment_id" in h_cols
+        assert "fragment_id" not in h_cols
+        assert "start_offset" not in h_cols
+        assert "end_offset" not in h_cols
 
         # Verify new fields on Media
         m_cols = {c.name for c in Media.__table__.columns}
@@ -486,6 +488,6 @@ class TestS6PR01OrmMapperCompatibility:
         assert hasattr(Highlight, "pdf_anchor")
         assert hasattr(Highlight, "pdf_quads")
         assert hasattr(Highlight, "annotation")
-        assert hasattr(Highlight, "fragment")
+        assert not hasattr(Highlight, "fragment")
         assert hasattr(Annotation, "highlight")
         assert hasattr(Media, "pdf_page_text_spans")

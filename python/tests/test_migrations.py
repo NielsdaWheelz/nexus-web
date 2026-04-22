@@ -50,6 +50,116 @@ def run_alembic_command(command: str) -> subprocess.CompletedProcess:
     return result
 
 
+def insert_canonical_fragment_highlight(
+    session: Session,
+    *,
+    highlight_id,
+    user_id,
+    media_id,
+    fragment_id,
+    start_offset: int,
+    end_offset: int,
+    color: str = "yellow",
+    exact: str = "exact",
+    prefix: str = "prefix",
+    suffix: str = "suffix",
+    created_at=None,
+) -> None:
+    """Insert a head-schema fragment highlight plus its canonical anchor row."""
+    highlight_params = {
+        "id": highlight_id,
+        "user_id": user_id,
+        "media_id": media_id,
+        "color": color,
+        "exact": exact,
+        "prefix": prefix,
+        "suffix": suffix,
+    }
+    if created_at is None:
+        session.execute(
+            text(
+                """
+                INSERT INTO highlights (
+                    id,
+                    user_id,
+                    anchor_kind,
+                    anchor_media_id,
+                    color,
+                    exact,
+                    prefix,
+                    suffix
+                )
+                VALUES (
+                    :id,
+                    :user_id,
+                    'fragment_offsets',
+                    :media_id,
+                    :color,
+                    :exact,
+                    :prefix,
+                    :suffix
+                )
+                """
+            ),
+            highlight_params,
+        )
+    else:
+        session.execute(
+            text(
+                """
+                INSERT INTO highlights (
+                    id,
+                    user_id,
+                    anchor_kind,
+                    anchor_media_id,
+                    color,
+                    exact,
+                    prefix,
+                    suffix,
+                    created_at
+                )
+                VALUES (
+                    :id,
+                    :user_id,
+                    'fragment_offsets',
+                    :media_id,
+                    :color,
+                    :exact,
+                    :prefix,
+                    :suffix,
+                    :created_at
+                )
+                """
+            ),
+            {**highlight_params, "created_at": created_at},
+        )
+
+    session.execute(
+        text(
+            """
+            INSERT INTO highlight_fragment_anchors (
+                highlight_id,
+                fragment_id,
+                start_offset,
+                end_offset
+            )
+            VALUES (
+                :highlight_id,
+                :fragment_id,
+                :start_offset,
+                :end_offset
+            )
+            """
+        ),
+        {
+            "highlight_id": highlight_id,
+            "fragment_id": fragment_id,
+            "start_offset": start_offset,
+            "end_offset": end_offset,
+        },
+    )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def verify_schema_exists():
     """Override the global verify_schema_exists fixture.
@@ -907,10 +1017,15 @@ class TestS2HighlightsAnnotationsConstraints:
             with pytest.raises(IntegrityError) as exc_info:
                 session.execute(
                     text("""
-                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                        VALUES (:id, :user_id, :fragment_id, 0, 10, 'invalid_color', 'exact', 'prefix', 'suffix')
+                        INSERT INTO highlights (
+                            id, user_id, anchor_kind, anchor_media_id, color, exact, prefix, suffix
+                        )
+                        VALUES (
+                            :id, :user_id, 'fragment_offsets', :media_id,
+                            'invalid_color', 'exact', 'prefix', 'suffix'
+                        )
                     """),
-                    {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+                    {"id": uuid4(), "user_id": user_id, "media_id": media_id},
                 )
                 session.commit()
 
@@ -923,17 +1038,13 @@ class TestS2HighlightsAnnotationsConstraints:
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
 
-    def test_invalid_highlight_offsets_rejected(self, migrated_engine):
-        """CHECK constraint prevents invalid offset ranges.
-
-        After S6 pr-01, the constraint name changed from ck_highlights_offsets_valid
-        to ck_highlights_fragment_bridge (transitional nullable bridge), but the
-        enforcement semantics for fragment rows remain identical.
-        """
+    def test_invalid_fragment_anchor_offsets_rejected(self, migrated_engine):
+        """Canonical fragment anchor rows reject invalid offset ranges."""
         with Session(migrated_engine) as session:
             user_id = uuid4()
             media_id = uuid4()
             fragment_id = uuid4()
+            highlight_id = uuid4()
 
             # Create user and media with fragment
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
@@ -950,6 +1061,20 @@ class TestS2HighlightsAnnotationsConstraints:
                     VALUES (:id, :media_id, 0, 'Test canonical text content', '<p>Test</p>')
                 """),
                 {"id": fragment_id, "media_id": media_id},
+            )
+            session.commit()
+
+            session.execute(
+                text("""
+                    INSERT INTO highlights (
+                        id, user_id, anchor_kind, anchor_media_id, color, exact, prefix, suffix
+                    )
+                    VALUES (
+                        :id, :user_id, 'fragment_offsets', :media_id,
+                        'yellow', 'exact', 'prefix', 'suffix'
+                    )
+                """),
+                {"id": highlight_id, "user_id": user_id, "media_id": media_id},
             )
             session.commit()
 
@@ -957,52 +1082,59 @@ class TestS2HighlightsAnnotationsConstraints:
             with pytest.raises(IntegrityError) as exc_info:
                 session.execute(
                     text("""
-                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                        VALUES (:id, :user_id, :fragment_id, 10, 10, 'yellow', 'exact', 'prefix', 'suffix')
+                        INSERT INTO highlight_fragment_anchors (
+                            highlight_id, fragment_id, start_offset, end_offset
+                        )
+                        VALUES (:highlight_id, :fragment_id, 10, 10)
                     """),
-                    {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+                    {"highlight_id": highlight_id, "fragment_id": fragment_id},
                 )
                 session.commit()
 
             session.rollback()
-            assert "ck_highlights_fragment_bridge" in str(exc_info.value)
+            assert "ck_hfa_offsets_valid" in str(exc_info.value)
 
             # Test case 2: end_offset < start_offset
             with pytest.raises(IntegrityError) as exc_info:
                 session.execute(
                     text("""
-                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                        VALUES (:id, :user_id, :fragment_id, 10, 5, 'yellow', 'exact', 'prefix', 'suffix')
+                        INSERT INTO highlight_fragment_anchors (
+                            highlight_id, fragment_id, start_offset, end_offset
+                        )
+                        VALUES (:highlight_id, :fragment_id, 10, 5)
                     """),
-                    {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+                    {"highlight_id": highlight_id, "fragment_id": fragment_id},
                 )
                 session.commit()
 
             session.rollback()
-            assert "ck_highlights_fragment_bridge" in str(exc_info.value)
+            assert "ck_hfa_offsets_valid" in str(exc_info.value)
 
             # Test case 3: negative start_offset
             with pytest.raises(IntegrityError) as exc_info:
                 session.execute(
                     text("""
-                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                        VALUES (:id, :user_id, :fragment_id, -1, 10, 'yellow', 'exact', 'prefix', 'suffix')
+                        INSERT INTO highlight_fragment_anchors (
+                            highlight_id, fragment_id, start_offset, end_offset
+                        )
+                        VALUES (:highlight_id, :fragment_id, -1, 10)
                     """),
-                    {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+                    {"highlight_id": highlight_id, "fragment_id": fragment_id},
                 )
                 session.commit()
 
             session.rollback()
-            assert "ck_highlights_fragment_bridge" in str(exc_info.value)
+            assert "ck_hfa_offsets_valid" in str(exc_info.value)
 
             # Clean up
+            session.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": highlight_id})
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
 
-    def test_duplicate_highlight_span_rejected(self, migrated_engine):
-        """Unique index prevents duplicate (user_id, fragment_id, start_offset, end_offset)."""
+    def test_duplicate_fragment_spans_are_not_db_constrained_at_head(self, migrated_engine):
+        """Head schema no longer keeps a bridge-column unique index for fragment spans."""
         with Session(migrated_engine) as session:
             user_id = uuid4()
             media_id = uuid4()
@@ -1025,34 +1157,40 @@ class TestS2HighlightsAnnotationsConstraints:
                 {"id": fragment_id, "media_id": media_id},
             )
 
-            # Create first highlight
-            session.execute(
-                text("""
-                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                    VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'exact', 'prefix', 'suffix')
-                """),
-                {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+            insert_canonical_fragment_highlight(
+                session,
+                highlight_id=uuid4(),
+                user_id=user_id,
+                media_id=media_id,
+                fragment_id=fragment_id,
+                start_offset=0,
+                end_offset=10,
+                color="yellow",
+                exact="exact",
+            )
+            insert_canonical_fragment_highlight(
+                session,
+                highlight_id=uuid4(),
+                user_id=user_id,
+                media_id=media_id,
+                fragment_id=fragment_id,
+                start_offset=0,
+                end_offset=10,
+                color="blue",
+                exact="exact",
             )
             session.commit()
 
-            # Attempt to create duplicate highlight at same span
-            with pytest.raises(IntegrityError) as exc_info:
-                session.execute(
-                    text("""
-                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                        VALUES (:id, :user_id, :fragment_id, 0, 10, 'blue', 'exact', 'prefix', 'suffix')
-                    """),
-                    {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
-                )
-                session.commit()
-
-            session.rollback()
-            assert "uix_highlights_user_fragment_offsets" in str(exc_info.value)
+            count = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM highlight_fragment_anchors "
+                    "WHERE fragment_id = :fragment_id AND start_offset = 0 AND end_offset = 10"
+                ),
+                {"fragment_id": fragment_id},
+            ).scalar_one()
+            assert count == 2
 
             # Clean up
-            session.execute(
-                text("DELETE FROM highlights WHERE fragment_id = :id"), {"id": fragment_id}
-            )
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
@@ -1084,10 +1222,24 @@ class TestS2HighlightsAnnotationsConstraints:
             )
             session.execute(
                 text("""
-                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                    VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'exact', 'prefix', 'suffix')
+                    INSERT INTO highlights (
+                        id, user_id, anchor_kind, anchor_media_id, color, exact, prefix, suffix
+                    )
+                    VALUES (
+                        :id, :user_id, 'fragment_offsets', :media_id,
+                        'yellow', 'exact', 'prefix', 'suffix'
+                    )
                 """),
-                {"id": highlight_id, "user_id": user_id, "fragment_id": fragment_id},
+                {"id": highlight_id, "user_id": user_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO highlight_fragment_anchors (
+                        highlight_id, fragment_id, start_offset, end_offset
+                    )
+                    VALUES (:highlight_id, :fragment_id, 0, 10)
+                """),
+                {"highlight_id": highlight_id, "fragment_id": fragment_id},
             )
 
             # Create first annotation
@@ -1151,10 +1303,24 @@ class TestS2HighlightsAnnotationsConstraints:
             )
             session.execute(
                 text("""
-                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                    VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'exact', 'prefix', 'suffix')
+                    INSERT INTO highlights (
+                        id, user_id, anchor_kind, anchor_media_id, color, exact, prefix, suffix
+                    )
+                    VALUES (
+                        :id, :user_id, 'fragment_offsets', :media_id,
+                        'yellow', 'exact', 'prefix', 'suffix'
+                    )
                 """),
-                {"id": highlight_id, "user_id": user_id, "fragment_id": fragment_id},
+                {"id": highlight_id, "user_id": user_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO highlight_fragment_anchors (
+                        highlight_id, fragment_id, start_offset, end_offset
+                    )
+                    VALUES (:highlight_id, :fragment_id, 0, 10)
+                """),
+                {"highlight_id": highlight_id, "fragment_id": fragment_id},
             )
             session.execute(
                 text("""
@@ -1216,10 +1382,24 @@ class TestS2HighlightsAnnotationsConstraints:
             )
             session.execute(
                 text("""
-                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                    VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'exact', 'prefix', 'suffix')
+                    INSERT INTO highlights (
+                        id, user_id, anchor_kind, anchor_media_id, color, exact, prefix, suffix
+                    )
+                    VALUES (
+                        :id, :user_id, 'fragment_offsets', :media_id,
+                        'yellow', 'exact', 'prefix', 'suffix'
+                    )
                 """),
-                {"id": highlight_id, "user_id": user_id, "fragment_id": fragment_id},
+                {"id": highlight_id, "user_id": user_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO highlight_fragment_anchors (
+                        highlight_id, fragment_id, start_offset, end_offset
+                    )
+                    VALUES (:highlight_id, :fragment_id, 0, 10)
+                """),
+                {"highlight_id": highlight_id, "fragment_id": fragment_id},
             )
             session.execute(
                 text("""
@@ -1292,39 +1472,35 @@ class TestS2HighlightsAnnotationsConstraints:
             )
             session.commit()
 
-            # Create highlights with each valid color (at different offsets to avoid uniqueness constraint)
+            # Create highlights with each valid color.
             for i, color in enumerate(valid_colors):
                 start = i * 5
                 end = start + 4
-                session.execute(
-                    text("""
-                        INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                        VALUES (:id, :user_id, :fragment_id, :start, :end, :color, 'text', '', '')
-                    """),
-                    {
-                        "id": uuid4(),
-                        "user_id": user_id,
-                        "fragment_id": fragment_id,
-                        "start": start,
-                        "end": end,
-                        "color": color,
-                    },
+                insert_canonical_fragment_highlight(
+                    session,
+                    highlight_id=uuid4(),
+                    user_id=user_id,
+                    media_id=media_id,
+                    fragment_id=fragment_id,
+                    start_offset=start,
+                    end_offset=end,
+                    color=color,
+                    exact="text",
+                    prefix="",
+                    suffix="",
                 )
 
             session.commit()
 
             # Verify all highlights were inserted
             result = session.execute(
-                text("SELECT COUNT(*) FROM highlights WHERE fragment_id = :fid"),
+                text("SELECT COUNT(*) FROM highlight_fragment_anchors WHERE fragment_id = :fid"),
                 {"fid": fragment_id},
             )
             count = result.scalar()
             assert count == len(valid_colors)
 
             # Clean up
-            session.execute(
-                text("DELETE FROM highlights WHERE fragment_id = :id"), {"id": fragment_id}
-            )
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
@@ -1356,45 +1532,54 @@ class TestS2HighlightsAnnotationsConstraints:
             session.commit()
 
             # Create first highlight: [0, 10)
-            session.execute(
-                text("""
-                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                    VALUES (:id, :user_id, :fragment_id, 0, 10, 'yellow', 'exact1', 'prefix', 'suffix')
-                """),
-                {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+            insert_canonical_fragment_highlight(
+                session,
+                highlight_id=uuid4(),
+                user_id=user_id,
+                media_id=media_id,
+                fragment_id=fragment_id,
+                start_offset=0,
+                end_offset=10,
+                color="yellow",
+                exact="exact1",
             )
 
             # Create overlapping highlight: [5, 15) - overlaps with first
-            session.execute(
-                text("""
-                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                    VALUES (:id, :user_id, :fragment_id, 5, 15, 'blue', 'exact2', 'prefix', 'suffix')
-                """),
-                {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+            insert_canonical_fragment_highlight(
+                session,
+                highlight_id=uuid4(),
+                user_id=user_id,
+                media_id=media_id,
+                fragment_id=fragment_id,
+                start_offset=5,
+                end_offset=15,
+                color="blue",
+                exact="exact2",
             )
 
             # Create nested highlight: [2, 8) - contained within first
-            session.execute(
-                text("""
-                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset, color, exact, prefix, suffix)
-                    VALUES (:id, :user_id, :fragment_id, 2, 8, 'green', 'exact3', 'prefix', 'suffix')
-                """),
-                {"id": uuid4(), "user_id": user_id, "fragment_id": fragment_id},
+            insert_canonical_fragment_highlight(
+                session,
+                highlight_id=uuid4(),
+                user_id=user_id,
+                media_id=media_id,
+                fragment_id=fragment_id,
+                start_offset=2,
+                end_offset=8,
+                color="green",
+                exact="exact3",
             )
 
             session.commit()
 
             # Verify all highlights were inserted
             result = session.execute(
-                text("SELECT COUNT(*) FROM highlights WHERE fragment_id = :fid"),
+                text("SELECT COUNT(*) FROM highlight_fragment_anchors WHERE fragment_id = :fid"),
                 {"fid": fragment_id},
             )
             assert result.scalar() == 3
 
             # Clean up
-            session.execute(
-                text("DELETE FROM highlights WHERE fragment_id = :id"), {"id": fragment_id}
-            )
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
@@ -2754,8 +2939,8 @@ class TestS6PR01Migration0009:
         yield engine
         engine.dispose()
 
-    def _upgrade_to_head(self):
-        result = run_alembic_command("upgrade head")
+    def _upgrade_to_0009(self):
+        result = run_alembic_command("upgrade 0009")
         assert result.returncode == 0, f"upgrade failed: {result.stderr}"
 
     def _create_base_fixtures(self, session):
@@ -2787,7 +2972,7 @@ class TestS6PR01Migration0009:
     # test_pr01_adds_s6_typed_highlight_foundation_tables_and_columns
     # ------------------------------------------------------------------
     def test_pr01_adds_s6_typed_highlight_foundation_tables_and_columns(self, s6_engine):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             # New tables exist
             for tbl in (
@@ -2864,7 +3049,7 @@ class TestS6PR01Migration0009:
     # test_pr01_media_page_count_domain_check
     # ------------------------------------------------------------------
     def test_pr01_media_page_count_domain_check(self, s6_engine):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             user_id = uuid4()
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
@@ -2926,7 +3111,7 @@ class TestS6PR01Migration0009:
     # test_pr01_preserves_legacy_fragment_highlight_constraints_after_migration
     # ------------------------------------------------------------------
     def test_pr01_preserves_legacy_fragment_highlight_constraints_after_migration(self, s6_engine):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             uid, mid, fid = self._create_base_fixtures(session)
 
@@ -2988,7 +3173,7 @@ class TestS6PR01Migration0009:
     # test_pr01_new_anchor_subtype_cascade_and_uniqueness_constraints
     # ------------------------------------------------------------------
     def test_pr01_new_anchor_subtype_cascade_and_uniqueness_constraints(self, s6_engine):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             uid, mid, fid = self._create_base_fixtures(session)
 
@@ -3053,7 +3238,7 @@ class TestS6PR01Migration0009:
     # test_pr01_greenfield_defaults_allow_dormant_schema_without_backfill
     # ------------------------------------------------------------------
     def test_pr01_greenfield_defaults_allow_dormant_schema_without_backfill(self, s6_engine):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             uid, mid, fid = self._create_base_fixtures(session)
 
@@ -3088,7 +3273,7 @@ class TestS6PR01Migration0009:
     # test_pr01_rejects_partial_dormant_logical_anchor_fields_on_highlights
     # ------------------------------------------------------------------
     def test_pr01_rejects_partial_dormant_logical_anchor_fields_on_highlights(self, s6_engine):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             uid, mid, fid = self._create_base_fixtures(session)
 
@@ -3145,7 +3330,7 @@ class TestS6PR01Migration0009:
     def test_pr01_does_not_require_fragment_subtype_dual_write_during_dormant_window(
         self, s6_engine
     ):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             uid, mid, fid = self._create_base_fixtures(session)
 
@@ -3172,7 +3357,7 @@ class TestS6PR01Migration0009:
     def test_pr01_allows_future_non_fragment_logical_rows_to_leave_legacy_fragment_columns_null(
         self, s6_engine
     ):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             uid, mid, _ = self._create_base_fixtures(session)
 
@@ -3205,7 +3390,7 @@ class TestS6PR01Migration0009:
     def test_pr01_retained_fragment_unique_index_preserves_duplicate_semantics_under_nullable_bridge(
         self, s6_engine
     ):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             uid, mid, fid = self._create_base_fixtures(session)
 
@@ -3256,7 +3441,7 @@ class TestS6PR01Migration0009:
     def test_pr01_pdf_anchor_supporting_indexes_exist_without_exact_duplicate_uniqueness(
         self, s6_engine
     ):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             indexes = session.execute(
                 text(
@@ -3277,7 +3462,7 @@ class TestS6PR01Migration0009:
     def test_pr01_pdf_page_text_spans_enforces_row_local_validity_but_not_contiguity_lifecycle_rules(
         self, s6_engine
     ):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             uid = uuid4()
             mid = uuid4()
@@ -3375,7 +3560,7 @@ class TestS6PR01Migration0009:
     def test_pr01_highlight_pdf_quads_enforces_row_shape_without_canonicalization_semantics(
         self, s6_engine
     ):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             uid, mid, _ = self._create_base_fixtures(session)
 
@@ -3453,7 +3638,7 @@ class TestS6PR01Migration0009:
     def test_pr01_highlight_pdf_anchors_enforces_row_local_shape_domains_without_semantic_coherence_rules(
         self, s6_engine
     ):
-        self._upgrade_to_head()
+        self._upgrade_to_0009()
         with Session(s6_engine) as session:
             uid, mid, _ = self._create_base_fixtures(session)
 
@@ -3609,6 +3794,218 @@ class TestS6PR01Migration0009:
                 {"hid": h_id, "mid": mid},
             )
             session.commit()
+
+
+class TestHighlightBridgeRemovalMigration0056:
+    """Data migration coverage for the highlight bridge-column hard cutover."""
+
+    @pytest.fixture(autouse=True)
+    def isolate_migration(self):
+        run_alembic_command("downgrade base")
+        yield
+        run_alembic_command("downgrade base")
+        run_alembic_command("upgrade head")
+
+    @pytest.fixture
+    def migration_engine(self):
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+
+    def test_upgrade_0055_to_head_backfills_fragment_anchors_and_drops_bridge_columns(
+        self, migration_engine
+    ):
+        result = run_alembic_command("upgrade 0055")
+        assert result.returncode == 0, f"upgrade 0055 failed: {result.stderr}"
+
+        user_id = uuid4()
+        media_id = uuid4()
+        fragment_id = uuid4()
+        highlight_id = uuid4()
+
+        with Session(migration_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Legacy highlight media', 'ready_for_reading', :user_id)
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'legacy fragment text', '<p>legacy fragment text</p>')
+                    """
+                ),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO highlights (
+                        id,
+                        user_id,
+                        fragment_id,
+                        start_offset,
+                        end_offset,
+                        color,
+                        exact,
+                        prefix,
+                        suffix
+                    )
+                    VALUES (
+                        :id,
+                        :user_id,
+                        :fragment_id,
+                        0,
+                        6,
+                        'yellow',
+                        'legacy',
+                        '',
+                        ''
+                    )
+                    """
+                ),
+                {
+                    "id": highlight_id,
+                    "user_id": user_id,
+                    "fragment_id": fragment_id,
+                },
+            )
+            session.commit()
+
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+        with Session(migration_engine) as session:
+            for column_name in ("fragment_id", "start_offset", "end_offset"):
+                row = session.execute(
+                    text(
+                        """
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_name = 'highlights'
+                          AND column_name = :column_name
+                        """
+                    ),
+                    {"column_name": column_name},
+                ).fetchone()
+                assert row is None, f"highlights.{column_name} must be removed at head"
+
+            row = session.execute(
+                text(
+                    """
+                    SELECT anchor_kind, anchor_media_id
+                    FROM highlights
+                    WHERE id = :id
+                    """
+                ),
+                {"id": highlight_id},
+            ).fetchone()
+            assert row is not None
+            assert row[0] == "fragment_offsets"
+            assert str(row[1]) == str(media_id)
+
+            anchor_row = session.execute(
+                text(
+                    """
+                    SELECT fragment_id, start_offset, end_offset
+                    FROM highlight_fragment_anchors
+                    WHERE highlight_id = :id
+                    """
+                ),
+                {"id": highlight_id},
+            ).fetchone()
+            assert anchor_row is not None
+            assert str(anchor_row[0]) == str(fragment_id)
+            assert anchor_row[1] == 0
+            assert anchor_row[2] == 6
+
+    def test_downgrade_head_to_0055_restores_bridge_columns_from_canonical_rows(
+        self, migration_engine
+    ):
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+        user_id = uuid4()
+        media_id = uuid4()
+        fragment_id = uuid4()
+        highlight_id = uuid4()
+
+        with Session(migration_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                    VALUES (:id, 'web_article', 'Canonical highlight media', 'ready_for_reading', :user_id)
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, 'canonical fragment text', '<p>canonical fragment text</p>')
+                    """
+                ),
+                {"id": fragment_id, "media_id": media_id},
+            )
+            insert_canonical_fragment_highlight(
+                session,
+                highlight_id=highlight_id,
+                user_id=user_id,
+                media_id=media_id,
+                fragment_id=fragment_id,
+                start_offset=1,
+                end_offset=7,
+                color="yellow",
+                exact="anonic",
+                prefix="c",
+                suffix="al",
+            )
+            session.commit()
+
+        result = run_alembic_command("downgrade 0055")
+        assert result.returncode == 0, f"downgrade 0055 failed: {result.stderr}"
+
+        with Session(migration_engine) as session:
+            column_names = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'highlights'
+                          AND column_name IN ('fragment_id', 'start_offset', 'end_offset')
+                        """
+                    )
+                ).fetchall()
+            }
+            assert column_names == {"fragment_id", "start_offset", "end_offset"}
+
+            row = session.execute(
+                text(
+                    """
+                    SELECT fragment_id, start_offset, end_offset, anchor_kind, anchor_media_id
+                    FROM highlights
+                    WHERE id = :id
+                    """
+                ),
+                {"id": highlight_id},
+            ).fetchone()
+            assert row is not None
+            assert str(row[0]) == str(fragment_id)
+            assert row[1] == 1
+            assert row[2] == 7
+            assert row[3] == "fragment_offsets"
+            assert str(row[4]) == str(media_id)
 
 
 class TestMigration0026SemanticChunkBackfill:

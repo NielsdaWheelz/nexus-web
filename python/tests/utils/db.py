@@ -100,9 +100,28 @@ class DirectSessionManager:
 
         with Session(self.engine) as session:
             for table, column, value in reversed(self._cleanup_items):
+                if table == "highlights" and column == "fragment_anchor_fragment_id":
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM highlights
+                            WHERE id IN (
+                                SELECT highlight_id
+                                FROM highlight_fragment_anchors
+                                WHERE fragment_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    continue
+
+                if value is None:
+                    session.execute(text(f"DELETE FROM {table} WHERE {column} IS NULL"))
+                    continue
+
                 session.execute(
-                    text(f"DELETE FROM {table} WHERE {column} = :value"),
-                    {"value": value},
+                    text(f"DELETE FROM {table} WHERE {column} = :value"), {"value": value}
                 )
             session.commit()
         self._cleanup_items.clear()

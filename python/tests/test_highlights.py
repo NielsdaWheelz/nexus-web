@@ -108,6 +108,14 @@ def add_media_to_library(client: TestClient, user_id: UUID, media_id: UUID) -> N
     )
 
 
+def register_fragment_highlight_cleanup(
+    direct_db: DirectSessionManager,
+    fragment_id: UUID,
+) -> None:
+    """Clean up fragment highlights through canonical anchor rows."""
+    direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
+
+
 # =============================================================================
 # Test 1: create_highlight_success
 # =============================================================================
@@ -123,7 +131,7 @@ class TestCreateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -139,9 +147,10 @@ class TestCreateHighlight:
 
         assert response.status_code == 201
         data = response.json()["data"]
-        assert data["fragment_id"] == str(fragment_id)
-        assert data["start_offset"] == 0
-        assert data["end_offset"] == 5
+        assert data["anchor"]["type"] == "fragment_offsets"
+        assert data["anchor"]["fragment_id"] == str(fragment_id)
+        assert data["anchor"]["start_offset"] == 0
+        assert data["anchor"]["end_offset"] == 5
         assert data["color"] == "yellow"
         assert data["exact"] == "Hello"
         assert data["prefix"] == ""
@@ -155,7 +164,7 @@ class TestCreateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -181,7 +190,7 @@ class TestCreateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -213,7 +222,7 @@ class TestCreateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -262,7 +271,7 @@ class TestListHighlights:
             media_id, fragment_id = create_media_and_fragment(session)
 
         direct_db.register_cleanup("annotations", "highlight_id", None)  # will clean by FK
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -313,7 +322,7 @@ class TestGetHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -359,7 +368,7 @@ class TestUpdateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -400,7 +409,7 @@ class TestUpdateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -442,7 +451,7 @@ class TestUpdateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -498,7 +507,7 @@ class TestDeleteHighlight:
             media_id, fragment_id = create_media_and_fragment(session)
 
         # Note: No need to register cleanup for highlights/annotations since we delete them
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -544,7 +553,7 @@ class TestDeleteAnnotation:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -585,7 +594,7 @@ class TestMediaReadiness:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session, processing_status="pending")
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -613,7 +622,7 @@ class TestMediaReadiness:
                 session, processing_status="ready_for_reading"
             )
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -682,7 +691,7 @@ class TestEmojiCodepointSlicing:
                 html_sanitized=EMOJI_HTML_SANITIZED,
             )
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -730,7 +739,7 @@ class TestLibraryMembership:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -777,7 +786,7 @@ class TestAnnotationUpsert:
             media_id, fragment_id = create_media_and_fragment(session)
 
         direct_db.register_cleanup("annotations", "highlight_id", None)
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -817,7 +826,7 @@ class TestAnnotationUpsert:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -864,7 +873,7 @@ class TestEdgeCases:
                 html_sanitized=f"<p>{short_text}</p>",
             )
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -891,7 +900,7 @@ class TestEdgeCases:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -923,9 +932,9 @@ class TestEdgeCases:
 
         highlights = list_resp.json()["data"]["highlights"]
         assert len(highlights) == 3
-        assert highlights[0]["start_offset"] == 0
-        assert highlights[1]["start_offset"] == 6
-        assert highlights[2]["start_offset"] == 12
+        assert highlights[0]["anchor"]["start_offset"] == 0
+        assert highlights[1]["anchor"]["start_offset"] == 6
+        assert highlights[2]["anchor"]["start_offset"] == 12
 
     def test_nonexistent_highlight_returns_404(self, auth_client, direct_db: DirectSessionManager):
         """Test that nonexistent highlight_id returns 404."""
@@ -1033,7 +1042,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1063,7 +1072,7 @@ class TestHighlightSharedRead:
         assert list_resp.status_code == 200
         highlights = list_resp.json()["data"]["highlights"]
         assert len(highlights) == 1
-        assert highlights[0]["start_offset"] == 6  # User B's highlight only
+        assert highlights[0]["anchor"]["start_offset"] == 6  # User B's highlight only
 
     def test_list_highlights_mine_only_false_returns_visible_shared(
         self, auth_client, direct_db: DirectSessionManager
@@ -1084,7 +1093,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1141,7 +1150,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1242,7 +1251,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1286,7 +1295,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1338,7 +1347,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1381,7 +1390,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1424,7 +1433,7 @@ class TestHighlightSharedRead:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
         direct_db.register_cleanup("annotations", "highlight_id", None)
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1457,8 +1466,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
-        direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1514,15 +1522,14 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
 
-        # Insert highlights with forced identical start_offset and created_at
-        # but different end_offset to satisfy uniqueness constraint
+        # Insert canonical fragment highlights with tied start_offset and created_at.
         with direct_db.session() as session:
             ids = sorted([uuid4() for _ in range(3)])
             for i, h_id in enumerate(ids):
@@ -1530,11 +1537,10 @@ class TestHighlightSharedRead:
                 session.execute(
                     text("""
                         INSERT INTO highlights
-                            (id, user_id, fragment_id, start_offset, end_offset,
-                             anchor_kind, anchor_media_id,
+                            (id, user_id, anchor_kind, anchor_media_id,
                              color, exact, prefix, suffix, created_at)
                         VALUES
-                            (:id, :uid, :fid, 0, :end_offset,
+                            (:id, :uid,
                              'fragment_offsets', :media_id,
                              'yellow', 'Hello', '', ' World',
                              '2026-01-01 00:00:00+00')
@@ -1542,9 +1548,7 @@ class TestHighlightSharedRead:
                     {
                         "id": h_id,
                         "uid": user_id,
-                        "fid": fragment_id,
                         "media_id": media_id,
-                        "end_offset": end,
                     },
                 )
                 session.execute(
@@ -1608,7 +1612,7 @@ class TestEpubHighlightCompatibility:
             media_id, frag_ids = self._setup_epub(session, user_id)
 
         for fid in frag_ids:
-            direct_db.register_cleanup("highlights", "fragment_id", fid)
+            register_fragment_highlight_cleanup(direct_db, fid)
             direct_db.register_cleanup("fragments", "id", fid)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1621,7 +1625,7 @@ class TestEpubHighlightCompatibility:
         )
         assert resp.status_code == 201
         hl_data = resp.json()["data"]
-        assert hl_data["fragment_id"] == str(ch1_frag)
+        assert hl_data["anchor"]["fragment_id"] == str(ch1_frag)
         assert hl_data["exact"] == "SENTINEL_ONE"
 
         for other_idx in [0, 2]:
@@ -1646,7 +1650,7 @@ class TestEpubHighlightCompatibility:
             media_id, frag_ids = self._setup_epub(session, user_id)
 
         for fid in frag_ids:
-            direct_db.register_cleanup("highlights", "fragment_id", fid)
+            register_fragment_highlight_cleanup(direct_db, fid)
             direct_db.register_cleanup("fragments", "id", fid)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1664,8 +1668,8 @@ class TestEpubHighlightCompatibility:
         assert resp.status_code == 201
         data = resp.json()["data"]
         assert data["exact"] == "café"
-        assert data["start_offset"] == cafe_start
-        assert data["end_offset"] == cafe_end
+        assert data["anchor"]["start_offset"] == cafe_start
+        assert data["anchor"]["end_offset"] == cafe_end
         assert len(data["prefix"]) <= 64
         assert len(data["suffix"]) <= 64
         # prefix/suffix must come from EPUB_CH1_TEXT, not other chapters
@@ -1685,7 +1689,7 @@ class TestEpubHighlightCompatibility:
             media_id, frag_ids = self._setup_epub(session, user_id)
 
         for fid in frag_ids:
-            direct_db.register_cleanup("highlights", "fragment_id", fid)
+            register_fragment_highlight_cleanup(direct_db, fid)
             direct_db.register_cleanup("fragments", "id", fid)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1714,18 +1718,18 @@ class TestEpubHighlightCompatibility:
 
 
 class TestS6PR01FragmentHighlightRouteSmoke:
-    """Confirms fragment-highlight route behavior is unchanged after S6 pr-01 schema."""
+    """Confirms fragment-highlight route exposes the canonical typed-anchor contract."""
 
     def test_pr01_fragment_highlight_route_smoke_unchanged(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Create, fetch, list a fragment highlight — same contract as pre-pr-01."""
+        """Create, fetch, list a fragment highlight with the canonical anchor payload."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1741,20 +1745,26 @@ class TestS6PR01FragmentHighlightRouteSmoke:
         assert resp.status_code == 201
         data = resp.json()["data"]
         h_id = data["id"]
-        assert data["fragment_id"] == str(fragment_id)
-        assert data["start_offset"] == 0
-        assert data["end_offset"] == 5
+        assert data["anchor"]["type"] == "fragment_offsets"
+        assert data["anchor"]["media_id"] == str(media_id)
+        assert data["anchor"]["fragment_id"] == str(fragment_id)
+        assert data["anchor"]["start_offset"] == 0
+        assert data["anchor"]["end_offset"] == 5
         assert data["color"] == "yellow"
         assert data["exact"] == "Hello"
 
-        # Typed-anchor fields must NOT leak into response
+        # Internal storage fields must NOT leak into response.
         assert "anchor_kind" not in data
         assert "anchor_media_id" not in data
+        assert "fragment_id" not in data
+        assert "start_offset" not in data
+        assert "end_offset" not in data
 
         # Get
         resp2 = auth_client.get(f"/highlights/{h_id}", headers=auth_headers(user_id))
         assert resp2.status_code == 200
         assert resp2.json()["data"]["id"] == h_id
+        assert resp2.json()["data"]["anchor"]["fragment_id"] == str(fragment_id)
 
         # List
         resp3 = auth_client.get(
@@ -1762,7 +1772,7 @@ class TestS6PR01FragmentHighlightRouteSmoke:
             headers=auth_headers(user_id),
         )
         assert resp3.status_code == 200
-        assert len(resp3.json()["data"]) == 1
+        assert len(resp3.json()["data"]["highlights"]) == 1
 
 
 # =============================================================================
@@ -1770,21 +1780,19 @@ class TestS6PR01FragmentHighlightRouteSmoke:
 # =============================================================================
 
 
-class TestS6PR02DualWrite:
-    """PR-02: Verify dual-write populates logical fields and subtype row."""
+class TestS6PR02CanonicalStorage:
+    """PR-02: Fragment highlights persist through the canonical anchor rows only."""
 
-    def test_pr02_create_highlight_dual_writes_logical_and_subtype(
+    def test_pr02_create_highlight_persists_canonical_anchor_without_legacy_offsets(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """POST /fragments/{fid}/highlights populates anchor_kind, anchor_media_id,
-        and creates a highlight_fragment_anchors subtype row."""
+        """POST /fragments/{fid}/highlights stores anchor metadata on canonical rows only."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1801,7 +1809,13 @@ class TestS6PR02DualWrite:
 
         with direct_db.session() as session:
             row = session.execute(
-                text("SELECT anchor_kind, anchor_media_id FROM highlights WHERE id = :id"),
+                text(
+                    """
+                    SELECT anchor_kind, anchor_media_id
+                    FROM highlights
+                    WHERE id = :id
+                    """
+                ),
                 {"id": h_id},
             ).fetchone()
             assert row is not None
@@ -1820,17 +1834,16 @@ class TestS6PR02DualWrite:
             assert fa_row[1] == 0
             assert fa_row[2] == 5
 
-    def test_pr02_update_highlight_offsets_syncs_subtype_row(
+    def test_pr02_update_highlight_offsets_syncs_canonical_rows_only(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """PATCH offsets updates the canonical fragment anchor subtype."""
+        """PATCH offsets updates the canonical fragment anchor without legacy residue."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1858,6 +1871,16 @@ class TestS6PR02DualWrite:
         assert update_resp.status_code == 200
 
         with direct_db.session() as session:
+            core_row = session.execute(
+                text(
+                    """
+                    SELECT anchor_kind, anchor_media_id
+                    FROM highlights
+                    WHERE id = :id
+                    """
+                ),
+                {"id": h_id},
+            ).fetchone()
             fa_row = session.execute(
                 text(
                     "SELECT start_offset, end_offset "
@@ -1865,25 +1888,27 @@ class TestS6PR02DualWrite:
                 ),
                 {"id": h_id},
             ).fetchone()
+            assert core_row is not None
+            assert core_row[0] == "fragment_offsets"
+            assert str(core_row[1]) == str(media_id)
             assert fa_row is not None
             assert fa_row[0] == 6
             assert fa_row[1] == 11
 
 
 class TestS6PR02ResponseContract:
-    """PR-02: Public response must not expose internal typed-anchor fields."""
+    """PR-02: Public response uses only the canonical typed anchor contract."""
 
-    def test_pr02_response_excludes_typed_anchor_fields(
+    def test_pr02_response_uses_canonical_anchor_shape(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Create, get, list, update — anchor_kind/anchor_media_id never in response."""
+        """Create, get, list, update — public responses expose `anchor`, not flat residue."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1911,8 +1936,16 @@ class TestS6PR02ResponseContract:
             data = endpoint_resp.json().get("data", {})
             if isinstance(data, dict) and "highlights" in data:
                 for h in data["highlights"]:
+                    assert h["anchor"]["type"] == "fragment_offsets"
                     assert "anchor_kind" not in h
                     assert "anchor_media_id" not in h
+                    assert "fragment_id" not in h
+                    assert "start_offset" not in h
+                    assert "end_offset" not in h
             elif isinstance(data, dict):
+                assert data["anchor"]["type"] == "fragment_offsets"
                 assert "anchor_kind" not in data
                 assert "anchor_media_id" not in data
+                assert "fragment_id" not in data
+                assert "start_offset" not in data
+                assert "end_offset" not in data

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RefObject } from "react";
 import SelectionPopover from "@/components/SelectionPopover";
@@ -158,6 +158,23 @@ describe("SelectionPopover", () => {
     await waitFor(() => {
       expect(onDismiss).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("prevents pointerdown default inside the popup so text selection stays intact", () => {
+    render(
+      <SelectionPopover
+        selectionRect={new DOMRect(120, 120, 80, 24)}
+        containerRef={createContainerRef()}
+        onCreateHighlight={vi.fn()}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    const button = screen.getByRole("button", { name: "Green" });
+    const event = createEvent.pointerDown(button);
+    fireEvent(button, event);
+
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it("prefers placing the popup below the last selected line on mobile", async () => {

@@ -91,7 +91,7 @@ class TestBasicSearch:
         media_id = uuid4()
         fragment_id = uuid4()
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("epub_nav_locations", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -331,6 +331,104 @@ class TestBasicSearch:
         assert str(ready_video_id) in result_ids
         assert str(unavailable_video_id) in result_ids
         assert str(unavailable_podcast_id) in result_ids
+
+    def test_fragment_search_excludes_transcript_media_marked_unavailable(
+        self, auth_client, direct_db
+    ):
+        """Transcript fragment search respects canonical transcript state, not media failure residue."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        fragment_id = uuid4()
+
+        direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with direct_db.session() as session:
+            default_library_id = get_user_default_library(session, user_id)
+            assert default_library_id is not None
+
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        last_error_code, external_playback_url, provider, provider_id, created_by_user_id
+                    )
+                    VALUES (
+                        :id, 'podcast_episode', :title, :source_url, 'failed',
+                        'E_TRANSCRIPT_UNAVAILABLE', :playback_url, 'podcast_index', :provider_id, :user_id
+                    )
+                """),
+                {
+                    "id": media_id,
+                    "title": "Unavailable transcript fragment search contract",
+                    "source_url": "https://podcasts.example.com/feed.xml",
+                    "playback_url": "https://cdn.example.com/unavailable.mp3",
+                    "provider_id": "unavailable-fragment-contract",
+                    "user_id": user_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, :canonical_text, :html_sanitized)
+                """),
+                {
+                    "id": fragment_id,
+                    "media_id": media_id,
+                    "canonical_text": "Needle transcript fragment should stay out of search results.",
+                    "html_sanitized": "<p>Needle transcript fragment should stay out of search results.</p>",
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media_transcript_states (
+                        media_id,
+                        transcript_state,
+                        transcript_coverage,
+                        semantic_status,
+                        last_request_reason
+                    )
+                    VALUES (
+                        :media_id,
+                        'unavailable',
+                        'none',
+                        'none',
+                        'search'
+                    )
+                """),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO library_entries (library_id, media_id)
+                    VALUES (:library_id, :media_id)
+                """),
+                {"library_id": default_library_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                    VALUES (:default_library_id, :media_id)
+                """),
+                {"default_library_id": default_library_id, "media_id": media_id},
+            )
+            session.commit()
+
+        response = auth_client.get(
+            "/search?q=needle+transcript+fragment&types=fragment",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"expected fragment search to succeed, got {response.status_code}: {response.text}"
+        )
+        result_ids = {row["id"] for row in response.json()["results"] if row["type"] == "fragment"}
+        assert str(fragment_id) not in result_ids
 
     def test_search_finds_fragments(self, auth_client, direct_db: DirectSessionManager):
         """Search finds fragments by canonical_text."""
@@ -2232,9 +2330,6 @@ class TestSearchTranscriptVersionNavigation:
                     INSERT INTO highlights (
                         id,
                         user_id,
-                        fragment_id,
-                        start_offset,
-                        end_offset,
                         anchor_kind,
                         anchor_media_id,
                         color,
@@ -2246,9 +2341,6 @@ class TestSearchTranscriptVersionNavigation:
                     VALUES (
                         :highlight_id,
                         :user_id,
-                        :fragment_id,
-                        0,
-                        6,
                         'fragment_offsets',
                         :media_id,
                         'yellow',
@@ -2262,7 +2354,6 @@ class TestSearchTranscriptVersionNavigation:
                 {
                     "highlight_id": highlight_id,
                     "user_id": user_id,
-                    "fragment_id": old_fragment_id,
                     "media_id": media_id,
                     "now_ts": now_ts,
                 },

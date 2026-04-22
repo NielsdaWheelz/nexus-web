@@ -745,12 +745,12 @@ class TestSendMessageContext:
                 text(
                     """
                     INSERT INTO highlights (
-                        id, user_id, fragment_id, start_offset, end_offset,
+                        id, user_id,
                         anchor_kind, anchor_media_id,
                         color, exact, prefix, suffix
                     )
                     VALUES (
-                        :id, :user_id, :fragment_id, 0, 7,
+                        :id, :user_id,
                         'fragment_offsets', :media_id,
                         'yellow', :exact, '', :suffix
                     )
@@ -759,7 +759,6 @@ class TestSendMessageContext:
                 {
                     "id": highlight_id,
                     "user_id": user_id,
-                    "fragment_id": fragment_id,
                     "media_id": media_id,
                     "exact": "Welcome",
                     "suffix": transcript_text[7:71],
@@ -881,12 +880,12 @@ class TestSendMessageContext:
                 text(
                     """
                     INSERT INTO highlights (
-                        id, user_id, fragment_id, start_offset, end_offset,
+                        id, user_id,
                         anchor_kind, anchor_media_id,
                         color, exact, prefix, suffix
                     )
                     VALUES (
-                        :id, :user_id, :fragment_id, 8, 18,
+                        :id, :user_id,
                         'fragment_offsets', :media_id,
                         'yellow', :exact, :prefix, :suffix
                     )
@@ -895,7 +894,6 @@ class TestSendMessageContext:
                 {
                     "id": highlight_id,
                     "user_id": user_id,
-                    "fragment_id": fragment_id,
                     "media_id": media_id,
                     "exact": "the transc",
                     "prefix": transcript_text[:8],
@@ -1051,12 +1049,12 @@ class TestSendMessagePdfQuoteToChat:
         session.execute(
             text("""
                 INSERT INTO highlights (
-                    id, user_id, fragment_id, start_offset, end_offset,
+                    id, user_id,
                     anchor_kind, anchor_media_id,
                     color, exact, prefix, suffix
                 )
                 VALUES (
-                    :id, :user_id, NULL, NULL, NULL,
+                    :id, :user_id,
                     'pdf_page_geometry', :media_id,
                     'yellow', :exact, :prefix, :suffix
                 )
@@ -1894,9 +1892,6 @@ class TestSendMessageEpubQuoteToChat:
                 INSERT INTO highlights (
                     id,
                     user_id,
-                    fragment_id,
-                    start_offset,
-                    end_offset,
                     anchor_kind,
                     anchor_media_id,
                     color,
@@ -1907,9 +1902,6 @@ class TestSendMessageEpubQuoteToChat:
                 VALUES (
                     :id,
                     :user_id,
-                    :fragment_id,
-                    0,
-                    :end_offset,
                     'fragment_offsets',
                     :media_id,
                     'yellow',
@@ -1921,7 +1913,6 @@ class TestSendMessageEpubQuoteToChat:
             {
                 "id": hl_id,
                 "user_id": user_id,
-                "fragment_id": frag1,
                 "media_id": media_id,
                 "end_offset": len(exact_text),
                 "exact": exact_text,
@@ -2096,12 +2087,12 @@ class TestSendMessageContextKernel:
             session.execute(
                 text("""
                     INSERT INTO highlights (
-                        id, user_id, fragment_id, start_offset, end_offset,
+                        id, user_id,
                         anchor_kind, anchor_media_id,
                         color, exact, prefix, suffix
                     )
                     VALUES (
-                        :id, :uid, :fid, 0, 7,
+                        :id, :uid,
                         'fragment_offsets', :media_id,
                         'yellow', 'Dormant', '', ' highlight'
                     )
@@ -2109,7 +2100,6 @@ class TestSendMessageContextKernel:
                 {
                     "id": hl_id,
                     "uid": user_id,
-                    "fid": fragment_id,
                     "media_id": media_id,
                 },
             )

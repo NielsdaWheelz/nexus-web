@@ -316,23 +316,18 @@ function canRequestTranscriptForEpisode(episode: PodcastEpisodeMedia): boolean {
 }
 
 function shouldPollTranscriptProvisioningForEpisode(episode: PodcastEpisodeMedia): boolean {
-  return (
-    episode.transcript_state === "queued" ||
-    episode.transcript_state === "running" ||
-    episode.processing_status === "extracting"
-  );
+  return episode.transcript_state === "queued" || episode.transcript_state === "running";
 }
 
 function applyTranscriptResponseToEpisode(
   episode: PodcastEpisodeMedia,
   response: Pick<
     TranscriptRequestResult,
-    "processing_status" | "transcript_state" | "transcript_coverage"
+    "transcript_state" | "transcript_coverage"
   >
 ): PodcastEpisodeMedia {
   return {
     ...episode,
-    processing_status: response.processing_status,
     transcript_state: response.transcript_state,
     transcript_coverage: response.transcript_coverage,
   };

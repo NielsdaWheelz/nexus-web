@@ -67,10 +67,6 @@ vi.mock("@/components/workspace/PaneShell", () => ({
   usePaneChromeOverride: () => {},
 }));
 
-vi.mock("@/components/workspace/PaneStrip", () => ({
-  default: ({ children }: { children: React.ReactNode }) => <div data-testid="pane-strip">{children}</div>,
-}));
-
 vi.mock("@/components/workspace/WorkspaceTabsBar", () => ({
   default: (props: { tabs: Array<{ paneId: string; title: string; isActive: boolean }>; onActivatePane: (id: string, opts?: { focusPaneChrome?: boolean }) => void; onClosePane: (id: string) => void }) => (
     <div data-testid="workspace-tabs-bar" role="tablist">

@@ -5,15 +5,21 @@ import type { HighlightColor } from "@/lib/highlights/segmenter";
 
 export interface Highlight {
   id: string;
-  fragment_id: string;
-  start_offset: number;
-  end_offset: number;
+  anchor: {
+    type: "fragment_offsets";
+    media_id: string;
+    fragment_id: string;
+    start_offset: number;
+    end_offset: number;
+  };
   color: HighlightColor;
   exact: string;
   prefix: string;
   suffix: string;
   created_at: string;
   updated_at: string;
+  author_user_id: string;
+  is_owner: boolean;
   annotation: {
     id: string;
     body: string;
@@ -54,18 +60,13 @@ export async function createHighlight(
 export async function updateHighlight(
   highlightId: string,
   updates: {
-    start_offset?: number;
-    end_offset?: number;
+    anchor?: {
+      start_offset: number;
+      end_offset: number;
+    };
     color?: HighlightColor;
   }
 ): Promise<void> {
-  const hasStartOffset = typeof updates.start_offset === "number";
-  const hasEndOffset = typeof updates.end_offset === "number";
-
-  if (hasStartOffset !== hasEndOffset) {
-    throw new Error("Fragment highlight updates require both start_offset and end_offset.");
-  }
-
   const body: {
     color?: HighlightColor;
     anchor?: {
@@ -79,11 +80,11 @@ export async function updateHighlight(
     body.color = updates.color;
   }
 
-  if (hasStartOffset && hasEndOffset) {
+  if (updates.anchor !== undefined) {
     body.anchor = {
       type: "fragment_offsets",
-      start_offset: updates.start_offset as number,
-      end_offset: updates.end_offset as number,
+      start_offset: updates.anchor.start_offset,
+      end_offset: updates.anchor.end_offset,
     };
   }
 

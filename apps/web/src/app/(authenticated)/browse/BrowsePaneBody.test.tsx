@@ -234,23 +234,27 @@ describe("BrowsePaneBody", () => {
       if (url.pathname === "/api/browse" && url.searchParams.get("cursor") === "podcasts-cursor-1") {
         return jsonResponse({
           data: {
-            page_type: "podcasts",
-            results: [
-              {
-                type: "podcasts",
-                podcast_id: "podcast-2",
-                provider_podcast_id: "provider-2",
-                title: "Systems Podcast Two",
-                author: "Systems Team",
-                feed_url: "https://feeds.example.com/systems-2.xml",
-                website_url: null,
-                image_url: null,
-                description: "A second podcast page.",
+            query: "systems",
+            sections: {
+              podcasts: {
+                results: [
+                  {
+                    type: "podcasts",
+                    podcast_id: "podcast-2",
+                    provider_podcast_id: "provider-2",
+                    title: "Systems Podcast Two",
+                    author: "Systems Team",
+                    feed_url: "https://feeds.example.com/systems-2.xml",
+                    website_url: null,
+                    image_url: null,
+                    description: "A second podcast page.",
+                  },
+                ],
+                page: {
+                  has_more: false,
+                  next_cursor: null,
+                },
               },
-            ],
-            page: {
-              has_more: false,
-              next_cursor: null,
             },
           },
         });
@@ -285,22 +289,27 @@ describe("BrowsePaneBody", () => {
       if (url.pathname === "/api/browse") {
         return jsonResponse({
           data: {
-            results: [
-              {
-                type: "podcasts",
-                podcast_id: null,
-                provider_podcast_id: "provider-2",
-                title: "New Systems Podcast",
-                author: "Systems Team",
-                feed_url: "https://feeds.example.com/new-systems.xml",
-                website_url: null,
-                image_url: null,
-                description: "A new show to follow.",
+            query: "new",
+            sections: {
+              podcasts: {
+                results: [
+                  {
+                    type: "podcasts",
+                    podcast_id: null,
+                    provider_podcast_id: "provider-2",
+                    title: "New Systems Podcast",
+                    author: "Systems Team",
+                    feed_url: "https://feeds.example.com/new-systems.xml",
+                    website_url: null,
+                    image_url: null,
+                    description: "A new show to follow.",
+                  },
+                ],
+                page: {
+                  has_more: false,
+                  next_cursor: null,
+                },
               },
-            ],
-            page: {
-              has_more: false,
-              next_cursor: null,
             },
           },
         });

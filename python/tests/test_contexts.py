@@ -106,9 +106,6 @@ def media_with_highlight(db_session: Session, user_with_library: tuple) -> tuple
             INSERT INTO highlights (
                 id,
                 user_id,
-                fragment_id,
-                start_offset,
-                end_offset,
                 anchor_kind,
                 anchor_media_id,
                 color,
@@ -119,9 +116,6 @@ def media_with_highlight(db_session: Session, user_with_library: tuple) -> tuple
             VALUES (
                 :id,
                 :user_id,
-                :fragment_id,
-                0,
-                4,
                 'fragment_offsets',
                 :media_id,
                 'yellow',
@@ -133,7 +127,6 @@ def media_with_highlight(db_session: Session, user_with_library: tuple) -> tuple
         {
             "id": highlight_id,
             "user_id": user_id,
-            "fragment_id": fragment_id,
             "media_id": media_id,
         },
     )
@@ -358,7 +351,7 @@ class TestMediaIdResolution:
     def test_resolve_annotation_via_highlight_fragment(
         self, db_session: Session, media_with_highlight: tuple
     ):
-        """Annotation reference resolves via highlight.fragment to media_id."""
+        """Annotation reference resolves via the canonical fragment anchor to media_id."""
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(

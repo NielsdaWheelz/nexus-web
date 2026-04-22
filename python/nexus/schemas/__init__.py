@@ -16,7 +16,7 @@ from nexus.schemas.conversation import (
 from nexus.schemas.highlights import (
     AnnotationOut,
     CreateHighlightRequest,
-    HighlightOut,
+    TypedHighlightOut,
     UpdateHighlightRequest,
     UpsertAnnotationRequest,
 )
@@ -80,7 +80,7 @@ __all__ = [
     "MediaOut",
     "FragmentOut",
     # Highlight schemas (Slice 2)
-    "HighlightOut",
+    "TypedHighlightOut",
     "AnnotationOut",
     "CreateHighlightRequest",
     "UpdateHighlightRequest",

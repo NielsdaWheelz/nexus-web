@@ -291,6 +291,10 @@ export default function SelectionPopover({
     void onQuoteToChat(selectedColor);
   }, [isCreating, onQuoteToChat, selectedColor]);
 
+  const handlePopoverPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+  }, []);
+
   return (
     <div
       ref={popoverRef}
@@ -304,6 +308,7 @@ export default function SelectionPopover({
       aria-label="Highlight actions"
       data-placement={position.placement}
       data-mobile={isMobileViewport ? "true" : "false"}
+      onPointerDown={handlePopoverPointerDown}
     >
       <div className={styles.colorPicker}>
         {HIGHLIGHT_COLORS.map((color) => (

@@ -511,7 +511,7 @@ def _search_fragments(
     """Search fragment canonical_text with visibility filtering."""
     # Build scope filter
     scope_filter = ""
-    transcript_media_filter = transcript_media_searchable_sql("m")
+    transcript_media_filter = transcript_media_searchable_sql("m", "mts")
     params: dict = {"viewer_id": viewer_id, "query": q, "limit": limit}
 
     if scope_type == "all":
@@ -615,7 +615,7 @@ def _search_annotations(
       the anchor media (library intersection check).
     """
     scope_filter = ""
-    transcript_media_filter = transcript_media_searchable_sql("m")
+    transcript_media_filter = transcript_media_searchable_sql("m", "mts")
     params: dict = {"viewer_id": viewer_id, "query": q, "limit": limit}
 
     if scope_type == "all":
@@ -662,7 +662,8 @@ def _search_annotations(
                         'MaxWords=50, MinWords=10, MaxFragments=1') AS snippet
         FROM annotations a
         JOIN highlights h ON h.id = a.highlight_id
-        JOIN fragments f ON f.id = h.fragment_id
+        JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+        JOIN fragments f ON f.id = hfa.fragment_id
         JOIN media m ON m.id = f.media_id
         JOIN visible_media vm ON vm.media_id = f.media_id
         LEFT JOIN media_transcript_states mts ON mts.media_id = f.media_id
@@ -840,7 +841,7 @@ def _search_transcript_chunks(
 ) -> list[dict]:
     """Semantic transcript-chunk search using pgvector ANN + hybrid reranking."""
     scope_filter = ""
-    transcript_media_filter = transcript_media_searchable_sql("m")
+    transcript_media_filter = transcript_media_searchable_sql("m", "mts")
     embedding_dims = transcript_embedding_dimensions()
     ann_limit = max(
         TRANSCRIPT_CHUNK_MIN_ANN_CANDIDATES,

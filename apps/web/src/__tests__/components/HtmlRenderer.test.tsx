@@ -113,7 +113,7 @@ describe("HtmlRenderer", () => {
     expect(getComputedStyle(renderer).overflowWrap).toBe("break-word");
   });
 
-  it("lets wide content overflow so DocumentViewport can scroll it", () => {
+  it("lets wide content overflow so the document scroll container can handle it", () => {
     const html = '<div style="width: 9999px; height: 10px;">wide</div>';
     render(
       <div style={{ width: "320px" }}>

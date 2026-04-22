@@ -23,7 +23,7 @@ import sys
 import time
 import zipfile
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -532,7 +532,8 @@ def _clear_fragment_artifacts(db, media_id: UUID) -> None:
             WHERE highlight_id IN (
                 SELECT h.id
                 FROM highlights h
-                JOIN fragments f ON f.id = h.fragment_id
+                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                JOIN fragments f ON f.id = hfa.fragment_id
                 WHERE f.media_id = :media_id
             )
             """
@@ -543,9 +544,11 @@ def _clear_fragment_artifacts(db, media_id: UUID) -> None:
         text(
             """
             DELETE FROM highlights
-            WHERE fragment_id IN (
-                SELECT id
-                FROM fragments
+            WHERE id IN (
+                SELECT h.id
+                FROM highlights h
+                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                JOIN fragments f ON f.id = hfa.fragment_id
                 WHERE media_id = :media_id
             )
             """
@@ -555,6 +558,119 @@ def _clear_fragment_artifacts(db, media_id: UUID) -> None:
     db.execute(
         text("DELETE FROM fragments WHERE media_id = :media_id"),
         {"media_id": media_id},
+    )
+
+
+def _ensure_ai_plus_billing(db, user_id: UUID) -> None:
+    """Keep the E2E user on an AI Plus plan so transcript flows stay testable."""
+    now = datetime.now(UTC)
+    values = {
+        "user_id": user_id,
+        "plan_tier": "ai_plus",
+        "subscription_status": "active",
+        "current_period_start": now - timedelta(days=1),
+        "current_period_end": now + timedelta(days=30),
+        "updated_at": now,
+    }
+    account_id = db.execute(
+        text("SELECT id FROM billing_accounts WHERE user_id = :user_id"),
+        {"user_id": user_id},
+    ).scalar_one_or_none()
+    if account_id is None:
+        db.execute(
+            text(
+                """
+                INSERT INTO billing_accounts (
+                    id,
+                    user_id,
+                    plan_tier,
+                    subscription_status,
+                    current_period_start,
+                    current_period_end,
+                    cancel_at_period_end,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    gen_random_uuid(),
+                    :user_id,
+                    :plan_tier,
+                    :subscription_status,
+                    :current_period_start,
+                    :current_period_end,
+                    false,
+                    :updated_at,
+                    :updated_at
+                )
+                """
+            ),
+            values,
+        )
+    else:
+        db.execute(
+            text(
+                """
+                UPDATE billing_accounts
+                SET plan_tier = :plan_tier,
+                    subscription_status = :subscription_status,
+                    current_period_start = :current_period_start,
+                    current_period_end = :current_period_end,
+                    cancel_at_period_end = false,
+                    updated_at = :updated_at
+                WHERE user_id = :user_id
+                """
+            ),
+            values,
+        )
+    db.commit()
+
+
+def _upsert_media_transcript_state(
+    db,
+    *,
+    media_id: UUID,
+    transcript_state: str,
+    transcript_coverage: str,
+    semantic_status: str,
+    last_error_code: str | None = None,
+) -> None:
+    """Keep seeded media aligned with the canonical transcript-state table."""
+    db.execute(
+        text(
+            """
+            INSERT INTO media_transcript_states (
+                media_id,
+                transcript_state,
+                transcript_coverage,
+                semantic_status,
+                last_error_code,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                :media_id,
+                :transcript_state,
+                :transcript_coverage,
+                :semantic_status,
+                :last_error_code,
+                now(),
+                now()
+            )
+            ON CONFLICT (media_id) DO UPDATE
+            SET transcript_state = EXCLUDED.transcript_state,
+                transcript_coverage = EXCLUDED.transcript_coverage,
+                semantic_status = EXCLUDED.semantic_status,
+                last_error_code = EXCLUDED.last_error_code,
+                updated_at = now()
+            """
+        ),
+        {
+            "media_id": media_id,
+            "transcript_state": transcript_state,
+            "transcript_coverage": transcript_coverage,
+            "semantic_status": semantic_status,
+            "last_error_code": last_error_code,
+        },
     )
 
 
@@ -576,6 +692,8 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
         media = db.execute(select(Media).where(Media.id == media_id)).scalar_one_or_none()
         if media is None:
             raise RuntimeError(f"Non-PDF seed media missing: {media_id}")
+
+        _clear_fragment_artifacts(db, media_id)
 
         now = datetime.now(UTC)
         media.title = "E2E linked-items web article seed"
@@ -698,6 +816,13 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
                 )
             )
 
+        _upsert_media_transcript_state(
+            db,
+            media_id=transcript_media_id,
+            transcript_state="ready",
+            transcript_coverage="full",
+            semantic_status="ready",
+        )
         db.commit()
 
     with session_factory() as db:
@@ -733,6 +858,14 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
         playback_only_media.failed_at = now
         playback_only_media.processing_completed_at = now
         playback_only_media.updated_at = now
+        _upsert_media_transcript_state(
+            db,
+            media_id=playback_only_media_id,
+            transcript_state="unavailable",
+            transcript_coverage="none",
+            semantic_status="failed",
+            last_error_code="E_TRANSCRIPT_UNAVAILABLE",
+        )
         db.commit()
 
     seek_segment = YOUTUBE_TRANSCRIPT_SEGMENTS[1]
@@ -1085,7 +1218,8 @@ def main() -> None:
     upload_fixture_path = _write_upload_fixture(pdf_bytes)
 
     with session_factory() as db:
-        ensure_user_and_default_library(db, user_id)
+        ensure_user_and_default_library(db, user_id, email=E2E_USER_EMAIL)
+        _ensure_ai_plus_billing(db, user_id)
         init_data = init_upload(
             db=db,
             viewer_id=user_id,

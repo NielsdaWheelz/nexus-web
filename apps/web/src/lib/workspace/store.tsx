@@ -122,10 +122,10 @@ function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): Wor
       );
       return { ...state, panes };
     }
-
-    default:
-      return state;
   }
+
+  const exhaustiveAction: never = action;
+  return exhaustiveAction;
 }
 
 // ---------------------------------------------------------------------------
@@ -415,7 +415,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
 
   // --- Sync state → URL ---
   useEffect(() => {
-    if (typeof window === "undefined" || !readyRef.current) return;
+    if (typeof window === "undefined" || !readyRef.current || !mounted) return;
     if (skipSyncRef.current) { skipSyncRef.current = false; return; }
 
     const { href, errorCode } = buildWorkspaceUrl(state, {
@@ -440,7 +440,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       }
     }
     historyModeRef.current = "replace";
-  }, [state]);
+  }, [mounted, state]);
 
   // --- Stable callbacks ---
 

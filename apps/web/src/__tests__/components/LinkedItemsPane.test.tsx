@@ -95,8 +95,10 @@ describe("LinkedItemsPane", () => {
         exact: "offset target",
         color: "yellow" as const,
         annotation: null,
-        start_offset: 0,
-        end_offset: 12,
+        anchor: {
+          start_offset: 0,
+          end_offset: 12,
+        },
         created_at: "2026-01-01T00:00:00Z",
       },
     ] as const;
@@ -170,8 +172,10 @@ describe("LinkedItemsPane", () => {
         exact: "late token",
         color: "yellow" as const,
         annotation: null,
-        start_offset: 10,
-        end_offset: 19,
+        anchor: {
+          start_offset: 10,
+          end_offset: 19,
+        },
         created_at: "2026-01-02T00:00:00Z",
       },
       {
@@ -179,8 +183,10 @@ describe("LinkedItemsPane", () => {
         exact: "early token",
         color: "green" as const,
         annotation: null,
-        start_offset: 1,
-        end_offset: 10,
+        anchor: {
+          start_offset: 1,
+          end_offset: 10,
+        },
         created_at: "2026-01-01T00:00:00Z",
       },
     ] as const;
@@ -224,8 +230,10 @@ describe("LinkedItemsPane", () => {
             exact: "pdf target",
             color: "yellow",
             annotation: null,
-            start_offset: 0,
-            end_offset: 10,
+            anchor: {
+              start_offset: 0,
+              end_offset: 10,
+            },
             created_at: "2026-01-01T00:00:00Z",
           },
         ] as never}
@@ -270,9 +278,10 @@ describe("LinkedItemsPane", () => {
             exact: "above excerpt",
             color: "yellow",
             annotation: null,
-            fragment_idx: 0,
-            start_offset: 0,
-            end_offset: 12,
+            anchor: {
+              start_offset: 0,
+              end_offset: 12,
+            },
             created_at: "2026-01-01T00:00:00Z",
           },
           {
@@ -280,9 +289,10 @@ describe("LinkedItemsPane", () => {
             exact: "current excerpt",
             color: "blue",
             annotation: null,
-            fragment_idx: 1,
-            start_offset: 20,
-            end_offset: 35,
+            anchor: {
+              start_offset: 20,
+              end_offset: 35,
+            },
             created_at: "2026-01-02T00:00:00Z",
           },
           {
@@ -290,9 +300,10 @@ describe("LinkedItemsPane", () => {
             exact: "below excerpt",
             color: "blue",
             annotation: null,
-            fragment_idx: 2,
-            start_offset: 40,
-            end_offset: 53,
+            anchor: {
+              start_offset: 40,
+              end_offset: 53,
+            },
             created_at: "2026-01-03T00:00:00Z",
           },
         ] as never}
@@ -342,9 +353,10 @@ describe("LinkedItemsPane", () => {
                 title: "Context thread",
               },
             ],
-            fragment_idx: 0,
-            start_offset: 0,
-            end_offset: 20,
+            anchor: {
+              start_offset: 0,
+              end_offset: 20,
+            },
             created_at: "2026-01-01T00:00:00Z",
           },
         ] as never}
@@ -394,9 +406,10 @@ describe("LinkedItemsPane", () => {
             exact: "above excerpt",
             color: "yellow",
             annotation: null,
-            fragment_idx: 0,
-            start_offset: 0,
-            end_offset: 12,
+            anchor: {
+              start_offset: 0,
+              end_offset: 12,
+            },
             created_at: "2026-01-01T00:00:00Z",
           },
           {
@@ -404,9 +417,10 @@ describe("LinkedItemsPane", () => {
             exact: "mid excerpt",
             color: "green",
             annotation: null,
-            fragment_idx: 1,
-            start_offset: 20,
-            end_offset: 31,
+            anchor: {
+              start_offset: 20,
+              end_offset: 31,
+            },
             created_at: "2026-01-02T00:00:00Z",
           },
           {
@@ -414,9 +428,10 @@ describe("LinkedItemsPane", () => {
             exact: "lower excerpt",
             color: "blue",
             annotation: null,
-            fragment_idx: 2,
-            start_offset: 40,
-            end_offset: 53,
+            anchor: {
+              start_offset: 40,
+              end_offset: 53,
+            },
             created_at: "2026-01-03T00:00:00Z",
           },
         ] as never}
@@ -475,9 +490,10 @@ describe("LinkedItemsPane", () => {
             exact: "far above excerpt",
             color: "yellow",
             annotation: null,
-            fragment_idx: 0,
-            start_offset: 0,
-            end_offset: 17,
+            anchor: {
+              start_offset: 0,
+              end_offset: 17,
+            },
             created_at: "2026-01-01T00:00:00Z",
           },
           {
@@ -485,9 +501,10 @@ describe("LinkedItemsPane", () => {
             exact: "far below excerpt 1",
             color: "green",
             annotation: null,
-            fragment_idx: 1,
-            start_offset: 20,
-            end_offset: 38,
+            anchor: {
+              start_offset: 20,
+              end_offset: 38,
+            },
             created_at: "2026-01-02T00:00:00Z",
           },
           {
@@ -495,9 +512,10 @@ describe("LinkedItemsPane", () => {
             exact: "far below excerpt 2",
             color: "blue",
             annotation: null,
-            fragment_idx: 2,
-            start_offset: 40,
-            end_offset: 58,
+            anchor: {
+              start_offset: 40,
+              end_offset: 58,
+            },
             created_at: "2026-01-03T00:00:00Z",
           },
         ] as never}
@@ -535,8 +553,10 @@ describe("LinkedItemsPane", () => {
             exact: "clipped item",
             color: "yellow",
             annotation: null,
-            start_offset: 0,
-            end_offset: 12,
+            anchor: {
+              start_offset: 0,
+              end_offset: 12,
+            },
             created_at: "2026-01-01T00:00:00Z",
           },
         ] as never}
@@ -581,9 +601,10 @@ describe("LinkedItemsPane", () => {
             exact: "row b",
             color: "yellow",
             annotation: null,
-            fragment_idx: 1,
-            start_offset: 100,
-            end_offset: 120,
+            anchor: {
+              start_offset: 100,
+              end_offset: 120,
+            },
             created_at: "2026-01-01T00:00:00Z",
             stable_order_key: "00000001:000000000100.000000:000000000072.000000:2026-01-01T00:00:00Z:h-b",
           },
@@ -592,9 +613,10 @@ describe("LinkedItemsPane", () => {
             exact: "row a",
             color: "yellow",
             annotation: null,
-            fragment_idx: 1,
-            start_offset: 100,
-            end_offset: 120,
+            anchor: {
+              start_offset: 100,
+              end_offset: 120,
+            },
             created_at: "2026-01-01T00:00:00Z",
             stable_order_key: "00000001:000000000100.000000:000000000072.000000:2026-01-01T00:00:00Z:h-a",
           },

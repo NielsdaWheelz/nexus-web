@@ -13,12 +13,12 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.services.podcasts import catalog as podcast_catalog_service
 from nexus.services.podcasts import provider as podcast_provider_service
-from nexus.services.search import visible_media_ids_cte_sql
 
 logger = get_logger(__name__)
 

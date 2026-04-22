@@ -1103,7 +1103,7 @@ class TestEpubChapterFragmentsImmutableAcrossReadsAndHighlightChurn:
             media_id, frag_ids = _create_ready_epub(session, num_chapters=3)
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
-        direct_db.register_cleanup("highlights", "fragment_id", frag_ids[1])
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)

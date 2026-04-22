@@ -58,18 +58,16 @@ type SSEErrorHandler = (error: Error) => void;
 export interface ContextItem {
   type: "highlight" | "annotation" | "media";
   id: string;
-  /** Display fields — optional, for richer rendering */
+  /** Display fields carried by the caller when available. */
   color?: "yellow" | "green" | "blue" | "pink" | "purple";
   preview?: string;
   mediaId?: string;
   mediaTitle?: string;
-  /** Enriched fields — populated via API hydration */
   exact?: string;
   prefix?: string;
   suffix?: string;
   annotationBody?: string;
   mediaKind?: string;
-  hydrated?: boolean;
 }
 
 /**

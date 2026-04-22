@@ -188,9 +188,11 @@ class TestVideoCapabilities:
         caps = derive_capabilities(
             kind="video",
             processing_status="failed",
-            last_error_code="E_TRANSCRIPT_UNAVAILABLE",
+            last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=True,
+            transcript_state="unavailable",
+            transcript_coverage="none",
         )
 
         # Can play but cannot read/highlight/quote
@@ -255,9 +257,11 @@ class TestPodcastEpisodeCapabilities:
         caps = derive_capabilities(
             kind="podcast_episode",
             processing_status="failed",
-            last_error_code="E_TRANSCRIPT_UNAVAILABLE",
+            last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=True,
+            transcript_state="unavailable",
+            transcript_coverage="none",
         )
 
         assert caps.can_play is True
@@ -301,6 +305,24 @@ class TestPodcastEpisodeCapabilities:
         assert caps.can_highlight is True
         assert caps.can_quote is True
         assert caps.can_search is True
+
+    def test_podcast_last_error_code_does_not_stand_in_for_transcript_state(self):
+        """Transcript media no longer infers unavailability from processing failure residue."""
+        caps = derive_capabilities(
+            kind="podcast_episode",
+            processing_status="failed",
+            last_error_code="E_TRANSCRIPT_UNAVAILABLE",
+            media_file_exists=False,
+            external_playback_url_exists=True,
+            transcript_state=None,
+            transcript_coverage=None,
+        )
+
+        assert caps.can_play is True
+        assert caps.can_read is False
+        assert caps.can_highlight is False
+        assert caps.can_quote is False
+        assert caps.can_search is False
 
 
 class TestDownloadCapability:

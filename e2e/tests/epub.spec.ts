@@ -21,8 +21,10 @@ interface EpubSectionDetail {
 
 interface HighlightOut {
   id: string;
-  start_offset: number;
-  end_offset: number;
+  anchor: {
+    start_offset: number;
+    end_offset: number;
+  };
 }
 
 async function upsertHighlightAnnotation(
@@ -243,7 +245,8 @@ async function ensureFragmentHighlight(
       data: { highlights: HighlightOut[] };
     };
     const existing = payload.data.highlights.find(
-      (item) => item.start_offset === startOffset && item.end_offset === endOffset
+      (item) =>
+        item.anchor.start_offset === startOffset && item.anchor.end_offset === endOffset
     );
     expect(existing).toBeTruthy();
     if (!existing) {

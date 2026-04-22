@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, type RefObject } from "react";
 import type { PdfHighlightOut } from "@/components/PdfReader";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
 import type { Highlight } from "./mediaHighlights";
@@ -55,7 +55,7 @@ export default function MediaHighlightsPaneBody({
   onAnnotationDelete,
   onOpenConversation,
 }: MediaHighlightsPaneBodyProps) {
-  const lastResolvedIndexRef = useRef(0);
+  const shouldAutoSelectFirstContextualHighlight = isEpub && !isMobile;
 
   const contextualHighlights = useMemo(() => {
     if (isPdf) {
@@ -85,11 +85,11 @@ export default function MediaHighlightsPaneBody({
     }
 
     return [...fragmentHighlights].sort((left, right) => {
-      if (left.start_offset !== right.start_offset) {
-        return left.start_offset - right.start_offset;
+      if (left.anchor.start_offset !== right.anchor.start_offset) {
+        return left.anchor.start_offset - right.anchor.start_offset;
       }
-      if (left.end_offset !== right.end_offset) {
-        return left.end_offset - right.end_offset;
+      if (left.anchor.end_offset !== right.anchor.end_offset) {
+        return left.anchor.end_offset - right.anchor.end_offset;
       }
 
       const leftCreatedAt = Date.parse(left.created_at);
@@ -136,7 +136,7 @@ export default function MediaHighlightsPaneBody({
       });
     }
 
-    return (contextualHighlights as Highlight[]).map((highlight, index) => ({
+    return (contextualHighlights as Highlight[]).map((highlight) => ({
       id: highlight.id,
       exact: highlight.exact,
       color: highlight.color,
@@ -145,14 +145,14 @@ export default function MediaHighlightsPaneBody({
       updated_at: highlight.updated_at,
       prefix: highlight.prefix,
       suffix: highlight.suffix,
-      start_offset: highlight.start_offset,
-      end_offset: highlight.end_offset,
-      fragment_idx: index,
+      anchor: {
+        start_offset: highlight.anchor.start_offset,
+        end_offset: highlight.anchor.end_offset,
+      },
       linked_conversations: highlight.linked_conversations,
       stable_order_key: [
-        String(index).padStart(8, "0"),
-        String(highlight.start_offset).padStart(12, "0"),
-        String(highlight.end_offset).padStart(12, "0"),
+        String(highlight.anchor.start_offset).padStart(12, "0"),
+        String(highlight.anchor.end_offset).padStart(12, "0"),
         highlight.created_at,
         highlight.id,
       ].join(":"),
@@ -163,26 +163,23 @@ export default function MediaHighlightsPaneBody({
     if (contextualHighlights.length === 0) {
       return null;
     }
-    if (focusedId) {
-      const focusedHighlight = contextualHighlights.find((highlight) => highlight.id === focusedId);
-      if (focusedHighlight) {
-        return focusedHighlight;
+    if (focusedId === null) {
+      if (!shouldAutoSelectFirstContextualHighlight) {
+        return null;
       }
+      return contextualHighlights[0]!;
     }
-    return contextualHighlights[Math.min(lastResolvedIndexRef.current, contextualHighlights.length - 1)];
-  }, [contextualHighlights, focusedId]);
 
-  useEffect(() => {
-    if (!selectedHighlight) {
-      return;
+    const focusedHighlight = contextualHighlights.find((highlight) => highlight.id === focusedId);
+    if (focusedHighlight) {
+      return focusedHighlight;
     }
-    const selectedIndex = contextualHighlights.findIndex(
-      (highlight) => highlight.id === selectedHighlight.id
-    );
-    if (selectedIndex >= 0) {
-      lastResolvedIndexRef.current = selectedIndex;
+
+    if (!shouldAutoSelectFirstContextualHighlight) {
+      return null;
     }
-  }, [contextualHighlights, selectedHighlight]);
+    return contextualHighlights[0]!;
+  }, [contextualHighlights, focusedId, shouldAutoSelectFirstContextualHighlight]);
 
   useEffect(() => {
     if (contextualHighlights.length === 0) {
@@ -192,12 +189,23 @@ export default function MediaHighlightsPaneBody({
       return;
     }
 
-    if (!selectedHighlight || focusedId === selectedHighlight.id) {
+    if (
+      !shouldAutoSelectFirstContextualHighlight ||
+      !selectedHighlight ||
+      focusedId === selectedHighlight.id
+    ) {
       return;
     }
 
     onFocusHighlight(selectedHighlight.id);
-  }, [contextualHighlights, focusedId, onClearFocus, onFocusHighlight, selectedHighlight]);
+  }, [
+    contextualHighlights,
+    focusedId,
+    onClearFocus,
+    onFocusHighlight,
+    selectedHighlight,
+    shouldAutoSelectFirstContextualHighlight,
+  ]);
 
   const handleHighlightClick = useCallback(
     (highlightId: string) => {

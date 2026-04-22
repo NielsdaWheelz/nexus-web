@@ -1,8 +1,8 @@
 "use client";
 
-import type { MouseEvent, RefObject } from "react";
-import ReaderContentArea from "@/components/ReaderContentArea";
+import type { CSSProperties, MouseEvent, RefObject } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import { useReaderContext } from "@/lib/reader";
 import {
   formatTranscriptTimestampMs,
   normalizeTranscriptChapters,
@@ -45,6 +45,20 @@ export default function TranscriptContentPanel({
   onSeek,
   onContentClick,
 }: TranscriptContentPanelProps) {
+  const { profile } = useReaderContext();
+  const readerFontFamily =
+    profile.font_family === "sans"
+      ? "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+      : "Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, Times New Roman, serif";
+  const readerSurfaceStyle = {
+    "--reader-font-family": readerFontFamily,
+    "--reader-font-size-px": `${profile.font_size_px}px`,
+    "--reader-line-height": String(profile.line_height),
+    "--reader-column-width-ch": `${profile.column_width_ch}ch`,
+  } as CSSProperties;
+  const readerSurfaceClassName = `${styles.readerContentRoot} ${
+    profile.theme === "dark" ? styles.readerThemeDark : styles.readerThemeLight
+  }`;
   const normalizedChapters = normalizeTranscriptChapters(chapters);
   const isReadablePartialTranscript =
     transcriptState === "partial" || transcriptCoverage === "partial";
@@ -163,11 +177,13 @@ export default function TranscriptContentPanel({
           </div>
 
           {activeFragment ? (
-            <ReaderContentArea>
-              <div ref={contentRef} onClick={onContentClick}>
-                <HtmlRenderer htmlSanitized={renderedHtml} />
+            <div className={readerSurfaceClassName} style={readerSurfaceStyle}>
+              <div className={styles.readerContentInner}>
+                <div ref={contentRef} onClick={onContentClick}>
+                  <HtmlRenderer htmlSanitized={renderedHtml} />
+                </div>
               </div>
-            </ReaderContentArea>
+            </div>
           ) : null}
         </div>
       )}

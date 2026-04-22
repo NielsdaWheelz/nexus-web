@@ -52,6 +52,7 @@ export function parseAttachContext(
   const preview = searchParams.get("attach_preview");
   if (preview) {
     item.preview = preview;
+    item.exact = preview;
   }
 
   const mediaId = searchParams.get("attach_media_id");
@@ -70,8 +71,7 @@ export function parseAttachContext(
 /**
  * Stable signature for URL-backed attach context state.
  *
- * Includes only fields sourced from attach_* params so hydrated enrichment
- * does not trigger false-positive "changed" comparisons.
+ * Includes only fields sourced from attach_* params.
  */
 export function getAttachContextSignature(items: ContextItem[]): string {
   return items

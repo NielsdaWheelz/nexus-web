@@ -405,12 +405,12 @@ class TestPdfQuoteBlockingStream:
             session.execute(
                 text("""
                     INSERT INTO highlights (
-                        id, user_id, fragment_id, start_offset, end_offset,
+                        id, user_id,
                         anchor_kind, anchor_media_id,
                         color, exact, prefix, suffix
                     )
                     VALUES (
-                        :id, :user_id, NULL, NULL, NULL,
+                        :id, :user_id,
                         'pdf_page_geometry', :media_id,
                         'yellow', 'stored exact', '', ''
                     )

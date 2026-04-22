@@ -3,7 +3,7 @@ import { sseClientDirect, toWireContextItem } from "./sse";
 import type { ContextItem } from "./sse";
 
 describe("toWireContextItem", () => {
-  it("strips enriched fields from a fully hydrated context item", () => {
+  it("strips non-wire display detail from a context item", () => {
     const item: ContextItem = {
       type: "highlight",
       id: "abc-123",
@@ -16,7 +16,6 @@ describe("toWireContextItem", () => {
       suffix: " after",
       annotationBody: "my note",
       mediaKind: "web_article",
-      hydrated: true,
     };
 
     const wire = toWireContextItem(item);
@@ -35,7 +34,6 @@ describe("toWireContextItem", () => {
     expect("suffix" in wire).toBe(false);
     expect("annotationBody" in wire).toBe(false);
     expect("mediaKind" in wire).toBe(false);
-    expect("hydrated" in wire).toBe(false);
   });
 
   it("omits undefined optional display fields", () => {

@@ -31,6 +31,9 @@ paths, or backward-compatibility shims.
   reading scroll
 - on mobile, document panes restore header and toolbar near the top of the
   document and on intentional upward scroll
+- on mobile, `/media/:id` route-level chrome decisions live in
+  `MediaPaneBody.tsx`, and scroll-driven visibility lives only with the real
+  scroller owner
 - overlay headers, close bars, and other escape affordances stay visible
 - while a drawer, quote flow, menu, selection flow, or other transient UI is
   open, the relevant chrome stays visible
@@ -42,10 +45,11 @@ paths, or backward-compatibility shims.
 
 - `PaneShell` owns mobile chrome layout for workspace panes
 - `PaneShell` does not run scroll-reactive hide/show logic for standard panes
+- `MediaPaneBody.tsx` is the only `/media/:id` route controller
 - document-pane chrome visibility is driven by the real document scroller, not
   by `PaneShell`'s outer body wrapper
 - there is one mobile chrome behavior path for workspace panes
-- `PageLayout` does not define an alternate production mobile chrome behavior
+- `PageLayout` is deleted
 - document panes use explicit local wiring at the scroll owner instead of a new
   generic abstraction layer
 
@@ -55,6 +59,8 @@ paths, or backward-compatibility shims.
   `useMobileChromeVisibility` and `PaneShell`
 - remove any unused production mobile hide/show path after the cutover
 - do not keep both shell-driven and document-driven visibility state
+- do not keep route-level chrome mutations in `useMediaRouteState.tsx` or move
+  them into a replacement controller hook
 - do not add optional props, mode flags, registries, manifests, or adapters to
   support both old and new behavior
 - if a file becomes a one-use wrapper after the cutover, inline or remove it
@@ -78,15 +84,14 @@ paths, or backward-compatibility shims.
 
 - `apps/web/src/components/workspace/PaneShell.tsx`
 - `apps/web/src/components/workspace/PaneShell.module.css`
-- `apps/web/src/components/workspace/DocumentViewport.tsx`
-- `apps/web/src/components/workspace/DocumentViewport.module.css`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
+- `apps/web/src/app/(authenticated)/media/[id]/useMediaRouteState.tsx`
+- `apps/web/src/app/(authenticated)/media/[id]/TranscriptContentPanel.tsx`
 - `apps/web/src/components/PdfReader.tsx`
 - `apps/web/src/components/PdfReader.module.css`
-- `apps/web/src/app/(authenticated)/media/[id]/mediaHelpers.ts`
+- `apps/web/src/app/(authenticated)/media/[id]/transcriptView.ts`
 - `apps/web/src/__tests__/components/PaneShell.test.tsx`
 - `apps/web/src/__tests__/components/PdfReader.test.tsx`
-- `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx`
 - `e2e/tests/pane-chrome.spec.ts`
 - `e2e/tests/pdf-reader.spec.ts`
 - `e2e/tests/epub.spec.ts`
@@ -103,18 +108,24 @@ paths, or backward-compatibility shims.
   keep pinned mobile chrome styles for standard panes
   keep transform-based hidden/visible styles for document panes only
   keep safe-area padding and reserved top space
-- `DocumentViewport.tsx`
-  become the explicit scroll owner for epub, transcript, and web document panes
-  publish visibility updates directly from its own scroll events
 - `MediaPaneBody.tsx`
-  keep document-pane decisions explicit at the media surface
+  keep epub and web document-pane decisions explicit at the media surface
+  absorb the remaining route-level mobile chrome decisions from the deleted
+  media-route hook
   keep transient UI flows forcing visible chrome while they are open
+- `useMediaRouteState.tsx`
+  delete it
+  move any remaining route-level chrome mutations into `MediaPaneBody.tsx`
+  or the real leaf scroller owner
+- `TranscriptContentPanel.tsx`
+  keep transcript document scroll ownership local instead of routing it through
+  a wrapper component
 - `PdfReader.tsx`
   become the explicit scroll owner for pdf mobile chrome visibility
   protect page jumps and resume positioning from hidden or reappearing chrome
-- `mediaHelpers.ts`
-  keep scroll-padding and target placement logic aligned with the visible
-  chrome height of the active scroller
+- `transcriptView.ts`
+  keep transcript target placement aligned with the visible chrome height of the
+  active scroller
 - tests
   delete assertions that depend on the legacy shell-body-driven document
   behavior
@@ -149,8 +160,8 @@ paths, or backward-compatibility shims.
 - reader resume restore does not snap content under the chrome
 - reduced-motion mode disables animated hide/show motion
 - no duplicate production hide/show logic remains for workspace pane chrome
-- no unused production `PageLayout` mobile chrome path remains after the
-  cutover
+- no deleted wrapper or alternate `PageLayout` chrome path remains in
+  production
 
 ## validation
 

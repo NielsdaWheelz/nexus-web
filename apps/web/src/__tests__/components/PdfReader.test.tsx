@@ -1,13 +1,54 @@
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PdfReader, {
   type PdfReaderControlActions,
   type PdfReaderControlsState,
-  type PdfReaderDeps,
 } from "@/components/PdfReader";
+import type { PdfJsLike, PdfJsViewerLike } from "@/components/pdfReaderRuntime";
 import PaneShell from "@/components/workspace/PaneShell";
 import "pdfjs-dist/web/pdf_viewer.css";
+
+const { apiFetchMock, getPdfSelectionMock, loadPdfJsMock, loadPdfJsViewerMock } = vi.hoisted(
+  () => ({
+    apiFetchMock: vi.fn(),
+    getPdfSelectionMock: vi.fn(),
+    loadPdfJsMock: vi.fn(),
+    loadPdfJsViewerMock: vi.fn(),
+  })
+);
+
+vi.mock("@/lib/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>("@/lib/api/client");
+  return {
+    ...actual,
+    apiFetch: apiFetchMock,
+  };
+});
+
+vi.mock("@/components/pdfReaderRuntime", async () => {
+  const actual = await vi.importActual<typeof import("@/components/pdfReaderRuntime")>(
+    "@/components/pdfReaderRuntime"
+  );
+  return {
+    ...actual,
+    PDF_WORKER_SRC: "/pdf.worker.test.mjs",
+    getPdfSelection: () => getPdfSelectionMock(),
+    loadPdfJs: loadPdfJsMock,
+    loadPdfJsViewer: loadPdfJsViewerMock,
+  };
+});
+
+beforeEach(() => {
+  apiFetchMock.mockReset();
+  getPdfSelectionMock.mockReset();
+  loadPdfJsMock.mockReset();
+  loadPdfJsViewerMock.mockReset();
+  getPdfSelectionMock.mockImplementation(() => window.getSelection());
+  FakePDFViewer.resetUpdateCallCount();
+  FakePDFViewer.resetScaleHistory();
+  FakePDFViewer.resetLastInitOptions();
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -377,16 +418,15 @@ function createDeps(options: {
   docsByUrl: Record<string, FakePdfDocumentLike>;
   highlightsByPage?: Record<number, Array<ReturnType<typeof makePdfHighlight>>>;
   getSelection?: () => Selection | null;
+  loadPdfJs?: () => Promise<PdfJsLike>;
+  loadPdfJsViewer?: () => Promise<PdfJsViewerLike>;
 }): {
-  deps: PdfReaderDeps;
+  deps: Record<string, never>;
   apiFetchMock: ReturnType<typeof vi.fn>;
   getDocumentMock: ReturnType<typeof vi.fn>;
 } {
   let fileCallCount = 0;
-  const apiFetchImpl: PdfReaderDeps["apiFetch"] = async <T,>(
-    path: string,
-    init?: RequestInit
-  ): Promise<T> => {
+  const apiFetchImpl = async <T,>(path: string, init?: RequestInit): Promise<T> => {
     if (/\/api\/media\/[^/]+\/file$/.test(path)) {
       const nextUrl = options.urls[fileCallCount] ?? options.urls[options.urls.length - 1];
       fileCallCount += 1;
@@ -419,7 +459,7 @@ function createDeps(options: {
 
     throw new Error(`Unexpected apiFetch path: ${path}`);
   };
-  const apiFetchMock = vi.fn(apiFetchImpl);
+  apiFetchMock.mockImplementation(apiFetchImpl);
 
   const getDocumentMock = vi.fn((source: { url: string }) => {
     const doc = options.docsByUrl[source.url];
@@ -429,43 +469,37 @@ function createDeps(options: {
     return { promise: Promise.resolve(doc) };
   });
 
-  const deps: PdfReaderDeps = {
-    apiFetch: apiFetchMock as unknown as PdfReaderDeps["apiFetch"],
-    loadPdfJs: async () => ({
-      getDocument: getDocumentMock,
-      GlobalWorkerOptions: { workerSrc: "" },
-    }),
-    loadPdfJsViewer: async () => ({
-      EventBus: FakeEventBus as unknown as PdfReaderDeps["loadPdfJsViewer"] extends () => Promise<infer T>
-        ? T extends { EventBus: infer E }
-          ? E
-          : never
-        : never,
-      PDFLinkService: FakePDFLinkService as unknown as PdfReaderDeps["loadPdfJsViewer"] extends () => Promise<infer T>
-        ? T extends { PDFLinkService: infer L }
-          ? L
-          : never
-        : never,
-      PDFViewer: FakePDFViewer as unknown as PdfReaderDeps["loadPdfJsViewer"] extends () => Promise<infer T>
-        ? T extends { PDFViewer: infer V }
-          ? V
-          : never
-        : never,
-      ScrollMode: { VERTICAL: 0 },
-      LinkTarget: { BLANK: 2 },
-    }),
-    workerSrc: "/pdf.worker.test.mjs",
-    getSelection: options.getSelection ?? (() => window.getSelection()),
-  };
+  loadPdfJsMock.mockImplementation(
+    options.loadPdfJs ??
+      (async () => ({
+        getDocument: getDocumentMock,
+        GlobalWorkerOptions: { workerSrc: "" },
+      }))
+  );
+  loadPdfJsViewerMock.mockImplementation(
+    options.loadPdfJsViewer ??
+      (async () => ({
+        EventBus: FakeEventBus as unknown as PdfJsViewerLike["EventBus"],
+        PDFLinkService: FakePDFLinkService as unknown as PdfJsViewerLike["PDFLinkService"],
+        PDFViewer: FakePDFViewer as unknown as PdfJsViewerLike["PDFViewer"],
+        ScrollMode: { VERTICAL: 0 },
+        LinkTarget: { BLANK: 2 },
+      }))
+  );
+  getPdfSelectionMock.mockImplementation(options.getSelection ?? (() => window.getSelection()));
 
-  return { deps, apiFetchMock, getDocumentMock };
+  return { deps: {}, apiFetchMock, getDocumentMock };
 }
 
-function renderPdfReaderWithControls(props: Parameters<typeof PdfReader>[0]) {
+type PdfReaderTestProps = Parameters<typeof PdfReader>[0] & {
+  deps?: Record<string, never>;
+};
+
+function renderPdfReaderWithControls(props: PdfReaderTestProps) {
   const stateEvents: PdfReaderControlsState[] = [];
   const actionsRef: { current: PdfReaderControlActions | null } = { current: null };
 
-  const renderWithControls = (nextProps: Parameters<typeof PdfReader>[0]) => (
+  const renderWithControls = ({ deps: _deps, ...nextProps }: PdfReaderTestProps) => (
     <PdfReader
       {...nextProps}
       onControlsStateChange={(state) => {
@@ -485,7 +519,7 @@ function renderPdfReaderWithControls(props: Parameters<typeof PdfReader>[0]) {
     ...view,
     actionsRef,
     stateEvents,
-    rerenderWithControls(nextProps: Parameters<typeof PdfReader>[0]) {
+    rerenderWithControls(nextProps: PdfReaderTestProps) {
       view.rerender(renderWithControls(nextProps));
     },
   };
@@ -499,6 +533,26 @@ async function expectLatestControlsState(
     expect(stateEvents.at(-1)).toMatchObject(expected);
   });
 }
+
+function defaultPdfJs(): PdfJsLike {
+  return {
+    getDocument: vi.fn(() => ({ promise: Promise.reject(new Error("default pdf runtime not configured")) })),
+    GlobalWorkerOptions: { workerSrc: "" },
+  };
+}
+
+function defaultPdfJsViewer(): PdfJsViewerLike {
+  return {
+    EventBus: FakeEventBus as unknown as PdfJsViewerLike["EventBus"],
+    PDFLinkService: FakePDFLinkService as unknown as PdfJsViewerLike["PDFLinkService"],
+    PDFViewer: FakePDFViewer as unknown as PdfJsViewerLike["PDFViewer"],
+    ScrollMode: { VERTICAL: 0 },
+    LinkTarget: { BLANK: 2 },
+  };
+}
+
+loadPdfJsMock.mockResolvedValue(defaultPdfJs());
+loadPdfJsViewerMock.mockResolvedValue(defaultPdfJsViewer());
 
 describe("PdfReader", () => {
   it("loads via canonical file endpoint and renders canvas viewer without iframe", async () => {
@@ -589,17 +643,18 @@ describe("PdfReader", () => {
     const passwordError = new Error("Password required");
     passwordError.name = "PasswordException";
 
-    const { deps } = createDeps({
-      urls: [signedUrl],
-      docsByUrl: {},
-    });
-
-    const loadPdfJs = async () => ({
+    const loadPdfJs = async (): Promise<PdfJsLike> => ({
       getDocument: vi.fn(() => ({ promise: Promise.reject(passwordError) })),
       GlobalWorkerOptions: { workerSrc: "" },
     });
 
-    render(<PdfReader mediaId="media-3" deps={{ ...deps, loadPdfJs }} />);
+    createDeps({
+      urls: [signedUrl],
+      docsByUrl: {},
+      loadPdfJs,
+    });
+
+    render(<PdfReader mediaId="media-3" />);
 
     expect(
       await screen.findByText(/password-protected and cannot be opened/i)
@@ -668,13 +723,13 @@ describe("PdfReader", () => {
       ]),
     ];
 
-    const { deps } = createDeps({
+    createDeps({
       urls: [signedUrl],
       docsByUrl: { [signedUrl]: doc },
       highlightsByPage: { 1: pageOneHighlights },
     });
 
-    render(<PdfReader mediaId="media-tap" deps={deps} onHighlightTap={onHighlightTap} />);
+    render(<PdfReader mediaId="media-tap" onHighlightTap={onHighlightTap} />);
 
     const overlay = await screen.findByTestId("pdf-highlight-h-tap-0");
     expect(overlay).toHaveAttribute("role", "button");
@@ -700,13 +755,13 @@ describe("PdfReader", () => {
       ]),
     ];
 
-    const { deps } = createDeps({
+    createDeps({
       urls: [signedUrl],
       docsByUrl: { [signedUrl]: doc },
       highlightsByPage: { 1: pageOneHighlights },
     });
 
-    render(<PdfReader mediaId="media-static" deps={deps} />);
+    render(<PdfReader mediaId="media-static" />);
 
     const overlay = await screen.findByTestId("pdf-highlight-h-static-0");
     expect(overlay).not.toHaveAttribute("role");
@@ -1397,35 +1452,22 @@ describe("PdfReader", () => {
 
     const signedUrl = "https://storage.example/signed-broken-scale";
     const doc = createFakeDocument(1);
-    const { deps } = createDeps({
-      urls: [signedUrl],
-      docsByUrl: { [signedUrl]: doc },
-      highlightsByPage: { 1: [] },
-    });
-
-    const loadPdfJsViewer: PdfReaderDeps["loadPdfJsViewer"] = async () => ({
-      EventBus: FakeEventBus as unknown as PdfReaderDeps["loadPdfJsViewer"] extends () => Promise<infer T>
-        ? T extends { EventBus: infer E }
-          ? E
-          : never
-        : never,
-      PDFLinkService:
-        FakePDFLinkService as unknown as PdfReaderDeps["loadPdfJsViewer"] extends () => Promise<infer T>
-          ? T extends { PDFLinkService: infer L }
-            ? L
-            : never
-          : never,
-      PDFViewer:
-        BrokenScalePdfViewer as unknown as PdfReaderDeps["loadPdfJsViewer"] extends () => Promise<infer T>
-          ? T extends { PDFViewer: infer V }
-            ? V
-            : never
-          : never,
+    const loadPdfJsViewer = async (): Promise<PdfJsViewerLike> => ({
+      EventBus: FakeEventBus as unknown as PdfJsViewerLike["EventBus"],
+      PDFLinkService: FakePDFLinkService as unknown as PdfJsViewerLike["PDFLinkService"],
+      PDFViewer: BrokenScalePdfViewer as unknown as PdfJsViewerLike["PDFViewer"],
       ScrollMode: { VERTICAL: 0 },
       LinkTarget: { BLANK: 2 },
     });
 
-    render(<PdfReader mediaId="media-14" deps={{ ...deps, loadPdfJsViewer }} />);
+    createDeps({
+      urls: [signedUrl],
+      docsByUrl: { [signedUrl]: doc },
+      highlightsByPage: { 1: [] },
+      loadPdfJsViewer,
+    });
+
+    render(<PdfReader mediaId="media-14" />);
 
     expect(
       await screen.findByText(/unable to load this pdf right now\. please retry\./i)
@@ -1702,7 +1744,7 @@ describe("PdfReader", () => {
       1: createFakePage({ textItems: ["external controls page one"] }),
       2: createFakePage({ textItems: ["external controls page two"] }),
     });
-    const { deps } = createDeps({
+    createDeps({
       urls: [signedUrl],
       docsByUrl: { [signedUrl]: doc },
       highlightsByPage: { 1: [], 2: [] },
@@ -1730,7 +1772,6 @@ describe("PdfReader", () => {
     render(
       <PdfReader
         mediaId="media-12"
-        deps={deps}
         onControlsStateChange={(state) => stateEvents.push(state)}
         onControlsReady={(next) => {
           actionsRef.current = next;
@@ -1779,14 +1820,13 @@ describe("PdfReader", () => {
 
     const url = "https://storage.example/signed-mobile-fit";
     const doc = createFakeDocument(1);
-    const { deps } = createDeps({
+    createDeps({
       urls: [url],
       docsByUrl: { [url]: doc },
     });
 
     const { stateEvents } = renderPdfReaderWithControls({
       mediaId: "media-mobile-fit",
-      deps,
     });
 
     await expectLatestControlsState(stateEvents, {
@@ -1810,7 +1850,7 @@ describe("PdfReader", () => {
 
     const url = "https://storage.example/signed-mobile-chrome";
     const doc = createFakeDocument(1);
-    const { deps } = createDeps({
+    createDeps({
       urls: [url],
       docsByUrl: { [url]: doc },
     });
@@ -1828,7 +1868,7 @@ describe("PdfReader", () => {
           onResizePane={onResizePane}
           isMobile
         >
-          <PdfReader mediaId="media-mobile-chrome" deps={deps} />
+          <PdfReader mediaId="media-mobile-chrome" />
         </PaneShell>
       );
 
@@ -1856,7 +1896,7 @@ describe("PdfReader", () => {
 
     const url = "https://storage.example/signed-reduced-motion";
     const doc = createFakeDocument(1);
-    const { deps } = createDeps({
+    createDeps({
       urls: [url],
       docsByUrl: { [url]: doc },
     });
@@ -1874,7 +1914,7 @@ describe("PdfReader", () => {
           onResizePane={onResizePane}
           isMobile
         >
-          <PdfReader mediaId="media-reduced-motion" deps={deps} />
+          <PdfReader mediaId="media-reduced-motion" />
         </PaneShell>
       );
 

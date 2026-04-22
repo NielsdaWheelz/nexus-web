@@ -174,7 +174,7 @@ export default function PaneShell({
   }, [isMobile, title, subtitle, effectiveToolbar]);
 
   // Hide chrome on scroll-down, restore on scroll-up.
-  const handleDocumentViewportScroll = useCallback(
+  const handleDocumentScroll = useCallback(
     (scrollTop: number) => {
       if (!isMobile || bodyMode !== "document") {
         return;
@@ -309,7 +309,7 @@ export default function PaneShell({
       >
         <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
           <PaneChromeVisibilityContext.Provider value={paneChromeVisibility}>
-            <PaneChromeScrollContext.Provider value={handleDocumentViewportScroll}>
+            <PaneChromeScrollContext.Provider value={handleDocumentScroll}>
               {children}
             </PaneChromeScrollContext.Provider>
           </PaneChromeVisibilityContext.Provider>

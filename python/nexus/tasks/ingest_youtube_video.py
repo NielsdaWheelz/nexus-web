@@ -125,6 +125,18 @@ def _do_ingest(
         if transcript_status == "completed" and transcript_segments:
             now = datetime.now(UTC)
             db.execute(
+                text(
+                    """
+                    DELETE FROM highlights AS h
+                    USING highlight_fragment_anchors AS hfa
+                    JOIN fragments AS f ON f.id = hfa.fragment_id
+                    WHERE h.id = hfa.highlight_id
+                      AND f.media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            db.execute(
                 text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id}
             )
             insert_transcript_fragments(db, media_id, transcript_segments, now=now)

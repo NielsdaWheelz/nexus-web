@@ -7,7 +7,6 @@ import PaneShell, {
   usePaneChromeScrollHandler,
   usePaneMobileChromeVisibility,
 } from "@/components/workspace/PaneShell";
-import DocumentViewport from "@/components/workspace/DocumentViewport";
 
 describe("PaneShell", () => {
   it("keeps chrome outside the scrollable body in standard mode", () => {
@@ -106,9 +105,9 @@ describe("PaneShell", () => {
         bodyMode="document"
         onResizePane={() => {}}
       >
-        <WiredDocumentViewport>
+        <WiredDocumentBody>
           <div>Document body</div>
-        </WiredDocumentViewport>
+        </WiredDocumentBody>
       </PaneShell>
     );
 
@@ -168,9 +167,9 @@ describe("PaneShell", () => {
         onResizePane={() => {}}
         isMobile
       >
-        <WiredDocumentViewport>
+        <WiredDocumentBody>
           <div style={{ height: "1600px" }}>Document body</div>
-        </WiredDocumentViewport>
+        </WiredDocumentBody>
       </PaneShell>
     );
 
@@ -206,9 +205,9 @@ describe("PaneShell", () => {
         onResizePane={() => {}}
         isMobile
       >
-        <WiredDocumentViewport>
+        <WiredDocumentBody>
           <div style={{ height: "1600px" }}>Document body</div>
-        </WiredDocumentViewport>
+        </WiredDocumentBody>
       </PaneShell>
     );
 
@@ -257,9 +256,9 @@ describe("PaneShell", () => {
         isMobile
       >
         <LockVisibleProbe />
-        <WiredDocumentViewport>
+        <WiredDocumentBody>
           <div style={{ height: "1600px" }}>Document body</div>
-        </WiredDocumentViewport>
+        </WiredDocumentBody>
       </PaneShell>
     );
 
@@ -436,8 +435,23 @@ function LockVisibleProbe() {
   );
 }
 
-function WiredDocumentViewport({ children }: { children: React.ReactNode }) {
+function WiredDocumentBody({ children }: { children: React.ReactNode }) {
   const onScroll = usePaneChromeScrollHandler();
 
-  return <DocumentViewport onScroll={onScroll ?? undefined}>{children}</DocumentViewport>;
+  return (
+    <div
+      data-testid="document-viewport"
+      data-pane-content="true"
+      style={{
+        width: "100%",
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
+        overflow: "auto",
+      }}
+      onScroll={(event) => onScroll?.(event.currentTarget.scrollTop)}
+    >
+      {children}
+    </div>
+  );
 }

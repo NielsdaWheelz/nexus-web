@@ -39,15 +39,21 @@ vi.mock("@/components/Toast", () => ({
 function makeHighlight(overrides: Partial<Highlight> = {}): Highlight {
   return {
     id: "highlight-1",
-    fragment_id: "fragment-1",
-    start_offset: 10,
-    end_offset: 20,
+    anchor: {
+      type: "fragment_offsets",
+      media_id: "media-1",
+      fragment_id: "fragment-1",
+      start_offset: 10,
+      end_offset: 20,
+    },
     color: "yellow",
     exact: "Example highlight",
     prefix: "Before",
     suffix: "After",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
+    author_user_id: "user-1",
+    is_owner: true,
     annotation: null,
     linked_conversations: [],
     ...overrides,
@@ -142,8 +148,28 @@ describe("MediaHighlightsPaneBody", () => {
         {...buildProps({
           focusedId: "highlight-2",
           fragmentHighlights: [
-            makeHighlight({ id: "highlight-1", exact: "Earlier highlight", start_offset: 0 }),
-            makeHighlight({ id: "highlight-2", exact, start_offset: 40 }),
+            makeHighlight({
+              id: "highlight-1",
+              exact: "Earlier highlight",
+              anchor: {
+                type: "fragment_offsets",
+                media_id: "media-1",
+                fragment_id: "fragment-1",
+                start_offset: 0,
+                end_offset: 20,
+              },
+            }),
+            makeHighlight({
+              id: "highlight-2",
+              exact,
+              anchor: {
+                type: "fragment_offsets",
+                media_id: "media-1",
+                fragment_id: "fragment-1",
+                start_offset: 40,
+                end_offset: 60,
+              },
+            }),
           ],
         })}
       />
@@ -153,6 +179,46 @@ describe("MediaHighlightsPaneBody", () => {
     expect(screen.queryByRole("button", { name: "All highlights" })).not.toBeInTheDocument();
     expect(getRenderedHighlightIds()).toEqual(["highlight-1", "highlight-2"]);
     expect(getLatestPaneProps().focusedId).toBe("highlight-2");
+  });
+
+  it("does not auto-focus a highlight when the route focus is null", () => {
+    const onFocusHighlight = vi.fn();
+
+    render(
+      <MediaHighlightsPaneBody
+        {...buildProps({
+          focusedId: null,
+          onFocusHighlight,
+          fragmentHighlights: [
+            makeHighlight({
+              id: "highlight-1",
+              exact: "Earlier highlight",
+              anchor: {
+                type: "fragment_offsets",
+                media_id: "media-1",
+                fragment_id: "fragment-1",
+                start_offset: 0,
+                end_offset: 20,
+              },
+            }),
+            makeHighlight({
+              id: "highlight-2",
+              exact: "Later highlight",
+              anchor: {
+                type: "fragment_offsets",
+                media_id: "media-1",
+                fragment_id: "fragment-1",
+                start_offset: 40,
+                end_offset: 60,
+              },
+            }),
+          ],
+        })}
+      />
+    );
+
+    expect(getLatestPaneProps().focusedId).toBeNull();
+    expect(onFocusHighlight).not.toHaveBeenCalled();
   });
 
   it("re-resolves EPUB focus to the first contextual highlight when the prior focus is out of scope", async () => {
@@ -165,8 +231,28 @@ describe("MediaHighlightsPaneBody", () => {
           focusedId: "missing-highlight",
           onFocusHighlight,
           fragmentHighlights: [
-            makeHighlight({ id: "late-highlight", exact: "Later", start_offset: 20 }),
-            makeHighlight({ id: "early-highlight", exact: "Earlier", start_offset: 2 }),
+            makeHighlight({
+              id: "late-highlight",
+              exact: "Later",
+              anchor: {
+                type: "fragment_offsets",
+                media_id: "media-1",
+                fragment_id: "fragment-1",
+                start_offset: 20,
+                end_offset: 30,
+              },
+            }),
+            makeHighlight({
+              id: "early-highlight",
+              exact: "Earlier",
+              anchor: {
+                type: "fragment_offsets",
+                media_id: "media-1",
+                fragment_id: "fragment-1",
+                start_offset: 2,
+                end_offset: 12,
+              },
+            }),
           ],
         })}
       />

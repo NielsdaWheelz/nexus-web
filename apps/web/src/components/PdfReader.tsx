@@ -12,6 +12,20 @@ import {
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { PdfReaderResumeState } from "@/lib/reader";
 import { usePaneMobileChromeVisibility } from "@/components/workspace/PaneShell";
+import {
+  PDF_WORKER_SRC,
+  getPdfSelection,
+  loadPdfJs,
+  loadPdfJsViewer,
+  type PdfDocumentLike,
+  type PdfDocumentLoadingTaskLike,
+  type PdfEventBusLike,
+  type PdfJsLike,
+  type PdfJsViewerLike,
+  type PdfLinkServiceLike,
+  type PdfPageViewLike,
+  type PdfViewerLike,
+} from "@/components/pdfReaderRuntime";
 import SelectionPopover from "./SelectionPopover";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
@@ -112,104 +126,13 @@ interface PdfHighlightCreateResponse {
   data: PdfHighlightOut;
 }
 
-interface PdfViewportLike {
-  width: number;
-  height: number;
-  scale?: number;
-  rotation?: number;
-}
-
-export interface PdfDocumentLike {
-  numPages: number;
-  destroy?: () => Promise<void> | void;
-}
-
-interface PdfDocumentLoadingTaskLike {
-  promise: Promise<PdfDocumentLike>;
-  destroy?: () => void;
-}
-
 interface OpenedPdfDocument {
   doc: PdfDocumentLike;
   loadingTask: PdfDocumentLoadingTaskLike;
 }
 
-interface PdfDocumentSourceLike {
-  url: string;
-  withCredentials?: boolean;
-  disableRange?: boolean;
-  disableStream?: boolean;
-  disableAutoFetch?: boolean;
-}
-
-interface PdfGlobalWorkerOptionsLike {
-  workerSrc: string;
-}
-
-export interface PdfJsLike {
-  getDocument(source: PdfDocumentSourceLike): PdfDocumentLoadingTaskLike;
-  GlobalWorkerOptions: PdfGlobalWorkerOptionsLike;
-}
-
-interface PdfPageViewLike {
-  viewport?: PdfViewportLike;
-  pdfPage?: {
-    getViewport(params: { scale: number; rotation?: number }): PdfViewportLike;
-  };
-}
-
-interface PdfEventBusLike {
-  on(eventName: string, listener: (event: unknown) => void): void;
-  off(eventName: string, listener: (event: unknown) => void): void;
-}
-
-interface PdfLinkServiceLike {
-  setDocument(doc: PdfDocumentLike | null, baseUrl?: string | null): void;
-  setViewer(viewer: PdfViewerLike): void;
-}
-
-interface PdfViewerLike {
-  setDocument(doc: PdfDocumentLike | null): void;
-  currentPageNumber: number;
-  currentScaleValue: string | number;
-  pagesCount: number;
-  update?: () => void;
-  scrollMode?: number;
-  getPageView?: (index: number) => PdfPageViewLike | undefined;
-}
-
-interface PdfJsViewerLike {
-  EventBus: new () => PdfEventBusLike;
-  PDFLinkService: new (params?: {
-    eventBus?: PdfEventBusLike;
-    externalLinkTarget?: number | null;
-    externalLinkRel?: string | null;
-  }) => PdfLinkServiceLike;
-  PDFViewer: new (params: {
-    container: HTMLDivElement;
-    viewer: HTMLDivElement;
-    eventBus: PdfEventBusLike;
-    linkService: PdfLinkServiceLike;
-    textLayerMode?: number;
-    enableAutoLinking?: boolean;
-  }) => PdfViewerLike;
-  ScrollMode?: { VERTICAL?: number };
-  LinkTarget?: { BLANK?: number };
-}
-
-type ApiFetchLike = <T>(path: string, options?: RequestInit) => Promise<T>;
-
-export interface PdfReaderDeps {
-  apiFetch: ApiFetchLike;
-  loadPdfJs: () => Promise<PdfJsLike>;
-  loadPdfJsViewer: () => Promise<PdfJsViewerLike>;
-  workerSrc: string;
-  getSelection: () => Selection | null;
-}
-
 interface PdfReaderProps {
   mediaId: string;
-  deps?: Partial<PdfReaderDeps>;
   contentRef?: MutableRefObject<HTMLDivElement | null>;
   onControlsStateChange?: (state: PdfReaderControlsState) => void;
   onControlsReady?: (actions: PdfReaderControlActions | null) => void;
@@ -276,8 +199,6 @@ interface ViewerEventHandlers {
   annotationlayerrendered: (event: unknown) => void;
 }
 
-const DEFAULT_WORKER_SRC = "/api/pdfjs/worker";
-const DEFAULT_VIEWER_MODULE_URL = "/api/pdfjs/viewer";
 const SIGNED_URL_REFRESH_SKEW_MS = 2_000;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 2;
@@ -295,30 +216,6 @@ const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
   pink: "rgba(233, 30, 99, 0.3)",
   purple: "rgba(156, 39, 176, 0.3)",
 };
-
-async function defaultLoadPdfJs(): Promise<PdfJsLike> {
-  const moduleUrl = "/api/pdfjs/module";
-  const pdfJsModule = await import(
-    /* @vite-ignore */
-    /* webpackIgnore: true */
-    moduleUrl
-  );
-  return pdfJsModule as unknown as PdfJsLike;
-}
-
-async function defaultLoadPdfJsViewer(): Promise<PdfJsViewerLike> {
-  const moduleUrl = DEFAULT_VIEWER_MODULE_URL;
-  const pdfViewerModule = await import(
-    /* @vite-ignore */
-    /* webpackIgnore: true */
-    moduleUrl
-  );
-  return pdfViewerModule as unknown as PdfJsViewerLike;
-}
-
-function defaultGetSelection(): Selection | null {
-  return window.getSelection();
-}
 
 function extractErrorStatus(error: unknown): number | null {
   if (typeof error !== "object" || error === null) {
@@ -621,7 +518,6 @@ function computePageLayerAlignmentDelta(pageElement: HTMLElement): number | null
 
 export default function PdfReader({
   mediaId,
-  deps,
   contentRef,
   onControlsStateChange,
   onControlsReady,
@@ -699,12 +595,6 @@ export default function PdfReader({
   const selectionSnapshotKeyRef = useRef<string | null>(null);
   const selectionVisibleRef = useRef(false);
   const mobileSelectionTimerRef = useRef<number | null>(null);
-
-  const apiFetchDep = deps?.apiFetch ?? apiFetch;
-  const loadPdfJsDep = deps?.loadPdfJs ?? defaultLoadPdfJs;
-  const loadPdfJsViewerDep = deps?.loadPdfJsViewer ?? defaultLoadPdfJsViewer;
-  const workerSrcDep = deps?.workerSrc ?? DEFAULT_WORKER_SRC;
-  const getSelectionDep = deps?.getSelection ?? defaultGetSelection;
 
   useEffect(() => {
     onPageHighlightsChangeRef.current = onPageHighlightsChange;
@@ -794,24 +684,24 @@ export default function PdfReader({
     if (pdfJsRef.current) {
       return pdfJsRef.current;
     }
-    const pdfJs = await loadPdfJsDep();
+    const pdfJs = await loadPdfJs();
     try {
-      pdfJs.GlobalWorkerOptions.workerSrc = workerSrcDep;
+      pdfJs.GlobalWorkerOptions.workerSrc = PDF_WORKER_SRC;
     } catch {
       // Some PDF.js bundles preconfigure worker wiring.
     }
     pdfJsRef.current = pdfJs;
     return pdfJs;
-  }, [loadPdfJsDep, workerSrcDep]);
+  }, []);
 
   const ensurePdfJsViewer = useCallback(async () => {
     if (pdfJsViewerRef.current) {
       return pdfJsViewerRef.current;
     }
-    const pdfJsViewer = await loadPdfJsViewerDep();
+    const pdfJsViewer = await loadPdfJsViewer();
     pdfJsViewerRef.current = pdfJsViewer;
     return pdfJsViewer;
-  }, [loadPdfJsViewerDep]);
+  }, []);
 
   const getPageElement = useCallback((targetPage: number): HTMLElement | null => {
     const root = internalContentRef.current;
@@ -1031,8 +921,8 @@ export default function PdfReader({
     setSelection(null);
     selectionSnapshotRef.current = null;
     setSelectionError(null);
-    getSelectionDep()?.removeAllRanges();
-  }, [getSelectionDep]);
+    getPdfSelection()?.removeAllRanges();
+  }, []);
 
   useEffect(() => {
     selectionVisibleRef.current = selection !== null;
@@ -1055,17 +945,17 @@ export default function PdfReader({
   );
 
   const fetchSignedUrl = useCallback(async () => {
-    const response = await apiFetchDep<PdfFileAccessResponse>(`/api/media/${mediaId}/file`);
+    const response = await apiFetch<PdfFileAccessResponse>(`/api/media/${mediaId}/file`);
     const expiresAtMs = Date.parse(response.data.expires_at);
     return {
       url: response.data.url,
       expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : null,
     } satisfies SignedUrlAccess;
-  }, [apiFetchDep, mediaId]);
+  }, [mediaId]);
 
   const fetchPageHighlights = useCallback(
     async (targetPage: number): Promise<PdfHighlightOut[]> => {
-      const response = await apiFetchDep<PdfHighlightListResponse>(
+      const response = await apiFetch<PdfHighlightListResponse>(
         `/api/media/${mediaId}/pdf-highlights?page_number=${targetPage}&mine_only=false`
       );
       return response.data.highlights.filter(
@@ -1074,7 +964,7 @@ export default function PdfReader({
           highlight.anchor.page_number === targetPage
       );
     },
-    [apiFetchDep, mediaId]
+    [mediaId]
   );
 
   const openDocument = useCallback(
@@ -1464,7 +1354,7 @@ export default function PdfReader({
   );
 
   const captureSelectionSnapshotFromWindow = useCallback(() => {
-    const sel = getSelectionDep();
+    const sel = getPdfSelection();
     if (!sel || sel.rangeCount === 0 || sel.toString().trim().length === 0) {
       return;
     }
@@ -1480,7 +1370,7 @@ export default function PdfReader({
     );
     selectionSnapshotRef.current = snapshot;
     selectionSnapshotKeyRef.current = buildSelectionSnapshotKey(snapshot);
-  }, [getSelectionDep, resolveTextLayerRootFromRange]);
+  }, [resolveTextLayerRootFromRange]);
 
   const buildSelectionQuads = useCallback(
     (range: Range, targetPage: number): PdfHighlightQuad[] => {
@@ -1580,7 +1470,7 @@ export default function PdfReader({
       return;
     }
 
-    const sel = getSelectionDep();
+    const sel = getPdfSelection();
     if (!sel || sel.rangeCount === 0) {
       if (mobileSelectionTimerRef.current != null) {
         window.clearTimeout(mobileSelectionTimerRef.current);
@@ -1678,7 +1568,7 @@ export default function PdfReader({
       selectionVisibleRef.current = true;
       setSelection(selectionSnapshotRef.current);
     }, MOBILE_SELECTION_STABILIZATION_DELAY_MS);
-  }, [getSelectionDep, resolveTextLayerRootFromRange, textLayerUsable]);
+  }, [resolveTextLayerRootFromRange, textLayerUsable]);
 
   const handleCreateHighlight = useCallback(
     async (color: HighlightColor): Promise<string | null> => {
@@ -1697,7 +1587,7 @@ export default function PdfReader({
       }
 
       const fallbackSelection: SelectionState | null = (() => {
-        const sel = getSelectionDep();
+        const sel = getPdfSelection();
         if (!sel || sel.rangeCount === 0 || sel.toString().trim().length === 0) {
           return null;
         }
@@ -1750,7 +1640,7 @@ export default function PdfReader({
             patchRequests: prev.patchRequests + 1,
             lastOutcome: "request_patch",
           }));
-          await apiFetchDep(`/api/highlights/${editingHighlightId}`, {
+          await apiFetch(`/api/highlights/${editingHighlightId}`, {
             method: "PATCH",
             body: JSON.stringify({
               exact,
@@ -1767,7 +1657,7 @@ export default function PdfReader({
             postRequests: prev.postRequests + 1,
             lastOutcome: "request_post",
           }));
-          const response = await apiFetchDep<PdfHighlightCreateResponse>(
+          const response = await apiFetch<PdfHighlightCreateResponse>(
             `/api/media/${mediaId}/pdf-highlights`,
             {
               method: "POST",
@@ -1804,12 +1694,10 @@ export default function PdfReader({
       }
     },
     [
-      apiFetchDep,
       buildAreaSelectionQuads,
       buildSelectionQuads,
       clearSelection,
       editingHighlightId,
-      getSelectionDep,
       isCreating,
       mediaId,
       refreshPageHighlights,
@@ -2112,7 +2000,7 @@ export default function PdfReader({
       return;
     }
     const pollId = window.setInterval(() => {
-      const sel = getSelectionDep();
+      const sel = getPdfSelection();
       if (!sel || sel.toString().trim().length === 0) {
         return;
       }
@@ -2121,7 +2009,7 @@ export default function PdfReader({
     return () => {
       window.clearInterval(pollId);
     };
-  }, [getSelectionDep, syncSelectionFromWindow, textLayerUsable]);
+  }, [syncSelectionFromWindow, textLayerUsable]);
 
   const projectedHighlightRects = useMemo(() => {
     const activeScale = pageScale <= 0 ? activePageScaleRef.current : pageScale;

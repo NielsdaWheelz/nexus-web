@@ -8070,7 +8070,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         assert anchor_payload["end_offset"] == 8
 
         with direct_db.session() as session:
-            anchor_row = session.execute(
+            transcript_anchor_row = session.execute(
                 text(
                     """
                     SELECT start_offset, end_offset
@@ -8080,23 +8080,23 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                 ),
                 {"highlight_id": highlight_id},
             ).fetchone()
-            highlight_row = session.execute(
+            fragment_anchor_row = session.execute(
                 text(
                     """
                     SELECT start_offset, end_offset
-                    FROM highlights
-                    WHERE id = :highlight_id
+                    FROM highlight_fragment_anchors
+                    WHERE highlight_id = :highlight_id
                     """
                 ),
                 {"highlight_id": highlight_id},
             ).fetchone()
 
-        assert highlight_row is not None
-        assert highlight_row[0] == 2
-        assert highlight_row[1] == 8
-        assert anchor_row is not None
-        assert anchor_row[0] == 2
-        assert anchor_row[1] == 8
+        assert fragment_anchor_row is not None
+        assert fragment_anchor_row[0] == 2
+        assert fragment_anchor_row[1] == 8
+        assert transcript_anchor_row is not None
+        assert transcript_anchor_row[0] == 2
+        assert transcript_anchor_row[1] == 8
 
     def test_transcript_request_reason_is_durably_audited_per_request(
         self, auth_client, monkeypatch, direct_db

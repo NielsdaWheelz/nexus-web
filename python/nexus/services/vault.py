@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.models import (
     Annotation,
     Fragment,
@@ -36,7 +36,6 @@ from nexus.services.highlights import (
     validate_offsets_or_400,
 )
 from nexus.services.pdf_quote_match import MatchStatus, compute_match
-from nexus.services.search import visible_media_ids_cte_sql
 from nexus.storage import get_file_extension, get_storage_client
 from nexus.storage.client import StorageClientBase
 
@@ -318,6 +317,40 @@ def _sync_highlight_content(
         return False, exc.message
 
 
+def _lock_fragment_row_for_highlight_write(db: Session, fragment_id: UUID) -> None:
+    locked = db.execute(
+        text("SELECT 1 FROM fragments WHERE id = :fragment_id FOR UPDATE"),
+        {"fragment_id": fragment_id},
+    ).scalar_one_or_none()
+    if locked is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Fragment not found")
+
+
+def _fragment_highlight_span_conflict_exists(
+    db: Session,
+    *,
+    user_id: UUID,
+    fragment_id: UUID,
+    start_offset: int,
+    end_offset: int,
+    exclude_highlight_id: UUID | None = None,
+) -> bool:
+    query = (
+        db.query(Highlight.id)
+        .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
+        .filter(
+            Highlight.user_id == user_id,
+            Highlight.anchor_kind == "fragment_offsets",
+            HighlightFragmentAnchor.fragment_id == fragment_id,
+            HighlightFragmentAnchor.start_offset == start_offset,
+            HighlightFragmentAnchor.end_offset == end_offset,
+        )
+    )
+    if exclude_highlight_id is not None:
+        query = query.filter(Highlight.id != exclude_highlight_id)
+    return query.first() is not None
+
+
 def _create_highlight_from_file(
     db: Session, viewer_id: UUID, metadata: dict[str, object], body: str
 ) -> None:
@@ -373,44 +406,46 @@ def _apply_highlight_changes(
 
     selector_kind = str(metadata.get("selector_kind") or "")
     if highlight.anchor_kind == "fragment_offsets":
+        anchor = highlight.fragment_anchor
+        if anchor is None:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Fragment anchor is missing")
         if selector_kind in {"text_quote", "text_position"}:
             fragment_id, start_offset, end_offset = _resolve_fragment_selector(
                 db, _highlight_media_id_required(highlight), metadata
             )
             if (
-                highlight.fragment_id != fragment_id
-                or highlight.start_offset != start_offset
-                or highlight.end_offset != end_offset
+                anchor.fragment_id != fragment_id
+                or anchor.start_offset != start_offset
+                or anchor.end_offset != end_offset
             ):
                 fragment = db.get(Fragment, fragment_id)
                 if fragment is None:
                     raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Fragment not found")
+                _lock_fragment_row_for_highlight_write(db, fragment_id)
+                if _fragment_highlight_span_conflict_exists(
+                    db,
+                    user_id=viewer_id,
+                    fragment_id=fragment_id,
+                    start_offset=start_offset,
+                    end_offset=end_offset,
+                    exclude_highlight_id=highlight.id,
+                ):
+                    raise ApiError(
+                        ApiErrorCode.E_HIGHLIGHT_CONFLICT,
+                        "Highlight already exists at this range",
+                    )
                 validate_offsets_or_400(fragment.canonical_text, start_offset, end_offset)
                 exact, prefix, suffix = derive_exact_prefix_suffix(
                     fragment.canonical_text, start_offset, end_offset
                 )
-                highlight.fragment_id = fragment_id
-                highlight.start_offset = start_offset
-                highlight.end_offset = end_offset
                 highlight.anchor_media_id = fragment.media_id
                 highlight.exact = exact
                 highlight.prefix = prefix
                 highlight.suffix = suffix
                 highlight.updated_at = func.now()
-                anchor = highlight.fragment_anchor
-                if anchor is None:
-                    db.add(
-                        HighlightFragmentAnchor(
-                            highlight_id=highlight.id,
-                            fragment_id=fragment_id,
-                            start_offset=start_offset,
-                            end_offset=end_offset,
-                        )
-                    )
-                else:
-                    anchor.fragment_id = fragment_id
-                    anchor.start_offset = start_offset
-                    anchor.end_offset = end_offset
+                anchor.fragment_id = fragment_id
+                anchor.start_offset = start_offset
+                anchor.end_offset = end_offset
     elif highlight.anchor_kind == "pdf_text_quote":
         page_number, start_offset, end_offset, exact, prefix, suffix = _resolve_pdf_text_selector(
             db, _highlight_media_id_required(highlight), metadata
@@ -448,15 +483,21 @@ def _create_fragment_highlight(
     fragment = db.get(Fragment, fragment_id)
     if fragment is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Fragment not found")
+    _lock_fragment_row_for_highlight_write(db, fragment_id)
     validate_offsets_or_400(fragment.canonical_text, start_offset, end_offset)
+    if _fragment_highlight_span_conflict_exists(
+        db,
+        user_id=viewer_id,
+        fragment_id=fragment_id,
+        start_offset=start_offset,
+        end_offset=end_offset,
+    ):
+        raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
     exact, prefix, suffix = derive_exact_prefix_suffix(
         fragment.canonical_text, start_offset, end_offset
     )
     highlight = Highlight(
         user_id=viewer_id,
-        fragment_id=fragment_id,
-        start_offset=start_offset,
-        end_offset=end_offset,
         anchor_kind="fragment_offsets",
         anchor_media_id=media.id,
         color=color,
@@ -489,9 +530,6 @@ def _create_pdf_text_highlight(
     )
     highlight = Highlight(
         user_id=viewer_id,
-        fragment_id=None,
-        start_offset=None,
-        end_offset=None,
         anchor_kind="pdf_text_quote",
         anchor_media_id=media.id,
         color=color,
@@ -640,10 +678,13 @@ def _metadata_for_highlight(highlight: Highlight) -> dict[str, object]:
         metadata["selector_kind"] = "pdf_text_quote"
         metadata["page"] = highlight.pdf_text_anchor.page_number if highlight.pdf_text_anchor else 0
     else:
+        anchor = highlight.fragment_anchor
+        if anchor is None:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Fragment anchor is missing")
         metadata["selector_kind"] = "text_position"
-        metadata["fragment_handle"] = _fragment_handle(highlight.fragment_id)
-        metadata["start_offset"] = int(highlight.start_offset or 0)
-        metadata["end_offset"] = int(highlight.end_offset or 0)
+        metadata["fragment_handle"] = _fragment_handle(anchor.fragment_id)
+        metadata["start_offset"] = anchor.start_offset
+        metadata["end_offset"] = anchor.end_offset
     return metadata
 
 
@@ -729,11 +770,7 @@ def _delete_highlight(db: Session, highlight: Highlight) -> None:
 
 
 def _highlight_media_id(highlight: Highlight) -> UUID | None:
-    if highlight.anchor_media_id is not None:
-        return highlight.anchor_media_id
-    if highlight.fragment is not None:
-        return highlight.fragment.media_id
-    return None
+    return highlight.anchor_media_id
 
 
 def _highlight_media_id_required(highlight: Highlight) -> UUID:
@@ -759,7 +796,13 @@ def _highlight_sort_key(highlight: Highlight) -> tuple[int, int, int]:
             highlight.pdf_text_anchor.plain_text_start_offset,
             0,
         )
-    return (0, int(highlight.start_offset or 0), int(highlight.end_offset or 0))
+    if highlight.fragment_anchor is None:
+        return (0, 0, 0)
+    return (
+        0,
+        highlight.fragment_anchor.start_offset,
+        highlight.fragment_anchor.end_offset,
+    )
 
 
 def _write_source_file(

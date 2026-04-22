@@ -4,7 +4,6 @@ import { Component, memo, useCallback, useEffect, useMemo, useRef } from "react"
 import { resolvePaneRoute, getParentHref, type ResolvedPaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { PaneRuntimeProvider, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import PaneShell, { type PaneBodyMode } from "@/components/workspace/PaneShell";
-import PaneStrip from "@/components/workspace/PaneStrip";
 import WorkspaceTabsBar from "@/components/workspace/WorkspaceTabsBar";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
@@ -456,7 +455,19 @@ export default function WorkspaceHost() {
           mobileSwitcherLabel="Open panes"
         />
       )}
-      <PaneStrip isMobile={isMobile}>
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          minWidth: 0,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "row",
+          gap: 0,
+          overflowX: isMobile ? "hidden" : "auto",
+          overflowY: "hidden",
+        }}
+      >
         {visiblePanes.map((pane) => (
           <div
             key={pane.paneId}
@@ -494,7 +505,7 @@ export default function WorkspaceHost() {
             </PaneShell>
           </div>
         ))}
-      </PaneStrip>
+      </div>
     </section>
   );
 }

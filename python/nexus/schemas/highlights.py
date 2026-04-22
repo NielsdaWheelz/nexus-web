@@ -71,27 +71,6 @@ class LinkedConversationRef(BaseModel):
     title: str
 
 
-class HighlightOut(BaseModel):
-    """Fragment collection response item."""
-
-    id: UUID
-    fragment_id: UUID
-    start_offset: int
-    end_offset: int
-    color: str
-    exact: str
-    prefix: str
-    suffix: str
-    created_at: datetime
-    updated_at: datetime
-    annotation: AnnotationOut | None = None
-    author_user_id: UUID
-    is_owner: bool
-    linked_conversations: list[LinkedConversationRef] = Field(default_factory=list)
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class TypedHighlightOut(BaseModel):
     """Canonical highlight item response."""
 

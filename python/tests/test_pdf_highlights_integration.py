@@ -748,7 +748,7 @@ class TestUpdatePdfHighlight:
         direct_db.register_cleanup("library_entries", "media_id", mid)
         direct_db.register_cleanup("fragments", "id", fid)
         direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fid)
-        direct_db.register_cleanup("highlights", "fragment_id", fid)
+        direct_db.register_cleanup("highlights", "anchor_media_id", mid)
 
         _add_media_to_library(auth_client, user_id, mid)
 

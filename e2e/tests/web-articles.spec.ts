@@ -59,6 +59,8 @@ test.describe("web articles", () => {
   test("creates highlight from paragraph-start element boundary without OUTSIDE_CONTENT warning", async ({
     page,
   }) => {
+    test.slow();
+
     const seed = readSeededNonPdfMedia();
     await page.goto(`/media/${seed.media_id}`);
 
@@ -142,7 +144,14 @@ test.describe("web articles", () => {
     const highlightActions = page.getByRole("dialog", { name: /highlight actions/i });
     const greenButton = highlightActions.getByRole("button", { name: /^Green/ }).first();
     await expect(greenButton).toBeEnabled();
+    const createHighlightResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/fragments/${seed.fragment_id}/highlights`)
+    );
     await greenButton.click();
+    const createdHighlightResponse = await createHighlightResponse;
+    expect(createdHighlightResponse.ok()).toBeTruthy();
 
     await expect
       .poll(
@@ -156,7 +165,7 @@ test.describe("web articles", () => {
           };
           return payload.data.highlights.length > existingCount;
         },
-        { timeout: 10_000 }
+        { timeout: 20_000 }
       )
       .toBe(true);
 
@@ -166,7 +175,7 @@ test.describe("web articles", () => {
 
     await expect
       .poll(async () => page.locator("[data-active-highlight-ids]").count(), {
-        timeout: 10_000,
+        timeout: 20_000,
       })
       .toBeGreaterThan(beforeCount);
   });

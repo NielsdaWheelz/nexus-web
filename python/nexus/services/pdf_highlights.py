@@ -368,9 +368,6 @@ def create_pdf_highlight(
 
     highlight = Highlight(
         user_id=viewer_id,
-        fragment_id=None,
-        start_offset=None,
-        end_offset=None,
         anchor_kind="pdf_page_geometry",
         anchor_media_id=media_id,
         color=req.color,

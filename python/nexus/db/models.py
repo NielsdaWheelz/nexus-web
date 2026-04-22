@@ -632,9 +632,6 @@ class Fragment(Base):
         "PodcastTranscriptVersion",
         back_populates="fragments",
     )
-    highlights: Mapped[list["Highlight"]] = relationship(
-        "Highlight", back_populates="fragment", cascade="all, delete-orphan"
-    )
 
 
 class LibraryEntry(Base):
@@ -1541,14 +1538,6 @@ class Highlight(Base):
         nullable=False,
     )
 
-    fragment_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("fragments.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
     # Canonical typed-anchor fields used by all runtime highlight reads.
     anchor_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
     anchor_media_id: Mapped[UUID | None] = mapped_column(
@@ -1590,9 +1579,6 @@ class Highlight(Base):
     )
 
     # Relationships
-    fragment: Mapped["Fragment | None"] = relationship(
-        "Fragment", back_populates="highlights", lazy="joined"
-    )
     annotation: Mapped["Annotation | None"] = relationship(
         "Annotation",
         uselist=False,
@@ -1712,6 +1698,7 @@ class HighlightFragmentAnchor(Base):
             "start_offset >= 0 AND end_offset > start_offset",
             name="ck_hfa_offsets_valid",
         ),
+        Index("ix_hfa_fragment_offsets", "fragment_id", "start_offset", "end_offset"),
     )
 
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="fragment_anchor")

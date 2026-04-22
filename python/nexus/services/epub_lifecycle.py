@@ -19,6 +19,8 @@ from nexus.db.models import (
     FailureStage,
     Fragment,
     FragmentBlock,
+    Highlight,
+    HighlightFragmentAnchor,
     Media,
     MediaFile,
     ProcessingStatus,
@@ -325,6 +327,15 @@ def _delete_extraction_artifacts(db: Session, media_id: UUID) -> None:
     )
 
     if fragment_ids:
+        db.execute(
+            delete(Highlight).where(
+                Highlight.id.in_(
+                    select(HighlightFragmentAnchor.highlight_id).where(
+                        HighlightFragmentAnchor.fragment_id.in_(fragment_ids)
+                    )
+                )
+            )
+        )
         db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(fragment_ids)))
 
     db.execute(delete(Fragment).where(Fragment.media_id == media_id))

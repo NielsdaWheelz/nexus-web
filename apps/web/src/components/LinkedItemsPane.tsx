@@ -93,13 +93,14 @@ interface LinkedItemsPaneProps {
     exact: string;
     color: HighlightColor;
     annotation?: { id: string; body: string } | null;
-    start_offset?: number;
-    end_offset?: number;
+    anchor?: {
+      start_offset: number;
+      end_offset: number;
+    };
     created_at?: string;
     updated_at?: string;
     prefix?: string;
     suffix?: string;
-    fragment_idx?: number;
     stable_order_key?: string;
     linked_conversations?: { conversation_id: string; title: string }[];
     page_number?: number;
@@ -175,20 +176,14 @@ export default function LinkedItemsPane({
         return 1;
       }
 
-      const leftFragment = left.fragment_idx ?? 0;
-      const rightFragment = right.fragment_idx ?? 0;
-      if (leftFragment !== rightFragment) {
-        return leftFragment - rightFragment;
-      }
-
-      const leftStart = left.start_offset ?? 0;
-      const rightStart = right.start_offset ?? 0;
+      const leftStart = left.anchor?.start_offset ?? 0;
+      const rightStart = right.anchor?.start_offset ?? 0;
       if (leftStart !== rightStart) {
         return leftStart - rightStart;
       }
 
-      const leftEnd = left.end_offset ?? 0;
-      const rightEnd = right.end_offset ?? 0;
+      const leftEnd = left.anchor?.end_offset ?? 0;
+      const rightEnd = right.anchor?.end_offset ?? 0;
       if (leftEnd !== rightEnd) {
         return leftEnd - rightEnd;
       }
@@ -347,14 +342,14 @@ export default function LinkedItemsPane({
         return left.desiredTop - right.desiredTop;
       }
 
-      const leftStart = left.highlight.start_offset ?? 0;
-      const rightStart = right.highlight.start_offset ?? 0;
+      const leftStart = left.highlight.anchor?.start_offset ?? 0;
+      const rightStart = right.highlight.anchor?.start_offset ?? 0;
       if (leftStart !== rightStart) {
         return leftStart - rightStart;
       }
 
-      const leftEnd = left.highlight.end_offset ?? 0;
-      const rightEnd = right.highlight.end_offset ?? 0;
+      const leftEnd = left.highlight.anchor?.end_offset ?? 0;
+      const rightEnd = right.highlight.anchor?.end_offset ?? 0;
       if (leftEnd !== rightEnd) {
         return leftEnd - rightEnd;
       }

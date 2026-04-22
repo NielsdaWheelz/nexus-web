@@ -87,11 +87,8 @@ type BrowseSectionData = {
 
 type BrowseResponse = {
   data: {
-    page?: BrowsePageInfo;
-    page_type?: BrowseSectionType | null;
     query?: string;
-    results?: BrowseResult[];
-    sections?: Partial<Record<BrowseSectionType, BrowseSectionData>>;
+    sections: Partial<Record<BrowseSectionType, BrowseSectionData>>;
   };
 };
 
@@ -229,43 +226,93 @@ function getDocumentFallbackDescription(result: BrowseDocumentResult): string {
   return "Add this document to open it in the reader.";
 }
 
-function normalizeSections(
-  data: BrowseResponse["data"],
-  requestedType: BrowseSectionType | null = null
-): Record<BrowseSectionType, BrowseSectionData> {
+function normalizeSections(data: BrowseResponse["data"]): Record<BrowseSectionType, BrowseSectionData> {
   const nextSections = emptySections();
-  if (data.sections) {
-    for (const type of BROWSE_TYPES) {
-      const section = data.sections[type];
-      if (section) {
-        nextSections[type] = section;
-      }
+  for (const type of BROWSE_TYPES) {
+    const section = data.sections[type];
+    if (section) {
+      nextSections[type] = section;
     }
   }
+  return nextSections;
+}
 
-  if (!data.results || data.results.length === 0) {
-    return nextSections;
-  }
+function replaceSection(
+  current: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType,
+  nextSection: BrowseSectionData
+): Record<BrowseSectionType, BrowseSectionData> {
+  return {
+    ...current,
+    [sectionType]: nextSection,
+  };
+}
 
-  const targetType =
-    requestedType ?? (data.page_type && isBrowseSectionType(data.page_type) ? data.page_type : null);
-  if (targetType) {
-    nextSections[targetType] = {
-      results: data.results,
-      page: data.page ?? { has_more: false, next_cursor: null },
-    };
-    return nextSections;
-  }
+function updateSectionResults<T extends BrowseResult>(
+  results: BrowseResult[],
+  match: (row: BrowseResult) => row is T,
+  update: (row: T) => T
+): BrowseResult[] {
+  return results.map((row) => (match(row) ? update(row) : row));
+}
 
-  const grouped = emptySections();
-  for (const result of data.results) {
-    grouped[result.type].results.push(result);
-  }
-  const populatedTypes = BROWSE_TYPES.filter((type) => grouped[type].results.length > 0);
-  if (populatedTypes.length === 1) {
-    grouped[populatedTypes[0]].page = data.page ?? { has_more: false, next_cursor: null };
-  }
-  return grouped;
+function isPodcastResult(row: BrowseResult): row is BrowsePodcastResult {
+  return row.type === "podcasts";
+}
+
+function isPodcastEpisodeResult(row: BrowseResult): row is BrowseEpisodeResult {
+  return row.type === "podcast_episodes";
+}
+
+function isDocumentResult(row: BrowseResult): row is BrowseDocumentResult {
+  return row.type === "documents";
+}
+
+function isVideoResult(row: BrowseResult): row is BrowseVideoResult {
+  return row.type === "videos";
+}
+
+function getSection(
+  sections: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType
+): BrowseSectionData {
+  return sections[sectionType];
+}
+
+function getSectionResults(
+  sections: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType
+): BrowseResult[] {
+  return getSection(sections, sectionType).results;
+}
+
+function getSectionPage(
+  sections: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType
+): BrowsePageInfo {
+  return getSection(sections, sectionType).page;
+}
+
+function mergeSectionResults(
+  current: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType,
+  nextSection: BrowseSectionData
+): Record<BrowseSectionType, BrowseSectionData> {
+  return replaceSection(current, sectionType, {
+    results: [...getSectionResults(current, sectionType), ...nextSection.results],
+    page: nextSection.page,
+  });
+}
+
+function updateSection(
+  current: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType,
+  updateResults: (results: BrowseResult[]) => BrowseResult[]
+): Record<BrowseSectionType, BrowseSectionData> {
+  return replaceSection(current, sectionType, {
+    ...getSection(current, sectionType),
+    results: updateResults(getSectionResults(current, sectionType)),
+  });
 }
 
 export default function BrowsePaneBody() {
@@ -390,26 +437,24 @@ export default function BrowsePaneBody() {
         }),
       });
       const podcastId = response.data.podcast_id;
-      setSections((current) => ({
-        ...current,
-        podcasts: {
-          ...current.podcasts,
-          results: current.podcasts.results.map((row) =>
-            row.type === "podcasts" && row.provider_podcast_id === result.provider_podcast_id
-              ? { ...row, podcast_id: podcastId }
-              : row
+      setSections((current) =>
+        updateSection(
+          updateSection(current, "podcasts", (results) =>
+            updateSectionResults(results, isPodcastResult, (row) =>
+              row.provider_podcast_id === result.provider_podcast_id
+                ? { ...row, podcast_id: podcastId }
+                : row
+            )
           ),
-        },
-        podcast_episodes: {
-          ...current.podcast_episodes,
-          results: current.podcast_episodes.results.map((row) =>
-            row.type === "podcast_episodes" &&
-            row.provider_podcast_id === result.provider_podcast_id
-              ? { ...row, podcast_id: podcastId }
-              : row
-          ),
-        },
-      }));
+          "podcast_episodes",
+          (results) =>
+            updateSectionResults(results, isPodcastEpisodeResult, (row) =>
+              row.provider_podcast_id === result.provider_podcast_id
+                ? { ...row, podcast_id: podcastId }
+                : row
+            )
+        )
+      );
       requestOpenInAppPane(`/podcasts/${podcastId}`);
     } catch (openError) {
       if (isApiError(openError)) {
@@ -444,17 +489,15 @@ export default function BrowsePaneBody() {
           library_id: libraryId,
         }),
       });
-      setSections((current) => ({
-        ...current,
-        podcasts: {
-          ...current.podcasts,
-          results: current.podcasts.results.map((row) =>
-            row.type === "podcasts" && row.provider_podcast_id === result.provider_podcast_id
+      setSections((current) =>
+        updateSection(current, "podcasts", (results) =>
+          updateSectionResults(results, isPodcastResult, (row) =>
+            row.provider_podcast_id === result.provider_podcast_id
               ? { ...row, podcast_id: response.data.podcast_id }
               : row
-          ),
-        },
-      }));
+          )
+        )
+      );
     } catch (followError) {
       if (isApiError(followError)) {
         setError(followError.message);
@@ -488,25 +531,20 @@ export default function BrowsePaneBody() {
         url: result.type === "documents" ? result.url : result.watch_url,
         libraryId,
       });
-      setSections((current) => ({
-        ...current,
-        [result.type]: {
-          ...current[result.type],
-          results: current[result.type].results.map((row) => {
-            if (result.type === "documents" && row.type === "documents" && row.url === result.url) {
-              return { ...row, media_id: added.mediaId };
-            }
-            if (
-              result.type === "videos" &&
-              row.type === "videos" &&
-              row.provider_video_id === result.provider_video_id
-            ) {
-              return { ...row, media_id: added.mediaId };
-            }
-            return row;
-          }),
-        },
-      }));
+      setSections((current) =>
+        updateSection(current, result.type, (results) => {
+          if (result.type === "documents") {
+            return updateSectionResults(results, isDocumentResult, (row) =>
+              row.url === result.url ? { ...row, media_id: added.mediaId } : row
+            );
+          }
+          return updateSectionResults(results, isVideoResult, (row) =>
+            row.provider_video_id === result.provider_video_id
+              ? { ...row, media_id: added.mediaId }
+              : row
+          );
+        })
+      );
       requestOpenInAppPane(`/media/${added.mediaId}`);
     } catch (addError) {
       if (isApiError(addError)) {
@@ -526,7 +564,7 @@ export default function BrowsePaneBody() {
   }
 
   async function loadMore(sectionType: BrowseSectionType) {
-    const nextCursor = sections[sectionType].page.next_cursor;
+    const nextCursor = getSectionPage(sections, sectionType).next_cursor;
     if (!appliedQuery || !nextCursor) {
       return;
     }
@@ -540,17 +578,9 @@ export default function BrowsePaneBody() {
         cursor: nextCursor,
       });
       const response = await apiFetch<BrowseResponse>(`/api/browse?${params.toString()}`);
-      const nextSection = normalizeSections(response.data, sectionType)[sectionType];
-      if (!nextSection) {
-        throw new Error(`Missing ${sectionType} page`);
-      }
-      setSections((current) => ({
-        ...current,
-        [sectionType]: {
-          results: [...current[sectionType].results, ...nextSection.results],
-          page: nextSection.page,
-        },
-      }));
+      setSections((current) =>
+        mergeSectionResults(current, sectionType, getSection(normalizeSections(response.data), sectionType))
+      );
     } catch (loadMoreError) {
       if (isApiError(loadMoreError)) {
         setError(loadMoreError.message);
@@ -566,7 +596,7 @@ export default function BrowsePaneBody() {
     }
   }
 
-  const visibleSections = visibleTypes.filter((type) => sections[type].results.length > 0);
+  const visibleSections = visibleTypes.filter((type) => getSectionResults(sections, type).length > 0);
   const selectedTypeSet = new Set(visibleTypes);
 
   return (
@@ -650,7 +680,7 @@ export default function BrowsePaneBody() {
             </div>
 
             <div className={styles.resultRows}>
-              {sections[sectionType].results.map((result) => {
+              {getSectionResults(sections, sectionType).map((result) => {
                 if (result.type === "documents") {
                   const busy = busyKeys.has(`document:${result.url}`);
                   const sourceLabel = getDocumentSourceLabel(result);
@@ -923,7 +953,7 @@ export default function BrowsePaneBody() {
               })}
             </div>
 
-            {sections[sectionType].page.next_cursor ? (
+            {getSectionPage(sections, sectionType).next_cursor ? (
               <button
                 type="button"
                 className={styles.loadMore}
