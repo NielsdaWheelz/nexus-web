@@ -42,6 +42,7 @@ Invariants:
 
 import hashlib
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -50,6 +51,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
+from nexus.auth.permissions import can_read_media
 from nexus.db.models import (
     Annotation,
     Conversation,
@@ -65,6 +67,7 @@ from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import (
     MAX_CONTEXTS,
     MAX_MESSAGE_CONTENT_LENGTH,
+    ContextItem,
     SendMessageResponse,
 )
 from nexus.services.api_key_resolver import (
@@ -86,7 +89,6 @@ from nexus.services.llm import LLMRouter
 from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.prompt import render_prompt
 from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMResponse, Turn
-from nexus.services.media import can_read_media
 from nexus.services.models import get_model_catalog_metadata
 from nexus.services.quote_context_errors import (
     QuoteContextBlockingError,
@@ -127,18 +129,80 @@ class PrepareResult:
     assistant_message: Message
 
 
+def _get_highlight_anchor_media_id(
+    highlight: Highlight,
+    *,
+    operation: str,
+) -> UUID | None:
+    """Return the canonical anchor media for a highlight or fail closed."""
+
+    media_id = highlight.anchor_media_id
+    if media_id is None:
+        logger.warning(
+            "send_message_highlight_missing_anchor_media",
+            highlight_id=str(highlight.id),
+            operation=operation,
+            anchor_kind=highlight.anchor_kind,
+        )
+        return None
+
+    if highlight.anchor_kind == "fragment_offsets":
+        fragment_anchor = highlight.fragment_anchor
+        if fragment_anchor is None:
+            logger.warning(
+                "send_message_highlight_missing_fragment_anchor",
+                highlight_id=str(highlight.id),
+                operation=operation,
+            )
+            return None
+        fragment = fragment_anchor.fragment
+        if fragment is not None and fragment.media_id != media_id:
+            logger.warning(
+                "send_message_highlight_fragment_media_mismatch",
+                highlight_id=str(highlight.id),
+                operation=operation,
+                anchor_media_id=str(media_id),
+                fragment_media_id=str(fragment.media_id),
+            )
+            return None
+        return media_id
+
+    if highlight.anchor_kind == "pdf_page_geometry":
+        pdf_anchor = highlight.pdf_anchor
+        if pdf_anchor is None or pdf_anchor.media_id != media_id:
+            logger.warning(
+                "send_message_highlight_pdf_anchor_invalid",
+                highlight_id=str(highlight.id),
+                operation=operation,
+                anchor_media_id=str(media_id),
+                pdf_anchor_media_id=str(pdf_anchor.media_id) if pdf_anchor is not None else None,
+            )
+            return None
+        return media_id
+
+    logger.warning(
+        "send_message_highlight_unknown_anchor_kind",
+        highlight_id=str(highlight.id),
+        operation=operation,
+        anchor_kind=highlight.anchor_kind,
+    )
+    return None
+
+
 def compute_payload_hash(
     content: str,
     model_id: UUID,
     reasoning: str,
     key_mode: str,
-    contexts: list[dict],
+    contexts: Sequence[ContextItem],
     conversation_id: UUID | None,
 ) -> str:
     """Compute a hash of the request payload for idempotency."""
-    # Sort contexts by type and id for deterministic hashing
-    sorted_contexts = sorted(contexts, key=lambda c: (c.get("type", ""), str(c.get("id", ""))))
-    payload_str = f"{conversation_id}|{content}|{model_id}|{reasoning}|{key_mode}|{sorted_contexts}"
+    sorted_contexts = sorted(contexts, key=lambda c: (c.type, str(c.id)))
+    payload_contexts = [(ctx.type, str(ctx.id)) for ctx in sorted_contexts]
+    payload_str = (
+        f"{conversation_id}|{content}|{model_id}|{reasoning}|{key_mode}|{payload_contexts}"
+    )
     return hashlib.sha256(payload_str.encode()).hexdigest()
 
 
@@ -255,7 +319,7 @@ def validate_pre_phase(
     model_id: UUID,
     reasoning: str,
     key_mode: str,
-    contexts: list[dict],
+    contexts: Sequence[ContextItem],
     use_platform_key: bool,
 ) -> Model:
     """Phase 0: Pre-validation (no DB writes).
@@ -329,27 +393,15 @@ def validate_pre_phase(
 def _validate_context_visibility(
     db: Session,
     viewer_id: UUID,
-    ctx: dict,
+    ctx: ContextItem,
 ) -> None:
     """Validate that viewer can see the context target.
-
-    Uses highlight_kernel for anchor-kind-aware media resolution (S6 PR-02).
-    Side-effect-free: requires canonical highlight rows.
-    Mismatch in highlight/annotation visibility resolution is treated as
-    masked not-found per D03.
 
     Raises:
         NotFoundError: If context target not visible (prevents existence leaks).
     """
-    from nexus.services.highlight_kernel import (
-        MappingClass,
-        ResolverState,
-        map_mismatch,
-        resolve_highlight,
-    )
-
-    ctx_type = ctx.get("type")
-    ctx_id = ctx.get("id")
+    ctx_type = ctx.type
+    ctx_id = ctx.id
 
     if ctx_type == "media":
         media = db.get(Media, ctx_id)
@@ -360,15 +412,10 @@ def _validate_context_visibility(
         highlight = db.get(Highlight, ctx_id)
         if not highlight:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        resolution = resolve_highlight(highlight)
-        if resolution.state != ResolverState.ok:
-            map_mismatch(
-                resolution,
-                MappingClass.masked_not_found,
-                "send_message_validate_context_visibility",
-            )
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        media_id = resolution.anchor_media_id
+        media_id = _get_highlight_anchor_media_id(
+            highlight,
+            operation="send_message_validate_context_visibility",
+        )
         if media_id is None or not can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
 
@@ -379,15 +426,10 @@ def _validate_context_visibility(
         highlight = annotation.highlight
         if not highlight:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        resolution = resolve_highlight(highlight)
-        if resolution.state != ResolverState.ok:
-            map_mismatch(
-                resolution,
-                MappingClass.masked_not_found,
-                "send_message_validate_context_visibility",
-            )
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        media_id = resolution.anchor_media_id
+        media_id = _get_highlight_anchor_media_id(
+            highlight,
+            operation="send_message_validate_context_visibility",
+        )
         if media_id is None or not can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
 
@@ -431,7 +473,7 @@ def phase1_prepare(
     conversation_id: UUID | None,
     content: str,
     model_id: UUID,
-    contexts: list[dict],
+    contexts: Sequence[ContextItem],
     idempotency_key: str | None,
     payload_hash: str,
 ) -> PrepareResult:
@@ -474,8 +516,8 @@ def phase1_prepare(
     # Insert contexts
     context_items: list[dict] = []
     for i, ctx in enumerate(contexts):
-        ctx_type = ctx.get("type")
-        ctx_id = ctx.get("id")
+        ctx_type = ctx.type
+        ctx_id = ctx.id
 
         item = {"type": ctx_type, "id": str(ctx_id)}
 
@@ -488,8 +530,6 @@ def phase1_prepare(
                 item["preview"] = media.title
 
         elif ctx_type == "highlight":
-            from nexus.services.highlight_kernel import ResolverState, resolve_highlight
-
             highlight = db.get(Highlight, ctx_id)
             if highlight is not None:
                 item["color"] = highlight.color
@@ -500,12 +540,12 @@ def phase1_prepare(
                 if highlight.annotation is not None:
                     item["annotation_body"] = highlight.annotation.body
 
-                resolution = resolve_highlight(highlight)
-                if (
-                    resolution.state != ResolverState.mismatch
-                    and resolution.anchor_media_id is not None
-                ):
-                    media = db.get(Media, resolution.anchor_media_id)
+                media_id = _get_highlight_anchor_media_id(
+                    highlight,
+                    operation="send_message_prepare_highlight_context",
+                )
+                if media_id is not None:
+                    media = db.get(Media, media_id)
                     if media is not None:
                         item["media_id"] = str(media.id)
                         item["media_title"] = media.title
@@ -522,14 +562,12 @@ def phase1_prepare(
                 item["suffix"] = highlight.suffix
                 item["color"] = highlight.color
 
-                from nexus.services.highlight_kernel import ResolverState, resolve_highlight
-
-                resolution = resolve_highlight(highlight)
-                if (
-                    resolution.state != ResolverState.mismatch
-                    and resolution.anchor_media_id is not None
-                ):
-                    media = db.get(Media, resolution.anchor_media_id)
+                media_id = _get_highlight_anchor_media_id(
+                    highlight,
+                    operation="send_message_prepare_annotation_context",
+                )
+                if media_id is not None:
+                    media = db.get(Media, media_id)
                     if media is not None:
                         item["media_id"] = str(media.id)
                         item["media_title"] = media.title
@@ -714,7 +752,7 @@ async def send_message(
     model_id: UUID,
     reasoning: str,
     key_mode: str = "auto",
-    contexts: list[dict] | None = None,
+    contexts: Sequence[ContextItem] | None = None,
     idempotency_key: str | None = None,
     *,
     router: LLMRouter,
@@ -725,7 +763,7 @@ async def send_message(
     Sync DB calls run via run_in_threadpool; the LLM call awaits on the
     main event loop so the shared httpx.AsyncClient is used correctly.
     """
-    contexts = contexts or []
+    contexts = list(contexts or [])
     rate_limiter = get_rate_limiter()
 
     flow_id = str(uuid4())
@@ -733,13 +771,13 @@ async def send_message(
     total_start = time.monotonic()
 
     try:
-        context_dicts = [{"type": c.get("type"), "id": str(c.get("id"))} for c in contexts]
+        context_dicts = [{"type": c.type, "id": c.id} for c in contexts]
         payload_hash = compute_payload_hash(
             content,
             model_id,
             reasoning,
             key_mode,
-            context_dicts,
+            contexts,
             conversation_id,
         )
 
@@ -815,7 +853,7 @@ async def send_message(
 
             try:
                 context_text, context_chars = await run_in_threadpool(
-                    render_context_blocks, db, contexts
+                    render_context_blocks, db, context_dicts
                 )
             except QuoteContextBlockingError as quote_err:
                 phase2_ms = int((time.monotonic() - phase2_start) * 1000)
@@ -863,7 +901,7 @@ async def send_message(
                 user_content=content,
                 history=history,
                 context_blocks=[context_text] if context_text else [],
-                context_types={c.get("type") for c in contexts},
+                context_types={c.type for c in contexts},
             )
             llm_request = LLMRequest(
                 model_name=model.model_name,

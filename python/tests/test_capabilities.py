@@ -166,13 +166,15 @@ class TestVideoCapabilities:
     """Tests for video media capabilities."""
 
     def test_video_ready_with_playback_url(self):
-        """Video ready with playback URL can play and read."""
+        """Video with ready transcript state and playback URL can play and read."""
         caps = derive_capabilities(
             kind="video",
             processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=True,
+            transcript_state="ready",
+            transcript_coverage="full",
         )
 
         assert caps.can_read is True
@@ -232,13 +234,15 @@ class TestPodcastEpisodeCapabilities:
         assert caps.can_search is False
 
     def test_podcast_episode_ready(self):
-        """Podcast episode ready can read and play."""
+        """Podcast episode with ready transcript state can read and play."""
         caps = derive_capabilities(
             kind="podcast_episode",
             processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=True,
+            transcript_state="ready",
+            transcript_coverage="full",
         )
 
         assert caps.can_read is True
@@ -262,8 +266,8 @@ class TestPodcastEpisodeCapabilities:
         assert caps.can_quote is False
         assert caps.can_search is False
 
-    def test_podcast_capabilities_use_transcript_state_not_processing_bridge(self):
-        """Transcript state drives transcript capabilities even when processing_status is stale."""
+    def test_podcast_capabilities_require_transcript_state_to_read(self):
+        """Transcript media stays unreadable when transcript state has not been seeded."""
         caps = derive_capabilities(
             kind="podcast_episode",
             processing_status="ready_for_reading",
@@ -280,8 +284,8 @@ class TestPodcastEpisodeCapabilities:
         assert caps.can_quote is False
         assert caps.can_search is False
 
-    def test_podcast_capabilities_allow_ready_transcript_despite_pending_processing_bridge(self):
-        """Dedicated transcript state can mark transcript-ready before legacy bridge status catches up."""
+    def test_podcast_capabilities_allow_ready_transcript_regardless_of_processing_status(self):
+        """Dedicated transcript state controls readability even if processing status lags."""
         caps = derive_capabilities(
             kind="podcast_episode",
             processing_status="pending",

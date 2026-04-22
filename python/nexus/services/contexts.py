@@ -83,6 +83,25 @@ def validate_target_type(target_type: str, context_data: dict) -> None:
         )
 
 
+def _resolve_typed_highlight_media_id(highlight: Highlight) -> UUID | None:
+    """Resolve the media id for a canonical typed highlight."""
+    if highlight.anchor_media_id is None:
+        return None
+
+    if highlight.anchor_kind == "fragment_offsets":
+        fragment_anchor = highlight.fragment_anchor
+        fragment = fragment_anchor.fragment if fragment_anchor is not None else None
+        if fragment is not None and fragment.media_id == highlight.anchor_media_id:
+            return highlight.anchor_media_id
+
+    if highlight.anchor_kind == "pdf_page_geometry":
+        pdf_anchor = highlight.pdf_anchor
+        if pdf_anchor is not None and pdf_anchor.media_id == highlight.anchor_media_id:
+            return highlight.anchor_media_id
+
+    return None
+
+
 def resolve_media_id_for_context(
     db: Session,
     target_type: str,
@@ -92,8 +111,7 @@ def resolve_media_id_for_context(
 ) -> UUID | None:
     """Resolve the media_id for a context target.
 
-    Uses highlight_kernel for anchor-kind-aware media resolution (S6 PR-02).
-    Side-effect-free: requires canonical highlight rows.
+    Uses canonical typed anchors for highlight and annotation targets.
 
     Args:
         db: Database session.
@@ -108,39 +126,29 @@ def resolve_media_id_for_context(
     Raises:
         NotFoundError: If the target doesn't exist.
     """
-    from nexus.services.highlight_kernel import (
-        MappingClass,
-        ResolverState,
-        map_mismatch,
-        resolve_highlight,
-    )
-
     if target_type == "media":
         media = db.get(Media, media_id)
         if media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         return media.id
 
-    elif target_type == "highlight":
+    if target_type == "highlight":
         highlight = db.get(Highlight, highlight_id)
         if highlight is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Highlight not found")
-        resolution = resolve_highlight(highlight)
-        if resolution.state != ResolverState.ok:
-            map_mismatch(resolution, MappingClass.internal_error, "resolve_media_id_for_context")
-        return resolution.anchor_media_id
+        media_id = _resolve_typed_highlight_media_id(highlight)
+        if media_id is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Highlight not found")
+        return media_id
 
-    elif target_type == "annotation":
+    if target_type == "annotation":
         annotation = db.get(Annotation, annotation_id)
-        if annotation is None:
+        if annotation is None or annotation.highlight is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Annotation not found")
-        highlight = annotation.highlight
-        if highlight is None:
+        media_id = _resolve_typed_highlight_media_id(annotation.highlight)
+        if media_id is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Annotation not found")
-        resolution = resolve_highlight(highlight)
-        if resolution.state != ResolverState.ok:
-            map_mismatch(resolution, MappingClass.internal_error, "resolve_media_id_for_context")
-        return resolution.anchor_media_id
+        return media_id
 
     return None
 
@@ -300,12 +308,9 @@ def recompute_conversation_media(db: Session, conversation_id: UUID) -> None:
 
     Idempotent repair helper. Safe to call anytime.
 
-    S6 PR-02: uses hybrid batch strategy with highlight_kernel resolver semantics
-    instead of fragment-only SQL joins. Rejects non-canonical highlight rows.
-
     This function:
     1. Bulk-loads message_context references and referenced highlights/annotations
-    2. Resolves highlight/annotation media via side-effect-free kernel resolver
+    2. Resolves highlight/annotation media via side-effect-free typed-anchor logic
     3. Computes expected media set in Python
     4. Applies set-diff updates to conversation_media
 
@@ -313,11 +318,6 @@ def recompute_conversation_media(db: Session, conversation_id: UUID) -> None:
         db: Database session.
         conversation_id: The conversation to recompute.
     """
-    from nexus.services.highlight_kernel import (
-        map_mismatch,
-        resolve_highlight,
-    )
-
     current_media_result = db.execute(
         select(ConversationMedia.media_id).where(
             ConversationMedia.conversation_id == conversation_id
@@ -334,7 +334,7 @@ def recompute_conversation_media(db: Session, conversation_id: UUID) -> None:
 
     expected_media_ids: set[UUID] = set()
     for ctx in context_rows:
-        resolved = _resolve_context_media_via_kernel(db, ctx, resolve_highlight, map_mismatch)
+        resolved = _resolve_context_media_id(db, ctx)
         if resolved is not None:
             expected_media_ids.add(resolved)
 
@@ -359,10 +359,8 @@ def recompute_conversation_media(db: Session, conversation_id: UUID) -> None:
     db.flush()
 
 
-def _resolve_context_media_via_kernel(db, ctx, resolve_highlight_fn, map_mismatch_fn):
-    """Resolve media_id for a single message_context row using kernel semantics."""
-    from nexus.services.highlight_kernel import MappingClass, ResolverState
-
+def _resolve_context_media_id(db, ctx) -> UUID | None:
+    """Resolve media_id for a single message_context row."""
     if ctx.target_type == "media" and ctx.media_id is not None:
         media = db.get(Media, ctx.media_id)
         return media.id if media else None
@@ -371,10 +369,7 @@ def _resolve_context_media_via_kernel(db, ctx, resolve_highlight_fn, map_mismatc
         highlight = db.get(Highlight, ctx.highlight_id)
         if highlight is None:
             return None
-        resolution = resolve_highlight_fn(highlight)
-        if resolution.state != ResolverState.ok:
-            map_mismatch_fn(resolution, MappingClass.internal_error, "recompute_conversation_media")
-        return resolution.anchor_media_id
+        return _resolve_typed_highlight_media_id(highlight)
 
     if ctx.target_type == "annotation" and ctx.annotation_id is not None:
         annotation = db.get(Annotation, ctx.annotation_id)
@@ -383,10 +378,7 @@ def _resolve_context_media_via_kernel(db, ctx, resolve_highlight_fn, map_mismatc
         highlight = annotation.highlight
         if highlight is None:
             return None
-        resolution = resolve_highlight_fn(highlight)
-        if resolution.state != ResolverState.ok:
-            map_mismatch_fn(resolution, MappingClass.internal_error, "recompute_conversation_media")
-        return resolution.anchor_media_id
+        return _resolve_typed_highlight_media_id(highlight)
 
     return None
 

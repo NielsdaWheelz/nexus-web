@@ -27,7 +27,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media as _can_read_media
+from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.config import get_settings
 from nexus.db.models import (
     Fragment,
@@ -60,7 +60,6 @@ from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragmen
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.sanitize_html import sanitize_html
-from nexus.services.search import visible_media_ids_cte_sql
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
@@ -167,7 +166,7 @@ def get_media_for_viewer(
     Raises:
         NotFoundError: If media does not exist or viewer cannot read it.
     """
-    if not _can_read_media(db, viewer_id, media_id):
+    if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     rows = list_media_for_viewer_by_ids(db, viewer_id, [media_id])
@@ -396,7 +395,7 @@ def get_listening_state_for_viewer(
     media_id: UUID,
 ) -> ListeningStateOut:
     """Get listener state for one media item scoped to the viewer."""
-    if not _can_read_media(db, viewer_id, media_id):
+    if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     state = (
@@ -436,7 +435,7 @@ def upsert_listening_state_for_viewer(
     body: ListeningStateUpsertRequest,
 ) -> None:
     """Upsert listener state for one media item scoped to the viewer."""
-    if not _can_read_media(db, viewer_id, media_id):
+    if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     existing_state = (
@@ -730,22 +729,6 @@ def list_visible_media(
         next_cursor = _encode_media_cursor(last.updated_at, last.id)
 
     return media_list, next_cursor
-
-
-def can_read_media(db: Session, viewer_id: UUID, media_id: UUID) -> bool:
-    """Check if viewer can read a media item.
-
-    Delegates to the canonical predicate in nexus.auth.permissions.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        media_id: The ID of the media.
-
-    Returns:
-        True if viewer can read the media, False otherwise.
-    """
-    return _can_read_media(db, viewer_id, media_id)
 
 
 def _remote_file_kind_from_url(url: str) -> str | None:
@@ -1693,7 +1676,7 @@ def list_fragments_for_viewer(
     """
     # Check readability using the canonical predicate
     # This masks existence - both "not found" and "not readable" return 404
-    if not _can_read_media(db, viewer_id, media_id):
+    if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     # Query 2: Fetch fragments ordered by idx ASC
@@ -1783,7 +1766,7 @@ def get_epub_asset_for_viewer(
     from nexus.errors import ApiError
     from nexus.storage import get_storage_client
 
-    if not _can_read_media(db, viewer_id, media_id):
+    if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
     media = db.get(Media, media_id)

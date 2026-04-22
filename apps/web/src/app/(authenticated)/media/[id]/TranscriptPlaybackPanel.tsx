@@ -9,7 +9,7 @@ import {
   normalizeTranscriptChapters,
   type TranscriptChapter,
   type TranscriptPlaybackSource,
-} from "./mediaHelpers";
+} from "./transcriptView";
 import styles from "./page.module.css";
 
 const YOUTUBE_EMBED_HOST_ALLOWLIST = new Set([

@@ -3,7 +3,7 @@ import {
   formatTranscriptTimestampMs,
   resolveActiveTranscriptFragment,
   type Fragment,
-} from "./mediaHelpers";
+} from "./transcriptView";
 
 function buildFragment(
   id: string,

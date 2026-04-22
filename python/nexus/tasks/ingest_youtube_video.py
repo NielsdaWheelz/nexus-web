@@ -79,6 +79,14 @@ def _do_ingest(
     media.last_error_code = None
     media.last_error_message = None
     media.updated_at = now
+    _upsert_media_transcript_state(
+        db,
+        media_id=media_id,
+        transcript_state="running",
+        transcript_coverage="none",
+        last_error_code=None,
+        now=now,
+    )
     db.commit()
 
     media = db.get(Media, media_id)
@@ -137,6 +145,14 @@ def _do_ingest(
                 media.canonical_url = watch_url
                 media.canonical_source_url = watch_url
                 media.external_playback_url = watch_url
+            _upsert_media_transcript_state(
+                db,
+                media_id=media_id,
+                transcript_state="ready",
+                transcript_coverage="full",
+                last_error_code=None,
+                now=now,
+            )
             db.commit()
             logger.info(
                 "ingest_youtube_video_success",
@@ -347,7 +363,76 @@ def _mark_failed(db: Session, media_id: UUID, error_code: str, message: str) -> 
             "media_id": media_id,
         },
     )
+    transcript_state = (
+        "unavailable"
+        if error_code == ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value
+        else "failed_provider"
+    )
+    _upsert_media_transcript_state(
+        db,
+        media_id=media_id,
+        transcript_state=transcript_state,
+        transcript_coverage="none",
+        last_error_code=error_code,
+        now=now,
+    )
     db.commit()
+
+
+def _upsert_media_transcript_state(
+    db: Session,
+    *,
+    media_id: UUID,
+    transcript_state: str,
+    transcript_coverage: str,
+    last_error_code: str | None,
+    now: datetime,
+) -> None:
+    db.execute(
+        text(
+            """
+            INSERT INTO media_transcript_states (
+                media_id,
+                transcript_state,
+                transcript_coverage,
+                semantic_status,
+                active_transcript_version_id,
+                last_request_reason,
+                last_error_code,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                :media_id,
+                :transcript_state,
+                :transcript_coverage,
+                'none',
+                NULL,
+                NULL,
+                :last_error_code,
+                :created_at,
+                :updated_at
+            )
+            ON CONFLICT (media_id) DO UPDATE
+            SET
+                transcript_state = EXCLUDED.transcript_state,
+                transcript_coverage = EXCLUDED.transcript_coverage,
+                semantic_status = 'none',
+                active_transcript_version_id = NULL,
+                last_request_reason = NULL,
+                last_error_code = EXCLUDED.last_error_code,
+                updated_at = EXCLUDED.updated_at
+            """
+        ),
+        {
+            "media_id": media_id,
+            "transcript_state": transcript_state,
+            "transcript_coverage": transcript_coverage,
+            "last_error_code": last_error_code,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
 
 
 def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:

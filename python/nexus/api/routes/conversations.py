@@ -283,8 +283,6 @@ async def send_message_new_conversation(
         E_TOKEN_BUDGET_EXCEEDED (429): Platform token budget exceeded.
         E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409): Key reused with different payload.
     """
-    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
-
     result = await send_message_service.send_message(
         db=db,
         viewer_id=viewer.user_id,
@@ -293,7 +291,7 @@ async def send_message_new_conversation(
         model_id=body.model_id,
         reasoning=body.reasoning,
         key_mode=body.key_mode,
-        contexts=contexts,
+        contexts=body.contexts,
         idempotency_key=idempotency_key,
         router=llm_router,
     )
@@ -332,8 +330,6 @@ async def send_message_existing_conversation(
         E_TOKEN_BUDGET_EXCEEDED (429): Platform token budget exceeded.
         E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409): Key reused with different payload.
     """
-    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
-
     result = await send_message_service.send_message(
         db=db,
         viewer_id=viewer.user_id,
@@ -342,7 +338,7 @@ async def send_message_existing_conversation(
         model_id=body.model_id,
         reasoning=body.reasoning,
         key_mode=body.key_mode,
-        contexts=contexts,
+        contexts=body.contexts,
         idempotency_key=idempotency_key,
         router=llm_router,
     )

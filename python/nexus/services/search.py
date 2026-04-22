@@ -30,7 +30,12 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
+from nexus.auth.permissions import (
+    can_read_conversation,
+    can_read_media,
+    is_library_member,
+    visible_media_ids_cte_sql,
+)
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.search import (
@@ -232,53 +237,6 @@ def _normalize_result_types(types: list[str] | None) -> list[str]:
         )
 
     return normalized_types
-
-
-# =============================================================================
-# Visibility CTEs
-# =============================================================================
-
-
-def visible_media_ids_cte_sql() -> str:
-    """Return SQL for CTE that selects media IDs visible to viewer under s4 provenance.
-
-    Three paths (UNION):
-    1. Non-default library membership: viewer is member of non-default library containing media.
-    2. Default intrinsic: viewer owns default library with intrinsic row for media.
-    3. Default closure: viewer owns default library with closure edge, and viewer is
-       currently a member of the source library.
-
-    Raw presence in library_entries for a default library is NOT sufficient without
-    intrinsic or active closure-edge justification.
-
-    Requires :viewer_id parameter.
-    Returns media_id column.
-    """
-    return """
-        SELECT le.media_id
-        FROM library_entries le
-        JOIN memberships m ON m.library_id = le.library_id
-        JOIN libraries l ON l.id = le.library_id
-        WHERE m.user_id = :viewer_id
-          AND l.is_default = false
-          AND le.media_id IS NOT NULL
-
-        UNION
-
-        SELECT dli.media_id
-        FROM default_library_intrinsics dli
-        JOIN libraries l ON l.id = dli.default_library_id
-        WHERE l.owner_user_id = :viewer_id AND l.is_default = true
-
-        UNION
-
-        SELECT dlce.media_id
-        FROM default_library_closure_edges dlce
-        JOIN libraries l ON l.id = dlce.default_library_id
-        JOIN memberships m ON m.library_id = dlce.source_library_id
-                           AND m.user_id = :viewer_id
-        WHERE l.owner_user_id = :viewer_id AND l.is_default = true
-    """
 
 
 def visible_conversation_ids_cte_sql() -> str:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillingAccount";
-import { type TranscriptRequestForecast } from "./mediaHelpers";
+import { type TranscriptRequestForecast } from "./transcriptView";
 import styles from "./page.module.css";
 
 function planLabel(planTier: BillingPlanTier): string {

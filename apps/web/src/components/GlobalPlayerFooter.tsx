@@ -4,20 +4,20 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
+  SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
+  formatPlaybackSpeedLabel,
+} from "@/lib/player/subscriptionPlaybackSpeed";
+import {
   areAudioEffectsActive,
   type AudioEffectsVolumeBoost,
 } from "@/lib/player/audioEffects";
-import {
-  countUpcomingQueueItems,
-  type PlaybackQueueItem,
-} from "@/lib/player/playbackQueueClient";
+import { countUpcomingQueueItems, type PlaybackQueueItem } from "@/lib/player/playbackQueueClient";
 import Image from "next/image";
 import SortableList from "@/components/sortable/SortableList";
 import styles from "./GlobalPlayerFooter.module.css";
 
 const SKIP_BACK_SECONDS = 15;
 const SKIP_FORWARD_SECONDS = 30;
-const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3] as const;
 const VOLUME_BOOST_OPTIONS: Array<{ value: AudioEffectsVolumeBoost; label: string }> = [
   { value: "off", label: "Off" },
   { value: "low", label: "Low (+3dB)" },
@@ -252,7 +252,9 @@ export default function GlobalPlayerFooter() {
     seekToMs(Math.floor(clampedSeconds * 1000));
   };
 
-  const speedValue = SPEED_OPTIONS.includes(playbackRate as (typeof SPEED_OPTIONS)[number])
+  const speedValue = SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.includes(
+    playbackRate as (typeof SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS)[number]
+  )
     ? playbackRate
     : 1;
   const upcomingCount = countUpcomingQueueItems(queueItems, track.media_id);
@@ -504,9 +506,9 @@ export default function GlobalPlayerFooter() {
                       onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
                       className={styles.select}
                     >
-                      {SPEED_OPTIONS.map((option) => (
+                      {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
                         <option key={option} value={option.toString()}>
-                          {option.toFixed(option % 1 === 0 ? 0 : 2)}x
+                          {formatPlaybackSpeedLabel(option)}
                         </option>
                       ))}
                     </select>
@@ -699,9 +701,9 @@ export default function GlobalPlayerFooter() {
                     onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
                     className={styles.select}
                   >
-                    {SPEED_OPTIONS.map((option) => (
+                    {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
                       <option key={option} value={option.toString()}>
-                        {option.toFixed(option % 1 === 0 ? 0 : 2)}x
+                        {formatPlaybackSpeedLabel(option)}
                       </option>
                     ))}
                   </select>

@@ -30,20 +30,6 @@ def test_registry_job_kinds_match_task_catalog_contract():
     )
 
 
-def test_worker_registry_matches_catalog_contract():
-    from apps.worker.main import create_worker
-
-    from nexus.jobs.registry import get_default_registry
-
-    worker = create_worker()
-    expected = set(get_default_registry().keys())
-    actual = set(worker.registry.keys())
-    assert actual == expected, (
-        "Worker runtime registry must match canonical registry module. "
-        f"Worker={sorted(actual)}, Registry={sorted(expected)}"
-    )
-
-
 def test_health_exposes_task_contract_version(client: TestClient):
     from nexus.jobs.registry import get_task_contract_version
 

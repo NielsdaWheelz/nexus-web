@@ -474,7 +474,7 @@ class TestS6PR01OrmMapperCompatibility:
         h_cols = {c.name for c in Highlight.__table__.columns}
         assert "anchor_kind" in h_cols
         assert "anchor_media_id" in h_cols
-        assert "fragment_id" in h_cols  # legacy bridge
+        assert "fragment_id" in h_cols
 
         # Verify new fields on Media
         m_cols = {c.name for c in Media.__table__.columns}

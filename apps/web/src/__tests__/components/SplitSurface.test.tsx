@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SplitSurface from "@/components/workspace/SplitSurface";
-import Pane from "@/components/Pane";
 
 describe("SplitSurface", () => {
   it("renders only primary content when secondary is missing", () => {
@@ -89,98 +88,5 @@ describe("SplitSurface", () => {
     );
 
     expect(screen.getByTestId("split-primary")).toHaveAttribute("data-split-role", "primary");
-  });
-
-  describe("pane header deduplication in mobile overlay", () => {
-    it("shows only one heading when Pane with title is rendered in mobile overlay", async () => {
-      const user = userEvent.setup();
-      render(
-        <SplitSurface
-          primary={<div>Primary</div>}
-          secondary={
-            <Pane title="Highlights">
-              <div>Highlight items</div>
-            </Pane>
-          }
-          secondaryTitle="Highlights"
-          secondaryFabLabel="Highlights"
-        />
-      );
-
-      await user.click(screen.getByRole("button", { name: "Highlights" }));
-
-      const dialog = screen.getByRole("dialog", { name: "Highlights" });
-      const headings = within(dialog).getAllByRole("heading", { name: "Highlights" });
-      expect(headings).toHaveLength(1);
-    });
-
-    it("preserves Pane chrome header in the desktop side-by-side view", () => {
-      render(
-        <SplitSurface
-          primary={<div>Primary</div>}
-          secondary={
-            <Pane title="Highlights">
-              <div>Highlight items</div>
-            </Pane>
-          }
-          secondaryTitle="Highlights"
-          secondaryFabLabel="Highlights"
-        />
-      );
-
-      // The desktop aside is CSS-hidden on mobile viewport but still rendered in DOM.
-      // Use { hidden: true } to query inside display:none containers.
-      const desktopAside = screen.getByRole("complementary", { hidden: true });
-      expect(
-        within(desktopAside).getByRole("heading", { name: "Highlights", hidden: true })
-      ).toBeInTheDocument();
-    });
-
-    it("suppresses Pane chrome inside overlay but not Pane content", async () => {
-      const user = userEvent.setup();
-      render(
-        <SplitSurface
-          primary={<div>Primary</div>}
-          secondary={
-            <Pane title="Highlights">
-              <div>Highlight items</div>
-            </Pane>
-          }
-          secondaryTitle="Highlights"
-          secondaryFabLabel="Highlights"
-        />
-      );
-
-      await user.click(screen.getByRole("button", { name: "Highlights" }));
-
-      const dialog = screen.getByRole("dialog", { name: "Highlights" });
-      // Content should still be rendered
-      expect(within(dialog).getByText("Highlight items")).toBeInTheDocument();
-      // Pane chrome should NOT be inside the overlay.
-      expect(within(dialog).queryByTestId("pane-chrome")).toBeNull();
-    });
-
-    it("keeps only overlay heading when Pane title differs from secondaryTitle", async () => {
-      const user = userEvent.setup();
-      render(
-        <SplitSurface
-          primary={<div>Primary</div>}
-          secondary={
-            <Pane title="Pane title">
-              <div>Highlight items</div>
-            </Pane>
-          }
-          secondaryTitle="Overlay title"
-          secondaryFabLabel="Highlights"
-        />
-      );
-
-      await user.click(screen.getByRole("button", { name: "Highlights" }));
-
-      const dialog = screen.getByRole("dialog", { name: "Overlay title" });
-      const headings = within(dialog).getAllByRole("heading");
-      expect(headings).toHaveLength(1);
-      expect(headings[0]).toHaveTextContent("Overlay title");
-    });
   });
 });

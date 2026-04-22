@@ -32,6 +32,7 @@ from nexus.config import get_settings
 from nexus.db.models import MessageLLM, Model
 from nexus.errors import ApiError
 from nexus.logging import get_logger, set_flow_id
+from nexus.schemas.conversation import ContextItem
 from nexus.services.api_key_resolver import (
     ResolvedKey,
     get_model_by_id,
@@ -221,7 +222,7 @@ async def stream_send_message_async(
     model_id: UUID,
     reasoning: str,
     key_mode: str = "auto",
-    contexts: list[dict] | None = None,
+    contexts: list[ContextItem] | None = None,
     idempotency_key: str | None = None,
     llm_router: LLMRouter | None = None,
 ) -> AsyncIterator[str]:
@@ -255,13 +256,13 @@ async def stream_send_message_async(
     set_flow_id(flow_id)
 
     # Compute payload hash for idempotency
-    context_dicts = [{"type": c.get("type"), "id": str(c.get("id"))} for c in contexts]
+    context_dicts = [{"type": c.type, "id": c.id} for c in contexts]
     payload_hash = compute_payload_hash(
         content,
         model_id,
         reasoning,
         key_mode,
-        context_dicts,
+        contexts,
         conversation_id,
     )
 
@@ -533,7 +534,7 @@ async def stream_send_message_async(
         stream_start_time = time.monotonic()
 
         # --- Phase 2: Stream from provider (async, same event loop) ---
-        context_text, _ = await run_in_threadpool(render_context_blocks, db, contexts)
+        context_text, _ = await run_in_threadpool(render_context_blocks, db, context_dicts)
         history = await run_in_threadpool(
             load_prompt_history,
             db,
@@ -544,7 +545,7 @@ async def stream_send_message_async(
             user_content=content,
             history=history,
             context_blocks=[context_text] if context_text else [],
-            context_types={c.get("type") for c in contexts},
+            context_types={c.type for c in contexts},
         )
 
         llm_request = LLMRequest(

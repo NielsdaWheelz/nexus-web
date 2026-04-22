@@ -1,10 +1,8 @@
 /**
- * Workspace pane body for media viewing.
+ * Route owner for media viewing.
  *
- * Thin shell that delegates all media state to useMediaViewState and handles
- * the workspace-specific layout: reader with a fixed desktop highlights
- * column, mobile highlights + quote drawers, and usePaneChromeOverride for
- * pane chrome.
+ * Composes route-local media state with the reader leaf components and
+ * workspace chrome.
  */
 
 "use client";
@@ -38,12 +36,9 @@ import EpubContentPane from "./EpubContentPane";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import TranscriptContentPanel from "./TranscriptContentPanel";
 import TranscriptStatePanel from "./TranscriptStatePanel";
-import {
-  formatMediaAuthors,
-  formatResumeTime,
-  normalizeTranscriptChapters,
-} from "./mediaHelpers";
-import useMediaViewState from "./useMediaViewState";
+import { formatMediaAuthors, formatResumeTime } from "./mediaFormatting";
+import { normalizeTranscriptChapters } from "./transcriptView";
+import useMediaRouteState from "./useMediaRouteState";
 import { PanelRight } from "lucide-react";
 import styles from "./page.module.css";
 
@@ -134,7 +129,7 @@ export default function MediaPaneBody() {
     transcriptRequestInFlight,
     transcriptRequestForecast,
     isMobileViewport,
-  } = useMediaViewState(id);
+  } = useMediaRouteState(id);
   const paneChromeScrollHandler = usePaneChromeScrollHandler();
   const paneMobileChrome = usePaneMobileChromeVisibility();
   const { toast } = useToast();
@@ -668,7 +663,6 @@ export default function MediaPaneBody() {
     />
   ) : null;
   const showDesktopHighlightsPane = !isMobileViewport && highlightsContent !== null;
-  const transcriptMediaKind = media.kind === "video" ? "video" : "podcast_episode";
   const transcriptPaneBody = isPlaybackOnlyTranscript ? (
     <div className={styles.notReady}>
       <p>Transcript unavailable for this episode.</p>
@@ -737,7 +731,7 @@ export default function MediaPaneBody() {
               <div className={styles.transcriptPane}>
                 <TranscriptPlaybackPanel
                   mediaId={media.id}
-                  mediaKind={transcriptMediaKind}
+                  mediaKind={media.kind === "video" ? "video" : "podcast_episode"}
                   playbackSource={playbackSource}
                   canonicalSourceUrl={media.canonical_source_url}
                   chapters={media.chapters ?? []}

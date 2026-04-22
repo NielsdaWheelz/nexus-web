@@ -8,7 +8,7 @@ import {
   normalizeTranscriptChapters,
   type TranscriptChapter,
   type TranscriptFragment,
-} from "./mediaHelpers";
+} from "./transcriptView";
 import styles from "./page.module.css";
 
 interface TranscriptContentPanelProps {

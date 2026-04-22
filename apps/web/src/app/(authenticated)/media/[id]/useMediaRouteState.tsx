@@ -1,10 +1,8 @@
 /**
- * Shared media viewing state — data fetching, EPUB orchestration, highlight
- * CRUD, selection handling, reader state, and toolbar construction.
+ * Route-local media state for `MediaPaneBody`.
  *
- * Consumed by both the Next.js page route (page.tsx) and the workspace pane
- * body (MediaPaneBody.tsx). Each consumer handles its own layout, highlights
- * pane, and chrome delivery.
+ * Owns media data loading, EPUB orchestration, highlight CRUD, selection
+ * handling, and reader state for the `/media/:id` route.
  */
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
@@ -73,37 +71,21 @@ import {
   useIntervalPoll,
 } from "./transcriptPolling";
 import {
-  type Media,
   type Fragment,
+  type TranscriptChapter,
   type TranscriptFragment,
+  type TranscriptPlaybackSource,
   type TranscriptRequestForecast,
-  type SelectionState,
-  type ActiveContent,
-  type Highlight,
-  type NavigationTocNodeLike,
-  TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
-  DOCUMENT_PROCESSING_POLL_INTERVAL_MS,
-  buildCompactMediaPaneTitle,
-  buildCanonicalQuoteWindow,
-  escapeAttrValue,
-  findCanonicalOffsetFromQuote,
-  getPaneScrollContainer,
-  getPaneScrollTopPaddingPx,
   resolveActiveTranscriptFragment,
-  findFirstVisibleCanonicalOffset,
-  READER_POSITION_BUCKET_CP,
-  scrollToCanonicalTextAnchor,
-  fetchHighlights,
-  createHighlight,
-  updateHighlight,
-  deleteHighlight,
-  saveAnnotation,
-  deleteAnnotation,
-  fetchEpubSectionContent,
+} from "./transcriptView";
+import { type Highlight, fetchHighlights, createHighlight, updateHighlight, deleteHighlight, saveAnnotation, deleteAnnotation } from "./mediaHighlights";
+import { buildCompactMediaPaneTitle, type MediaAuthor } from "./mediaFormatting";
+import {
+  type NavigationTocNodeLike,
   buildEpubLocationHref,
   resolveSectionAnchorId,
   resolveEpubInternalLinkTarget,
-} from "./mediaHelpers";
+} from "./epubHelpers";
 import {
   buildHistoryEpubRestoreRequest,
   buildInternalLinkRestoreRequest,
@@ -118,7 +100,112 @@ import {
 // Constants
 // =============================================================================
 
+interface Media {
+  id: string;
+  kind: string;
+  title: string;
+  podcast_title?: string | null;
+  podcast_image_url?: string | null;
+  canonical_source_url: string | null;
+  processing_status: string;
+  transcript_state?:
+    | "not_requested"
+    | "queued"
+    | "running"
+    | "failed_provider"
+    | "failed_quota"
+    | "unavailable"
+    | "ready"
+    | "partial"
+    | null;
+  transcript_coverage?: "none" | "partial" | "full" | null;
+  capabilities?: {
+    can_read: boolean;
+    can_highlight: boolean;
+    can_quote: boolean;
+    can_search: boolean;
+    can_play: boolean;
+    can_download_file: boolean;
+  };
+  playback_source?: TranscriptPlaybackSource | null;
+  chapters?: TranscriptChapter[];
+  authors: MediaAuthor[];
+  published_date?: string | null;
+  publisher?: string | null;
+  language?: string | null;
+  listening_state?: {
+    position_ms: number;
+    duration_ms?: number | null;
+    playback_speed: number;
+    is_completed?: boolean;
+  } | null;
+  subscription_default_playback_speed?: number | null;
+  episode_state?: "unplayed" | "in_progress" | "played" | null;
+  failure_stage?: string | null;
+  last_error_code?: string | null;
+  description?: string | null;
+  description_html?: string | null;
+  description_text?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SelectionState {
+  range: Range;
+  rect: DOMRect;
+  lineRects: DOMRect[];
+}
+
+interface ActiveContent {
+  fragmentId: string;
+  htmlSanitized: string;
+  canonicalText: string;
+}
+
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
+const TEXT_ANCHOR_TOP_PADDING_PX = 56;
+const READER_POSITION_BUCKET_CP = 1024;
+const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
+const DOCUMENT_PROCESSING_POLL_INTERVAL_MS = 3000;
+const READER_QUOTE_EXACT_CP = 48;
+const READER_QUOTE_CONTEXT_CP = 24;
+
+function escapeAttrValue(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function getPaneScrollContainer(
+  contentNode: HTMLDivElement | null
+): HTMLElement | null {
+  if (!contentNode) {
+    return null;
+  }
+
+  const paneContent = contentNode.closest<HTMLElement>('[data-pane-content="true"]');
+  if (paneContent) {
+    return paneContent;
+  }
+
+  if (typeof document !== "undefined" && document.scrollingElement) {
+    return document.scrollingElement as HTMLElement;
+  }
+  return null;
+}
+
+function getPaneScrollTopPaddingPx(container: HTMLElement): number {
+  if (typeof window === "undefined") {
+    return TEXT_ANCHOR_TOP_PADDING_PX;
+  }
+
+  const parsed = Number.parseFloat(window.getComputedStyle(container).scrollPaddingTop);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return TEXT_ANCHOR_TOP_PADDING_PX;
+}
 
 function buildSelectionSnapshotKey(selection: SelectionState): string {
   const { left, top, width, height } = selection.rect;
@@ -133,6 +220,196 @@ function buildSelectionSnapshotKey(selection: SelectionState): string {
 
 function canonicalCpLength(text: string): number {
   return [...text].length;
+}
+
+function findFirstVisibleCanonicalOffset(
+  container: HTMLElement,
+  cursor: CanonicalCursorResult
+): number | null {
+  const containerRect = container.getBoundingClientRect();
+  const topPaddingPx = getPaneScrollTopPaddingPx(container);
+  const probeTop =
+    containerRect.top +
+    Math.min(
+      topPaddingPx,
+      Math.max(8, Math.floor(containerRect.height * 0.12))
+    );
+
+  for (const entry of cursor.nodes) {
+    const anchorElement = entry.node.parentElement;
+    if (!anchorElement) {
+      continue;
+    }
+    const rect = anchorElement.getBoundingClientRect();
+    if (rect.bottom < probeTop || rect.top > containerRect.bottom) {
+      continue;
+    }
+    if ((entry.node.textContent ?? "").trim().length === 0) {
+      continue;
+    }
+    return entry.start;
+  }
+  return null;
+}
+
+function scrollToCanonicalTextAnchor(
+  container: HTMLElement,
+  cursor: CanonicalCursorResult,
+  canonicalOffset: number
+): boolean {
+  if (cursor.nodes.length === 0) {
+    return false;
+  }
+
+  const clampedOffset = Math.max(0, Math.min(canonicalOffset, cursor.length));
+  const targetNode =
+    cursor.nodes.find((entry) => clampedOffset >= entry.start && clampedOffset < entry.end) ??
+    cursor.nodes.find((entry) => entry.start >= clampedOffset) ??
+    cursor.nodes[cursor.nodes.length - 1];
+
+  if (!targetNode) {
+    return false;
+  }
+
+  const rawText = targetNode.node.textContent ?? "";
+  const nodeCanonicalLength = Math.max(0, targetNode.end - targetNode.start);
+  const localCanonicalOffset = Math.max(
+    0,
+    Math.min(clampedOffset - targetNode.start, nodeCanonicalLength)
+  );
+  const localRawCpOffset = canonicalCpToRawCp(
+    rawText,
+    localCanonicalOffset,
+    targetNode.trimLeadCp
+  );
+  const localRawUtf16Offset = Math.max(
+    0,
+    Math.min(codepointToUtf16(rawText, localRawCpOffset), rawText.length)
+  );
+
+  const range = document.createRange();
+  range.setStart(targetNode.node, localRawUtf16Offset);
+  range.collapse(true);
+
+  const containerRect = container.getBoundingClientRect();
+  const topPaddingPx = getPaneScrollTopPaddingPx(container);
+  const targetRect = range.getBoundingClientRect();
+  if (targetRect.width > 0 || targetRect.height > 0) {
+    const delta = targetRect.top - containerRect.top - topPaddingPx;
+    container.scrollTop = Math.max(0, container.scrollTop + delta);
+    return true;
+  }
+
+  const fallbackElement = targetNode.node.parentElement;
+  if (fallbackElement) {
+    fallbackElement.scrollIntoView({ block: "start", behavior: "auto" });
+    return true;
+  }
+  return false;
+}
+
+function buildCanonicalQuoteWindow(
+  canonicalText: string,
+  canonicalOffset: number
+): {
+  quote: string | null;
+  quotePrefix: string | null;
+  quoteSuffix: string | null;
+} {
+  const chars = [...canonicalText];
+  if (chars.length === 0) {
+    return { quote: null, quotePrefix: null, quoteSuffix: null };
+  }
+
+  const clampedOffset = Math.max(0, Math.min(Math.floor(canonicalOffset), chars.length - 1));
+  const quoteStart = Math.min(
+    clampedOffset,
+    Math.max(0, chars.length - READER_QUOTE_EXACT_CP)
+  );
+  const quoteEnd = Math.min(chars.length, quoteStart + READER_QUOTE_EXACT_CP);
+  const prefixStart = Math.max(0, quoteStart - READER_QUOTE_CONTEXT_CP);
+  const suffixEnd = Math.min(chars.length, quoteEnd + READER_QUOTE_CONTEXT_CP);
+
+  const quote = chars.slice(quoteStart, quoteEnd).join("");
+  const quotePrefix = chars.slice(prefixStart, quoteStart).join("");
+  const quoteSuffix = chars.slice(quoteEnd, suffixEnd).join("");
+
+  return {
+    quote: quote.length > 0 ? quote : null,
+    quotePrefix: quotePrefix.length > 0 ? quotePrefix : null,
+    quoteSuffix: quoteSuffix.length > 0 ? quoteSuffix : null,
+  };
+}
+
+function findCanonicalOffsetFromQuote(
+  canonicalText: string,
+  quote: string | null,
+  quotePrefix: string | null,
+  quoteSuffix: string | null
+): number | null {
+  if (!quote) {
+    return null;
+  }
+
+  const chars = [...canonicalText];
+  const quoteChars = [...quote];
+  const prefixChars = quotePrefix ? [...quotePrefix] : [];
+  const suffixChars = quoteSuffix ? [...quoteSuffix] : [];
+  if (quoteChars.length === 0 || chars.length < quoteChars.length) {
+    return null;
+  }
+
+  let bestOffset: number | null = null;
+  let bestScore = -1;
+
+  for (let start = 0; start <= chars.length - quoteChars.length; start += 1) {
+    let matchesQuote = true;
+    for (let idx = 0; idx < quoteChars.length; idx += 1) {
+      if (chars[start + idx] !== quoteChars[idx]) {
+        matchesQuote = false;
+        break;
+      }
+    }
+    if (!matchesQuote) {
+      continue;
+    }
+
+    let score = 0;
+    if (prefixChars.length > 0 && start >= prefixChars.length) {
+      let matchesPrefix = true;
+      for (let idx = 0; idx < prefixChars.length; idx += 1) {
+        if (chars[start - prefixChars.length + idx] !== prefixChars[idx]) {
+          matchesPrefix = false;
+          break;
+        }
+      }
+      if (matchesPrefix) {
+        score += 2;
+      }
+    }
+    if (suffixChars.length > 0 && start + quoteChars.length + suffixChars.length <= chars.length) {
+      let matchesSuffix = true;
+      for (let idx = 0; idx < suffixChars.length; idx += 1) {
+        if (chars[start + quoteChars.length + idx] !== suffixChars[idx]) {
+          matchesSuffix = false;
+          break;
+        }
+      }
+      if (matchesSuffix) {
+        score += 1;
+      }
+    }
+
+    if (bestOffset === null || score > bestScore) {
+      bestOffset = start;
+      bestScore = score;
+      if (score === 3) {
+        break;
+      }
+    }
+  }
+
+  return bestOffset;
 }
 
 function isCanonicalTextAnchorVisible(
@@ -194,7 +471,7 @@ function isCanonicalTextAnchorVisible(
 // Hook
 // =============================================================================
 
-export default function useMediaViewState(id: string) {
+export default function useMediaRouteState(id: string) {
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
   const { state: workspaceState, navigatePane } = useWorkspaceStore();
@@ -505,7 +782,7 @@ export default function useMediaViewState(id: string) {
     return applyEpubNavigationResponse(navResp);
   }, [applyEpubNavigationResponse, id]);
 
-  // Unified active content for both paths
+  // Active content
   const activeContent: ActiveContent | null = useMemo(() => {
     if (isPdf) {
       return null;
@@ -1079,9 +1356,12 @@ export default function useMediaViewState(id: string) {
 
     const load = async () => {
       try {
-        const section = await fetchEpubSectionContent(id, activeSectionId, controller.signal);
+        const sectionResp = await apiFetch<{ data: EpubSectionContent }>(
+          `/api/media/${id}/sections/${encodeURIComponent(activeSectionId)}`,
+          { signal: controller.signal }
+        );
         if (version !== epubSectionVersionRef.current) return;
-        setActiveEpubSection(section);
+        setActiveEpubSection(sectionResp.data);
         setEpubError(null);
       } catch (err) {
         if (controller.signal.aborted || version !== epubSectionVersionRef.current) return;

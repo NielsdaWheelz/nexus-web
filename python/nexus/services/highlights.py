@@ -2,11 +2,11 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, exists, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_highlight, can_read_media, highlight_visibility_filter
+from nexus.auth.permissions import can_read_media, highlight_visibility_filter
 from nexus.db.models import (
     Annotation,
     Conversation,
@@ -14,7 +14,9 @@ from nexus.db.models import (
     Highlight,
     HighlightFragmentAnchor,
     HighlightTranscriptAnchor,
+    LibraryEntry,
     Media,
+    Membership,
     Message,
     MessageContext,
 )
@@ -32,10 +34,6 @@ from nexus.schemas.highlights import (
     TypedHighlightOut,
     UpdateHighlightRequest,
     UpsertAnnotationRequest,
-)
-from nexus.services.highlight_kernel import (
-    ResolverState,
-    resolve_highlight,
 )
 
 logger = get_logger(__name__)
@@ -111,29 +109,53 @@ def map_integrity_error(e: IntegrityError) -> ApiError:
         # Fallback: search exception message
         msg = str(e.orig) if e.orig else str(e)
         for name in (
-            "uix_highlights_user_fragment_offsets",
-            "ck_highlights_offsets_valid",
             "ck_highlights_color",
-            "ck_highlights_fragment_bridge",
             "ck_hfa_offsets_valid",
         ):
             if name in msg:
                 constraint_name = name
                 break
 
-    if constraint_name == "uix_highlights_user_fragment_offsets":
-        return ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
-    if constraint_name in (
-        "ck_highlights_offsets_valid",
-        "ck_highlights_color",
-        "ck_highlights_fragment_bridge",
-        "ck_hfa_offsets_valid",
-    ):
+    if constraint_name in ("ck_highlights_color", "ck_hfa_offsets_valid"):
         return ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid highlight data")
 
     # Unknown constraint — internal error
     logger.error("unknown_integrity_error", constraint=constraint_name, error=str(e))
     return ApiError(ApiErrorCode.E_INTERNAL, "Database constraint violation")
+
+
+def _highlight_library_intersection_exists(
+    db: Session,
+    viewer_id: UUID,
+    author_id: UUID,
+    media_id: UUID,
+) -> bool:
+    """Return whether viewer and author share a library containing the media."""
+
+    viewer_membership = Membership.__table__.alias("highlight_viewer_membership")
+    author_membership = Membership.__table__.alias("highlight_author_membership")
+    statement = select(
+        exists().where(
+            LibraryEntry.media_id == media_id,
+            LibraryEntry.library_id == viewer_membership.c.library_id,
+            viewer_membership.c.user_id == viewer_id,
+            LibraryEntry.library_id == author_membership.c.library_id,
+            author_membership.c.user_id == author_id,
+        )
+    )
+    return bool(db.execute(statement).scalar_one())
+
+
+def _require_typed_highlight_or_404(highlight: Highlight) -> None:
+    """Require a highlight to carry a canonical typed anchor row."""
+
+    if highlight.anchor_kind == "fragment_offsets":
+        if highlight.fragment_anchor is not None and highlight.anchor_media_id is not None:
+            return
+    elif highlight.anchor_kind == "pdf_page_geometry":
+        if highlight.pdf_anchor is not None and highlight.anchor_media_id is not None:
+            return
+    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
 
 def get_highlight_for_visible_read_or_404(
@@ -150,19 +172,31 @@ def get_highlight_for_visible_read_or_404(
     highlight = db.get(Highlight, highlight_id)
     if highlight is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    if not can_read_highlight(db, viewer_id, highlight_id):
+    _require_typed_highlight_or_404(highlight)
+    media_id = highlight.anchor_media_id
+    if media_id is None or not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    _resolve_canonical_highlight_or_404(highlight)
+    if not _highlight_library_intersection_exists(db, viewer_id, highlight.user_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     return highlight
 
 
-def _resolve_canonical_highlight_or_404(highlight: Highlight):
-    """Require a highlight to be in the canonical typed state."""
+def _require_fragment_highlight_or_404(highlight: Highlight) -> HighlightFragmentAnchor:
+    """Require a highlight to be a canonical fragment highlight."""
 
-    resolution = resolve_highlight(highlight)
-    if resolution.state != ResolverState.ok:
+    _require_typed_highlight_or_404(highlight)
+    if highlight.anchor_kind != "fragment_offsets" or highlight.fragment_anchor is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    return resolution
+    return highlight.fragment_anchor
+
+
+def _require_pdf_highlight_or_404(highlight: Highlight):
+    """Require a highlight to be a canonical PDF highlight."""
+
+    _require_typed_highlight_or_404(highlight)
+    if highlight.anchor_kind != "pdf_page_geometry" or highlight.pdf_anchor is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    return highlight.pdf_anchor
 
 
 def get_highlight_for_author_write_or_404(
@@ -178,18 +212,18 @@ def get_highlight_for_author_write_or_404(
     if highlight is None or highlight.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
-    resolution = _resolve_canonical_highlight_or_404(highlight)
-    media_id = resolution.anchor_media_id
+    _require_typed_highlight_or_404(highlight)
+    media_id = highlight.anchor_media_id
     if media_id is None or not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     return highlight
 
 
 def _require_media_ready_for_highlight(db: Session, highlight: Highlight) -> None:
-    """Resolve media for a highlight via kernel and check processing status."""
+    """Resolve media for a highlight and check processing status."""
 
-    resolution = _resolve_canonical_highlight_or_404(highlight)
-    media_id = resolution.anchor_media_id
+    _require_typed_highlight_or_404(highlight)
+    media_id = highlight.anchor_media_id
 
     if highlight.fragment and highlight.fragment.media:
         require_media_ready_or_409(highlight.fragment.media.processing_status.value)
@@ -243,10 +277,7 @@ def _batch_linked_conversations(
 def _fragment_highlight_fields(highlight: Highlight, viewer_id: UUID) -> dict:
     """Canonical fragment-anchor fields for fragment collection responses."""
 
-    resolution = _resolve_canonical_highlight_or_404(highlight)
-    fragment_anchor = resolution.fragment_anchor
-    if resolution.anchor_kind != "fragment_offsets" or fragment_anchor is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    fragment_anchor = _require_fragment_highlight_or_404(highlight)
 
     return dict(
         id=highlight.id,
@@ -267,12 +298,10 @@ def _fragment_highlight_fields(highlight: Highlight, viewer_id: UUID) -> dict:
 
 def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighlightOut:
     """Convert Highlight ORM model to anchor-discriminated TypedHighlightOut."""
-    resolution = _resolve_canonical_highlight_or_404(highlight)
+    _require_typed_highlight_or_404(highlight)
 
-    if resolution.anchor_kind == "pdf_page_geometry":
-        pdf_anchor = highlight.pdf_anchor
-        if pdf_anchor is None:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    if highlight.anchor_kind == "pdf_page_geometry":
+        pdf_anchor = _require_pdf_highlight_or_404(highlight)
         quads_out = []
         if highlight.pdf_quads:
             sorted_quads = sorted(highlight.pdf_quads, key=lambda q: q.quad_idx)
@@ -295,13 +324,14 @@ def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighl
             page_number=pdf_anchor.page_number,
             quads=quads_out,
         )
-    elif resolution.anchor_kind == "fragment_offsets" and resolution.fragment_anchor is not None:
+    elif highlight.anchor_kind == "fragment_offsets":
+        fragment_anchor = _require_fragment_highlight_or_404(highlight)
         anchor = FragmentAnchorOut(
             type="fragment_offsets",
-            media_id=resolution.fragment_anchor.media_id,
-            fragment_id=resolution.fragment_anchor.fragment_id,
-            start_offset=resolution.fragment_anchor.start_offset,
-            end_offset=resolution.fragment_anchor.end_offset,
+            media_id=highlight.anchor_media_id,
+            fragment_id=fragment_anchor.fragment_id,
+            start_offset=fragment_anchor.start_offset,
+            end_offset=fragment_anchor.end_offset,
         )
     else:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
@@ -319,6 +349,32 @@ def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighl
         author_user_id=highlight.user_id,
         is_owner=(highlight.user_id == viewer_id),
     )
+
+
+def _fragment_highlight_span_conflict_exists(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    fragment_id: UUID,
+    start_offset: int,
+    end_offset: int,
+    highlight_id: UUID | None = None,
+) -> bool:
+    statement = (
+        select(Highlight.id)
+        .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
+        .where(
+            Highlight.user_id == viewer_id,
+            Highlight.anchor_kind == "fragment_offsets",
+            HighlightFragmentAnchor.fragment_id == fragment_id,
+            HighlightFragmentAnchor.start_offset == start_offset,
+            HighlightFragmentAnchor.end_offset == end_offset,
+        )
+        .limit(1)
+    )
+    if highlight_id is not None:
+        statement = statement.where(Highlight.id != highlight_id)
+    return db.execute(statement).scalar_one_or_none() is not None
 
 
 # =============================================================================
@@ -354,6 +410,15 @@ def create_highlight_for_fragment(
 
     # 3. Validate offsets
     validate_offsets_or_400(fragment.canonical_text, req.start_offset, req.end_offset)
+
+    if _fragment_highlight_span_conflict_exists(
+        db,
+        viewer_id=viewer_id,
+        fragment_id=fragment_id,
+        start_offset=req.start_offset,
+        end_offset=req.end_offset,
+    ):
+        raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
 
     # 4. Derive exact/prefix/suffix
     exact, prefix, suffix = derive_exact_prefix_suffix(
@@ -520,8 +585,7 @@ def update_highlight(
     Returns TypedHighlightOut with anchor discriminator.
     """
     highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
-    resolution = _resolve_canonical_highlight_or_404(highlight)
-    anchor_kind = resolution.anchor_kind
+    anchor_kind = highlight.anchor_kind
     anchor_update = req.anchor
 
     if anchor_update is not None and anchor_update.type != anchor_kind:
@@ -565,13 +629,14 @@ def update_highlight(
             db.refresh(highlight)
         return _highlight_to_typed_out(highlight, viewer_id)
 
-    if resolution.fragment_anchor is None:
+    fragment_anchor = highlight.fragment_anchor
+    if fragment_anchor is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
     _require_media_ready_for_highlight(db, highlight)
 
-    current_start = resolution.fragment_anchor.start_offset
-    current_end = resolution.fragment_anchor.end_offset
+    current_start = fragment_anchor.start_offset
+    current_end = fragment_anchor.end_offset
     final_start = anchor_update.start_offset if anchor_update is not None else current_start
     final_end = anchor_update.end_offset if anchor_update is not None else current_end
     final_color = req.color if req.color is not None else highlight.color
@@ -601,6 +666,16 @@ def update_highlight(
 
     if color_changed:
         update_values["color"] = final_color
+
+    if offsets_changed and _fragment_highlight_span_conflict_exists(
+        db,
+        viewer_id=viewer_id,
+        fragment_id=fragment_anchor.fragment_id,
+        start_offset=final_start,
+        end_offset=final_end,
+        highlight_id=highlight_id,
+    ):
+        raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
 
     try:
         stmt = update(Highlight).where(Highlight.id == highlight_id).values(**update_values)
@@ -680,7 +755,7 @@ def upsert_annotation_for_highlight(
     # 1. Get highlight with ownership and readability check
     highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
-    # 2. Require media ready via kernel-resolved media
+    # 2. Require media ready via the anchor's media row
     _require_media_ready_for_highlight(db, highlight)
 
     # 3. Check for existing annotation

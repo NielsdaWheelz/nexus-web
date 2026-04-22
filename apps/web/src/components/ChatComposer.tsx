@@ -2,7 +2,7 @@
  * ChatComposer — message input with model picker, context chips, and streaming send.
  *
  * Uses the direct `/stream/*` transport when streaming is enabled.
- * Falls back to non-stream send only when streaming is unavailable.
+ * Uses the non-stream API path when streaming is disabled.
  *
  * Per s3_pr07:
  * - Streaming path uses temporary IDs, patches on meta event.
@@ -236,7 +236,7 @@ export default function ChatComposer({
   );
 
   // --------------------------------------------------------------------------
-  // Non-streaming send (fallback)
+  // Non-streaming send
   // --------------------------------------------------------------------------
 
   const sendNonStreaming = useCallback(
@@ -290,7 +290,8 @@ export default function ChatComposer({
         streamBaseUrl = tokenResponse.stream_base_url;
         streamToken = tokenResponse.token;
       } catch {
-        return sendNonStreaming(body, idempotencyKey);
+        setError("Streaming is unavailable right now.");
+        return false;
       }
 
       const tempUserId = `temp-user-${crypto.randomUUID()}`;
@@ -433,7 +434,6 @@ export default function ChatComposer({
       onOptimisticMessages,
       pollForCompletion,
       router,
-      sendNonStreaming,
     ]
   );
 

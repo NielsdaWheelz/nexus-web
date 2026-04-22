@@ -174,18 +174,7 @@ export function usePaneRouter(): PaneScopedRouter {
     if (rootNavigation) {
       return rootNavigation.router;
     }
-    return {
-      push: (href: string) => {
-        if (typeof window !== "undefined") {
-          window.location.assign(href);
-        }
-      },
-      replace: (href: string) => {
-        if (typeof window !== "undefined") {
-          window.location.replace(href);
-        }
-      },
-    };
+    throw new Error("usePaneRouter must be used inside PaneRuntimeProvider or PaneRootNavigationProvider");
   }, [paneRuntime, rootNavigation]);
 }
 
@@ -200,9 +189,6 @@ export function usePaneSearchParams(): URLSearchParams {
     }
     if (typeof rootSearch === "string") {
       return new URLSearchParams(rootSearch);
-    }
-    if (typeof window !== "undefined") {
-      return new URLSearchParams(window.location.search);
     }
     return new URLSearchParams();
   }, [paneSearch, rootSearch]);

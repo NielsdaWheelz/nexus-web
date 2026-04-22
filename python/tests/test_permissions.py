@@ -64,14 +64,14 @@ def _create_non_default_library(db: Session, owner_id=None):
     return lib_id
 
 
-def _create_media(db: Session, title: str = "Test") -> "UUID":
+def _create_media(db: Session, title: str = "Test", kind: str = "web_article") -> "UUID":
     mid = uuid4()
     db.execute(
         text("""
             INSERT INTO media (id, kind, title, processing_status)
-            VALUES (:id, 'web_article', :title, 'pending')
+            VALUES (:id, :kind, :title, 'pending')
         """),
-        {"id": mid, "title": title},
+        {"id": mid, "kind": kind, "title": title},
     )
     db.flush()
     return mid
@@ -442,12 +442,12 @@ class TestIsLibraryMember:
 
 
 # =============================================================================
-# S6 PR-02: can_read_highlight — anchor-kind-aware via kernel
+# S6 PR-02: can_read_highlight — anchor-kind-aware visibility
 # =============================================================================
 
 
-class TestCanReadHighlightKernelAware:
-    """PR-02: can_read_highlight uses highlight_kernel for media resolution."""
+class TestCanReadHighlightAnchorAware:
+    """Typed-anchor highlight visibility."""
 
     def test_can_read_highlight_normalized_fragment_true(self, db_session: Session):
         """Normalized fragment highlight is readable by author with library access."""
@@ -467,26 +467,81 @@ class TestCanReadHighlightKernelAware:
         hl_id = create_normalized_fragment_highlight(db_session, user_id, frag_id, media_id, 0, 10)
         assert can_read_highlight(db_session, user_id, hl_id) is True
 
-    def test_can_read_highlight_bridge_only_fragment_false(self, db_session: Session):
-        """Bridge-only fragment highlight is rejected after the hard cutover."""
+    def test_can_read_highlight_pdf_page_geometry_true(self, db_session: Session):
+        """PDF highlight with canonical typed anchor is readable by author."""
         from nexus.auth.permissions import can_read_highlight
-        from tests.factories import (
-            create_dormant_fragment_highlight,
-            create_test_fragment,
-            create_test_media_in_library,
-            get_user_default_library,
-        )
 
         user_id = uuid4()
-        ensure_user_and_default_library(db_session, user_id)
-        lib_id = get_user_default_library(db_session, user_id)
-        media_id = create_test_media_in_library(db_session, user_id, lib_id)
-        frag_id = create_test_fragment(db_session, media_id, content="y" * 30)
-        hl_id = create_dormant_fragment_highlight(db_session, user_id, frag_id, 0, 10)
-        assert can_read_highlight(db_session, user_id, hl_id) is False
+        default_lib = ensure_user_and_default_library(db_session, user_id)
+        media_id = _create_media(db_session, title="PDF", kind="pdf")
+        _add_media_to_library(db_session, default_lib, media_id)
+        _add_intrinsic(db_session, default_lib, media_id)
+
+        highlight_id = uuid4()
+        db_session.execute(
+            text("""
+                INSERT INTO highlights (
+                    id,
+                    user_id,
+                    anchor_kind,
+                    anchor_media_id,
+                    color,
+                    exact,
+                    prefix,
+                    suffix
+                )
+                VALUES (
+                    :id,
+                    :user_id,
+                    'pdf_page_geometry',
+                    :media_id,
+                    'yellow',
+                    'pdf quote',
+                    '',
+                    ''
+                )
+            """),
+            {"id": highlight_id, "user_id": user_id, "media_id": media_id},
+        )
+        db_session.execute(
+            text("""
+                INSERT INTO highlight_pdf_anchors (
+                    highlight_id,
+                    media_id,
+                    page_number,
+                    geometry_version,
+                    geometry_fingerprint,
+                    sort_top,
+                    sort_left,
+                    plain_text_match_version,
+                    plain_text_match_status,
+                    plain_text_start_offset,
+                    plain_text_end_offset,
+                    rect_count
+                )
+                VALUES (
+                    :highlight_id,
+                    :media_id,
+                    1,
+                    1,
+                    'fingerprint',
+                    0,
+                    0,
+                    1,
+                    'unique',
+                    0,
+                    9,
+                    1
+                )
+            """),
+            {"highlight_id": highlight_id, "media_id": media_id},
+        )
+        db_session.flush()
+
+        assert can_read_highlight(db_session, user_id, highlight_id) is True
 
     def test_can_read_highlight_mismatch_returns_false(self, db_session: Session):
-        """Mismatched highlight returns False (bool_fail_closed), no existence leak."""
+        """Typed anchor mismatch returns False without leaking existence."""
         from nexus.auth.permissions import can_read_highlight
         from tests.factories import (
             create_mismatched_fragment_highlight,

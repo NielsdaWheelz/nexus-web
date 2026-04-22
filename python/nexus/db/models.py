@@ -1381,7 +1381,7 @@ class PodcastTranscriptChunk(Base):
 
 
 class MediaTranscriptState(Base):
-    """Dedicated transcript-state bridge for media capabilities/search readiness."""
+    """Dedicated transcript-state table for media capabilities/search readiness."""
 
     __tablename__ = "media_transcript_states"
 
@@ -1526,10 +1526,6 @@ class Highlight(Base):
     Supports typed anchor subtypes:
     - fragment_offsets: half-open [start_offset, end_offset) over canonical_text
     - pdf_page_geometry: page-space geometry (quads/rects) on a PDF page
-
-    The fragment_id/start_offset/end_offset columns remain as a nullable bridge
-    while the schema still stores the historical fragment shape. Runtime code
-    now requires typed anchor rows for all highlight reads.
     """
 
     __tablename__ = "highlights"
@@ -1545,7 +1541,6 @@ class Highlight(Base):
         nullable=False,
     )
 
-    # Nullable bridge columns retained while the schema still carries fragment offsets.
     fragment_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("fragments.id", ondelete="CASCADE"),
@@ -1579,14 +1574,6 @@ class Highlight(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "(fragment_id IS NOT NULL AND start_offset IS NOT NULL "
-            "AND end_offset IS NOT NULL AND start_offset >= 0 "
-            "AND end_offset > start_offset) "
-            "OR (fragment_id IS NULL AND start_offset IS NULL "
-            "AND end_offset IS NULL)",
-            name="ck_highlights_fragment_bridge",
-        ),
-        CheckConstraint(
             "color IN ('yellow','green','blue','pink','purple')",
             name="ck_highlights_color",
         ),
@@ -1599,13 +1586,6 @@ class Highlight(Base):
             "anchor_kind IS NULL OR anchor_kind IN "
             "('fragment_offsets', 'pdf_page_geometry', 'pdf_text_quote')",
             name="ck_highlights_anchor_kind_valid",
-        ),
-        UniqueConstraint(
-            "user_id",
-            "fragment_id",
-            "start_offset",
-            "end_offset",
-            name="uix_highlights_user_fragment_offsets",
         ),
     )
 

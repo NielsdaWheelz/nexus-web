@@ -10,7 +10,7 @@ Tests cover the helpers in services/contexts.py:
 NO PUBLIC ROUTES use these in PR-02. These are service-layer tests only.
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
@@ -165,6 +165,80 @@ def media_with_highlight(db_session: Session, user_with_library: tuple) -> tuple
     return media_id, fragment_id, highlight_id, annotation_id
 
 
+def _create_pdf_media_with_highlight(db_session: Session, user_id: UUID) -> tuple:
+    """Create a PDF media item with a canonical typed highlight."""
+    media_id = uuid4()
+    db_session.execute(
+        text("""
+            INSERT INTO media (id, kind, title, processing_status)
+            VALUES (:id, 'pdf', 'Test PDF', 'ready_for_reading')
+        """),
+        {"id": media_id},
+    )
+
+    highlight_id = uuid4()
+    db_session.execute(
+        text("""
+            INSERT INTO highlights (
+                id,
+                user_id,
+                anchor_kind,
+                anchor_media_id,
+                color,
+                exact,
+                prefix,
+                suffix
+            )
+            VALUES (
+                :id,
+                :user_id,
+                'pdf_page_geometry',
+                :media_id,
+                'yellow',
+                'pdf quote',
+                '',
+                ''
+            )
+        """),
+        {"id": highlight_id, "user_id": user_id, "media_id": media_id},
+    )
+    db_session.execute(
+        text("""
+            INSERT INTO highlight_pdf_anchors (
+                highlight_id,
+                media_id,
+                page_number,
+                geometry_version,
+                geometry_fingerprint,
+                sort_top,
+                sort_left,
+                plain_text_match_version,
+                plain_text_match_status,
+                plain_text_start_offset,
+                plain_text_end_offset,
+                rect_count
+            )
+            VALUES (
+                :highlight_id,
+                :media_id,
+                1,
+                1,
+                'fingerprint',
+                0,
+                0,
+                1,
+                'unique',
+                0,
+                9,
+                1
+            )
+        """),
+        {"highlight_id": highlight_id, "media_id": media_id},
+    )
+    db_session.flush()
+    return media_id, highlight_id
+
+
 # =============================================================================
 # Target Type Validation Tests
 # =============================================================================
@@ -263,6 +337,17 @@ class TestMediaIdResolution:
     def test_resolve_highlight_via_fragment(self, db_session: Session, media_with_highlight: tuple):
         """Highlight reference resolves via fragment to media_id."""
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
+
+        resolved = contexts_service.resolve_media_id_for_context(
+            db_session, "highlight", None, highlight_id, None
+        )
+
+        assert resolved == media_id
+
+    def test_resolve_highlight_via_pdf_anchor(self, db_session: Session, user_with_library: tuple):
+        """PDF highlight reference resolves via typed anchor to media_id."""
+        user_id, default_library_id = user_with_library
+        media_id, highlight_id = _create_pdf_media_with_highlight(db_session, user_id)
 
         resolved = contexts_service.resolve_media_id_for_context(
             db_session, "highlight", None, highlight_id, None
@@ -611,11 +696,13 @@ class TestBatchInsert:
 # =============================================================================
 
 
-class TestKernelBasedMediaResolution:
-    """PR-02: resolve_media_id_for_context uses kernel for highlight/annotation targets."""
+class TestTypedAnchorMediaResolution:
+    """resolve_media_id_for_context uses canonical typed anchors."""
 
-    def test_resolve_highlight_via_kernel(self, db_session: Session, media_with_highlight: tuple):
-        """Highlight resolution goes through kernel and returns media_id."""
+    def test_resolve_highlight_via_typed_anchor(
+        self, db_session: Session, media_with_highlight: tuple
+    ):
+        """Highlight resolution uses the typed anchor row and returns media_id."""
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(
@@ -623,8 +710,10 @@ class TestKernelBasedMediaResolution:
         )
         assert resolved == media_id
 
-    def test_resolve_annotation_via_kernel(self, db_session: Session, media_with_highlight: tuple):
-        """Annotation resolution goes through kernel and returns media_id."""
+    def test_resolve_annotation_via_typed_anchor(
+        self, db_session: Session, media_with_highlight: tuple
+    ):
+        """Annotation resolution uses the typed anchor row and returns media_id."""
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(
@@ -633,7 +722,7 @@ class TestKernelBasedMediaResolution:
         assert resolved == media_id
 
     def test_resolve_media_direct_unchanged(self, db_session: Session, media_with_highlight: tuple):
-        """Direct media resolution path is unaffected by kernel changes."""
+        """Direct media resolution path is unaffected by typed-anchor changes."""
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(
@@ -642,16 +731,16 @@ class TestKernelBasedMediaResolution:
         assert resolved == media_id
 
 
-class TestKernelBasedRecompute:
-    """PR-02: recompute_conversation_media uses hybrid batch strategy with kernel."""
+class TestTypedAnchorRecompute:
+    """recompute_conversation_media uses canonical typed anchors."""
 
-    def test_recompute_with_highlight_context_resolves_via_kernel(
+    def test_recompute_with_highlight_context_resolves_via_typed_anchor(
         self,
         db_session: Session,
         conversation_with_message: tuple,
         media_with_highlight: tuple,
     ):
-        """Recompute correctly resolves media for highlight context through kernel."""
+        """Recompute correctly resolves media for highlight context through typed anchors."""
         conversation_id, message_id, user_id, default_library_id = conversation_with_message
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
@@ -676,13 +765,13 @@ class TestKernelBasedRecompute:
         )
         assert result.scalar() == 1
 
-    def test_recompute_with_annotation_context_resolves_via_kernel(
+    def test_recompute_with_annotation_context_resolves_via_typed_anchor(
         self,
         db_session: Session,
         conversation_with_message: tuple,
         media_with_highlight: tuple,
     ):
-        """Recompute correctly resolves media for annotation context through kernel."""
+        """Recompute correctly resolves media for annotation context through typed anchors."""
         conversation_id, message_id, user_id, default_library_id = conversation_with_message
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
@@ -693,6 +782,37 @@ class TestKernelBasedRecompute:
                 VALUES (:id, :message_id, 0, 'annotation', :annotation_id)
             """),
             {"id": context_id, "message_id": message_id, "annotation_id": annotation_id},
+        )
+        db_session.flush()
+
+        contexts_service.recompute_conversation_media(db_session, conversation_id)
+
+        result = db_session.execute(
+            text("""
+                SELECT COUNT(*) FROM conversation_media
+                WHERE conversation_id = :conv_id AND media_id = :media_id
+            """),
+            {"conv_id": conversation_id, "media_id": media_id},
+        )
+        assert result.scalar() == 1
+
+    def test_recompute_with_pdf_highlight_context_resolves_via_typed_anchor(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+        user_with_library: tuple,
+    ):
+        """Recompute also handles PDF highlight contexts through typed anchors."""
+        conversation_id, message_id, user_id, default_library_id = conversation_with_message
+        media_id, highlight_id = _create_pdf_media_with_highlight(db_session, user_id)
+
+        context_id = uuid4()
+        db_session.execute(
+            text("""
+                INSERT INTO message_contexts (id, message_id, ordinal, target_type, highlight_id)
+                VALUES (:id, :message_id, 0, 'highlight', :highlight_id)
+            """),
+            {"id": context_id, "message_id": message_id, "highlight_id": highlight_id},
         )
         db_session.flush()
 

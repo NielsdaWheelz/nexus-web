@@ -7,7 +7,14 @@ from uuid import uuid4
 
 import pytest
 
-from nexus.db.models import Highlight, HighlightPdfAnchor, Media
+from nexus.db.models import (
+    Annotation,
+    Fragment,
+    Highlight,
+    HighlightFragmentAnchor,
+    HighlightPdfAnchor,
+    Media,
+)
 from nexus.errors import ApiErrorCode
 from nexus.services import context_rendering
 from nexus.services.pdf_quote_match import (
@@ -39,6 +46,40 @@ def _make_highlight(exact: str) -> Highlight:
         prefix="",
         suffix="",
     )
+
+
+def _make_fragment_highlight(exact: str = "quoted-text") -> tuple[Highlight, Fragment, Media]:
+    media = Media(
+        id=uuid4(),
+        kind="web_article",
+        title="Test Article",
+        canonical_source_url="https://example.com",
+    )
+    fragment = Fragment(
+        id=uuid4(),
+        media_id=media.id,
+        idx=0,
+        canonical_text=f"prefix {exact} suffix",
+        media=media,
+    )
+    highlight = Highlight(
+        id=uuid4(),
+        user_id=uuid4(),
+        anchor_kind="fragment_offsets",
+        anchor_media_id=media.id,
+        color="yellow",
+        exact=exact,
+        prefix="",
+        suffix="",
+    )
+    highlight.fragment_anchor = HighlightFragmentAnchor(
+        highlight_id=highlight.id,
+        fragment_id=fragment.id,
+        start_offset=7,
+        end_offset=7 + len(exact),
+        fragment=fragment,
+    )
+    return highlight, fragment, media
 
 
 def _make_pdf_anchor(
@@ -113,6 +154,42 @@ class TestValidateUniquePdfOffsets:
         assert offsets is None
         mock_handle.assert_called_once()
         assert mock_handle.call_args.args[0] == CoherenceAnomalyKind.unsupported_match_version
+
+
+class TestTypedAnchorRendering:
+    def test_render_fragment_highlight_context_uses_typed_anchor(self):
+        highlight, fragment, media = _make_fragment_highlight()
+        db = MagicMock()
+        db.get.side_effect = [highlight, media]
+
+        with patch(
+            "nexus.services.context_rendering.get_context_window",
+            return_value=SimpleNamespace(text=f"prefix {highlight.exact} suffix"),
+        ):
+            rendered = context_rendering._render_highlight_context(db, highlight.id)
+
+        assert rendered is not None
+        assert "<highlight>" in rendered
+        assert "<quote>quoted-text</quote>" in rendered
+
+    def test_render_annotation_context_uses_typed_anchor(self):
+        highlight, fragment, media = _make_fragment_highlight()
+        annotation = Annotation(
+            id=uuid4(), highlight_id=highlight.id, body="note", highlight=highlight
+        )
+        highlight.annotation = annotation
+        db = MagicMock()
+        db.get.side_effect = [annotation, media]
+
+        with patch(
+            "nexus.services.context_rendering.get_context_window",
+            return_value=SimpleNamespace(text=f"prefix {highlight.exact} suffix"),
+        ):
+            rendered = context_rendering._render_annotation_context(db, annotation.id)
+
+        assert rendered is not None
+        assert "<annotation>" in rendered
+        assert "<note>note</note>" in rendered
 
 
 class TestResolvePdfNearbyContext:

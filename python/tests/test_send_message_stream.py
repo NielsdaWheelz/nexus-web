@@ -37,6 +37,7 @@ from nexus.db.session import create_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.middleware.stream_cors import StreamCORSMiddleware
 from nexus.schemas.billing import BillingEntitlementsOut
+from nexus.schemas.conversation import ContextItem
 from nexus.services.api_key_resolver import ResolvedKey
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.llm.types import LLMChunk, LLMUsage
@@ -465,7 +466,7 @@ class TestPdfQuoteBlockingStream:
             model_id=model_id,
             reasoning="none",
             key_mode="auto",
-            contexts=[{"type": "highlight", "id": highlight_id}],
+            contexts=[ContextItem(type="highlight", id=highlight_id)],
             llm_router=router,
         ):
             events.append(event)

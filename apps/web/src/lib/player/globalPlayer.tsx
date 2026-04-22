@@ -124,45 +124,6 @@ interface GlobalPlayerContextValue {
   bindAudioElement: (node: HTMLAudioElement | null) => void;
 }
 
-const noop = () => {};
-
-const FALLBACK_CONTEXT: GlobalPlayerContextValue = {
-  track: null,
-  setTrack: noop as GlobalPlayerContextValue["setTrack"],
-  clearTrack: noop,
-  seekToMs: noop as GlobalPlayerContextValue["seekToMs"],
-  skipBySeconds: noop as GlobalPlayerContextValue["skipBySeconds"],
-  setPlaybackRate: noop as GlobalPlayerContextValue["setPlaybackRate"],
-  setVolume: noop as GlobalPlayerContextValue["setVolume"],
-  play: noop,
-  pause: noop,
-  retryPlayback: noop,
-  isPlaying: false,
-  isBuffering: false,
-  playbackError: null,
-  currentTimeSeconds: 0,
-  durationSeconds: 0,
-  bufferedSeconds: 0,
-  playbackRate: DEFAULT_PLAYBACK_RATE,
-  volume: DEFAULT_VOLUME,
-  audioEffects: AUDIO_EFFECTS_DEFAULTS,
-  setAudioEffects: noop as GlobalPlayerContextValue["setAudioEffects"],
-  audioEffectsAvailable: true,
-  isSilenceTrimming: false,
-  silenceTimeSavedSeconds: 0,
-  queueItems: [],
-  refreshQueue: async () => {},
-  addToQueue: async () => {},
-  removeFromQueue: async () => {},
-  reorderQueue: async () => {},
-  clearQueue: async () => {},
-  playNextInQueue: async () => {},
-  playPreviousInQueue: async () => {},
-  hasNextInQueue: false,
-  hasPreviousInQueue: false,
-  bindAudioElement: noop as GlobalPlayerContextValue["bindAudioElement"],
-};
-
 const GlobalPlayerContext = createContext<GlobalPlayerContextValue | null>(null);
 
 function clampSeconds(value: number, durationSeconds: number | null): number {
@@ -1547,5 +1508,9 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
 }
 
 export function useGlobalPlayer(): GlobalPlayerContextValue {
-  return useContext(GlobalPlayerContext) ?? FALLBACK_CONTEXT;
+  const value = useContext(GlobalPlayerContext);
+  if (!value) {
+    throw new Error("useGlobalPlayer must be used inside GlobalPlayerProvider");
+  }
+  return value;
 }

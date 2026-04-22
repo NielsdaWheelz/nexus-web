@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import type { PdfHighlightOut } from "@/components/PdfReader";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
-import type { Highlight } from "./mediaHelpers";
+import type { Highlight } from "./mediaHighlights";
 import StatusPill from "@/components/ui/StatusPill";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import styles from "./page.module.css";

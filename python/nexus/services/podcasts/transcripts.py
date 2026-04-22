@@ -170,7 +170,6 @@ def request_podcast_transcript_for_viewer(
 
     media_kind = str(media_row[0] or "")
     processing_status = str(media_row[1] or "")
-    last_error_code = str(media_row[2] or "").strip() or None
     duration_seconds = _coerce_positive_int(media_row[3])
     job_status = str(media_row[4] or "").strip() or None
     transcript_state = str(media_row[5] or "").strip() or None
@@ -188,20 +187,11 @@ def request_podcast_transcript_for_viewer(
         _ensure_media_transcript_state_row(
             db,
             media_id=media_id,
-            processing_status=processing_status,
-            last_error_code=last_error_code,
             now=now,
             request_reason=normalized_reason,
         )
-        if processing_status in {"ready_for_reading", "embedding", "ready"}:
-            transcript_state = "ready"
-            transcript_coverage = "full"
-        elif processing_status == "extracting":
-            transcript_state = "running"
-            transcript_coverage = "none"
-        else:
-            transcript_state = "not_requested"
-            transcript_coverage = "none"
+        transcript_state = "not_requested"
+        transcript_coverage = "none"
 
     required_minutes = _episode_minutes({"duration_seconds": duration_seconds})
     entitlements = get_entitlements(db, viewer_id)
@@ -1685,31 +1675,9 @@ def _ensure_media_transcript_state_row(
     db: Session,
     *,
     media_id: UUID,
-    processing_status: str,
-    last_error_code: str | None,
     now: datetime,
     request_reason: str | None = None,
 ) -> None:
-    if processing_status in {"ready_for_reading", "embedding", "ready"}:
-        transcript_state = "ready"
-    elif processing_status == "extracting":
-        transcript_state = "running"
-    elif (
-        processing_status == "failed"
-        and last_error_code == ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value
-    ):
-        transcript_state = "unavailable"
-    elif (
-        processing_status == "failed"
-        and last_error_code == ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED.value
-    ):
-        transcript_state = "failed_quota"
-    elif processing_status == "failed":
-        transcript_state = "failed_provider"
-    else:
-        transcript_state = "not_requested"
-
-    transcript_coverage = "full" if transcript_state == "ready" else "none"
     db.execute(
         text(
             """
@@ -1726,12 +1694,12 @@ def _ensure_media_transcript_state_row(
             )
             VALUES (
                 :media_id,
-                :transcript_state,
-                :transcript_coverage,
+                'not_requested',
+                'none',
                 'none',
                 NULL,
                 :last_request_reason,
-                :last_error_code,
+                NULL,
                 :created_at,
                 :updated_at
             )
@@ -1740,10 +1708,7 @@ def _ensure_media_transcript_state_row(
         ),
         {
             "media_id": media_id,
-            "transcript_state": transcript_state,
-            "transcript_coverage": transcript_coverage,
             "last_request_reason": request_reason,
-            "last_error_code": last_error_code,
             "created_at": now,
             "updated_at": now,
         },

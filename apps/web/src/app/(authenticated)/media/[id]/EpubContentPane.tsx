@@ -4,7 +4,7 @@ import {
   type EpubSectionContent,
   type NormalizedNavigationTocNode,
 } from "@/lib/media/epubReader";
-import { parseAnchorIdFromHref } from "./mediaHelpers";
+import { parseAnchorIdFromHref } from "./epubHelpers";
 import styles from "./page.module.css";
 
 export default function EpubContentPane({

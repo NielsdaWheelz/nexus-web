@@ -396,23 +396,6 @@ export function getParentHref(resolved: ResolvedPaneRoute): string | null {
 
 export function resolvePaneRoute(href: string): ResolvedPaneRoute {
   const pathname = parseHrefPathname(href);
-  if (
-    pathname === "/discover" ||
-    pathname === "/discover/podcasts" ||
-    pathname === "/documents" ||
-    pathname === "/videos" ||
-    pathname === "/podcasts/subscriptions"
-  ) {
-    return {
-      id: "unsupported",
-      pathname,
-      params: {},
-      staticTitle: "Tab",
-      resourceRef: null,
-      render: null,
-      definition: null,
-    };
-  }
   for (const definition of ROUTE_DEFINITIONS) {
     const params = matchPattern(pathname, definition.pattern);
     if (!params) {

@@ -33,6 +33,10 @@ from nexus.schemas.podcast import (
 from nexus.services import playback_queue as playback_queue_service
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.sanitize_html import sanitize_html
+from nexus.services.transcript_segments import (
+    insert_transcript_fragments,
+    normalize_transcript_segments,
+)
 from nexus.services.upload import _ensure_in_default_library
 from nexus.services.url_normalize import validate_requested_url
 
@@ -45,9 +49,7 @@ from .transcripts import (
     _create_next_transcript_version,
     _ensure_media_transcript_state_row,
     _insert_transcript_chunks_for_version,
-    _insert_transcript_fragments,
     _insert_transcript_segments_for_version,
-    _normalize_transcript_segments,
     _set_media_transcript_state,
     _try_enqueue_metadata_enrichment,
 )
@@ -824,8 +826,6 @@ def _sync_subscription_ingest(
             _ensure_media_transcript_state_row(
                 db,
                 media_id=media_id,
-                processing_status="pending",
-                last_error_code=None,
                 now=now,
             )
             db.execute(
@@ -973,7 +973,7 @@ def _sync_subscription_ingest(
                 if t_end_ms is None or t_end_ms <= t_start_ms:
                     segment["t_end_ms"] = t_start_ms + 1
 
-        transcript_segments = _normalize_transcript_segments(fetched_segments)
+        transcript_segments = normalize_transcript_segments(fetched_segments)
         if not transcript_segments:
             continue
 
@@ -998,7 +998,7 @@ def _sync_subscription_ingest(
             ),
             {"media_id": media_id},
         )
-        _insert_transcript_fragments(
+        insert_transcript_fragments(
             db,
             media_id,
             transcript_segments,

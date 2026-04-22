@@ -8,7 +8,7 @@ Covers:
 - D16: anchor-kind mismatch rejection
 - D17: duplicate detection (create and update)
 - D20: no-op short-circuit
-- Generic GET/DELETE compat for PDF highlights
+- Generic GET/DELETE coverage for PDF highlights
 """
 
 from uuid import UUID, uuid4
@@ -864,11 +864,11 @@ class TestUpdatePdfHighlight:
 
 
 # ---------------------------------------------------------------------------
-# Generic GET/DELETE compat
+# Generic GET/DELETE coverage
 # ---------------------------------------------------------------------------
 
 
-class TestGenericPdfHighlightCompat:
+class TestGenericPdfHighlightCoverage:
     """Generic routes work correctly with PDF highlights."""
 
     def test_get_returns_typed_pdf_anchor(self, auth_client, direct_db: DirectSessionManager):

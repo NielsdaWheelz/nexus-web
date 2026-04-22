@@ -78,7 +78,6 @@ async def stream_send_existing(
     if not settings.enable_streaming:
         raise ApiError(ApiErrorCode.E_FORBIDDEN, "Streaming is disabled")
 
-    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
     db_factory = get_session_factory()
 
     return StreamingResponse(
@@ -90,7 +89,7 @@ async def stream_send_existing(
             model_id=body.model_id,
             reasoning=body.reasoning,
             key_mode=body.key_mode,
-            contexts=contexts,
+            contexts=body.contexts,
             idempotency_key=idempotency_key,
             llm_router=llm_router,
         ),
@@ -117,7 +116,6 @@ async def stream_send_new(
     if not settings.enable_streaming:
         raise ApiError(ApiErrorCode.E_FORBIDDEN, "Streaming is disabled")
 
-    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
     db_factory = get_session_factory()
 
     return StreamingResponse(
@@ -129,7 +127,7 @@ async def stream_send_new(
             model_id=body.model_id,
             reasoning=body.reasoning,
             key_mode=body.key_mode,
-            contexts=contexts,
+            contexts=body.contexts,
             idempotency_key=idempotency_key,
             llm_router=llm_router,
         ),

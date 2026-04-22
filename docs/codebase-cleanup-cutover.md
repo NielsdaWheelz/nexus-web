@@ -3,19 +3,23 @@
 this document defines the implementation target for the current repo-wide
 cleanup pass.
 
+it supersedes the previous cleanup inventory and reflects the current tree.
+
 it is a hard cutover plan. do not preserve legacy behavior, duplicate code
 paths, backward-compatibility shims, deprecated routes, deprecated schema
-fields, or transition wrappers.
+fields, transition wrappers, or test-only production seams.
 
 ## goals
 
-- reduce the number of production code paths for each capability
-- make ownership obvious from the file structure and control flow
-- remove dead code, dead tests, dead wrappers, dead parameters, and stale docs
+- collapse each capability onto one canonical production path
+- make ownership obvious from file structure, module boundaries, and control
+  flow
+- delete dead code, dead tests, dead wrappers, dead exports, and stale docs
 - split god files only when the split clearly reduces cognitive load
 - keep implementation local and explicit instead of reusable-looking
   indirection
-- make tests prove behavior instead of source layout or internal wiring
+- make tests prove user-visible behavior instead of import topology, source
+  text, mocked child wiring, or route string plumbing
 - align the resulting code with `docs/rules/simplicity.md`,
   `docs/rules/module-apis.md`, `docs/rules/layers.md`,
   `docs/rules/control-flow.md`, and `docs/rules/testing_standards.md`
@@ -24,300 +28,447 @@ fields, or transition wrappers.
 
 - product redesign
 - feature additions
-- speculative abstractions, registries, adapters, builders, or helper
-  frameworks
-- preserving old response shapes, old routes, old query params, or old test
-  seams for compatibility
-- rewriting framework-required filesystem entrypoints that still have a clear
-  owning purpose
-- partial migration plans, feature flags, gradual rollout paths, or fallback
+- speculative abstractions, registries, adapters, builders, helper
+  frameworks, or generic infrastructure
+- preserving old request or response shapes, old routes, old query params, or
+  old storage bridges for compatibility
+- partial migration plans, gradual rollout paths, feature flags, or fallback
   compatibility modes
+- rewriting framework-required filesystem entrypoints that still have one
+  clear owner and one clear purpose
 
 ## target behavior
 
-- all supported user flows keep working through one canonical production path
-- unsupported legacy inputs and routes fail fast or disappear instead of being
+- all supported user flows keep working through one explicit production path
+- unsupported old inputs and routes fail fast or disappear instead of being
   silently translated
-- browser streaming uses one canonical transport path
+- the media route is easy to follow from `MediaPaneBody.tsx` and the owning
+  reader components without a hidden god-hook controller
+- transcript-capable media derive read, quote, highlight, and search
+  capabilities from one transcript readiness source only
 - highlight create, read, update, and delete behavior uses one canonical typed
-  model with no legacy bridge semantics
-- media-reader behavior stays functionally equivalent for supported flows, but
-  the route ownership and local state boundaries become easier to follow
-- backend services branch explicitly and exhaustively
+  model with no fragment bridge semantics and no PDF compatibility payloads
+- workspace navigation normalizes hrefs once, in one place, and rejects bad
+  inputs explicitly
+- backend services branch explicitly and exhaustively instead of relying on
+  fallback behavior or broad catch-all parsing
 - tests fail only on meaningful behavior regressions, not harmless refactors
 
 ## final state
 
-- there is one canonical browser streaming path:
-  browser -> stream token -> fastapi `/stream/*`
-- old BFF-proxied streaming routes are deleted
-- unused legacy SSE client code is deleted
-- highlight storage and API contracts are typed and canonical only
-- highlight code no longer dual-writes to legacy bridge fields or preserves
-  fragment-era compatibility shapes
-- `useMediaViewState` no longer owns unrelated reader concerns in one file
-- transcript fragment selection logic exists in one place only
-- one-use wrapper components that only relay props are removed
-- one href normalizer exists for workspace/pane navigation
-- dead backend wrapper functions and dead parameters are removed
-- service files branch exhaustively instead of falling through to silent
-  fallback behavior
-- `python/nexus/services/podcasts.py` is replaced by a small set of concrete
-  subdomain-owned modules, with no compatibility facade preserving the old
-  monolith surface
-- source-inspection tests, legacy cutover contract tests, and
-  compatibility-preserving tests are removed from cleaned areas
+- `apps/web/src/components/Pane.tsx`,
+  `apps/web/src/components/PaneContainer.tsx`, and
+  `apps/web/src/components/workspace/index.ts` are deleted
+- stale cutover-only test inventory is gone, including
+  `apps/web/src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx`
+- `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` is the only
+  media-route controller
+- `apps/web/src/app/(authenticated)/media/[id]/useMediaViewState.tsx` is
+  deleted
+- `apps/web/src/app/(authenticated)/media/[id]/mediaHelpers.ts` is deleted as
+  a mixed-purpose helper dump
+- `apps/web/src/components/PdfReader.tsx` exposes only real production API
+  surface; the `deps` test seam is removed
+- `apps/web/src/components/LinkedItemsPane.tsx`,
+  `apps/web/src/components/PdfReader.tsx`,
+  `apps/web/src/app/(authenticated)/media/[id]/TranscriptPlaybackPanel.tsx`,
+  `apps/web/src/app/(authenticated)/media/[id]/TranscriptContentPanel.tsx`,
+  and `apps/web/src/app/(authenticated)/media/[id]/EpubContentPane.tsx`
+  directly own their real behavior
+- `apps/web/src/lib/player/globalPlayer.tsx` no longer exports or relies on a
+  no-op fallback context
+- `apps/web/src/components/GlobalPlayerFooter.tsx` does not duplicate player
+  option or chapter logic already owned elsewhere
+- `apps/web/src/components/ChatComposer.tsx` keeps one explicit streaming path
+  and one explicit non-stream path, with no hidden automatic fallback between
+  them
+- `apps/web/src/lib/api/client.ts` no longer performs auth recovery by setting
+  `sessionStorage` flags and reloading the page
+- `apps/web/src/lib/workspace/schema.ts` contains the one canonical href
+  normalizer used by workspace and pane navigation code
+- `apps/web/src/lib/panes/paneRouteRegistry.tsx` no longer contains a
+  hardcoded list of removed historical routes; unknown routes are simply
+  unsupported
+- frontend podcast panes do not duplicate the same wire types and simple label
+  helpers across multiple large files
+- transcript readiness for podcast and video media is derived only from
+  `media_transcript_states`
+- `processing_status` remains a generic ingest state and no longer acts as a
+  transcript readiness fallback
+- highlight storage and API contracts are canonical only
+- highlight bridge columns and bridge-only integrity helpers are removed
+- `python/nexus/services/highlight_kernel.py` is deleted
+- `python/nexus/services/libraries.py` no longer manually rebuilds `MediaOut`
+  or duplicates canonical hydration logic from `python/nexus/services/media.py`
+- visibility SQL helpers do not live in `python/nexus/services/search.py`
+- route handlers normalize transport payloads once, then pass typed service
+  inputs instead of raw dicts and duplicated normalization logic
+- podcast service modules have real boundaries and do not import each other's
+  private helpers as an unofficial compatibility surface
+- source-inspection tests, proxy path plumbing tests, mocked child wiring
+  tests, and stale cutover contract tests are removed from cleaned areas
+- cleanup docs match the final tree and do not reference missing files
 
 ## hard cutover rules
 
 - remove deprecated routes instead of forwarding them to the new path
-- remove deprecated schema fields instead of continuing additive compatibility
+- remove deprecated schema fields and bridge columns instead of continuing
+  additive compatibility
 - remove dead wrappers instead of keeping aliases to the canonical function
 - remove one-use prop-relay components instead of renaming them
+- do not keep old and new transcript readiness logic in parallel
 - do not keep old and new highlight models in parallel
-- do not keep old and new streaming implementations in parallel
-- do not add new generic reader, pane, or service infrastructure to hide the
-  cleanup
+- do not keep old and new navigation normalization paths in parallel
+- do not keep old and new chat transport behavior in parallel via hidden
+  fallback
+- do not add new generic reader, pane, workspace, player, or service
+  infrastructure to hide the cleanup
 - if a helper, type, constant, or component is used once and does not hide
   substantial incidental complexity, inline it
-- if a split creates a facade layer, the split is wrong
-- if a test asserts source text, import topology, or mocked child wiring rather
-  than user-visible behavior, delete or rewrite it
-- any branch that still exists only to support old callers must be removed
+- if a split creates a facade layer, registry, or compatibility wrapper, the
+  split is wrong
+- if a branch still exists only to support old callers, remove it
+- if a test asserts source text, import topology, mocked child wiring, proxy
+  path strings, or private helper exports instead of user-visible behavior,
+  delete or rewrite it
 
 ## key decisions
 
-- direct streaming is the only streaming transport
-  reason: the current app already uses `sseClientDirect`; the older sync bridge
-  and old stream routes are explicit compatibility baggage
-- non-streaming message send may remain only as an explicit product path
-  reason: failure fallback for a supported product behavior is different from
-  preserving a deprecated transport surface
-- highlights keep collection routes that match their real owner surface
-  reason: fragment-scoped and page-scoped collection reads are real domain
-  operations, but the item model and mutation shape must be canonical and typed
-- highlight item mutation moves to one typed request model
-  reason: `pdf_bounds`, flat fragment fields, and legacy response variants are
-  compatibility clutter
-- media reader cleanup stays local to the media route
-  reason: the repo rules favor direct local ownership over a reusable reader
-  framework
-- `TranscriptMediaPane.tsx` is removed
-  reason: it is a one-use orchestration wrapper between `MediaPaneBody` and
-  more substantive transcript leaf components
-- `MediaHighlightsPaneBody.tsx` stays only if it continues to own real
-  highlight-pane behavior
-  reason: substantive local ownership is fine; prop plumbing is not
-- workspace navigation uses one href normalizer
-  reason: duplicate normalization APIs create subtle divergence and extra
-  branches
-- `podcasts.py` is split by subdomain, not wrapped by a new facade
-  reason: smaller concrete modules reduce collision and search cost without
-  adding another abstraction layer
+- `MediaPaneBody.tsx` is the only media-route controller
+  reason: the current media route already has substantive leaf owners, and the
+  extra god-hook layer makes control flow harder to follow
+- `useMediaViewState.tsx` is deleted, not replaced by another generic
+  controller hook
+  reason: replacing one mega-hook with another would preserve the same
+  indirection problem
+- `mediaHelpers.ts` is deleted, not renamed or split into another catch-all
+  helper layer
+  reason: mixed-purpose utility bags hide ownership and encourage drift
+- real reader behavior stays with the existing reader owners
+  reason: `PdfReader.tsx`, `LinkedItemsPane.tsx`, transcript panels, and epub
+  content already have clear runtime ownership; the cleanup should sharpen that
+  ownership instead of inventing a framework
+- `normalizeWorkspaceHref()` in `apps/web/src/lib/workspace/schema.ts` is the
+  only href normalizer
+  reason: duplicate normalization paths create silent divergence and extra
+  fallback branches
+- removed routes are handled generically as unsupported
+  reason: the router should know current routes, not preserve historical route
+  memory
+- transcript media capability derivation uses `media_transcript_states` only
+  reason: transcript readiness is a transcript concern, not a `processing_status`
+  inference problem
+- `processing_status` remains for ingest state only
+  reason: keeping it separate prevents media capability logic from silently
+  bridging two eras of state
+- highlights keep the current real collection routes
+  reason: fragment and pdf collection surfaces express real ownership, but item
+  storage and mutation contracts must be canonical and typed
+- the canonical highlight item contract is the typed anchor model
+  reason: `TypedHighlightOut` and `UpdateHighlightRequest` already express the
+  intended end state; the remaining work is to delete bridge behavior around
+  them
+- canonical media hydration stays in `python/nexus/services/media.py`
+  reason: multiple services need the same output shape, and the current bug is
+  duplicate ownership, not insufficient reuse
+- visibility SQL moves to an auth-owned module, not a feature service
+  reason: visibility is access control, and `search.py` is the wrong owner for
+  code used across unrelated services
+- route handlers convert transport payloads once and services accept typed
+  inputs
+  reason: duplicating normalization in both layers weakens the service
+  boundary and adds extra branches
+- podcast package modules may depend on public functions only
+  reason: importing private helpers across package boundaries recreates the old
+  monolith under a new directory layout
+- `useGlobalPlayer()` fails fast when the provider is missing
+  reason: silent no-op fallbacks hide wiring bugs and compatibility clutter
+- thin framework entrypoints may remain
+  reason: the problem is extra behavior and extra layers, not filesystem
+  entrypoints that are required by Next.js or FastAPI
 
 ## workstreams
 
-1. streaming hard cutover
-2. highlight contract hard cutover
-3. media reader decomposition and wrapper removal
-4. backend service cleanup and dead-surface removal
-5. podcasts service split
-6. workspace navigation normalization cleanup
-7. test suite cleanup
+1. dead surface deletion
+2. media route hard cutover
+3. player, chat, auth, and workspace cleanup
+4. frontend podcast simplification
+5. transcript and highlight backend cutover
+6. backend service ownership cleanup
+7. podcast package boundary cleanup
+8. test and docs cleanup
 
 ## files in scope
 
-### streaming
+### dead surface deletion
 
-- `apps/web/src/lib/api/sse.ts`
-- `apps/web/src/components/ChatComposer.tsx`
-- `apps/web/src/lib/api/proxy.ts`
-- `python/nexus/services/send_message_stream.py`
-- `python/nexus/api/routes/conversations.py`
-- `python/nexus/api/routes/stream.py`
+- `apps/web/src/components/Pane.tsx`
+- `apps/web/src/components/PaneContainer.tsx`
+- `apps/web/src/components/workspace/index.ts`
+- `apps/web/src/__tests__/components/Pane.test.tsx`
+- `apps/web/src/__tests__/components/PaneContainer.test.tsx`
+- `apps/web/src/__tests__/components/SplitSurface.test.tsx`
+- `apps/web/src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx`
 
-### highlights
-
-- `python/nexus/services/highlights.py`
-- `python/nexus/api/routes/highlights.py`
-- `python/nexus/schemas/highlights.py`
-- `apps/web/src/app/(authenticated)/media/[id]/mediaHelpers.ts`
-- `apps/web/src/app/(authenticated)/media/[id]/useMediaViewState.tsx`
-- `apps/web/src/components/PdfReader.tsx`
-- `apps/web/src/app/api/fragments/[fragmentId]/highlights/route.ts`
-- `apps/web/src/app/api/highlights/[highlightId]/route.ts`
-- `apps/web/src/app/api/highlights/[highlightId]/annotation/route.ts`
-- `apps/web/src/app/api/media/[id]/pdf-highlights/route.ts`
-
-### media reader
+### media route hard cutover
 
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/useMediaViewState.tsx`
-- `apps/web/src/app/(authenticated)/media/[id]/TranscriptMediaPane.tsx`
+- `apps/web/src/app/(authenticated)/media/[id]/mediaHelpers.ts`
+- `apps/web/src/app/(authenticated)/media/[id]/EpubContentPane.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/TranscriptPlaybackPanel.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/TranscriptContentPanel.tsx`
-- `apps/web/src/app/(authenticated)/media/[id]/EpubContentPane.tsx`
+- `apps/web/src/app/(authenticated)/media/[id]/TranscriptStatePanel.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaHighlightsPaneBody.tsx`
+- `apps/web/src/components/PdfReader.tsx`
+- `apps/web/src/components/LinkedItemsPane.tsx`
+- `apps/web/src/components/ReaderContentArea.tsx`
+- `apps/web/src/components/workspace/DocumentViewport.tsx`
 
-### backend service cleanup
+### player, chat, auth, and workspace cleanup
 
-- `python/nexus/services/media.py`
-- `python/nexus/services/capabilities.py`
-- `python/nexus/services/search.py`
-- `python/nexus/services/libraries.py`
-
-### podcasts split
-
-- `python/nexus/services/podcasts.py`
-- `python/nexus/api/routes/podcasts.py`
-- any tests directly targeting the current monolith layout
-
-### workspace cleanup
-
+- `apps/web/src/lib/player/globalPlayer.tsx`
+- `apps/web/src/components/GlobalPlayerFooter.tsx`
+- `apps/web/src/lib/player/subscriptionPlaybackSpeed.ts`
+- `apps/web/src/components/ChatComposer.tsx`
+- `apps/web/src/lib/api/client.ts`
 - `apps/web/src/lib/workspace/schema.ts`
 - `apps/web/src/lib/workspace/store.tsx`
 - `apps/web/src/lib/panes/openInAppPane.ts`
 - `apps/web/src/lib/panes/paneRuntime.tsx`
+- `apps/web/src/lib/panes/paneRouteRegistry.tsx`
 - `apps/web/src/components/workspace/WorkspaceHost.tsx`
 
-### test cleanup
+### frontend podcast simplification
 
-- `apps/web/src/lib/panes/workspacePaneCutover.contract.test.ts`
-- `apps/web/src/__tests__/components/Navbar.test.tsx`
-- `apps/web/src/__tests__/components/AddContentTray.test.tsx`
+- `apps/web/src/app/(authenticated)/browse/BrowsePaneBody.tsx`
+- `apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx`
+- `apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody.tsx`
+- `apps/web/src/components/AddContentTray.tsx`
+- `apps/web/src/app/(authenticated)/settings/billing/SettingsBillingPaneBody.tsx`
+
+### transcript and highlight backend cutover
+
+- `python/nexus/db/models.py`
+- `python/nexus/services/capabilities.py`
+- `python/nexus/services/highlights.py`
+- `python/nexus/services/highlight_kernel.py`
+- `python/nexus/services/media.py`
+- `python/nexus/services/libraries.py`
+- `python/nexus/services/reader.py`
+- `python/nexus/schemas/highlights.py`
+- `python/nexus/api/routes/highlights.py`
+- `python/nexus/api/routes/media.py`
+- `apps/web/src/app/api/media/[id]/pdf-highlights/route.ts`
+- `apps/web/src/app/api/highlights/[highlightId]/route.ts`
+- `apps/web/src/app/api/highlights/[highlightId]/annotation/route.ts`
+- `apps/web/src/app/api/fragments/[fragmentId]/highlights/route.ts`
+
+### backend service ownership cleanup
+
+- `python/nexus/services/media.py`
+- `python/nexus/services/libraries.py`
+- `python/nexus/services/search.py`
+- `python/nexus/services/send_message.py`
+- `python/nexus/services/send_message_stream.py`
+- `python/nexus/api/routes/conversations.py`
+- `python/nexus/api/routes/stream.py`
+- `python/nexus/auth/permissions.py`
+
+### podcast package boundary cleanup
+
+- `python/nexus/services/podcasts/catalog.py`
+- `python/nexus/services/podcasts/subscriptions.py`
+- `python/nexus/services/podcasts/provider.py`
+- `python/nexus/services/podcasts/transcripts.py`
+- `python/nexus/services/podcasts/sync.py`
+- `python/nexus/services/podcasts/__init__.py`
+
+### test and docs cleanup
+
+- `apps/web/src/app/api/media/media-routes.test.ts`
+- `apps/web/src/app/api/billing/billing-routes.test.ts`
+- `apps/web/src/app/api/podcasts/podcasts-routes.test.ts`
+- `apps/web/src/app/api/libraries/libraries-media-routes.test.ts`
+- `apps/web/src/app/api/libraries/invites-routes.test.ts`
+- `apps/web/src/app/api/playback/playback-routes.test.ts`
+- `apps/web/src/app/api/conversations/shares-routes.test.ts`
+- `apps/web/src/app/api/me/command-palette-recents/route.test.ts`
+- `apps/web/src/app/api/vault/route.test.ts`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx`
-- `python/tests/test_upload.py`
-- `python/tests/test_media.py`
-- `python/tests/test_search.py`
-- `python/tests/test_route_structure.py`
-- `python/tests/test_job_cutover_contract.py`
+- `apps/web/src/__tests__/components/WorkspaceHost.test.tsx`
+- `apps/web/src/lib/panes/paneRouteRegistry.test.tsx`
+- `apps/web/src/lib/api/proxy.test.ts`
+- `apps/web/src/lib/ui/mobileScrollFixes.test.ts`
+- `apps/web/src/lib/workspace/store-recents.test.tsx`
+- `python/tests/test_library_target_picker_cutover.py`
 - `python/tests/test_pdf_highlights_integration.py`
+- `python/tests/test_highlight_kernel.py`
+- `python/tests/test_ingest_remediation_contracts.py`
+- `python/tests/test_reader_integration.py`
+- `python/tests/test_command_palette_recents_integration.py`
+- `docs/mobile-pane-chrome-cutover.md`
+- `docs/mobile-highlights-pane-cutover.md`
+- `docs/codebase-cleanup-cutover.md`
 
 ## workstream targets
 
-### 1. streaming hard cutover
+### 1. dead surface deletion
 
-- delete `/conversations/messages/stream` and
-  `/conversations/{conversation_id}/messages/stream`
-- delete `stream_send_message()` and its thread/queue bridge
-- delete unused `sseClient()` and any comments pointing to the old BFF
-  streaming path
-- remove unused SSE-specific proxy surface from the BFF layer if no remaining
-  route needs it
-- keep only the direct `/stream/*` fastapi transport for streaming
+- delete runtime-dead pane layers and their dead tests
+- delete the unused workspace barrel
+- delete stale test files and stale names that refer to removed wrappers
+- delete underscored test-only exports from production modules
 
-### 2. highlight contract hard cutover
+### 2. media route hard cutover
 
-- remove fragment legacy response compatibility and PDF generic compat wording
-- remove dual-write and legacy bridge semantics from highlight storage and
-  service code
-- remove `pdf_bounds` compatibility request shape
-- replace mixed legacy request/response variants with one typed item model
-- keep collection routes only where they express real collection ownership,
-  not compatibility
-- update frontend highlight calls to the canonical request and response shapes
+- remove `useMediaViewState.tsx`
+- move route orchestration into a smaller, explicit `MediaPaneBody.tsx`
+- move behavior to the true owners instead of creating a new shared controller
+- delete `mediaHelpers.ts`
+- inline one-use media helpers, constants, and object shapes
+- keep only coherent, reused local utilities where the reuse is real
+- eliminate duplicated selection snapshot utilities and DOM escape helpers
+- remove the `PdfReaderDeps` production seam
+- remove one-use wrappers such as `ReaderContentArea.tsx` or
+  `DocumentViewport.tsx` if they remain pure prop relays after the cutover
 
-### 3. media reader decomposition and wrapper removal
+### 3. player, chat, auth, and workspace cleanup
 
-- split `useMediaViewState` into a small set of route-local files by concern,
-  with no generic reader framework
-- move transcript fragment selection into one explicit implementation
-- inline or delete one-use wrappers that only relay props
-- remove `TranscriptMediaPane.tsx`
-- keep transcript timestamp formatting in one shared local utility only
-- eliminate `MediaPaneBody` dependency suppressions caused by unstable
-  all-in-one hook return objects
+- remove `FALLBACK_CONTEXT` and make missing-provider access fail fast
+- eliminate duplicate speed and chapter logic in `GlobalPlayerFooter.tsx`
+- keep player ownership clear between provider state and footer rendering
+- remove the hidden `sendNonStreaming` fallback from the streaming path in
+  `ChatComposer.tsx`
+- remove auth recovery reload logic from `apps/web/src/lib/api/client.ts`
+- keep one href normalizer
+- remove duplicate normalization passes and silent early-return branches
+- reduce `store.tsx` to one clear ownership boundary instead of reducer,
+  hydration, URL sync, telemetry, recents, and event bridge all at once
+- remove historical route special cases from `paneRouteRegistry.tsx`
 
-### 4. backend service cleanup and dead-surface removal
+### 4. frontend podcast simplification
 
-- delete dead wrappers in `media.py`
-- delete dead parameters in `capabilities.py`
-- remove stale constants and silent fallback branches in `search.py`
-- replace service-layer `assert` boundary checks with explicit validated
-  control flow
-- remove stale docs and comments that describe already-removed compatibility
-  behavior
+- remove duplicated wire types and label helpers where one canonical owner is
+  clearly warranted
+- inline trivial one-use helpers inside the large pane files
+- keep only substantive extracted components or utilities
+- reduce repeated subscription settings, library membership, and refresh flow
+  code where the duplication is large enough to create maintenance risk
 
-### 5. podcasts service split
+### 5. transcript and highlight backend cutover
 
-- replace the single `podcasts.py` monolith with a small concrete package or
-  module set split by ownership:
-  discovery/catalog, subscriptions/opml, transcript, and sync
-- route handlers import the defining module directly
-- do not keep a compatibility facade mirroring the old file's public surface
+- make transcript capability derivation use `media_transcript_states` only
+- remove transcript readiness fallback from `processing_status`
+- delete remaining highlight bridge semantics from models and services
+- remove `ck_highlights_fragment_bridge` handling and related bridge-only
+  compatibility behavior
+- delete `highlight_kernel.py`
+- delete highlight tests that exist only to preserve bridge behavior
+- keep only the typed highlight anchor model and canonical mutation contract
+- remove the generic `/media/{id}/fragments` compatibility surface if no
+  supported product flow still depends on it
 
-### 6. workspace navigation normalization cleanup
+### 6. backend service ownership cleanup
 
-- choose one canonical href normalizer
-- delete the duplicate normalizer
-- update open-pane, workspace store, and pane runtime code to use the same
-  normalization logic
-- remove fallback chaining between normalizers
+- keep `MediaOut` hydration in one owner only
+- remove manual hydration duplication from `libraries.py`
+- move visibility SQL ownership out of `search.py`
+- replace broad cursor parsing fallbacks with explicit validation
+- make route handlers the only transport-normalization layer for message
+  contexts
+- make services accept typed normalized inputs, not `list[dict]`
+- remove dead wrappers such as `can_read_media` aliases outside the canonical
+  auth owner
 
-### 7. test suite cleanup
+### 7. podcast package boundary cleanup
 
-- remove source-text and route-layout contract tests
-- remove tests whose only purpose is to preserve compatibility response fields
-- rewrite heavily mocked tests toward behavior checks or delete them if higher
-  confidence coverage already exists
-- keep only cutover tests that reject removed legacy inputs and routes
+- remove private cross-module imports between `sync.py` and `transcripts.py`
+- expose only the small public functions each podcast module actually owns
+- keep package boundaries aligned to real subdomains: catalog, subscriptions,
+  provider, transcripts, and sync
+- do not add a compatibility facade in `__init__.py`
+- remove test-only or compatibility-only bridge helpers inside the package
 
-## implementation rules
+### 8. test and docs cleanup
 
-- keep control flow linear and explicit
-- prefer explicit `if` and `elif` branches over generic dispatch maps when the
-  variant set is small and known
-- enforce exhaustiveness in typed branching
-- do not add new context layers, reusable state machines, strategy objects, or
-  policy objects
-- do not add new option flags to support old and new behavior side by side
-- do not preserve old names as aliases after the new name lands
-- do not keep TODO comments about future deletion for code that should be
-  deleted in this cutover
-- route files stay transport-only
-- services stay framework-free
-- tests assert public behavior, not child component composition or source text
+- delete mocked proxy route tests and replace them only where real behavior
+  coverage is still needed
+- delete mocked child-wiring and source-layout tests
+- keep higher-confidence browser, e2e, and API-behavior tests
+- collapse duplicate cutover rejection coverage to one owner per removed
+  surface
+- rename or delete stale test files that preserve migration-era terminology
+- update docs so every referenced file exists and every stated cut line matches
+  the code
 
 ## acceptance criteria
 
-- the only remaining streaming browser transport is `/stream/*`
-- no deprecated stream routes remain in fastapi route files
-- no sync bridge remains in `send_message_stream.py`
-- no unused SSE client surface remains in the web app
-- highlight item requests and responses use one typed canonical contract
-- no highlight dual-write or legacy bridge behavior remains in production code
-- no `pdf_bounds` compatibility branch remains
-- `useMediaViewState` no longer duplicates transcript fragment resolution logic
-- transcript timestamp formatting exists in one place only
-- `TranscriptMediaPane.tsx` is deleted
-- dead wrappers `can_read_media`, `get_media_for_viewer_or_404`, and
-  `enqueue_web_article_from_url` are deleted if still unused at implementation
-  time
-- dead `capabilities.py` parameters are removed
-- `search.py` has no stale ANN-cutover constant and no silent unknown-type
-  fallback
-- `libraries.py` contains no bare `assert` for request invariants in the
-  cleaned path
-- `podcasts.py` no longer exists as a single multi-domain god file
-- only one href normalizer remains in the workspace path
-- no compatibility-preserving ingest/retry tests remain
-- no source-inspection cutover tests remain in cleaned areas
-- no heavily mocked component test remains where a behavior-level browser or
-  e2e test already covers the same contract
+- `apps/web/src/app/(authenticated)/media/[id]/useMediaViewState.tsx` does
+  not exist
+- `apps/web/src/app/(authenticated)/media/[id]/mediaHelpers.ts` does not exist
+- `apps/web/src/components/Pane.tsx`,
+  `apps/web/src/components/PaneContainer.tsx`, and
+  `apps/web/src/components/workspace/index.ts` do not exist
+- `apps/web/src/app/(authenticated)/media/[id]/TranscriptMediaPane.test.tsx`
+  does not exist
+- `apps/web/src/components/PdfReader.tsx` does not expose `PdfReaderDeps` or
+  `deps?: Partial<PdfReaderDeps>`
+- `apps/web/src/lib/player/globalPlayer.tsx` does not contain
+  `FALLBACK_CONTEXT`
+- `apps/web/src/components/ChatComposer.tsx` does not automatically fall back
+  from streaming send to non-stream send
+- `apps/web/src/lib/api/client.ts` does not read or write auth-recovery flags
+  in `sessionStorage` and does not reload the page on `401`
+- `apps/web/src/lib/workspace/schema.ts` is the only href normalizer used by
+  workspace and pane navigation code
+- `apps/web/src/lib/panes/paneRouteRegistry.tsx` does not enumerate removed
+  legacy routes by pathname
+- `python/nexus/services/capabilities.py` does not derive transcript media
+  readability from `processing_status`
+- `python/nexus/db/models.py` does not contain highlight bridge columns or
+  bridge-only highlight constraints
+- `python/nexus/services/highlight_kernel.py` does not exist
+- `python/nexus/services/libraries.py` does not manually construct `MediaOut`
+  from duplicated hydration logic
+- no service imports a visibility SQL helper from
+  `python/nexus/services/search.py`
+- `python/nexus/services/send_message.py` and
+  `python/nexus/services/send_message_stream.py` accept typed normalized
+  contexts, not raw `list[dict]` transport payloads
+- podcast service modules do not import private helpers from sibling podcast
+  modules
+- mocked proxy route tests and mocked child-wiring tests in cleaned areas do
+  not remain
+- cleanup docs do not reference missing files
+- `make verify` passes
+- `make test-e2e` passes
+
+## implementation order
+
+1. delete dead surfaces and stale tests first
+2. cut over the media route and remove the god-hook/helper layer
+3. remove frontend compatibility fallbacks and duplicate navigation logic
+4. finish transcript and highlight backend cutover
+5. clean up backend service ownership boundaries
+6. tighten podcast package boundaries
+7. delete or rewrite low-value tests
+8. sync docs to the final tree and rerun full verification
 
 ## validation
 
 - `make verify`
 - `make test-e2e`
-- targeted browser tests for media reader, highlights, and workspace panes
-- targeted backend integration tests for highlights, streaming, media, search,
-  libraries, and podcasts
+- targeted browser coverage for media readers, workspace panes, highlights, and
+  chat streaming
+- targeted backend integration coverage for media, highlights, conversations,
+  and podcasts
 
 ## shipping bar
 
 - do not ship partial cutover
-- do not leave dead code in place because removal felt risky
-- do not leave old tests asserting previous contracts
-- do not leave comments that say code is deprecated or will be removed later
-- if two production code paths still exist for the same capability after the
-  cutover, the cutover is not done
+- do not leave dead compatibility code in production files
+- do not keep stale tests to preserve removed seams
+- do not keep stale doc references to deleted files
+- if a final module still needs a large comment to explain ownership, the
+  ownership is still too indirect and the cleanup is not done

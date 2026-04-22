@@ -16,10 +16,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
-/**
- * Header name for request correlation.
- */
-export const REQUEST_ID_HEADER = "x-request-id";
+const REQUEST_ID_HEADER = "x-request-id";
 
 /**
  * Request headers allowed to be forwarded from browser to FastAPI.
@@ -68,45 +65,20 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
   "set-cookie",
 ]);
 
-/**
- * Dependencies that can be injected for testing.
- */
-export interface ProxyDeps {
-  /**
-   * Function to get the Supabase session.
-   * Returns null if no session exists.
-   */
+interface ProxyDeps {
   getSession: () => Promise<{ access_token: string } | null>;
-
-  /**
-   * Function to make HTTP requests.
-   */
   fetch: typeof fetch;
-
-  /**
-   * Function to generate a request ID.
-   */
   generateRequestId: () => string;
-
-  /**
-   * Environment configuration.
-   */
   config: {
     fastApiBaseUrl: string;
     internalSecret: string;
   };
 }
 
-/**
- * Generate a UUID v4 string for request correlation.
- */
 function generateRequestId(): string {
   return crypto.randomUUID();
 }
 
-/**
- * Get the request ID from incoming request or generate a new one.
- */
 function getOrGenerateRequestId(
   request: Request,
   generateFn: () => string
@@ -118,9 +90,6 @@ function getOrGenerateRequestId(
   return generateFn();
 }
 
-/**
- * Check if a response header should be forwarded to the browser.
- */
 function shouldForwardResponseHeader(headerName: string): boolean {
   const lowerName = headerName.toLowerCase();
 
@@ -138,9 +107,6 @@ function shouldForwardResponseHeader(headerName: string): boolean {
   return ALLOWED_RESPONSE_HEADERS.has(lowerName);
 }
 
-/**
- * Check if a request header should be forwarded to FastAPI.
- */
 function shouldForwardRequestHeader(headerName: string): boolean {
   const lowerName = headerName.toLowerCase();
 
@@ -153,22 +119,12 @@ function shouldForwardRequestHeader(headerName: string): boolean {
   return ALLOWED_REQUEST_HEADERS.has(lowerName);
 }
 
-/**
- * Check if a content type represents text/JSON data.
- */
 function isTextContentType(contentType: string | null): boolean {
   if (!contentType) return false;
   const lower = contentType.toLowerCase();
   return lower.includes("application/json") || lower.includes("text/");
 }
 
-/**
- * Detect transport-level abort/cancel errors across runtimes.
- *
- * Next.js/undici may surface aborted requests as either:
- * - DOMException("AbortError")
- * - Error-like objects named "ResponseAborted"
- */
 function isAbortLikeError(error: unknown): boolean {
   if (error instanceof DOMException && error.name === "AbortError") {
     return true;
@@ -180,9 +136,6 @@ function isAbortLikeError(error: unknown): boolean {
   return false;
 }
 
-/**
- * Get default environment configuration.
- */
 function getDefaultConfig() {
   const fastApiBaseUrl =
     process.env.FASTAPI_BASE_URL || "http://localhost:8000";
@@ -191,9 +144,6 @@ function getDefaultConfig() {
   return { fastApiBaseUrl, internalSecret };
 }
 
-/**
- * Create default dependencies using real implementations.
- */
 async function createDefaultDeps(): Promise<ProxyDeps> {
   const supabase = await createClient();
 
@@ -210,17 +160,7 @@ async function createDefaultDeps(): Promise<ProxyDeps> {
   };
 }
 
-/**
- * Core proxy implementation with injectable dependencies.
- *
- * This function is exported for testing. Production code should use proxyToFastAPI.
- *
- * @param request - The incoming Next.js request
- * @param path - The FastAPI path to proxy to (must not contain query string)
- * @param deps - Injectable dependencies
- * @returns Response from FastAPI with filtered headers
- */
-export async function proxyToFastAPIWithDeps(
+async function proxyToFastAPIWithDeps(
   request: Request,
   path: string,
   deps: ProxyDeps
@@ -371,21 +311,6 @@ export async function proxyToFastAPIWithDeps(
   }
 }
 
-/**
- * Proxy a request to FastAPI with proper authentication and headers.
- *
- * This function:
- * 1. Extracts the Supabase access token from the session
- * 2. Generates or forwards X-Request-ID for tracing
- * 3. Attaches Authorization and X-Nexus-Internal headers
- * 4. Forwards the request to FastAPI
- * 5. Filters response headers via allowlist
- *
- * @param request - The incoming Next.js request
- * @param path - The FastAPI path to proxy to (e.g., "/me", "/libraries/123")
- *               Must NOT contain query string - those are extracted from request URL
- * @returns Response from FastAPI with filtered headers
- */
 export async function proxyToFastAPI(
   request: Request,
   path: string
@@ -393,15 +318,3 @@ export async function proxyToFastAPI(
   const deps = await createDefaultDeps();
   return proxyToFastAPIWithDeps(request, path, deps);
 }
-
-// Exports for testing
-export {
-  shouldForwardResponseHeader as _shouldForwardResponseHeader,
-  shouldForwardRequestHeader as _shouldForwardRequestHeader,
-  getOrGenerateRequestId as _getOrGenerateRequestId,
-  isTextContentType as _isTextContentType,
-  ALLOWED_REQUEST_HEADERS as _ALLOWED_REQUEST_HEADERS,
-  BLOCKED_REQUEST_HEADERS as _BLOCKED_REQUEST_HEADERS,
-  ALLOWED_RESPONSE_HEADERS as _ALLOWED_RESPONSE_HEADERS,
-  BLOCKED_RESPONSE_HEADERS as _BLOCKED_RESPONSE_HEADERS,
-};

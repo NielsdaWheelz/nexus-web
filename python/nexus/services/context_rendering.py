@@ -52,6 +52,25 @@ def _format_timestamp_ms(timestamp_ms: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
+def _resolve_renderable_highlight_kind(highlight: Highlight) -> str | None:
+    """Return the canonical anchor kind if the typed highlight is renderable."""
+    if highlight.anchor_media_id is None:
+        return None
+
+    if highlight.anchor_kind == "fragment_offsets":
+        fragment_anchor = highlight.fragment_anchor
+        fragment = fragment_anchor.fragment if fragment_anchor is not None else None
+        if fragment is not None and fragment.media_id == highlight.anchor_media_id:
+            return "fragment_offsets"
+
+    if highlight.anchor_kind == "pdf_page_geometry":
+        pdf_anchor = highlight.pdf_anchor
+        if pdf_anchor is not None and pdf_anchor.media_id == highlight.anchor_media_id:
+            return "pdf_page_geometry"
+
+    return None
+
+
 def render_context_blocks(
     db: Session,
     contexts: list[dict],
@@ -155,48 +174,43 @@ def _render_media_context(db: Session, media_id: UUID) -> str | None:
 
 
 def _render_highlight_context(db: Session, highlight_id: UUID) -> str | None:
-    """Render a highlight context with quote and surrounding context.
-
-    S6 PR-02: uses anchor-kind dispatch seam. Fragment rendering path is
-    unchanged; PDF rendering is deferred to pr-05.
-    """
-    from nexus.services.highlight_kernel import ResolverState, resolve_highlight
-
+    """Render a highlight context with quote and surrounding context."""
     highlight = db.get(Highlight, highlight_id)
     if not highlight:
         return None
 
-    resolution = resolve_highlight(highlight)
-    if resolution.state != ResolverState.ok:
+    anchor_kind = _resolve_renderable_highlight_kind(highlight)
+    if anchor_kind is None:
         logger.warning(
-            "context_render_highlight_mismatch",
+            "context_render_highlight_unrenderable",
             highlight_id=str(highlight_id),
-            mismatch_code=resolution.mismatch_code.value if resolution.mismatch_code else None,
+            anchor_kind=highlight.anchor_kind,
         )
         return None
 
-    if resolution.anchor_kind == "fragment_offsets":
-        return _render_fragment_highlight_context(db, highlight, resolution)
+    if anchor_kind == "fragment_offsets":
+        return _render_fragment_highlight_context(db, highlight)
 
-    if resolution.anchor_kind == "pdf_page_geometry":
-        return _render_pdf_highlight_context(db, highlight, resolution)
-
-    # Future non-fragment anchor kinds fall back to exact-only rendering.
-    return _render_fallback_highlight_context(db, highlight, resolution)
+    return _render_pdf_highlight_context(db, highlight)
 
 
-def _render_fragment_highlight_context(db, highlight, resolution) -> str | None:
+def _render_fragment_highlight_context(db, highlight) -> str | None:
     """Render a fragment-anchored highlight context."""
-    fragment = highlight.fragment
-    if fragment is None:
+    fragment_anchor = highlight.fragment_anchor
+    if fragment_anchor is None or fragment_anchor.fragment is None:
         return None
-    media = fragment.media
+    fragment = fragment_anchor.fragment
+    if fragment.media_id != highlight.anchor_media_id:
+        return None
+    media = db.get(Media, fragment.media_id)
+    if media is None:
+        return None
 
     context_window = get_context_window(
         db,
         fragment.id,
-        highlight.start_offset,
-        highlight.end_offset,
+        fragment_anchor.start_offset,
+        fragment_anchor.end_offset,
     )
 
     lines = ["<highlight>", f"<source>{xml_escape(media.title)}</source>"]
@@ -398,20 +412,16 @@ def _resolve_pdf_nearby_context(
     return _build_pdf_nearby_context(plain_text, result.start_offset, result.end_offset)
 
 
-def _render_pdf_highlight_context(db, highlight, resolution) -> str | None:
+def _render_pdf_highlight_context(db, highlight) -> str | None:
     """Render a PDF-anchored highlight context with deterministic degrade semantics."""
-    media_id = resolution.anchor_media_id
-    if media_id is None:
+    pdf_anchor = highlight.pdf_anchor
+    if pdf_anchor is None or pdf_anchor.media_id != highlight.anchor_media_id:
         return None
-    media = db.get(Media, media_id)
+    media = db.get(Media, pdf_anchor.media_id)
     if media is None:
         return None
-    if not is_pdf_quote_text_ready(db, media_id):
+    if not is_pdf_quote_text_ready(db, pdf_anchor.media_id):
         raise QuoteContextBlockingError(ApiErrorCode.E_MEDIA_NOT_READY)
-
-    pdf_anchor = highlight.pdf_anchor
-    if pdf_anchor is None:
-        return None
 
     lines = ["<highlight>", f"<source>{xml_escape(media.title)}</source>"]
     if media.canonical_source_url:
@@ -424,20 +434,16 @@ def _render_pdf_highlight_context(db, highlight, resolution) -> str | None:
     return "\n".join(lines)
 
 
-def _render_pdf_annotation_context(db, highlight, annotation, resolution) -> str | None:
+def _render_pdf_annotation_context(db, highlight, annotation) -> str | None:
     """Render a PDF-anchored annotation context with deterministic degrade semantics."""
-    media_id = resolution.anchor_media_id
-    if media_id is None:
+    pdf_anchor = highlight.pdf_anchor
+    if pdf_anchor is None or pdf_anchor.media_id != highlight.anchor_media_id:
         return None
-    media = db.get(Media, media_id)
+    media = db.get(Media, pdf_anchor.media_id)
     if media is None:
         return None
-    if not is_pdf_quote_text_ready(db, media_id):
+    if not is_pdf_quote_text_ready(db, pdf_anchor.media_id):
         raise QuoteContextBlockingError(ApiErrorCode.E_MEDIA_NOT_READY)
-
-    pdf_anchor = highlight.pdf_anchor
-    if pdf_anchor is None:
-        return None
 
     lines = ["<annotation>", f"<source>{xml_escape(media.title)}</source>"]
     if media.canonical_source_url:
@@ -451,33 +457,8 @@ def _render_pdf_annotation_context(db, highlight, annotation, resolution) -> str
     return "\n".join(lines)
 
 
-def _render_fallback_highlight_context(db, highlight, resolution) -> str | None:
-    """Fallback rendering for non-fragment highlight contexts (pr-05+)."""
-    from nexus.db.models import Media as MediaModel
-
-    media_id = resolution.anchor_media_id
-    if media_id is None:
-        return None
-    media = db.get(MediaModel, media_id)
-    if media is None:
-        return None
-
-    lines = ["<highlight>", f"<source>{xml_escape(media.title)}</source>"]
-    if media.canonical_source_url:
-        lines.append(f"<url>{xml_escape(media.canonical_source_url)}</url>")
-    if highlight.exact:
-        lines.append(f"<quote>{xml_escape(highlight.exact)}</quote>")
-    lines.append("</highlight>")
-    return "\n".join(lines)
-
-
 def _render_annotation_context(db: Session, annotation_id: UUID) -> str | None:
-    """Render an annotation context (highlight + annotation note).
-
-    S6 PR-02: uses anchor-kind dispatch via highlight rendering seam.
-    """
-    from nexus.services.highlight_kernel import ResolverState, resolve_highlight
-
+    """Render an annotation context (highlight + annotation note)."""
     annotation = db.get(Annotation, annotation_id)
     if not annotation:
         return None
@@ -486,38 +467,39 @@ def _render_annotation_context(db: Session, annotation_id: UUID) -> str | None:
     if not highlight:
         return None
 
-    resolution = resolve_highlight(highlight)
-    if resolution.state != ResolverState.ok:
+    anchor_kind = _resolve_renderable_highlight_kind(highlight)
+    if anchor_kind is None:
         logger.warning(
-            "context_render_annotation_mismatch",
+            "context_render_annotation_unrenderable",
             annotation_id=str(annotation_id),
             highlight_id=str(highlight.id),
-            mismatch_code=resolution.mismatch_code.value if resolution.mismatch_code else None,
+            anchor_kind=highlight.anchor_kind,
         )
         return None
 
-    if resolution.anchor_kind == "fragment_offsets":
-        return _render_fragment_annotation_context(db, highlight, annotation, resolution)
+    if anchor_kind == "fragment_offsets":
+        return _render_fragment_annotation_context(db, highlight, annotation)
 
-    if resolution.anchor_kind == "pdf_page_geometry":
-        return _render_pdf_annotation_context(db, highlight, annotation, resolution)
-
-    # Future non-fragment anchor kinds fall back to exact-only rendering.
-    return _render_fallback_annotation_context(db, highlight, annotation, resolution)
+    return _render_pdf_annotation_context(db, highlight, annotation)
 
 
-def _render_fragment_annotation_context(db, highlight, annotation, resolution) -> str | None:
+def _render_fragment_annotation_context(db, highlight, annotation) -> str | None:
     """Render a fragment-anchored annotation context."""
-    fragment = highlight.fragment
-    if fragment is None:
+    fragment_anchor = highlight.fragment_anchor
+    if fragment_anchor is None or fragment_anchor.fragment is None:
         return None
-    media = fragment.media
+    fragment = fragment_anchor.fragment
+    if fragment.media_id != highlight.anchor_media_id:
+        return None
+    media = db.get(Media, fragment.media_id)
+    if media is None:
+        return None
 
     context_window = get_context_window(
         db,
         fragment.id,
-        highlight.start_offset,
-        highlight.end_offset,
+        fragment_anchor.start_offset,
+        fragment_anchor.end_offset,
     )
 
     lines = ["<annotation>", f"<source>{xml_escape(media.title)}</source>"]
@@ -531,26 +513,5 @@ def _render_fragment_annotation_context(db, highlight, annotation, resolution) -
     lines.append(f"<note>{xml_escape(annotation.body)}</note>")
     if context_window.text != highlight.exact:
         lines.append(f"<surrounding>{xml_escape(context_window.text)}</surrounding>")
-    lines.append("</annotation>")
-    return "\n".join(lines)
-
-
-def _render_fallback_annotation_context(db, highlight, annotation, resolution) -> str | None:
-    """Fallback rendering for non-fragment annotation contexts (pr-05+)."""
-    from nexus.db.models import Media as MediaModel
-
-    media_id = resolution.anchor_media_id
-    if media_id is None:
-        return None
-    media = db.get(MediaModel, media_id)
-    if media is None:
-        return None
-
-    lines = ["<annotation>", f"<source>{xml_escape(media.title)}</source>"]
-    if media.canonical_source_url:
-        lines.append(f"<url>{xml_escape(media.canonical_source_url)}</url>")
-    if highlight.exact:
-        lines.append(f"<quote>{xml_escape(highlight.exact)}</quote>")
-    lines.append(f"<note>{xml_escape(annotation.body)}</note>")
     lines.append("</annotation>")
     return "\n".join(lines)

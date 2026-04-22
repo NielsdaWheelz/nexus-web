@@ -780,37 +780,6 @@ def get_user_library(session: Session, user_id: UUID) -> UUID | None:
 
 
 # =============================================================================
-# S6 PR-02: Typed-Highlight Test Factories
-# =============================================================================
-
-
-def create_dormant_fragment_highlight(
-    session: Session,
-    user_id: UUID,
-    fragment_id: UUID,
-    start_offset: int = 0,
-    end_offset: int = 20,
-    exact: str = "highlighted text",
-) -> UUID:
-    """Create a legacy bridge-only highlight for rejection-path tests."""
-    highlight = Highlight(
-        id=uuid4(),
-        user_id=user_id,
-        fragment_id=fragment_id,
-        start_offset=start_offset,
-        end_offset=end_offset,
-        anchor_kind=None,
-        anchor_media_id=None,
-        color="yellow",
-        exact=exact,
-        prefix="",
-        suffix="",
-    )
-    session.add(highlight)
-    session.commit()
-    return highlight.id
-
-
 def create_normalized_fragment_highlight(
     session: Session,
     user_id: UUID,
@@ -820,10 +789,7 @@ def create_normalized_fragment_highlight(
     end_offset: int = 20,
     exact: str = "highlighted text",
 ) -> UUID:
-    """Create a fully normalized fragment highlight (pr-02 canonical shape).
-
-    Logical fields set, legacy bridge populated, fragment_anchor subtype row present.
-    """
+    """Create a fully normalized fragment highlight with its subtype row."""
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,
@@ -912,10 +878,7 @@ def create_mismatched_fragment_highlight(
     start_offset: int = 0,
     end_offset: int = 20,
 ) -> UUID:
-    """Create a fragment highlight with irreconcilable bridge-vs-subtype mismatch.
-
-    Legacy bridge points to fragment_id but subtype row points to other_fragment_id.
-    """
+    """Create a fragment highlight whose subtype row points to another fragment."""
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,

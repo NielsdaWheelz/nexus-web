@@ -66,14 +66,16 @@ def derive_capabilities(
 
     status_ready_for_reading = processing_status in _READY_PROCESSING_STATUSES
     is_failed = processing_status == ProcessingStatus.failed.value
-    is_transcript_unavailable = is_failed and last_error_code == "E_TRANSCRIPT_UNAVAILABLE"
+    is_transcript_unavailable = False
+    transcript_ready = False
 
-    transcript_ready = status_ready_for_reading
     if is_transcript_media and transcript_state is not None:
         is_transcript_unavailable = transcript_state == TranscriptState.unavailable.value
         transcript_ready = transcript_state in _READABLE_TRANSCRIPT_STATES and (
             transcript_coverage in _READABLE_TRANSCRIPT_COVERAGES
         )
+    elif is_failed and last_error_code == "E_TRANSCRIPT_UNAVAILABLE":
+        is_transcript_unavailable = True
 
     can_download_file = media_file_exists
 

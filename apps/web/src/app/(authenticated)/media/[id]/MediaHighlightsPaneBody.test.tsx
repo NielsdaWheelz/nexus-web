@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PdfHighlightOut } from "@/components/PdfReader";
-import type { Highlight } from "./mediaHelpers";
+import type { Highlight } from "./mediaHighlights";
 import MediaHighlightsPaneBody from "./MediaHighlightsPaneBody";
 
 const mockHighlightsPane = vi.fn((props: Record<string, unknown>) => {
