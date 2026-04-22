@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  parseWorkspaceHref,
   WORKSPACE_SCHEMA_VERSION,
   WORKSPACE_STATE_PARAM,
   WORKSPACE_VERSION_PARAM,
@@ -192,7 +193,15 @@ export function buildWorkspaceUrl(
       ? window.location.origin
       : "http://localhost");
 
-  const parsed = new URL(primaryHref, baseOrigin);
+  const parsed =
+    parseWorkspaceHref(primaryHref, { baseOrigin }) ??
+    parseWorkspaceHref(WORKSPACE_DEFAULT_FALLBACK_HREF, { baseOrigin });
+  if (!parsed) {
+    return {
+      href: WORKSPACE_DEFAULT_FALLBACK_HREF,
+      errorCode: "encode_failed",
+    };
+  }
   const params = stripWorkspaceParams(new URLSearchParams(parsed.search));
 
   // Single pane → omit workspace params from URL

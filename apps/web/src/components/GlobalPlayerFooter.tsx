@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import {
+  getTrackChapterAtSeconds,
+  useGlobalPlayer,
+} from "@/lib/player/globalPlayer";
 import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
   formatPlaybackSpeedLabel,
@@ -39,25 +42,6 @@ function formatClock(seconds: number): string {
       .padStart(2, "0")}`;
   }
   return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
-}
-
-function resolveCurrentChapter(
-  chapters: NonNullable<ReturnType<typeof useGlobalPlayer>["track"]>["chapters"],
-  currentSeconds: number
-) {
-  if (!chapters || chapters.length === 0) {
-    return null;
-  }
-  const currentMs = Math.max(0, Math.floor(currentSeconds * 1000));
-  let activeChapter = null;
-  for (const chapter of chapters) {
-    if (chapter.t_start_ms <= currentMs) {
-      activeChapter = chapter;
-      continue;
-    }
-    break;
-  }
-  return activeChapter;
 }
 
 function EffectsPanel({
@@ -242,7 +226,7 @@ export default function GlobalPlayerFooter() {
           }))
           .filter((chapter) => Number.isFinite(chapter.leftPercent))
       : [];
-  const currentChapter = resolveCurrentChapter(track.chapters ?? [], currentSafe);
+  const currentChapter = getTrackChapterAtSeconds(track.chapters ?? [], currentSafe);
 
   const onSeek = (nextValue: number) => {
     if (durationSafe <= 0) {

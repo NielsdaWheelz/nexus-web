@@ -25,7 +25,6 @@ import {
 } from "lucide-react";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { resolvePaneDescriptor } from "@/lib/workspace/paneDescriptor";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { apiFetch } from "@/lib/api/client";
 import {
@@ -44,6 +43,7 @@ import {
 } from "@/lib/keybindings";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
+import { normalizePaneTitle } from "@/lib/workspace/schema";
 import styles from "./CommandPalette.module.css";
 
 type Section = "Recent" | "Panes" | "Create" | "Navigate" | "Settings" | "Search Results";
@@ -162,7 +162,6 @@ export default function CommandPalette() {
     state: workspaceState,
     runtimeTitleByPaneId,
     openHintByPaneId,
-    resourceTitleByRef,
     activatePane,
     closePane,
   } = useWorkspaceStore();
@@ -336,15 +335,15 @@ export default function CommandPalette() {
   // Build pane-switching actions from workspace state
   const paneActions: Action[] = useMemo(() => {
     const panes = workspaceState.panes.map((pane) => {
-      const descriptor = resolvePaneDescriptor(pane, {
-        nowMs: Date.now(),
-        runtimeTitleByPaneId,
-        openHintByPaneId,
-        resourceTitleByRef,
-      });
+      const route = resolvePaneRoute(pane.href);
+      const label =
+        normalizePaneTitle(runtimeTitleByPaneId.get(pane.id)) ??
+        normalizePaneTitle(openHintByPaneId.get(pane.id)?.titleHint) ??
+        normalizePaneTitle(route.staticTitle) ??
+        "Pane";
       return {
         id: `pane-${pane.id}`,
-        label: descriptor.resolvedTitle,
+        label,
         keywords: ["tab", "pane", "switch"],
         section: "Panes" as Section,
         icon: PanelLeft,
@@ -358,7 +357,7 @@ export default function CommandPalette() {
         a.label.toLowerCase().includes(q) ||
         a.keywords.some((k) => k.includes(q)),
     );
-  }, [workspaceState.panes, runtimeTitleByPaneId, openHintByPaneId, resourceTitleByRef, activatePane, query]);
+  }, [workspaceState.panes, runtimeTitleByPaneId, openHintByPaneId, activatePane, query]);
 
   // Build search result actions
   const searchActions: Action[] = useMemo(

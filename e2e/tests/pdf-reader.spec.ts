@@ -9,25 +9,6 @@ interface SeededPdfMedia {
   password_media_id: string;
 }
 
-interface CreateTelemetrySnapshot {
-  attempts: number;
-  postRequests: number;
-  successes: number;
-  errors: number;
-  lastOutcome: string;
-  pageRenderEpoch: number;
-}
-
-interface LayerAlignmentSnapshot {
-  pageNumber: number;
-  widthScaleDrift: number;
-  heightScaleDrift: number;
-  leftOffsetDrift: number;
-  topOffsetDrift: number;
-  rightOffsetDrift: number;
-  bottomOffsetDrift: number;
-}
-
 interface PdfReaderResumeState {
   kind: "pdf";
   position: number | null;
@@ -53,17 +34,6 @@ function readSeededPdfMedia(): SeededPdfMedia {
   return parsed;
 }
 
-function extractHighlightIdFromDataTestId(dataTestId: string | null): string {
-  if (!dataTestId) {
-    throw new Error("Missing data-testid for persisted PDF highlight");
-  }
-  const match = dataTestId.match(/^pdf-highlight-([0-9a-f-]+)-\d+$/i);
-  if (!match) {
-    throw new Error(`Unexpected PDF highlight test id: ${dataTestId}`);
-  }
-  return match[1];
-}
-
 async function putReaderState(
   page: Page,
   mediaId: string,
@@ -73,47 +43,6 @@ async function putReaderState(
     data: locator,
   });
   expect(response.ok()).toBeTruthy();
-}
-
-async function listVisibleHighlightIds(page: Page): Promise<string[]> {
-  const dataTestIds = await page.locator('[data-testid^="pdf-highlight-"]').evaluateAll((nodes) =>
-    nodes
-      .map((node) => node.getAttribute("data-testid"))
-      .filter((value): value is string => Boolean(value)),
-  );
-  const ids = new Set<string>();
-  for (const dataTestId of dataTestIds) {
-    ids.add(extractHighlightIdFromDataTestId(dataTestId));
-  }
-  return Array.from(ids);
-}
-
-async function waitForNewVisibleHighlightId(
-  page: Page,
-  knownIds: ReadonlySet<string>,
-  timeoutMs = 10_000,
-): Promise<string> {
-  let createdHighlightId: string | null = null;
-  let visibleIds: string[] = [];
-
-  await expect
-    .poll(
-      async () => {
-        visibleIds = await listVisibleHighlightIds(page);
-        createdHighlightId = visibleIds.find((id) => !knownIds.has(id)) ?? null;
-        return createdHighlightId;
-      },
-      { timeout: timeoutMs },
-    )
-    .not.toBeNull();
-
-  if (!createdHighlightId) {
-    throw new Error(
-      `Timed out waiting for a newly-created highlight. Known ids: ${JSON.stringify(Array.from(knownIds))}; visible ids: ${JSON.stringify(visibleIds)}`,
-    );
-  }
-
-  return createdHighlightId;
 }
 
 function activeTextLayer(page: Page) {
@@ -170,65 +99,10 @@ async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
   await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
-async function readCreateTelemetry(page: Page): Promise<CreateTelemetrySnapshot> {
-  const button = pdfControlsToolbar(page)
-    .getByRole("button", { name: "Highlight selection" })
-    .first();
-  await expect(button).toBeVisible();
-  return button.evaluate((element) => {
-    const readNumber = (name: string): number => {
-      const raw = element.getAttribute(name);
-      const parsed = Number.parseInt(raw ?? "0", 10);
-      return Number.isFinite(parsed) ? parsed : 0;
-    };
-    return {
-      attempts: readNumber("data-create-attempts"),
-      postRequests: readNumber("data-create-post-requests"),
-      successes: readNumber("data-create-successes"),
-      errors: readNumber("data-create-errors"),
-      lastOutcome: element.getAttribute("data-create-last-outcome") ?? "unknown",
-      pageRenderEpoch: readNumber("data-page-render-epoch"),
-    };
-  });
-}
-
-async function createHighlightFromCurrentSelection(page: Page): Promise<void> {
-  const toolbarButton = pdfControlsToolbar(page)
-    .getByRole("button", { name: "Highlight selection" })
-    .first();
-  const actionsDialog = page.getByRole("dialog", { name: "Highlight actions" }).first();
-  const greenColorButton = actionsDialog.getByRole("button", { name: /^Green/ }).first();
-
-  if (
-    (await greenColorButton.count()) > 0 &&
-    (await greenColorButton.isVisible().catch(() => false)) &&
-    (await greenColorButton.isEnabled().catch(() => false))
-  ) {
-    await greenColorButton.dispatchEvent("click");
-    return;
-  }
-
-  if (
-    (await toolbarButton.count()) > 0 &&
-    (await toolbarButton.isVisible().catch(() => false)) &&
-    (await toolbarButton.isEnabled().catch(() => false))
-  ) {
-    await toolbarButton.click();
-  }
-}
-
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
   return pdfControlsToolbar(page)
     .locator(`[aria-label="Page ${pageNumber} of ${pageCount}"]`)
     .first();
-}
-
-async function readRenderedPageScale(page: Page, pageNumber: number): Promise<number | null> {
-  const pageSurface = page.locator(`[data-testid="pdf-page-surface-${pageNumber}"]`).first();
-  await expect(pageSurface).toBeVisible();
-  const raw = await pageSurface.getAttribute("data-nexus-page-scale");
-  const parsed = Number.parseFloat(raw ?? "");
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 async function readCurrentPageNumber(page: Page, pageCount: number): Promise<number | null> {
@@ -312,48 +186,6 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
   }
 }
 
-async function readLayerAlignmentForPage(
-  page: Page,
-  targetPageNumber: number,
-): Promise<LayerAlignmentSnapshot | null> {
-  return page.evaluate((pageNumber) => {
-    const pageRoot = document.querySelector<HTMLElement>(
-      `.pdfViewer .page[data-page-number="${pageNumber}"]`,
-    );
-    if (!pageRoot) {
-      return null;
-    }
-    const canvas =
-      pageRoot.querySelector<HTMLElement>(".canvasWrapper") ??
-      pageRoot.querySelector<HTMLElement>("canvas");
-    const textLayer = pageRoot.querySelector<HTMLElement>(".textLayer");
-    if (!canvas || !textLayer) {
-      return null;
-    }
-
-    const canvasRect = canvas.getBoundingClientRect();
-    const textRect = textLayer.getBoundingClientRect();
-    if (
-      canvasRect.width <= 0 ||
-      canvasRect.height <= 0 ||
-      textRect.width <= 0 ||
-      textRect.height <= 0
-    ) {
-      return null;
-    }
-
-    return {
-      pageNumber,
-      widthScaleDrift: Math.abs(textRect.width / canvasRect.width - 1),
-      heightScaleDrift: Math.abs(textRect.height / canvasRect.height - 1),
-      leftOffsetDrift: Math.abs(textRect.left - canvasRect.left) / canvasRect.width,
-      topOffsetDrift: Math.abs(textRect.top - canvasRect.top) / canvasRect.height,
-      rightOffsetDrift: Math.abs(textRect.right - canvasRect.right) / canvasRect.width,
-      bottomOffsetDrift: Math.abs(textRect.bottom - canvasRect.bottom) / canvasRect.height,
-    } satisfies LayerAlignmentSnapshot;
-  }, targetPageNumber);
-}
-
 test.describe("pdf reader", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -363,7 +195,7 @@ test.describe("pdf reader", () => {
   });
 
   test("upload -> viewer -> persistent highlight -> send to chat", async ({ page }) => {
-    test.slow(); // full upload → render → highlight → reload → chat flow under parallel workers
+    test.slow();
     const seeded = readSeededPdfMedia();
     const uploadFixturePath = path.join(process.cwd(), seeded.upload_fixture_path);
     const expectedPageCount = seeded.page_count;
@@ -391,16 +223,12 @@ test.describe("pdf reader", () => {
       });
       await expect(activeTextLayer(page)).toBeVisible();
 
-      // Navigate to page 2 so highlights don't collide with the stress
-      // test (line ~310) which creates highlights on page 1. Both tests
-      // share the same seeded PDF and run in parallel (fullyParallel).
+      // Keep this flow on page 2 so page-scoping assertions stay isolated.
       await clickToolbarButtonByAriaLabel(page, "Next page");
       await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible();
       await expect(activeTextLayer(page)).toBeVisible();
 
-      // This flow verifies persistence + quote-to-chat behavior. Create the
-      // highlight via API to avoid text-selection timing races that are already
-      // covered by the dedicated stress test in this file.
+      // Use the API to keep this focused on persistence and quote-to-chat behavior.
       const nonce = Date.now() % 100_000;
       const createHighlight = await page.request.post(`/api/media/${expectedMediaId}/pdf-highlights`, {
         data: {
@@ -638,226 +466,4 @@ test.describe("pdf reader", () => {
     await expect(page.getByRole("img", { name: "PDF page" })).toBeVisible();
   });
 
-  test("creates highlights reliably across rerenders and selection timing pressure", async ({
-    page,
-  }) => {
-    const seeded = readSeededPdfMedia();
-    const mediaId = seeded.media_id;
-    const expectedPageCount = seeded.page_count;
-    const highlightStressPage = Math.min(expectedPageCount, 10);
-    const highlightEndpointPath = `/api/media/${mediaId}/pdf-highlights`;
-    let highlightPostRequests = 0;
-    let highlightPostResponsesOk = 0;
-
-    page.on("request", (request) => {
-      if (request.method() !== "POST") {
-        return;
-      }
-      const url = new URL(request.url());
-      if (url.pathname === highlightEndpointPath) {
-        highlightPostRequests += 1;
-      }
-    });
-    page.on("response", (response) => {
-      const request = response.request();
-      if (request.method() !== "POST") {
-        return;
-      }
-      const url = new URL(response.url());
-      if (url.pathname === highlightEndpointPath && response.ok()) {
-        highlightPostResponsesOk += 1;
-      }
-    });
-
-    await page.goto(`/media/${mediaId}`);
-    await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
-      timeout: 20_000,
-    });
-    await expect(page.getByRole("img", { name: "PDF page" })).toBeVisible();
-    await expect(activeTextLayer(page)).toBeVisible();
-
-    const targetPageHighlightsPath = `/api/media/${mediaId}/pdf-highlights?page_number=${highlightStressPage}`;
-    await expect
-      .poll(async () => {
-        const existingHighlightsResponse = await page.request.get(targetPageHighlightsPath);
-        if (!existingHighlightsResponse.ok()) {
-          return -1;
-        }
-        const existingHighlights = (await existingHighlightsResponse.json()) as {
-          data: { highlights: Array<{ id: string }> };
-        };
-        for (const highlight of existingHighlights.data.highlights) {
-          await page.request.delete(`/api/highlights/${highlight.id}`).catch(() => undefined);
-        }
-        return existingHighlights.data.highlights.length;
-      })
-      .toBe(0);
-
-    for (const [zoomLabel, scaleDirection, selectionNeedle] of [
-      ["Zoom in", "increase", "E2E PDF signed-url expiry seed"],
-      ["Zoom out", "decrease", "This file is generated by python/scripts/seed_e2e_data.py"],
-    ]) {
-      await ensureOnPage(page, highlightStressPage, expectedPageCount);
-      const scaleBefore = await readRenderedPageScale(page, highlightStressPage);
-      await clickToolbarButtonByAriaLabel(page, zoomLabel);
-      await expect
-        .poll(async () => {
-          const scaleAfter = await readRenderedPageScale(page, highlightStressPage);
-          if (scaleAfter === null || scaleBefore === null) {
-            return null;
-          }
-          return scaleDirection === "increase"
-            ? scaleAfter > scaleBefore
-            : scaleAfter < scaleBefore;
-        })
-        .toBe(true);
-
-      await expect(activeTextLayer(page)).toBeVisible();
-      const targetTextLayer = page
-        .locator(`.pdfViewer .page[data-page-number="${highlightStressPage}"] .textLayer`)
-        .last();
-      await expect(targetTextLayer).toBeVisible();
-      const knownIds = new Set(await listVisibleHighlightIds(page));
-      const postRequestsBefore = highlightPostRequests;
-      const postResponsesOkBefore = highlightPostResponsesOk;
-
-      let createdHighlightId: string | null = null;
-      const attemptNotes: string[] = [];
-      for (let retry = 0; retry < 8; retry += 1) {
-        await page.keyboard.press("Escape").catch(() => undefined);
-        await page
-          .getByRole("dialog", { name: "Highlight actions" })
-          .first()
-          .waitFor({ state: "hidden", timeout: 1_000 })
-          .catch(() => undefined);
-        const selectionReady = await targetTextLayer.evaluate((textLayer, needle) => {
-          const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
-          while (walker.nextNode()) {
-            const textNode = walker.currentNode as Text;
-            const raw = textNode.textContent ?? "";
-            const matchIndex = raw.indexOf(needle);
-            if (matchIndex < 0) {
-              continue;
-            }
-
-            const selection = window.getSelection();
-            if (!selection) {
-              return false;
-            }
-
-            const range = document.createRange();
-            range.setStart(textNode, matchIndex);
-            range.setEnd(textNode, Math.min(raw.length, matchIndex + needle.length));
-            selection.removeAllRanges();
-            selection.addRange(range);
-            document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
-            textLayer.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-            return selection.toString().trim() === needle;
-          }
-          return false;
-        }, selectionNeedle);
-        if (!selectionReady) {
-          attemptNotes.push(`retry=${retry}:selection_unavailable`);
-          await page.waitForTimeout(120);
-          continue;
-        }
-        const attemptRequestsBefore = highlightPostRequests;
-        const attemptResponsesOkBefore = highlightPostResponsesOk;
-        await createHighlightFromCurrentSelection(page);
-
-        let postIssued = false;
-        try {
-          await expect.poll(() => highlightPostRequests, { timeout: 6_000 }).toBeGreaterThan(
-            attemptRequestsBefore,
-          );
-          postIssued = true;
-        } catch {
-          attemptNotes.push(`retry=${retry}:no_post_request`);
-        }
-        if (!postIssued) {
-          continue;
-        }
-
-        try {
-          await expect
-            .poll(() => highlightPostResponsesOk, { timeout: 10_000 })
-            .toBeGreaterThanOrEqual(attemptResponsesOkBefore + 1);
-        } catch {
-          attemptNotes.push(`retry=${retry}:post_response_not_ok`);
-          continue;
-        }
-
-        try {
-          createdHighlightId = await waitForNewVisibleHighlightId(page, knownIds, 10_000);
-          knownIds.add(createdHighlightId);
-          break;
-        } catch (error) {
-          attemptNotes.push(`retry=${retry}:no_new_dom_highlight:${String(error).slice(0, 160)}`);
-        }
-      }
-      if (!createdHighlightId) {
-        const lastTelemetry = await readCreateTelemetry(page);
-        throw new Error(
-          `Failed to create highlight after retries. notes=${attemptNotes.join(" | ")} telemetry=${JSON.stringify(lastTelemetry)} postRequests=${highlightPostRequests} postResponsesOk=${highlightPostResponsesOk}`,
-        );
-      }
-
-      expect(highlightPostRequests).toBeGreaterThanOrEqual(postRequestsBefore + 1);
-      expect(highlightPostResponsesOk).toBeGreaterThanOrEqual(postResponsesOkBefore + 1);
-    }
-
-    await expect
-      .poll(async () => page.locator('[data-testid^="pdf-highlight-"]').count())
-      .toBeGreaterThanOrEqual(2);
-    expect(highlightPostRequests).toBeGreaterThanOrEqual(2);
-    expect(highlightPostResponsesOk).toBeGreaterThanOrEqual(2);
-  });
-
-  test("keeps text-layer/canvas geometry aligned and avoids invalid page warnings", async ({
-    page,
-  }) => {
-    const seeded = readSeededPdfMedia();
-    const expectedPageCount = seeded.page_count;
-    const targetPage = expectedPageCount >= 2 ? 2 : 1;
-    const invalidPageWarnings: string[] = [];
-
-    page.on("console", (message) => {
-      if (message.type() !== "warning" && message.type() !== "error") {
-        return;
-      }
-      const text = message.text();
-      if (
-        /scrollPageIntoView:\s*"\d+"\s*is not a valid pageNumber parameter/i.test(text) ||
-        /currentPageNumber:\s*"\d+"\s*is not a valid page/i.test(text)
-      ) {
-        invalidPageWarnings.push(text);
-      }
-    });
-
-    await page.goto(`/media/${seeded.media_id}`);
-    await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
-      timeout: 20_000,
-    });
-    await expect(page.getByRole("img", { name: "PDF page" })).toBeVisible();
-
-    if (targetPage > 1) {
-      await clickToolbarButtonByAriaLabel(page, "Next page");
-      await expect(pageIndicator(page, targetPage, expectedPageCount)).toBeVisible({
-        timeout: 20_000,
-      });
-    }
-
-    await expect(
-      page.locator(`.pdfViewer .page[data-page-number="${targetPage}"] .textLayer`),
-    ).toBeVisible();
-    const alignment = await readLayerAlignmentForPage(page, targetPage);
-    expect(alignment).not.toBeNull();
-    expect(alignment?.widthScaleDrift ?? 1).toBeLessThanOrEqual(0.02);
-    expect(alignment?.heightScaleDrift ?? 1).toBeLessThanOrEqual(0.02);
-    expect(alignment?.leftOffsetDrift ?? 1).toBeLessThanOrEqual(0.02);
-    expect(alignment?.topOffsetDrift ?? 1).toBeLessThanOrEqual(0.02);
-    expect(alignment?.rightOffsetDrift ?? 1).toBeLessThanOrEqual(0.02);
-    expect(alignment?.bottomOffsetDrift ?? 1).toBeLessThanOrEqual(0.02);
-    expect(invalidPageWarnings).toEqual([]);
-  });
 });

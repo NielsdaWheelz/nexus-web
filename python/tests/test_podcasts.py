@@ -7975,25 +7975,10 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             assert original_fragment_row is not None
             assert original_fragment_row[1] == first_version_id
 
-            transcript_anchor_row = session.execute(
-                text(
-                    """
-                    SELECT transcript_version_id, t_start_ms, t_end_ms
-                    FROM highlight_transcript_anchors
-                    WHERE highlight_id = :highlight_id
-                    """
-                ),
-                {"highlight_id": highlight_id},
-            ).fetchone()
-
             from nexus.services.context_rendering import _render_highlight_context
 
             rendered_context = _render_highlight_context(session, highlight_id)
 
-        assert transcript_anchor_row is not None
-        assert transcript_anchor_row[0] == first_version_id
-        assert transcript_anchor_row[1] == 0
-        assert transcript_anchor_row[2] == 1200
         assert rendered_context is not None
         assert "<timestamp>00:00:00</timestamp>" in rendered_context
         assert "<speaker>SpeakerA</speaker>" in rendered_context
@@ -8007,7 +7992,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         assert anchor["type"] == "fragment_offsets"
         assert anchor["fragment_id"] == str(first_fragment_id)
 
-    def test_highlight_offset_updates_keep_transcript_anchor_offsets_in_sync(
+    def test_highlight_offset_updates_fragment_anchor_offsets(
         self, auth_client, monkeypatch, direct_db
     ):
         seeded = self._seed_metadata_only_episode(
@@ -8070,16 +8055,6 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         assert anchor_payload["end_offset"] == 8
 
         with direct_db.session() as session:
-            transcript_anchor_row = session.execute(
-                text(
-                    """
-                    SELECT start_offset, end_offset
-                    FROM highlight_transcript_anchors
-                    WHERE highlight_id = :highlight_id
-                    """
-                ),
-                {"highlight_id": highlight_id},
-            ).fetchone()
             fragment_anchor_row = session.execute(
                 text(
                     """
@@ -8094,9 +8069,6 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         assert fragment_anchor_row is not None
         assert fragment_anchor_row[0] == 2
         assert fragment_anchor_row[1] == 8
-        assert transcript_anchor_row is not None
-        assert transcript_anchor_row[0] == 2
-        assert transcript_anchor_row[1] == 8
 
     def test_transcript_request_reason_is_durably_audited_per_request(
         self, auth_client, monkeypatch, direct_db

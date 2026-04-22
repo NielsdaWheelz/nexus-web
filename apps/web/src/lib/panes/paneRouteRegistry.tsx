@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { parseWorkspaceHref } from "@/lib/workspace/schema";
 import LibrariesPaneBody from "@/app/(authenticated)/libraries/LibrariesPaneBody";
 import LibraryPaneBody from "@/app/(authenticated)/libraries/[id]/LibraryPaneBody";
 import MediaPaneBody from "@/app/(authenticated)/media/[id]/MediaPaneBody";
@@ -363,13 +364,7 @@ function matchPattern(pathname: string, pattern: RoutePattern): RouteParams | nu
 }
 
 function parseHrefPathname(href: string): string {
-  const baseOrigin =
-    typeof window !== "undefined" &&
-    window.location.origin &&
-    window.location.origin !== "null"
-      ? window.location.origin
-      : "http://localhost";
-  return new URL(href, baseOrigin).pathname;
+  return parseWorkspaceHref(href)?.pathname ?? "/";
 }
 
 /**

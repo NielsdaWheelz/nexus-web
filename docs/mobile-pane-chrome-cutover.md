@@ -91,7 +91,6 @@ paths, or backward-compatibility shims.
 - `apps/web/src/components/PdfReader.module.css`
 - `apps/web/src/app/(authenticated)/media/[id]/transcriptView.ts`
 - `apps/web/src/__tests__/components/PaneShell.test.tsx`
-- `apps/web/src/__tests__/components/PdfReader.test.tsx`
 - `e2e/tests/pane-chrome.spec.ts`
 - `e2e/tests/pdf-reader.spec.ts`
 - `e2e/tests/epub.spec.ts`

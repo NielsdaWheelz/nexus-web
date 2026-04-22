@@ -17,19 +17,42 @@ Routes are transport-only and call exactly one service function.
 
 import base64
 import json
+from collections.abc import Sequence
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from nexus.auth.permissions import can_read_conversation
-from nexus.db.models import Conversation, Message
+from nexus.db.models import (
+    Annotation,
+    Conversation,
+    Highlight,
+    HighlightFragmentAnchor,
+    Media,
+    Message,
+    MessageContext,
+)
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
-from nexus.schemas.conversation import ConversationOut, MessageOut, PageInfo
+from nexus.schemas.conversation import (
+    HIGHLIGHT_COLORS,
+    ConversationOut,
+    MessageContextSnapshot,
+    MessageOut,
+    PageInfo,
+)
 
 logger = get_logger(__name__)
+
+
+def _message_context_color(color: str | None) -> HIGHLIGHT_COLORS | None:
+    if color not in {"yellow", "green", "blue", "pink", "purple"}:
+        return None
+    return cast(HIGHLIGHT_COLORS, color)
+
 
 # =============================================================================
 # Constants
@@ -208,19 +231,208 @@ def conversation_to_out(
     )
 
 
-def message_to_out(message: Message) -> MessageOut:
+def message_to_out(
+    message: Message,
+    contexts: list[MessageContextSnapshot] | None = None,
+) -> MessageOut:
     """Convert Message ORM model to MessageOut schema."""
     return MessageOut(
         id=message.id,
         seq=message.seq,
         role=message.role,
         content=message.content,
-        contexts=message.context_items or [],
+        contexts=contexts or [],
         status=message.status,
         error_code=message.error_code,
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
+
+
+def _resolve_context_highlight_media_id(highlight: Highlight) -> UUID | None:
+    """Return the canonical media id for a typed highlight context."""
+
+    media_id = highlight.anchor_media_id
+    if media_id is None:
+        return None
+
+    if highlight.anchor_kind == "fragment_offsets":
+        fragment_anchor = highlight.fragment_anchor
+        fragment = fragment_anchor.fragment if fragment_anchor is not None else None
+        if fragment is not None and fragment.media_id == media_id:
+            return media_id
+        return None
+
+    if highlight.anchor_kind == "pdf_page_geometry":
+        pdf_anchor = highlight.pdf_anchor
+        if pdf_anchor is not None and pdf_anchor.media_id == media_id:
+            return media_id
+        return None
+
+    return None
+
+
+def _message_context_snapshot_from_media(
+    context_id: UUID,
+    media: Media | None,
+) -> MessageContextSnapshot:
+    if media is None:
+        return MessageContextSnapshot(type="media", id=context_id)
+
+    return MessageContextSnapshot(
+        type="media",
+        id=context_id,
+        preview=media.title,
+        media_id=media.id,
+        media_title=media.title,
+        media_kind=media.kind,
+    )
+
+
+def _message_context_snapshot_from_highlight(
+    context_id: UUID,
+    highlight: Highlight | None,
+    media_by_id: dict[UUID, Media],
+) -> MessageContextSnapshot:
+    if highlight is None:
+        return MessageContextSnapshot(type="highlight", id=context_id)
+
+    media_id = _resolve_context_highlight_media_id(highlight)
+    media = media_by_id.get(media_id) if media_id is not None else None
+    return MessageContextSnapshot(
+        type="highlight",
+        id=context_id,
+        color=_message_context_color(highlight.color),
+        preview=highlight.exact,
+        exact=highlight.exact,
+        prefix=highlight.prefix,
+        suffix=highlight.suffix,
+        annotation_body=highlight.annotation.body if highlight.annotation is not None else None,
+        media_id=media.id if media is not None else media_id,
+        media_title=media.title if media is not None else None,
+        media_kind=media.kind if media is not None else None,
+    )
+
+
+def _message_context_snapshot_from_annotation(
+    context_id: UUID,
+    annotation: Annotation | None,
+    media_by_id: dict[UUID, Media],
+) -> MessageContextSnapshot:
+    if annotation is None:
+        return MessageContextSnapshot(type="annotation", id=context_id)
+
+    highlight = annotation.highlight
+    if highlight is None:
+        return MessageContextSnapshot(
+            type="annotation",
+            id=context_id,
+            annotation_body=annotation.body,
+        )
+
+    media_id = _resolve_context_highlight_media_id(highlight)
+    media = media_by_id.get(media_id) if media_id is not None else None
+    return MessageContextSnapshot(
+        type="annotation",
+        id=context_id,
+        color=_message_context_color(highlight.color),
+        preview=highlight.exact,
+        exact=highlight.exact,
+        prefix=highlight.prefix,
+        suffix=highlight.suffix,
+        annotation_body=annotation.body,
+        media_id=media.id if media is not None else media_id,
+        media_title=media.title if media is not None else None,
+        media_kind=media.kind if media is not None else None,
+    )
+
+
+def load_message_context_snapshots_for_message_ids(
+    db: Session,
+    message_ids: list[UUID],
+) -> dict[UUID, list[MessageContextSnapshot]]:
+    """Load typed context snapshots for the given messages."""
+
+    if not message_ids:
+        return {}
+
+    context_rows = list(
+        db.scalars(
+            select(MessageContext)
+            .options(
+                joinedload(MessageContext.media),
+                joinedload(MessageContext.highlight).joinedload(Highlight.annotation),
+                joinedload(MessageContext.highlight)
+                .joinedload(Highlight.fragment_anchor)
+                .joinedload(HighlightFragmentAnchor.fragment),
+                joinedload(MessageContext.highlight).joinedload(Highlight.pdf_anchor),
+                joinedload(MessageContext.annotation)
+                .joinedload(Annotation.highlight)
+                .joinedload(Highlight.annotation),
+                joinedload(MessageContext.annotation)
+                .joinedload(Annotation.highlight)
+                .joinedload(Highlight.fragment_anchor)
+                .joinedload(HighlightFragmentAnchor.fragment),
+                joinedload(MessageContext.annotation)
+                .joinedload(Annotation.highlight)
+                .joinedload(Highlight.pdf_anchor),
+            )
+            .where(MessageContext.message_id.in_(message_ids))
+            .order_by(MessageContext.message_id.asc(), MessageContext.ordinal.asc())
+        )
+    )
+
+    media_ids: set[UUID] = set()
+    for context_row in context_rows:
+        if context_row.media is not None:
+            media_ids.add(context_row.media.id)
+
+        highlight = context_row.highlight
+        if highlight is not None:
+            media_id = _resolve_context_highlight_media_id(highlight)
+            if media_id is not None:
+                media_ids.add(media_id)
+
+        annotation = context_row.annotation
+        annotation_highlight = annotation.highlight if annotation is not None else None
+        if annotation_highlight is not None:
+            media_id = _resolve_context_highlight_media_id(annotation_highlight)
+            if media_id is not None:
+                media_ids.add(media_id)
+
+    media_by_id = {
+        media.id: media for media in db.scalars(select(Media).where(Media.id.in_(media_ids))).all()
+    }
+
+    snapshots_by_message_id: dict[UUID, list[MessageContextSnapshot]] = {
+        message_id: [] for message_id in message_ids
+    }
+    for context_row in context_rows:
+        if context_row.target_type == "media":
+            if context_row.media_id is None:
+                continue
+            snapshot = _message_context_snapshot_from_media(context_row.media_id, context_row.media)
+        elif context_row.target_type == "highlight":
+            if context_row.highlight_id is None:
+                continue
+            snapshot = _message_context_snapshot_from_highlight(
+                context_row.highlight_id,
+                context_row.highlight,
+                media_by_id,
+            )
+        elif context_row.target_type == "annotation":
+            if context_row.annotation_id is None:
+                continue
+            snapshot = _message_context_snapshot_from_annotation(
+                context_row.annotation_id,
+                context_row.annotation,
+                media_by_id,
+            )
+        else:
+            continue
+        snapshots_by_message_id.setdefault(context_row.message_id, []).append(snapshot)
+
+    return snapshots_by_message_id
 
 
 # =============================================================================
@@ -419,7 +631,7 @@ def _list_conversations_visible(
 
 
 def _build_conversation_page(
-    rows: list, limit: int, viewer_id: UUID
+    rows: Sequence, limit: int, viewer_id: UUID
 ) -> tuple[list[ConversationOut], PageInfo]:
     """Build paginated response from raw rows."""
     has_more = len(rows) > limit
@@ -508,7 +720,7 @@ def list_messages(
         # Tuple comparison for ASC ordering: (seq, id) > (cursor.seq, cursor.id)
         result = db.execute(
             text("""
-                SELECT m.id, m.seq, m.role, m.content, m.context_items, m.status, m.error_code,
+                SELECT m.id, m.seq, m.role, m.content, m.status, m.error_code,
                        m.created_at, m.updated_at
                 FROM messages m
                 WHERE m.conversation_id = :conversation_id
@@ -526,7 +738,7 @@ def list_messages(
     else:
         result = db.execute(
             text("""
-                SELECT m.id, m.seq, m.role, m.content, m.context_items, m.status, m.error_code,
+                SELECT m.id, m.seq, m.role, m.content, m.status, m.error_code,
                        m.created_at, m.updated_at
                 FROM messages m
                 WHERE m.conversation_id = :conversation_id
@@ -546,17 +758,19 @@ def list_messages(
     if has_more:
         rows = rows[:limit]
 
+    message_ids = [row[0] for row in rows]
+    contexts_by_message_id = load_message_context_snapshots_for_message_ids(db, message_ids)
     messages = [
         MessageOut(
             id=row[0],
             seq=row[1],
             role=row[2],
             content=row[3],
-            contexts=row[4] or [],
-            status=row[5],
-            error_code=row[6],
-            created_at=row[7],
-            updated_at=row[8],
+            contexts=contexts_by_message_id.get(row[0], []),
+            status=row[4],
+            error_code=row[5],
+            created_at=row[6],
+            updated_at=row[7],
         )
         for row in rows
     ]

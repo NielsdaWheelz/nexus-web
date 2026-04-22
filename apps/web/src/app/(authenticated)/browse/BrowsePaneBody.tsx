@@ -12,6 +12,7 @@ import { apiFetch, isApiError } from "@/lib/api/client";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import { subscribeToPodcast } from "../podcasts/podcastSubscriptions";
 import styles from "./page.module.css";
 
 type BrowseSectionType = "documents" | "videos" | "podcasts" | "podcast_episodes";
@@ -476,24 +477,21 @@ export default function BrowsePaneBody() {
     setBusyKeys((current) => new Set(current).add(busyKey));
     setError(null);
     try {
-      const response = await apiFetch<{ data: { podcast_id: string } }>("/api/podcasts/subscriptions", {
-        method: "POST",
-        body: JSON.stringify({
-          provider_podcast_id: result.provider_podcast_id,
-          title: result.title,
-          author: result.author,
-          feed_url: result.feed_url,
-          website_url: result.website_url,
-          image_url: result.image_url,
-          description: result.description,
-          library_id: libraryId,
-        }),
+      const response = await subscribeToPodcast({
+        provider_podcast_id: result.provider_podcast_id,
+        title: result.title,
+        author: result.author,
+        feed_url: result.feed_url,
+        website_url: result.website_url,
+        image_url: result.image_url,
+        description: result.description,
+        library_id: libraryId,
       });
       setSections((current) =>
         updateSection(current, "podcasts", (results) =>
           updateSectionResults(results, isPodcastResult, (row) =>
             row.provider_podcast_id === result.provider_podcast_id
-              ? { ...row, podcast_id: response.data.podcast_id }
+              ? { ...row, podcast_id: response.podcast_id }
               : row
           )
         )

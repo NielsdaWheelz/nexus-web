@@ -12,6 +12,19 @@ export interface TranscriptPlaybackSource {
   embed_url?: string | null;
 }
 
+export type TranscriptState =
+  | "not_requested"
+  | "queued"
+  | "running"
+  | "failed_provider"
+  | "failed_quota"
+  | "unavailable"
+  | "ready"
+  | "partial"
+  | null;
+
+export type TranscriptCoverage = "none" | "partial" | "full" | null;
+
 export interface TranscriptFragment {
   id: string;
   canonical_text: string;
@@ -53,6 +66,26 @@ interface TranscriptFragmentSelectionOptions {
   requestedStartMs?: number | null;
   readerResumeFragmentId?: string | null;
   waitForInitialResumeState?: boolean;
+}
+
+export function canRequestTranscript(transcriptState: TranscriptState): boolean {
+  if (transcriptState === null) {
+    return false;
+  }
+
+  return !(
+    transcriptState === "queued" ||
+    transcriptState === "running" ||
+    transcriptState === "ready" ||
+    transcriptState === "partial" ||
+    transcriptState === "unavailable"
+  );
+}
+
+export function shouldPollTranscriptProvisioning(
+  transcriptState: TranscriptState
+): boolean {
+  return transcriptState === "queued" || transcriptState === "running";
 }
 
 export function formatTranscriptTimestampMs(

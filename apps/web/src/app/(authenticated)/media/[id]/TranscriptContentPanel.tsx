@@ -2,27 +2,20 @@
 
 import type { CSSProperties, MouseEvent, RefObject } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import { useReaderContext } from "@/lib/reader";
+import { useReaderContext } from "@/lib/reader/ReaderContext";
 import {
   formatTranscriptTimestampMs,
   normalizeTranscriptChapters,
   type TranscriptChapter,
+  type TranscriptCoverage,
   type TranscriptFragment,
+  type TranscriptState,
 } from "./transcriptView";
 import styles from "./page.module.css";
 
 interface TranscriptContentPanelProps {
-  transcriptState:
-    | "not_requested"
-    | "queued"
-    | "running"
-    | "failed_provider"
-    | "failed_quota"
-    | "unavailable"
-    | "ready"
-    | "partial"
-    | null;
-  transcriptCoverage: "none" | "partial" | "full" | null;
+  transcriptState: TranscriptState;
+  transcriptCoverage: TranscriptCoverage;
   chapters: TranscriptChapter[];
   fragments: TranscriptFragment[];
   activeFragment: TranscriptFragment | null;

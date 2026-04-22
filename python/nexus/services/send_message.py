@@ -45,6 +45,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -83,12 +84,20 @@ from nexus.services.conversations import (
     conversation_to_out,
     derive_conversation_title,
     get_message_count,
+    load_message_context_snapshots_for_message_ids,
     message_to_out,
 )
 from nexus.services.llm import LLMRouter
 from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.prompt import render_prompt
-from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMResponse, Turn
+from nexus.services.llm.types import (
+    LLMCallContext,
+    LLMOperation,
+    LLMRequest,
+    LLMResponse,
+    ReasoningEffort,
+    Turn,
+)
 from nexus.services.models import get_model_catalog_metadata
 from nexus.services.quote_context_errors import (
     QuoteContextBlockingError,
@@ -212,9 +221,10 @@ def load_prompt_history(
     before_seq: int,
 ) -> list[Turn]:
     """Load bounded user/assistant history for prompt construction."""
-    rows = db.execute(
-        text(
-            """
+    rows = list(
+        db.execute(
+            text(
+                """
             SELECT role, content
             FROM messages
             WHERE conversation_id = :conversation_id
@@ -224,13 +234,14 @@ def load_prompt_history(
             ORDER BY seq DESC
             LIMIT :limit
             """
-        ),
-        {
-            "conversation_id": conversation_id,
-            "before_seq": before_seq,
-            "limit": MAX_HISTORY_TURNS,
-        },
-    ).fetchall()
+            ),
+            {
+                "conversation_id": conversation_id,
+                "before_seq": before_seq,
+                "limit": MAX_HISTORY_TURNS,
+            },
+        ).fetchall()
+    )
 
     rows.reverse()
     return [Turn(role=row[0], content=row[1]) for row in rows]
@@ -514,66 +525,9 @@ def phase1_prepare(
     db.flush()
 
     # Insert contexts
-    context_items: list[dict] = []
     for i, ctx in enumerate(contexts):
         ctx_type = ctx.type
         ctx_id = ctx.id
-
-        item = {"type": ctx_type, "id": str(ctx_id)}
-
-        if ctx_type == "media":
-            media = db.get(Media, ctx_id)
-            if media is not None:
-                item["media_id"] = str(media.id)
-                item["media_title"] = media.title
-                item["media_kind"] = media.kind
-                item["preview"] = media.title
-
-        elif ctx_type == "highlight":
-            highlight = db.get(Highlight, ctx_id)
-            if highlight is not None:
-                item["color"] = highlight.color
-                item["exact"] = highlight.exact
-                item["preview"] = highlight.exact
-                item["prefix"] = highlight.prefix
-                item["suffix"] = highlight.suffix
-                if highlight.annotation is not None:
-                    item["annotation_body"] = highlight.annotation.body
-
-                media_id = _get_highlight_anchor_media_id(
-                    highlight,
-                    operation="send_message_prepare_highlight_context",
-                )
-                if media_id is not None:
-                    media = db.get(Media, media_id)
-                    if media is not None:
-                        item["media_id"] = str(media.id)
-                        item["media_title"] = media.title
-                        item["media_kind"] = media.kind
-
-        elif ctx_type == "annotation":
-            annotation = db.get(Annotation, ctx_id)
-            if annotation is not None and annotation.highlight is not None:
-                highlight = annotation.highlight
-                item["annotation_body"] = annotation.body
-                item["exact"] = highlight.exact
-                item["preview"] = highlight.exact
-                item["prefix"] = highlight.prefix
-                item["suffix"] = highlight.suffix
-                item["color"] = highlight.color
-
-                media_id = _get_highlight_anchor_media_id(
-                    highlight,
-                    operation="send_message_prepare_annotation_context",
-                )
-                if media_id is not None:
-                    media = db.get(Media, media_id)
-                    if media is not None:
-                        item["media_id"] = str(media.id)
-                        item["media_title"] = media.title
-                        item["media_kind"] = media.kind
-
-        context_items.append(item)
 
         insert_context(
             db=db,
@@ -584,8 +538,6 @@ def phase1_prepare(
             highlight_id=ctx_id if ctx_type == "highlight" else None,
             annotation_id=ctx_id if ctx_type == "annotation" else None,
         )
-
-    user_message.context_items = context_items
     db.flush()
 
     # Assign seq for assistant message
@@ -771,7 +723,7 @@ async def send_message(
     total_start = time.monotonic()
 
     try:
-        context_dicts = [{"type": c.type, "id": c.id} for c in contexts]
+        context_render_inputs = [ctx.model_dump(mode="python") for ctx in contexts]
         payload_hash = compute_payload_hash(
             content,
             model_id,
@@ -787,11 +739,22 @@ async def send_message(
         )
         if replay:
             user_message, assistant_message, conversation = replay
+            contexts_by_message_id = await run_in_threadpool(
+                load_message_context_snapshots_for_message_ids,
+                db,
+                [user_message.id, assistant_message.id],
+            )
             message_count = await run_in_threadpool(get_message_count, db, conversation.id)
             return SendMessageResponse(
                 conversation=conversation_to_out(conversation, message_count, viewer_id=viewer_id),
-                user_message=message_to_out(user_message),
-                assistant_message=message_to_out(assistant_message),
+                user_message=message_to_out(
+                    user_message,
+                    contexts_by_message_id.get(user_message.id, []),
+                ),
+                assistant_message=message_to_out(
+                    assistant_message,
+                    contexts_by_message_id.get(assistant_message.id, []),
+                ),
             )
 
         model = await run_in_threadpool(get_model_by_id, db, model_id)
@@ -853,7 +816,7 @@ async def send_message(
 
             try:
                 context_text, context_chars = await run_in_threadpool(
-                    render_context_blocks, db, context_dicts
+                    render_context_blocks, db, context_render_inputs
                 )
             except QuoteContextBlockingError as quote_err:
                 phase2_ms = int((time.monotonic() - phase2_start) * 1000)
@@ -908,7 +871,7 @@ async def send_message(
                 messages=messages,
                 max_tokens=4096,
                 temperature=0.7,
-                reasoning_effort=reasoning,
+                reasoning_effort=cast(ReasoningEffort, reasoning),
             )
 
             # LLM call — await on main event loop (no asyncio.run)
@@ -968,13 +931,24 @@ async def send_message(
             message_count = await run_in_threadpool(
                 get_message_count, db, prepare_result.conversation.id
             )
+            contexts_by_message_id = await run_in_threadpool(
+                load_message_context_snapshots_for_message_ids,
+                db,
+                [prepare_result.user_message.id, prepare_result.assistant_message.id],
+            )
 
             return SendMessageResponse(
                 conversation=conversation_to_out(
                     prepare_result.conversation, message_count, viewer_id=viewer_id
                 ),
-                user_message=message_to_out(prepare_result.user_message),
-                assistant_message=message_to_out(prepare_result.assistant_message),
+                user_message=message_to_out(
+                    prepare_result.user_message,
+                    contexts_by_message_id.get(prepare_result.user_message.id, []),
+                ),
+                assistant_message=message_to_out(
+                    prepare_result.assistant_message,
+                    contexts_by_message_id.get(prepare_result.assistant_message.id, []),
+                ),
             )
 
         finally:

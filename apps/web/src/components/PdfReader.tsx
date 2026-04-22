@@ -10,7 +10,7 @@ import {
   type MutableRefObject,
 } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import type { PdfReaderResumeState } from "@/lib/reader";
+import type { PdfReaderResumeState } from "@/lib/reader/types";
 import { usePaneMobileChromeVisibility } from "@/components/workspace/PaneShell";
 import {
   PDF_WORKER_SRC,

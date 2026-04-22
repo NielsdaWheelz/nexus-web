@@ -646,8 +646,8 @@ def _search_annotations(
             a.id,
             a.highlight_id,
             f.media_id,
-            COALESCE(f_active.id, f.id) AS fragment_id,
-            COALESCE(f_active.idx, f.idx) AS fragment_idx,
+            f.id AS fragment_id,
+            f.idx AS fragment_idx,
             nav.location_id AS section_id,
             h.exact,
             h.prefix,
@@ -667,44 +667,12 @@ def _search_annotations(
         JOIN media m ON m.id = f.media_id
         JOIN visible_media vm ON vm.media_id = f.media_id
         LEFT JOIN media_transcript_states mts ON mts.media_id = f.media_id
-        LEFT JOIN highlight_transcript_anchors hta ON hta.highlight_id = h.id
-        LEFT JOIN LATERAL (
-            SELECT
-                fa.id,
-                fa.idx
-            FROM fragments fa
-            WHERE fa.media_id = f.media_id
-              AND mts.active_transcript_version_id IS NOT NULL
-              AND fa.transcript_version_id = mts.active_transcript_version_id
-              AND hta.t_start_ms IS NOT NULL
-              AND hta.t_end_ms IS NOT NULL
-              AND fa.t_start_ms IS NOT NULL
-              AND fa.t_end_ms IS NOT NULL
-              AND (
-                  -- Prefer true overlap when active transcript timing shifts slightly.
-                  (fa.t_end_ms > hta.t_start_ms AND fa.t_start_ms < hta.t_end_ms)
-                  -- Fallback for near-miss ranges when overlap is lost by boundary drift.
-                  OR (
-                      ABS(fa.t_start_ms - hta.t_start_ms) <= 2000
-                      AND ABS(fa.t_end_ms - hta.t_end_ms) <= 2000
-                  )
-              )
-            ORDER BY
-                GREATEST(
-                    0,
-                    LEAST(fa.t_end_ms, hta.t_end_ms) - GREATEST(fa.t_start_ms, hta.t_start_ms)
-                ) DESC,
-                ABS(fa.t_start_ms - hta.t_start_ms) ASC,
-                ABS(fa.t_end_ms - hta.t_end_ms) ASC,
-                fa.idx ASC
-            LIMIT 1
-        ) f_active ON TRUE
         LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
         LEFT JOIN LATERAL (
             SELECT location_id
             FROM epub_nav_locations
             WHERE media_id = f.media_id
-              AND fragment_idx = COALESCE(f_active.idx, f.idx)
+              AND fragment_idx = f.idx
             ORDER BY ordinal ASC
             LIMIT 1
         ) nav ON m.kind = 'epub'

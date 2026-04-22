@@ -1,7 +1,12 @@
 "use client";
 
 import { Component, memo, useCallback, useEffect, useMemo, useRef } from "react";
-import { resolvePaneRoute, getParentHref, type ResolvedPaneRoute } from "@/lib/panes/paneRouteRegistry";
+import {
+  getParentHref,
+  resolvePaneRoute,
+  type PaneChromeDescriptor,
+  type ResolvedPaneRoute,
+} from "@/lib/panes/paneRouteRegistry";
 import { PaneRuntimeProvider, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import PaneShell, { type PaneBodyMode } from "@/components/workspace/PaneShell";
 import WorkspaceTabsBar from "@/components/workspace/WorkspaceTabsBar";
@@ -10,10 +15,10 @@ import type { SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import {
   MAX_STANDARD_PANE_WIDTH_PX,
   MIN_PANE_WIDTH_PX,
+  normalizePaneTitle,
   normalizeWorkspaceHref,
   type WorkspacePaneStateV3,
 } from "@/lib/workspace/schema";
-import { resolvePaneDescriptor } from "@/lib/workspace/paneDescriptor";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import styles from "./WorkspaceHost.module.css";
@@ -37,6 +42,8 @@ interface WorkspaceShellPane {
   isActive: boolean;
   content: React.ReactNode;
 }
+
+type WorkspacePaneTitleSource = "runtime_page" | "open_hint" | "route_static";
 
 // ---------------------------------------------------------------------------
 // PaneRouteErrorBoundary — class component (must remain a class component
@@ -229,17 +236,8 @@ const PaneContent = memo(function PaneContent({
 
 function buildShellPane(input: {
   pane: WorkspacePaneStateV3;
-  nowMs: number;
   runtimeTitleByPaneId: ReadonlyMap<string, string>;
   openHintByPaneId: ReadonlyMap<string, { titleHint?: string; resourceRef?: string | null }>;
-  resourceTitleByRef: ReadonlyMap<
-    string,
-    {
-      title: string;
-      updatedAtMs: number;
-      expiresAtMs: number;
-    }
-  >;
   onNavigatePane: (paneId: string, href: string, options?: { replace?: boolean }) => void;
   onOpenPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
   onPublishPaneTitle: (
@@ -249,19 +247,10 @@ function buildShellPane(input: {
   ) => void;
   isActive: boolean;
 }): WorkspaceShellPane {
-  const route = resolvePaneRoute(input.pane.href);
-  const descriptor = resolvePaneDescriptor(input.pane, {
-    nowMs: input.nowMs,
+  const { chrome, route, title } = resolveWorkspaceShellPane(input.pane, {
     runtimeTitleByPaneId: input.runtimeTitleByPaneId,
     openHintByPaneId: input.openHintByPaneId,
-    resourceTitleByRef: input.resourceTitleByRef,
   });
-  const chrome = route.definition?.getChrome?.({
-    href: input.pane.href,
-    params: route.params,
-  });
-  const title = descriptor.resolvedTitle || chrome?.title || "Pane";
-
   const parentHref = getParentHref(route);
   const onBack = parentHref
     ? () => input.onNavigatePane(input.pane.id, parentHref)
@@ -291,6 +280,39 @@ function buildShellPane(input: {
   };
 }
 
+function resolveWorkspaceShellPane(
+  pane: WorkspacePaneStateV3,
+  inputs: {
+    runtimeTitleByPaneId: ReadonlyMap<string, string>;
+    openHintByPaneId: ReadonlyMap<string, { titleHint?: string; resourceRef?: string | null }>;
+  }
+): {
+  chrome: PaneChromeDescriptor | undefined;
+  route: ResolvedPaneRoute;
+  title: string;
+  titleSource: WorkspacePaneTitleSource;
+} {
+  const route = resolvePaneRoute(pane.href);
+  const chrome = route.definition?.getChrome?.({
+    href: pane.href,
+    params: route.params,
+  });
+  const runtimeTitle = normalizePaneTitle(inputs.runtimeTitleByPaneId.get(pane.id));
+  if (runtimeTitle) {
+    return { chrome, route, title: runtimeTitle, titleSource: "runtime_page" };
+  }
+  const titleHint = normalizePaneTitle(inputs.openHintByPaneId.get(pane.id)?.titleHint);
+  if (titleHint) {
+    return { chrome, route, title: titleHint, titleSource: "open_hint" };
+  }
+  return {
+    chrome,
+    route,
+    title: normalizePaneTitle(chrome?.title) ?? normalizePaneTitle(route.staticTitle) ?? "Pane",
+    titleSource: "route_static",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // WorkspaceHost — the top-level pane orchestrator. Reads workspace state,
 // builds pane descriptors, and renders the shell layout with tabs + pane strip.
@@ -301,7 +323,6 @@ export default function WorkspaceHost() {
     state,
     runtimeTitleByPaneId,
     openHintByPaneId,
-    resourceTitleByRef,
     activatePane,
     openPane,
     navigatePane,
@@ -317,20 +338,17 @@ export default function WorkspaceHost() {
   const pendingPaneChromeFocusPaneIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const nowMs = Date.now();
     const nextTelemetryByPaneId = new Map<string, string>();
 
     for (const pane of state.panes) {
-      const descriptor = resolvePaneDescriptor(pane, {
-        nowMs,
+      const descriptor = resolveWorkspaceShellPane(pane, {
         runtimeTitleByPaneId,
         openHintByPaneId,
-        resourceTitleByRef,
       });
       const telemetryKey = [
-        descriptor.resolvedTitle,
+        descriptor.title,
         descriptor.titleSource,
-        descriptor.routeId,
+        descriptor.route.id,
       ].join("|");
       nextTelemetryByPaneId.set(pane.id, telemetryKey);
       if (titleTelemetryByPaneIdRef.current.get(pane.id) === telemetryKey) {
@@ -338,25 +356,23 @@ export default function WorkspaceHost() {
       }
       emitWorkspaceTelemetry({
         type: "title",
-        status: descriptor.titleSource === "safe_fallback" ? "fallback" : "ok",
-        errorCode: descriptor.titleSource === "safe_fallback" ? "safe_fallback_title" : null,
+        status: "ok",
+        errorCode: null,
         titleSource: descriptor.titleSource,
-        routeId: descriptor.routeId,
+        routeId: descriptor.route.id,
       });
     }
 
     titleTelemetryByPaneIdRef.current = nextTelemetryByPaneId;
-  }, [openHintByPaneId, resourceTitleByRef, runtimeTitleByPaneId, state.panes]);
+  }, [openHintByPaneId, runtimeTitleByPaneId, state.panes]);
 
   const panes = useMemo(
     () =>
       state.panes.map((pane) =>
         buildShellPane({
           pane,
-          nowMs: Date.now(),
           runtimeTitleByPaneId,
           openHintByPaneId,
-          resourceTitleByRef,
           onNavigatePane: navigatePane,
           onOpenPane: openPane,
           onPublishPaneTitle: publishPaneTitle,
@@ -368,7 +384,6 @@ export default function WorkspaceHost() {
       state.activePaneId,
       runtimeTitleByPaneId,
       openHintByPaneId,
-      resourceTitleByRef,
       navigatePane,
       openPane,
       publishPaneTitle,

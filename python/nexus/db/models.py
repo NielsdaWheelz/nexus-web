@@ -1572,8 +1572,7 @@ class Highlight(Base):
             name="ck_highlights_anchor_fields_paired_null",
         ),
         CheckConstraint(
-            "anchor_kind IS NULL OR anchor_kind IN "
-            "('fragment_offsets', 'pdf_page_geometry', 'pdf_text_quote')",
+            "anchor_kind IS NULL OR anchor_kind IN ('fragment_offsets', 'pdf_page_geometry')",
             name="ck_highlights_anchor_kind_valid",
         ),
     )
@@ -1593,25 +1592,12 @@ class Highlight(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    transcript_anchor: Mapped["HighlightTranscriptAnchor | None"] = relationship(
-        "HighlightTranscriptAnchor",
-        back_populates="highlight",
-        uselist=False,
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
     pdf_anchor: Mapped["HighlightPdfAnchor | None"] = relationship(
         "HighlightPdfAnchor",
         back_populates="highlight",
         uselist=False,
         cascade="all, delete-orphan",
         passive_deletes=True,
-    )
-    pdf_text_anchor: Mapped["HighlightPdfTextAnchor | None"] = relationship(
-        "HighlightPdfTextAnchor",
-        back_populates="highlight",
-        uselist=False,
-        cascade="all, delete-orphan",
     )
     pdf_quads: Mapped[list["HighlightPdfQuad"]] = relationship(
         "HighlightPdfQuad",
@@ -1703,57 +1689,6 @@ class HighlightFragmentAnchor(Base):
 
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="fragment_anchor")
     fragment: Mapped["Fragment"] = relationship("Fragment")
-
-
-class HighlightTranscriptAnchor(Base):
-    """Transcript-version aware anchor subtype for transcript highlights."""
-
-    __tablename__ = "highlight_transcript_anchors"
-
-    highlight_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    transcript_version_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcast_transcript_versions.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    transcript_segment_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcast_transcript_segments.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    t_start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    t_end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "t_start_ms >= 0 AND t_end_ms > t_start_ms",
-            name="ck_highlight_transcript_anchors_time_offsets_valid",
-        ),
-        CheckConstraint(
-            "start_offset >= 0 AND end_offset > start_offset",
-            name="ck_highlight_transcript_anchors_text_offsets_valid",
-        ),
-        Index("ix_highlight_transcript_anchors_version", "transcript_version_id"),
-    )
-
-    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="transcript_anchor")
-    transcript_version: Mapped["PodcastTranscriptVersion"] = relationship(
-        "PodcastTranscriptVersion"
-    )
-    transcript_segment: Mapped["PodcastTranscriptSegment | None"] = relationship(
-        "PodcastTranscriptSegment"
-    )
 
 
 class HighlightPdfAnchor(Base):
@@ -1850,42 +1785,6 @@ class HighlightPdfQuad(Base):
     __table_args__ = (CheckConstraint("quad_idx >= 0", name="ck_hpq_quad_idx"),)
 
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="pdf_quads")
-
-
-class HighlightPdfTextAnchor(Base):
-    """Page-scoped PDF text quote anchor for local-vault highlights."""
-
-    __tablename__ = "highlight_pdf_text_anchors"
-
-    highlight_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id"),
-        primary_key=True,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=False,
-    )
-    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    plain_text_start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    plain_text_end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("page_number >= 1", name="ck_hpta_page_number"),
-        CheckConstraint(
-            "plain_text_start_offset >= 0 AND plain_text_end_offset > plain_text_start_offset",
-            name="ck_hpta_offsets_valid",
-        ),
-    )
-
-    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="pdf_text_anchor")
-    media: Mapped["Media"] = relationship("Media")
 
 
 class PdfPageTextSpan(Base):
@@ -2127,11 +2026,6 @@ class Message(Base):
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    context_items: Mapped[list[dict]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'[]'::jsonb"),
-    )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="complete")
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_id: Mapped[UUID | None] = mapped_column(
@@ -2177,7 +2071,10 @@ class Message(Base):
         cascade="all, delete-orphan",
     )
     contexts: Mapped[list["MessageContext"]] = relationship(
-        "MessageContext", back_populates="message", cascade="all, delete-orphan"
+        "MessageContext",
+        back_populates="message",
+        cascade="all, delete-orphan",
+        order_by="MessageContext.ordinal",
     )
 
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useReaderContext } from "@/lib/reader";
+import { useReaderContext } from "@/lib/reader/ReaderContext";
 import {
   DEFAULT_READER_PROFILE,
   type ReaderFontFamily,

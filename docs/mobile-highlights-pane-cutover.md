@@ -107,7 +107,6 @@ paths, or backward-compatibility shims.
 - `apps/web/src/app/(authenticated)/media/[id]/MediaHighlightsPaneBody.tsx`
 - `apps/web/src/components/LinkedItemsPane.tsx`
 - `apps/web/src/components/LinkedItemsPane.module.css`
-- `apps/web/src/app/(authenticated)/media/[id]/MediaHighlightsPaneBody.test.tsx`
 - `apps/web/src/__tests__/components/LinkedItemsPane.test.tsx`
 - `e2e/tests/non-pdf-linked-items.spec.ts`
 - `e2e/tests/epub.spec.ts`

@@ -2,8 +2,11 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { normalizePaneTitle } from "@/lib/workspace/paneDescriptor";
-import { normalizeWorkspaceHref } from "@/lib/workspace/schema";
+import {
+  normalizePaneTitle,
+  normalizeWorkspaceHref,
+  parseWorkspaceHref,
+} from "@/lib/workspace/schema";
 
 export interface PaneScopedRouter {
   push: (href: string) => void;
@@ -48,13 +51,13 @@ interface PaneRuntimeProviderProps {
 }
 
 function parsePaneHref(href: string): { pathname: string; searchParams: URLSearchParams } {
-  const base =
-    typeof window !== "undefined" &&
-    window.location.origin &&
-    window.location.origin !== "null"
-      ? window.location.origin
-      : "http://localhost";
-  const parsed = new URL(href, base);
+  const parsed = parseWorkspaceHref(href);
+  if (!parsed) {
+    return {
+      pathname: "/",
+      searchParams: new URLSearchParams(),
+    };
+  }
   return {
     pathname: parsed.pathname,
     searchParams: new URLSearchParams(parsed.search),

@@ -275,6 +275,25 @@ function areTrackChaptersEqual(
   });
 }
 
+export function getTrackChapterAtSeconds(
+  chapters: GlobalPlayerChapter[] | null | undefined,
+  currentSeconds: number
+): GlobalPlayerChapter | null {
+  const normalizedChapters = normalizeTrackChapters(chapters);
+  if (normalizedChapters.length === 0) {
+    return null;
+  }
+  const currentMs = Math.max(0, Math.floor(currentSeconds * 1000));
+  let activeChapter: GlobalPlayerChapter | null = null;
+  for (const chapter of normalizedChapters) {
+    if (chapter.t_start_ms > currentMs) {
+      break;
+    }
+    activeChapter = chapter;
+  }
+  return activeChapter;
+}
+
 export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const [track, setTrackState] = useState<GlobalPlayerTrack | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);

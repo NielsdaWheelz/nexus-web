@@ -1,6 +1,6 @@
 """Local Markdown vault routes."""
 
-from typing import Annotated, cast
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -35,21 +35,24 @@ def sync_vault(
     result = vault_service.sync_vault_files(
         db,
         viewer.user_id,
-        [file.model_dump() for file in request.files],
+        [
+            vault_service.VaultFile(
+                path=file.path,
+                content=file.content,
+            )
+            for file in request.files
+        ],
     )
-    files = cast(list[dict[str, str]], result["files"])
-    delete_paths = cast(list[str], result["delete_paths"])
-    conflicts = cast(list[dict[str, str]], result["conflicts"])
     response = VaultSnapshotOut(
-        files=[VaultFile(path=file["path"], content=file["content"]) for file in files],
-        delete_paths=delete_paths,
+        files=[VaultFile(path=file["path"], content=file["content"]) for file in result["files"]],
+        delete_paths=result["delete_paths"],
         conflicts=[
             VaultConflict(
                 path=conflict["path"],
                 message=conflict["message"],
                 content=conflict["content"],
             )
-            for conflict in conflicts
+            for conflict in result["conflicts"]
         ],
     )
     return success_response(response.model_dump(mode="json"))

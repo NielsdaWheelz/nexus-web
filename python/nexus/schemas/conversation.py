@@ -22,6 +22,12 @@ MESSAGE_ROLES = Literal["user", "assistant", "system"]
 # Valid message statuses - must match DB constraint
 MESSAGE_STATUSES = Literal["pending", "complete", "error"]
 
+# Valid context target types - must match message_contexts.target_type
+MESSAGE_CONTEXT_TYPES = Literal["media", "highlight", "annotation"]
+
+# Valid highlight colors surfaced on context snapshots
+HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
+
 
 # =============================================================================
 # Response Schemas
@@ -59,7 +65,7 @@ class MessageOut(BaseModel):
     seq: int
     role: str  # "user" | "assistant" | "system"
     content: str
-    contexts: list[dict] = Field(default_factory=list)
+    contexts: list["MessageContextSnapshot"] = Field(default_factory=list)
     status: str  # "pending" | "complete" | "error"
     error_code: str | None = None
     created_at: datetime
@@ -112,15 +118,34 @@ MAX_MESSAGE_CONTENT_LENGTH = 20000
 MAX_CONTEXTS = 10
 
 
-class ContextItem(BaseModel):
-    """A context item to include with a message.
+class MessageContextRef(BaseModel):
+    """Canonical typed context reference for send-message inputs.
 
-    Context items reference objects (media, highlights, annotations) whose
+    Context references point at objects (media, highlights, annotations) whose
     content will be included in the LLM prompt.
     """
 
-    type: Literal["media", "highlight", "annotation"]
+    type: MESSAGE_CONTEXT_TYPES
     id: UUID
+
+    model_config = ConfigDict(extra="ignore")
+
+
+ContextItem = MessageContextRef
+
+
+class MessageContextSnapshot(MessageContextRef):
+    """Hydrated message-context snapshot returned on message reads."""
+
+    color: HIGHLIGHT_COLORS | None = None
+    preview: str | None = None
+    exact: str | None = None
+    prefix: str | None = None
+    suffix: str | None = None
+    annotation_body: str | None = None
+    media_id: UUID | None = None
+    media_title: str | None = None
+    media_kind: str | None = None
 
 
 class SendMessageRequest(BaseModel):
@@ -138,7 +163,7 @@ class SendMessageRequest(BaseModel):
     model_id: UUID
     reasoning: REASONING_MODES
     key_mode: KEY_MODES = "auto"
-    contexts: list[ContextItem] = []
+    contexts: list[MessageContextRef] = Field(default_factory=list)
 
     model_config = ConfigDict(str_strip_whitespace=True)
 

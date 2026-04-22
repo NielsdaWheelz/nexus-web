@@ -1,14 +1,6 @@
-"""Integration tests for PDF highlight API endpoints (S6 PR-04).
+"""Integration tests for PDF highlight API endpoints.
 
-Covers:
-- POST /media/{media_id}/pdf-highlights (create with geometry + match metadata)
-- GET  /media/{media_id}/pdf-highlights (page-scoped list)
-- PATCH /highlights/{id} with typed PDF anchor replacement
-- PATCH /highlights/{id} color-only on PDF
-- D16: anchor-kind mismatch rejection
-- D17: duplicate detection (create and update)
-- D20: no-op short-circuit
-- Generic GET/DELETE coverage for PDF highlights
+Covers create, list, update, and delete behavior for typed PDF highlights.
 """
 
 from uuid import UUID, uuid4

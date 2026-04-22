@@ -27,6 +27,18 @@ import StateMessage from "@/components/ui/StateMessage";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import {
+  addPodcastToLibrary,
+  buildPodcastUnsubscribeConfirmation,
+  fetchPodcastLibraries,
+  refreshPodcastSubscriptionSync,
+  removePodcastFromLibrary,
+  savePodcastSubscriptionSettings,
+  subscribeToPodcast,
+  type PodcastLibraryMembership,
+  type PodcastSubscriptionSyncStatus,
+  unsubscribeFromPodcast,
+} from "../podcastSubscriptions";
 import styles from "./page.module.css";
 
 const EPISODES_PAGE_SIZE = 100;
@@ -77,7 +89,7 @@ interface PodcastSubscription {
   status: "active" | "unsubscribed";
   default_playback_speed?: number | null;
   auto_queue?: boolean;
-  sync_status: "pending" | "running" | "partial" | "complete" | "source_limited" | "failed";
+  sync_status: PodcastSubscriptionSyncStatus;
   sync_error_code: string | null;
   sync_error_message: string | null;
   sync_attempts: number;
@@ -142,34 +154,6 @@ interface PodcastEpisodeMedia {
   description_text: string | null;
   created_at: string;
   updated_at: string;
-}
-
-interface PodcastSubscriptionSyncRefreshResult {
-  podcast_id: string;
-  sync_status: PodcastSubscription["sync_status"];
-  sync_error_code: string | null;
-  sync_error_message: string | null;
-  sync_attempts: number;
-  sync_enqueued: boolean;
-}
-
-interface PodcastSubscriptionSettingsResponse {
-  podcast_id: string;
-  default_playback_speed: number | null;
-  auto_queue: boolean;
-  updated_at: string;
-}
-
-interface PodcastSubscribeResult {
-  podcast_id: string;
-  subscription_created: boolean;
-  sync_status: "pending" | "running" | "partial" | "complete" | "source_limited" | "failed";
-  sync_enqueued: boolean;
-  sync_error_code: string | null;
-  sync_error_message: string | null;
-  sync_attempts: number;
-  last_synced_at: string | null;
-  window_size: number;
 }
 
 interface LibrarySummary {
@@ -428,7 +412,7 @@ export default function PodcastDetailPaneBody() {
   const [availableLibraries, setAvailableLibraries] = useState<LibraryTargetPickerItem[]>([]);
   const [availableLibrariesLoading, setAvailableLibrariesLoading] = useState(false);
   const [availableLibrariesLoaded, setAvailableLibrariesLoaded] = useState(false);
-  const [podcastLibraries, setPodcastLibraries] = useState<LibraryTargetPickerItem[]>([]);
+  const [podcastLibraries, setPodcastLibraries] = useState<PodcastLibraryMembership[]>([]);
   const [podcastLibrariesLoading, setPodcastLibrariesLoading] = useState(false);
   const [episodeLibrariesById, setEpisodeLibrariesById] = useState<
     Record<string, LibraryTargetPickerItem[]>
@@ -513,7 +497,7 @@ export default function PodcastDetailPaneBody() {
   const loadPodcastLibraries = useCallback(
     async (force = false) => {
       if (!podcastId) {
-        return [] as LibraryTargetPickerItem[];
+        return [] as PodcastLibraryMembership[];
       }
       if (!force && podcastLibrariesLoading) {
         return podcastLibraries;
@@ -524,24 +508,7 @@ export default function PodcastDetailPaneBody() {
 
       setPodcastLibrariesLoading(true);
       try {
-        const response = await apiFetch<{
-          data: Array<{
-            id: string;
-            name: string;
-            color: string | null;
-            is_in_library: boolean;
-            can_add: boolean;
-            can_remove: boolean;
-          }>;
-        }>(`/api/podcasts/${podcastId}/libraries`);
-        const nextLibraries = response.data.map((library) => ({
-          id: library.id,
-          name: library.name,
-          color: library.color,
-          isInLibrary: library.is_in_library,
-          canAdd: library.can_add,
-          canRemove: library.can_remove,
-        }));
+        const nextLibraries = await fetchPodcastLibraries(podcastId);
         setPodcastLibraries(nextLibraries);
         return nextLibraries;
       } catch (loadError) {
@@ -643,30 +610,9 @@ export default function PodcastDetailPaneBody() {
       setSettingsModalOpen(false);
       setSettingsError(null);
       try {
-        if (detailResp.data.subscription) {
-          const podcastLibrariesResponse = await apiFetch<{
-            data: Array<{
-              id: string;
-              name: string;
-              color: string | null;
-              is_in_library: boolean;
-              can_add: boolean;
-              can_remove: boolean;
-            }>;
-          }>(`/api/podcasts/${podcastId}/libraries`);
-          setPodcastLibraries(
-            podcastLibrariesResponse.data.map((library) => ({
-              id: library.id,
-              name: library.name,
-              color: library.color,
-              isInLibrary: library.is_in_library,
-              canAdd: library.can_add,
-              canRemove: library.can_remove,
-            }))
-          );
-        } else {
-          setPodcastLibraries([]);
-        }
+        setPodcastLibraries(
+          detailResp.data.subscription ? await fetchPodcastLibraries(podcastId) : []
+        );
         setEpisodeLibrariesById({});
         setLoadingEpisodeLibraryMediaIds(new Set());
       } catch {
@@ -868,18 +814,15 @@ export default function PodcastDetailPaneBody() {
     setSubscribeBusy(true);
     setError(null);
     try {
-      await apiFetch<{ data: PodcastSubscribeResult }>("/api/podcasts/subscriptions", {
-        method: "POST",
-        body: JSON.stringify({
-          provider_podcast_id: detail.podcast.provider_podcast_id,
-          title: detail.podcast.title,
-          author: detail.podcast.author,
-          feed_url: detail.podcast.feed_url,
-          website_url: detail.podcast.website_url,
-          image_url: detail.podcast.image_url,
-          description: detail.podcast.description,
-          library_id: libraryId,
-        }),
+      await subscribeToPodcast({
+        provider_podcast_id: detail.podcast.provider_podcast_id,
+        title: detail.podcast.title,
+        author: detail.podcast.author,
+        feed_url: detail.podcast.feed_url,
+        website_url: detail.podcast.website_url,
+        image_url: detail.podcast.image_url,
+        description: detail.podcast.description,
+        library_id: libraryId,
       });
       await load();
     } catch (subscribeError) {
@@ -901,10 +844,7 @@ export default function PodcastDetailPaneBody() {
     setBusyPodcastLibraryKeys((prev) => new Set(prev).add(busyKey));
     setError(null);
     try {
-      await apiFetch(`/api/libraries/${libraryId}/podcasts`, {
-        method: "POST",
-        body: JSON.stringify({ podcast_id: podcastId }),
-      });
+      await addPodcastToLibrary(podcastId, libraryId);
       setPodcastLibraries((prev) =>
         prev.map((library) =>
           library.id === libraryId
@@ -940,9 +880,7 @@ export default function PodcastDetailPaneBody() {
     setBusyPodcastLibraryKeys((prev) => new Set(prev).add(busyKey));
     setError(null);
     try {
-      await apiFetch(`/api/libraries/${libraryId}/podcasts/${podcastId}`, {
-        method: "DELETE",
-      });
+      await removePodcastFromLibrary(podcastId, libraryId);
       setPodcastLibraries((prev) =>
         prev.map((library) =>
           library.id === libraryId
@@ -980,20 +918,17 @@ export default function PodcastDetailPaneBody() {
     setRefreshSyncBusy(true);
     setError(null);
     try {
-      const response = await apiFetch<{ data: PodcastSubscriptionSyncRefreshResult }>(
-        `/api/podcasts/subscriptions/${podcastId}/sync`,
-        { method: "POST" }
-      );
+      const response = await refreshPodcastSubscriptionSync(podcastId);
       setDetail((prev) =>
         prev && prev.subscription
           ? {
               ...prev,
               subscription: {
                 ...prev.subscription,
-                sync_status: response.data.sync_status,
-                sync_error_code: response.data.sync_error_code,
-                sync_error_message: response.data.sync_error_message,
-                sync_attempts: response.data.sync_attempts,
+                sync_status: response.sync_status,
+                sync_error_code: response.sync_error_code,
+                sync_error_message: response.sync_error_message,
+                sync_attempts: response.sync_attempts,
               },
             }
           : prev
@@ -1018,32 +953,20 @@ export default function PodcastDetailPaneBody() {
       return;
     }
     const currentLibraries = await loadPodcastLibraries(true);
-    const removableLibraries = currentLibraries.filter(
-      (library) => library.isInLibrary && library.canRemove
-    );
     const retainedLibraries = currentLibraries.filter(
       (library) => library.isInLibrary && !library.canRemove
     );
-    const confirmationLines = [
-      `Unsubscribe from "${detail.podcast.title}"?`,
-      removableLibraries.length === 0
-        ? "This podcast is not in any libraries you can change."
-        : `This will remove the podcast from ${removableLibraries.length} librar${removableLibraries.length === 1 ? "y" : "ies"}.`,
-    ];
-    if (retainedLibraries.length > 0) {
-      confirmationLines.push(
-        `It will remain in ${retainedLibraries.length} shared librar${retainedLibraries.length === 1 ? "y" : "ies"} you cannot administer.`
-      );
-    }
-    if (!window.confirm(confirmationLines.join("\n\n"))) {
+    if (
+      !window.confirm(
+        buildPodcastUnsubscribeConfirmation(detail.podcast.title, currentLibraries)
+      )
+    ) {
       return;
     }
     setUnsubscribeBusy(true);
     setError(null);
     try {
-      await apiFetch(`/api/podcasts/subscriptions/${podcastId}`, {
-        method: "DELETE",
-      });
+      await unsubscribeFromPodcast(podcastId);
       setDetail((prev) => (prev ? { ...prev, subscription: null } : prev));
       setPodcastLibraries(retainedLibraries);
       setPodcastMembershipPanelOpen(false);
@@ -1091,25 +1014,19 @@ export default function PodcastDetailPaneBody() {
     const nextDefaultPlaybackSpeed =
       settingsDefaultSpeed === "default" ? null : Number.parseFloat(settingsDefaultSpeed);
     try {
-      const response = await apiFetch<{ data: PodcastSubscriptionSettingsResponse }>(
-        `/api/podcasts/subscriptions/${detail.subscription.podcast_id}/settings`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            default_playback_speed: nextDefaultPlaybackSpeed,
-            auto_queue: settingsAutoQueue,
-          }),
-        }
-      );
+      const response = await savePodcastSubscriptionSettings(detail.subscription.podcast_id, {
+        defaultPlaybackSpeed: nextDefaultPlaybackSpeed,
+        autoQueue: settingsAutoQueue,
+      });
       setDetail((prev) =>
         prev && prev.subscription
           ? {
               ...prev,
               subscription: {
                 ...prev.subscription,
-                default_playback_speed: response.data.default_playback_speed,
-                auto_queue: response.data.auto_queue,
-                updated_at: response.data.updated_at ?? prev.subscription.updated_at,
+                default_playback_speed: response.default_playback_speed,
+                auto_queue: response.auto_queue,
+                updated_at: response.updated_at ?? prev.subscription.updated_at,
               },
             }
           : prev
@@ -1117,7 +1034,7 @@ export default function PodcastDetailPaneBody() {
       setEpisodes((prev) =>
         prev.map((episode) => ({
           ...episode,
-          subscription_default_playback_speed: response.data.default_playback_speed,
+          subscription_default_playback_speed: response.default_playback_speed,
         }))
       );
       setSettingsModalOpen(false);

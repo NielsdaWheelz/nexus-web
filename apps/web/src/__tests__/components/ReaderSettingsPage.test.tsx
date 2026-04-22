@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ReaderSettingsPage from "@/app/(authenticated)/settings/reader/page";
-import { useReaderContext } from "@/lib/reader";
+import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { DEFAULT_READER_PROFILE } from "@/lib/reader/types";
 
-vi.mock("@/lib/reader", () => ({
+vi.mock("@/lib/reader/ReaderContext", () => ({
   useReaderContext: vi.fn(),
 }));
 

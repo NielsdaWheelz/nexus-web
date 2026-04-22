@@ -16,6 +16,8 @@ import {
   clampPaneWidth,
   createDefaultWorkspaceState,
   createPaneId,
+  normalizePaneResourceRef,
+  normalizePaneTitle,
   normalizeWorkspaceHref,
   type WorkspacePaneStateV3,
   type WorkspaceStateV3,
@@ -34,16 +36,6 @@ import {
   setPaneGraphReady,
   type OpenInAppPaneDetail,
 } from "@/lib/panes/openInAppPane";
-import {
-  createResourceTitleCacheEntry,
-  loadResourceTitleCacheFromStorage,
-  normalizePaneTitle,
-  pruneResourceTitleCache,
-  RESOURCE_TITLE_CACHE_TTL_MS,
-  saveResourceTitleCacheToStorage,
-  type PaneOpenHint,
-  type ResourceTitleCacheEntry,
-} from "@/lib/workspace/paneDescriptor";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { apiFetch } from "@/lib/api/client";
 
@@ -56,6 +48,11 @@ type WorkspaceAction =
   | { type: "navigate_pane"; paneId: string; href: string }
   | { type: "close_pane"; paneId: string }
   | { type: "resize_pane"; paneId: string; widthPx: number };
+
+interface PaneOpenHint {
+  titleHint?: string;
+  resourceRef?: string | null;
+}
 
 function ensureActivePaneId(state: WorkspaceStateV3): WorkspaceStateV3 {
   if (!state.panes.length) {
@@ -152,7 +149,6 @@ interface WorkspaceStoreValue {
   state: WorkspaceStateV3;
   runtimeTitleByPaneId: ReadonlyMap<string, string>;
   openHintByPaneId: ReadonlyMap<string, PaneOpenHint>;
-  resourceTitleByRef: ReadonlyMap<string, ResourceTitleCacheEntry>;
   activatePane: (paneId: string) => void;
   openPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
   navigatePane: (paneId: string, href: string, options?: { replace?: boolean }) => void;
@@ -206,9 +202,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   const [openHintByPaneId, setOpenHintByPaneId] = useState<Map<string, PaneOpenHint>>(
     () => new Map()
   );
-  const [resourceTitleByRef, setResourceTitleByRef] = useState<
-    Map<string, ResourceTitleCacheEntry>
-  >(() => loadResourceTitleCacheFromStorage(Date.now()));
   const historyModeRef = useRef<HistoryMode>("replace");
   const skipSyncRef = useRef(false);
   const readyRef = useRef(false);
@@ -218,8 +211,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   const pendingRecentHrefByPaneIdRef = useRef<Map<string, string>>(new Map());
   const stateRef = useRef(state);
   stateRef.current = state;
-  const openHintRef = useRef(openHintByPaneId);
-  openHintRef.current = openHintByPaneId;
 
   const dispatchAndSync = useCallback(
     (action: WorkspaceAction, historyMode: HistoryMode = "replace") => {
@@ -242,36 +233,16 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     });
   }, []);
 
-  const upsertResourceTitle = useCallback((resourceRef: string, title: string) => {
-    const ref = resourceRef.trim();
-    const normalized = normalizePaneTitle(title);
-    if (!ref || !normalized) return;
-    setResourceTitleByRef((prev) => {
-      const nowMs = Date.now();
-      const next = pruneResourceTitleCache(prev, nowMs);
-      const entry = createResourceTitleCacheEntry(normalized, nowMs, RESOURCE_TITLE_CACHE_TTL_MS);
-      if (!entry) return next;
-      next.set(ref, entry);
-      return next;
-    });
-  }, []);
-
   const setOpenHint = useCallback((paneId: string, hint: PaneOpenHint) => {
     const titleHint = normalizePaneTitle(hint.titleHint) ?? undefined;
-    const resourceRef =
-      typeof hint.resourceRef === "string" && hint.resourceRef.trim().length > 0
-        ? hint.resourceRef.trim()
-        : undefined;
+    const resourceRef = normalizePaneResourceRef(hint.resourceRef) ?? undefined;
     if (!titleHint && !resourceRef) return;
     setOpenHintByPaneId((prev) => {
       const next = new Map(prev);
       next.set(paneId, { titleHint, resourceRef });
       return next;
     });
-    if (titleHint && resourceRef) {
-      upsertResourceTitle(resourceRef, titleHint);
-    }
-  }, [upsertResourceTitle]);
+  }, []);
 
   const postCommandPaletteRecent = useCallback(
     (href: string, titleSnapshot?: string | null) => {
@@ -322,10 +293,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       const panes = buildPanesForOpen(href);
       const targetPaneId = panes[0]!.id;
       const titleHint = normalizePaneTitle(detail.titleHint) ?? undefined;
-      const resourceRef =
-        typeof detail.resourceRef === "string" && detail.resourceRef.trim().length > 0
-          ? detail.resourceRef.trim()
-          : undefined;
+      const resourceRef = normalizePaneResourceRef(detail.resourceRef) ?? undefined;
       if (titleHint || resourceRef) {
         setOpenHint(targetPaneId, { titleHint, resourceRef });
       }
@@ -408,11 +376,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     );
   }, [state.panes]);
 
-  // --- Persist resource title cache ---
-  useEffect(() => {
-    saveResourceTitleCacheToStorage(resourceTitleByRef, Date.now());
-  }, [resourceTitleByRef]);
-
   // --- Sync state → URL ---
   useEffect(() => {
     if (typeof window === "undefined" || !readyRef.current || !mounted) return;
@@ -490,7 +453,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   );
 
   const publishPaneTitle = useCallback(
-    (paneId: string, title: string | null, options?: { resourceRef?: string | null }) => {
+    (paneId: string, title: string | null, _options?: { resourceRef?: string | null }) => {
       const pane = stateRef.current.panes.find((p) => p.id === paneId);
       if (!pane) return;
 
@@ -504,15 +467,13 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       });
 
       if (!normalized) return;
-      const resourceRef = options?.resourceRef ?? openHintRef.current.get(paneId)?.resourceRef ?? null;
-      if (resourceRef) upsertResourceTitle(resourceRef, normalized);
       const pendingHref = pendingRecentHrefByPaneIdRef.current.get(paneId);
       if (pendingHref && pendingHref === pane.href) {
         pendingRecentHrefByPaneIdRef.current.delete(paneId);
         postCommandPaletteRecent(pane.href, normalized);
       }
     },
-    [postCommandPaletteRecent, upsertResourceTitle]
+    [postCommandPaletteRecent]
   );
 
   const value = useMemo<WorkspaceStoreValue>(
@@ -520,7 +481,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       state,
       runtimeTitleByPaneId,
       openHintByPaneId,
-      resourceTitleByRef,
       activatePane,
       openPane,
       navigatePane,
@@ -529,9 +489,15 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       publishPaneTitle,
     }),
     [
-      state, runtimeTitleByPaneId, openHintByPaneId, resourceTitleByRef,
-      activatePane, openPane, navigatePane, closePane,
-      resizePane, publishPaneTitle,
+      state,
+      runtimeTitleByPaneId,
+      openHintByPaneId,
+      activatePane,
+      openPane,
+      navigatePane,
+      closePane,
+      resizePane,
+      publishPaneTitle,
     ]
   );
 

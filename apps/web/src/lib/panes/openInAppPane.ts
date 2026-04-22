@@ -1,7 +1,10 @@
 "use client";
 
-import { normalizePaneTitle, normalizeResourceRef } from "@/lib/workspace/paneDescriptor";
-import { normalizeWorkspaceHref } from "@/lib/workspace/schema";
+import {
+  normalizePaneResourceRef,
+  normalizePaneTitle,
+  normalizeWorkspaceHref,
+} from "@/lib/workspace/schema";
 
 export const NEXUS_OPEN_PANE_EVENT = "nexus:open-pane";
 export const NEXUS_OPEN_PANE_MESSAGE_TYPE = "nexus:open-pane";
@@ -59,7 +62,7 @@ function sanitizeOpenPaneDetail(detail: unknown): OpenInAppPaneDetail | null {
         : undefined,
     resourceRef:
       typeof candidate.resourceRef === "string"
-        ? normalizeResourceRef(candidate.resourceRef) ?? undefined
+        ? normalizePaneResourceRef(candidate.resourceRef) ?? undefined
         : undefined,
   };
 }

@@ -22,6 +22,7 @@ import json
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import text as sa_text
@@ -43,7 +44,13 @@ from nexus.services.context_rendering import PROMPT_VERSION, render_context_bloc
 from nexus.services.llm import LLMRouter
 from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.prompt import render_prompt
-from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, LLMUsage
+from nexus.services.llm.types import (
+    LLMCallContext,
+    LLMOperation,
+    LLMRequest,
+    LLMUsage,
+    ReasoningEffort,
+)
 from nexus.services.quote_context_errors import (
     QuoteContextBlockingError,
     get_quote_context_error_message,
@@ -142,7 +149,7 @@ def _finalize_stream_conditional(
         },
     )
 
-    if result.rowcount == 0:
+    if getattr(result, "rowcount", 0) == 0:
         # Already finalized (sweeper or another path got there first)
         # PR-09: Emit stream.double_finalize_detected
         logger.error(
@@ -156,13 +163,13 @@ def _finalize_stream_conditional(
         db.rollback()
         return False
 
-    # Insert message_llm — PK on message_id guards against duplicates
+    # Insert message_llm for the finalized assistant row.
     prompt_tokens = usage.prompt_tokens if usage else None
     completion_tokens = usage.completion_tokens if usage else None
     total_tokens = usage.total_tokens if usage else None
 
-    try:
-        message_llm = MessageLLM(
+    db.add(
+        MessageLLM(
             message_id=assistant_message_id,
             provider=model.provider,
             model_name=model.model_name,
@@ -176,26 +183,7 @@ def _finalize_stream_conditional(
             provider_request_id=provider_request_id,
             prompt_version=PROMPT_VERSION,
         )
-        db.add(message_llm)
-    except Exception as e:
-        # PK violation = already inserted (race). Not a problem.
-        logger.debug("message_llm_insert_dup", error=str(e))
-        db.rollback()
-        db.execute(
-            sa_text("""
-                UPDATE messages
-                SET content = :content, status = :status, error_code = :error_code,
-                    updated_at = :now
-                WHERE id = :id AND status = 'pending'
-            """),
-            {
-                "content": final_content,
-                "status": status,
-                "error_code": error_code,
-                "now": datetime.now(UTC),
-                "id": assistant_message_id,
-            },
-        )
+    )
 
     # Update BYOK status
     if resolved_key.mode == "byok":
@@ -256,7 +244,7 @@ async def stream_send_message_async(
     set_flow_id(flow_id)
 
     # Compute payload hash for idempotency
-    context_dicts = [{"type": c.type, "id": c.id} for c in contexts]
+    context_render_inputs = [ctx.model_dump(mode="python") for ctx in contexts]
     payload_hash = compute_payload_hash(
         content,
         model_id,
@@ -300,7 +288,12 @@ async def stream_send_message_async(
                 # Orphaned — finalize to error
                 model = await run_in_threadpool(get_model_by_id, db, model_id)
                 if model:
-                    dummy_key = ResolvedKey(api_key="", mode="platform", user_key_id=None)
+                    dummy_key = ResolvedKey(
+                        api_key="",
+                        mode="platform",
+                        provider=model.provider,
+                        user_key_id=None,
+                    )
                     await run_in_threadpool(
                         _finalize_stream_conditional,
                         db,
@@ -534,7 +527,7 @@ async def stream_send_message_async(
         stream_start_time = time.monotonic()
 
         # --- Phase 2: Stream from provider (async, same event loop) ---
-        context_text, _ = await run_in_threadpool(render_context_blocks, db, context_dicts)
+        context_text, _ = await run_in_threadpool(render_context_blocks, db, context_render_inputs)
         history = await run_in_threadpool(
             load_prompt_history,
             db,
@@ -553,7 +546,7 @@ async def stream_send_message_async(
             messages=messages,
             max_tokens=4096,
             temperature=0.7,
-            reasoning_effort=reasoning,
+            reasoning_effort=cast(ReasoningEffort, reasoning),
         )
 
         if llm_router is None:

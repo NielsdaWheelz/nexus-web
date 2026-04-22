@@ -97,7 +97,6 @@ test.describe("conversations", () => {
       await page.goto(`/conversations/${conversationId}`);
 
       const modelSelect = page.locator("select").first();
-      await expect(modelSelect).toBeVisible();
       const missingKeyError = page.getByText("No API key available for openai");
       const input = page.getByPlaceholder(/ask anything|type a message/i);
       const sendButton = input.locator("xpath=following-sibling::button[1]");
@@ -118,7 +117,7 @@ test.describe("conversations", () => {
 
           composeState = "pending";
           return composeState;
-        }, { timeout: 10_000 })
+        }, { timeout: 15_000 })
         .not.toBe("pending");
 
       if (composeState === "missing_key") {

@@ -18,6 +18,10 @@ interface SeededYoutubeMedia {
   media_id: string;
 }
 
+interface SeededReaderResumeMedia {
+  epub_media_id: string;
+}
+
 function readSeed<T>(seedFile: string): T {
   const seedPath = path.join(__dirname, "..", ".seed", seedFile);
   return JSON.parse(readFileSync(seedPath, "utf-8")) as T;
@@ -155,7 +159,7 @@ test.describe("pane chrome", () => {
 
   test("shows page/chapter navigation only for supported media kinds", async ({ page }) => {
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
-    const epubSeed = readSeed<SeededEpubMedia>("epub-media.json");
+    const readerResumeSeed = readSeed<SeededReaderResumeMedia>("reader-resume-media.json");
     const youtubeSeed = readSeed<SeededYoutubeMedia>("youtube-media.json");
 
     await page.goto(`/media/${pdfSeed.media_id}`);
@@ -165,7 +169,7 @@ test.describe("pane chrome", () => {
       page.locator('[aria-label^="Page "][aria-label*=" of "]').first()
     ).toBeVisible();
 
-    await page.goto(`/media/${epubSeed.media_id}`);
+    await page.goto(`/media/${readerResumeSeed.epub_media_id}`);
     await expect(page.getByRole("button", { name: "Previous section" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Next section" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Previous page" })).toHaveCount(0);

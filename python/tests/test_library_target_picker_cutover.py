@@ -3,7 +3,6 @@ from uuid import UUID
 import pytest
 from sqlalchemy import text
 
-from nexus.storage.client import FakeStorageClient
 from tests.factories import (
     add_library_member,
     create_test_library,
@@ -23,196 +22,8 @@ def _bootstrap_user(auth_client, user_id: UUID) -> UUID:
     return UUID(response.json()["data"]["default_library_id"])
 
 
-class TestLibraryTargetPickerWrites:
-    def test_upload_init_with_library_id_adds_explicit_non_default_library_membership(
-        self,
-        auth_client,
-        direct_db: DirectSessionManager,
-        monkeypatch,
-    ):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        fake_storage = FakeStorageClient()
-        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
-
-        with direct_db.session() as session:
-            target_library_id = create_test_library(session, user_id, "Upload Target")
-
-        direct_db.register_cleanup("libraries", "id", target_library_id)
-        direct_db.register_cleanup("memberships", "library_id", target_library_id)
-
-        response = auth_client.post(
-            "/media/upload/init",
-            json={
-                "kind": "pdf",
-                "filename": "picker-target.pdf",
-                "content_type": "application/pdf",
-                "size_bytes": 4096,
-                "library_id": str(target_library_id),
-            },
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 200, (
-            f"upload init failed unexpectedly: {response.status_code} {response.text}"
-        )
-        media_id = UUID(response.json()["data"]["media_id"])
-
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-
-        with direct_db.session() as session:
-            row = session.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM library_entries
-                    WHERE library_id = :library_id
-                      AND media_id = :media_id
-                    """
-                ),
-                {"library_id": target_library_id, "media_id": media_id},
-            ).fetchone()
-
-        assert row is not None
-
-    def test_from_url_with_library_id_adds_explicit_non_default_library_membership(
-        self,
-        auth_client,
-        direct_db: DirectSessionManager,
-    ):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        with direct_db.session() as session:
-            target_library_id = create_test_library(session, user_id, "From URL Target")
-
-        direct_db.register_cleanup("libraries", "id", target_library_id)
-        direct_db.register_cleanup("memberships", "library_id", target_library_id)
-
-        response = auth_client.post(
-            "/media/from_url",
-            json={
-                "url": "https://example.com/library-target-picker",
-                "library_id": str(target_library_id),
-            },
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 202, (
-            f"from_url failed unexpectedly: {response.status_code} {response.text}"
-        )
-        media_id = UUID(response.json()["data"]["media_id"])
-
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-
-        with direct_db.session() as session:
-            job_ids = session.execute(
-                text(
-                    """
-                    SELECT id
-                    FROM background_jobs
-                    WHERE payload->>'media_id' = :media_id
-                    """
-                ),
-                {"media_id": str(media_id)},
-            ).fetchall()
-            row = session.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM library_entries
-                    WHERE library_id = :library_id
-                      AND media_id = :media_id
-                    """
-                ),
-                {"library_id": target_library_id, "media_id": media_id},
-            ).fetchone()
-
-        for job_id in job_ids:
-            direct_db.register_cleanup("background_jobs", "id", job_id[0])
-
-        assert row is not None
-
-    def test_subscribe_with_library_id_adds_podcast_library_entry(
-        self,
-        auth_client,
-        direct_db: DirectSessionManager,
-    ):
-        user_id = create_test_user_id()
-        _bootstrap_user(auth_client, user_id)
-
-        with direct_db.session() as session:
-            target_library_id = create_test_library(session, user_id, "Podcast Target")
-
-        direct_db.register_cleanup("libraries", "id", target_library_id)
-        direct_db.register_cleanup("memberships", "library_id", target_library_id)
-
-        response = auth_client.post(
-            "/podcasts/subscriptions",
-            json={
-                "provider_podcast_id": "picker-cutover-subscribe-target",
-                "title": "Picker Cutover Podcast",
-                "author": "Nexus",
-                "feed_url": "https://feeds.example.com/picker-cutover.xml",
-                "website_url": "https://example.com/picker-cutover",
-                "image_url": "https://example.com/picker-cutover.png",
-                "description": "Podcast subscribe target test",
-                "library_id": str(target_library_id),
-            },
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 200, (
-            f"subscribe failed unexpectedly: {response.status_code} {response.text}"
-        )
-        podcast_id = UUID(response.json()["data"]["podcast_id"])
-
-        direct_db.register_cleanup("podcasts", "id", podcast_id)
-        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
-        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
-
-        with direct_db.session() as session:
-            job_ids = session.execute(
-                text(
-                    """
-                    SELECT id
-                    FROM background_jobs
-                    WHERE kind = 'podcast_sync_subscription_job'
-                      AND payload->>'user_id' = :user_id
-                      AND payload->>'podcast_id' = :podcast_id
-                    """
-                ),
-                {"user_id": str(user_id), "podcast_id": str(podcast_id)},
-            ).fetchall()
-            row = session.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM library_entries
-                    WHERE library_id = :library_id
-                      AND podcast_id = :podcast_id
-                    """
-                ),
-                {"library_id": target_library_id, "podcast_id": podcast_id},
-            ).fetchone()
-
-        for job_id in job_ids:
-            direct_db.register_cleanup("background_jobs", "id", job_id[0])
-
-        assert row is not None
-
-
-class TestLibraryTargetPickerReads:
-    def test_get_media_libraries_returns_picker_rows(
+class TestLibraryTargetPickerOptions:
+    def test_get_media_libraries_returns_current_membership_options(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -291,7 +102,7 @@ class TestLibraryTargetPickerReads:
             "can_remove": False,
         }
 
-    def test_get_podcast_libraries_returns_picker_rows(
+    def test_get_podcast_libraries_returns_current_membership_options(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -321,7 +132,7 @@ class TestLibraryTargetPickerReads:
         subscribe_response = auth_client.post(
             "/podcasts/subscriptions",
             json={
-                "provider_podcast_id": "picker-cutover-read-target",
+                "provider_podcast_id": "picker-read-target",
                 "title": "Picker Read Podcast",
                 "author": "Nexus",
                 "feed_url": "https://feeds.example.com/picker-read.xml",

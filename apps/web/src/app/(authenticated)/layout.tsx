@@ -10,7 +10,7 @@ import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { PaneRootNavigationProvider } from "@/lib/panes/paneRuntime";
-import { ReaderProvider } from "@/lib/reader";
+import { ReaderProvider } from "@/lib/reader/ReaderContext";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import styles from "./layout.module.css";
 

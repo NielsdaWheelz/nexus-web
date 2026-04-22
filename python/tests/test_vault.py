@@ -127,22 +127,25 @@ def test_vault_exports_and_syncs_existing_highlight_note_and_color(
     assert highlight.annotation.body == "Edited note"
 
 
-def test_vault_creates_fragment_highlight_from_text_quote(
+def test_vault_creates_fragment_highlight_from_fragment_offsets(
     db_session: Session, bootstrapped_user: UUID, tmp_path
 ) -> None:
-    media_id, _fragment_id, _highlight_id = _seed_article_highlight(db_session, bootstrapped_user)
+    media_id, fragment_id, _highlight_id = _seed_article_highlight(db_session, bootstrapped_user)
     export_vault(db_session, bootstrapped_user, tmp_path)
+    canonical_text = "This is the first sentence. This is the second sentence for local sync."
+    start_offset = canonical_text.index("second sentence")
+    end_offset = start_offset + len("second sentence")
 
     (tmp_path / "Highlights" / "new-local.md").write_text(
         f"""---
 nexus_type: "highlight"
 media_handle: "med_{media_id.hex}"
-selector_kind: "text_quote"
+selector_kind: "fragment_offsets"
+fragment_handle: "frag_{fragment_id.hex}"
+start_offset: {start_offset}
+end_offset: {end_offset}
 color: "blue"
 deleted: false
-exact: "second sentence"
-prefix: "This is the "
-suffix: " for local sync."
 ---
 New note from Codex.
 """,
@@ -162,7 +165,7 @@ New note from Codex.
     assert (tmp_path / "Highlights" / f"hl_{created.id.hex}.md").exists()
 
 
-def test_vault_creates_pdf_text_highlight(
+def test_vault_rejects_pdf_highlight_creation(
     db_session: Session, bootstrapped_user: UUID, tmp_path
 ) -> None:
     library_id = get_user_default_library(db_session, bootstrapped_user)
@@ -198,13 +201,15 @@ PDF note.
     created = (
         db_session.query(Highlight)
         .filter(Highlight.user_id == bootstrapped_user, Highlight.color == "purple")
-        .one()
+        .all()
     )
-    assert created.anchor_kind == "pdf_text_quote"
-    assert created.pdf_text_anchor is not None
-    assert created.pdf_text_anchor.page_number == 1
-    assert created.annotation is not None
-    assert created.annotation.body == "PDF note."
+    assert created == []
+    conflict_path = tmp_path / "Highlights" / "new-pdf.conflict.md"
+    assert conflict_path.exists()
+    assert (
+        "Vault highlight creation only supports fragment_offsets selectors"
+        in conflict_path.read_text(encoding="utf-8")
+    )
 
 
 def test_vault_creates_updates_and_deletes_pages(

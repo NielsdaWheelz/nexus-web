@@ -8,6 +8,7 @@ export const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
 export const MAX_PANES = 12;
 export const MIN_PANE_WIDTH_PX = 320;
 export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
+const MAX_PANE_TITLE_LENGTH = 120;
 
 export interface WorkspacePaneStateV3 {
   id: string;
@@ -46,10 +47,10 @@ function resolveBaseOrigin(baseOrigin?: string): string {
   return "http://localhost";
 }
 
-export function normalizeWorkspaceHref(
+export function parseWorkspaceHref(
   href: string,
   options?: { baseOrigin?: string }
-): string | null {
+): URL | null {
   if (typeof href !== "string" || href.trim().length === 0) {
     return null;
   }
@@ -62,10 +63,40 @@ export function normalizeWorkspaceHref(
     if (parsed.origin !== baseOrigin) {
       return null;
     }
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return parsed;
   } catch {
     return null;
   }
+}
+
+export function normalizeWorkspaceHref(
+  href: string,
+  options?: { baseOrigin?: string }
+): string | null {
+  const parsed = parseWorkspaceHref(href, options);
+  if (!parsed) {
+    return null;
+  }
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+}
+
+export function normalizePaneTitle(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const normalized = raw.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return null;
+  }
+  return normalized.slice(0, MAX_PANE_TITLE_LENGTH).trim();
+}
+
+export function normalizePaneResourceRef(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const normalized = raw.trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
 export function clampPaneWidth(value: number): number {

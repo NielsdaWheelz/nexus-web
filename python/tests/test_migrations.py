@@ -380,45 +380,6 @@ class TestSchemaConstraints:
             session.rollback()
             assert "ck_pages_title_length" in str(exc_info.value)
 
-    def test_highlights_accept_pdf_text_quote_anchor_kind(self, migrated_engine):
-        with Session(migrated_engine) as session:
-            user_id = uuid4()
-            media_id = uuid4()
-            highlight_id = uuid4()
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status, plain_text, page_count)
-                    VALUES (:id, 'pdf', 'PDF', 'ready_for_reading', 'quoted text', 1)
-                """),
-                {"id": media_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO highlights (
-                        id, user_id, anchor_kind, anchor_media_id, color,
-                        exact, prefix, suffix
-                    )
-                    VALUES (
-                        :id, :user_id, 'pdf_text_quote', :media_id, 'yellow',
-                        'quoted', '', ''
-                    )
-                """),
-                {"id": highlight_id, "user_id": user_id, "media_id": media_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO highlight_pdf_text_anchors (
-                        highlight_id, media_id, page_number,
-                        plain_text_start_offset, plain_text_end_offset
-                    )
-                    VALUES (:highlight_id, :media_id, 1, 0, 6)
-                """),
-                {"highlight_id": highlight_id, "media_id": media_id},
-            )
-            session.flush()
-            session.rollback()
-
     def test_billing_webhook_event_duplicate_rejected(self, migrated_engine):
         with Session(migrated_engine) as session:
             event_id = "evt_test_1"

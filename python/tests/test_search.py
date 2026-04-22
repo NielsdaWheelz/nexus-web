@@ -2403,40 +2403,8 @@ class TestSearchTranscriptVersionNavigation:
                     "now_ts": now_ts,
                 },
             )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO highlight_transcript_anchors (
-                        highlight_id,
-                        transcript_version_id,
-                        transcript_segment_id,
-                        t_start_ms,
-                        t_end_ms,
-                        start_offset,
-                        end_offset,
-                        created_at
-                    )
-                    VALUES (
-                        :highlight_id,
-                        :transcript_version_id,
-                        NULL,
-                        0,
-                        1000,
-                        0,
-                        6,
-                        :now_ts
-                    )
-                    """
-                ),
-                {
-                    "highlight_id": highlight_id,
-                    "transcript_version_id": version_v1,
-                    "now_ts": now_ts,
-                },
-            )
             session.commit()
 
-        direct_db.register_cleanup("highlight_transcript_anchors", "highlight_id", highlight_id)
         direct_db.register_cleanup("annotations", "id", annotation_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "id", old_fragment_id)
@@ -2456,9 +2424,8 @@ class TestSearchTranscriptVersionNavigation:
             f"expected annotation search to succeed, got {response.status_code}: {response.text}"
         )
         annotation_rows = [row for row in response.json()["results"] if row["type"] == "annotation"]
-        assert annotation_rows, "expected annotation search row for remap assertion"
+        assert annotation_rows, "expected annotation search row for stored-fragment assertion"
         assert annotation_rows[0]["id"] == str(annotation_id)
-        assert annotation_rows[0]["fragment_id"] == str(active_fragment_id), (
-            "annotation search deep-links must target the active transcript version fragment rather than "
-            "a stale historical fragment id"
+        assert annotation_rows[0]["fragment_id"] == str(old_fragment_id), (
+            "annotation search deep-links must follow the canonical stored fragment anchor"
         )

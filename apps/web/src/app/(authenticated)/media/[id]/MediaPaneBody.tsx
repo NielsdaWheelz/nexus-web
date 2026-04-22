@@ -61,16 +61,16 @@ import {
   usePaneChromeScrollHandler,
   usePaneMobileChromeVisibility,
 } from "@/components/workspace/PaneShell";
+import { useReaderContext } from "@/lib/reader/ReaderContext";
 import {
   isPdfReaderResumeState,
   isReflowableReaderResumeState,
-  useReaderContext,
-  useReaderResumeState,
   type EpubReaderResumeState,
   type ReaderResumeLocations,
   type ReaderResumeState,
   type ReaderResumeTextContext,
-} from "@/lib/reader";
+} from "@/lib/reader/types";
+import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import type { WorkspacePaneStateV3 } from "@/lib/workspace/schema";
@@ -90,9 +90,10 @@ import TranscriptStatePanel from "./TranscriptStatePanel";
 import {
   type Fragment,
   type TranscriptChapter,
+  type TranscriptCoverage,
   type TranscriptFragment,
   type TranscriptPlaybackSource,
-  type TranscriptRequestForecast,
+  type TranscriptState,
   resolveActiveTranscriptFragment,
   normalizeTranscriptChapters,
 } from "./transcriptView";
@@ -115,7 +116,6 @@ import {
   type NavigationTocNodeLike,
   buildEpubLocationHref,
   resolveSectionAnchorId,
-  resolveEpubInternalLinkTarget,
 } from "./epubHelpers";
 import { PanelRight } from "lucide-react";
 import styles from "./page.module.css";
@@ -132,17 +132,8 @@ interface Media {
   podcast_image_url?: string | null;
   canonical_source_url: string | null;
   processing_status: string;
-  transcript_state?:
-    | "not_requested"
-    | "queued"
-    | "running"
-    | "failed_provider"
-    | "failed_quota"
-    | "unavailable"
-    | "ready"
-    | "partial"
-    | null;
-  transcript_coverage?: "none" | "partial" | "full" | null;
+  transcript_state?: TranscriptState;
+  transcript_coverage?: TranscriptCoverage;
   capabilities?: {
     can_read: boolean;
     can_highlight: boolean;
@@ -189,7 +180,6 @@ interface ActiveContent {
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const TEXT_ANCHOR_TOP_PADDING_PX = 56;
 const READER_POSITION_BUCKET_CP = 1024;
-const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
 const DOCUMENT_PROCESSING_POLL_INTERVAL_MS = 3000;
 const READER_QUOTE_EXACT_CP = 48;
 const READER_QUOTE_CONTEXT_CP = 24;
@@ -598,16 +588,6 @@ function useIntervalPoll({
   }, [enabled, onPoll, pollIntervalMs]);
 }
 
-function shouldPollTranscriptProvisioning(
-  isTranscriptMedia: boolean,
-  transcriptState: "queued" | "running" | string | null | undefined
-): boolean {
-  if (!isTranscriptMedia) {
-    return false;
-  }
-  return transcriptState === "queued" || transcriptState === "running";
-}
-
 function shouldPollDocumentProcessing(
   mediaKind: string | null | undefined,
   processingStatus: string | null | undefined,
@@ -844,13 +824,6 @@ function buildManualSectionRestoreRequest(
   return buildEmptyEpubRestoreRequest(sectionId, "manual_section", anchorId, anchorId === null);
 }
 
-function buildInternalLinkRestoreRequest(
-  sectionId: string,
-  anchorId: string | null
-): EpubRestoreRequest {
-  return buildEmptyEpubRestoreRequest(sectionId, "internal_link", anchorId, anchorId === null);
-}
-
 function isUserScrollKey(event: KeyboardEvent): boolean {
   return (
     event.key === "ArrowDown" ||
@@ -953,9 +926,6 @@ export default function MediaPaneBody() {
   const [activeTranscriptFragmentId, setActiveTranscriptFragmentId] = useState<string | null>(
     null
   );
-  const [transcriptRequestInFlight, setTranscriptRequestInFlight] = useState(false);
-  const [transcriptRequestForecast, setTranscriptRequestForecast] =
-    useState<TranscriptRequestForecast | null>(null);
 
   // ---- EPUB state ----
   const [epubSections, setEpubSections] = useState<EpubNavigationSection[] | null>(null);
@@ -1096,14 +1066,6 @@ export default function MediaPaneBody() {
     media?.kind === "podcast_episode" || media?.kind === "video";
   const transcriptState = media?.transcript_state ?? null;
   const transcriptCoverage = media?.transcript_coverage ?? null;
-  const canRequestTranscript =
-    isTranscriptMedia &&
-    transcriptState !== null &&
-    transcriptState !== "queued" &&
-    transcriptState !== "running" &&
-    transcriptState !== "ready" &&
-    transcriptState !== "partial" &&
-    transcriptState !== "unavailable";
   const canRead = media
     ? isTranscriptMedia
       ? Boolean(media.capabilities?.can_read)
@@ -1340,36 +1302,43 @@ export default function MediaPaneBody() {
     return () => { cancelled = true; };
   }, [id]);
 
-  const refreshTranscriptProvisioningState = useCallback(async () => {
-    if (!media?.id || !isTranscriptMedia) {
-      return;
-    }
+  const handleTranscriptStateChange = useCallback(
+    ({
+      transcriptState: nextTranscriptState,
+      transcriptCoverage: nextTranscriptCoverage,
+      capabilities,
+      lastErrorCode,
+      fragments: nextFragments,
+    }: {
+      transcriptState: TranscriptState;
+      transcriptCoverage: TranscriptCoverage;
+      capabilities: Media["capabilities"] | null;
+      lastErrorCode: string | null;
+      fragments: Fragment[] | null;
+    }) => {
+      setMedia((prev) =>
+        prev && prev.id === id
+          ? {
+              ...prev,
+              transcript_state: nextTranscriptState,
+              transcript_coverage: nextTranscriptCoverage,
+              last_error_code: lastErrorCode,
+              capabilities: capabilities ?? prev.capabilities,
+            }
+          : prev
+      );
 
-    const mediaResp = await apiFetch<{ data: Media }>(`/api/media/${media.id}`);
-    const nextMedia = mediaResp.data;
-    setMedia(nextMedia);
+      if (!nextFragments) {
+        return;
+      }
 
-    const nextCanRead = Boolean(nextMedia.capabilities?.can_read);
-    if (!nextCanRead) {
-      return;
-    }
-
-    const fragmentsResp = await apiFetch<{ data: Fragment[] }>(`/api/media/${media.id}/fragments`);
-    setFragments(fragmentsResp.data);
-    setActiveTranscriptFragmentId((prev) =>
-      fragmentsResp.data.some((fragment) => fragment.id === prev)
-        ? prev
-        : null
-    );
-  }, [isTranscriptMedia, media?.id]);
-
-  const pollTranscriptProvisioning = useCallback(async () => {
-    try {
-      await refreshTranscriptProvisioningState();
-    } catch {
-      // Keep the pane responsive even if one poll attempt fails.
-    }
-  }, [refreshTranscriptProvisioningState]);
+      setFragments(nextFragments);
+      setActiveTranscriptFragmentId((prev) =>
+        nextFragments.some((fragment) => fragment.id === prev) ? prev : null
+      );
+    },
+    [id]
+  );
 
   const refreshDocumentProcessingState = useCallback(async () => {
     if (!media?.id || (media.kind !== "epub" && media.kind !== "pdf")) {
@@ -1388,11 +1357,6 @@ export default function MediaPaneBody() {
     }
   }, [refreshDocumentProcessingState]);
 
-  const transcriptProvisioningPollEnabled = shouldPollTranscriptProvisioning(
-    isTranscriptMedia,
-    transcriptState
-  );
-
   const documentProcessingPollEnabled = shouldPollDocumentProcessing(
     media?.kind,
     media?.processing_status,
@@ -1400,72 +1364,10 @@ export default function MediaPaneBody() {
   );
 
   useIntervalPoll({
-    enabled: Boolean(media?.id) && transcriptProvisioningPollEnabled,
-    onPoll: pollTranscriptProvisioning,
-    pollIntervalMs: TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
-  });
-
-  useIntervalPoll({
     enabled: Boolean(media?.id) && documentProcessingPollEnabled,
     onPoll: pollDocumentProcessing,
     pollIntervalMs: DOCUMENT_PROCESSING_POLL_INTERVAL_MS,
   });
-
-  const mediaId = media?.id;
-  useEffect(() => {
-    if (!mediaId || !isTranscriptMedia || !canRequestTranscript) {
-      setTranscriptRequestForecast(null);
-      return;
-    }
-
-    let cancelled = false;
-    const loadForecast = async () => {
-      try {
-        const forecastResponse = await apiFetch<{
-          data: {
-            transcript_state: Media["transcript_state"];
-            transcript_coverage: Media["transcript_coverage"];
-            required_minutes: number;
-            remaining_minutes: number | null;
-            fits_budget: boolean;
-          };
-        }>(`/api/media/${mediaId}/transcript/request`, {
-          method: "POST",
-          body: JSON.stringify({
-            reason: "episode_open",
-            dry_run: true,
-          }),
-        });
-        if (cancelled) return;
-        const payload = forecastResponse.data;
-        setTranscriptRequestForecast({
-          requiredMinutes: payload.required_minutes,
-          remainingMinutes: payload.remaining_minutes,
-          fitsBudget: payload.fits_budget,
-        });
-        setMedia((prev) =>
-          prev && prev.id === mediaId
-            ? prev.transcript_state === payload.transcript_state &&
-              prev.transcript_coverage === payload.transcript_coverage
-              ? prev
-              : {
-                  ...prev,
-                  transcript_state: payload.transcript_state,
-                  transcript_coverage: payload.transcript_coverage,
-                }
-            : prev
-        );
-      } catch {
-        if (!cancelled) {
-          setTranscriptRequestForecast(null);
-        }
-      }
-    };
-    loadForecast();
-    return () => {
-      cancelled = true;
-    };
-  }, [mediaId, isTranscriptMedia, canRequestTranscript]);
 
   // ==========================================================================
   // EPUB orchestration — navigation + initial section
@@ -2166,20 +2068,55 @@ export default function MediaPaneBody() {
     if (!activeContent) return;
 
     const version = ++highlightVersionRef.current;
+    let cancelled = false;
 
     const loadHighlights = async () => {
-      try {
-        const data = await fetchHighlights(activeContent.fragmentId);
-        if (version !== highlightVersionRef.current) return;
-        setHighlights(data);
-        setHighlightsVersion((v) => v + 1);
-      } catch (err) {
-        if (version !== highlightVersionRef.current) return;
-        console.error("Failed to load highlights:", err);
+      const retryDelaysMs = [0, 150, 400];
+
+      for (let attempt = 0; attempt < retryDelaysMs.length; attempt += 1) {
+        if (retryDelaysMs[attempt]! > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, retryDelaysMs[attempt]));
+        }
+        if (cancelled || version !== highlightVersionRef.current) {
+          return;
+        }
+
+        try {
+          const data = await fetchHighlights(activeContent.fragmentId);
+          if (cancelled || version !== highlightVersionRef.current) {
+            return;
+          }
+
+          const shouldRetryEmptyEpubResult =
+            isEpub && data.length === 0 && attempt < retryDelaysMs.length - 1;
+          if (shouldRetryEmptyEpubResult) {
+            continue;
+          }
+
+          setHighlights(data);
+          setHighlightsVersion((v) => v + 1);
+          return;
+        } catch (err) {
+          if (cancelled || version !== highlightVersionRef.current) {
+            return;
+          }
+
+          const shouldRetry =
+            attempt < retryDelaysMs.length - 1 && (!isApiError(err) || err.status >= 500);
+          if (shouldRetry) {
+            continue;
+          }
+
+          console.error("Failed to load highlights:", err);
+          return;
+        }
       }
     };
 
-    loadHighlights();
+    void loadHighlights();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-fetch when active fragment changes
   }, [activeContent?.fragmentId]);
 
@@ -2319,7 +2256,7 @@ export default function MediaPaneBody() {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !contentRef.current) {
       clearPendingMobileSelectionPublish();
-      if (!isMobileViewport || !selectionVisibleRef.current || focusState.editingBounds) {
+      if (!selectionVisibleRef.current || focusState.editingBounds) {
         selectionSnapshotRef.current = null;
         selectionSnapshotKeyRef.current = null;
         publishSelection(null);
@@ -2330,7 +2267,7 @@ export default function MediaPaneBody() {
     const range = sel.getRangeAt(0);
     if (!contentRef.current.contains(range.commonAncestorContainer)) {
       clearPendingMobileSelectionPublish();
-      if (!isMobileViewport || !selectionVisibleRef.current || focusState.editingBounds) {
+      if (!selectionVisibleRef.current || focusState.editingBounds) {
         selectionSnapshotRef.current = null;
         selectionSnapshotKeyRef.current = null;
         publishSelection(null);
@@ -2536,60 +2473,6 @@ export default function MediaPaneBody() {
     clearRetainedSelection(false);
   }, [clearRetainedSelection]);
 
-  const handleRequestTranscript = useCallback(async () => {
-    if (!media || transcriptRequestInFlight) return;
-
-    setTranscriptRequestInFlight(true);
-    try {
-      const response = await apiFetch<{
-        data: {
-          transcript_state: Media["transcript_state"];
-          transcript_coverage: Media["transcript_coverage"];
-          required_minutes: number;
-          remaining_minutes: number | null;
-          fits_budget: boolean;
-          request_enqueued: boolean;
-        };
-      }>(`/api/media/${media.id}/transcript/request`, {
-        method: "POST",
-        body: JSON.stringify({
-          reason: "episode_open",
-          dry_run: false,
-        }),
-      });
-      const payload = response.data;
-      setMedia((prev) =>
-        prev && prev.id === media.id
-          ? {
-              ...prev,
-              transcript_state: payload.transcript_state,
-              transcript_coverage: payload.transcript_coverage,
-              last_error_code: null,
-            }
-          : prev
-      );
-      setTranscriptRequestForecast({
-        requiredMinutes: payload.required_minutes,
-        remainingMinutes: payload.remaining_minutes,
-        fitsBudget: payload.fits_budget,
-      });
-      toast({
-        variant: payload.request_enqueued ? "success" : "info",
-        message: payload.request_enqueued
-          ? "Transcript request queued."
-          : "Transcript request acknowledged.",
-      });
-    } catch (err) {
-      if (isApiError(err)) {
-        toast({ variant: "error", message: err.message });
-      } else {
-        toast({ variant: "error", message: "Failed to request transcript." });
-      }
-    } finally {
-      setTranscriptRequestInFlight(false);
-    }
-  }, [media, transcriptRequestInFlight, toast]);
-
   const handleTranscriptSegmentSelect = useCallback(
     (fragment: TranscriptFragment) => {
       cancelRestoreSession();
@@ -2609,35 +2492,6 @@ export default function MediaPaneBody() {
   const handleReaderContentClick = useCallback(
     (e: React.MouseEvent): string | null => {
       const target = e.target as Element;
-      const anchorEl = target.closest("a[href]");
-
-      if (anchorEl instanceof HTMLAnchorElement) {
-        const linkTarget = resolveEpubInternalLinkTarget(
-          anchorEl.getAttribute("href"),
-          activeSectionId,
-          epubSections
-        );
-        if (linkTarget) {
-          e.preventDefault();
-          const section = epubSections?.find((item) => item.section_id === linkTarget.sectionId);
-          if (!section) {
-            return null;
-          }
-          beginRestoreSession("opening_target");
-          setEpubRestoreRequest(
-            buildInternalLinkRestoreRequest(linkTarget.sectionId, linkTarget.anchorId)
-          );
-          if (linkTarget.sectionId !== activeSectionId) {
-            router.push(buildEpubLocationHref(id, linkTarget.sectionId));
-            setActiveSectionId(linkTarget.sectionId);
-            setActiveEpubSection(null);
-          }
-          return null;
-        }
-
-        return null;
-      }
-
       const highlightEl = findHighlightElement(target);
 
       if (highlightEl) {
@@ -2655,13 +2509,8 @@ export default function MediaPaneBody() {
       return null;
     },
     [
-      activeSectionId,
-      beginRestoreSession,
       clearFocus,
-      epubSections,
       handleHighlightClick,
-      id,
-      router,
     ]
   );
 
@@ -3690,11 +3539,10 @@ export default function MediaPaneBody() {
   const showDesktopHighlightsPane = !isMobileViewport && highlightsContent !== null;
   const transcriptPaneBody = !canRead ? (
     <TranscriptStatePanel
+      mediaId={media.id}
       transcriptState={transcriptState}
       transcriptCoverage={transcriptCoverage}
-      transcriptRequestInFlight={transcriptRequestInFlight}
-      transcriptRequestForecast={transcriptRequestForecast}
-      onRequestTranscript={handleRequestTranscript}
+      onTranscriptStateChange={handleTranscriptStateChange}
     />
   ) : (
     <TranscriptContentPanel
