@@ -244,7 +244,6 @@ async def stream_send_message_async(
     set_flow_id(flow_id)
 
     # Compute payload hash for idempotency
-    context_render_inputs = [ctx.model_dump(mode="python") for ctx in contexts]
     payload_hash = compute_payload_hash(
         content,
         model_id,
@@ -527,7 +526,7 @@ async def stream_send_message_async(
         stream_start_time = time.monotonic()
 
         # --- Phase 2: Stream from provider (async, same event loop) ---
-        context_text, _ = await run_in_threadpool(render_context_blocks, db, context_render_inputs)
+        context_text, _ = await run_in_threadpool(render_context_blocks, db, contexts)
         history = await run_in_threadpool(
             load_prompt_history,
             db,

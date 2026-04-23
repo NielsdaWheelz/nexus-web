@@ -30,14 +30,20 @@ import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import {
   addPodcastToLibrary,
   buildPodcastUnsubscribeConfirmation,
+  fetchNonDefaultLibraries,
   fetchPodcastLibraries,
+  getPodcastSubscriptionSettingsDraft,
+  getPodcastSubscriptionSettingsPatch,
+  getPodcastSubscriptionSyncPatch,
+  parsePodcastSubscriptionDefaultPlaybackSpeed,
   refreshPodcastSubscriptionSync,
   removePodcastFromLibrary,
   savePodcastSubscriptionSettings,
   subscribeToPodcast,
+  type PodcastDetailResponse,
   type PodcastLibraryMembership,
-  type PodcastSubscriptionSyncStatus,
   unsubscribeFromPodcast,
+  updatePodcastLibraryMemberships,
 } from "../podcastSubscriptions";
 import styles from "./page.module.css";
 
@@ -61,48 +67,6 @@ type EpisodeTranscriptState =
   | "partial"
   | null;
 type EpisodeTranscriptCoverage = "none" | "partial" | "full" | null;
-
-function planLabel(planTier: string): string {
-  if (planTier === "plus") return "Plus";
-  if (planTier === "ai_plus") return "AI Plus";
-  if (planTier === "ai_pro") return "AI Pro";
-  return "Free";
-}
-
-interface PodcastDetailItem {
-  id: string;
-  provider: string;
-  provider_podcast_id: string;
-  title: string;
-  author: string | null;
-  feed_url: string;
-  website_url: string | null;
-  image_url: string | null;
-  description: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface PodcastSubscription {
-  user_id: string;
-  podcast_id: string;
-  status: "active" | "unsubscribed";
-  default_playback_speed?: number | null;
-  auto_queue?: boolean;
-  sync_status: PodcastSubscriptionSyncStatus;
-  sync_error_code: string | null;
-  sync_error_message: string | null;
-  sync_attempts: number;
-  sync_started_at: string | null;
-  sync_completed_at: string | null;
-  last_synced_at: string | null;
-  updated_at: string;
-}
-
-interface PodcastDetailResponse {
-  podcast: PodcastDetailItem;
-  subscription: PodcastSubscription | null;
-}
 
 interface MediaCapabilities {
   can_read: boolean;
@@ -154,13 +118,6 @@ interface PodcastEpisodeMedia {
   description_text: string | null;
   created_at: string;
   updated_at: string;
-}
-
-interface LibrarySummary {
-  id: string;
-  name: string;
-  is_default: boolean;
-  color?: string | null;
 }
 
 interface TranscriptRequestResult {
@@ -243,13 +200,6 @@ function episodeMatchesFilter(episodeState: EpisodeState, filter: EpisodeStateFi
   return filter === "all" || episodeState === filter;
 }
 
-function formatEpisodeStateLabel(episodeState: EpisodeState): string {
-  if (episodeState === "in_progress") {
-    return "in progress";
-  }
-  return episodeState;
-}
-
 function getEpisodeProgressPercent(episode: PodcastEpisodeMedia): number {
   const listeningState = episode.listening_state;
   if (!listeningState || listeningState.duration_ms == null || listeningState.duration_ms <= 0) {
@@ -257,12 +207,6 @@ function getEpisodeProgressPercent(episode: PodcastEpisodeMedia): number {
   }
   const rawPercent = Math.floor((listeningState.position_ms / listeningState.duration_ms) * 100);
   return Math.max(0, Math.min(100, rawPercent));
-}
-
-function formatEpisodeTranscriptMeta(episode: PodcastEpisodeMedia): string {
-  const state = episode.transcript_state ?? "unknown";
-  const coverage = episode.transcript_coverage ?? "unknown";
-  return `transcript ${state} (${coverage} coverage)`;
 }
 
 function formatAuthorSummary(
@@ -468,18 +412,16 @@ export default function PodcastDetailPaneBody() {
     }
     setAvailableLibrariesLoading(true);
     try {
-      const response = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
+      const libraries = await fetchNonDefaultLibraries();
       setAvailableLibraries(
-        response.data
-          .filter((library) => !library.is_default)
-          .map((library) => ({
-            id: library.id,
-            name: library.name,
-            color: library.color ?? null,
-            isInLibrary: false,
-            canAdd: true,
-            canRemove: false,
-          }))
+        libraries.map((library) => ({
+          id: library.id,
+          name: library.name,
+          color: library.color ?? null,
+          isInLibrary: false,
+          canAdd: true,
+          canRemove: false,
+        }))
       );
       setAvailableLibrariesLoaded(true);
     } catch (loadError) {
@@ -497,7 +439,7 @@ export default function PodcastDetailPaneBody() {
   const loadPodcastLibraries = useCallback(
     async (force = false) => {
       if (!podcastId) {
-        return [] as PodcastLibraryMembership[];
+        return [];
       }
       if (!force && podcastLibrariesLoading) {
         return podcastLibraries;
@@ -601,12 +543,9 @@ export default function PodcastDetailPaneBody() {
       setHasMoreEpisodes(episodesResp.data.length === EPISODES_PAGE_SIZE);
       forecastingTranscriptMediaIdsRef.current.clear();
       setTranscriptRequestForecastByMediaId({});
-      setSettingsDefaultSpeed(
-        detailResp.data.subscription?.default_playback_speed == null
-          ? "default"
-          : String(detailResp.data.subscription.default_playback_speed)
-      );
-      setSettingsAutoQueue(Boolean(detailResp.data.subscription?.auto_queue));
+      const settingsDraft = getPodcastSubscriptionSettingsDraft(detailResp.data.subscription);
+      setSettingsDefaultSpeed(settingsDraft.defaultSpeed);
+      setSettingsAutoQueue(settingsDraft.autoQueue);
       setSettingsModalOpen(false);
       setSettingsError(null);
       try {
@@ -846,16 +785,7 @@ export default function PodcastDetailPaneBody() {
     try {
       await addPodcastToLibrary(podcastId, libraryId);
       setPodcastLibraries((prev) =>
-        prev.map((library) =>
-          library.id === libraryId
-            ? {
-                ...library,
-                isInLibrary: true,
-                canAdd: false,
-                canRemove: true,
-              }
-            : library
-        )
+        updatePodcastLibraryMemberships(prev, { libraryId, isInLibrary: true })
       );
     } catch (mutationError) {
       if (isApiError(mutationError)) {
@@ -882,16 +812,7 @@ export default function PodcastDetailPaneBody() {
     try {
       await removePodcastFromLibrary(podcastId, libraryId);
       setPodcastLibraries((prev) =>
-        prev.map((library) =>
-          library.id === libraryId
-            ? {
-                ...library,
-                isInLibrary: false,
-                canAdd: true,
-                canRemove: false,
-              }
-            : library
-        )
+        updatePodcastLibraryMemberships(prev, { libraryId, isInLibrary: false })
       );
     } catch (mutationError) {
       if (isApiError(mutationError)) {
@@ -925,10 +846,7 @@ export default function PodcastDetailPaneBody() {
               ...prev,
               subscription: {
                 ...prev.subscription,
-                sync_status: response.sync_status,
-                sync_error_code: response.sync_error_code,
-                sync_error_message: response.sync_error_message,
-                sync_attempts: response.sync_attempts,
+                ...getPodcastSubscriptionSyncPatch(response),
               },
             }
           : prev
@@ -988,12 +906,9 @@ export default function PodcastDetailPaneBody() {
     if (!detail?.subscription) {
       return;
     }
-    setSettingsDefaultSpeed(
-      detail.subscription.default_playback_speed == null
-        ? "default"
-        : String(detail.subscription.default_playback_speed)
-    );
-    setSettingsAutoQueue(Boolean(detail.subscription.auto_queue));
+    const settingsDraft = getPodcastSubscriptionSettingsDraft(detail.subscription);
+    setSettingsDefaultSpeed(settingsDraft.defaultSpeed);
+    setSettingsAutoQueue(settingsDraft.autoQueue);
     setSettingsError(null);
     setSettingsModalOpen(true);
   }, [detail]);
@@ -1011,11 +926,11 @@ export default function PodcastDetailPaneBody() {
     setSettingsBusy(true);
     setSettingsError(null);
     setError(null);
-    const nextDefaultPlaybackSpeed =
-      settingsDefaultSpeed === "default" ? null : Number.parseFloat(settingsDefaultSpeed);
     try {
       const response = await savePodcastSubscriptionSettings(detail.subscription.podcast_id, {
-        defaultPlaybackSpeed: nextDefaultPlaybackSpeed,
+        defaultPlaybackSpeed: parsePodcastSubscriptionDefaultPlaybackSpeed(
+          settingsDefaultSpeed
+        ),
         autoQueue: settingsAutoQueue,
       });
       setDetail((prev) =>
@@ -1024,9 +939,10 @@ export default function PodcastDetailPaneBody() {
               ...prev,
               subscription: {
                 ...prev.subscription,
-                default_playback_speed: response.default_playback_speed,
-                auto_queue: response.auto_queue,
-                updated_at: response.updated_at ?? prev.subscription.updated_at,
+                ...getPodcastSubscriptionSettingsPatch({
+                  response,
+                  updatedAt: prev.subscription.updated_at,
+                }),
               },
             }
           : prev
@@ -1523,7 +1439,7 @@ export default function PodcastDetailPaneBody() {
     ]
   );
 
-  const activeEpisodeCount = useMemo(() => episodes.length, [episodes]);
+  const activeEpisodeCount = episodes.length;
   const queueMediaIds = useMemo(() => {
     return new Set(queueItems.map((item) => item.media_id));
   }, [queueItems]);
@@ -1735,7 +1651,6 @@ export default function PodcastDetailPaneBody() {
                 key={episode.id}
                 href={`/media/${episode.id}`}
                 paneTitleHint={paneTitleHint}
-                paneResourceRef={`media:${episode.id}`}
                 title={
                   <span className={styles.episodeTitle}>
                     {episodeState === "unplayed" && (
@@ -1805,8 +1720,8 @@ export default function PodcastDetailPaneBody() {
                 meta={[
                   authorSummary,
                   episode.processing_status,
-                  formatEpisodeTranscriptMeta(episode),
-                  formatEpisodeStateLabel(episodeState),
+                  `transcript ${episode.transcript_state ?? "unknown"} (${episode.transcript_coverage ?? "unknown"} coverage)`,
+                  episodeState === "in_progress" ? "in progress" : episodeState,
                 ]
                   .filter(Boolean)
                   .join(" · ")}
@@ -1902,7 +1817,7 @@ export default function PodcastDetailPaneBody() {
                       <span className={styles.transcriptQuotaWarning}>
                         {billingDisabled
                           ? "Billing is temporarily unavailable, so transcription upgrades are unavailable right now."
-                          : `Transcription is included with ${planLabel("ai_plus")} and ${planLabel("ai_pro")}.`}
+                          : "Transcription is included with AI Plus and AI Pro."}
                       </span>
                     )}
                     {!canRequestTranscript && transcriptionAllowed && (

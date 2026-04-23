@@ -16,7 +16,6 @@ interface AppListItemProps {
   rel?: string;
   title: ReactNode;
   paneTitleHint?: string;
-  paneResourceRef?: string;
   description?: ReactNode;
   meta?: ReactNode;
   icon?: ReactNode;
@@ -36,7 +35,6 @@ export function AppListItem({
   rel,
   title,
   paneTitleHint,
-  paneResourceRef,
   description,
   meta,
   icon,
@@ -62,12 +60,7 @@ export function AppListItem({
     }
 
     event.preventDefault();
-    if (
-      !requestOpenInAppPane(href, {
-        titleHint: resolvedPaneTitleHint,
-        resourceRef: paneResourceRef,
-      })
-    ) {
+    if (!requestOpenInAppPane(href, { titleHint: resolvedPaneTitleHint })) {
       window.location.assign(href);
     }
   };

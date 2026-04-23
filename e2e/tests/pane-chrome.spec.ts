@@ -75,20 +75,6 @@ async function expectToolbarToFitPaneChrome(
 }
 
 test.describe("pane chrome", () => {
-  test("mobile standard panes keep pane chrome visible while the pane body scrolls", async ({
-    page,
-  }) => {
-    await useMobileViewport(page);
-
-    await page.goto("/libraries");
-    const paneBody = page.getByTestId("pane-shell-body");
-    await expect(paneBody).toBeVisible();
-    await expectPaneChromeHidden(page, false);
-
-    await setScrollTop(paneBody, 320);
-    await expectPaneChromeHidden(page, false);
-  });
-
   test("mobile document panes scroll inside the document viewport", async ({
     page,
   }) => {

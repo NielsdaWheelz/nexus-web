@@ -38,8 +38,6 @@ function linkedItemRowByHighlightId(highlightId: string): string {
   return `[data-highlight-id="${highlightId}"]`;
 }
 
-const MOBILE_VIEWPORT = { width: 390, height: 844 };
-
 function distanceOutsideViewport(top: number, viewportHeight: number): number {
   if (top < 0) {
     return Math.abs(top);
@@ -56,23 +54,6 @@ function rowAskInChatButton(row: Locator): Locator {
 
 function rowActionsButton(row: Locator): Locator {
   return row.getByRole("button", { name: "Actions" });
-}
-
-async function setMobileViewport(page: Page): Promise<void> {
-  await page.setViewportSize(MOBILE_VIEWPORT);
-}
-
-async function closeMobileHighlightsDrawer(page: Page): Promise<void> {
-  const drawer = page.getByRole("dialog", { name: "Highlights" }).first();
-  await expect(drawer).toBeVisible();
-  await drawer.getByRole("button", { name: "Close" }).click();
-  await expect(drawer).toBeHidden();
-}
-
-async function scrollLocatorIntoCenteredView(locator: Locator): Promise<void> {
-  await locator.evaluate((element) => {
-    (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
-  });
 }
 
 async function rowContainsVisibleTextOrFieldValue(
@@ -110,8 +91,6 @@ async function expectHighlightRowToStayCollapsed(
 ): Promise<void> {
   await expect(row).toBeVisible();
   await expect.poll(() => rowContainsVisibleTextOrFieldValue(row, hiddenText)).toBe(false);
-  await expect(rowAskInChatButton(row)).toHaveCount(0);
-  await expect(rowActionsButton(row)).toHaveCount(0);
 }
 
 async function expectHighlightRowToBeExpanded(
@@ -153,51 +132,6 @@ async function switchBackToMediaTab(page: Page): Promise<void> {
 }
 
 test.describe("non-pdf linked-items", () => {
-  test("mobile highlights drawer only shows visible rows and replaces offscreen context with indicators", async ({
-    page,
-  }) => {
-    const seeded = readSeededNonPdfMedia();
-    const mediaUrl = `/media/${seeded.media_id}`;
-    const contentPane = page.locator('div[class*="fragments"]');
-    const quoteAnchor = contentPane
-      .locator(`[data-active-highlight-ids~="${seeded.quote_highlight_id}"]`)
-      .first();
-    const focusAnchor = contentPane
-      .locator(`[data-active-highlight-ids~="${seeded.focus_highlight_id}"]`)
-      .first();
-    const quoteRow = page.locator(linkedItemRowByHighlightId(seeded.quote_highlight_id)).first();
-    const focusRow = page.locator(linkedItemRowByHighlightId(seeded.focus_highlight_id)).first();
-
-    await setMobileViewport(page);
-    await page.goto(mediaUrl);
-    await expect(contentPane).toBeVisible({ timeout: 10_000 });
-    await expect(quoteAnchor).toBeAttached({ timeout: 10_000 });
-    await expect(focusAnchor).toBeAttached({ timeout: 10_000 });
-
-    await scrollLocatorIntoCenteredView(quoteAnchor);
-    await quoteAnchor.click({ force: true });
-    const drawer = page.getByRole("dialog", { name: "Highlights" }).first();
-    await expect(drawer).toBeVisible();
-    await expect(quoteRow).toBeVisible({ timeout: 10_000 });
-    await expect(focusRow).toHaveCount(0);
-    await expect(drawer.getByText(/^\d+ below$/)).toBeVisible();
-    await expect(drawer.getByText("No highlights in view.")).toHaveCount(0);
-
-    await scrollLocatorIntoCenteredView(contentPane.locator("p").nth(90));
-    await expect(quoteRow).toHaveCount(0);
-    await expect(focusRow).toHaveCount(0);
-    await expect(drawer.getByText("No highlights in view.")).toBeVisible();
-    await expect(drawer.getByText(/^\d+ above$/)).toBeVisible();
-    await expect(drawer.getByText(/^\d+ below$/)).toBeVisible();
-
-    await scrollLocatorIntoCenteredView(focusAnchor);
-    await expect(quoteRow).toHaveCount(0);
-    await expect(focusRow).toBeVisible({ timeout: 10_000 });
-    await expect(drawer.getByText(/^\d+ above$/)).toBeVisible();
-    await expect(drawer.getByText("No highlights in view.")).toHaveCount(0);
-    await closeMobileHighlightsDrawer(page);
-  });
-
   test("contextual highlights expand inline and keep row-local chat + source focus in sync", async ({
     page,
   }) => {

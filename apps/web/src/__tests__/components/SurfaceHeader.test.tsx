@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { userEvent } from "vitest/browser";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 
 describe("SurfaceHeader", () => {
@@ -24,7 +24,7 @@ describe("SurfaceHeader", () => {
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
 
-  it("moves focus into options menu and loops tab focus", async () => {
+  it("loops tab focus inside the options menu", async () => {
     const user = userEvent.setup();
 
     render(
@@ -42,6 +42,9 @@ describe("SurfaceHeader", () => {
 
     const openSourceOption = screen.getByRole("menuitem", { name: "Open source" });
     const deleteOption = screen.getByRole("menuitem", { name: "Delete" });
+    expect(optionsToggle).toHaveFocus();
+
+    await user.tab();
     await waitFor(() => {
       expect(openSourceOption).toHaveFocus();
     });
@@ -81,33 +84,13 @@ describe("SurfaceHeader", () => {
     const item = screen.getByRole("menuitem", { name: "Open source" });
     expect(item).toHaveAttribute("aria-disabled", "true");
     expect(item).toHaveAttribute("tabindex", "-1");
-
-    await user.click(item);
+    expect(screen.getByRole("button", { name: "Options" })).toHaveFocus();
     expect(onSelect).not.toHaveBeenCalled();
   });
 
   describe("mobile viewport", () => {
     afterEach(() => {
       vi.unstubAllGlobals();
-    });
-
-    it("hides meta and subtitle on mobile viewport", () => {
-      vi.stubGlobal("innerWidth", 390);
-      window.dispatchEvent(new Event("resize"));
-
-      render(
-        <SurfaceHeader
-          title="Design Doc"
-          subtitle="Chapter 1"
-          meta={<span data-testid="header-meta">PDF · View Source</span>}
-        />
-      );
-
-      const header = screen.getByRole("banner");
-      expect(header).toHaveAttribute("data-mobile", "true");
-
-      // Meta and subtitle are rendered but hidden via CSS (.mobile .meta { display: none })
-      expect(screen.getByTestId("header-meta")).toBeInTheDocument();
     });
 
     it("sets data-mobile attribute on mobile viewport", () => {

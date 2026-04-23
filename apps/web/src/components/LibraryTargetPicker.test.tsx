@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import LibraryTargetPicker, {
   type LibraryTargetPickerItem,
@@ -27,7 +26,6 @@ const libraries: LibraryTargetPickerItem[] = [
 
 describe("LibraryTargetPicker", () => {
   it("uses listbox and option semantics in selection mode", async () => {
-    const user = userEvent.setup();
     const handleSelectLibrary = vi.fn();
 
     render(
@@ -40,7 +38,7 @@ describe("LibraryTargetPicker", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: "Personal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Personal" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Choose library" });
     const listbox = within(dialog).getByRole("listbox", { name: "Choose library" });
@@ -52,9 +50,12 @@ describe("LibraryTargetPicker", () => {
     expect(personalOption).toHaveAttribute("aria-selected", "true");
     expect(workOption).toHaveAttribute("aria-selected", "false");
 
-    await user.click(workOption);
+    fireEvent.click(workOption);
 
     expect(handleSelectLibrary).toHaveBeenCalledWith("work");
-    expect(screen.queryByRole("dialog", { name: "Choose library" })).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Choose library" })).not.toBeInTheDocument();
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { userEvent } from "vitest/browser";
 import Dialog from "@/components/ui/Dialog";
 
 describe("Dialog", () => {
@@ -58,7 +58,6 @@ describe("Dialog", () => {
   });
 
   it("calls onClose when backdrop is clicked", async () => {
-    const user = userEvent.setup();
     const onClose = vi.fn();
 
     render(
@@ -68,8 +67,7 @@ describe("Dialog", () => {
     );
 
     const dialog = screen.getByRole("dialog");
-    // Click on the dialog element itself (acts as backdrop)
-    await user.click(dialog);
+    fireEvent.click(dialog);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

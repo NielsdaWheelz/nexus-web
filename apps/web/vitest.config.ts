@@ -28,25 +28,6 @@ export default defineConfig({
         test: {
           name: "browser",
           include: ["src/**/*.test.tsx", "src/lib/highlights/**/*.test.ts"],
-          exclude: ["src/__tests__/components/PdfReader.test.tsx"],
-          setupFiles: ["./vitest.browser-setup.ts"],
-          browser: {
-            enabled: true,
-            provider: playwright(),
-            instances: [{ browser: "chromium" }],
-            headless: true,
-            fileParallelism: true,
-          },
-        },
-      },
-      {
-        extends: true,
-        define: {
-          "process.env.NODE_ENV": JSON.stringify("test"),
-        },
-        test: {
-          name: "browser-serial",
-          include: ["src/__tests__/components/PdfReader.test.tsx"],
           setupFiles: ["./vitest.browser-setup.ts"],
           browser: {
             enabled: true,

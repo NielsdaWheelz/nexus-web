@@ -34,4 +34,6 @@ if (typeof globalThis.process === "undefined") {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });

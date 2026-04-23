@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
-  getTrackChapterAtSeconds,
+  PLAYER_SKIP_BACK_SECONDS,
+  PLAYER_SKIP_FORWARD_SECONDS,
   useGlobalPlayer,
 } from "@/lib/player/globalPlayer";
 import {
@@ -14,13 +15,11 @@ import {
   areAudioEffectsActive,
   type AudioEffectsVolumeBoost,
 } from "@/lib/player/audioEffects";
-import { countUpcomingQueueItems, type PlaybackQueueItem } from "@/lib/player/playbackQueueClient";
+import { type PlaybackQueueItem } from "@/lib/player/playbackQueueClient";
 import Image from "next/image";
 import SortableList from "@/components/sortable/SortableList";
 import styles from "./GlobalPlayerFooter.module.css";
 
-const SKIP_BACK_SECONDS = 15;
-const SKIP_FORWARD_SECONDS = 30;
 const VOLUME_BOOST_OPTIONS: Array<{ value: AudioEffectsVolumeBoost; label: string }> = [
   { value: "off", label: "Off" },
   { value: "low", label: "Low (+3dB)" },
@@ -126,7 +125,6 @@ export default function GlobalPlayerFooter() {
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const {
     track,
-    setTrack,
     bindAudioElement,
     isPlaying,
     isBuffering,
@@ -137,7 +135,9 @@ export default function GlobalPlayerFooter() {
     currentTimeSeconds,
     durationSeconds,
     bufferedSeconds,
-    playbackRate,
+    currentChapter,
+    chapterMarkers,
+    selectedPlaybackRateOption,
     volume,
     audioEffects,
     setAudioEffects,
@@ -153,8 +153,11 @@ export default function GlobalPlayerFooter() {
     removeFromQueue,
     reorderQueue,
     clearQueue,
+    playQueueItem,
     playNextInQueue,
     playPreviousInQueue,
+    currentQueueItemId,
+    upcomingQueueCount,
     hasNextInQueue,
   } = useGlobalPlayer();
 
@@ -214,19 +217,6 @@ export default function GlobalPlayerFooter() {
     "--progress-percent": `${progressPercent}%`,
     "--buffered-percent": `${Math.max(progressPercent, bufferedPercent)}%`,
   } as CSSProperties;
-  const chapterMarkers =
-    durationSafe > 0 && Array.isArray(track.chapters)
-      ? track.chapters
-          .map((chapter) => ({
-            ...chapter,
-            leftPercent: Math.max(
-              0,
-              Math.min(100, (chapter.t_start_ms / 1000 / durationSafe) * 100)
-            ),
-          }))
-          .filter((chapter) => Number.isFinite(chapter.leftPercent))
-      : [];
-  const currentChapter = getTrackChapterAtSeconds(track.chapters ?? [], currentSafe);
 
   const onSeek = (nextValue: number) => {
     if (durationSafe <= 0) {
@@ -236,31 +226,10 @@ export default function GlobalPlayerFooter() {
     seekToMs(Math.floor(clampedSeconds * 1000));
   };
 
-  const speedValue = SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.includes(
-    playbackRate as (typeof SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS)[number]
-  )
-    ? playbackRate
-    : 1;
-  const upcomingCount = countUpcomingQueueItems(queueItems, track.media_id);
   const hasActiveAudioEffects = areAudioEffectsActive(audioEffects);
 
-  const handleQueueItemPlay = (item: PlaybackQueueItem) => {
-    setTrack(
-      {
-        media_id: item.media_id,
-        title: item.title,
-        stream_url: item.stream_url,
-        source_url: item.source_url,
-        podcast_title: item.podcast_title ?? undefined,
-        image_url: item.image_url ?? undefined,
-      },
-      {
-        autoplay: true,
-        seek_seconds:
-          item.listening_state != null ? Math.floor(item.listening_state.position_ms / 1000) : undefined,
-        playback_rate: item.listening_state?.playback_speed,
-      }
-    );
+  const handleQueueItemPlay = (item: (typeof queueItems)[number]) => {
+    playQueueItem(item);
     setQueueOpen(false);
   };
 
@@ -323,7 +292,7 @@ export default function GlobalPlayerFooter() {
             <button
               type="button"
               className={styles.transportButton}
-              onClick={() => skipBySeconds(SKIP_FORWARD_SECONDS)}
+              onClick={() => skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS)}
               aria-label="Forward 30 seconds"
             >
               30s ►►
@@ -449,7 +418,7 @@ export default function GlobalPlayerFooter() {
                   <button
                     type="button"
                     className={styles.transportButton}
-                    onClick={() => skipBySeconds(-SKIP_BACK_SECONDS)}
+                    onClick={() => skipBySeconds(-PLAYER_SKIP_BACK_SECONDS)}
                     aria-label="Back 15 seconds"
                   >
                     ◄◄ 15s
@@ -465,7 +434,7 @@ export default function GlobalPlayerFooter() {
                   <button
                     type="button"
                     className={styles.transportButton}
-                    onClick={() => skipBySeconds(SKIP_FORWARD_SECONDS)}
+                    onClick={() => skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS)}
                     aria-label="Forward 30 seconds"
                   >
                     30s ►►
@@ -486,7 +455,7 @@ export default function GlobalPlayerFooter() {
                     <span className={styles.controlLabel}>Speed</span>
                     <select
                       aria-label="Playback speed"
-                      value={speedValue.toString()}
+                      value={selectedPlaybackRateOption.toString()}
                       onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
                       className={styles.select}
                     >
@@ -514,10 +483,10 @@ export default function GlobalPlayerFooter() {
                     type="button"
                     className={styles.queueButton}
                     onClick={() => setQueueOpen(true)}
-                    aria-label={`Open playback queue (${upcomingCount} upcoming)`}
+                    aria-label={`Open playback queue (${upcomingQueueCount} upcoming)`}
                   >
                     Queue
-                    <span className={styles.queueBadge}>{upcomingCount}</span>
+                    <span className={styles.queueBadge}>{upcomingQueueCount}</span>
                   </button>
                 </div>
 
@@ -569,7 +538,7 @@ export default function GlobalPlayerFooter() {
             <button
               type="button"
               className={styles.transportButton}
-              onClick={() => skipBySeconds(-SKIP_BACK_SECONDS)}
+              onClick={() => skipBySeconds(-PLAYER_SKIP_BACK_SECONDS)}
               aria-label="Back 15 seconds"
             >
               ◄◄ 15s
@@ -587,7 +556,7 @@ export default function GlobalPlayerFooter() {
             <button
               type="button"
               className={styles.transportButton}
-              onClick={() => skipBySeconds(SKIP_FORWARD_SECONDS)}
+              onClick={() => skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS)}
               aria-label="Forward 30 seconds"
             >
               30s ►►
@@ -681,7 +650,7 @@ export default function GlobalPlayerFooter() {
                   <span className={styles.controlLabel}>Speed</span>
                   <select
                     aria-label="Playback speed"
-                    value={speedValue.toString()}
+                    value={selectedPlaybackRateOption.toString()}
                     onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
                     className={styles.select}
                   >
@@ -738,10 +707,10 @@ export default function GlobalPlayerFooter() {
                     setQueueOpen(true);
                     setMoreOpen(false);
                   }}
-                  aria-label={`Open playback queue (${upcomingCount} upcoming)`}
+                  aria-label={`Open playback queue (${upcomingQueueCount} upcoming)`}
                 >
                   Queue
-                  <span className={styles.queueBadge}>{upcomingCount}</span>
+                  <span className={styles.queueBadge}>{upcomingQueueCount}</span>
                 </button>
               </div>
 
@@ -792,7 +761,7 @@ export default function GlobalPlayerFooter() {
                 getItemId={(item) => item.item_id}
                 onReorder={handleQueueReorder}
                 renderItem={({ item, handleProps }) => {
-                  const isCurrent = item.media_id === track.media_id;
+                  const isCurrent = item.item_id === currentQueueItemId;
                   return (
                     <div className={styles.queueListItemInner} data-current={isCurrent ? "true" : "false"}>
                       <button

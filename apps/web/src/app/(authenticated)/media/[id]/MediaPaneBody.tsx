@@ -166,7 +166,10 @@ interface Media {
 }
 
 interface SelectionState {
-  range: Range;
+  fragmentId: string;
+  startOffset: number;
+  endOffset: number;
+  selectedText: string;
   rect: DOMRect;
   lineRects: DOMRect[];
 }
@@ -175,6 +178,12 @@ interface ActiveContent {
   fragmentId: string;
   htmlSanitized: string;
   canonicalText: string;
+}
+
+interface PdfHighlightsPaneState {
+  activePage: number;
+  highlights: PdfHighlightOut[];
+  version: number;
 }
 
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
@@ -190,6 +199,14 @@ type QuoteChatTarget = {
   paneHref: string | null;
   conversationId: string | null;
 };
+
+function createEmptyPdfHighlightsPaneState(): PdfHighlightsPaneState {
+  return {
+    activePage: 1,
+    highlights: [],
+    version: 0,
+  };
+}
 
 function getQuoteChatBaseOrigin(): string {
   if (
@@ -293,7 +310,10 @@ function getPaneScrollTopPaddingPx(container: HTMLElement): number {
 function buildSelectionSnapshotKey(selection: SelectionState): string {
   const { left, top, width, height } = selection.rect;
   return [
-    selection.range.toString().trim(),
+    selection.fragmentId,
+    String(selection.startOffset),
+    String(selection.endOffset),
+    selection.selectedText,
     left.toFixed(1),
     top.toFixed(1),
     width.toFixed(1),
@@ -949,10 +969,10 @@ export default function MediaPaneBody() {
 
   // ---- Highlight interaction state ----
   const [highlights, setHighlights] = useState<Highlight[]>([]);
-  const [pdfPageHighlights, setPdfPageHighlights] = useState<PdfHighlightOut[]>([]);
-  const [pdfActivePage, setPdfActivePage] = useState(1);
+  const [pdfHighlightsPaneState, setPdfHighlightsPaneState] = useState<PdfHighlightsPaneState>(
+    createEmptyPdfHighlightsPaneState
+  );
   const [pdfRefreshToken, setPdfRefreshToken] = useState(0);
-  const [pdfHighlightsVersion, setPdfHighlightsVersion] = useState(0);
   const {
     focusState,
     focusHighlight,
@@ -966,7 +986,7 @@ export default function MediaPaneBody() {
   const mismatchToastFragmentRef = useRef<string | null>(null);
   const mismatchLoggedFragmentRef = useRef<string | null>(null);
 
-  // Selection state for creating highlights
+  // Retained canonical selection for highlight actions
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
@@ -1241,12 +1261,20 @@ export default function MediaPaneBody() {
   }, [activeContent, activeEpubSection, epubSections, fragments, isEpub, isPdf]);
 
   useEffect(() => {
+    const retainedSelection = selectionSnapshotRef.current;
+    if (!retainedSelection) {
+      return;
+    }
+    if (!activeContent || retainedSelection.fragmentId !== activeContent.fragmentId || isMismatchDisabled) {
+      clearRetainedSelection(false);
+    }
+  }, [activeContent, clearRetainedSelection, isMismatchDisabled]);
+
+  useEffect(() => {
     // Reset PDF-specific pane state whenever media identity/type changes.
     // This prevents stale cross-document rows from flashing during navigation.
-    setPdfPageHighlights([]);
-    setPdfActivePage(1);
+    setPdfHighlightsPaneState(createEmptyPdfHighlightsPaneState());
     setPdfRefreshToken(0);
-    setPdfHighlightsVersion(0);
   }, [isPdf, id]);
 
   // ==========================================================================
@@ -2257,21 +2285,14 @@ export default function MediaPaneBody() {
     if (!sel || sel.isCollapsed || !contentRef.current) {
       clearPendingMobileSelectionPublish();
       if (!selectionVisibleRef.current || focusState.editingBounds) {
-        selectionSnapshotRef.current = null;
-        selectionSnapshotKeyRef.current = null;
-        publishSelection(null);
+        clearRetainedSelection(false);
       }
       return;
     }
 
     const range = sel.getRangeAt(0);
     if (!contentRef.current.contains(range.commonAncestorContainer)) {
-      clearPendingMobileSelectionPublish();
-      if (!selectionVisibleRef.current || focusState.editingBounds) {
-        selectionSnapshotRef.current = null;
-        selectionSnapshotKeyRef.current = null;
-        publishSelection(null);
-      }
+      clearRetainedSelection(false);
       return;
     }
 
@@ -2285,12 +2306,31 @@ export default function MediaPaneBody() {
       return;
     }
 
+    if (!activeContent || !cursorRef.current) {
+      clearRetainedSelection(false);
+      return;
+    }
+
+    const result = selectionToOffsets(
+      range,
+      cursorRef.current,
+      activeContent.canonicalText
+    );
+
+    if (!result.success) {
+      clearRetainedSelection(false);
+      return;
+    }
+
     const rect = range.getBoundingClientRect();
     const lineRects = Array.from(range.getClientRects()).filter(
       (clientRect) => clientRect.width > 0 && clientRect.height > 0
     );
     const nextSelection = {
-      range: range.cloneRange(),
+      fragmentId: activeContent.fragmentId,
+      startOffset: result.startOffset,
+      endOffset: result.endOffset,
+      selectedText: result.selectedText,
       rect,
       lineRects: lineRects.length > 0 ? lineRects : [rect],
     };
@@ -2325,7 +2365,7 @@ export default function MediaPaneBody() {
       publishSelection(selectionSnapshotRef.current);
     }, MOBILE_SELECTION_STABILIZATION_DELAY_MS);
   }, [
-    activeContent?.fragmentId,
+    activeContent,
     clearPendingMobileSelectionPublish,
     clearRetainedSelection,
     focusState.editingBounds,
@@ -2350,17 +2390,16 @@ export default function MediaPaneBody() {
   const handleCreateHighlight = useCallback(
     async (color: HighlightColor): Promise<string | null> => {
       const activeSelection = selection ?? selectionSnapshotRef.current;
-      if (!activeSelection || !activeContent || !cursorRef.current || isCreating) return null;
+      if (!activeSelection || !activeContent || isCreating) return null;
 
-      const result = selectionToOffsets(
-        activeSelection.range,
-        cursorRef.current,
-        activeContent.canonicalText,
-        isMismatchDisabled
-      );
+      if (isMismatchDisabled) {
+        toast({ variant: "warning", message: "Highlights disabled due to content mismatch." });
+        clearRetainedSelection(false);
+        return null;
+      }
 
-      if (!result.success) {
-        toast({ variant: "error", message: result.message });
+      if (activeSelection.fragmentId !== activeContent.fragmentId) {
+        toast({ variant: "warning", message: "Selection changed. Select text again." });
         clearRetainedSelection(false);
         return null;
       }
@@ -2368,8 +2407,8 @@ export default function MediaPaneBody() {
       const duplicateId =
         highlights.find(
           (highlight) =>
-            highlight.anchor.start_offset === result.startOffset &&
-            highlight.anchor.end_offset === result.endOffset
+            highlight.anchor.start_offset === activeSelection.startOffset &&
+            highlight.anchor.end_offset === activeSelection.endOffset
         )?.id ?? null;
 
       if (duplicateId) {
@@ -2383,9 +2422,9 @@ export default function MediaPaneBody() {
       try {
         const requestVersion = ++highlightVersionRef.current;
         const createdHighlight = await createHighlight(
-          activeContent.fragmentId,
-          result.startOffset,
-          result.endOffset,
+          activeSelection.fragmentId,
+          activeSelection.startOffset,
+          activeSelection.endOffset,
           color
         );
         if (requestVersion !== highlightVersionRef.current) {
@@ -2433,8 +2472,8 @@ export default function MediaPaneBody() {
 
             const existing = newHighlights.find(
               (h) =>
-                h.anchor.start_offset === result.startOffset &&
-                h.anchor.end_offset === result.endOffset
+                h.anchor.start_offset === activeSelection.startOffset &&
+                h.anchor.end_offset === activeSelection.endOffset
             );
             if (existing) {
               focusHighlight(existing.id);
@@ -2523,25 +2562,14 @@ export default function MediaPaneBody() {
       isPdf ||
       !focusState.editingBounds ||
       !selection ||
-      !activeContent ||
-      !cursorRef.current
+      !activeContent
     )
       return;
 
     const focusedHighlight = highlights.find(
       (h) => h.id === focusState.focusedId
     );
-    if (!focusedHighlight) return;
-
-    const result = selectionToOffsets(
-      selection.range,
-      cursorRef.current,
-      activeContent.canonicalText,
-      isMismatchDisabled
-    );
-
-    if (!result.success) {
-      toast({ variant: "error", message: result.message });
+    if (!focusedHighlight || selection.fragmentId !== activeContent.fragmentId || isMismatchDisabled) {
       return;
     }
 
@@ -2550,8 +2578,8 @@ export default function MediaPaneBody() {
         const requestVersion = ++highlightVersionRef.current;
         await updateHighlight(focusedHighlight.id, {
           anchor: {
-            start_offset: result.startOffset,
-            end_offset: result.endOffset,
+            start_offset: selection.startOffset,
+            end_offset: selection.endOffset,
           },
         });
 
@@ -2688,12 +2716,11 @@ export default function MediaPaneBody() {
     () => findQuoteChatTarget(workspaceState.panes, workspaceState.activePaneId),
     [workspaceState.activePaneId, workspaceState.panes]
   );
+  const activeChatHighlights = isPdf ? pdfHighlightsPaneState.highlights : highlights;
 
   const handleSendToChat = useCallback(
     (highlightId: string) => {
-      const highlight =
-        highlights.find((item) => item.id === highlightId) ??
-        pdfPageHighlights.find((item) => item.id === highlightId);
+      const highlight = activeChatHighlights.find((item) => item.id === highlightId);
 
       const quoteParams = new URLSearchParams({
         attach_type: "highlight",
@@ -2731,11 +2758,10 @@ export default function MediaPaneBody() {
       requestOpenInAppPane(`/conversations/new?${quoteParams.toString()}`, { titleHint: "New chat" });
     },
     [
-      highlights,
+      activeChatHighlights,
       media?.id,
       media?.title,
       navigatePane,
-      pdfPageHighlights,
       quoteChatTarget,
     ]
   );
@@ -2749,7 +2775,7 @@ export default function MediaPaneBody() {
       targetConversationId: string | null;
     } | null> => {
       const activeSelection = selection ?? selectionSnapshotRef.current;
-      const preview = activeSelection?.range.toString().trim().slice(0, 120) || undefined;
+      const preview = activeSelection?.selectedText.slice(0, 120) || undefined;
       const highlightId = await handleCreateHighlight(color);
       if (!highlightId) {
         return null;
@@ -2832,9 +2858,11 @@ export default function MediaPaneBody() {
 
   const handlePdfPageHighlightsChange = useCallback(
     (nextPage: number, nextHighlights: PdfHighlightOut[]) => {
-      setPdfActivePage(nextPage);
-      setPdfPageHighlights(nextHighlights);
-      setPdfHighlightsVersion((v) => v + 1);
+      setPdfHighlightsPaneState((current) => ({
+        activePage: nextPage,
+        highlights: nextHighlights,
+        version: current.version + 1,
+      }));
 
       const focusedHighlightId = focusedHighlightIdRef.current;
       if (
@@ -3517,10 +3545,10 @@ export default function MediaPaneBody() {
       isEpub={isEpub}
       isMobile={isMobileViewport}
       fragmentHighlights={highlights}
-      pdfPageHighlights={pdfPageHighlights}
+      pdfPageHighlights={pdfHighlightsPaneState.highlights}
       highlightsVersion={highlightsVersion}
-      pdfHighlightsVersion={pdfHighlightsVersion}
-      pdfActivePage={pdfActivePage}
+      pdfHighlightsVersion={pdfHighlightsPaneState.version}
+      pdfActivePage={pdfHighlightsPaneState.activePage}
       contentRef={isPdf ? pdfContentRef : contentRef}
       focusedId={focusState.focusedId}
       onFocusHighlight={focusHighlight}

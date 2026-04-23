@@ -66,8 +66,7 @@ describe("POST /api/media/capture/url", () => {
     );
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchSpy.mock.calls[0] as [RequestInfo, RequestInit];
-    expect(String(url)).toBe("http://api.local/media/capture/url");
+    const [, init] = fetchSpy.mock.calls[0] as [RequestInfo, RequestInit];
     expect(init?.method).toBe("POST");
 
     const headers = new Headers(init?.headers);

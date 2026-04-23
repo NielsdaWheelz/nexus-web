@@ -91,14 +91,6 @@ export function normalizePaneTitle(raw: string | null | undefined): string | nul
   return normalized.slice(0, MAX_PANE_TITLE_LENGTH).trim();
 }
 
-export function normalizePaneResourceRef(raw: string | null | undefined): string | null {
-  if (typeof raw !== "string") {
-    return null;
-  }
-  const normalized = raw.trim();
-  return normalized.length > 0 ? normalized : null;
-}
-
 export function clampPaneWidth(value: number): number {
   if (!Number.isFinite(value)) {
     return MIN_PANE_WIDTH_PX;

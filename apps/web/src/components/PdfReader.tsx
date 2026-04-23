@@ -911,18 +911,37 @@ export default function PdfReader({
     [getPageElement]
   );
 
-  const clearSelection = useCallback(() => {
-    if (mobileSelectionTimerRef.current != null) {
-      window.clearTimeout(mobileSelectionTimerRef.current);
-      mobileSelectionTimerRef.current = null;
+  const clearPendingMobileSelectionPublish = useCallback(() => {
+    if (mobileSelectionTimerRef.current == null) {
+      return;
     }
-    selectionSnapshotKeyRef.current = null;
-    selectionVisibleRef.current = false;
-    setSelection(null);
-    selectionSnapshotRef.current = null;
+    window.clearTimeout(mobileSelectionTimerRef.current);
+    mobileSelectionTimerRef.current = null;
+  }, []);
+
+  const publishSelection = useCallback((nextSelection: SelectionState | null) => {
+    selectionVisibleRef.current = nextSelection !== null;
+    setSelection(nextSelection);
+  }, []);
+
+  const resetSelectionState = useCallback(
+    (keepVisibleMobileSelection = false) => {
+      clearPendingMobileSelectionPublish();
+      if (keepVisibleMobileSelection && isMobileRef.current && selectionVisibleRef.current) {
+        return;
+      }
+      selectionSnapshotRef.current = null;
+      selectionSnapshotKeyRef.current = null;
+      publishSelection(null);
+    },
+    [clearPendingMobileSelectionPublish, publishSelection]
+  );
+
+  const clearSelection = useCallback(() => {
+    resetSelectionState();
     setSelectionError(null);
     getPdfSelection()?.removeAllRanges();
-  }, []);
+  }, [resetSelectionState]);
 
   useEffect(() => {
     selectionVisibleRef.current = selection !== null;
@@ -930,12 +949,9 @@ export default function PdfReader({
 
   useEffect(() => {
     return () => {
-      if (mobileSelectionTimerRef.current != null) {
-        window.clearTimeout(mobileSelectionTimerRef.current);
-        mobileSelectionTimerRef.current = null;
-      }
+      clearPendingMobileSelectionPublish();
     };
-  }, []);
+  }, [clearPendingMobileSelectionPublish]);
 
   const updateCreateTelemetry = useCallback(
     (updater: (prev: CreateTelemetryState) => CreateTelemetryState) => {
@@ -1459,75 +1475,32 @@ export default function PdfReader({
 
   const syncSelectionFromWindow = useCallback(() => {
     if (!textLayerUsable) {
-      if (mobileSelectionTimerRef.current != null) {
-        window.clearTimeout(mobileSelectionTimerRef.current);
-        mobileSelectionTimerRef.current = null;
-      }
-      selectionVisibleRef.current = false;
-      setSelection(null);
-      selectionSnapshotRef.current = null;
-      selectionSnapshotKeyRef.current = null;
+      resetSelectionState();
       return;
     }
 
     const sel = getPdfSelection();
     if (!sel || sel.rangeCount === 0) {
-      if (mobileSelectionTimerRef.current != null) {
-        window.clearTimeout(mobileSelectionTimerRef.current);
-        mobileSelectionTimerRef.current = null;
-      }
-      if (!isMobileRef.current || !selectionVisibleRef.current) {
-        selectionSnapshotRef.current = null;
-        selectionSnapshotKeyRef.current = null;
-        selectionVisibleRef.current = false;
-        setSelection(null);
-      }
+      resetSelectionState(true);
       return;
     }
     const selectedTextFromSelection = sel.toString().trim();
     if (sel.isCollapsed && selectedTextFromSelection.length === 0) {
-      if (mobileSelectionTimerRef.current != null) {
-        window.clearTimeout(mobileSelectionTimerRef.current);
-        mobileSelectionTimerRef.current = null;
-      }
-      if (!isMobileRef.current || !selectionVisibleRef.current) {
-        selectionSnapshotRef.current = null;
-        selectionSnapshotKeyRef.current = null;
-        selectionVisibleRef.current = false;
-        setSelection(null);
-      }
+      resetSelectionState(true);
       return;
     }
 
     const range = sel.getRangeAt(0);
     const selectionContext = resolveTextLayerRootFromRange(range);
     if (!selectionContext) {
-      if (mobileSelectionTimerRef.current != null) {
-        window.clearTimeout(mobileSelectionTimerRef.current);
-        mobileSelectionTimerRef.current = null;
-      }
-      if (!isMobileRef.current || !selectionVisibleRef.current) {
-        selectionSnapshotRef.current = null;
-        selectionSnapshotKeyRef.current = null;
-        selectionVisibleRef.current = false;
-        setSelection(null);
-      }
+      resetSelectionState(true);
       return;
     }
 
     const selectionText =
       selectedTextFromSelection.length > 0 ? selectedTextFromSelection : range.toString().trim();
     if (selectionText.length === 0) {
-      if (mobileSelectionTimerRef.current != null) {
-        window.clearTimeout(mobileSelectionTimerRef.current);
-        mobileSelectionTimerRef.current = null;
-      }
-      if (!isMobileRef.current || !selectionVisibleRef.current) {
-        selectionSnapshotRef.current = null;
-        selectionSnapshotKeyRef.current = null;
-        selectionVisibleRef.current = false;
-        setSelection(null);
-      }
+      resetSelectionState(true);
       return;
     }
 
@@ -1542,8 +1515,7 @@ export default function PdfReader({
     selectionSnapshotKeyRef.current = nextSelectionKey;
     setSelectionError(null);
     if (!isMobileRef.current) {
-      selectionVisibleRef.current = true;
-      setSelection(snapshot);
+      publishSelection(snapshot);
       return;
     }
     if (
@@ -1552,11 +1524,8 @@ export default function PdfReader({
     ) {
       return;
     }
-    if (mobileSelectionTimerRef.current != null) {
-      window.clearTimeout(mobileSelectionTimerRef.current);
-    }
-    selectionVisibleRef.current = false;
-    setSelection(null);
+    clearPendingMobileSelectionPublish();
+    publishSelection(null);
     mobileSelectionTimerRef.current = window.setTimeout(() => {
       mobileSelectionTimerRef.current = null;
       if (
@@ -1565,10 +1534,15 @@ export default function PdfReader({
       ) {
         return;
       }
-      selectionVisibleRef.current = true;
-      setSelection(selectionSnapshotRef.current);
+      publishSelection(selectionSnapshotRef.current);
     }, MOBILE_SELECTION_STABILIZATION_DELAY_MS);
-  }, [resolveTextLayerRootFromRange, textLayerUsable]);
+  }, [
+    clearPendingMobileSelectionPublish,
+    publishSelection,
+    resetSelectionState,
+    resolveTextLayerRootFromRange,
+    textLayerUsable,
+  ]);
 
   const handleCreateHighlight = useCallback(
     async (color: HighlightColor): Promise<string | null> => {

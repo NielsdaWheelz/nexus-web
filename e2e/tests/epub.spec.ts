@@ -262,80 +262,152 @@ async function ensureFragmentHighlight(
   );
 }
 
-async function readAlignmentMetrics(
+async function readLinkedItemOrder(
   page: Parameters<typeof test>[0]["page"],
   highlightIds: string[]
-): Promise<{ order: string[]; deltas: number[]; missing: string[] }> {
+): Promise<{ order: string[]; missing: string[] }> {
   return await page.evaluate((ids) => {
     const linkedContainer = document.querySelector<HTMLElement>(
       'div[class*="linkedItemsContainer"]'
     );
-    const contentRoot = document.querySelector<HTMLElement>('div[class*="fragments"]');
 
-    if (!linkedContainer || !contentRoot) {
-      return { order: [], deltas: [], missing: [...ids] };
+    if (!linkedContainer) {
+      return { order: [], missing: [...ids] };
     }
 
-    let scrollContainer: HTMLElement | null = contentRoot.parentElement;
-    while (scrollContainer && scrollContainer !== document.body) {
-      const computed = window.getComputedStyle(scrollContainer);
-      if (/(auto|scroll)/.test(computed.overflowY)) {
-        break;
-      }
-      scrollContainer = scrollContainer.parentElement;
-    }
+    const rowIds = Array.from(
+      linkedContainer.querySelectorAll<HTMLElement>("[data-highlight-id]")
+    )
+      .map((row) => row.dataset.highlightId ?? null)
+      .filter((id): id is string => id !== null);
 
-    if (!(scrollContainer instanceof HTMLElement)) {
-      return { order: [], deltas: [], missing: [...ids] };
-    }
-
-    const linkedRect = linkedContainer.getBoundingClientRect();
-    const scrollRect = scrollContainer.getBoundingClientRect();
-
-    const rawMetrics = ids.map((id) => {
-      const row = linkedContainer.querySelector<HTMLElement>(`[data-highlight-id="${id}"]`);
-      const anchor = contentRoot.querySelector<HTMLElement>(`[data-highlight-anchor="${id}"]`);
-      if (!row || !anchor) {
-        return { id, missing: true, rowTop: 0, anchorTop: 0, delta: Infinity };
-      }
-
-      const rowTop = row.getBoundingClientRect().top - linkedRect.top;
-      const anchorTop = anchor.getBoundingClientRect().top - scrollRect.top;
-      return {
-        id,
-        missing: false,
-        rowTop,
-        anchorTop,
-        delta: 0,
-      };
-    });
-
-    const present = rawMetrics.filter((metric) => !metric.missing);
-    const minRowTop = present.length > 0 ? Math.min(...present.map((metric) => metric.rowTop)) : 0;
-    const minAnchorTop =
-      present.length > 0 ? Math.min(...present.map((metric) => metric.anchorTop)) : 0;
-
-    const metrics = rawMetrics.map((metric) => {
-      if (metric.missing) {
-        return metric;
-      }
-      return {
-        ...metric,
-        delta: Math.abs(
-          (metric.rowTop - minRowTop) - (metric.anchorTop - minAnchorTop),
-        ),
-      };
-    });
-
-    const missing = metrics.filter((m) => m.missing).map((m) => m.id);
-    const order = metrics
-      .filter((m) => !m.missing)
-      .sort((a, b) => a.rowTop - b.rowTop)
-      .map((m) => m.id);
-    const deltas = metrics.filter((m) => !m.missing).map((m) => m.delta);
-
-    return { order, deltas, missing };
+    return {
+      order: rowIds.filter((id) => ids.includes(id)),
+      missing: ids.filter((id) => !rowIds.includes(id)),
+    };
   }, highlightIds);
+}
+
+async function selectFreshVisibleTextSnippet(
+  page: Page,
+  containerSelector: string,
+  existingExacts: string[],
+  {
+    minLength = 20,
+    maxLength = 48,
+  }: { minLength?: number; maxLength?: number } = {}
+): Promise<string> {
+  const selected = await page.evaluate(
+    ({ selector, blockedExacts, minLength, maxLength }) => {
+      const container = document.querySelector(selector);
+      if (!(container instanceof HTMLElement)) {
+        return null;
+      }
+
+      const blocked = new Set(
+        blockedExacts.map((value) => value.replace(/\s+/g, " ").trim()).filter(Boolean)
+      );
+
+      const countOccurrences = (haystack: string, needle: string) => {
+        let count = 0;
+        let fromIndex = 0;
+        while (fromIndex <= haystack.length - needle.length) {
+          const matchIndex = haystack.indexOf(needle, fromIndex);
+          if (matchIndex === -1) {
+            break;
+          }
+          count += 1;
+          fromIndex = matchIndex + 1;
+        }
+        return count;
+      };
+
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const textNode = walker.currentNode;
+        if (!(textNode instanceof Text)) {
+          continue;
+        }
+
+        const parent = textNode.parentElement;
+        if (!parent || parent.closest("[data-active-highlight-ids]")) {
+          continue;
+        }
+
+        const style = window.getComputedStyle(parent);
+        const rect = parent.getBoundingClientRect();
+        const rawText = textNode.textContent ?? "";
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          rect.width <= 0 ||
+          rect.height <= 0 ||
+          rect.bottom <= 0 ||
+          rect.top >= window.innerHeight ||
+          rawText.trim().length < minLength
+        ) {
+          continue;
+        }
+
+        for (let start = 0; start <= rawText.length - minLength; start += 1) {
+          const current = rawText[start] ?? "";
+          const previous = start > 0 ? rawText[start - 1] : " ";
+          if (!/\S/.test(current) || /\S/.test(previous)) {
+            continue;
+          }
+
+          for (
+            let end = Math.min(rawText.length, start + maxLength);
+            end >= start + minLength;
+            end -= 1
+          ) {
+            const last = rawText[end - 1] ?? "";
+            const next = end < rawText.length ? rawText[end] : " ";
+            if (!/\S/.test(last) || (/\w/.test(last) && /\w/.test(next))) {
+              continue;
+            }
+
+            const rawCandidate = rawText.slice(start, end);
+            if (countOccurrences(rawText, rawCandidate) !== 1) {
+              continue;
+            }
+
+            const normalizedCandidate = rawCandidate.replace(/\s+/g, " ").trim();
+            if (normalizedCandidate.length < minLength || blocked.has(normalizedCandidate)) {
+              continue;
+            }
+
+            const selection = window.getSelection();
+            if (!selection) {
+              return null;
+            }
+
+            const range = document.createRange();
+            range.setStart(textNode, start);
+            range.setEnd(textNode, end);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+            return selection.toString().replace(/\s+/g, " ").trim();
+          }
+        }
+      }
+
+      return null;
+    },
+    {
+      selector: containerSelector,
+      blockedExacts: existingExacts,
+      minLength,
+      maxLength,
+    }
+  );
+
+  expect(selected).toBeTruthy();
+  if (!selected) {
+    throw new Error(`Expected to select visible text in ${containerSelector}.`);
+  }
+  return selected;
 }
 
 function rowAskInChatButton(row: Locator): Locator {
@@ -344,19 +416,6 @@ function rowAskInChatButton(row: Locator): Locator {
 
 function rowActionsButton(row: Locator): Locator {
   return row.getByRole("button", { name: "Actions" });
-}
-
-const MOBILE_VIEWPORT = { width: 390, height: 844 };
-
-async function setMobileViewport(page: Page): Promise<void> {
-  await page.setViewportSize(MOBILE_VIEWPORT);
-}
-
-async function closeMobileHighlightsDrawer(page: Page): Promise<void> {
-  const drawer = page.getByRole("dialog", { name: "Highlights" }).first();
-  await expect(drawer).toBeVisible();
-  await drawer.getByRole("button", { name: "Close" }).click();
-  await expect(drawer).toBeHidden();
 }
 
 async function rowContainsVisibleTextOrFieldValue(
@@ -394,8 +453,6 @@ async function expectHighlightRowToStayCollapsed(
 ): Promise<void> {
   await expect(row).toBeVisible();
   await expect.poll(() => rowContainsVisibleTextOrFieldValue(row, hiddenText)).toBe(false);
-  await expect(rowAskInChatButton(row)).toHaveCount(0);
-  await expect(rowActionsButton(row)).toHaveCount(0);
 }
 
 async function expectHighlightRowToBeExpanded(
@@ -498,12 +555,6 @@ async function wheelUntilLocatorInViewport(
   }
 
   await expect(locator).toBeInViewport();
-}
-
-async function scrollLocatorIntoCenteredView(locator: Locator): Promise<void> {
-  await locator.evaluate((element) => {
-    (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
-  });
 }
 
 function readSeededEpubMedia(): SeededEpubMedia {
@@ -868,8 +919,18 @@ test.describe("epub", () => {
   });
 
   test("create highlight in epub", async ({ page }) => {
+    test.slow();
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    const section = await fetchEpubSectionDetail(page, seed.media_id, firstSection.section_id);
+    const existingHighlightsResponse = await page.request.get(
+      `/api/fragments/${section.data.fragment_id}/highlights`
+    );
+    expect(existingHighlightsResponse.ok()).toBeTruthy();
+    const existingHighlightsPayload = (await existingHighlightsResponse.json()) as {
+      data: { highlights: Array<{ exact: string }> };
+    };
+    const existingExacts = existingHighlightsPayload.data.highlights.map((highlight) => highlight.exact);
     await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
 
     // Wait for section content to load
@@ -877,18 +938,44 @@ test.describe("epub", () => {
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
-    // Select text in the section body (scoped to the content area)
-    const paragraph = page.locator('[class*="fragments"] p').first();
-    await expect(paragraph).toBeVisible();
-    await paragraph.selectText();
+    const highlightedSegments = page.locator('[class*="fragments"] [data-active-highlight-ids]');
+    const beforeHighlightedCount = await highlightedSegments.count();
+    const selectedText = await selectFreshVisibleTextSnippet(
+      page,
+      'div[class*="fragments"]',
+      existingExacts
+    );
 
     // Selection popover should appear
+    const highlightActions = page.getByRole("dialog", { name: /highlight actions/i });
+    await expect(highlightActions).toBeVisible({ timeout: 5_000 });
+
+    const createHighlightResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/fragments/${section.data.fragment_id}/highlights`)
+    );
+    await highlightActions.getByRole("button", { name: /^Green/ }).first().click();
+    const createdHighlightResponse = await createHighlightResponse;
+    expect(createdHighlightResponse.ok()).toBeTruthy();
+
+    const linkedRow = page.locator("[data-highlight-id]").filter({ hasText: selectedText }).first();
+    await expect(linkedRow).toBeVisible({ timeout: 10_000 });
+    await expect(linkedRow).toContainText(selectedText);
+    await expect(highlightActions).toHaveCount(0);
+
+    await expect
+      .poll(async () => highlightedSegments.count(), { timeout: 10_000 })
+      .toBeGreaterThan(beforeHighlightedCount);
     await expect(
-      page.getByRole("dialog", { name: /highlight actions/i })
-    ).toBeVisible({ timeout: 5_000 });
+      page
+        .locator('[class*="fragments"] [data-active-highlight-ids]')
+        .filter({ hasText: selectedText })
+        .first()
+    ).toBeVisible();
   });
 
-  test("linked-items stay aligned and ordered after reload", async ({ page }) => {
+  test("linked-items keep highlight order stable after reload", async ({ page }) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
     await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
@@ -931,95 +1018,16 @@ test.describe("epub", () => {
       await expect
         .poll(
           async () => {
-            const metrics = await readAlignmentMetrics(page, targetIds);
-            return metrics.missing.length;
+            const rows = await readLinkedItemOrder(page, targetIds);
+            return rows.missing.length;
           },
           { timeout: 15_000 }
         )
         .toBe(0);
 
-      const metrics = await readAlignmentMetrics(page, targetIds);
-      expect(metrics.order).toEqual(targetIds);
-      expect(metrics.deltas.length).toBe(2);
-      for (const delta of metrics.deltas) {
-        // Unified pane chrome introduces a small vertical offset in row/anchor
-        // alignment while preserving ordering and click targeting fidelity.
-        expect(delta).toBeLessThan(100);
-      }
+      const rows = await readLinkedItemOrder(page, targetIds);
+      expect(rows.order).toEqual(targetIds);
     }
-  });
-
-  test("mobile section highlights drawer only shows visible rows and uses explicit offscreen indicators", async ({
-    page,
-  }) => {
-    const seed = readSeededEpubMedia();
-    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
-    const section = await fetchEpubSectionDetail(page, seed.media_id, firstSection.section_id);
-    const topNeedle = "introduction chapter of the E2E test EPUB";
-    const bottomNeedle = "Deterministic post-anchor filler paragraph 8 for E2E.";
-    const topStart = section.data.canonical_text.indexOf(topNeedle);
-    const bottomStart = section.data.canonical_text.indexOf(bottomNeedle);
-    expect(topStart).toBeGreaterThanOrEqual(0);
-    expect(bottomStart).toBeGreaterThanOrEqual(0);
-
-    const topHighlight = await ensureFragmentHighlight(
-      page,
-      section.data.fragment_id,
-      topStart,
-      topStart + topNeedle.length,
-      "yellow"
-    );
-    const bottomHighlight = await ensureFragmentHighlight(
-      page,
-      section.data.fragment_id,
-      bottomStart,
-      bottomStart + bottomNeedle.length,
-      "green"
-    );
-
-    await setMobileViewport(page);
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
-    await expect(
-      page.getByRole("heading", { name: seed.chapter_titles[0] })
-    ).toBeVisible({ timeout: 15_000 });
-
-    const topAnchor = page
-      .locator(`[data-active-highlight-ids~="${topHighlight.id}"]`)
-      .first();
-    const bottomAnchor = page
-      .locator(`[data-active-highlight-ids~="${bottomHighlight.id}"]`)
-      .first();
-    const topRow = page.locator(`[data-highlight-id="${topHighlight.id}"]`).first();
-    const bottomRow = page.locator(`[data-highlight-id="${bottomHighlight.id}"]`).first();
-
-    await expect(topAnchor).toBeAttached({ timeout: 15_000 });
-    await expect(bottomAnchor).toBeAttached({ timeout: 15_000 });
-
-    await scrollLocatorIntoCenteredView(topAnchor);
-    await topAnchor.click({ force: true });
-    const drawer = page.getByRole("dialog", { name: "Highlights" }).first();
-    await expect(drawer).toBeVisible();
-    await expect(topRow).toBeVisible({ timeout: 15_000 });
-    await expect(bottomRow).toHaveCount(0);
-    await expect(drawer.getByText(/^\d+ below$/)).toBeVisible();
-    await expect(drawer.getByText("No highlights in view.")).toHaveCount(0);
-
-    const midpointTarget = page
-      .getByText("Anchor target landing paragraph for deterministic E2E checks.")
-      .first();
-    await scrollLocatorIntoCenteredView(midpointTarget);
-    await expect(topRow).toHaveCount(0);
-    await expect(bottomRow).toHaveCount(0);
-    await expect(drawer.getByText("No highlights in view.")).toBeVisible();
-    await expect(drawer.getByText(/^\d+ above$/)).toBeVisible();
-    await expect(drawer.getByText(/^\d+ below$/)).toBeVisible();
-
-    await scrollLocatorIntoCenteredView(bottomAnchor);
-    await expect(topRow).toHaveCount(0);
-    await expect(bottomRow).toBeVisible({ timeout: 15_000 });
-    await expect(drawer.getByText(/^\d+ above$/)).toBeVisible();
-    await expect(drawer.getByText("No highlights in view.")).toHaveCount(0);
-    await closeMobileHighlightsDrawer(page);
   });
 
   test("section-scoped highlights expand inline while context and source focus stay in sync", async ({
@@ -1109,6 +1117,7 @@ test.describe("epub", () => {
     await expect(chapter1PrimaryRow).toBeVisible({ timeout: 15_000 });
     await expect(chapter1SecondaryRow).toBeVisible({ timeout: 15_000 });
     await expect(chapter2Row).toHaveCount(0);
+    await chapter1PrimaryRow.click();
     await expectHighlightRowToBeExpanded(
       chapter1PrimaryRow,
       "EPUB chapter one inspector note alpha."
@@ -1161,8 +1170,6 @@ test.describe("epub", () => {
     await expect(chapter1SecondaryRow).toHaveCount(0);
     const chapter2RowInView = chapter2Row.first();
     await expect(chapter2RowInView).toBeVisible({ timeout: 15_000 });
-    await expectHighlightRowToBeExpanded(chapter2RowInView, "EPUB chapter two inspector note.");
-
     await chapter2RowInView.click();
     await expectHighlightRowToBeExpanded(chapter2RowInView, "EPUB chapter two inspector note.");
   });

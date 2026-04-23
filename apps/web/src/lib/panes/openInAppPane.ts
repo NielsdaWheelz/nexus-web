@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  normalizePaneResourceRef,
   normalizePaneTitle,
   normalizeWorkspaceHref,
 } from "@/lib/workspace/schema";
@@ -14,7 +13,6 @@ const NEXUS_PENDING_PANE_OPEN_QUEUE_KEY = "__nexusPendingPaneOpenQueue";
 export interface OpenInAppPaneDetail {
   href: string;
   titleHint?: string;
-  resourceRef?: string;
 }
 
 export interface OpenInAppPaneMessage extends OpenInAppPaneDetail {
@@ -45,7 +43,6 @@ function sanitizeOpenPaneDetail(detail: unknown): OpenInAppPaneDetail | null {
   const candidate = detail as {
     href?: unknown;
     titleHint?: unknown;
-    resourceRef?: unknown;
   };
   if (typeof candidate.href !== "string") {
     return null;
@@ -59,10 +56,6 @@ function sanitizeOpenPaneDetail(detail: unknown): OpenInAppPaneDetail | null {
     titleHint:
       typeof candidate.titleHint === "string"
         ? normalizePaneTitle(candidate.titleHint) ?? undefined
-        : undefined,
-    resourceRef:
-      typeof candidate.resourceRef === "string"
-        ? normalizePaneResourceRef(candidate.resourceRef) ?? undefined
         : undefined,
   };
 }
@@ -109,7 +102,6 @@ export function isOpenInAppPaneMessage(value: unknown): value is OpenInAppPaneMe
     type?: unknown;
     href?: unknown;
     titleHint?: unknown;
-    resourceRef?: unknown;
   };
   if (candidate.type !== NEXUS_OPEN_PANE_MESSAGE_TYPE || typeof candidate.href !== "string") {
     return false;
@@ -117,23 +109,16 @@ export function isOpenInAppPaneMessage(value: unknown): value is OpenInAppPaneMe
   if (typeof candidate.titleHint !== "undefined" && typeof candidate.titleHint !== "string") {
     return false;
   }
-  if (typeof candidate.resourceRef !== "undefined" && typeof candidate.resourceRef !== "string") {
-    return false;
-  }
   return true;
 }
 
-export function requestOpenInAppPane(
-  href: string,
-  options?: { titleHint?: string; resourceRef?: string }
-): boolean {
+export function requestOpenInAppPane(href: string, options?: { titleHint?: string }): boolean {
   if (typeof window === "undefined") {
     return false;
   }
   const detail = sanitizeOpenPaneDetail({
     href,
     titleHint: options?.titleHint,
-    resourceRef: options?.resourceRef,
   });
   if (!detail) {
     return false;
@@ -145,7 +130,6 @@ export function requestOpenInAppPane(
         type: NEXUS_OPEN_PANE_MESSAGE_TYPE,
         href: detail.href,
         titleHint: detail.titleHint,
-        resourceRef: detail.resourceRef,
       } satisfies OpenInAppPaneMessage,
       window.location.origin
     );

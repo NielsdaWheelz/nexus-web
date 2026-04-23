@@ -4,8 +4,7 @@ Implements context insertion and conversation_media management for Slice 3, PR-0
 
 This module provides helpers for:
 - Inserting message_context rows with ordinal ordering
-- Validating target_type ↔ FK consistency
-- Computing media_id from context targets
+- Resolving media_id from canonical typed context targets
 - Transactionally upserting conversation_media
 - Recomputing conversation_media (repair helper)
 
@@ -13,6 +12,7 @@ NO PUBLIC ROUTES use this in PR-02. Used by send-message (PR-05) and tested via
 service-layer tests only.
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -27,18 +27,11 @@ from nexus.db.models import (
     Message,
     MessageContext,
 )
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
+from nexus.schemas.conversation import MessageContextRef
 
 logger = get_logger(__name__)
-
-
-# =============================================================================
-# Context Target Types
-# =============================================================================
-
-
-VALID_TARGET_TYPES = {"media", "highlight", "annotation"}
 
 
 # =============================================================================
@@ -46,41 +39,14 @@ VALID_TARGET_TYPES = {"media", "highlight", "annotation"}
 # =============================================================================
 
 
-def validate_target_type(target_type: str, context_data: dict) -> None:
-    """Validate that target_type matches the non-null FK column.
-
-    Args:
-        target_type: The declared target type.
-        context_data: Dict with keys media_id, highlight_id, annotation_id.
-
-    Raises:
-        ApiError(E_INVALID_REQUEST): If target_type doesn't match the FK column.
-    """
-    if target_type not in VALID_TARGET_TYPES:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid target_type: {target_type}")
-
-    # Count non-null FKs
-    non_null_count = sum(
-        1 for key in ["media_id", "highlight_id", "annotation_id"] if context_data.get(key)
-    )
-
-    if non_null_count != 1:
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Exactly one of media_id, highlight_id, annotation_id must be set",
-        )
-
-    # Validate target_type matches the non-null FK
-    if target_type == "media" and not context_data.get("media_id"):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "target_type='media' requires media_id")
-    if target_type == "highlight" and not context_data.get("highlight_id"):
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST, "target_type='highlight' requires highlight_id"
-        )
-    if target_type == "annotation" and not context_data.get("annotation_id"):
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST, "target_type='annotation' requires annotation_id"
-        )
+def _context_foreign_keys(
+    context: MessageContextRef,
+) -> tuple[UUID | None, UUID | None, UUID | None]:
+    if context.type == "media":
+        return context.id, None, None
+    if context.type == "highlight":
+        return None, context.id, None
+    return None, None, context.id
 
 
 def _resolve_typed_highlight_media_id(highlight: Highlight) -> UUID | None:
@@ -104,35 +70,31 @@ def _resolve_typed_highlight_media_id(highlight: Highlight) -> UUID | None:
 
 def resolve_media_id_for_context(
     db: Session,
-    target_type: str,
-    media_id: UUID | None,
-    highlight_id: UUID | None,
-    annotation_id: UUID | None,
-) -> UUID | None:
+    context: MessageContextRef,
+) -> UUID:
     """Resolve the media_id for a context target.
 
     Uses canonical typed anchors for highlight and annotation targets.
 
     Args:
         db: Database session.
-        target_type: The type of context target.
-        media_id: Direct media reference (if target_type='media').
-        highlight_id: Highlight reference (if target_type='highlight').
-        annotation_id: Annotation reference (if target_type='annotation').
+        context: Canonical typed context target.
 
     Returns:
-        The resolved media_id, or None if target doesn't exist.
+        The resolved media_id.
 
     Raises:
         NotFoundError: If the target doesn't exist.
     """
-    if target_type == "media":
+    if context.type == "media":
+        media_id, _, _ = _context_foreign_keys(context)
         media = db.get(Media, media_id)
         if media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         return media.id
 
-    if target_type == "highlight":
+    if context.type == "highlight":
+        _, highlight_id, _ = _context_foreign_keys(context)
         highlight = db.get(Highlight, highlight_id)
         if highlight is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Highlight not found")
@@ -141,7 +103,8 @@ def resolve_media_id_for_context(
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Highlight not found")
         return media_id
 
-    if target_type == "annotation":
+    if context.type == "annotation":
+        _, _, annotation_id = _context_foreign_keys(context)
         annotation = db.get(Annotation, annotation_id)
         if annotation is None or annotation.highlight is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Annotation not found")
@@ -150,7 +113,7 @@ def resolve_media_id_for_context(
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Annotation not found")
         return media_id
 
-    return None
+    raise AssertionError(f"Unsupported context type: {context.type}")
 
 
 # =============================================================================
@@ -160,12 +123,10 @@ def resolve_media_id_for_context(
 
 def insert_context(
     db: Session,
+    *,
     message_id: UUID,
     ordinal: int,
-    target_type: str,
-    media_id: UUID | None = None,
-    highlight_id: UUID | None = None,
-    annotation_id: UUID | None = None,
+    context: MessageContextRef,
 ) -> MessageContext:
     """Insert a message_context row.
 
@@ -173,30 +134,18 @@ def insert_context(
         db: Database session.
         message_id: The message to attach context to.
         ordinal: Display order within message (0-indexed).
-        target_type: Type of context target.
-        media_id: Media ID (if target_type='media').
-        highlight_id: Highlight ID (if target_type='highlight').
-        annotation_id: Annotation ID (if target_type='annotation').
+        context: Canonical typed context target.
 
     Returns:
         The created MessageContext.
 
     Raises:
-        ApiError(E_INVALID_REQUEST): If target_type doesn't match FK.
         NotFoundError: If target doesn't exist.
     """
-    # Validate target_type matches FK
-    context_data = {
-        "media_id": media_id,
-        "highlight_id": highlight_id,
-        "annotation_id": annotation_id,
-    }
-    validate_target_type(target_type, context_data)
+    media_id, highlight_id, annotation_id = _context_foreign_keys(context)
 
     # Resolve media_id for conversation_media update
-    resolved_media_id = resolve_media_id_for_context(
-        db, target_type, media_id, highlight_id, annotation_id
-    )
+    resolved_media_id = resolve_media_id_for_context(db, context)
 
     # Get conversation_id from message
     message = db.get(Message, message_id)
@@ -206,57 +155,48 @@ def insert_context(
     conversation_id = message.conversation_id
 
     # Create context
-    context = MessageContext(
+    created_context = MessageContext(
         message_id=message_id,
         ordinal=ordinal,
-        target_type=target_type,
+        target_type=context.type,
         media_id=media_id,
         highlight_id=highlight_id,
         annotation_id=annotation_id,
     )
-    db.add(context)
+    db.add(created_context)
     db.flush()
 
     # Upsert conversation_media
-    if resolved_media_id:
-        upsert_conversation_media(db, conversation_id, resolved_media_id)
+    upsert_conversation_media(db, conversation_id, resolved_media_id)
 
-    return context
+    return created_context
 
 
 def insert_contexts_batch(
     db: Session,
+    *,
     message_id: UUID,
-    contexts: list[dict],
+    contexts: Sequence[MessageContextRef],
 ) -> list[MessageContext]:
     """Insert multiple message_context rows in a batch.
 
     Args:
         db: Database session.
         message_id: The message to attach contexts to.
-        contexts: List of context dicts with keys:
-            - ordinal: int
-            - target_type: str
-            - media_id: UUID | None
-            - highlight_id: UUID | None
-            - annotation_id: UUID | None
+        contexts: Ordered canonical typed context targets.
 
     Returns:
         List of created MessageContext objects.
     """
-    results = []
-    for ctx in contexts:
-        result = insert_context(
+    return [
+        insert_context(
             db=db,
             message_id=message_id,
-            ordinal=ctx["ordinal"],
-            target_type=ctx["target_type"],
-            media_id=ctx.get("media_id"),
-            highlight_id=ctx.get("highlight_id"),
-            annotation_id=ctx.get("annotation_id"),
+            ordinal=ordinal,
+            context=context,
         )
-        results.append(result)
-    return results
+        for ordinal, context in enumerate(contexts)
+    ]
 
 
 def upsert_conversation_media(

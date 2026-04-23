@@ -9,7 +9,6 @@ import { ToastProvider } from "@/components/Toast";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
-import { PaneRootNavigationProvider } from "@/lib/panes/paneRuntime";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import styles from "./layout.module.css";
@@ -22,23 +21,21 @@ export default function AuthenticatedLayout() {
       <LocalVaultAutoSync />
       <ReaderProvider>
         <Suspense fallback={null}>
-          <PaneRootNavigationProvider>
-            <WorkspaceStoreProvider>
-              <CommandPalette />
-              <AddContentTray />
-              <div
-                className={`${styles.layout} ${navbarCollapsed ? styles.navCollapsed : ""}`}
-              >
-                <Navbar onToggle={setNavbarCollapsed} />
-                <main className={styles.main}>
-                  <GlobalPlayerProvider>
-                    <WorkspaceHost />
-                    <GlobalPlayerFooter />
-                  </GlobalPlayerProvider>
-                </main>
-              </div>
-            </WorkspaceStoreProvider>
-          </PaneRootNavigationProvider>
+          <WorkspaceStoreProvider>
+            <CommandPalette />
+            <AddContentTray />
+            <div
+              className={`${styles.layout} ${navbarCollapsed ? styles.navCollapsed : ""}`}
+            >
+              <Navbar onToggle={setNavbarCollapsed} />
+              <main className={styles.main}>
+                <GlobalPlayerProvider>
+                  <WorkspaceHost />
+                  <GlobalPlayerFooter />
+                </GlobalPlayerProvider>
+              </main>
+            </div>
+          </WorkspaceStoreProvider>
         </Suspense>
       </ReaderProvider>
     </ToastProvider>

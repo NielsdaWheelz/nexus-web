@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { userEvent } from "vitest/browser";
 import { useState } from "react";
 import WorkspaceTabsBar from "@/components/workspace/WorkspaceTabsBar";
 
@@ -39,6 +39,10 @@ describe("WorkspaceTabsBar", () => {
   beforeEach(() => {
     vi.stubGlobal("innerWidth", 1200);
     window.dispatchEvent(new Event("resize"));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("renders global tab semantics for panes", () => {

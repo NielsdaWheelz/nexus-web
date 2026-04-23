@@ -24,7 +24,8 @@ import base64
 import hashlib
 import json
 import time
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -89,6 +90,98 @@ TYPE_WEIGHTS = {
 
 # Maximum snippet length
 MAX_SNIPPET_LENGTH = 300
+
+
+@dataclass(slots=True)
+class _SearchScore:
+    raw: float
+    weighted: float = 0.0
+    normalized: float = 0.0
+
+
+@dataclass(slots=True)
+class _RankedMediaResult:
+    id: UUID
+    snippet: str
+    source: SearchResultSourceOut
+    score: _SearchScore
+    result_type: Literal["media"] = "media"
+
+
+@dataclass(slots=True)
+class _RankedFragmentResult:
+    id: UUID
+    snippet: str
+    fragment_idx: int
+    section_id: str | None
+    source: SearchResultSourceOut
+    score: _SearchScore
+    result_type: Literal["fragment"] = "fragment"
+
+
+@dataclass(slots=True)
+class _RankedAnnotationResult:
+    id: UUID
+    snippet: str
+    highlight_id: UUID
+    fragment_id: UUID
+    fragment_idx: int
+    section_id: str | None
+    annotation_body: str
+    highlight: SearchResultHighlightOut
+    source: SearchResultSourceOut
+    score: _SearchScore
+    result_type: Literal["annotation"] = "annotation"
+
+
+@dataclass(slots=True)
+class _RankedMessageResult:
+    id: UUID
+    snippet: str
+    conversation_id: UUID
+    seq: int
+    score: _SearchScore
+    result_type: Literal["message"] = "message"
+
+
+@dataclass(slots=True)
+class _RankedTranscriptChunkResult:
+    id: UUID
+    snippet: str
+    t_start_ms: int
+    t_end_ms: int
+    source: SearchResultSourceOut
+    score: _SearchScore
+    result_type: Literal["transcript_chunk"] = "transcript_chunk"
+
+
+InternalSearchResult = (
+    _RankedMediaResult
+    | _RankedFragmentResult
+    | _RankedAnnotationResult
+    | _RankedMessageResult
+    | _RankedTranscriptChunkResult
+)
+
+
+def _build_search_score(raw_score: Any) -> _SearchScore:
+    return _SearchScore(raw=float(raw_score) if raw_score else 0.0)
+
+
+def _build_search_source(
+    media_id: UUID,
+    media_kind: str,
+    title: str,
+    authors: Any,
+    published_date: Any,
+) -> SearchResultSourceOut:
+    return SearchResultSourceOut(
+        media_id=media_id,
+        media_kind=media_kind,
+        title=title,
+        authors=list(authors) if authors else [],
+        published_date=str(published_date) if published_date is not None else None,
+    )
 
 
 # =============================================================================
@@ -346,7 +439,7 @@ def search(
         offset = decode_search_cursor(cursor)
 
     # Execute search queries per type and collect results
-    all_results: list[dict] = []
+    all_results: list[InternalSearchResult] = []
 
     for result_type in normalized_types:
         type_results = _search_type(
@@ -363,13 +456,13 @@ def search(
 
     # Compute weighted scores
     for result in all_results:
-        result["weighted_score"] = result["raw_score"] * TYPE_WEIGHTS[result["type"]]
+        result.score.weighted = result.score.raw * TYPE_WEIGHTS[result.result_type]
 
     # Normalize scores within each type to [0, 1]
     _normalize_scores_by_type(all_results)
 
     # Sort by normalized_score DESC, then by id ASC for determinism
-    all_results.sort(key=lambda r: (-r["normalized_score"], str(r["id"])))
+    all_results.sort(key=lambda result: (-result.score.normalized, str(result.id)))
 
     # Apply offset pagination
     paginated = all_results[offset : offset + limit + 1]  # +1 to check has_more
@@ -403,7 +496,7 @@ def _search_type(
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
-) -> list[dict]:
+) -> list[InternalSearchResult]:
     """Search a specific content type with visibility filtering.
 
     Returns list of dicts with raw results (not yet normalized).
@@ -430,7 +523,7 @@ def _search_media(
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
-) -> list[dict]:
+) -> list[InternalSearchResult]:
     """Search media titles with visibility filtering."""
     # Build scope filter
     scope_filter = ""
@@ -483,19 +576,12 @@ def _search_media(
     rows = result.fetchall()
 
     return [
-        {
-            "type": "media",
-            "id": row[0],
-            "source": {
-                "media_id": row[0],
-                "media_kind": row[2],
-                "title": row[1],
-                "authors": list(row[4]) if row[4] else [],
-                "published_date": row[3],
-            },
-            "raw_score": float(row[5]) if row[5] else 0.0,
-            "snippet": _truncate_snippet(row[6] or row[1]),
-        }
+        _RankedMediaResult(
+            id=row[0],
+            snippet=_truncate_snippet(str(row[6] or row[1])),
+            source=_build_search_source(row[0], row[2], row[1], row[4], row[3]),
+            score=_build_search_score(row[5]),
+        )
         for row in rows
     ]
 
@@ -507,7 +593,7 @@ def _search_fragments(
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
-) -> list[dict]:
+) -> list[InternalSearchResult]:
     """Search fragment canonical_text with visibility filtering."""
     # Build scope filter
     scope_filter = ""
@@ -580,21 +666,14 @@ def _search_fragments(
     rows = result.fetchall()
 
     return [
-        {
-            "type": "fragment",
-            "id": row[0],
-            "fragment_idx": row[2],
-            "section_id": row[3],
-            "source": {
-                "media_id": row[1],
-                "media_kind": row[4],
-                "title": row[5],
-                "authors": list(row[7]) if row[7] else [],
-                "published_date": row[6],
-            },
-            "raw_score": float(row[8]) if row[8] else 0.0,
-            "snippet": _truncate_snippet(row[9] or ""),
-        }
+        _RankedFragmentResult(
+            id=row[0],
+            snippet=_truncate_snippet(str(row[9] or "")),
+            fragment_idx=row[2],
+            section_id=row[3],
+            source=_build_search_source(row[1], row[4], row[5], row[7], row[6]),
+            score=_build_search_score(row[8]),
+        )
         for row in rows
     ]
 
@@ -606,7 +685,7 @@ def _search_annotations(
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
-) -> list[dict]:
+) -> list[InternalSearchResult]:
     """Search annotation body with s4 highlight visibility filtering.
 
     An annotation is visible iff:
@@ -697,29 +776,22 @@ def _search_annotations(
     rows = result.fetchall()
 
     return [
-        {
-            "type": "annotation",
-            "id": row[0],
-            "highlight_id": row[1],
-            "fragment_id": row[3],
-            "fragment_idx": row[4],
-            "section_id": row[5],
-            "highlight": {
-                "exact": row[6],
-                "prefix": row[7],
-                "suffix": row[8],
-            },
-            "annotation_body": row[9],
-            "source": {
-                "media_id": row[2],
-                "media_kind": row[10],
-                "title": row[11],
-                "authors": list(row[13]) if row[13] else [],
-                "published_date": row[12],
-            },
-            "raw_score": float(row[14]) if row[14] else 0.0,
-            "snippet": _truncate_snippet(row[15] or ""),
-        }
+        _RankedAnnotationResult(
+            id=row[0],
+            snippet=_truncate_snippet(str(row[15] or "")),
+            highlight_id=row[1],
+            fragment_id=row[3],
+            fragment_idx=row[4],
+            section_id=row[5],
+            annotation_body=row[9],
+            highlight=SearchResultHighlightOut(
+                exact=row[6],
+                prefix=row[7] or "",
+                suffix=row[8] or "",
+            ),
+            source=_build_search_source(row[2], row[10], row[11], row[13], row[12]),
+            score=_build_search_score(row[14]),
+        )
         for row in rows
     ]
 
@@ -731,7 +803,7 @@ def _search_messages(
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
-) -> list[dict]:
+) -> list[InternalSearchResult]:
     """Search message content with visibility filtering.
 
     Message visibility follows conversation visibility (canonical s4 CTE).
@@ -787,14 +859,13 @@ def _search_messages(
     rows = result.fetchall()
 
     return [
-        {
-            "type": "message",
-            "id": row[0],
-            "conversation_id": row[1],
-            "seq": row[2],
-            "raw_score": float(row[3]) if row[3] else 0.0,
-            "snippet": _truncate_snippet(row[4] or ""),
-        }
+        _RankedMessageResult(
+            id=row[0],
+            snippet=_truncate_snippet(str(row[4] or "")),
+            conversation_id=row[1],
+            seq=row[2],
+            score=_build_search_score(row[3]),
+        )
         for row in rows
     ]
 
@@ -806,7 +877,7 @@ def _search_transcript_chunks(
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
-) -> list[dict]:
+) -> list[InternalSearchResult]:
     """Semantic transcript-chunk search using pgvector ANN + hybrid reranking."""
     scope_filter = ""
     transcript_media_filter = transcript_media_searchable_sql("m", "mts")
@@ -941,51 +1012,46 @@ def _search_transcript_chunks(
     result = db.execute(text(query), params)
     rows = result.fetchall()
     return [
-        {
-            "type": "transcript_chunk",
-            "id": row[0],
-            "source": {
-                "media_id": row[1],
-                "media_kind": row[2],
-                "title": row[3],
-                "authors": list(row[5]) if row[5] else [],
-                "published_date": row[4],
-            },
-            "t_start_ms": int(row[7]),
-            "t_end_ms": int(row[8]),
-            "raw_score": float(row[9]) if row[9] else 0.0,
-            "snippet": _truncate_snippet(str(row[6] or "")),
-        }
+        _RankedTranscriptChunkResult(
+            id=row[0],
+            snippet=_truncate_snippet(str(row[6] or "")),
+            t_start_ms=int(row[7]),
+            t_end_ms=int(row[8]),
+            source=_build_search_source(row[1], row[2], row[3], row[5], row[4]),
+            score=_build_search_score(row[9]),
+        )
         for row in rows
     ]
 
 
-def _normalize_scores_by_type(results: list[dict]) -> None:
+def _normalize_scores_by_type(results: list[InternalSearchResult]) -> None:
     """Normalize weighted scores within each type to [0, 1] range.
 
-    Modifies results in place, adding 'normalized_score' field.
+    Modifies results in place.
     """
     # Group by type
-    by_type: dict[str, list[dict]] = {}
-    for r in results:
-        by_type.setdefault(r["type"], []).append(r)
+    by_type: dict[str, list[InternalSearchResult]] = {}
+    for result in results:
+        by_type.setdefault(result.result_type, []).append(result)
 
     # Normalize each type
     for type_results in by_type.values():
         if not type_results:
             continue
 
-        max_score = max(r["weighted_score"] for r in type_results)
-        min_score = min(r["weighted_score"] for r in type_results)
+        max_score = max(result.score.weighted for result in type_results)
+        min_score = min(result.score.weighted for result in type_results)
 
         if max_score == min_score:
             # All same score -> all get 1.0 (or 0.5 if zero)
             norm_value = 1.0 if max_score > 0 else 0.5
-            for r in type_results:
-                r["normalized_score"] = norm_value
+            for result in type_results:
+                result.score.normalized = norm_value
         else:
-            for r in type_results:
-                r["normalized_score"] = (r["weighted_score"] - min_score) / (max_score - min_score)
+            for result in type_results:
+                result.score.normalized = (result.score.weighted - min_score) / (
+                    max_score - min_score
+                )
 
 
 def _truncate_snippet(snippet: str) -> str:
@@ -1002,64 +1068,61 @@ def _truncate_snippet(snippet: str) -> str:
     return truncated + "..."
 
 
-def _result_to_out(result: dict) -> SearchResultOut:
-    """Convert internal result dict to a strict v2 discriminated union result."""
+def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
+    """Convert an internal ranked result into the strict response union."""
     base_payload = {
-        "id": result["id"],
-        "score": round(result["normalized_score"], 4),
-        "snippet": result["snippet"],
+        "id": result.id,
+        "score": round(result.score.normalized, 4),
+        "snippet": result.snippet,
     }
-    result_type = result["type"]
 
-    if result_type == "media":
+    if isinstance(result, _RankedMediaResult):
         return SearchResultMediaOut(
             type="media",
-            source=SearchResultSourceOut.model_validate(result["source"]),
+            source=result.source,
             **base_payload,
         )
 
-    if result_type == "fragment":
+    if isinstance(result, _RankedFragmentResult):
         return SearchResultFragmentOut(
             type="fragment",
-            fragment_idx=result["fragment_idx"],
-            section_id=result.get("section_id"),
-            source=SearchResultSourceOut.model_validate(result["source"]),
+            fragment_idx=result.fragment_idx,
+            section_id=result.section_id,
+            source=result.source,
             **base_payload,
         )
 
-    if result_type == "annotation":
+    if isinstance(result, _RankedAnnotationResult):
         return SearchResultAnnotationOut(
             type="annotation",
-            highlight_id=result["highlight_id"],
-            fragment_id=result["fragment_id"],
-            fragment_idx=result["fragment_idx"],
-            section_id=result.get("section_id"),
-            annotation_body=result["annotation_body"],
-            highlight=SearchResultHighlightOut.model_validate(result["highlight"]),
-            source=SearchResultSourceOut.model_validate(result["source"]),
+            highlight_id=result.highlight_id,
+            fragment_id=result.fragment_id,
+            fragment_idx=result.fragment_idx,
+            section_id=result.section_id,
+            annotation_body=result.annotation_body,
+            highlight=result.highlight,
+            source=result.source,
             **base_payload,
         )
 
-    if result_type == "message":
+    if isinstance(result, _RankedMessageResult):
         return SearchResultMessageOut(
             type="message",
-            conversation_id=result["conversation_id"],
-            seq=result["seq"],
+            conversation_id=result.conversation_id,
+            seq=result.seq,
             **base_payload,
         )
 
-    if result_type == "transcript_chunk":
+    if isinstance(result, _RankedTranscriptChunkResult):
         return SearchResultTranscriptChunkOut(
             type="transcript_chunk",
-            t_start_ms=result["t_start_ms"],
-            t_end_ms=result["t_end_ms"],
-            source=SearchResultSourceOut.model_validate(result["source"]),
+            t_start_ms=result.t_start_ms,
+            t_end_ms=result.t_end_ms,
+            source=result.source,
             **base_payload,
         )
 
-    raise InvalidRequestError(
-        ApiErrorCode.E_INVALID_REQUEST, f"Unknown search result type: {result_type}"
-    )
+    raise AssertionError(f"Unknown search result type: {type(result).__name__}")
 
 
 def _log_search(

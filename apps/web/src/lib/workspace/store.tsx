@@ -16,7 +16,6 @@ import {
   clampPaneWidth,
   createDefaultWorkspaceState,
   createPaneId,
-  normalizePaneResourceRef,
   normalizePaneTitle,
   normalizeWorkspaceHref,
   type WorkspacePaneStateV3,
@@ -36,7 +35,11 @@ import {
   setPaneGraphReady,
   type OpenInAppPaneDetail,
 } from "@/lib/panes/openInAppPane";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
+import {
+  resolvePaneRoute,
+  type PaneChromeDescriptor,
+  type ResolvedPaneRoute,
+} from "@/lib/panes/paneRouteRegistry";
 import { apiFetch } from "@/lib/api/client";
 
 type HistoryMode = "replace" | "push";
@@ -48,11 +51,6 @@ type WorkspaceAction =
   | { type: "navigate_pane"; paneId: string; href: string }
   | { type: "close_pane"; paneId: string }
   | { type: "resize_pane"; paneId: string; widthPx: number };
-
-interface PaneOpenHint {
-  titleHint?: string;
-  resourceRef?: string | null;
-}
 
 function ensureActivePaneId(state: WorkspaceStateV3): WorkspaceStateV3 {
   if (!state.panes.length) {
@@ -141,6 +139,41 @@ function buildPanesForOpen(href: string): WorkspacePaneStateV3[] {
   ];
 }
 
+export type WorkspacePaneTitleSource = "runtime_page" | "route";
+
+interface WorkspacePaneTitleInput {
+  id: string;
+  href: string;
+}
+
+export interface WorkspacePaneTitleDescriptor {
+  chrome: PaneChromeDescriptor | undefined;
+  route: ResolvedPaneRoute;
+  title: string;
+  titleSource: WorkspacePaneTitleSource;
+}
+
+export function resolveWorkspacePaneTitle(
+  pane: WorkspacePaneTitleInput,
+  runtimeTitleByPaneId: ReadonlyMap<string, string>
+): WorkspacePaneTitleDescriptor {
+  const route = resolvePaneRoute(pane.href);
+  const chrome = route.definition?.getChrome?.({
+    href: pane.href,
+    params: route.params,
+  });
+  const runtimeTitle = normalizePaneTitle(runtimeTitleByPaneId.get(pane.id));
+  if (runtimeTitle) {
+    return { chrome, route, title: runtimeTitle, titleSource: "runtime_page" };
+  }
+  return {
+    chrome,
+    route,
+    title: normalizePaneTitle(chrome?.title) ?? normalizePaneTitle(route.staticTitle) ?? "Pane",
+    titleSource: "route",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Store context + provider
 // ---------------------------------------------------------------------------
@@ -148,17 +181,12 @@ function buildPanesForOpen(href: string): WorkspacePaneStateV3[] {
 interface WorkspaceStoreValue {
   state: WorkspaceStateV3;
   runtimeTitleByPaneId: ReadonlyMap<string, string>;
-  openHintByPaneId: ReadonlyMap<string, PaneOpenHint>;
   activatePane: (paneId: string) => void;
   openPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
   navigatePane: (paneId: string, href: string, options?: { replace?: boolean }) => void;
   closePane: (paneId: string) => void;
   resizePane: (paneId: string, widthPx: number) => void;
-  publishPaneTitle: (
-    paneId: string,
-    title: string | null,
-    options?: { resourceRef?: string | null }
-  ) => void;
+  publishPaneTitle: (paneId: string, title: string | null) => void;
 }
 
 const WorkspaceStoreContext = createContext<WorkspaceStoreValue | null>(null);
@@ -199,9 +227,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   const [runtimeTitleByPaneId, setRuntimeTitleByPaneId] = useState<Map<string, string>>(
     () => new Map()
   );
-  const [openHintByPaneId, setOpenHintByPaneId] = useState<Map<string, PaneOpenHint>>(
-    () => new Map()
-  );
   const historyModeRef = useRef<HistoryMode>("replace");
   const skipSyncRef = useRef(false);
   const readyRef = useRef(false);
@@ -230,17 +255,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
         ? decoded.source === "fallback" ? "fallback" : "error"
         : "ok",
       errorCode: decoded.errorCode,
-    });
-  }, []);
-
-  const setOpenHint = useCallback((paneId: string, hint: PaneOpenHint) => {
-    const titleHint = normalizePaneTitle(hint.titleHint) ?? undefined;
-    const resourceRef = normalizePaneResourceRef(hint.resourceRef) ?? undefined;
-    if (!titleHint && !resourceRef) return;
-    setOpenHintByPaneId((prev) => {
-      const next = new Map(prev);
-      next.set(paneId, { titleHint, resourceRef });
-      return next;
     });
   }, []);
 
@@ -293,10 +307,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       const panes = buildPanesForOpen(href);
       const targetPaneId = panes[0]!.id;
       const titleHint = normalizePaneTitle(detail.titleHint) ?? undefined;
-      const resourceRef = normalizePaneResourceRef(detail.resourceRef) ?? undefined;
-      if (titleHint || resourceRef) {
-        setOpenHint(targetPaneId, { titleHint, resourceRef });
-      }
       recordUserDrivenRecent(targetPaneId, href, titleHint);
       historyModeRef.current = "push";
       dispatch({ type: "open_pane", panes, afterPaneId: null, activate: true });
@@ -313,7 +323,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       handleOpenPaneDetail({
         href: event.data.href,
         titleHint: event.data.titleHint,
-        resourceRef: event.data.resourceRef,
       });
     };
 
@@ -332,7 +341,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       window.removeEventListener("message", handleWindowMessage);
       setPaneGraphReady(false);
     };
-  }, [publishDecodeTelemetry, recordUserDrivenRecent, setOpenHint]);
+  }, [publishDecodeTelemetry, recordUserDrivenRecent]);
 
   // --- Prune stale title caches when panes change ---
   useEffect(() => {
@@ -354,16 +363,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       for (const [id, title] of prev) {
         if (!livePaneIds.has(id) || changedHrefIds.has(id)) { changed = true; continue; }
         next.set(id, title);
-      }
-      return changed || next.size !== prev.size ? next : prev;
-    });
-
-    setOpenHintByPaneId((prev) => {
-      let changed = false;
-      const next = new Map<string, PaneOpenHint>();
-      for (const [id, hint] of prev) {
-        if (!livePaneIds.has(id) || changedHrefIds.has(id)) { changed = true; continue; }
-        next.set(id, hint);
       }
       return changed || next.size !== prev.size ? next : prev;
     });
@@ -418,9 +417,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       if (!href) return;
       const panes = buildPanesForOpen(href);
       recordUserDrivenRecent(panes[0]!.id, href);
-      if (input.openerPaneId) {
-        // Title hints are set by the opener's publishPaneTitle, not here
-      }
       dispatchAndSync(
         { type: "open_pane", panes, afterPaneId: input.openerPaneId ?? null, activate: input.activate ?? true },
         "push"
@@ -453,7 +449,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   );
 
   const publishPaneTitle = useCallback(
-    (paneId: string, title: string | null, _options?: { resourceRef?: string | null }) => {
+    (paneId: string, title: string | null) => {
       const pane = stateRef.current.panes.find((p) => p.id === paneId);
       if (!pane) return;
 
@@ -480,7 +476,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     () => ({
       state,
       runtimeTitleByPaneId,
-      openHintByPaneId,
       activatePane,
       openPane,
       navigatePane,
@@ -491,7 +486,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     [
       state,
       runtimeTitleByPaneId,
-      openHintByPaneId,
       activatePane,
       openPane,
       navigatePane,

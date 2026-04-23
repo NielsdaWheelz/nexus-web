@@ -12,17 +12,14 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { isApiError } from "@/lib/api/client";
 import SectionCard from "@/components/ui/SectionCard";
 import StateMessage from "@/components/ui/StateMessage";
 import SearchResultRow from "@/components/search/SearchResultRow";
 import {
   ALL_SEARCH_TYPES,
-  adaptSearchResultRow,
-  buildSearchQueryParams,
-  normalizeSearchResult,
-  type SearchApiResult,
-  type SearchResponseShape,
+  fetchSearchResultPage,
+  type SearchResultRowViewModel,
   type SearchType,
 } from "@/lib/search/resultRowAdapter";
 import styles from "./page.module.css";
@@ -34,7 +31,7 @@ import styles from "./page.module.css";
 export default function SearchPaneBody() {
   const [query, setQuery] = useState("");
   const [types, setTypes] = useState<Set<SearchType>>(new Set(ALL_SEARCH_TYPES));
-  const [results, setResults] = useState<SearchApiResult[]>([]);
+  const [results, setResults] = useState<SearchResultRowViewModel[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -53,34 +50,19 @@ export default function SearchPaneBody() {
       setError(null);
 
       try {
-        const params = buildSearchQueryParams({
+        const page = await fetchSearchResultPage({
           query: trimmed,
           selectedTypes: types,
           limit: 20,
           cursor: cursor ?? null,
         });
 
-        const response = await apiFetch<SearchResponseShape>(
-          `/api/search?${params.toString()}`
-        );
-
-        // Layer 1: normalize results at the API boundary (strict canonical shape)
-        const valid = response.results
-          .map((r) => {
-            const normalized = normalizeSearchResult(r);
-            if (!normalized) {
-              console.warn("[search] dropping unrecoverable result:", r);
-            }
-            return normalized;
-          })
-          .filter((r): r is SearchApiResult => r !== null);
-
         if (cursor) {
-          setResults((prev) => [...prev, ...valid]);
+          setResults((prev) => [...prev, ...page.rows]);
         } else {
-          setResults(valid);
+          setResults(page.rows);
         }
-        setNextCursor(response.page.next_cursor);
+        setNextCursor(page.nextCursor);
         setHasSearched(true);
       } catch (err) {
         if (isApiError(err)) {
@@ -177,10 +159,7 @@ export default function SearchPaneBody() {
         {results.length > 0 && (
           <div className={styles.resultRows}>
             {results.map((result) => (
-              <SearchResultRow
-                key={`${result.type}-${result.id}`}
-                row={adaptSearchResultRow(result)}
-              />
+              <SearchResultRow key={result.key} row={result} />
             ))}
           </div>
         )}

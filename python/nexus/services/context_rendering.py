@@ -12,6 +12,7 @@ Note: This module has DB access and is intentionally kept outside the LLM
 adapter layer (which must be DB-free per PR-04 spec).
 """
 
+from collections.abc import Sequence
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Annotation, Highlight, HighlightPdfAnchor, Media, PdfPageTextSpan
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
+from nexus.schemas.conversation import MessageContextRef
 from nexus.services.context_window import get_context_window
 from nexus.services.pdf_quote_match import MatcherAnomaly, MatchStatus, compute_match
 from nexus.services.pdf_quote_match_policy import (
@@ -73,15 +75,13 @@ def _resolve_renderable_highlight_kind(highlight: Highlight) -> str | None:
 
 def render_context_blocks(
     db: Session,
-    contexts: list[dict],
+    contexts: Sequence[MessageContextRef],
 ) -> tuple[str, int]:
     """Render context items into XML-tagged blocks for the prompt.
 
     Args:
         db: Database session.
-        contexts: List of context dicts with keys:
-            - type: "media" | "highlight" | "annotation"
-            - id: UUID of the target
+        contexts: Ordered canonical typed context targets.
 
     Returns:
         Tuple of (rendered_context_text, total_chars).
@@ -129,8 +129,8 @@ def render_context_blocks(
         except Exception as e:
             logger.warning(
                 "context_render_failed",
-                context_type=ctx.get("type"),
-                context_id=str(ctx.get("id")),
+                context_type=ctx.type,
+                context_id=str(ctx.id),
                 error=str(e),
             )
             continue
@@ -141,23 +141,19 @@ def render_context_blocks(
     return "", 0
 
 
-def _render_single_context(db: Session, ctx: dict) -> str | None:
+def _render_single_context(db: Session, ctx: MessageContextRef) -> str | None:
     """Render a single context item to an XML block."""
-    ctx_type = ctx.get("type")
-    ctx_id = ctx.get("id")
-
-    if not ctx_type or not ctx_id:
-        return None
+    ctx_type = ctx.type
+    ctx_id = ctx.id
 
     if ctx_type == "media":
         return _render_media_context(db, ctx_id)
-    elif ctx_type == "highlight":
+    if ctx_type == "highlight":
         return _render_highlight_context(db, ctx_id)
-    elif ctx_type == "annotation":
+    if ctx_type == "annotation":
         return _render_annotation_context(db, ctx_id)
-    else:
-        logger.warning("unknown_context_type", context_type=ctx_type)
-        return None
+    logger.warning("unknown_context_type", context_type=ctx_type)
+    return None
 
 
 def _render_media_context(db: Session, media_id: UUID) -> str | None:

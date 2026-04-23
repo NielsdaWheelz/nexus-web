@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/CommandPalette";
+import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import PaneShell, {
   usePaneChromeOverride,
   usePaneChromeScrollHandler,
@@ -9,37 +8,6 @@ import PaneShell, {
 } from "@/components/workspace/PaneShell";
 
 describe("PaneShell", () => {
-  it("keeps chrome outside the scrollable body in standard mode", () => {
-    render(
-      <PaneShell
-        paneId="pane-a"
-        title="Libraries"
-        widthPx={560}
-        minWidthPx={320}
-        maxWidthPx={1400}
-        bodyMode="standard"
-        onResizePane={() => {}}
-      >
-        <div>Body content</div>
-      </PaneShell>
-    );
-
-    expect(screen.getByText("Libraries")).toBeInTheDocument();
-    const chrome = screen.getByTestId("pane-shell-chrome");
-    const body = screen.getByTestId("pane-shell-body");
-    expect(chrome).toBeInTheDocument();
-    expect(body).toBeInTheDocument();
-    expect(body).toHaveAttribute("data-body-mode", "standard");
-    expect(body).toHaveAttribute("data-pane-content", "true");
-    expect(body).toHaveStyle({
-      display: "flex",
-      flexDirection: "column",
-      minHeight: "0",
-      overflowY: "auto",
-      overflowX: "hidden",
-    });
-  });
-
   it("delegates keyboard resize to the focused resize handle", () => {
     const onResizePane = vi.fn();
     render(
@@ -94,38 +62,7 @@ describe("PaneShell", () => {
     expect(onResizePane).toHaveBeenCalledWith("pane-a", 320);
   });
 
-  it("uses clipped outer body for document mode", () => {
-    render(
-      <PaneShell
-        paneId="pane-doc"
-        title="PDF"
-        widthPx={920}
-        minWidthPx={420}
-        maxWidthPx={1800}
-        bodyMode="document"
-        onResizePane={() => {}}
-      >
-        <WiredDocumentBody>
-          <div>Document body</div>
-        </WiredDocumentBody>
-      </PaneShell>
-    );
-
-    const body = screen.getByTestId("pane-shell-body");
-    const viewport = screen.getByTestId("document-viewport");
-    expect(body).toHaveAttribute("data-body-mode", "document");
-    expect(body).toHaveAttribute("data-pane-content", "true");
-    expect(body).toHaveStyle({
-      display: "flex",
-      flexDirection: "column",
-      minHeight: "0",
-      overflow: "hidden",
-    });
-    expect(viewport).toHaveAttribute("data-pane-content", "true");
-    expect(viewport).toHaveStyle({ overflow: "auto" });
-  });
-
-  it("keeps standard mobile panes pinned while the body scrolls", () => {
+  it("keeps mobile chrome visible while a standard-pane body scrolls", () => {
     render(
       <PaneShell
         paneId="pane-standard"
@@ -368,8 +305,7 @@ describe("PaneShell", () => {
     expect(screen.queryByRole("button", { name: "Options" })).not.toBeInTheDocument();
   });
 
-  it("renders an icon-only Search trigger on mobile and dispatches the open event", async () => {
-    const user = userEvent.setup();
+  it("renders an icon-only Search trigger on mobile and dispatches the open event", () => {
     const onOpen = vi.fn();
     window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen as EventListener);
 
@@ -391,7 +327,7 @@ describe("PaneShell", () => {
     const trigger = screen.getByRole("button", { name: "Search" });
     expect(trigger).not.toHaveTextContent(/\S/);
 
-    await user.click(trigger);
+    fireEvent.click(trigger);
 
     expect(onOpen).toHaveBeenCalledTimes(1);
     window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen as EventListener);

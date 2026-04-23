@@ -78,7 +78,7 @@ from nexus.services.api_key_resolver import (
     update_user_key_status,
 )
 from nexus.services.context_rendering import PROMPT_VERSION, render_context_blocks
-from nexus.services.contexts import insert_context
+from nexus.services.contexts import insert_contexts_batch
 from nexus.services.conversations import (
     DEFAULT_CONVERSATION_TITLE,
     conversation_to_out,
@@ -525,19 +525,11 @@ def phase1_prepare(
     db.flush()
 
     # Insert contexts
-    for i, ctx in enumerate(contexts):
-        ctx_type = ctx.type
-        ctx_id = ctx.id
-
-        insert_context(
-            db=db,
-            message_id=user_message.id,
-            ordinal=i,
-            target_type=ctx_type,
-            media_id=ctx_id if ctx_type == "media" else None,
-            highlight_id=ctx_id if ctx_type == "highlight" else None,
-            annotation_id=ctx_id if ctx_type == "annotation" else None,
-        )
+    insert_contexts_batch(
+        db=db,
+        message_id=user_message.id,
+        contexts=contexts,
+    )
     db.flush()
 
     # Assign seq for assistant message
@@ -723,7 +715,6 @@ async def send_message(
     total_start = time.monotonic()
 
     try:
-        context_render_inputs = [ctx.model_dump(mode="python") for ctx in contexts]
         payload_hash = compute_payload_hash(
             content,
             model_id,
@@ -816,7 +807,7 @@ async def send_message(
 
             try:
                 context_text, context_chars = await run_in_threadpool(
-                    render_context_blocks, db, context_render_inputs
+                    render_context_blocks, db, contexts
                 )
             except QuoteContextBlockingError as quote_err:
                 phase2_ms = int((time.monotonic() - phase2_start) * 1000)

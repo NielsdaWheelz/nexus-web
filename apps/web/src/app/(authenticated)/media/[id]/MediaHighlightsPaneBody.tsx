@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, type RefObject } from "react";
 import type { PdfHighlightOut } from "@/components/PdfReader";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
 import type { Highlight } from "./mediaHighlights";
+import {
+  sortContextualFragmentHighlights,
+  sortContextualPdfHighlights,
+} from "./mediaHighlightOrdering";
 import StatusPill from "@/components/ui/StatusPill";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import styles from "./page.module.css";
@@ -59,49 +63,10 @@ export default function MediaHighlightsPaneBody({
 
   const contextualHighlights = useMemo(() => {
     if (isPdf) {
-      return [...pdfPageHighlights].sort((left, right) => {
-        const leftTop = left.anchor.quads[0]?.y1 ?? 0;
-        const rightTop = right.anchor.quads[0]?.y1 ?? 0;
-        if (leftTop !== rightTop) {
-          return leftTop - rightTop;
-        }
-
-        const leftLeft = left.anchor.quads[0]?.x1 ?? 0;
-        const rightLeft = right.anchor.quads[0]?.x1 ?? 0;
-        if (leftLeft !== rightLeft) {
-          return leftLeft - rightLeft;
-        }
-
-        const leftCreatedAt = Date.parse(left.created_at);
-        const rightCreatedAt = Date.parse(right.created_at);
-        const leftCreatedAtMs = Number.isNaN(leftCreatedAt) ? 0 : leftCreatedAt;
-        const rightCreatedAtMs = Number.isNaN(rightCreatedAt) ? 0 : rightCreatedAt;
-        if (leftCreatedAtMs !== rightCreatedAtMs) {
-          return leftCreatedAtMs - rightCreatedAtMs;
-        }
-
-        return left.id.localeCompare(right.id);
-      });
+      return sortContextualPdfHighlights(pdfPageHighlights);
     }
 
-    return [...fragmentHighlights].sort((left, right) => {
-      if (left.anchor.start_offset !== right.anchor.start_offset) {
-        return left.anchor.start_offset - right.anchor.start_offset;
-      }
-      if (left.anchor.end_offset !== right.anchor.end_offset) {
-        return left.anchor.end_offset - right.anchor.end_offset;
-      }
-
-      const leftCreatedAt = Date.parse(left.created_at);
-      const rightCreatedAt = Date.parse(right.created_at);
-      const leftCreatedAtMs = Number.isNaN(leftCreatedAt) ? 0 : leftCreatedAt;
-      const rightCreatedAtMs = Number.isNaN(rightCreatedAt) ? 0 : rightCreatedAt;
-      if (leftCreatedAtMs !== rightCreatedAtMs) {
-        return leftCreatedAtMs - rightCreatedAtMs;
-      }
-
-      return left.id.localeCompare(right.id);
-    });
+    return sortContextualFragmentHighlights(fragmentHighlights);
   }, [fragmentHighlights, isPdf, pdfPageHighlights]);
 
   const paneHighlights = useMemo(() => {

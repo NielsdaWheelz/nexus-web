@@ -9,6 +9,64 @@ export type PodcastSubscriptionSyncStatus =
   | "source_limited"
   | "failed";
 
+export type LibrarySummary = {
+  id: string;
+  name: string;
+  is_default: boolean;
+  color?: string | null;
+};
+
+export type PodcastSummary = {
+  id: string;
+  provider: string;
+  provider_podcast_id: string;
+  title: string;
+  author: string | null;
+  feed_url: string;
+  website_url: string | null;
+  image_url: string | null;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PodcastVisibleLibrary = {
+  id: string;
+  name: string;
+  color: string | null;
+};
+
+export type PodcastSubscriptionRecord = {
+  podcast_id: string;
+  status: "active" | "unsubscribed";
+  default_playback_speed?: number | null;
+  auto_queue?: boolean;
+  sync_status: PodcastSubscriptionSyncStatus;
+  sync_error_code: string | null;
+  sync_error_message: string | null;
+  sync_attempts: number;
+  sync_started_at: string | null;
+  sync_completed_at: string | null;
+  last_synced_at: string | null;
+  updated_at: string;
+};
+
+export type PodcastSubscriptionDetail = PodcastSubscriptionRecord & {
+  user_id: string;
+};
+
+export type PodcastDetailResponse = {
+  podcast: PodcastSummary;
+  subscription: PodcastSubscriptionDetail | null;
+};
+
+export type PodcastSubscriptionListItem = PodcastSubscriptionRecord & {
+  unplayed_count: number;
+  latest_episode_published_at: string | null;
+  visible_libraries: PodcastVisibleLibrary[];
+  podcast: PodcastSummary;
+};
+
 type PodcastLibraryResponseItem = {
   id: string;
   name: string;
@@ -22,6 +80,16 @@ export type PodcastLibraryMembership = LibraryTargetPickerItem & {
   isInLibrary: boolean;
   canAdd: boolean;
   canRemove: boolean;
+};
+
+type PodcastSubscriptionSettingsFields = Pick<
+  PodcastSubscriptionRecord,
+  "default_playback_speed" | "auto_queue"
+>;
+
+export type PodcastSubscriptionSettingsDraft = {
+  defaultSpeed: string;
+  autoQueue: boolean;
 };
 
 export type PodcastSubscriptionSettingsResponse = {
@@ -76,6 +144,11 @@ function toPodcastLibraryMembership(
   };
 }
 
+export async function fetchNonDefaultLibraries(): Promise<LibrarySummary[]> {
+  const response = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
+  return response.data.filter((library) => !library.is_default);
+}
+
 export async function fetchPodcastLibraries(
   podcastId: string
 ): Promise<PodcastLibraryMembership[]> {
@@ -83,6 +156,71 @@ export async function fetchPodcastLibraries(
     `/api/podcasts/${podcastId}/libraries`
   );
   return response.data.map(toPodcastLibraryMembership);
+}
+
+export function updatePodcastLibraryMemberships(
+  libraries: PodcastLibraryMembership[],
+  {
+    libraryId,
+    isInLibrary,
+  }: {
+    libraryId: string;
+    isInLibrary: boolean;
+  }
+): PodcastLibraryMembership[] {
+  return libraries.map((library) =>
+    library.id === libraryId
+      ? {
+          ...library,
+          isInLibrary,
+          canAdd: !isInLibrary,
+          canRemove: isInLibrary,
+        }
+      : library
+  );
+}
+
+export function getPodcastSubscriptionSettingsDraft(
+  subscription: PodcastSubscriptionSettingsFields | null | undefined
+): PodcastSubscriptionSettingsDraft {
+  return {
+    defaultSpeed:
+      subscription?.default_playback_speed == null
+        ? "default"
+        : String(subscription.default_playback_speed),
+    autoQueue: Boolean(subscription?.auto_queue),
+  };
+}
+
+export function parsePodcastSubscriptionDefaultPlaybackSpeed(
+  value: string
+): number | null {
+  return value === "default" ? null : Number.parseFloat(value);
+}
+
+export function getPodcastSubscriptionSyncPatch(
+  result: PodcastSubscriptionSyncRefreshResult
+) {
+  return {
+    sync_status: result.sync_status,
+    sync_error_code: result.sync_error_code,
+    sync_error_message: result.sync_error_message,
+    sync_attempts: result.sync_attempts,
+  };
+}
+
+export function getPodcastSubscriptionSettingsPatch({
+  response,
+  updatedAt,
+}: {
+  response: PodcastSubscriptionSettingsResponse;
+  updatedAt: string;
+}) {
+  return {
+    default_playback_speed: response.default_playback_speed,
+    auto_queue: response.auto_queue,
+    updated_at: response.updated_at ?? updatedAt,
+  };
 }
 
 export async function addPodcastToLibrary(

@@ -1,3 +1,5 @@
+import { apiFetch } from "@/lib/api/client";
+
 export const ALL_SEARCH_TYPES = [
   "media",
   "fragment",
@@ -8,7 +10,7 @@ export const ALL_SEARCH_TYPES = [
 
 export type SearchType = (typeof ALL_SEARCH_TYPES)[number];
 
-export interface SearchSourceMetadata {
+interface SearchSourceMetadata {
   media_id: string;
   media_kind: string;
   title: string;
@@ -16,7 +18,7 @@ export interface SearchSourceMetadata {
   published_date: string | null;
 }
 
-export interface SearchHighlightContext {
+interface SearchHighlightContext {
   exact: string;
   prefix: string;
   suffix: string;
@@ -28,19 +30,19 @@ interface SearchBaseResult {
   snippet: string;
 }
 
-export interface SearchMediaResult extends SearchBaseResult {
+interface SearchMediaResult extends SearchBaseResult {
   type: "media";
   source: SearchSourceMetadata;
 }
 
-export interface SearchFragmentResult extends SearchBaseResult {
+interface SearchFragmentResult extends SearchBaseResult {
   type: "fragment";
   fragment_idx: number;
   section_id: string | null;
   source: SearchSourceMetadata;
 }
 
-export interface SearchAnnotationResult extends SearchBaseResult {
+interface SearchAnnotationResult extends SearchBaseResult {
   type: "annotation";
   highlight_id: string;
   fragment_id: string;
@@ -51,44 +53,31 @@ export interface SearchAnnotationResult extends SearchBaseResult {
   source: SearchSourceMetadata;
 }
 
-export interface SearchMessageResult extends SearchBaseResult {
+interface SearchMessageResult extends SearchBaseResult {
   type: "message";
   conversation_id: string;
   seq: number;
 }
 
-export interface SearchTranscriptChunkResult extends SearchBaseResult {
+interface SearchTranscriptChunkResult extends SearchBaseResult {
   type: "transcript_chunk";
   t_start_ms: number;
   t_end_ms: number;
   source: SearchSourceMetadata;
 }
 
-export type SearchApiResult =
+type SearchApiResult =
   | SearchMediaResult
   | SearchFragmentResult
   | SearchAnnotationResult
   | SearchMessageResult
   | SearchTranscriptChunkResult;
 
-/** Result types that carry source metadata. */
-export type SearchResultWithSource =
-  | SearchMediaResult
-  | SearchFragmentResult
-  | SearchAnnotationResult
-  | SearchTranscriptChunkResult;
-
-export interface SearchResponseShape {
-  results: SearchApiResult[];
-  page: {
-    has_more: boolean;
-    next_cursor: string | null;
-  };
-}
-
-export interface SnippetSegment {
-  text: string;
-  emphasized: boolean;
+interface SearchResponseShape {
+  results: unknown[];
+  page?: {
+    next_cursor?: string | null;
+  } | null;
 }
 
 export interface SearchResultRowViewModel {
@@ -97,7 +86,10 @@ export interface SearchResultRowViewModel {
   type: SearchType;
   typeLabel: string;
   primaryText: string;
-  snippetSegments: SnippetSegment[];
+  snippetSegments: Array<{
+    text: string;
+    emphasized: boolean;
+  }>;
   sourceMeta: string | null;
   annotationBody: string | null;
   highlightSnippet: {
@@ -108,142 +100,165 @@ export interface SearchResultRowViewModel {
   scoreLabel: string;
 }
 
-// ---------------------------------------------------------------------------
-// Runtime validation & normalization – Layer 1
-//
-// Contract is strict: result rows must use canonical nested source metadata.
-// Legacy flat shapes are intentionally rejected after cutover.
-// ---------------------------------------------------------------------------
+interface FetchSearchResultPageInput {
+  query: string;
+  selectedTypes: ReadonlySet<SearchType>;
+  limit: number;
+  cursor?: string | null;
+}
 
-/** Runtime check that a source object has the required shape. */
+export interface SearchResultPage {
+  rows: SearchResultRowViewModel[];
+  nextCursor: string | null;
+}
+
 function isValidSource(value: unknown): value is SearchSourceMetadata {
-  if (typeof value !== "object" || value === null) return false;
-  const s = value as Record<string, unknown>;
-  return (
-    typeof s.media_id === "string" &&
-    typeof s.media_kind === "string" &&
-    typeof s.title === "string" &&
-    Array.isArray(s.authors)
-  );
-}
-
-/**
- * Resolve nested source metadata from canonical `source` field.
- */
-function resolveSource(r: Record<string, unknown>): SearchSourceMetadata | null {
-  if (isValidSource(r.source)) {
-    return r.source as SearchSourceMetadata;
+  if (typeof value !== "object" || value === null) {
+    return false;
   }
-  return null;
-}
 
-/** Runtime check that a highlight object has the required shape. */
-function isValidHighlight(value: unknown): value is SearchHighlightContext {
-  if (typeof value !== "object" || value === null) return false;
-  const h = value as Record<string, unknown>;
+  const source = value as Record<string, unknown>;
   return (
-    typeof h.exact === "string" &&
-    typeof h.prefix === "string" &&
-    typeof h.suffix === "string"
+    typeof source.media_id === "string" &&
+    typeof source.media_kind === "string" &&
+    typeof source.title === "string" &&
+    Array.isArray(source.authors)
   );
 }
 
-/**
- * Normalize a raw API result object into the canonical SearchApiResult type.
- *
- * Returns null for any result that violates the canonical nested contract.
- */
-export function normalizeSearchResult(
-  result: unknown,
-): SearchApiResult | null {
-  if (typeof result !== "object" || result === null) return null;
-  const r = result as Record<string, unknown>;
+function resolveSource(result: Record<string, unknown>): SearchSourceMetadata | null {
+  if (!isValidSource(result.source)) {
+    return null;
+  }
+  return result.source;
+}
 
-  // Common required fields
-  if (typeof r.id !== "string") return null;
-  if (typeof r.score !== "number") return null;
-  if (typeof r.snippet !== "string") return null;
+function isValidHighlight(value: unknown): value is SearchHighlightContext {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
 
-  const base = { id: r.id, score: r.score, snippet: r.snippet };
+  const highlight = value as Record<string, unknown>;
+  return (
+    typeof highlight.exact === "string" &&
+    typeof highlight.prefix === "string" &&
+    typeof highlight.suffix === "string"
+  );
+}
 
-  switch (r.type) {
+function normalizeSearchResult(result: unknown): SearchApiResult | null {
+  if (typeof result !== "object" || result === null) {
+    return null;
+  }
+
+  const row = result as Record<string, unknown>;
+  if (typeof row.id !== "string") {
+    return null;
+  }
+  if (typeof row.score !== "number") {
+    return null;
+  }
+  if (typeof row.snippet !== "string") {
+    return null;
+  }
+
+  const base = {
+    id: row.id,
+    score: row.score,
+    snippet: row.snippet,
+  };
+
+  switch (row.type) {
     case "media": {
-      const source = resolveSource(r);
-      if (!source) return null;
+      const source = resolveSource(row);
+      if (!source) {
+        return null;
+      }
       return { ...base, type: "media", source };
     }
     case "fragment": {
-      const source = resolveSource(r);
-      if (!source) return null;
-      if (typeof r.fragment_idx !== "number") return null;
-      const fragment_idx = r.fragment_idx;
-      const section_id =
-        typeof r.section_id === "string" && r.section_id.length > 0
-          ? r.section_id
-          : source.media_kind === "epub"
-            ? null
-            : null;
-      if (source.media_kind === "epub" && section_id === null) return null;
-      return { ...base, type: "fragment", fragment_idx, section_id, source };
-    }
-    case "annotation": {
-      const source = resolveSource(r);
-      if (!source) return null;
-      if (typeof r.fragment_idx !== "number") return null;
-      const fragment_idx = r.fragment_idx;
-      const section_id =
-        typeof r.section_id === "string" && r.section_id.length > 0
-          ? r.section_id
-          : source.media_kind === "epub"
-            ? null
-            : null;
-      if (
-        typeof r.highlight_id !== "string" ||
-        typeof r.fragment_id !== "string" ||
-        typeof r.annotation_body !== "string" ||
-        !isValidHighlight(r.highlight) ||
-        (source.media_kind === "epub" && section_id === null)
-      )
+      const source = resolveSource(row);
+      if (!source || typeof row.fragment_idx !== "number") {
         return null;
+      }
+
+      const sectionId =
+        typeof row.section_id === "string" && row.section_id.length > 0
+          ? row.section_id
+          : null;
+      if (source.media_kind === "epub" && sectionId === null) {
+        return null;
+      }
+
       return {
         ...base,
-        type: "annotation",
-        highlight_id: r.highlight_id,
-        fragment_id: r.fragment_id,
-        fragment_idx,
-        section_id,
-        annotation_body: r.annotation_body,
-        highlight: r.highlight,
+        type: "fragment",
+        fragment_idx: row.fragment_idx,
+        section_id: sectionId,
         source,
       };
     }
-    case "message": {
-      if (
-        typeof r.conversation_id !== "string" ||
-        typeof r.seq !== "number"
-      )
+    case "annotation": {
+      const source = resolveSource(row);
+      if (!source || typeof row.fragment_idx !== "number") {
         return null;
-      return {
-        ...base,
-        type: "message",
-        conversation_id: r.conversation_id,
-        seq: r.seq,
-      };
-    }
-    case "transcript_chunk": {
-      const source = resolveSource(r);
-      if (!source) return null;
+      }
+
+      const sectionId =
+        typeof row.section_id === "string" && row.section_id.length > 0
+          ? row.section_id
+          : null;
       if (
-        typeof r.t_start_ms !== "number" ||
-        typeof r.t_end_ms !== "number"
+        typeof row.highlight_id !== "string" ||
+        typeof row.fragment_id !== "string" ||
+        typeof row.annotation_body !== "string" ||
+        !isValidHighlight(row.highlight) ||
+        (source.media_kind === "epub" && sectionId === null)
       ) {
         return null;
       }
+
+      return {
+        ...base,
+        type: "annotation",
+        highlight_id: row.highlight_id,
+        fragment_id: row.fragment_id,
+        fragment_idx: row.fragment_idx,
+        section_id: sectionId,
+        annotation_body: row.annotation_body,
+        highlight: row.highlight,
+        source,
+      };
+    }
+    case "message":
+      if (
+        typeof row.conversation_id !== "string" ||
+        typeof row.seq !== "number"
+      ) {
+        return null;
+      }
+
+      return {
+        ...base,
+        type: "message",
+        conversation_id: row.conversation_id,
+        seq: row.seq,
+      };
+    case "transcript_chunk": {
+      const source = resolveSource(row);
+      if (
+        !source ||
+        typeof row.t_start_ms !== "number" ||
+        typeof row.t_end_ms !== "number"
+      ) {
+        return null;
+      }
+
       return {
         ...base,
         type: "transcript_chunk",
-        t_start_ms: r.t_start_ms,
-        t_end_ms: r.t_end_ms,
+        t_start_ms: row.t_start_ms,
+        t_end_ms: row.t_end_ms,
         source,
       };
     }
@@ -252,37 +267,45 @@ export function normalizeSearchResult(
   }
 }
 
-/**
- * Runtime validation for a single search result.
- *
- * Returns true if the result matches the canonical nested SearchApiResult shape.
- */
-export function isValidSearchResult(
-  result: unknown,
-): result is SearchApiResult {
-  return normalizeSearchResult(result) !== null;
+function buildSearchQueryParams({
+  query,
+  selectedTypes,
+  limit,
+  cursor = null,
+}: FetchSearchResultPageInput): URLSearchParams {
+  const params = new URLSearchParams({
+    q: query.trim(),
+    limit: String(limit),
+  });
+
+  const orderedSelectedTypes = ALL_SEARCH_TYPES.filter((type) =>
+    selectedTypes.has(type)
+  );
+  if (orderedSelectedTypes.length === 0) {
+    params.set("types", "");
+  } else {
+    params.set("types", orderedSelectedTypes.join(","));
+  }
+  if (orderedSelectedTypes.includes("transcript_chunk")) {
+    params.set("semantic", "true");
+  }
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+
+  return params;
 }
 
-// ---------------------------------------------------------------------------
-// Query helpers
-// ---------------------------------------------------------------------------
-
-interface BuildSearchQueryParamsInput {
-  query: string;
-  selectedTypes: Set<SearchType>;
-  limit: number;
-  cursor?: string | null;
-}
-
-function sanitizeSnippet(snippet: string | null | undefined): string {
-  if (!snippet) return "";
+function sanitizeSnippet(snippet: string): string {
   return snippet.replace(/<\/?b>/gi, "");
 }
 
-function parseSnippetSegments(snippet: string): SnippetSegment[] {
-  if (!snippet) return [];
+function parseSnippetSegments(snippet: string) {
+  if (!snippet) {
+    return [];
+  }
 
-  const segments: SnippetSegment[] = [];
+  const segments: SearchResultRowViewModel["snippetSegments"] = [];
   const parts = snippet.split(/(<\/?b>)/gi);
   let emphasized = false;
 
@@ -305,34 +328,23 @@ function parseSnippetSegments(snippet: string): SnippetSegment[] {
   return segments;
 }
 
-function formatMediaKind(kind: string): string {
-  return kind.replace(/_/g, " ");
-}
-
 function buildSourceMeta(result: SearchApiResult): string | null {
   if (result.type === "message") {
     return `message #${result.seq}`;
   }
 
-  // After eliminating "message", TS narrows to SearchResultWithSource —
-  // all remaining variants carry `source: SearchSourceMetadata`.
-  const { source } = result;
-
-  const parts: string[] = [];
-  if (source.title) {
-    parts.push(source.title);
+  const parts = [result.source.title];
+  if (result.source.authors.length > 0) {
+    parts.push(result.source.authors.join(", "));
   }
-  if (source.authors.length > 0) {
-    parts.push(source.authors.join(", "));
+  if (result.source.published_date) {
+    parts.push(result.source.published_date);
   }
-  if (source.published_date) {
-    parts.push(source.published_date);
-  }
-  if (source.media_kind) {
-    parts.push(formatMediaKind(source.media_kind));
+  if (result.source.media_kind) {
+    parts.push(result.source.media_kind.replace(/_/g, " "));
   }
 
-  return parts.length > 0 ? parts.join(" — ") : null;
+  return parts.filter(Boolean).join(" — ") || null;
 }
 
 function buildResultHref(result: SearchApiResult): string {
@@ -345,10 +357,7 @@ function buildResultHref(result: SearchApiResult): string {
         params.set("loc", result.section_id ?? "");
       }
       params.set("fragment", result.id);
-      const query = params.toString();
-      return query
-        ? `/media/${result.source.media_id}?${query}`
-        : `/media/${result.source.media_id}`;
+      return `/media/${result.source.media_id}?${params.toString()}`;
     }
     case "annotation": {
       const params = new URLSearchParams();
@@ -357,16 +366,14 @@ function buildResultHref(result: SearchApiResult): string {
       }
       params.set("fragment", result.fragment_id);
       params.set("highlight", result.highlight_id);
-      const query = params.toString();
-      return query
-        ? `/media/${result.source.media_id}?${query}`
-        : `/media/${result.source.media_id}`;
+      return `/media/${result.source.media_id}?${params.toString()}`;
     }
     case "message":
       return `/conversations/${result.conversation_id}`;
     case "transcript_chunk": {
-      const params = new URLSearchParams();
-      params.set("t_start_ms", String(result.t_start_ms));
+      const params = new URLSearchParams({
+        t_start_ms: String(result.t_start_ms),
+      });
       return `/media/${result.source.media_id}?${params.toString()}`;
     }
   }
@@ -385,40 +392,7 @@ function buildPrimaryText(result: SearchApiResult): string {
   return sanitizeSnippet(result.snippet);
 }
 
-function formatTypeLabel(type: SearchType): string {
-  return type === "transcript_chunk" ? "transcript chunk" : type;
-}
-
-export function buildSearchQueryParams({
-  query,
-  selectedTypes,
-  limit,
-  cursor = null,
-}: BuildSearchQueryParamsInput): URLSearchParams {
-  const params = new URLSearchParams({
-    q: query.trim(),
-    limit: String(limit),
-  });
-
-  const orderedSelected = ALL_SEARCH_TYPES.filter((type) => selectedTypes.has(type));
-  if (orderedSelected.length === 0) {
-    // Explicitly differentiate from omitted types (which means "all").
-    params.set("types", "");
-  } else {
-    params.set("types", orderedSelected.join(","));
-  }
-  if (orderedSelected.includes("transcript_chunk")) {
-    params.set("semantic", "true");
-  }
-
-  if (cursor) {
-    params.set("cursor", cursor);
-  }
-
-  return params;
-}
-
-export function adaptSearchResultRow(result: SearchApiResult): SearchResultRowViewModel {
+function adaptSearchResultRow(result: SearchApiResult): SearchResultRowViewModel {
   const highlightSnippet =
     result.type === "annotation"
       ? {
@@ -432,12 +406,47 @@ export function adaptSearchResultRow(result: SearchApiResult): SearchResultRowVi
     key: `${result.type}-${result.id}`,
     href: buildResultHref(result),
     type: result.type,
-    typeLabel: formatTypeLabel(result.type),
+    typeLabel: result.type === "transcript_chunk" ? "transcript chunk" : result.type,
     primaryText: buildPrimaryText(result),
     snippetSegments: parseSnippetSegments(result.snippet),
     sourceMeta: buildSourceMeta(result),
     annotationBody: result.type === "annotation" ? result.annotation_body : null,
     highlightSnippet,
     scoreLabel: `score ${result.score.toFixed(2)}`,
+  };
+}
+
+function adaptSearchResults(results: unknown[]): SearchResultRowViewModel[] {
+  return results.flatMap((result) => {
+    const normalized = normalizeSearchResult(result);
+    if (!normalized) {
+      console.warn("[search] dropping invalid result", result);
+      return [];
+    }
+    return [adaptSearchResultRow(normalized)];
+  });
+}
+
+export async function fetchSearchResultPage({
+  query,
+  selectedTypes,
+  limit,
+  cursor = null,
+}: FetchSearchResultPageInput): Promise<SearchResultPage> {
+  const response = await apiFetch<SearchResponseShape>(
+    `/api/search?${buildSearchQueryParams({
+      query,
+      selectedTypes,
+      limit,
+      cursor,
+    }).toString()}`
+  );
+
+  return {
+    rows: adaptSearchResults(Array.isArray(response.results) ? response.results : []),
+    nextCursor:
+      typeof response.page?.next_cursor === "string"
+        ? response.page.next_cursor
+        : null,
   };
 }

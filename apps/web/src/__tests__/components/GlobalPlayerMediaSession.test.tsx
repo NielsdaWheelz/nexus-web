@@ -1,23 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
-import { setAudioMetrics, jsonResponse } from "../helpers/audio";
-
-type QueueItem = {
-  item_id: string;
-  media_id: string;
-  title: string;
-  podcast_title: string | null;
-  duration_seconds: number | null;
-  stream_url: string;
-  source_url: string;
-  position: number;
-  source: "manual" | "auto_subscription" | "auto_playlist";
-  added_at: string;
-  listening_state: { position_ms: number; playback_speed: number } | null;
-};
+import {
+  buildPlaybackQueueItem,
+  installPlaybackFetchMock,
+  setAudioMetrics,
+  setViewportWidth,
+} from "../helpers/audio";
 
 type MediaSessionHarness = {
   actionHandlers: Map<string, MediaSessionActionHandler | null>;
@@ -25,50 +15,15 @@ type MediaSessionHarness = {
   restore: () => void;
 };
 
-function buildQueueItem(
-  itemId: string,
-  mediaId: string,
-  title: string,
-  position: number
-): QueueItem {
-  return {
-    item_id: itemId,
-    media_id: mediaId,
-    title,
-    podcast_title: "Queue Podcast",
-    duration_seconds: 120,
-    stream_url: `https://cdn.example.com/${mediaId}.mp3`,
-    source_url: `https://example.com/${mediaId}`,
-    position,
-    source: "manual",
-    added_at: "2026-03-22T00:00:00Z",
-    listening_state: {
-      position_ms: 0,
-      playback_speed: 1,
-    },
-  };
-}
-
-function installPlaybackFetchMock(queueItems: QueueItem[]) {
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = new URL(String(input), "http://localhost");
-
-    if (url.pathname === "/api/playback/queue") {
-      return jsonResponse({ data: queueItems });
-    }
-    if (url.pathname === "/api/playback/queue/next") {
-      const currentMediaId = url.searchParams.get("current_media_id");
-      const currentIndex = queueItems.findIndex((item) => item.media_id === currentMediaId);
-      const nextItem = currentIndex >= 0 ? queueItems[currentIndex + 1] ?? null : null;
-      return jsonResponse({ data: nextItem });
-    }
-    if (url.pathname.startsWith("/api/media/") && url.pathname.endsWith("/listening-state")) {
-      return new Response(null, { status: 204 });
-    }
-    return jsonResponse({ data: [] });
-  });
-  return fetchMock;
-}
+const MEDIA_SESSION_ACTIONS = [
+  "play",
+  "pause",
+  "seekbackward",
+  "seekforward",
+  "previoustrack",
+  "nexttrack",
+  "seekto",
+] as const;
 
 function installMediaSessionHarness(): MediaSessionHarness {
   const actionHandlers = new Map<string, MediaSessionActionHandler | null>();
@@ -173,34 +128,32 @@ function App() {
 
 describe("GlobalPlayer MediaSession integration", () => {
   beforeEach(() => {
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
-    window.dispatchEvent(new Event("resize"));
+    setViewportWidth(1280);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("registers metadata and media action handlers; updates playback/position state", async () => {
-    const user = userEvent.setup();
     const mediaSession = installMediaSessionHarness();
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
     installPlaybackFetchMock([
-      buildQueueItem("item-a", "media-a", "Episode A", 0),
-      buildQueueItem("item-b", "media-b", "Episode B", 1),
+      buildPlaybackQueueItem("item-a", "media-a", "Episode A", 0),
+      buildPlaybackQueueItem("item-b", "media-b", "Episode B", 1),
     ]);
 
+    let unmount: (() => void) | null = null;
     try {
-      render(<App />);
-      await user.click(screen.getByRole("button", { name: "Load A" }));
+      ({ unmount } = render(<App />));
+      fireEvent.click(screen.getByRole("button", { name: "Load A" }));
 
       await waitFor(() => {
-        expect(mediaSession.actionHandlers.get("play")).toEqual(expect.any(Function));
-        expect(mediaSession.actionHandlers.get("pause")).toEqual(expect.any(Function));
-        expect(mediaSession.actionHandlers.get("seekbackward")).toEqual(expect.any(Function));
-        expect(mediaSession.actionHandlers.get("seekforward")).toEqual(expect.any(Function));
-        expect(mediaSession.actionHandlers.get("previoustrack")).toEqual(expect.any(Function));
-        expect(mediaSession.actionHandlers.get("nexttrack")).toEqual(expect.any(Function));
-        expect(mediaSession.actionHandlers.get("seekto")).toEqual(expect.any(Function));
+        for (const action of MEDIA_SESSION_ACTIONS) {
+          expect(mediaSession.actionHandlers.get(action)).toEqual(expect.any(Function));
+        }
       });
 
       const sessionMetadata = window.navigator.mediaSession?.metadata as
@@ -230,19 +183,26 @@ describe("GlobalPlayer MediaSession integration", () => {
 
       setAudioMetrics(audio, { duration: 120, currentTime: 10 });
       mediaSession.setPositionStateSpy.mockClear();
+      now = 1_000;
       fireEvent(audio, new Event("timeupdate"));
-      fireEvent(audio, new Event("timeupdate"));
-      expect(mediaSession.setPositionStateSpy).toHaveBeenCalledTimes(1);
+      expect(mediaSession.setPositionStateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          duration: 120,
+          playbackRate: 1,
+          position: 10,
+        })
+      );
 
-      await new Promise((resolve) => setTimeout(resolve, 1_050));
+      now = 2_050;
       setAudioMetrics(audio, { duration: 120, currentTime: 12 });
       fireEvent(audio, new Event("timeupdate"));
-      expect(mediaSession.setPositionStateSpy).toHaveBeenCalledTimes(2);
-      expect(mediaSession.setPositionStateSpy.mock.calls[1]?.[0]).toMatchObject({
-        duration: 120,
-        playbackRate: 1,
-        position: 12,
-      });
+      expect(mediaSession.setPositionStateSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          duration: 120,
+          playbackRate: 1,
+          position: 12,
+        })
+      );
 
       const playHandler = mediaSession.actionHandlers.get("play");
       const pauseHandler = mediaSession.actionHandlers.get("pause");
@@ -280,36 +240,34 @@ describe("GlobalPlayer MediaSession integration", () => {
         expect(Math.floor(audio.currentTime)).toBe(0);
       });
     } finally {
+      unmount?.();
       mediaSession.restore();
     }
   });
 
   it("cleans up MediaSession handlers and playback state when track is cleared", async () => {
-    const user = userEvent.setup();
     const mediaSession = installMediaSessionHarness();
-    installPlaybackFetchMock([buildQueueItem("item-a", "media-a", "Episode A", 0)]);
+    installPlaybackFetchMock([buildPlaybackQueueItem("item-a", "media-a", "Episode A", 0)]);
 
+    let unmount: (() => void) | null = null;
     try {
-      render(<App />);
-      await user.click(screen.getByRole("button", { name: "Load A" }));
+      ({ unmount } = render(<App />));
+      fireEvent.click(screen.getByRole("button", { name: "Load A" }));
 
       await waitFor(() => {
         expect(mediaSession.actionHandlers.get("play")).toEqual(expect.any(Function));
       });
 
-      await user.click(screen.getByRole("button", { name: "Clear" }));
+      fireEvent.click(screen.getByRole("button", { name: "Clear" }));
 
       await waitFor(() => {
-        expect(mediaSession.actionHandlers.get("play")).toBeNull();
-        expect(mediaSession.actionHandlers.get("pause")).toBeNull();
-        expect(mediaSession.actionHandlers.get("seekbackward")).toBeNull();
-        expect(mediaSession.actionHandlers.get("seekforward")).toBeNull();
-        expect(mediaSession.actionHandlers.get("previoustrack")).toBeNull();
-        expect(mediaSession.actionHandlers.get("nexttrack")).toBeNull();
-        expect(mediaSession.actionHandlers.get("seekto")).toBeNull();
+        for (const action of MEDIA_SESSION_ACTIONS) {
+          expect(mediaSession.actionHandlers.get(action)).toBeNull();
+        }
         expect(window.navigator.mediaSession?.playbackState).toBe("none");
       });
     } finally {
+      unmount?.();
       mediaSession.restore();
     }
   });

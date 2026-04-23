@@ -75,6 +75,12 @@ interface ProxyDeps {
   };
 }
 
+interface ExtensionProxyOptions {
+  defaultAccept?: string;
+  defaultContentType?: string;
+  forwardHeaders?: readonly string[];
+}
+
 function generateRequestId(): string {
   return crypto.randomUUID();
 }
@@ -317,4 +323,123 @@ export async function proxyToFastAPI(
 ): Promise<Response> {
   const deps = await createDefaultDeps();
   return proxyToFastAPIWithDeps(request, path, deps);
+}
+
+export async function proxyExtensionToFastAPI(
+  request: Request,
+  path: string,
+  options: ExtensionProxyOptions = {}
+): Promise<Response> {
+  const requestId = getOrGenerateRequestId(request, generateRequestId);
+  const authorization = request.headers.get("authorization") || "";
+
+  if (!authorization.toLowerCase().startsWith("bearer ")) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "E_UNAUTHENTICATED",
+          message: "Extension token required",
+          request_id: requestId,
+        },
+      },
+      {
+        status: 401,
+        headers: { [REQUEST_ID_HEADER]: requestId },
+      }
+    );
+  }
+
+  const { fastApiBaseUrl, internalSecret } = getDefaultConfig();
+  const headers = new Headers({
+    Authorization: authorization,
+    [REQUEST_ID_HEADER]: requestId,
+  });
+  const contentType =
+    request.headers.get("content-type") ?? options.defaultContentType;
+  const accept = request.headers.get("accept") ?? options.defaultAccept;
+
+  if (contentType) {
+    headers.set("Content-Type", contentType);
+  }
+  if (accept) {
+    headers.set("Accept", accept);
+  }
+  for (const headerName of options.forwardHeaders ?? []) {
+    const value = request.headers.get(headerName);
+    if (value) {
+      headers.set(headerName, value);
+    }
+  }
+  if (internalSecret) {
+    headers.set("X-Nexus-Internal", internalSecret);
+  }
+
+  let body: ArrayBuffer | undefined;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    body = await request.arrayBuffer();
+  }
+
+  try {
+    const response = await fetch(`${fastApiBaseUrl}${path}`, {
+      method: request.method,
+      headers,
+      body,
+      signal: request.signal,
+    });
+    const responseHeaders = new Headers({
+      [REQUEST_ID_HEADER]:
+        response.headers.get(REQUEST_ID_HEADER) || requestId,
+    });
+    const responseContentType = response.headers.get("content-type");
+
+    if (responseContentType) {
+      responseHeaders.set("Content-Type", responseContentType);
+    }
+
+    if (
+      request.method === "HEAD" ||
+      response.status === 204 ||
+      response.status === 205 ||
+      response.status === 304
+    ) {
+      return new Response(null, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeaders,
+      });
+    }
+
+    if (isTextContentType(responseContentType)) {
+      return new Response(await response.text(), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeaders,
+      });
+    }
+
+    return new Response(await response.arrayBuffer(), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    });
+  } catch (error) {
+    if (isAbortLikeError(error)) {
+      return new Response(null, { status: 499 });
+    }
+
+    console.error("Extension proxy error:", error);
+    return NextResponse.json(
+      {
+        error: {
+          code: "E_INTERNAL",
+          message: "Backend service unavailable",
+          request_id: requestId,
+        },
+      },
+      {
+        status: 503,
+        headers: { [REQUEST_ID_HEADER]: requestId },
+      }
+    );
+  }
 }

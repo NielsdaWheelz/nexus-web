@@ -13,7 +13,7 @@ import {
 import {
   OPEN_ADD_CONTENT_EVENT,
   type AddContentMode,
-} from "@/components/CommandPalette";
+} from "@/components/addContentEvents";
 import LibraryTargetPicker, {
   type LibraryTargetPickerItem,
 } from "@/components/LibraryTargetPicker";

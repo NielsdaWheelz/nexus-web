@@ -68,15 +68,24 @@ interface LibraryPodcastSubscription {
   sync_status: "pending" | "running" | "partial" | "complete" | "source_limited" | "failed";
 }
 
-interface LibraryEntry {
+interface LibraryEntryBase {
   id: string;
   position: number;
   created_at: string;
-  kind: "media" | "podcast";
-  media?: LibraryMediaEntry | null;
-  podcast?: LibraryPodcastEntry | null;
-  subscription?: LibraryPodcastSubscription | null;
 }
+
+interface LibraryMediaListEntry extends LibraryEntryBase {
+  kind: "media";
+  media: LibraryMediaEntry;
+}
+
+interface LibraryPodcastListEntry extends LibraryEntryBase {
+  kind: "podcast";
+  podcast: LibraryPodcastEntry;
+  subscription: LibraryPodcastSubscription | null;
+}
+
+type LibraryEntry = LibraryMediaListEntry | LibraryPodcastListEntry;
 
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
@@ -114,14 +123,6 @@ export default function LibraryPaneBody() {
           apiFetch<{ data: Library }>(`/api/libraries/${id}`),
           apiFetch<{ data: LibraryEntry[] }>(`/api/libraries/${id}/entries`),
         ]);
-        for (const entry of entriesResp.data) {
-          if (entry.kind === "media" && !entry.media) {
-            throw new Error("Library entry is missing media payload");
-          }
-          if (entry.kind === "podcast" && !entry.podcast) {
-            throw new Error("Library entry is missing podcast payload");
-          }
-        }
         setLibrary(libraryResp.data);
         setEntries(entriesResp.data);
         setRemovedEntryIds(new Set());
@@ -170,68 +171,33 @@ export default function LibraryPaneBody() {
       setLibraryPanelError(null);
 
       try {
-        if (entry.kind === "podcast") {
-          if (!entry.podcast) {
-            throw new Error("Library entry is missing podcast payload");
-          }
-          const response = await apiFetch<{
-            data: Array<{
-              id: string;
-              name: string;
-              color: string | null;
-              is_in_library: boolean;
-              can_add: boolean;
-              can_remove: boolean;
-            }>;
-          }>(`/api/podcasts/${entry.podcast.id}/libraries`);
-          if (libraryPanelRequestIdRef.current !== requestId) {
-            return;
-          }
-          setLibraryPanelLibraries(
-            response.data.map((library) => ({
-              id: library.id,
-              name: library.name,
-              color: library.color,
-              isInLibrary: library.is_in_library,
-              canAdd: library.can_add,
-              canRemove: library.can_remove,
-            }))
-          );
+        const path =
+          entry.kind === "podcast"
+            ? `/api/podcasts/${entry.podcast.id}/libraries`
+            : `/api/media/${entry.media.id}/libraries`;
+        const response = await apiFetch<{
+          data: Array<{
+            id: string;
+            name: string;
+            color: string | null;
+            is_in_library: boolean;
+            can_add: boolean;
+            can_remove: boolean;
+          }>;
+        }>(path);
+        if (libraryPanelRequestIdRef.current !== requestId) {
           return;
         }
-
-        if (entry.kind === "media") {
-          if (!entry.media) {
-            throw new Error("Library entry is missing media payload");
-          }
-          const response = await apiFetch<{
-            data: Array<{
-              id: string;
-              name: string;
-              color: string | null;
-              is_in_library: boolean;
-              can_add: boolean;
-              can_remove: boolean;
-            }>;
-          }>(`/api/media/${entry.media.id}/libraries`);
-          if (libraryPanelRequestIdRef.current !== requestId) {
-            return;
-          }
-          setLibraryPanelLibraries(
-            response.data.map((library) => ({
-              id: library.id,
-              name: library.name,
-              color: library.color,
-              isInLibrary: library.is_in_library,
-              canAdd: library.can_add,
-              canRemove: library.can_remove,
-            }))
-          );
-          return;
-        }
-
-        const unsupportedKind: never = entry.kind;
-        throw new Error(`Unsupported library entry kind: ${unsupportedKind}`);
+        setLibraryPanelLibraries(
+          response.data.map((library) => ({
+            id: library.id,
+            name: library.name,
+            color: library.color,
+            isInLibrary: library.is_in_library,
+            canAdd: library.can_add,
+            canRemove: library.can_remove,
+          }))
+        );
       } catch (err) {
         if (libraryPanelRequestIdRef.current !== requestId) {
           return;
@@ -261,24 +227,15 @@ export default function LibraryPaneBody() {
       setLibraryPanelError(null);
       try {
         if (libraryPanelEntry.kind === "podcast") {
-          if (!libraryPanelEntry.podcast) {
-            throw new Error("Library entry is missing podcast payload");
-          }
           await apiFetch(`/api/libraries/${libraryId}/podcasts`, {
             method: "POST",
             body: JSON.stringify({ podcast_id: libraryPanelEntry.podcast.id }),
           });
-        } else if (libraryPanelEntry.kind === "media") {
-          if (!libraryPanelEntry.media) {
-            throw new Error("Library entry is missing media payload");
-          }
+        } else {
           await apiFetch(`/api/libraries/${libraryId}/media`, {
             method: "POST",
             body: JSON.stringify({ media_id: libraryPanelEntry.media.id }),
           });
-        } else {
-          const unsupportedKind: never = libraryPanelEntry.kind;
-          throw new Error(`Unsupported library entry kind: ${unsupportedKind}`);
         }
 
         if (libraryPanelEntryIdRef.current === libraryPanelEntry.id) {
@@ -336,17 +293,15 @@ export default function LibraryPaneBody() {
               }
               if (
                 entry.kind === "media" &&
-                entry.media &&
                 candidate.kind === "media" &&
-                candidate.media?.id === entry.media.id
+                candidate.media.id === entry.media.id
               ) {
                 return false;
               }
               if (
                 entry.kind === "podcast" &&
-                entry.podcast &&
                 candidate.kind === "podcast" &&
-                candidate.podcast?.id === entry.podcast.id
+                candidate.podcast.id === entry.podcast.id
               ) {
                 return false;
               }
@@ -359,22 +314,13 @@ export default function LibraryPaneBody() {
 
       try {
         if (entry.kind === "podcast") {
-          if (!entry.podcast) {
-            throw new Error("Library entry is missing podcast payload");
-          }
           await apiFetch(`/api/libraries/${libraryId}/podcasts/${entry.podcast.id}`, {
             method: "DELETE",
           });
-        } else if (entry.kind === "media") {
-          if (!entry.media) {
-            throw new Error("Library entry is missing media payload");
-          }
+        } else {
           await apiFetch(`/api/libraries/${libraryId}/media/${entry.media.id}`, {
             method: "DELETE",
           });
-        } else {
-          const unsupportedKind: never = entry.kind;
-          throw new Error(`Unsupported library entry kind: ${unsupportedKind}`);
         }
 
         if (removingCurrentEntry) {
@@ -675,9 +621,6 @@ export default function LibraryPaneBody() {
                     : [];
 
                 if (item.kind === "podcast") {
-                  if (!item.podcast) {
-                    throw new Error("Library entry is missing podcast payload");
-                  }
                   const subscription = item.subscription;
                   return (
                     <div className={styles.mediaRow} data-dragging={isDragging ? "true" : "false"}>
@@ -716,88 +659,80 @@ export default function LibraryPaneBody() {
                   );
                 }
 
-                if (item.kind === "media") {
-                  if (!item.media) {
-                    throw new Error("Library entry is missing media payload");
-                  }
-                  const Icon = MEDIA_KIND_ICONS[item.media.kind] ?? Globe;
-                  const authorNames = item.media.authors
-                    .map((author) => author.name.trim())
-                    .filter((name) => name.length > 0);
-                  let authorSummary: string | null = null;
-                  if (authorNames.length === 1) {
-                    authorSummary = authorNames[0] ?? null;
-                  } else if (authorNames.length > 1) {
-                    authorSummary = `${authorNames[0]} +${authorNames.length - 1}`;
-                  }
-                  let publishedDate = item.media.published_date?.trim() || null;
-                  if (publishedDate && /^\d{4}-\d{2}-\d{2}T/.test(publishedDate)) {
-                    publishedDate = publishedDate.slice(0, 10);
-                  }
-                  const publisher = item.media.publisher?.trim() || null;
-                  const metaParts: string[] = [];
-                  if (authorSummary) {
-                    metaParts.push(authorSummary);
-                  }
-                  if (publishedDate) {
-                    metaParts.push(publishedDate);
-                  }
-                  if (metaParts.length === 0 && publisher) {
-                    metaParts.push(publisher);
-                  }
-                  let statusLabel: string | null = null;
-                  if (item.media.processing_status === "pending") {
-                    statusLabel = "Queued";
-                  } else if (item.media.processing_status === "extracting") {
-                    statusLabel = "Processing";
-                  } else if (item.media.processing_status === "embedding") {
-                    statusLabel = "Indexing";
-                  } else if (item.media.processing_status === "failed") {
-                    statusLabel = "Failed";
-                  }
-                  return (
-                    <div className={styles.mediaRow} data-dragging={isDragging ? "true" : "false"}>
-                      <div className={styles.mediaRowMain}>
-                        {library.role === "admin" && (
-                          <button
-                            type="button"
-                            className={styles.dragHandle}
-                            aria-label={`Reorder ${item.media.title}`}
-                            disabled={reorderBusy}
-                            {...dragHandleBindings}
-                          >
-                            ⋮⋮
-                          </button>
-                        )}
-                        <a href={`/media/${item.media.id}`} className={styles.mediaLink}>
-                          <span className={styles.mediaTitleRow}>
-                            <Icon size={18} aria-hidden="true" />
-                            <span className={styles.mediaTitle}>{item.media.title}</span>
-                          </span>
-                          {metaParts.length > 0 || statusLabel ? (
-                            <span className={styles.mediaMetaRow}>
-                              {metaParts.length > 0 ? (
-                                <span className={styles.mediaMeta}>{metaParts.join(" · ")}</span>
-                              ) : null}
-                              {statusLabel ? (
-                                <span
-                                  className={styles.mediaStatus}
-                                  data-status={item.media.processing_status}
-                                >
-                                  {statusLabel}
-                                </span>
-                              ) : null}
-                            </span>
-                          ) : null}
-                        </a>
-                      </div>
-                      <ActionMenu options={rowOptions} className={styles.rowActionMenu} />
-                    </div>
-                  );
+                const Icon = MEDIA_KIND_ICONS[item.media.kind] ?? Globe;
+                const authorNames = item.media.authors
+                  .map((author) => author.name.trim())
+                  .filter((name) => name.length > 0);
+                let authorSummary: string | null = null;
+                if (authorNames.length === 1) {
+                  authorSummary = authorNames[0] ?? null;
+                } else if (authorNames.length > 1) {
+                  authorSummary = `${authorNames[0]} +${authorNames.length - 1}`;
                 }
-
-                const unsupportedKind: never = item.kind;
-                throw new Error(`Unsupported library entry kind: ${unsupportedKind}`);
+                let publishedDate = item.media.published_date?.trim() || null;
+                if (publishedDate && /^\d{4}-\d{2}-\d{2}T/.test(publishedDate)) {
+                  publishedDate = publishedDate.slice(0, 10);
+                }
+                const publisher = item.media.publisher?.trim() || null;
+                const metaParts: string[] = [];
+                if (authorSummary) {
+                  metaParts.push(authorSummary);
+                }
+                if (publishedDate) {
+                  metaParts.push(publishedDate);
+                }
+                if (metaParts.length === 0 && publisher) {
+                  metaParts.push(publisher);
+                }
+                let statusLabel: string | null = null;
+                if (item.media.processing_status === "pending") {
+                  statusLabel = "Queued";
+                } else if (item.media.processing_status === "extracting") {
+                  statusLabel = "Processing";
+                } else if (item.media.processing_status === "embedding") {
+                  statusLabel = "Indexing";
+                } else if (item.media.processing_status === "failed") {
+                  statusLabel = "Failed";
+                }
+                return (
+                  <div className={styles.mediaRow} data-dragging={isDragging ? "true" : "false"}>
+                    <div className={styles.mediaRowMain}>
+                      {library.role === "admin" && (
+                        <button
+                          type="button"
+                          className={styles.dragHandle}
+                          aria-label={`Reorder ${item.media.title}`}
+                          disabled={reorderBusy}
+                          {...dragHandleBindings}
+                        >
+                          ⋮⋮
+                        </button>
+                      )}
+                      <a href={`/media/${item.media.id}`} className={styles.mediaLink}>
+                        <span className={styles.mediaTitleRow}>
+                          <Icon size={18} aria-hidden="true" />
+                          <span className={styles.mediaTitle}>{item.media.title}</span>
+                        </span>
+                        {metaParts.length > 0 || statusLabel ? (
+                          <span className={styles.mediaMetaRow}>
+                            {metaParts.length > 0 ? (
+                              <span className={styles.mediaMeta}>{metaParts.join(" · ")}</span>
+                            ) : null}
+                            {statusLabel ? (
+                              <span
+                                className={styles.mediaStatus}
+                                data-status={item.media.processing_status}
+                              >
+                                {statusLabel}
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : null}
+                      </a>
+                    </div>
+                    <ActionMenu options={rowOptions} className={styles.rowActionMenu} />
+                  </div>
+                );
               }}
             />
           )}

@@ -24,17 +24,20 @@ import {
   X,
 } from "lucide-react";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import { useWorkspaceStore } from "@/lib/workspace/store";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
+import {
+  resolveWorkspacePaneTitle,
+  useWorkspaceStore,
+} from "@/lib/workspace/store";
+import {
+  dispatchOpenAddContent,
+} from "@/components/addContentEvents";
+import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { apiFetch } from "@/lib/api/client";
 import {
-  type SearchResponseShape,
   type SearchResultRowViewModel,
   type SearchType,
   ALL_SEARCH_TYPES,
-  buildSearchQueryParams,
-  normalizeSearchResult,
-  adaptSearchResultRow,
+  fetchSearchResultPage,
 } from "@/lib/search/resultRowAdapter";
 import {
   loadKeybindings,
@@ -43,11 +46,9 @@ import {
 } from "@/lib/keybindings";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
-import { normalizePaneTitle } from "@/lib/workspace/schema";
 import styles from "./CommandPalette.module.css";
 
 type Section = "Recent" | "Panes" | "Create" | "Navigate" | "Settings" | "Search Results";
-type AddContentMode = "content" | "opml";
 
 interface Action {
   id: string;
@@ -62,17 +63,6 @@ interface CommandPaletteRecentRow {
   href: string;
   title_snapshot: string | null;
   last_used_at: string;
-}
-
-const OPEN_ADD_CONTENT_EVENT = "nexus:open-add-content";
-const OPEN_COMMAND_PALETTE_EVENT = "nexus:open-command-palette";
-
-function dispatchOpenAddContent(mode: AddContentMode = "content") {
-  window.dispatchEvent(
-    new CustomEvent(OPEN_ADD_CONTENT_EVENT, {
-      detail: { mode },
-    })
-  );
 }
 
 const ACTIONS: Action[] = [
@@ -106,6 +96,7 @@ const SEARCH_TYPE_ICON: Record<SearchType, LucideIcon> = {
   message: MessageSquare,
   transcript_chunk: Mic,
 };
+const EMPTY_RUNTIME_TITLE_BY_PANE_ID = new Map<string, string>();
 
 function getRecentDestinationIcon(routeId: string): LucideIcon {
   switch (routeId) {
@@ -138,13 +129,6 @@ function getRecentDestinationIcon(routeId: string): LucideIcon {
   }
 }
 
-export {
-  OPEN_ADD_CONTENT_EVENT,
-  OPEN_COMMAND_PALETTE_EVENT,
-  dispatchOpenAddContent,
-};
-export type { AddContentMode };
-
 export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -161,7 +145,6 @@ export default function CommandPalette() {
   const {
     state: workspaceState,
     runtimeTitleByPaneId,
-    openHintByPaneId,
     activatePane,
     closePane,
   } = useWorkspaceStore();
@@ -273,30 +256,31 @@ export default function CommandPalette() {
 
     setSearchLoading(true);
     const q = query.trim();
+    let cancelled = false;
     searchTimerRef.current = setTimeout(async () => {
       try {
-        const params = buildSearchQueryParams({
+        const page = await fetchSearchResultPage({
           query: q,
           selectedTypes: new Set(ALL_SEARCH_TYPES),
           limit: 5,
           cursor: null,
         });
-        const response = await apiFetch<SearchResponseShape>(
-          `/api/search?${params.toString()}`,
-        );
-        const valid = response.results
-          .map((r) => normalizeSearchResult(r))
-          .filter((r): r is NonNullable<typeof r> => r !== null)
-          .map((r) => adaptSearchResultRow(r));
-        setSearchResults(valid);
+        if (!cancelled) {
+          setSearchResults(page.rows);
+        }
       } catch {
-        setSearchResults([]);
+        if (!cancelled) {
+          setSearchResults([]);
+        }
       } finally {
-        setSearchLoading(false);
+        if (!cancelled) {
+          setSearchLoading(false);
+        }
       }
     }, 300);
 
     return () => {
+      cancelled = true;
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     };
   }, [query]);
@@ -316,14 +300,17 @@ export default function CommandPalette() {
   const recentActions = useMemo(() => {
     if (query) return [];
     return recentRows.map((row) => {
-      const route = resolvePaneRoute(row.href);
-      const label = row.title_snapshot?.trim() || route.staticTitle;
+      const descriptor = resolveWorkspacePaneTitle(
+        { id: row.href, href: row.href },
+        EMPTY_RUNTIME_TITLE_BY_PANE_ID
+      );
+      const label = row.title_snapshot?.trim() || descriptor.title;
       return {
         id: `recent-${encodeURIComponent(row.href)}`,
         label,
         keywords: [row.href],
         section: "Recent" as Section,
-        icon: getRecentDestinationIcon(route.id),
+        icon: getRecentDestinationIcon(descriptor.route.id),
         execute: () =>
           requestOpenInAppPane(row.href, {
             titleHint: row.title_snapshot ?? undefined,
@@ -335,15 +322,10 @@ export default function CommandPalette() {
   // Build pane-switching actions from workspace state
   const paneActions: Action[] = useMemo(() => {
     const panes = workspaceState.panes.map((pane) => {
-      const route = resolvePaneRoute(pane.href);
-      const label =
-        normalizePaneTitle(runtimeTitleByPaneId.get(pane.id)) ??
-        normalizePaneTitle(openHintByPaneId.get(pane.id)?.titleHint) ??
-        normalizePaneTitle(route.staticTitle) ??
-        "Pane";
+      const { title } = resolveWorkspacePaneTitle(pane, runtimeTitleByPaneId);
       return {
         id: `pane-${pane.id}`,
-        label,
+        label: title,
         keywords: ["tab", "pane", "switch"],
         section: "Panes" as Section,
         icon: PanelLeft,
@@ -357,7 +339,7 @@ export default function CommandPalette() {
         a.label.toLowerCase().includes(q) ||
         a.keywords.some((k) => k.includes(q)),
     );
-  }, [workspaceState.panes, runtimeTitleByPaneId, openHintByPaneId, activatePane, query]);
+  }, [workspaceState.panes, runtimeTitleByPaneId, activatePane, query]);
 
   // Build search result actions
   const searchActions: Action[] = useMemo(

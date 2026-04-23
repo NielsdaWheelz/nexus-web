@@ -102,7 +102,6 @@ export default function ConversationsPaneBody() {
               href={`/conversations/${conv.id}`}
               title={conv.title}
               paneTitleHint={conv.title}
-              paneResourceRef={`conversation:${conv.id}`}
               description={`${conv.message_count} messages`}
               meta={new Date(conv.updated_at).toLocaleDateString()}
               options={[

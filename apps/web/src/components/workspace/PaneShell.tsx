@@ -12,7 +12,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/CommandPalette";
+import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import SurfaceHeader, { type SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import styles from "./PaneShell.module.css";

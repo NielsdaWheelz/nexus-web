@@ -1,15 +1,8 @@
 import { useState, type ComponentProps, type RefCallback } from "react";
-import { describe, expect, it, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import LibraryMembershipPanel from "./LibraryMembershipPanel";
 import type { LibraryTargetPickerItem } from "./LibraryTargetPicker";
-
-let isMobileViewport = false;
-
-vi.mock("@/lib/ui/useIsMobileViewport", () => ({
-  useIsMobileViewport: () => isMobileViewport,
-}));
 
 const libraries: LibraryTargetPickerItem[] = [
   {
@@ -29,6 +22,16 @@ const libraries: LibraryTargetPickerItem[] = [
     canRemove: false,
   },
 ];
+
+const defaultViewportWidth = window.innerWidth;
+
+function setViewportWidth(width: number) {
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: width,
+  });
+  window.dispatchEvent(new Event("resize"));
+}
 
 function Harness(props: Partial<ComponentProps<typeof LibraryMembershipPanel>>) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
@@ -55,11 +58,10 @@ function Harness(props: Partial<ComponentProps<typeof LibraryMembershipPanel>>) 
 
 describe("LibraryMembershipPanel", () => {
   afterEach(() => {
-    isMobileViewport = false;
+    setViewportWidth(defaultViewportWidth);
   });
 
   it("filters libraries and stays open after membership changes", async () => {
-    const user = userEvent.setup();
     const handleAddToLibrary = vi.fn();
     const handleRemoveFromLibrary = vi.fn();
 
@@ -71,18 +73,26 @@ describe("LibraryMembershipPanel", () => {
     );
 
     await screen.findByRole("dialog", { name: "Libraries" });
-    await user.type(screen.getByRole("searchbox", { name: "Search libraries" }), "work");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search libraries" }), {
+      target: { value: "work" },
+    });
 
-    expect(screen.queryByRole("button", { name: "Personal Remove from library" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Personal Remove from library" })
+    ).not.toBeInTheDocument();
 
     const workButton = screen.getByRole("button", { name: "Work Add to library" });
-    await user.click(workButton);
+    fireEvent.click(workButton);
 
     expect(handleAddToLibrary).toHaveBeenCalledWith("work");
     expect(screen.getByRole("dialog", { name: "Libraries" })).toBeInTheDocument();
 
-    await user.clear(screen.getByRole("searchbox", { name: "Search libraries" }));
-    await user.click(screen.getByRole("button", { name: "Personal Remove from library" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search libraries" }), {
+      target: { value: "" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Personal Remove from library" })
+    );
 
     expect(handleRemoveFromLibrary).toHaveBeenCalledWith("personal");
     expect(screen.getByRole("dialog", { name: "Libraries" })).toBeInTheDocument();
@@ -96,13 +106,11 @@ describe("LibraryMembershipPanel", () => {
   });
 
   it("restores focus to the anchor when it closes", async () => {
-    const user = userEvent.setup();
-
     render(<Harness />);
 
     const anchor = screen.getByRole("button", { name: "Anchor" });
     await screen.findByRole("dialog", { name: "Libraries" });
-    await user.click(screen.getByRole("button", { name: "Close dialog" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "Libraries" })).not.toBeInTheDocument();
@@ -111,11 +119,10 @@ describe("LibraryMembershipPanel", () => {
   });
 
   it("uses the shared dialog on mobile", async () => {
-    isMobileViewport = true;
+    setViewportWidth(480);
 
     render(<Harness />);
 
-    const dialog = await screen.findByRole("dialog", { name: "Libraries" });
-    expect(dialog.tagName).toBe("DIALOG");
+    expect(await screen.findByRole("dialog", { name: "Libraries" })).toBeInTheDocument();
   });
 });

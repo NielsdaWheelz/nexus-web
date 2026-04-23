@@ -15,6 +15,7 @@ import {
   PLAYBACK_QUEUE_UPDATED_EVENT,
   addPlaybackQueueItems,
   clearPlaybackQueue,
+  countUpcomingQueueItems,
   fetchNextPlaybackQueueItem,
   fetchPlaybackQueue,
   removePlaybackQueueItem,
@@ -22,6 +23,10 @@ import {
   type PlaybackQueueInsertPosition,
   type PlaybackQueueItem,
 } from "@/lib/player/playbackQueueClient";
+import {
+  SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
+  type SubscriptionPlaybackSpeedOption,
+} from "@/lib/player/subscriptionPlaybackSpeed";
 import {
   AUDIO_EFFECTS_DEFAULTS,
   COMPRESSOR_DEFAULTS,
@@ -39,8 +44,8 @@ import {
 
 const LISTENING_STATE_SYNC_INTERVAL_MS = 15_000;
 const PREVIOUS_RESTART_THRESHOLD_SECONDS = 3;
-const SKIP_BACK_SECONDS = 15;
-const SKIP_FORWARD_SECONDS = 30;
+export const PLAYER_SKIP_BACK_SECONDS = 15;
+export const PLAYER_SKIP_FORWARD_SECONDS = 30;
 const DEFAULT_PLAYBACK_RATE = 1.0;
 const DEFAULT_VOLUME = 1.0;
 const VOLUME_STORAGE_KEY = "nexus.globalPlayer.volume";
@@ -81,6 +86,10 @@ export interface GlobalPlayerChapter {
   image_url: string | null;
 }
 
+interface GlobalPlayerChapterMarker extends GlobalPlayerChapter {
+  leftPercent: number;
+}
+
 interface SetTrackOptions {
   autoplay?: boolean;
   seek_seconds?: number | null;
@@ -104,7 +113,10 @@ interface GlobalPlayerContextValue {
   currentTimeSeconds: number;
   durationSeconds: number;
   bufferedSeconds: number;
+  currentChapter: GlobalPlayerChapter | null;
+  chapterMarkers: GlobalPlayerChapterMarker[];
   playbackRate: number;
+  selectedPlaybackRateOption: SubscriptionPlaybackSpeedOption;
   volume: number;
   audioEffects: AudioEffectsState;
   setAudioEffects: (partial: Partial<AudioEffectsState>) => void;
@@ -117,8 +129,11 @@ interface GlobalPlayerContextValue {
   removeFromQueue: (itemId: string) => Promise<void>;
   reorderQueue: (itemIds: string[]) => Promise<void>;
   clearQueue: () => Promise<void>;
+  playQueueItem: (item: PlaybackQueueItem) => void;
   playNextInQueue: () => Promise<void>;
   playPreviousInQueue: () => Promise<void>;
+  currentQueueItemId: string | null;
+  upcomingQueueCount: number;
   hasNextInQueue: boolean;
   hasPreviousInQueue: boolean;
   bindAudioElement: (node: HTMLAudioElement | null) => void;
@@ -275,17 +290,16 @@ function areTrackChaptersEqual(
   });
 }
 
-export function getTrackChapterAtSeconds(
+function getTrackChapterAtSeconds(
   chapters: GlobalPlayerChapter[] | null | undefined,
   currentSeconds: number
 ): GlobalPlayerChapter | null {
-  const normalizedChapters = normalizeTrackChapters(chapters);
-  if (normalizedChapters.length === 0) {
+  if (!Array.isArray(chapters) || chapters.length === 0) {
     return null;
   }
   const currentMs = Math.max(0, Math.floor(currentSeconds * 1000));
   let activeChapter: GlobalPlayerChapter | null = null;
-  for (const chapter of normalizedChapters) {
+  for (const chapter of chapters) {
     if (chapter.t_start_ms > currentMs) {
       break;
     }
@@ -987,6 +1001,20 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     [setTrack]
   );
 
+  const currentQueueIndex = useMemo(() => {
+    if (!track) {
+      return -1;
+    }
+    return queueItems.findIndex((item) => item.media_id === track.media_id);
+  }, [queueItems, track]);
+
+  const currentQueueItemId = currentQueueIndex >= 0 ? queueItems[currentQueueIndex]?.item_id ?? null : null;
+
+  const upcomingQueueCount = useMemo(
+    () => countUpcomingQueueItems(queueItems, track?.media_id ?? null),
+    [queueItems, track?.media_id]
+  );
+
   const playNextInQueue = useCallback(async () => {
     if (!track) {
       return;
@@ -1012,32 +1040,48 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       seekToMs(0);
       return;
     }
-    const currentIndex = queueItems.findIndex((item) => item.media_id === track.media_id);
-    if (currentIndex > 0) {
-      playQueueItem(queueItems[currentIndex - 1]);
+    if (currentQueueIndex > 0) {
+      playQueueItem(queueItems[currentQueueIndex - 1]);
       return;
     }
     seekToMs(0);
-  }, [currentTimeSeconds, playQueueItem, queueItems, seekToMs, track]);
+  }, [currentQueueIndex, currentTimeSeconds, playQueueItem, queueItems, seekToMs, track]);
+
+  const currentChapter = useMemo(
+    () => getTrackChapterAtSeconds(track?.chapters, currentTimeSeconds),
+    [currentTimeSeconds, track?.chapters]
+  );
+
+  const chapterMarkers = useMemo<GlobalPlayerChapterMarker[]>(() => {
+    if (!track?.chapters || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return [];
+    }
+    return track.chapters
+      .map((chapter) => ({
+        ...chapter,
+        leftPercent: Math.max(0, Math.min(100, (chapter.t_start_ms / 1000 / durationSeconds) * 100)),
+      }))
+      .filter((chapter) => Number.isFinite(chapter.leftPercent));
+  }, [durationSeconds, track?.chapters]);
+
+  const selectedPlaybackRateOption = useMemo<SubscriptionPlaybackSpeedOption>(() => {
+    if (SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.includes(playbackRate as SubscriptionPlaybackSpeedOption)) {
+      return playbackRate as SubscriptionPlaybackSpeedOption;
+    }
+    return 1;
+  }, [playbackRate]);
 
   const hasNextInQueue = useMemo(() => {
     if (!track) {
       return false;
     }
-    const currentIndex = queueItems.findIndex((item) => item.media_id === track.media_id);
-    if (currentIndex < 0) {
+    if (currentQueueIndex < 0) {
       return queueItems.length > 0;
     }
-    return currentIndex < queueItems.length - 1;
-  }, [queueItems, track]);
+    return currentQueueIndex < queueItems.length - 1;
+  }, [currentQueueIndex, queueItems.length, track]);
 
-  const hasPreviousInQueue = useMemo(() => {
-    if (!track) {
-      return false;
-    }
-    const currentIndex = queueItems.findIndex((item) => item.media_id === track.media_id);
-    return currentIndex > 0;
-  }, [queueItems, track]);
+  const hasPreviousInQueue = useMemo(() => currentQueueIndex > 0, [currentQueueIndex]);
 
   useEffect(() => {
     try {
@@ -1346,12 +1390,12 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       }
       if (key === "ArrowLeft") {
         event.preventDefault();
-        skipBySeconds(-SKIP_BACK_SECONDS);
+        skipBySeconds(-PLAYER_SKIP_BACK_SECONDS);
         return;
       }
       if (key === "ArrowRight") {
         event.preventDefault();
-        skipBySeconds(SKIP_FORWARD_SECONDS);
+        skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS);
       }
     };
     document.addEventListener("keydown", onKeyDown);
@@ -1424,10 +1468,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       pause();
     });
     setMediaSessionActionHandler(mediaSession, "seekbackward", () => {
-      skipBySeconds(-SKIP_BACK_SECONDS);
+      skipBySeconds(-PLAYER_SKIP_BACK_SECONDS);
     });
     setMediaSessionActionHandler(mediaSession, "seekforward", () => {
-      skipBySeconds(SKIP_FORWARD_SECONDS);
+      skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS);
     });
     setMediaSessionActionHandler(mediaSession, "previoustrack", () => {
       void playPreviousInQueue();
@@ -1466,7 +1510,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       currentTimeSeconds,
       durationSeconds,
       bufferedSeconds,
+      currentChapter,
+      chapterMarkers,
       playbackRate,
+      selectedPlaybackRateOption,
       volume,
       audioEffects,
       setAudioEffects,
@@ -1479,8 +1526,11 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       removeFromQueue,
       reorderQueue,
       clearQueue,
+      playQueueItem,
       playNextInQueue,
       playPreviousInQueue,
+      currentQueueItemId,
+      upcomingQueueCount,
       hasNextInQueue,
       hasPreviousInQueue,
       bindAudioElement,
@@ -1502,7 +1552,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       currentTimeSeconds,
       durationSeconds,
       bufferedSeconds,
+      currentChapter,
+      chapterMarkers,
       playbackRate,
+      selectedPlaybackRateOption,
       volume,
       audioEffects,
       setAudioEffects,
@@ -1515,8 +1568,11 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       removeFromQueue,
       reorderQueue,
       clearQueue,
+      playQueueItem,
       playNextInQueue,
       playPreviousInQueue,
+      currentQueueItemId,
+      upcomingQueueCount,
       hasNextInQueue,
       hasPreviousInQueue,
       bindAudioElement,

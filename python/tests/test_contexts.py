@@ -16,7 +16,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas.conversation import MessageContextRef
 from nexus.services import contexts as contexts_service
 from nexus.services.bootstrap import ensure_user_and_default_library
 
@@ -232,81 +233,8 @@ def _create_pdf_media_with_highlight(db_session: Session, user_id: UUID) -> tupl
     return media_id, highlight_id
 
 
-# =============================================================================
-# Target Type Validation Tests
-# =============================================================================
-
-
-class TestTargetTypeValidation:
-    """Tests for target_type validation."""
-
-    def test_validate_media_requires_media_id(self):
-        """target_type='media' requires media_id."""
-        with pytest.raises(ApiError) as exc_info:
-            contexts_service.validate_target_type(
-                "media",
-                {"media_id": None, "highlight_id": None, "annotation_id": None},
-            )
-        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
-
-    def test_validate_highlight_requires_highlight_id(self):
-        """target_type='highlight' requires highlight_id."""
-        with pytest.raises(ApiError) as exc_info:
-            contexts_service.validate_target_type(
-                "highlight",
-                {"media_id": uuid4(), "highlight_id": None, "annotation_id": None},
-            )
-        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
-
-    def test_validate_annotation_requires_annotation_id(self):
-        """target_type='annotation' requires annotation_id."""
-        with pytest.raises(ApiError) as exc_info:
-            contexts_service.validate_target_type(
-                "annotation",
-                {"media_id": None, "highlight_id": None, "annotation_id": None},
-            )
-        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
-
-    def test_validate_exactly_one_fk(self):
-        """Exactly one FK must be set."""
-        # Multiple FKs set
-        with pytest.raises(ApiError) as exc_info:
-            contexts_service.validate_target_type(
-                "media",
-                {"media_id": uuid4(), "highlight_id": uuid4(), "annotation_id": None},
-            )
-        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
-
-    def test_validate_invalid_target_type(self):
-        """Invalid target_type raises error."""
-        with pytest.raises(ApiError) as exc_info:
-            contexts_service.validate_target_type(
-                "invalid",
-                {"media_id": uuid4(), "highlight_id": None, "annotation_id": None},
-            )
-        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
-
-    def test_validate_media_succeeds(self):
-        """Valid media target passes validation."""
-        # Should not raise
-        contexts_service.validate_target_type(
-            "media",
-            {"media_id": uuid4(), "highlight_id": None, "annotation_id": None},
-        )
-
-    def test_validate_highlight_succeeds(self):
-        """Valid highlight target passes validation."""
-        contexts_service.validate_target_type(
-            "highlight",
-            {"media_id": None, "highlight_id": uuid4(), "annotation_id": None},
-        )
-
-    def test_validate_annotation_succeeds(self):
-        """Valid annotation target passes validation."""
-        contexts_service.validate_target_type(
-            "annotation",
-            {"media_id": None, "highlight_id": None, "annotation_id": uuid4()},
-        )
+def _context_ref(target_type: str, target_id: UUID) -> MessageContextRef:
+    return MessageContextRef(type=target_type, id=target_id)
 
 
 # =============================================================================
@@ -322,7 +250,8 @@ class TestMediaIdResolution:
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(
-            db_session, "media", media_id, None, None
+            db_session,
+            _context_ref("media", media_id),
         )
 
         assert resolved == media_id
@@ -332,7 +261,8 @@ class TestMediaIdResolution:
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(
-            db_session, "highlight", None, highlight_id, None
+            db_session,
+            _context_ref("highlight", highlight_id),
         )
 
         assert resolved == media_id
@@ -343,7 +273,8 @@ class TestMediaIdResolution:
         media_id, highlight_id = _create_pdf_media_with_highlight(db_session, user_id)
 
         resolved = contexts_service.resolve_media_id_for_context(
-            db_session, "highlight", None, highlight_id, None
+            db_session,
+            _context_ref("highlight", highlight_id),
         )
 
         assert resolved == media_id
@@ -355,7 +286,8 @@ class TestMediaIdResolution:
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(
-            db_session, "annotation", None, None, annotation_id
+            db_session,
+            _context_ref("annotation", annotation_id),
         )
 
         assert resolved == media_id
@@ -363,20 +295,25 @@ class TestMediaIdResolution:
     def test_resolve_nonexistent_media(self, db_session: Session):
         """Non-existent media raises NotFoundError."""
         with pytest.raises(NotFoundError):
-            contexts_service.resolve_media_id_for_context(db_session, "media", uuid4(), None, None)
+            contexts_service.resolve_media_id_for_context(
+                db_session,
+                _context_ref("media", uuid4()),
+            )
 
     def test_resolve_nonexistent_highlight(self, db_session: Session):
         """Non-existent highlight raises NotFoundError."""
         with pytest.raises(NotFoundError):
             contexts_service.resolve_media_id_for_context(
-                db_session, "highlight", None, uuid4(), None
+                db_session,
+                _context_ref("highlight", uuid4()),
             )
 
     def test_resolve_nonexistent_annotation(self, db_session: Session):
         """Non-existent annotation raises NotFoundError."""
         with pytest.raises(NotFoundError):
             contexts_service.resolve_media_id_for_context(
-                db_session, "annotation", None, None, uuid4()
+                db_session,
+                _context_ref("annotation", uuid4()),
             )
 
 
@@ -399,11 +336,10 @@ class TestContextInsertion:
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         context = contexts_service.insert_context(
-            db_session,
+            db=db_session,
             message_id=message_id,
             ordinal=0,
-            target_type="media",
-            media_id=media_id,
+            context=_context_ref("media", media_id),
         )
 
         assert context.message_id == message_id
@@ -433,11 +369,10 @@ class TestContextInsertion:
 
         # Insert context
         contexts_service.insert_context(
-            db_session,
+            db=db_session,
             message_id=message_id,
             ordinal=0,
-            target_type="highlight",
-            highlight_id=highlight_id,
+            context=_context_ref("highlight", highlight_id),
         )
 
         # After: conversation_media exists
@@ -458,11 +393,10 @@ class TestContextInsertion:
 
         with pytest.raises(NotFoundError) as exc_info:
             contexts_service.insert_context(
-                db_session,
+                db=db_session,
                 message_id=uuid4(),
                 ordinal=0,
-                target_type="media",
-                media_id=media_id,
+                context=_context_ref("media", media_id),
             )
 
         assert exc_info.value.code == ApiErrorCode.E_MESSAGE_NOT_FOUND
@@ -479,20 +413,18 @@ class TestContextInsertion:
 
         # Insert first context (media)
         contexts_service.insert_context(
-            db_session,
+            db=db_session,
             message_id=message_id,
             ordinal=0,
-            target_type="media",
-            media_id=media_id,
+            context=_context_ref("media", media_id),
         )
 
         # Insert second context (highlight on same media)
         contexts_service.insert_context(
-            db_session,
+            db=db_session,
             message_id=message_id,
             ordinal=1,
-            target_type="highlight",
-            highlight_id=highlight_id,
+            context=_context_ref("highlight", highlight_id),
         )
 
         # Should have only one conversation_media entry
@@ -526,11 +458,10 @@ class TestConversationMediaRecompute:
 
         # Insert context
         contexts_service.insert_context(
-            db_session,
+            db=db_session,
             message_id=message_id,
             ordinal=0,
-            target_type="media",
-            media_id=media_id,
+            context=_context_ref("media", media_id),
         )
 
         # Recompute multiple times
@@ -560,11 +491,10 @@ class TestConversationMediaRecompute:
 
         # Insert context
         context = contexts_service.insert_context(
-            db_session,
+            db=db_session,
             message_id=message_id,
             ordinal=0,
-            target_type="media",
-            media_id=media_id,
+            context=_context_ref("media", media_id),
         )
 
         # Manually delete the context (simulating cascade from highlight delete)
@@ -659,24 +589,16 @@ class TestBatchInsert:
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         contexts = [
-            {
-                "ordinal": 0,
-                "target_type": "media",
-                "media_id": media_id,
-            },
-            {
-                "ordinal": 1,
-                "target_type": "highlight",
-                "highlight_id": highlight_id,
-            },
-            {
-                "ordinal": 2,
-                "target_type": "annotation",
-                "annotation_id": annotation_id,
-            },
+            _context_ref("media", media_id),
+            _context_ref("highlight", highlight_id),
+            _context_ref("annotation", annotation_id),
         ]
 
-        results = contexts_service.insert_contexts_batch(db_session, message_id, contexts)
+        results = contexts_service.insert_contexts_batch(
+            db=db_session,
+            message_id=message_id,
+            contexts=contexts,
+        )
 
         assert len(results) == 3
         assert results[0].ordinal == 0
@@ -699,7 +621,8 @@ class TestTypedAnchorMediaResolution:
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(
-            db_session, "highlight", None, highlight_id, None
+            db_session,
+            _context_ref("highlight", highlight_id),
         )
         assert resolved == media_id
 
@@ -710,7 +633,8 @@ class TestTypedAnchorMediaResolution:
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(
-            db_session, "annotation", None, None, annotation_id
+            db_session,
+            _context_ref("annotation", annotation_id),
         )
         assert resolved == media_id
 
@@ -719,7 +643,8 @@ class TestTypedAnchorMediaResolution:
         media_id, fragment_id, highlight_id, annotation_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(
-            db_session, "media", media_id, None, None
+            db_session,
+            _context_ref("media", media_id),
         )
         assert resolved == media_id
 

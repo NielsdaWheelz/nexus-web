@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { dispatchOpenAddContent } from "@/components/CommandPalette";
+import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import styles from "./Navbar.module.css";
 
 interface NavbarProps {
