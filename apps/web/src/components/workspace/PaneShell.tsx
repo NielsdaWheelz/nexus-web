@@ -126,39 +126,67 @@ export default function PaneShell({
   const mobileChromeDirectionStartRef = useRef(0);
   const [mobileChromeHidden, setMobileChromeHidden] = useState(false);
   const [mobileChromeLockedVisible, setMobileChromeLockedVisible] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
   const [chromeOverrides, setChromeOverrides] = useState<PaneChromeOverrides>(
     EMPTY_PANE_CHROME_OVERRIDES
   );
 
+  const isMobileDocumentPane = isMobile && bodyMode === "document";
   const effectiveToolbar = chromeOverrides.toolbar ?? toolbar;
   const effectiveActions = chromeOverrides.actions ?? actions;
   const effectiveOptions = chromeOverrides.options ?? options;
   const effectiveMobileChromeHidden =
-    isMobile &&
-    bodyMode === "document" &&
+    isMobileDocumentPane &&
     mobileChromeHidden &&
-    !mobileChromeLockedVisible;
-  const mobileChromeStateClass =
-    effectiveMobileChromeHidden
-      ? styles.mobileChromeHidden
-      : isMobile
-        ? styles.mobileChromeVisible
-        : "";
+    !mobileChromeLockedVisible &&
+    !prefersReducedMotion;
 
-  // Reset mobile chrome state when leaving mobile or document mode.
+  // Reset mobile chrome state when leaving mobile document mode.
   useEffect(() => {
-    if (!isMobile || bodyMode !== "document") {
+    if (!isMobileDocumentPane) {
       setMobileChromeHidden(false);
       setMobileChromeLockedVisible(false);
       lastScrollTopRef.current = 0;
       mobileChromeScrollDirectionRef.current = null;
       mobileChromeDirectionStartRef.current = 0;
     }
-  }, [bodyMode, isMobile]);
+  }, [isMobileDocumentPane]);
 
-  // Track chrome height for padding offset.
+  // Pin reduced-motion mobile document panes visible at the shell level.
   useEffect(() => {
+    if (!isMobileDocumentPane) {
+      setPrefersReducedMotion(false);
+      return;
+    }
+    if (typeof window.matchMedia !== "function") {
+      setPrefersReducedMotion(false);
+      return;
+    }
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => {
+      setPrefersReducedMotion(mediaQuery.matches);
+      if (mediaQuery.matches) {
+        setMobileChromeHidden(false);
+        mobileChromeScrollDirectionRef.current = null;
+        mobileChromeDirectionStartRef.current = 0;
+      }
+    };
+    update();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", update);
+      return () => {
+        mediaQuery.removeEventListener("change", update);
+      };
+    }
+    mediaQuery.addListener(update);
+    return () => {
+      mediaQuery.removeListener(update);
+    };
+  }, [isMobileDocumentPane]);
+
+  // Track the chrome height for the stable document top reservation.
+  useLayoutEffect(() => {
     if (!isMobile || !chromeRef.current) {
       setMobileChromeHeight(0);
       return;
@@ -171,19 +199,20 @@ export default function PaneShell({
     const observer = new ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [isMobile, title, subtitle, effectiveToolbar]);
+  }, [isMobile]);
 
-  // Hide chrome on scroll-down, restore on scroll-up.
+  // Hide after deliberate downward scroll past the reserved top space; reveal
+  // on upward scroll or when the reader returns near the top.
   const handleDocumentScroll = useCallback(
     (scrollTop: number) => {
-      if (!isMobile || bodyMode !== "document") {
+      if (!isMobileDocumentPane || prefersReducedMotion) {
         return;
       }
       const previous = lastScrollTopRef.current;
       const delta = scrollTop - previous;
       lastScrollTopRef.current = scrollTop;
 
-      if (scrollTop <= 24) {
+      if (scrollTop <= mobileChromeHeight) {
         setMobileChromeHidden(false);
         mobileChromeScrollDirectionRef.current = null;
         mobileChromeDirectionStartRef.current = scrollTop;
@@ -197,33 +226,36 @@ export default function PaneShell({
       const direction = delta > 0 ? "down" : "up";
       if (mobileChromeScrollDirectionRef.current !== direction) {
         mobileChromeScrollDirectionRef.current = direction;
-        mobileChromeDirectionStartRef.current = previous;
-      }
-
-      const directionDistance = scrollTop - mobileChromeDirectionStartRef.current;
-
-      if (direction === "down" && directionDistance >= 10) {
-        setMobileChromeHidden(true);
         mobileChromeDirectionStartRef.current = scrollTop;
         return;
       }
 
-      if (direction === "up" && directionDistance <= -10) {
+      const directionDistance = Math.abs(scrollTop - mobileChromeDirectionStartRef.current);
+
+      if (direction === "down" && directionDistance >= 24) {
+        setMobileChromeHidden(true);
+        return;
+      }
+
+      if (direction === "up" && directionDistance >= 16) {
         setMobileChromeHidden(false);
-        mobileChromeDirectionStartRef.current = scrollTop;
       }
     },
-    [bodyMode, isMobile]
+    [isMobileDocumentPane, mobileChromeHeight, prefersReducedMotion]
   );
   const showMobileChrome = useCallback(() => {
     setMobileChromeHidden(false);
+    mobileChromeScrollDirectionRef.current = null;
+    mobileChromeDirectionStartRef.current = lastScrollTopRef.current;
   }, []);
   const paneChromeVisibility = useMemo(
     () => ({ setMobileChromeLockedVisible, showMobileChrome }),
     [showMobileChrome]
   );
 
-  const shellClass = `${styles.paneShell} ${mobileChromeStateClass}`.trim();
+  const shellClass = effectiveMobileChromeHidden
+    ? `${styles.paneShell} ${styles.mobileChromeHidden}`
+    : styles.paneShell;
 
   const shellStyle: PaneShellStyle = isMobile
     ? { width: "100%", minWidth: "100%", maxWidth: "100%" }

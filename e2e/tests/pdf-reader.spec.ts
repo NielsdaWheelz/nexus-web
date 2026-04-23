@@ -214,6 +214,8 @@ test.describe("pdf reader", () => {
       await expect(page).toHaveURL(new RegExp(`/media/${expectedMediaId}`), {
         timeout: 30_000,
       });
+      await expect(pdfControlsToolbar(page)).toBeVisible({ timeout: 20_000 });
+      await expect(activeTextLayer(page)).toBeVisible();
       // Normalize route after upload redirect to avoid pane-runtime tab churn
       // affecting subsequent viewer assertions under parallel workers.
       await page.goto(`/media/${expectedMediaId}`);

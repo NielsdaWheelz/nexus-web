@@ -22,6 +22,8 @@ implementation target and cutover details live in
   `bodyMode: "document"`.
 - document panes must restore chrome near the top of the document and on
   intentional upward scroll.
+- when `prefers-reduced-motion` is enabled, document panes keep chrome visible
+  instead of auto-hiding it.
 - mobile overlay headers stay visible. do not auto-hide headers that are the
   only close or escape affordance.
 - when a drawer, menu, selection popover, quote flow, or similar transient UI
@@ -48,8 +50,8 @@ implementation target and cutover details live in
 - mobile chrome must not reveal on tiny scroll reversals. use explicit
   hysteresis with a near-top reset and larger reveal and hide thresholds than a
   single scroll tick.
-- when `prefers-reduced-motion` is enabled, keep chrome pinned or switch state
-  without animated motion.
+- when `prefers-reduced-motion` is enabled, keep document-pane chrome pinned
+  visible.
 
 ## codebase policy
 

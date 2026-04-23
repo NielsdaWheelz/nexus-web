@@ -123,6 +123,9 @@
   }
 
   .viewerContainer {
+    padding-top: calc(
+      env(safe-area-inset-top) + var(--mobile-pane-chrome-height, 0px) + var(--space-2)
+    );
     scroll-padding-top: calc(
       env(safe-area-inset-top) + var(--mobile-pane-chrome-height, 0px) + var(--space-2)
     );

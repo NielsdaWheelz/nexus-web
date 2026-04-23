@@ -1113,11 +1113,30 @@ test.describe("epub", () => {
       .locator(`[data-highlight-id="${chapter1SecondaryHighlight.id}"]`)
       .first();
     const chapter2Row = page.locator(`[data-highlight-id="${chapter2Highlight.id}"]`);
+    const chapter1PrimaryPreviewButton = chapter1PrimaryRow.getByRole("button").first();
+    const chapter1SecondaryPreviewButton = chapter1SecondaryRow.getByRole("button").first();
+    const chapter1PrimaryAnchor = page
+      .locator(`[data-active-highlight-ids~="${chapter1PrimaryHighlight.id}"]`)
+      .first();
+    const chapter1SecondaryAnchor = page
+      .locator(`[data-active-highlight-ids~="${chapter1SecondaryHighlight.id}"]`)
+      .first();
 
-    await expect(chapter1PrimaryRow).toBeVisible({ timeout: 15_000 });
-    await expect(chapter1SecondaryRow).toBeVisible({ timeout: 15_000 });
+    await expect(chapter1PrimaryRow).toHaveCount(1);
+    await expect(chapter1SecondaryRow).toHaveCount(1);
     await expect(chapter2Row).toHaveCount(0);
-    await chapter1PrimaryRow.click();
+    await chapter1PrimaryAnchor.evaluate((element) => {
+      (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+    });
+    await expect
+      .poll(
+        async () =>
+          (await readAnchorCenterOffset(page, chapter1PrimaryHighlight.id)) ??
+          Number.POSITIVE_INFINITY,
+        { timeout: 15_000 }
+      )
+      .toBeLessThan(170);
+    await chapter1PrimaryPreviewButton.click();
     await expectHighlightRowToBeExpanded(
       chapter1PrimaryRow,
       "EPUB chapter one inspector note alpha."
@@ -1129,7 +1148,18 @@ test.describe("epub", () => {
     await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
 
-    await chapter1SecondaryRow.click();
+    await chapter1SecondaryAnchor.evaluate((element) => {
+      (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+    });
+    await expect
+      .poll(
+        async () =>
+          (await readAnchorCenterOffset(page, chapter1SecondaryHighlight.id)) ??
+          Number.POSITIVE_INFINITY,
+        { timeout: 15_000 }
+      )
+      .toBeLessThan(170);
+    await chapter1SecondaryPreviewButton.click();
     await expectHighlightRowToBeExpanded(
       chapter1SecondaryRow,
       "EPUB chapter one inspector note omega."
@@ -1145,10 +1175,6 @@ test.describe("epub", () => {
         { timeout: 15_000 }
       )
       .toBeLessThan(170);
-
-    const chapter1PrimaryAnchor = page
-      .locator(`[data-active-highlight-ids~="${chapter1PrimaryHighlight.id}"]`)
-      .first();
     await chapter1PrimaryAnchor.evaluate((element) => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
     });

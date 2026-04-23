@@ -1,19 +1,20 @@
 # mobile pane chrome cutover
 
-this document defines the implementation target for mobile pane chrome.
+this document defines the implementation target for smooth mobile pane chrome in
+document panes.
 
 it is a hard cutover plan. do not preserve legacy behavior, duplicate code
 paths, or backward-compatibility shims.
 
 ## goals
 
-- maximize reading space on mobile document panes without hiding critical
-  affordances
-- keep standard mobile panes predictable and pinned
-- bind chrome visibility to the element that actually scrolls
-- make the code easy to understand from the owning component
-- remove duplicate or partial implementations instead of layering new ones on
-  top
+- make mobile reader chrome hide and reveal without sudden jumps
+- maximize reading space on mobile document panes without losing orientation
+- keep scroll ownership and visibility ownership obvious from the owning
+  component
+- remove layout coupling that shifts content while the user is scrolling
+- keep reduced-motion behavior consistent across pdf, epub, web, and transcript
+  readers
 
 ## non-goals
 
@@ -21,63 +22,98 @@ paths, or backward-compatibility shims.
 - route registry redesign
 - reader resume contract changes
 - generic scroll behavior infrastructure
-- feature flags, gradual rollout paths, or fallback compatibility modes
+- continuous scroll-linked collapse or spring physics
+- feature flags, staged rollouts, or compatibility modes
 
 ## target behavior
 
-- on mobile, standard panes keep their header and toolbar visible for the full
+- on mobile, standard panes keep header and toolbar visible for the full
   session
-- on mobile, document panes hide header and toolbar on intentional downward
-  reading scroll
-- on mobile, document panes restore header and toolbar near the top of the
-  document and on intentional upward scroll
-- on mobile, `/media/:id` route-level chrome decisions live in
-  `MediaPaneBody.tsx`, and scroll-driven visibility lives only with the real
-  scroller owner
-- overlay headers, close bars, and other escape affordances stay visible
-- while a drawer, quote flow, menu, selection flow, or other transient UI is
-  open, the relevant chrome stays visible
-- anchor jumps, deep links, resume restore, search hits, and selection restore
-  land below visible chrome
-- reduced-motion users do not get animated chrome motion
+- on mobile, document panes hide chrome only after deliberate downward reading
+  scroll
+- on mobile, document panes reveal chrome on deliberate upward scroll and near
+  the top
+- hide and reveal do not change the reader scroller's `scrollTop`
+- hide and reveal do not shift the current text position or cause a visible
+  content jump
+- chrome motion is a short transform-based slide with optional opacity; no
+  layout properties change with visibility state
+- document panes keep one stable top protection value based on measured chrome
+  height
+- chrome does not hide before the reader has moved past the reserved top
+  protection area
+- quote drawers, highlights drawers, selection flows, library panels, and
+  similar transient ui keep chrome visible until they close
+- reduced-motion users keep chrome pinned visible on mobile document panes
+- anchor jumps, deep links, search hits, and resume restore land below visible
+  chrome
+- `/media/:id` route decisions stay in `MediaPaneBody.tsx`; the real scroller
+  only reports scroll position and local lock-visible conditions
+
+## target structure
+
+- `PaneShell.tsx` owns mobile document chrome hidden/visible state, measured
+  chrome height, reduced-motion pinning, and the scroll callback consumed by
+  real scrollers
+- `PaneShell.module.css` owns chrome overlay positioning, motion, and the single
+  reserved top space for document bodies
+- `MediaPaneBody.tsx` owns web, epub, and transcript scroll handoff plus
+  transient-ui lock-visible decisions
+- `page.module.css` owns stable `scroll-padding-top` for non-pdf document
+  scrollers
+- `PdfReader.tsx` owns pdf scroll handoff and pdf-local lock-visible decisions
+- `PdfReader.module.css` owns stable `scroll-padding-top` and
+  `scroll-margin-top` for pdf page targets
+- tests assert user-visible behavior and target placement, not internal helper
+  structure
 
 ## final state
 
-- `PaneShell` owns mobile chrome layout for workspace panes
-- `PaneShell` does not run scroll-reactive hide/show logic for standard panes
-- `MediaPaneBody.tsx` is the only `/media/:id` route controller
-- document-pane chrome visibility is driven by the real document scroller, not
-  by `PaneShell`'s outer body wrapper
-- there is one mobile chrome behavior path for workspace panes
-- `PageLayout` is deleted
-- document panes use explicit local wiring at the scroll owner instead of a new
-  generic abstraction layer
+- there is one production path for mobile document chrome visibility
+- `PaneShell` remains the only chrome layout owner for workspace panes
+- the real reader scroller remains the only scroll owner for document-pane
+  chrome
+- hidden mobile document chrome no longer changes body padding or any other
+  layout-affecting property
+- mobile reader hide/show motion no longer depends on `visibility` snapping the
+  chrome away immediately
+- reduced-motion handling no longer differs between pdf and non-pdf readers
+- scroll-padding and target protection no longer depend on whether chrome is
+  currently hidden
+- no stale docs or tests remain that describe padding-coupled hide/show
+  behavior
 
 ## hard cutover rules
 
-- remove the current duplicate hide/show implementation split between
-  `useMobileChromeVisibility` and `PaneShell`
-- remove any unused production mobile hide/show path after the cutover
-- do not keep both shell-driven and document-driven visibility state
-- do not keep route-level chrome mutations in `useMediaRouteState.tsx` or move
-  them into a replacement controller hook
-- do not add optional props, mode flags, registries, manifests, or adapters to
-  support both old and new behavior
-- if a file becomes a one-use wrapper after the cutover, inline or remove it
+- delete the hidden-state body padding branch in `PaneShell.module.css`
+- delete the immediate hidden-state `visibility` behavior that cuts off the exit
+  motion
+- do not keep both stable-geometry and padding-coupled hide/show paths
+- do not keep pdf-only reduced-motion pinning once `PaneShell` owns
+  reduced-motion behavior
+- do not add a new hook, policy object, config model, manifest, adapter, or
+  generic utility for this cutover
+- do not move threshold values into a separate shared model or tuning table
+- if logic is only needed in one owning component, inline it there
+- if a helper, type, or constant is used once and does not hide substantial
+  incidental complexity, inline or delete it
 
 ## key decisions
 
-- standard panes are pinned on mobile
-  reason: these panes are navigational and action-heavy, not long-form reading
-  surfaces
-- document panes may auto-hide chrome on mobile
-  reason: they are the only surfaces where extra vertical space materially
-  improves the primary task
-- the real scroller owns visibility state
-  reason: nested scrollers already exist for media readers and resume logic
-  already depends on the real scroller
-- the implementation stays local and explicit
-  reason: the repo rules favor fewer code paths and fewer abstractions over
+- keep scroll geometry stable
+  reason: a small amount of permanently reserved top space is cheaper than
+  moving the document under the user's finger while they read
+- gate hide on measured chrome height
+  reason: chrome must not hide while the scroller is still inside the reserved
+  top protection zone
+- pin reduced-motion users to visible chrome
+  reason: this is simpler, more predictable, and safer than maintaining a second
+  no-animation hide/show path
+- keep hysteresis explicit and asymmetric
+  reason: reveal on tiny reversals is the exact failure mode this cutover
+  removes
+- keep ownership local
+  reason: repo rules favor direct branches in the owning component over
   reusable-looking indirection
 
 ## files in scope
@@ -85,93 +121,106 @@ paths, or backward-compatibility shims.
 - `apps/web/src/components/workspace/PaneShell.tsx`
 - `apps/web/src/components/workspace/PaneShell.module.css`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
-- `apps/web/src/app/(authenticated)/media/[id]/useMediaRouteState.tsx`
-- `apps/web/src/app/(authenticated)/media/[id]/TranscriptContentPanel.tsx`
+- `apps/web/src/app/(authenticated)/media/[id]/page.module.css`
 - `apps/web/src/components/PdfReader.tsx`
 - `apps/web/src/components/PdfReader.module.css`
-- `apps/web/src/app/(authenticated)/media/[id]/transcriptView.ts`
 - `apps/web/src/__tests__/components/PaneShell.test.tsx`
 - `e2e/tests/pane-chrome.spec.ts`
-- `e2e/tests/pdf-reader.spec.ts`
-- `e2e/tests/epub.spec.ts`
 - `e2e/tests/reader-resume.spec.ts`
+- `e2e/tests/epub.spec.ts`
+- `e2e/tests/pdf-reader.spec.ts`
+- `e2e/tests/web-articles.spec.ts`
+- `e2e/tests/youtube-transcript.spec.ts`
 
 ## file-by-file target
 
 - `PaneShell.tsx`
-  keep mobile layout ownership here
-  remove scroll-reactive hide/show state for standard panes
-  expose one explicit document-pane path for visibility updates from the real
-  scroller
+  keep mobile chrome layout ownership here
+  keep one linear hide/reveal path for document panes
+  own reduced-motion pinning here instead of splitting it by reader type
+  keep explicit branches on mobile, document, and locked-visible state
+  require deliberate downward movement plus scroll position beyond the measured
+  chrome height before hiding
+  require deliberate upward movement or near-top reset before revealing
 - `PaneShell.module.css`
-  keep pinned mobile chrome styles for standard panes
-  keep transform-based hidden/visible styles for document panes only
-  keep safe-area padding and reserved top space
+  keep the chrome as an overlay surface
+  keep one stable top reservation for document bodies
+  animate only `transform` and optional `opacity`
+  do not branch body padding by hidden state
+  do not rely on immediate `visibility` changes for hide/show
 - `MediaPaneBody.tsx`
-  keep epub and web document-pane decisions explicit at the media surface
-  absorb the remaining route-level mobile chrome decisions from the deleted
-  media-route hook
-  keep transient UI flows forcing visible chrome while they are open
-- `useMediaRouteState.tsx`
-  delete it
-  move any remaining route-level chrome mutations into `MediaPaneBody.tsx`
-  or the real leaf scroller owner
-- `TranscriptContentPanel.tsx`
-  keep transcript document scroll ownership local instead of routing it through
-  a wrapper component
+  keep explicit scroll handoff for web, epub, and transcript document scrollers
+  keep transient-ui lock-visible wiring local here
+  do not add wrappers or helper layers around the scroll handoff
+- `page.module.css`
+  keep one stable `scroll-padding-top` based on `--mobile-pane-chrome-height`
+  do not couple target protection to hidden vs visible chrome state
 - `PdfReader.tsx`
-  become the explicit scroll owner for pdf mobile chrome visibility
-  protect page jumps and resume positioning from hidden or reappearing chrome
-- `transcriptView.ts`
-  keep transcript target placement aligned with the visible chrome height of the
-  active scroller
+  keep the pdf viewer as the explicit scroll owner for pdf chrome visibility
+  keep pdf-local lock-visible conditions such as text selection
+  delete any reduced-motion visibility ownership that becomes redundant once
+  `PaneShell` owns it
+- `PdfReader.module.css`
+  keep one stable `scroll-padding-top`
+  keep one stable `scroll-margin-top` for page targets
+  do not add hidden-state compensation
 - tests
-  delete assertions that depend on the legacy shell-body-driven document
-  behavior
-  replace them with assertions on the real document scroller
+  delete assertions that encode padding-coupled snap behavior
+  replace them with assertions on deliberate hide, deliberate reveal,
+  reduced-motion pinning, and target placement
 
 ## implementation rules
 
-- use explicit branches on `bodyMode`
-- use explicit branches on transient-ui-open state
+- use explicit branches on `bodyMode`, `isMobile`, `mobileChromeLockedVisible`,
+  and reduced-motion state
+- keep the scroll handler short, local, and linear
 - keep thresholds inline unless a value is reused and semantically named
-- do not introduce a generic policy object or configuration model
-- do not introduce a second reusable scroll hook unless multiple production
-  owners still need the exact same logic after the cutover
-- prefer direct prop wiring over context expansion
-- prefer local state in the owning component over cross-surface shared state
-- animate only with `transform` and `opacity`
-- do not animate layout-affecting properties on scroll
-- set top protection on the real scroller, not on an ancestor shell
+- do not add intermediate state models, config maps, or threshold objects
+- do not add a second reusable scroll hook
+- do not add a second context or controller layer
+- prefer direct prop and context wiring that already exists over new
+  abstractions
+- animate only `transform` and `opacity`
+- do not animate `padding`, `top`, `height`, `margin`, or other
+  layout-affecting properties on scroll
+- keep `scroll-padding-top` and `scroll-margin-top` stable from measured chrome
+  height
+- measure chrome height once in the owning shell and reuse the existing css
+  custom property path
+- if the final code needs comments to explain ownership, simplify the ownership
+  instead
 
 ## acceptance criteria
 
-- on mobile, `/libraries`, `/browse`, `/search`, `/conversations`, and
-  `/settings` keep pane chrome visible while scrolling
-- on mobile, `/media/:id` hides pane chrome during intentional downward reading
-  scroll for epub, web, transcript, and pdf readers
-- on mobile, `/media/:id` restores pane chrome near the top and on intentional
-  upward scroll
-- on mobile, quote drawers, highlights drawers, overlays, and similar flows
-  keep the necessary chrome visible until the flow closes
-- epub, web, transcript, and pdf anchor jumps are not obscured by visible
-  chrome
-- reader resume restore does not snap content under the chrome
-- reduced-motion mode disables animated hide/show motion
-- no duplicate production hide/show logic remains for workspace pane chrome
-- no deleted wrapper or alternate `PageLayout` chrome path remains in
-  production
+- on mobile, reader chrome exits with a visible slide instead of snapping away
+- on mobile, hiding reader chrome does not move the current paragraph, line, or
+  highlight under the user's finger
+- on mobile, tiny upward reversals do not reveal chrome
+- on mobile, chrome does not hide before the document has scrolled past the
+  reserved top protection area
+- on mobile, deliberate upward scroll reveals chrome before the user reaches the
+  very top
+- on mobile, reduced-motion users see pinned chrome for pdf, epub, web, and
+  transcript readers
+- on mobile, quote drawers, highlights drawers, library panels, and selection
+  flows keep chrome visible until they close
+- web, epub, transcript, and pdf anchors still land below visible chrome
+- resume restore still lands below visible chrome
+- there is no duplicate production hide/show logic and no padding-coupled
+  fallback path
 
 ## validation
 
 - `make verify`
 - `make test-e2e`
-- targeted browser and e2e coverage for mobile media readers
+- targeted browser coverage for `PaneShell`
+- targeted e2e coverage for pane chrome, reader resume, epub, pdf, web article,
+  and transcript readers
 
 ## shipping bar
 
 - do not ship partial cutover
-- do not leave old tests asserting the previous document-pane behavior
-- do not leave dead mobile chrome code in production files
-- if the final code still needs a comment to explain which element owns scroll,
-  the ownership is still too indirect and should be simplified
+- do not leave old code that can still toggle padding based on hidden chrome
+  state
+- do not leave pdf-only reduced-motion behavior in production
+- do not leave docs or tests that describe the previous snap-prone behavior

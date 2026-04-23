@@ -380,13 +380,6 @@ function createInitialCreateTelemetry(): CreateTelemetryState {
   };
 }
 
-function readPrefersReducedMotion(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return false;
-  }
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
 async function destroyPdfDocument(doc: PdfDocumentLike | null): Promise<void> {
   if (!doc?.destroy) {
     return;
@@ -540,9 +533,6 @@ export default function PdfReader({
   const paneMobileChrome = usePaneMobileChromeVisibility();
   const isMobileRef = useRef(isMobile);
   const initialMobileFitDoneRef = useRef(false);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState<boolean>(() =>
-    readPrefersReducedMotion()
-  );
   const startPageNumberRef = useRef(startPageNumber);
   const startPageProgressionRef = useRef(startPageProgression);
   const startZoomRef = useRef(startZoom);
@@ -608,25 +598,6 @@ export default function PdfReader({
     isMobileRef.current = isMobile;
   }, [isMobile]);
 
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return;
-    }
-    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => {
-      setPrefersReducedMotion(mediaQuery.matches);
-    };
-    update();
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", update);
-      return () => mediaQuery.removeEventListener("change", update);
-    }
-    if (typeof mediaQuery.addListener === "function") {
-      mediaQuery.addListener(update);
-      return () => mediaQuery.removeListener(update);
-    }
-  }, []);
-
   const onResumeStateChangeRef = useRef(onResumeStateChange);
   useEffect(() => {
     onResumeStateChangeRef.current = onResumeStateChange;
@@ -657,20 +628,19 @@ export default function PdfReader({
 
   const handleViewerContainerScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
-      if (!isMobile || prefersReducedMotion || !paneChromeScrollHandler) {
+      if (!paneChromeScrollHandler) {
         return;
       }
-      // On mobile, the PDF viewer is the scroll owner for pane chrome visibility.
       paneChromeScrollHandler(event.currentTarget.scrollTop);
     },
-    [isMobile, paneChromeScrollHandler, prefersReducedMotion]
+    [paneChromeScrollHandler]
   );
 
   useEffect(() => {
     if (!isMobile || !paneMobileChrome) {
       return;
     }
-    const lockVisible = prefersReducedMotion || selection !== null;
+    const lockVisible = selection !== null;
     if (lockVisible) {
       paneMobileChrome.showMobileChrome();
     }
@@ -678,7 +648,7 @@ export default function PdfReader({
     return () => {
       paneMobileChrome.setMobileChromeLockedVisible(false);
     };
-  }, [isMobile, paneMobileChrome, prefersReducedMotion, selection]);
+  }, [isMobile, paneMobileChrome, selection]);
 
   const ensurePdfJs = useCallback(async () => {
     if (pdfJsRef.current) {
