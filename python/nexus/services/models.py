@@ -26,10 +26,10 @@ def get_model_catalog_metadata(
         or None if model is outside the curated catalog.
     """
     if provider == "openai":
-        if model_name == "gpt-5.4":
+        if model_name == "gpt-5.5":
             return (
                 "OpenAI",
-                "GPT-5.4",
+                "GPT-5.5",
                 "sota",
                 ["none", "low", "medium", "high", "max"],
             )
@@ -43,10 +43,10 @@ def get_model_catalog_metadata(
         return None
 
     if provider == "anthropic":
-        if model_name == "claude-opus-4-6":
+        if model_name == "claude-opus-4-7":
             return (
                 "Anthropic",
-                "Opus 4.6",
+                "Opus 4.7",
                 "sota",
                 ["none", "low", "medium", "high", "max"],
             )
@@ -57,7 +57,7 @@ def get_model_catalog_metadata(
                 "sota",
                 ["none", "low", "medium", "high", "max"],
             )
-        if model_name.startswith("claude-haiku-4-5"):
+        if model_name == "claude-haiku-4-5-20251001":
             return (
                 "Anthropic",
                 "Haiku 4.5",
@@ -67,14 +67,14 @@ def get_model_catalog_metadata(
         return None
 
     if provider == "gemini":
-        if model_name.startswith("gemini-3.1-pro"):
+        if model_name == "gemini-3.1-pro-preview":
             return (
                 "Google",
                 "Gemini 3.1 Pro",
                 "sota",
                 ["low", "high"],
             )
-        if model_name.startswith("gemini-3-flash"):
+        if model_name == "gemini-3-flash-preview":
             return (
                 "Google",
                 "Gemini 3 Flash",
@@ -84,17 +84,17 @@ def get_model_catalog_metadata(
         return None
 
     if provider == "deepseek":
-        if model_name == "deepseek-reasoner":
+        if model_name == "deepseek-v4-pro":
             return (
                 "DeepSeek",
-                "DeepSeek-V3.2 (Reasoner)",
+                "DeepSeek V4 Pro",
                 "sota",
                 ["high"],
             )
-        if model_name == "deepseek-chat":
+        if model_name == "deepseek-v4-flash":
             return (
                 "DeepSeek",
-                "DeepSeek-V3.2 (Chat)",
+                "DeepSeek V4 Flash",
                 "light",
                 ["none", "high"],
             )
@@ -117,6 +117,16 @@ def _provider_sort_rank(provider: str) -> int:
 
 def _tier_sort_rank(model_tier: str) -> int:
     return 0 if model_tier == "sota" else 1
+
+
+def _available_via(provider: str, user_providers: set[str], platform_providers: set[str]) -> str:
+    has_byok = provider in user_providers
+    has_platform = provider in platform_providers
+    if has_byok and has_platform:
+        return "both"
+    if has_byok:
+        return "byok"
+    return "platform"
 
 
 def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
@@ -187,6 +197,11 @@ def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
                 model_tier=model_tier,
                 reasoning_modes=reasoning_modes,
                 max_context_tokens=model.max_context_tokens,
+                available_via=_available_via(
+                    model.provider,
+                    user_providers=user_providers,
+                    platform_providers=platform_providers,
+                ),
             )
         )
 

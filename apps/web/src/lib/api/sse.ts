@@ -46,7 +46,62 @@ export interface SSEDoneEvent {
   };
 }
 
-export type SSEEvent = SSEMetaEvent | SSEDeltaEvent | SSEDoneEvent;
+export interface SearchCitationEventData {
+  result_type:
+    | "media"
+    | "podcast"
+    | "fragment"
+    | "annotation"
+    | "message"
+    | "transcript_chunk";
+  source_id: string;
+  title: string;
+  source_label: string | null;
+  snippet: string;
+  deep_link: string;
+  context_ref: { type: string; id: string };
+  media_id: string | null;
+  media_kind: string | null;
+  score: number | null;
+  selected: boolean;
+}
+
+export interface SSEToolCallEvent {
+  type: "tool_call";
+  data: {
+    tool_call_id?: string | null;
+    assistant_message_id: string;
+    tool_name: "app_search" | string;
+    tool_call_index: number;
+    status: "started" | "pending" | "complete" | "error" | string;
+    scope?: string;
+    types?: string[];
+    semantic?: boolean;
+  };
+}
+
+export interface SSEToolResultEvent {
+  type: "tool_result";
+  data: {
+    tool_call_id?: string | null;
+    assistant_message_id: string;
+    tool_name: "app_search" | string;
+    tool_call_index: number;
+    status: "complete" | "error" | "skipped" | string;
+    error_code?: string | null;
+    result_count: number;
+    selected_count: number;
+    latency_ms: number;
+    citations: SearchCitationEventData[];
+  };
+}
+
+export type SSEEvent =
+  | SSEMetaEvent
+  | SSEDeltaEvent
+  | SSEDoneEvent
+  | SSEToolCallEvent
+  | SSEToolResultEvent;
 
 type SSEEventHandler = (event: SSEEvent) => void;
 type SSEErrorHandler = (error: Error) => void;
@@ -215,6 +270,12 @@ function processEvent(
       break;
     case "done":
       onEvent({ type: "done", data: parsed as SSEDoneEvent["data"] });
+      break;
+    case "tool_call":
+      onEvent({ type: "tool_call", data: parsed as SSEToolCallEvent["data"] });
+      break;
+    case "tool_result":
+      onEvent({ type: "tool_result", data: parsed as SSEToolResultEvent["data"] });
       break;
     default:
       // Unknown event type — ignore per spec

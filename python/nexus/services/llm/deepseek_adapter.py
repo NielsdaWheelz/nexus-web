@@ -10,6 +10,7 @@ from nexus.services.llm.errors import LLMError, LLMErrorClass
 from nexus.services.llm.types import LLMChunk, LLMRequest, LLMResponse, LLMUsage
 
 DEEPSEEK_CHAT_URL = "https://api.deepseek.com/chat/completions"
+DEEPSEEK_V4_MODELS = {"deepseek-v4-pro", "deepseek-v4-flash"}
 
 
 class DeepSeekAdapter(LLMAdapter):
@@ -131,11 +132,14 @@ class DeepSeekAdapter(LLMAdapter):
             "stream": stream,
         }
 
-        if req.temperature is not None:
+        uses_v4_thinking = req.model_name in DEEPSEEK_V4_MODELS and req.reasoning_effort != "none"
+        if req.temperature is not None and not uses_v4_thinking:
             body["temperature"] = req.temperature
 
-        if req.model_name == "deepseek-chat" and req.reasoning_effort != "none":
-            body["thinking"] = {"type": "enabled"}
+        if req.model_name in DEEPSEEK_V4_MODELS:
+            body["thinking"] = {
+                "type": "disabled" if req.reasoning_effort == "none" else "enabled"
+            }
 
         return body
 

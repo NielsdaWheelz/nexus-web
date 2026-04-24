@@ -849,7 +849,7 @@ class TestTurnConversion:
     def test_reasoning_openai_maps_max_to_xhigh(self, httpx_client):
         adapter = OpenAIAdapter(httpx_client)
         req = LLMRequest(
-            model_name="gpt-5.4",
+            model_name="gpt-5.5",
             messages=[Turn(role="user", content="Hello")],
             max_tokens=100,
             reasoning_effort="max",
@@ -858,10 +858,29 @@ class TestTurnConversion:
         body = adapter._build_request_body(req, stream=False)
         assert body["reasoning"]["effort"] == "xhigh"
 
-    def test_reasoning_anthropic_none_disables_thinking(self, httpx_client):
+    @pytest.mark.parametrize("model_name", ["claude-opus-4-7", "claude-sonnet-4-6"])
+    def test_reasoning_anthropic_adaptive_models_map_max_to_xhigh(
+        self, httpx_client, model_name
+    ):
         adapter = AnthropicAdapter(httpx_client)
         req = LLMRequest(
-            model_name="claude-sonnet-4-6",
+            model_name=model_name,
+            messages=[Turn(role="user", content="Hello")],
+            max_tokens=4096,
+            temperature=0.7,
+            reasoning_effort="max",
+        )
+
+        body = adapter._build_request_body(req, stream=False)
+        assert body["thinking"] == {"type": "adaptive"}
+        assert body["output_config"] == {"effort": "xhigh"}
+        assert "budget_tokens" not in body["thinking"]
+        assert "temperature" not in body
+
+    def test_reasoning_anthropic_opus_47_none_disables_thinking(self, httpx_client):
+        adapter = AnthropicAdapter(httpx_client)
+        req = LLMRequest(
+            model_name="claude-opus-4-7",
             messages=[Turn(role="user", content="Hello")],
             max_tokens=4096,
             reasoning_effort="none",
@@ -869,6 +888,7 @@ class TestTurnConversion:
 
         body = adapter._build_request_body(req, stream=False)
         assert body["thinking"] == {"type": "disabled"}
+        assert "output_config" not in body
 
     def test_reasoning_gemini_high_sets_thinking_level(self, httpx_client):
         adapter = GeminiAdapter(httpx_client)
@@ -882,10 +902,34 @@ class TestTurnConversion:
         body = adapter._build_request_body(req)
         assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "high"
 
-    def test_reasoning_deepseek_chat_enables_thinking(self, httpx_client):
+    def test_reasoning_gemini_pro_max_maps_to_high(self, httpx_client):
+        adapter = GeminiAdapter(httpx_client)
+        req = LLMRequest(
+            model_name="gemini-3.1-pro-preview",
+            messages=[Turn(role="user", content="Hello")],
+            max_tokens=100,
+            reasoning_effort="max",
+        )
+
+        body = adapter._build_request_body(req)
+        assert body["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "high"}
+
+    def test_reasoning_gemini_flash_none_maps_to_minimal(self, httpx_client):
+        adapter = GeminiAdapter(httpx_client)
+        req = LLMRequest(
+            model_name="gemini-3-flash-preview",
+            messages=[Turn(role="user", content="Hello")],
+            max_tokens=100,
+            reasoning_effort="none",
+        )
+
+        body = adapter._build_request_body(req)
+        assert body["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "minimal"}
+
+    def test_reasoning_deepseek_v4_pro_enables_thinking(self, httpx_client):
         adapter = DeepSeekAdapter(httpx_client)
         req = LLMRequest(
-            model_name="deepseek-chat",
+            model_name="deepseek-v4-pro",
             messages=[Turn(role="user", content="Hello")],
             max_tokens=100,
             reasoning_effort="high",
@@ -893,6 +937,21 @@ class TestTurnConversion:
 
         body = adapter._build_request_body(req, stream=False)
         assert body["thinking"] == {"type": "enabled"}
+        assert "temperature" not in body
+
+    def test_reasoning_deepseek_v4_flash_disables_thinking(self, httpx_client):
+        adapter = DeepSeekAdapter(httpx_client)
+        req = LLMRequest(
+            model_name="deepseek-v4-flash",
+            messages=[Turn(role="user", content="Hello")],
+            max_tokens=100,
+            temperature=0.7,
+            reasoning_effort="none",
+        )
+
+        body = adapter._build_request_body(req, stream=False)
+        assert body["thinking"] == {"type": "disabled"}
+        assert body["temperature"] == 0.7
 
     def test_turn_conversion_anthropic_system(self, httpx_client):
         """Anthropic should extract system turn to separate field."""

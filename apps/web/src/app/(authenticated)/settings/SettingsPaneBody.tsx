@@ -21,7 +21,7 @@ const SETTINGS_ITEMS: {
   {
     href: "/settings/keys",
     title: "API Keys",
-    description: "Configure OpenAI, Anthropic, and Gemini keys.",
+    description: "Configure OpenAI, Anthropic, Gemini, and DeepSeek keys.",
     Icon: KeyRound,
   },
   {

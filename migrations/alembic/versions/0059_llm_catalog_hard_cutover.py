@@ -1,17 +1,16 @@
-"""Curate model registry to fixed provider/model set for chat selection.
+"""Hard cut over LLM catalog to current provider model set.
 
-Revision ID: 0041
-Revises: 0040
-Create Date: 2026-04-12
+Revision ID: 0059
+Revises: 0056
+Create Date: 2026-04-24
 """
 
 from collections.abc import Sequence
 
 from alembic import op
 
-# revision identifiers, used by Alembic.
-revision: str = "0041"
-down_revision: str | None = "0040"
+revision: str = "0059"
+down_revision: str | None = "0056"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

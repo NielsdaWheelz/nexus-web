@@ -18,7 +18,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { ArrowUp } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
@@ -26,55 +26,28 @@ import {
   sseClientDirect,
   toWireContextItem,
   type SSEEvent,
+  type SSEToolCallEvent,
+  type SSEToolResultEvent,
   type ContextItem,
   type SendMessageRequest,
 } from "@/lib/api/sse";
 import { fetchStreamToken } from "@/lib/api/streamToken";
+import ContextChips from "@/components/chat/ContextChips";
+import type {
+  ConversationMessage,
+  ConversationModel,
+} from "@/lib/conversations/types";
 import styles from "./ChatComposer.module.css";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-interface Model {
-  id: string;
-  provider: string;
-  provider_display_name: string;
-  model_name: string;
-  model_display_name: string;
-  model_tier: "sota" | "light";
-  reasoning_modes: Array<"none" | "minimal" | "low" | "medium" | "high" | "max">;
-  max_context_tokens: number;
-}
-
-interface Message {
-  id: string;
-  seq: number;
-  role: "user" | "assistant" | "system";
-  content: string;
-  contexts?: Array<{
-    type: "highlight" | "annotation" | "media";
-    id: string;
-    color?: "yellow" | "green" | "blue" | "pink" | "purple";
-    preview?: string;
-    prefix?: string;
-    suffix?: string;
-    annotation_body?: string;
-    media_id?: string;
-    media_title?: string;
-    media_kind?: string;
-  }>;
-  status: "pending" | "complete" | "error";
-  error_code: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 interface SendResponse {
   data: {
     conversation: { id: string };
-    user_message: Message;
-    assistant_message: Message;
+    user_message: ConversationMessage;
+    assistant_message: ConversationMessage;
   };
 }
 
@@ -90,7 +63,10 @@ export interface ChatComposerProps {
   /** Called after message sent (for refreshing lists). */
   onMessageSent?: () => void;
   /** Streaming callbacks — only used when streaming is enabled. */
-  onOptimisticMessages?: (userMsg: Message, assistantMsg: Message) => void;
+  onOptimisticMessages?: (
+    userMsg: ConversationMessage,
+    assistantMsg: ConversationMessage,
+  ) => void;
   onMetaReceived?: (
     tempUserId: string,
     realUserId: string,
@@ -98,17 +74,47 @@ export interface ChatComposerProps {
     realAsstId: string
   ) => void;
   onDelta?: (assistantId: string, delta: string) => void;
+  onToolCall?: (assistantId: string, data: SSEToolCallEvent["data"]) => void;
+  onToolResult?: (assistantId: string, data: SSEToolResultEvent["data"]) => void;
   onDone?: (
     assistantId: string,
     status: "complete" | "error",
     errorCode: string | null
   ) => void;
   /** Non-streaming callback. */
-  onNonStreamMessages?: (userMsg: Message, assistantMsg: Message) => void;
+  onNonStreamMessages?: (
+    userMsg: ConversationMessage,
+    assistantMsg: ConversationMessage,
+  ) => void;
 }
 
 /** Max contexts per message. */
 const MAX_CONTEXTS = 10;
+const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
+
+type ComposerModel = ConversationModel;
+
+function getModelSourceLabel(model: ComposerModel): string {
+  if (model.available_via === "byok") {
+    return "Your key";
+  }
+  if (model.available_via === "both") {
+    return "Your key first";
+  }
+  return "Nexus AI";
+}
+
+function isAvailableViaUserKey(model: ComposerModel): boolean {
+  return model.available_via === "byok" || model.available_via === "both";
+}
+
+function firstModelForProviderOrder(models: ComposerModel[]): ComposerModel | undefined {
+  for (const provider of PROVIDER_ORDER) {
+    const model = models.find((item) => item.provider === provider);
+    if (model) return model;
+  }
+  return models[0];
+}
 
 // ============================================================================
 // Component
@@ -123,6 +129,8 @@ export default function ChatComposer({
   onOptimisticMessages,
   onMetaReceived,
   onDelta,
+  onToolCall,
+  onToolResult,
   onDone,
   onNonStreamMessages,
 }: ChatComposerProps) {
@@ -130,12 +138,13 @@ export default function ChatComposer({
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [models, setModels] = useState<Model[]>([]);
+  const [models, setModels] = useState<ComposerModel[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [selectedModelId, setSelectedModelId] = useState<string>("");
   const [selectedReasoning, setSelectedReasoning] = useState<
     "none" | "minimal" | "low" | "medium" | "high" | "max" | ""
   >("");
+  const [onlyUseMyKeys, setOnlyUseMyKeys] = useState(false);
   const abortRef = useRef<(() => void) | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -158,39 +167,31 @@ export default function ChatComposer({
   useEffect(() => {
     const loadModels = async () => {
       try {
-        const response = await apiFetch<{ data: Model[] }>("/api/models");
+        const response = await apiFetch<{ data: ComposerModel[] }>("/api/models");
         setModels(response.data);
-        if (response.data.length > 0) {
-          const providerOrder = ["openai", "anthropic", "gemini", "deepseek"];
-          let firstProvider = "";
-          for (const provider of providerOrder) {
-            if (response.data.some((model) => model.provider === provider)) {
-              firstProvider = provider;
-              break;
-            }
-          }
-          if (!firstProvider) {
-            firstProvider = response.data[0].provider;
-          }
-
-          const firstModel = response.data.find(
-            (model) => model.provider === firstProvider
-          );
-          const firstReasoning = firstModel?.reasoning_modes[0] ?? "";
-
-          setSelectedProvider(firstProvider);
-          setSelectedModelId(firstModel?.id ?? "");
-          setSelectedReasoning(firstReasoning);
-        }
       } catch (err) {
         console.error("Failed to load models:", err);
       }
     };
     loadModels();
-     
   }, []);
 
-  const selectedModel = models.find((model) => model.id === selectedModelId);
+  const availableModels = useMemo(
+    () => (onlyUseMyKeys ? models.filter(isAvailableViaUserKey) : models),
+    [models, onlyUseMyKeys]
+  );
+
+  useEffect(() => {
+    const selected = availableModels.find((model) => model.id === selectedModelId);
+    if (selected && selected.provider === selectedProvider) return;
+
+    const firstModel = firstModelForProviderOrder(availableModels);
+    setSelectedProvider(firstModel?.provider ?? "");
+    setSelectedModelId(firstModel?.id ?? "");
+    setSelectedReasoning(firstModel?.reasoning_modes[0] ?? "");
+  }, [availableModels, selectedModelId, selectedProvider]);
+
+  const selectedModel = availableModels.find((model) => model.id === selectedModelId);
 
   // --------------------------------------------------------------------------
   // Cleanup on unmount
@@ -215,7 +216,7 @@ export default function ChatComposer({
         await new Promise((r) => setTimeout(r, 2000));
         try {
           const res = await apiFetch<{
-            data: Message[];
+            data: ConversationMessage[];
           }>(`/api/conversations/${conversationId}/messages?limit=5`);
           const messages = res.data;
           const found = messages.find(
@@ -299,7 +300,7 @@ export default function ChatComposer({
       const now = new Date().toISOString();
 
       // Create optimistic placeholders
-      const userMsg: Message = {
+      const userMsg: ConversationMessage = {
         id: tempUserId,
         seq: 0,
         role: "user",
@@ -309,6 +310,7 @@ export default function ChatComposer({
           id: ctx.id,
           ...(ctx.color !== undefined && { color: ctx.color }),
           ...(ctx.preview !== undefined && { preview: ctx.preview }),
+          ...(ctx.exact !== undefined && { exact: ctx.exact }),
           ...(ctx.mediaId !== undefined && { media_id: ctx.mediaId }),
           ...(ctx.mediaTitle !== undefined && { media_title: ctx.mediaTitle }),
         })),
@@ -317,7 +319,7 @@ export default function ChatComposer({
         created_at: now,
         updated_at: now,
       };
-      const asstMsg: Message = {
+      const asstMsg: ConversationMessage = {
         id: tempAsstId,
         seq: 0,
         role: "assistant",
@@ -366,6 +368,14 @@ export default function ChatComposer({
             }
             case "delta": {
               onDelta?.(currentAsstId, event.data.delta);
+              break;
+            }
+            case "tool_call": {
+              onToolCall?.(currentAsstId, event.data);
+              break;
+            }
+            case "tool_result": {
+              onToolResult?.(currentAsstId, event.data);
               break;
             }
             case "done": {
@@ -453,7 +463,7 @@ export default function ChatComposer({
       content: trimmed,
       model_id: selectedModelId,
       reasoning: selectedReasoning,
-      key_mode: "auto",
+      key_mode: onlyUseMyKeys ? "byok_only" : "auto",
       contexts:
         attachedContexts.length > 0
           ? attachedContexts.slice(0, MAX_CONTEXTS).map(toWireContextItem)
@@ -480,6 +490,7 @@ export default function ChatComposer({
     sending,
     selectedModelId,
     selectedReasoning,
+    onlyUseMyKeys,
     attachedContexts,
     streamingEnabled,
     sendNonStreaming,
@@ -491,23 +502,24 @@ export default function ChatComposer({
     (provider: string) => {
       setSelectedProvider(provider);
 
-      const providerModels = models.filter((model) => model.provider === provider);
+      const providerModels = availableModels.filter((model) => model.provider === provider);
       const nextModel = providerModels[0];
       setSelectedModelId(nextModel?.id ?? "");
       setSelectedReasoning(nextModel?.reasoning_modes[0] ?? "");
     },
-    [models]
+    [availableModels]
   );
 
   const handleModelChange = useCallback(
     (modelId: string) => {
       setSelectedModelId(modelId);
 
-      const model = models.find((item) => item.id === modelId);
+      const model = availableModels.find((item) => item.id === modelId);
       if (!model) {
         setSelectedReasoning("");
         return;
       }
+      setSelectedProvider(model.provider);
 
       if (
         selectedReasoning === "" ||
@@ -516,7 +528,7 @@ export default function ChatComposer({
         setSelectedReasoning(model.reasoning_modes[0] ?? "");
       }
     },
-    [models, selectedReasoning]
+    [availableModels, selectedReasoning]
   );
 
   // --------------------------------------------------------------------------
@@ -538,46 +550,11 @@ export default function ChatComposer({
     <div className={styles.composer}>
       {error && <div className={styles.composerError}>{error}</div>}
 
-      {/* Context chips */}
-      {attachedContexts.length > 0 && (
-        <div className={styles.contextChips}>
-          {attachedContexts.map((ctx, i) => {
-            const chipText = ctx.exact || ctx.preview;
-            const chipLabel = chipText
-              ? chipText.length > 60
-                ? chipText.slice(0, 60) + "..."
-                : chipText
-              : `${ctx.type}: ${ctx.id.slice(0, 8)}...`;
-            const swatchClass = ctx.color
-              ? styles[`chipSwatch${ctx.color.charAt(0).toUpperCase()}${ctx.color.slice(1)}` as keyof typeof styles]
-              : undefined;
-
-            return (
-              <span key={`${ctx.type}-${ctx.id}`} className={styles.contextChip}>
-                {ctx.color && (
-                  <span
-                    className={`${styles.chipSwatch} ${swatchClass ?? ""}`}
-                    aria-hidden="true"
-                  />
-                )}
-                <span className={styles.chipText}>{chipLabel}</span>
-                {onRemoveContext && (
-                  <button
-                    className={styles.chipRemove}
-                    onClick={() => onRemoveContext(i)}
-                    aria-label="Remove context"
-                  >
-                    ×
-                  </button>
-                )}
-              </span>
-            );
-          })}
-          {attachedContexts.length >= MAX_CONTEXTS && (
-            <span className={styles.contextChip}>Max {MAX_CONTEXTS} reached</span>
-          )}
-        </div>
-      )}
+      <ContextChips
+        contexts={attachedContexts}
+        onRemoveContext={onRemoveContext}
+        maxContexts={MAX_CONTEXTS}
+      />
 
       {/* Provider / model / reasoning */}
       <div className={styles.composerControlBar}>
@@ -587,11 +564,11 @@ export default function ChatComposer({
           onChange={(e) => handleProviderChange(e.target.value)}
           disabled={sending}
         >
-          {models.length === 0 && <option value="">No providers available</option>}
-          {["openai", "anthropic", "gemini", "deepseek"]
-            .filter((provider) => models.some((model) => model.provider === provider))
+          {availableModels.length === 0 && <option value="">No providers available</option>}
+          {PROVIDER_ORDER
+            .filter((provider) => availableModels.some((model) => model.provider === provider))
             .map((provider) => {
-              const model = models.find((item) => item.provider === provider);
+              const model = availableModels.find((item) => item.provider === provider);
               return (
                 <option key={provider} value={provider}>
                   {model?.provider_display_name ?? provider}
@@ -606,13 +583,13 @@ export default function ChatComposer({
           onChange={(e) => handleModelChange(e.target.value)}
           disabled={sending}
         >
-          {models.length === 0 && <option value="">No models available</option>}
-          {models
+          {availableModels.length === 0 && <option value="">No models available</option>}
+          {availableModels
             .filter((model) => model.provider === selectedProvider)
             .map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.model_display_name} ({m.model_tier})
-            </option>
+              <option key={m.id} value={m.id}>
+                {m.model_display_name} ({m.model_tier}) - {getModelSourceLabel(m)}
+              </option>
             ))}
         </select>
 
@@ -633,6 +610,16 @@ export default function ChatComposer({
             </option>
           ))}
         </select>
+
+        <label className={styles.keyModeToggle}>
+          <input
+            type="checkbox"
+            checked={onlyUseMyKeys}
+            onChange={(e) => setOnlyUseMyKeys(e.target.checked)}
+            disabled={sending}
+          />
+          Only use my keys
+        </label>
       </div>
 
       {/* Input + send */}

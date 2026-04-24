@@ -65,6 +65,8 @@ from nexus.services.llm.types import LLMChunk, LLMRequest, LLMResponse, LLMUsage
 logger = get_logger(__name__)
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+GEMINI_31_PRO_PREVIEW = "gemini-3.1-pro-preview"
+GEMINI_3_FLASH_PREVIEW = "gemini-3-flash-preview"
 
 
 class GeminiAdapter(LLMAdapter):
@@ -220,28 +222,26 @@ class GeminiAdapter(LLMAdapter):
         if req.temperature is not None:
             body["generationConfig"]["temperature"] = req.temperature
 
-        if req.model_name.startswith("gemini-3.1-pro"):
-            if req.reasoning_effort == "low":
+        if req.model_name == GEMINI_31_PRO_PREVIEW:
+            if req.reasoning_effort in ("none", "minimal", "low"):
                 body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
-            elif req.reasoning_effort == "high":
+            elif req.reasoning_effort in ("medium", "high", "max"):
                 body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "high"}
             else:
-                raise ValueError("Gemini 3.1 Pro supports reasoning_effort values: low, high")
+                raise ValueError(f"Unknown reasoning_effort: {req.reasoning_effort}")
             return body
 
-        if req.model_name.startswith("gemini-3-flash"):
-            if req.reasoning_effort == "minimal":
+        if req.model_name == GEMINI_3_FLASH_PREVIEW:
+            if req.reasoning_effort in ("none", "minimal"):
                 body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "minimal"}
             elif req.reasoning_effort == "low":
                 body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
             elif req.reasoning_effort == "medium":
                 body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "medium"}
-            elif req.reasoning_effort == "high":
+            elif req.reasoning_effort in ("high", "max"):
                 body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "high"}
             else:
-                raise ValueError(
-                    "Gemini 3 Flash supports reasoning_effort values: minimal, low, medium, high"
-                )
+                raise ValueError(f"Unknown reasoning_effort: {req.reasoning_effort}")
             return body
 
         if req.reasoning_effort == "none":

@@ -16,67 +16,6 @@
   font-size: var(--font-size-xs);
 }
 
-.contextChips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-
-.contextChip {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 4px;
-  font-size: 11px;
-  color: var(--color-text-secondary);
-  max-width: 220px;
-}
-
-.chipSwatch {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.chipSwatchYellow { background: var(--highlight-yellow); }
-.chipSwatchGreen { background: var(--highlight-green); }
-.chipSwatchBlue { background: var(--highlight-blue); }
-.chipSwatchPink { background: var(--highlight-pink); }
-.chipSwatchPurple { background: var(--highlight-purple); }
-
-.chipText {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chipRemove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  padding: 0;
-  background: none;
-  border: none;
-  border-radius: 2px;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font-size: 11px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.chipRemove:hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text);
-}
-
 /* Control bar — 3 pill dropdowns */
 .composerControlBar {
   display: flex;
@@ -109,6 +48,16 @@
 .modelSelect:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.keyModeToggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 /* Input wrapper with embedded send button */
@@ -172,4 +121,27 @@
 .sendBtn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .composer {
+    width: 100%;
+    max-width: none;
+    padding: var(--space-3);
+  }
+
+  .composerControlBar {
+    gap: var(--space-1);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .composerControlBar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .modelSelect {
+    max-width: 42vw;
+    flex: 0 0 auto;
+  }
 }

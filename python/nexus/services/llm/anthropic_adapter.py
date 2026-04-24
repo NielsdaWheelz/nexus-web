@@ -57,6 +57,7 @@ logger = get_logger(__name__)
 
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_API_VERSION = "2023-06-01"
+ANTHROPIC_ADAPTIVE_THINKING_MODELS = {"claude-opus-4-7", "claude-sonnet-4-6"}
 
 
 class AnthropicAdapter(LLMAdapter):
@@ -210,22 +211,26 @@ class AnthropicAdapter(LLMAdapter):
         if system_prompt:
             body["system"] = system_prompt
 
-        if req.temperature is not None:
+        uses_adaptive_thinking = (
+            req.model_name in ANTHROPIC_ADAPTIVE_THINKING_MODELS
+            and req.reasoning_effort != "none"
+        )
+        if req.temperature is not None and not uses_adaptive_thinking:
             body["temperature"] = req.temperature
 
         if req.reasoning_effort == "none":
             body["thinking"] = {"type": "disabled"}
             return body
 
-        if req.model_name in ("claude-opus-4-6", "claude-sonnet-4-6"):
-            if req.reasoning_effort == "minimal" or req.reasoning_effort == "low":
+        if req.model_name in ANTHROPIC_ADAPTIVE_THINKING_MODELS:
+            if req.reasoning_effort in ("minimal", "low"):
                 effort = "low"
             elif req.reasoning_effort == "medium":
                 effort = "medium"
             elif req.reasoning_effort == "high":
                 effort = "high"
             elif req.reasoning_effort == "max":
-                effort = "max"
+                effort = "xhigh"
             else:
                 raise ValueError(f"Unknown reasoning_effort: {req.reasoning_effort}")
 

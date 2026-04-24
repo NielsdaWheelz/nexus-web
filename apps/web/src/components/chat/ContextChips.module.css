@@ -1,0 +1,75 @@
+.contextChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.contextChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: min(100%, 260px);
+  padding: 2px 6px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.chipSwatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.chipSwatchYellow {
+  background: var(--highlight-yellow);
+}
+
+.chipSwatchGreen {
+  background: var(--highlight-green);
+}
+
+.chipSwatchBlue {
+  background: var(--highlight-blue);
+}
+
+.chipSwatchPink {
+  background: var(--highlight-pink);
+}
+
+.chipSwatchPurple {
+  background: var(--highlight-purple);
+}
+
+.chipText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.chipRemove:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
