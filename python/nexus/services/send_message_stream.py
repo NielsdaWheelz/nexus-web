@@ -31,9 +31,10 @@ from starlette.concurrency import run_in_threadpool
 
 from nexus.config import get_settings
 from nexus.db.models import MessageLLM, Model
-from nexus.errors import ApiError
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import ContextItem
+from nexus.services.agent_tools.app_search import execute_app_search, should_run_app_search
 from nexus.services.api_key_resolver import (
     ResolvedKey,
     get_model_by_id,
@@ -382,6 +383,18 @@ async def stream_send_message_async(
     try:
         resolved = await run_in_threadpool(resolve_api_key, db, viewer_id, model.provider, key_mode)
         use_platform_key = resolved.mode == "platform"
+    except ApiError as e:
+        if e.code != ApiErrorCode.E_MODEL_NOT_AVAILABLE:
+            yield format_sse_event(
+                "done",
+                {
+                    "status": "error",
+                    "error_code": e.code.value,
+                },
+            )
+            db.close()
+            return
+        use_platform_key = False
     except LLMError:
         use_platform_key = False
 
@@ -527,6 +540,35 @@ async def stream_send_message_async(
 
         # --- Phase 2: Stream from provider (async, same event loop) ---
         context_text, _ = await run_in_threadpool(render_context_blocks, db, contexts)
+        app_search_run = None
+        if should_run_app_search(content, has_user_context=bool(contexts)):
+            yield format_sse_event(
+                "tool_call",
+                {
+                    "assistant_message_id": str(assistant_message_id),
+                    "tool_name": "app_search",
+                    "tool_call_index": 0,
+                    "status": "started",
+                },
+            )
+            app_search_run = await run_in_threadpool(
+                execute_app_search,
+                db,
+                viewer_id=viewer_id,
+                conversation_id=prepare_result.conversation.id,
+                user_message_id=prepare_result.user_message.id,
+                assistant_message_id=assistant_message_id,
+                content=content,
+                has_user_context=bool(contexts),
+            )
+            yield format_sse_event("tool_result", app_search_run.tool_result_event())
+
+        context_blocks = [context_text] if context_text else []
+        context_types = {c.type for c in contexts}
+        if app_search_run and app_search_run.context_text:
+            context_blocks.append(app_search_run.context_text)
+            context_types.add("app_search")
+
         history = await run_in_threadpool(
             load_prompt_history,
             db,
@@ -536,8 +578,8 @@ async def stream_send_message_async(
         messages = render_prompt(
             user_content=content,
             history=history,
-            context_blocks=[context_text] if context_text else [],
-            context_types={c.type for c in contexts},
+            context_blocks=context_blocks,
+            context_types=context_types,
         )
 
         llm_request = LLMRequest(

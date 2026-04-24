@@ -442,6 +442,8 @@ export default function ChatComposer({
       onDone,
       onMetaReceived,
       onOptimisticMessages,
+      onToolCall,
+      onToolResult,
       pollForCompletion,
       router,
     ]

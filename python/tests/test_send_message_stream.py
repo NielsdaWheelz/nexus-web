@@ -54,6 +54,7 @@ from nexus.services.stream_liveness import (
 from nexus.tasks.sweep_pending import sweep_pending_messages
 from tests.factories import (
     create_pdf_media_with_text,
+    create_searchable_media,
     create_test_conversation,
     create_test_message,
     create_test_model,
@@ -356,9 +357,90 @@ class _RecordingRouter:
         )
 
 
+class _DeltaRouter:
+    async def generate_stream(self, *args, **kwargs):
+        yield LLMChunk(delta_text="found it", done=False)
+        yield LLMChunk(
+            delta_text="",
+            done=True,
+            usage=LLMUsage(prompt_tokens=10, completion_tokens=2, total_tokens=12),
+            provider_request_id="req-stream-test",
+        )
+
+
 def _parse_sse_data(event: str) -> dict:
     data_line = next(line for line in event.splitlines() if line.startswith("data: "))
     return json.loads(data_line.removeprefix("data: "))
+
+
+class TestAppSearchStream:
+    @pytest.mark.asyncio
+    async def test_stream_emits_app_search_tool_events(
+        self,
+        engine,
+        direct_db,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-platform-key")
+        monkeypatch.setattr(
+            "nexus.services.api_key_resolver.get_entitlements",
+            lambda db, user_id: BillingEntitlementsOut(
+                plan_tier="ai_plus",
+                can_share=True,
+                can_use_platform_llm=True,
+                platform_token_limit_monthly=1_000_000,
+                transcription_minutes_limit_monthly=300,
+            ),
+        )
+        clear_settings_cache()
+        set_rate_limiter(NoOpRateLimiter())
+
+        user_id = uuid4()
+        with direct_db.session() as session:
+            ensure_user_and_default_library(session, user_id)
+            model_id = create_test_model(session)
+            media_id = create_searchable_media(
+                session,
+                user_id,
+                title="App Search Stream Needle",
+            )
+
+        db_factory = create_session_factory(engine)
+        events = []
+
+        async for event in stream_send_message_async(
+            db_factory=db_factory,
+            viewer_id=user_id,
+            conversation_id=None,
+            content="App Search Stream Needle",
+            model_id=model_id,
+            reasoning="none",
+            key_mode="auto",
+            contexts=[],
+            llm_router=_DeltaRouter(),
+        ):
+            events.append(event)
+
+        assert any(event.startswith("event: tool_call") for event in events)
+        tool_result = next(event for event in events if event.startswith("event: tool_result"))
+        tool_payload = _parse_sse_data(tool_result)
+        assert tool_payload["status"] == "complete"
+        assert tool_payload["result_count"] >= 1
+        assert any(citation["source_id"] == str(media_id) for citation in tool_payload["citations"])
+        assert any(event.startswith("event: delta") for event in events)
+        done_payload = _parse_sse_data(
+            next(event for event in events if event.startswith("event: done"))
+        )
+        assert done_payload["status"] == "complete"
+
+        meta_payload = _parse_sse_data(events[0])
+        conversation_id = UUID(meta_payload["conversation_id"])
+        direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
 
 
 class TestPdfQuoteBlockingStream:

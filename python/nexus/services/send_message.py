@@ -71,9 +71,11 @@ from nexus.schemas.conversation import (
     ContextItem,
     SendMessageResponse,
 )
+from nexus.services.agent_tools.app_search import execute_app_search
 from nexus.services.api_key_resolver import (
     ResolvedKey,
     get_model_by_id,
+    is_provider_enabled,
     resolve_api_key,
     update_user_key_status,
 )
@@ -85,6 +87,7 @@ from nexus.services.conversations import (
     derive_conversation_title,
     get_message_count,
     load_message_context_snapshots_for_message_ids,
+    load_message_tool_calls_for_message_ids,
     message_to_out,
 )
 from nexus.services.llm import LLMRouter
@@ -367,6 +370,11 @@ def validate_pre_phase(
         raise ApiError(
             ApiErrorCode.E_MODEL_NOT_AVAILABLE,
             "Model is outside the curated catalog",
+        )
+    if not is_provider_enabled(model.provider):
+        raise ApiError(
+            ApiErrorCode.E_MODEL_NOT_AVAILABLE,
+            "Model provider is disabled",
         )
     _, _, _, reasoning_modes = metadata
     if reasoning not in reasoning_modes:
@@ -735,16 +743,23 @@ async def send_message(
                 db,
                 [user_message.id, assistant_message.id],
             )
+            tool_calls_by_message_id = await run_in_threadpool(
+                load_message_tool_calls_for_message_ids,
+                db,
+                [user_message.id, assistant_message.id],
+            )
             message_count = await run_in_threadpool(get_message_count, db, conversation.id)
             return SendMessageResponse(
                 conversation=conversation_to_out(conversation, message_count, viewer_id=viewer_id),
                 user_message=message_to_out(
                     user_message,
                     contexts_by_message_id.get(user_message.id, []),
+                    tool_calls_by_message_id.get(user_message.id, []),
                 ),
                 assistant_message=message_to_out(
                     assistant_message,
                     contexts_by_message_id.get(assistant_message.id, []),
+                    tool_calls_by_message_id.get(assistant_message.id, []),
                 ),
             )
 
@@ -757,6 +772,10 @@ async def send_message(
                 resolve_api_key, db, viewer_id, model.provider, key_mode
             )
             use_platform_key = resolved.mode == "platform"
+        except ApiError as e:
+            if e.code != ApiErrorCode.E_MODEL_NOT_AVAILABLE:
+                raise
+            use_platform_key = False
         except LLMError:
             use_platform_key = False
 
@@ -845,6 +864,22 @@ async def send_message(
                     limit=MAX_RENDERED_CONTEXT_CHARS,
                 )
 
+            app_search_run = await run_in_threadpool(
+                execute_app_search,
+                db,
+                viewer_id=viewer_id,
+                conversation_id=prepare_result.conversation.id,
+                user_message_id=prepare_result.user_message.id,
+                assistant_message_id=prepare_result.assistant_message.id,
+                content=content,
+                has_user_context=bool(contexts),
+            )
+            context_blocks = [context_text] if context_text else []
+            context_types = {c.type for c in contexts}
+            if app_search_run and app_search_run.context_text:
+                context_blocks.append(app_search_run.context_text)
+                context_types.add("app_search")
+
             history = await run_in_threadpool(
                 load_prompt_history,
                 db,
@@ -854,8 +889,8 @@ async def send_message(
             messages = render_prompt(
                 user_content=content,
                 history=history,
-                context_blocks=[context_text] if context_text else [],
-                context_types={c.type for c in contexts},
+                context_blocks=context_blocks,
+                context_types=context_types,
             )
             llm_request = LLMRequest(
                 model_name=model.model_name,
@@ -927,6 +962,11 @@ async def send_message(
                 db,
                 [prepare_result.user_message.id, prepare_result.assistant_message.id],
             )
+            tool_calls_by_message_id = await run_in_threadpool(
+                load_message_tool_calls_for_message_ids,
+                db,
+                [prepare_result.user_message.id, prepare_result.assistant_message.id],
+            )
 
             return SendMessageResponse(
                 conversation=conversation_to_out(
@@ -935,10 +975,12 @@ async def send_message(
                 user_message=message_to_out(
                     prepare_result.user_message,
                     contexts_by_message_id.get(prepare_result.user_message.id, []),
+                    tool_calls_by_message_id.get(prepare_result.user_message.id, []),
                 ),
                 assistant_message=message_to_out(
                     prepare_result.assistant_message,
                     contexts_by_message_id.get(prepare_result.assistant_message.id, []),
+                    tool_calls_by_message_id.get(prepare_result.assistant_message.id, []),
                 ),
             )
 

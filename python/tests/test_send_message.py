@@ -1652,11 +1652,12 @@ class TestSendMessageLLMErrors:
         # Verify update_user_key_status ran and marked key as invalid in DB
         with direct_db.session() as session:
             row = session.execute(
-                text("SELECT status FROM user_api_keys WHERE id = :id"),
+                text("SELECT status, last_used_at FROM user_api_keys WHERE id = :id"),
                 {"id": key_id},
             ).fetchone()
             assert row is not None
             assert row[0] == "invalid"
+            assert row[1] is not None
 
         conversation_id = data["conversation"]["id"]
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
@@ -1719,6 +1720,37 @@ class TestSendMessageValidation:
             json={
                 "content": "Hello!",
                 "model_id": str(fake_model_id),
+                "reasoning": "none",
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_MODEL_NOT_AVAILABLE"
+
+    def test_disabled_provider_model_returns_400(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        mock_rate_limiter,
+        platform_key_env,
+        monkeypatch,
+    ):
+        """A direct model_id cannot bypass provider feature flags."""
+        monkeypatch.setenv("ENABLE_OPENAI", "false")
+        clear_settings_cache()
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello!",
+                "model_id": str(model_id),
                 "reasoning": "none",
             },
         )

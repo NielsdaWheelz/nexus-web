@@ -36,7 +36,7 @@ def search(
         default=None,
         description=(
             "Comma-separated list of types to search "
-            "(media, fragment, annotation, message, transcript_chunk)"
+            "(media, podcast, fragment, annotation, message, transcript_chunk)"
         ),
     ),
     semantic: bool = Query(
@@ -51,7 +51,8 @@ def search(
     """Search across all visible content.
 
     Keyword search using PostgreSQL full-text search. Returns mixed typed
-    results from media titles, fragment text, annotations, and messages.
+    results from media titles, podcast metadata, fragment text, annotations,
+    messages, and semantic transcript chunks.
 
     **Scopes:**
     - `all` - All visible content
@@ -61,6 +62,7 @@ def search(
 
     **Types:**
     - `media` - Search media titles
+    - `podcast` - Search visible podcast metadata
     - `fragment` - Search document fragments
     - `annotation` - Search user annotations
     - `message` - Search conversation messages

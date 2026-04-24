@@ -1040,7 +1040,11 @@ class TestSearchResultFormat:
         assert result["source"]["title"] == "Unique Title For Test"
         assert "authors" in result["source"]
         assert "published_date" in result["source"]
-        assert "title" not in result
+        assert result["title"] == "Unique Title For Test"
+        assert result["media_id"] == str(media_id)
+        assert result["media_kind"] == "web_article"
+        assert result["deep_link"] == f"/media/{media_id}"
+        assert result["context_ref"] == {"type": "media", "id": str(media_id)}
 
     def test_fragment_result_has_required_fields(
         self, auth_client, direct_db: DirectSessionManager
@@ -1070,8 +1074,11 @@ class TestSearchResultFormat:
             assert "source" in result
             assert result["source"]["media_id"] == str(media_id)
             assert result["source"]["media_kind"] == "web_article"
+            assert result["media_id"] == str(media_id)
+            assert result["media_kind"] == "web_article"
+            assert result["deep_link"].startswith(f"/media/{media_id}?")
+            assert result["context_ref"] == {"type": "fragment", "id": result["id"]}
             assert "idx" not in result
-            assert "media_id" not in result
 
     def test_message_result_has_required_fields(self, auth_client, direct_db: DirectSessionManager):
         """Message results include id, conversation_id, seq."""
@@ -1098,6 +1105,8 @@ class TestSearchResultFormat:
         assert result["type"] == "message"
         assert "conversation_id" in result
         assert "seq" in result
+        assert result["deep_link"] == f"/conversations/{conversation_id}"
+        assert result["context_ref"] == {"type": "message", "id": str(message_id)}
 
     def test_snippet_max_length(self, auth_client, direct_db: DirectSessionManager):
         """Snippets are truncated to max 300 chars."""
@@ -1194,7 +1203,9 @@ class TestSearchResultFormat:
         assert result["highlight"]["prefix"] == "prefix"
         assert result["highlight"]["suffix"] == "suffix"
         assert result["annotation_body"] == annotation_body
-        assert "media_kind" not in result
+        assert result["media_id"] == str(media_id)
+        assert result["media_kind"] == "web_article"
+        assert result["context_ref"] == {"type": "annotation", "id": str(annotation_id)}
         assert "source_title" not in result
         assert "source_authors" not in result
         assert "source_published_date" not in result
@@ -1265,6 +1276,47 @@ class TestSearchS4ConversationScope:
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_CONVERSATION_NOT_FOUND"
+
+    def test_scope_conversation_searches_associated_media(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Conversation scope includes media linked through conversation_media."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            media_id = create_searchable_media(
+                session,
+                user_id,
+                title="Conversation Scoped Media Needle",
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO conversation_media (conversation_id, media_id)
+                    VALUES (:conversation_id, :media_id)
+                    """
+                ),
+                {"conversation_id": conversation_id, "media_id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        response = auth_client.get(
+            f"/search?q=scoped+media+needle&scope=conversation:{conversation_id}&types=media",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        media_results = [r for r in data["results"] if r["type"] == "media"]
+        assert any(r["id"] == str(media_id) for r in media_results)
 
 
 class TestSearchS4AnnotationVisibility:

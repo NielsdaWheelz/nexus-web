@@ -40,6 +40,20 @@ class ResolvedKey:
     user_key_id: str | None = None  # Set if BYOK
 
 
+def is_provider_enabled(provider: str) -> bool:
+    """Return whether a provider is enabled for serving user requests."""
+    settings = get_settings()
+    if provider == "openai":
+        return settings.enable_openai
+    if provider == "anthropic":
+        return settings.enable_anthropic
+    if provider == "gemini":
+        return settings.enable_gemini
+    if provider == "deepseek":
+        return settings.enable_deepseek
+    return False
+
+
 def resolve_api_key(
     db: Session,
     user_id: UUID,
@@ -66,6 +80,12 @@ def resolve_api_key(
         LLMError: If no key is available.
     """
     settings = get_settings()
+
+    if not is_provider_enabled(provider):
+        raise ApiError(
+            ApiErrorCode.E_MODEL_NOT_AVAILABLE,
+            f"Provider is disabled: {provider}",
+        )
 
     # Get platform key if exists
     platform_key = None
@@ -193,8 +213,10 @@ def update_user_key_status(
 
         key = db.get(UserApiKey, UUIDType(user_key_id))
         if key and key.status not in ("revoked",):
+            now = datetime.now(UTC)
             key.status = status
-            key.last_tested_at = datetime.now(UTC)
+            key.last_tested_at = now
+            key.last_used_at = now
             db.flush()
     except Exception as e:
         logger.warning(

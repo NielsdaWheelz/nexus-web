@@ -2,6 +2,7 @@ import { apiFetch } from "@/lib/api/client";
 
 export const ALL_SEARCH_TYPES = [
   "media",
+  "podcast",
   "fragment",
   "annotation",
   "message",
@@ -28,11 +29,25 @@ interface SearchBaseResult {
   id: string;
   score: number;
   snippet: string;
+  title: string;
+  source_label: string | null;
+  media_id: string | null;
+  media_kind: string | null;
+  deep_link: string;
+  context_ref: {
+    type: SearchType;
+    id: string;
+  };
 }
 
 interface SearchMediaResult extends SearchBaseResult {
   type: "media";
   source: SearchSourceMetadata;
+}
+
+interface SearchPodcastResult extends SearchBaseResult {
+  type: "podcast";
+  author: string | null;
 }
 
 interface SearchFragmentResult extends SearchBaseResult {
@@ -68,6 +83,7 @@ interface SearchTranscriptChunkResult extends SearchBaseResult {
 
 type SearchApiResult =
   | SearchMediaResult
+  | SearchPodcastResult
   | SearchFragmentResult
   | SearchAnnotationResult
   | SearchMessageResult
@@ -161,11 +177,31 @@ function normalizeSearchResult(result: unknown): SearchApiResult | null {
   if (typeof row.snippet !== "string") {
     return null;
   }
+  if (typeof row.title !== "string") {
+    return null;
+  }
+  if (typeof row.deep_link !== "string") {
+    return null;
+  }
+  if (
+    typeof row.context_ref !== "object" ||
+    row.context_ref === null ||
+    typeof (row.context_ref as Record<string, unknown>).type !== "string" ||
+    typeof (row.context_ref as Record<string, unknown>).id !== "string"
+  ) {
+    return null;
+  }
 
   const base = {
     id: row.id,
     score: row.score,
     snippet: row.snippet,
+    title: row.title,
+    source_label: typeof row.source_label === "string" ? row.source_label : null,
+    media_id: typeof row.media_id === "string" ? row.media_id : null,
+    media_kind: typeof row.media_kind === "string" ? row.media_kind : null,
+    deep_link: row.deep_link,
+    context_ref: row.context_ref as SearchBaseResult["context_ref"],
   };
 
   switch (row.type) {
@@ -176,6 +212,12 @@ function normalizeSearchResult(result: unknown): SearchApiResult | null {
       }
       return { ...base, type: "media", source };
     }
+    case "podcast":
+      return {
+        ...base,
+        type: "podcast",
+        author: typeof row.author === "string" ? row.author : null,
+      };
     case "fragment": {
       const source = resolveSource(row);
       if (!source || typeof row.fragment_idx !== "number") {
@@ -330,7 +372,15 @@ function parseSnippetSegments(snippet: string) {
 
 function buildSourceMeta(result: SearchApiResult): string | null {
   if (result.type === "message") {
-    return `message #${result.seq}`;
+    return result.source_label ?? `message #${result.seq}`;
+  }
+
+  if (result.type === "podcast") {
+    return result.source_label;
+  }
+
+  if (result.source_label) {
+    return result.source_label;
   }
 
   const parts = [result.source.title];
@@ -348,43 +398,15 @@ function buildSourceMeta(result: SearchApiResult): string | null {
 }
 
 function buildResultHref(result: SearchApiResult): string {
-  switch (result.type) {
-    case "media":
-      return `/media/${result.id}`;
-    case "fragment": {
-      const params = new URLSearchParams();
-      if (result.source.media_kind === "epub") {
-        params.set("loc", result.section_id ?? "");
-      }
-      params.set("fragment", result.id);
-      return `/media/${result.source.media_id}?${params.toString()}`;
-    }
-    case "annotation": {
-      const params = new URLSearchParams();
-      if (result.source.media_kind === "epub") {
-        params.set("loc", result.section_id ?? "");
-      }
-      params.set("fragment", result.fragment_id);
-      params.set("highlight", result.highlight_id);
-      return `/media/${result.source.media_id}?${params.toString()}`;
-    }
-    case "message":
-      return `/conversations/${result.conversation_id}`;
-    case "transcript_chunk": {
-      const params = new URLSearchParams({
-        t_start_ms: String(result.t_start_ms),
-      });
-      return `/media/${result.source.media_id}?${params.toString()}`;
-    }
-  }
+  return result.deep_link;
 }
 
 function buildPrimaryText(result: SearchApiResult): string {
   if (result.type === "annotation") {
     return result.highlight.exact;
   }
-  if (result.type === "media") {
-    return result.source.title || sanitizeSnippet(result.snippet) || "Untitled";
+  if (result.type === "media" || result.type === "podcast") {
+    return result.title || sanitizeSnippet(result.snippet) || "Untitled";
   }
   if (result.type === "message") {
     return sanitizeSnippet(result.snippet) || `Message #${result.seq}`;
@@ -406,7 +428,8 @@ function adaptSearchResultRow(result: SearchApiResult): SearchResultRowViewModel
     key: `${result.type}-${result.id}`,
     href: buildResultHref(result),
     type: result.type,
-    typeLabel: result.type === "transcript_chunk" ? "transcript chunk" : result.type,
+    typeLabel:
+      result.type === "transcript_chunk" ? "transcript chunk" : result.type,
     primaryText: buildPrimaryText(result),
     snippetSegments: parseSnippetSegments(result.snippet),
     sourceMeta: buildSourceMeta(result),

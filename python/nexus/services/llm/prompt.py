@@ -58,7 +58,12 @@ def render_prompt(
     ]
 
     # Situation: tell the model what the user is doing
-    if "highlight" in context_types and "annotation" in context_types:
+    if "app_search" in context_types:
+        parts.append(
+            "The app has searched the user's saved media, fragments, annotations, transcripts, "
+            "podcasts, and prior conversation messages for relevant sources."
+        )
+    elif "highlight" in context_types and "annotation" in context_types:
         parts.append(
             "The user is asking about highlighted and annotated passages from their saved content."
         )
@@ -74,10 +79,18 @@ def render_prompt(
     if context_blocks:
         parts.append("<context>\n" + "\n\n".join(context_blocks) + "\n</context>")
 
-    parts.append(
-        "Answer using the provided context. Quote the source text directly when citing. "
-        "If the context does not contain enough information to answer, say so."
-    )
+    if "app_search" in context_types:
+        parts.append(
+            "Answer using the retrieved app-search context when it is relevant. Cite only sources "
+            "present in the context, name the source title in prose, and do not invent citations. "
+            "If app search returned no useful source for the user's request, say that directly "
+            "before giving any general guidance."
+        )
+    else:
+        parts.append(
+            "Answer using the provided context. Quote the source text directly when citing. "
+            "If the context does not contain enough information to answer, say so."
+        )
 
     turns: list[Turn] = []
     turns.append(Turn(role="system", content="\n\n".join(parts)))

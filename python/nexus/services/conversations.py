@@ -34,6 +34,7 @@ from nexus.db.models import (
     Media,
     Message,
     MessageContext,
+    MessageToolCall,
 )
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
@@ -42,6 +43,7 @@ from nexus.schemas.conversation import (
     ConversationOut,
     MessageContextSnapshot,
     MessageOut,
+    MessageToolCallOut,
     PageInfo,
 )
 
@@ -234,6 +236,7 @@ def conversation_to_out(
 def message_to_out(
     message: Message,
     contexts: list[MessageContextSnapshot] | None = None,
+    tool_calls: list[MessageToolCallOut] | None = None,
 ) -> MessageOut:
     """Convert Message ORM model to MessageOut schema."""
     return MessageOut(
@@ -242,6 +245,7 @@ def message_to_out(
         role=message.role,
         content=message.content,
         contexts=contexts or [],
+        tool_calls=tool_calls or [],
         status=message.status,
         error_code=message.error_code,
         created_at=message.created_at,
@@ -433,6 +437,39 @@ def load_message_context_snapshots_for_message_ids(
         snapshots_by_message_id.setdefault(context_row.message_id, []).append(snapshot)
 
     return snapshots_by_message_id
+
+
+def load_message_tool_calls_for_message_ids(
+    db: Session,
+    message_ids: list[UUID],
+) -> dict[UUID, list[MessageToolCallOut]]:
+    """Load persisted assistant tool calls for the given messages."""
+
+    if not message_ids:
+        return {}
+
+    rows = (
+        db.scalars(
+            select(MessageToolCall)
+            .options(joinedload(MessageToolCall.retrievals))
+            .where(MessageToolCall.assistant_message_id.in_(message_ids))
+            .order_by(
+                MessageToolCall.assistant_message_id.asc(),
+                MessageToolCall.tool_call_index.asc(),
+            )
+        )
+        .unique()
+        .all()
+    )
+
+    tool_calls_by_message_id: dict[UUID, list[MessageToolCallOut]] = {
+        message_id: [] for message_id in message_ids
+    }
+    for row in rows:
+        tool_calls_by_message_id.setdefault(row.assistant_message_id, []).append(
+            MessageToolCallOut.model_validate(row, from_attributes=True)
+        )
+    return tool_calls_by_message_id
 
 
 # =============================================================================
@@ -760,6 +797,7 @@ def list_messages(
 
     message_ids = [row[0] for row in rows]
     contexts_by_message_id = load_message_context_snapshots_for_message_ids(db, message_ids)
+    tool_calls_by_message_id = load_message_tool_calls_for_message_ids(db, message_ids)
     messages = [
         MessageOut(
             id=row[0],
@@ -767,6 +805,7 @@ def list_messages(
             role=row[2],
             content=row[3],
             contexts=contexts_by_message_id.get(row[0], []),
+            tool_calls=tool_calls_by_message_id.get(row[0], []),
             status=row[4],
             error_code=row[5],
             created_at=row[6],

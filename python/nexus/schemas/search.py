@@ -5,9 +5,11 @@ These schemas are introduced in Slice 3 (PR-06: Keyword Search).
 
 Search returns mixed typed results from different content types:
 - media (titles)
+- podcasts (titles/descriptions)
 - fragments (canonical_text)
 - annotations (body)
 - messages (content)
+- transcript chunks (semantic transcript windows)
 """
 
 from typing import Annotated, Literal
@@ -16,7 +18,14 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 # Valid search result types
-SEARCH_RESULT_TYPES = Literal["media", "fragment", "annotation", "message", "transcript_chunk"]
+SEARCH_RESULT_TYPES = Literal[
+    "media",
+    "podcast",
+    "fragment",
+    "annotation",
+    "message",
+    "transcript_chunk",
+]
 
 # Valid search scopes
 SEARCH_SCOPE_PREFIXES = ("all", "media:", "library:", "conversation:")
@@ -49,6 +58,28 @@ class SearchResultHighlightOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SearchResultContextRefOut(BaseModel):
+    """Backend-owned context reference for model retrieval and citations."""
+
+    type: SEARCH_RESULT_TYPES
+    id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchResultModelFields(BaseModel):
+    """Common model-facing fields shared by every typed search row."""
+
+    title: str
+    source_label: str | None = None
+    media_id: UUID | None = None
+    media_kind: str | None = None
+    deep_link: str
+    context_ref: SearchResultContextRefOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class SearchResultMediaOut(BaseModel):
     """V2 typed search result for media title hits."""
 
@@ -57,6 +88,30 @@ class SearchResultMediaOut(BaseModel):
     score: float
     snippet: str
     source: SearchResultSourceOut
+    title: str
+    source_label: str | None = None
+    media_id: UUID | None = None
+    media_kind: str | None = None
+    deep_link: str
+    context_ref: SearchResultContextRefOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchResultPodcastOut(BaseModel):
+    """Typed search result for visible podcast hits."""
+
+    type: Literal["podcast"]
+    id: UUID
+    score: float
+    snippet: str
+    author: str | None = None
+    title: str
+    source_label: str | None = None
+    media_id: UUID | None = None
+    media_kind: str | None = None
+    deep_link: str
+    context_ref: SearchResultContextRefOut
 
     model_config = ConfigDict(extra="forbid")
 
@@ -71,6 +126,12 @@ class SearchResultFragmentOut(BaseModel):
     fragment_idx: int
     section_id: str | None = None
     source: SearchResultSourceOut
+    title: str
+    source_label: str | None = None
+    media_id: UUID | None = None
+    media_kind: str | None = None
+    deep_link: str
+    context_ref: SearchResultContextRefOut
 
     model_config = ConfigDict(extra="forbid")
 
@@ -89,6 +150,12 @@ class SearchResultAnnotationOut(BaseModel):
     annotation_body: str
     highlight: SearchResultHighlightOut
     source: SearchResultSourceOut
+    title: str
+    source_label: str | None = None
+    media_id: UUID | None = None
+    media_kind: str | None = None
+    deep_link: str
+    context_ref: SearchResultContextRefOut
 
     model_config = ConfigDict(extra="forbid")
 
@@ -102,6 +169,12 @@ class SearchResultMessageOut(BaseModel):
     snippet: str
     conversation_id: UUID
     seq: int
+    title: str
+    source_label: str | None = None
+    media_id: UUID | None = None
+    media_kind: str | None = None
+    deep_link: str
+    context_ref: SearchResultContextRefOut
 
     model_config = ConfigDict(extra="forbid")
 
@@ -116,12 +189,19 @@ class SearchResultTranscriptChunkOut(BaseModel):
     t_start_ms: int
     t_end_ms: int
     source: SearchResultSourceOut
+    title: str
+    source_label: str | None = None
+    media_id: UUID | None = None
+    media_kind: str | None = None
+    deep_link: str
+    context_ref: SearchResultContextRefOut
 
     model_config = ConfigDict(extra="forbid")
 
 
 SearchResultOut = Annotated[
     SearchResultMediaOut
+    | SearchResultPodcastOut
     | SearchResultFragmentOut
     | SearchResultAnnotationOut
     | SearchResultMessageOut

@@ -68,6 +68,12 @@ describe("fetchSearchResultPage", () => {
             id: "ann-1",
             score: 0.91,
             snippet: "annotation <b>match</b>",
+            title: "Deep Work Notes",
+            source_label: "Deep Work Notes - Cal Newport - 2016-01-05 - web article",
+            media_id: "media-1",
+            media_kind: "web_article",
+            deep_link: "/media/media-1?fragment=frag-12&highlight=hl-1",
+            context_ref: { type: "annotation", id: "ann-1" },
             highlight_id: "hl-1",
             fragment_id: "frag-12",
             fragment_idx: 12,
@@ -114,7 +120,7 @@ describe("fetchSearchResultPage", () => {
       primaryText: "needle exact quote",
       typeLabel: "annotation",
       annotationBody: "annotation body text",
-      sourceMeta: "Deep Work Notes — Cal Newport — 2016-01-05 — web article",
+      sourceMeta: "Deep Work Notes - Cal Newport - 2016-01-05 - web article",
       highlightSnippet: {
         prefix: "this is before",
         exact: "needle exact quote",
@@ -125,7 +131,7 @@ describe("fetchSearchResultPage", () => {
     expect(warnMock).toHaveBeenCalledTimes(1);
   });
 
-  it("builds canonical hrefs for epub fragments and transcript chunks", async () => {
+  it("uses backend deep links for fragments and transcript chunks", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
         results: [
@@ -134,6 +140,12 @@ describe("fetchSearchResultPage", () => {
             id: "frag-7",
             score: 0.5,
             snippet: "section text",
+            title: "EPUB Source",
+            source_label: "EPUB Source - epub",
+            media_id: "media-epub-1",
+            media_kind: "epub",
+            deep_link: "/media/media-epub-1?loc=OPS%2Fnav%2Fintro&fragment=frag-7",
+            context_ref: { type: "fragment", id: "frag-7" },
             fragment_idx: 7,
             section_id: "OPS/nav/intro",
             source: {
@@ -149,6 +161,12 @@ describe("fetchSearchResultPage", () => {
             id: "chunk-1",
             score: 0.88,
             snippet: "transformer attention residual stream",
+            title: "Episode 42",
+            source_label: "Episode 42 - Host - 2026-03-10 - podcast episode",
+            media_id: "media-podcast-1",
+            media_kind: "podcast_episode",
+            deep_link: "/media/media-podcast-1?t_start_ms=42000",
+            context_ref: { type: "transcript_chunk", id: "chunk-1" },
             t_start_ms: 42000,
             t_end_ms: 47000,
             source: {
@@ -176,6 +194,44 @@ describe("fetchSearchResultPage", () => {
     expect(page.rows[1]).toMatchObject({
       href: "/media/media-podcast-1?t_start_ms=42000",
       typeLabel: "transcript chunk",
+    });
+  });
+
+  it("adapts podcast rows", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        results: [
+          {
+            type: "podcast",
+            id: "podcast-1",
+            score: 0.77,
+            snippet: "systems thinking weekly",
+            title: "Systems Thinking Weekly",
+            source_label: "Systems Thinking Weekly - Host",
+            media_id: null,
+            media_kind: null,
+            deep_link: "/podcasts/podcast-1",
+            context_ref: { type: "podcast", id: "podcast-1" },
+            author: "Host",
+          },
+        ],
+        page: { next_cursor: null },
+      }),
+    );
+
+    const page = await fetchSearchResultPage({
+      query: "systems",
+      selectedTypes: setOf("podcast"),
+      cursor: null,
+      limit: 20,
+    });
+
+    expect(page.rows).toHaveLength(1);
+    expect(page.rows[0]).toMatchObject({
+      href: "/podcasts/podcast-1",
+      type: "podcast",
+      primaryText: "Systems Thinking Weekly",
+      sourceMeta: "Systems Thinking Weekly - Host",
     });
   });
 });

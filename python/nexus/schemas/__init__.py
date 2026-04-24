@@ -10,6 +10,8 @@ from nexus.schemas.conversation import (
     ConversationShareTargetOut,
     MessageListResponse,
     MessageOut,
+    MessageRetrievalOut,
+    MessageToolCallOut,
     PageInfo,
     SetConversationSharesRequest,
 )
@@ -88,6 +90,8 @@ __all__ = [
     # Conversation schemas (Slice 3)
     "ConversationOut",
     "MessageOut",
+    "MessageToolCallOut",
+    "MessageRetrievalOut",
     "ConversationListResponse",
     "MessageListResponse",
     "PageInfo",

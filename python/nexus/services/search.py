@@ -26,6 +26,7 @@ import json
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import urlencode
 from uuid import UUID
 
 from sqlalchemy import text
@@ -43,11 +44,13 @@ from nexus.schemas.search import (
     SearchPageInfo,
     SearchResponse,
     SearchResultAnnotationOut,
+    SearchResultContextRefOut,
     SearchResultFragmentOut,
     SearchResultHighlightOut,
     SearchResultMediaOut,
     SearchResultMessageOut,
     SearchResultOut,
+    SearchResultPodcastOut,
     SearchResultSourceOut,
     SearchResultTranscriptChunkOut,
 )
@@ -76,12 +79,13 @@ TRANSCRIPT_CHUNK_ANN_CANDIDATE_MULTIPLIER = 20
 
 # Supported search result types (ordered for deterministic behavior).
 # Omitted type filters must mean "search everything the caller can ask for".
-ALL_RESULT_TYPES = ("media", "fragment", "annotation", "message", "transcript_chunk")
+ALL_RESULT_TYPES = ("media", "podcast", "fragment", "annotation", "message", "transcript_chunk")
 VALID_RESULT_TYPES = frozenset(ALL_RESULT_TYPES)
 
 # Type weight multipliers (applied post-rank)
 TYPE_WEIGHTS = {
     "media": 1.3,
+    "podcast": 1.15,
     "annotation": 1.2,
     "message": 1.0,
     "fragment": 0.9,
@@ -106,6 +110,16 @@ class _RankedMediaResult:
     source: SearchResultSourceOut
     score: _SearchScore
     result_type: Literal["media"] = "media"
+
+
+@dataclass(slots=True)
+class _RankedPodcastResult:
+    id: UUID
+    title: str
+    author: str | None
+    snippet: str
+    score: _SearchScore
+    result_type: Literal["podcast"] = "podcast"
 
 
 @dataclass(slots=True)
@@ -157,6 +171,7 @@ class _RankedTranscriptChunkResult:
 
 InternalSearchResult = (
     _RankedMediaResult
+    | _RankedPodcastResult
     | _RankedFragmentResult
     | _RankedAnnotationResult
     | _RankedMessageResult
@@ -503,6 +518,8 @@ def _search_type(
     """
     if result_type == "media":
         return _search_media(db, viewer_id, q, scope_type, scope_id, limit)
+    if result_type == "podcast":
+        return _search_podcasts(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "fragment":
         return _search_fragments(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "annotation":
@@ -545,8 +562,14 @@ def _search_media(
         """
         params["scope_id"] = scope_id
     elif scope_type == "conversation":
-        # Media search doesn't apply to conversation scope
-        return []
+        scope_filter = """
+            AND m.id IN (
+                SELECT media_id
+                FROM conversation_media
+                WHERE conversation_id = :scope_id
+            )
+        """
+        params["scope_id"] = scope_id
     else:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
@@ -586,6 +609,104 @@ def _search_media(
     ]
 
 
+def _search_podcasts(
+    db: Session,
+    viewer_id: UUID,
+    q: str,
+    scope_type: str,
+    scope_id: UUID | None,
+    limit: int,
+) -> list[InternalSearchResult]:
+    """Search visible podcast metadata."""
+    scope_filter = ""
+    params: dict = {"viewer_id": viewer_id, "query": q, "limit": limit}
+
+    if scope_type == "all":
+        pass
+    elif scope_type == "media":
+        return []
+    elif scope_type == "library":
+        scope_filter = """
+            AND p.id IN (
+                SELECT podcast_id
+                FROM library_entries
+                WHERE library_id = :scope_id
+                  AND podcast_id IS NOT NULL
+            )
+        """
+        params["scope_id"] = scope_id
+    elif scope_type == "conversation":
+        scope_filter = """
+            AND EXISTS (
+                SELECT 1
+                FROM conversation_media cm
+                JOIN podcast_episodes pe ON pe.media_id = cm.media_id
+                WHERE cm.conversation_id = :scope_id
+                  AND pe.podcast_id = p.id
+            )
+        """
+        params["scope_id"] = scope_id
+    else:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
+
+    query = f"""
+        WITH visible_podcasts AS (
+            SELECT ps.podcast_id
+            FROM podcast_subscriptions ps
+            WHERE ps.user_id = :viewer_id
+              AND ps.status = 'active'
+
+            UNION
+
+            SELECT le.podcast_id
+            FROM library_entries le
+            JOIN memberships m ON m.library_id = le.library_id
+                              AND m.user_id = :viewer_id
+            WHERE le.podcast_id IS NOT NULL
+        )
+        SELECT
+            p.id,
+            p.title,
+            p.author,
+            ts_rank_cd(
+                to_tsvector(
+                    'english',
+                    concat_ws(' ', p.title, COALESCE(p.author, ''), COALESCE(p.description, ''))
+                ),
+                websearch_to_tsquery('english', :query)
+            ) AS score,
+            ts_headline(
+                'english',
+                concat_ws(' ', p.title, COALESCE(p.author, ''), COALESCE(p.description, '')),
+                websearch_to_tsquery('english', :query),
+                'MaxWords=50, MinWords=10, MaxFragments=1'
+            ) AS snippet
+        FROM podcasts p
+        JOIN visible_podcasts vp ON vp.podcast_id = p.id
+        WHERE to_tsvector(
+                'english',
+                concat_ws(' ', p.title, COALESCE(p.author, ''), COALESCE(p.description, ''))
+            ) @@ websearch_to_tsquery('english', :query)
+        {scope_filter}
+        ORDER BY score DESC, p.id ASC
+        LIMIT :limit
+    """
+
+    result = db.execute(text(query), params)
+    rows = result.fetchall()
+
+    return [
+        _RankedPodcastResult(
+            id=row[0],
+            title=row[1],
+            author=row[2],
+            snippet=_truncate_snippet(str(row[4] or row[1])),
+            score=_build_search_score(row[3]),
+        )
+        for row in rows
+    ]
+
+
 def _search_fragments(
     db: Session,
     viewer_id: UUID,
@@ -616,8 +737,14 @@ def _search_fragments(
         """
         params["scope_id"] = scope_id
     elif scope_type == "conversation":
-        # Fragment search doesn't apply to conversation scope
-        return []
+        scope_filter = """
+            AND f.media_id IN (
+                SELECT media_id
+                FROM conversation_media
+                WHERE conversation_id = :scope_id
+            )
+        """
+        params["scope_id"] = scope_id
     else:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
@@ -713,7 +840,14 @@ def _search_annotations(
         """
         params["scope_id"] = scope_id
     elif scope_type == "conversation":
-        return []
+        scope_filter = """
+            AND f.media_id IN (
+                SELECT media_id
+                FROM conversation_media
+                WHERE conversation_id = :scope_id
+            )
+        """
+        params["scope_id"] = scope_id
     else:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
@@ -934,7 +1068,14 @@ def _search_transcript_chunks(
         """
         params["scope_id"] = scope_id
     elif scope_type == "conversation":
-        return []
+        scope_filter = """
+            AND tc.media_id IN (
+                SELECT media_id
+                FROM conversation_media
+                WHERE conversation_id = :scope_id
+            )
+        """
+        params["scope_id"] = scope_id
     else:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
@@ -1068,18 +1209,104 @@ def _truncate_snippet(snippet: str) -> str:
     return truncated + "..."
 
 
+def _build_source_label(source: SearchResultSourceOut) -> str:
+    parts = [source.title]
+    if source.authors:
+        parts.append(", ".join(source.authors))
+    if source.published_date:
+        parts.append(source.published_date)
+    if source.media_kind:
+        parts.append(source.media_kind.replace("_", " "))
+    return " - ".join(part for part in parts if part)
+
+
+def _result_context_ref(result: InternalSearchResult) -> SearchResultContextRefOut:
+    return SearchResultContextRefOut(type=result.result_type, id=result.id)
+
+
+def _result_deep_link(result: InternalSearchResult) -> str:
+    if isinstance(result, _RankedMediaResult):
+        return f"/media/{result.id}"
+    if isinstance(result, _RankedPodcastResult):
+        return f"/podcasts/{result.id}"
+    if isinstance(result, _RankedFragmentResult):
+        params: dict[str, str] = {}
+        if result.source.media_kind == "epub" and result.section_id:
+            params["loc"] = result.section_id
+        params["fragment"] = str(result.id)
+        return f"/media/{result.source.media_id}?{urlencode(params)}"
+    if isinstance(result, _RankedAnnotationResult):
+        params: dict[str, str] = {}
+        if result.source.media_kind == "epub" and result.section_id:
+            params["loc"] = result.section_id
+        params["fragment"] = str(result.fragment_id)
+        params["highlight"] = str(result.highlight_id)
+        return f"/media/{result.source.media_id}?{urlencode(params)}"
+    if isinstance(result, _RankedMessageResult):
+        return f"/conversations/{result.conversation_id}"
+    if isinstance(result, _RankedTranscriptChunkResult):
+        return f"/media/{result.source.media_id}?t_start_ms={result.t_start_ms}"
+    raise AssertionError(f"Unknown search result type: {type(result).__name__}")
+
+
+def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
+    context_ref = _result_context_ref(result)
+    deep_link = _result_deep_link(result)
+
+    if isinstance(result, _RankedPodcastResult):
+        source_parts = [result.title]
+        if result.author:
+            source_parts.append(result.author)
+        return {
+            "title": result.title,
+            "source_label": " - ".join(source_parts),
+            "media_id": None,
+            "media_kind": None,
+            "deep_link": deep_link,
+            "context_ref": context_ref,
+        }
+
+    if isinstance(result, _RankedMessageResult):
+        return {
+            "title": f"Conversation message #{result.seq}",
+            "source_label": f"message #{result.seq}",
+            "media_id": None,
+            "media_kind": None,
+            "deep_link": deep_link,
+            "context_ref": context_ref,
+        }
+
+    source = result.source
+    return {
+        "title": source.title,
+        "source_label": _build_source_label(source),
+        "media_id": source.media_id,
+        "media_kind": source.media_kind,
+        "deep_link": deep_link,
+        "context_ref": context_ref,
+    }
+
+
 def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
     """Convert an internal ranked result into the strict response union."""
     base_payload = {
         "id": result.id,
         "score": round(result.score.normalized, 4),
         "snippet": result.snippet,
+        **_result_model_fields(result),
     }
 
     if isinstance(result, _RankedMediaResult):
         return SearchResultMediaOut(
             type="media",
             source=result.source,
+            **base_payload,
+        )
+
+    if isinstance(result, _RankedPodcastResult):
+        return SearchResultPodcastOut(
+            type="podcast",
+            author=result.author,
             **base_payload,
         )
 

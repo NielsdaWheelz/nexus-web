@@ -8,7 +8,7 @@ is deferred to PR-05.
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,6 +27,19 @@ MESSAGE_CONTEXT_TYPES = Literal["media", "highlight", "annotation"]
 
 # Valid highlight colors surfaced on context snapshots
 HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
+
+# Valid assistant app-search result types - must match message_retrievals.result_type
+APP_SEARCH_RESULT_TYPES = Literal[
+    "media",
+    "podcast",
+    "fragment",
+    "annotation",
+    "message",
+    "transcript_chunk",
+]
+
+# Valid assistant tool-call statuses - must match message_tool_calls.status
+MESSAGE_TOOL_STATUSES = Literal["pending", "complete", "error"]
 
 
 # =============================================================================
@@ -66,10 +79,56 @@ class MessageOut(BaseModel):
     role: str  # "user" | "assistant" | "system"
     content: str
     contexts: list["MessageContextSnapshot"] = Field(default_factory=list)
+    tool_calls: list["MessageToolCallOut"] = Field(default_factory=list)
     status: str  # "pending" | "complete" | "error"
     error_code: str | None = None
     created_at: datetime
     updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MessageRetrievalOut(BaseModel):
+    """Persisted app-search retrieval metadata for assistant tool calls."""
+
+    id: UUID
+    tool_call_id: UUID
+    ordinal: int
+    result_type: APP_SEARCH_RESULT_TYPES
+    source_id: str
+    media_id: UUID | None = None
+    context_ref: dict[str, Any]
+    result_ref: dict[str, Any]
+    deep_link: str | None = None
+    score: float | None = None
+    selected: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MessageToolCallOut(BaseModel):
+    """Persisted assistant tool-call metadata linked to a message pair."""
+
+    id: UUID
+    conversation_id: UUID
+    user_message_id: UUID
+    assistant_message_id: UUID
+    tool_name: str
+    tool_call_index: int
+    query_hash: str | None = None
+    scope: str
+    requested_types: list[str] = Field(default_factory=list)
+    semantic: bool
+    result_refs: list[dict[str, Any]] = Field(default_factory=list)
+    selected_context_refs: list[dict[str, Any]] = Field(default_factory=list)
+    provider_request_ids: list[str] = Field(default_factory=list)
+    latency_ms: int | None = None
+    status: MESSAGE_TOOL_STATUSES
+    error_code: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    retrievals: list[MessageRetrievalOut] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

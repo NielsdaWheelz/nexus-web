@@ -91,6 +91,7 @@ const SECTION_ORDER: Section[] = ["Recent", "Panes", "Create", "Navigate", "Sett
 
 const SEARCH_TYPE_ICON: Record<SearchType, LucideIcon> = {
   media: Globe,
+  podcast: Mic,
   fragment: FileText,
   annotation: Highlighter,
   message: MessageSquare,

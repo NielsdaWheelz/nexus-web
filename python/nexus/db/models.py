@@ -1891,6 +1891,25 @@ class ContextTargetType(str, PyEnum):
     annotation = "annotation"
 
 
+class MessageToolStatus(str, PyEnum):
+    """Lifecycle states for assistant tool-call persistence."""
+
+    pending = "pending"
+    complete = "complete"
+    error = "error"
+
+
+class AppSearchResultType(str, PyEnum):
+    """Typed app-search result classes surfaced to assistant retrieval."""
+
+    media = "media"
+    podcast = "podcast"
+    fragment = "fragment"
+    annotation = "annotation"
+    message = "message"
+    transcript_chunk = "transcript_chunk"
+
+
 class Conversation(Base):
     """Conversation model - a thread of messages owned by one user."""
 
@@ -2145,6 +2164,242 @@ class MessageLLM(Base):
     message: Mapped["Message"] = relationship("Message", back_populates="llm_metadata")
 
 
+class MessageToolCall(Base):
+    """Durable assistant tool-call metadata for a message pair."""
+
+    __tablename__ = "message_tool_calls"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    assistant_message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tool_name: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_call_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    query_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
+    requested_types: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    semantic: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    result_refs: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    selected_context_refs: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    provider_request_ids: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(tool_name) BETWEEN 1 AND 128",
+            name="ck_message_tool_calls_tool_name_length",
+        ),
+        CheckConstraint(
+            "tool_call_index >= 0",
+            name="ck_message_tool_calls_index_non_negative",
+        ),
+        CheckConstraint(
+            "query_hash IS NULL OR char_length(query_hash) BETWEEN 1 AND 128",
+            name="ck_message_tool_calls_query_hash_length",
+        ),
+        CheckConstraint(
+            "char_length(scope) BETWEEN 1 AND 256",
+            name="ck_message_tool_calls_scope_length",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(requested_types) = 'array'",
+            name="ck_message_tool_calls_requested_types_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(result_refs) = 'array'",
+            name="ck_message_tool_calls_result_refs_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(selected_context_refs) = 'array'",
+            name="ck_message_tool_calls_selected_context_refs_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(provider_request_ids) = 'array'",
+            name="ck_message_tool_calls_provider_request_ids_array",
+        ),
+        CheckConstraint(
+            "latency_ms IS NULL OR latency_ms >= 0",
+            name="ck_message_tool_calls_latency_non_negative",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'complete', 'error')",
+            name="ck_message_tool_calls_status",
+        ),
+        UniqueConstraint(
+            "assistant_message_id",
+            "tool_call_index",
+            name="uix_message_tool_calls_assistant_index",
+        ),
+        Index(
+            "idx_message_tool_calls_conversation_created",
+            "conversation_id",
+            "created_at",
+        ),
+        Index(
+            "idx_message_tool_calls_user_message",
+            "user_message_id",
+            "tool_call_index",
+        ),
+        Index(
+            "idx_message_tool_calls_assistant_message",
+            "assistant_message_id",
+            "tool_call_index",
+        ),
+        Index(
+            "idx_message_tool_calls_tool_status",
+            "tool_name",
+            "status",
+        ),
+    )
+
+    conversation: Mapped["Conversation"] = relationship("Conversation")
+    user_message: Mapped["Message"] = relationship("Message", foreign_keys=[user_message_id])
+    assistant_message: Mapped["Message"] = relationship(
+        "Message",
+        foreign_keys=[assistant_message_id],
+    )
+    retrievals: Mapped[list["MessageRetrieval"]] = relationship(
+        "MessageRetrieval",
+        back_populates="tool_call",
+        cascade="all, delete-orphan",
+        order_by="MessageRetrieval.ordinal",
+    )
+
+
+class MessageRetrieval(Base):
+    """One app-search result retrieved for an assistant tool call."""
+
+    __tablename__ = "message_retrievals"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    tool_call_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("message_tool_calls.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    result_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source_id: Mapped[str] = mapped_column(Text, nullable=False)
+    media_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    context_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    result_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    deep_link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "ordinal >= 0",
+            name="ck_message_retrievals_ordinal_non_negative",
+        ),
+        CheckConstraint(
+            """
+            result_type IN (
+                'media',
+                'podcast',
+                'fragment',
+                'annotation',
+                'message',
+                'transcript_chunk'
+            )
+            """,
+            name="ck_message_retrievals_result_type",
+        ),
+        CheckConstraint(
+            "char_length(source_id) BETWEEN 1 AND 128",
+            name="ck_message_retrievals_source_id_length",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(context_ref) = 'object'",
+            name="ck_message_retrievals_context_ref_object",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(result_ref) = 'object'",
+            name="ck_message_retrievals_result_ref_object",
+        ),
+        CheckConstraint(
+            "score IS NULL OR score >= 0",
+            name="ck_message_retrievals_score_non_negative",
+        ),
+        UniqueConstraint(
+            "tool_call_id",
+            "ordinal",
+            name="uix_message_retrievals_tool_call_ordinal",
+        ),
+        Index(
+            "idx_message_retrievals_tool_call_selected",
+            "tool_call_id",
+            "selected",
+            "ordinal",
+        ),
+        Index("idx_message_retrievals_media", "media_id"),
+        Index("idx_message_retrievals_result_type", "result_type"),
+    )
+
+    tool_call: Mapped["MessageToolCall"] = relationship(
+        "MessageToolCall",
+        back_populates="retrievals",
+    )
+    media: Mapped["Media | None"] = relationship("Media")
+
+
 class UserApiKey(Base):
     """UserApiKey model - encrypted BYOK API keys per provider."""
 
@@ -2175,6 +2430,7 @@ class UserApiKey(Base):
         nullable=False,
     )
     last_tested_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     __table_args__ = (
