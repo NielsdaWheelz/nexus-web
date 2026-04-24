@@ -11,6 +11,7 @@ import {
   memo,
   useState,
   useCallback,
+  useRef,
   type ReactNode,
   type HTMLAttributes,
 } from "react";
@@ -54,15 +55,15 @@ function CodeBlockWrapper({
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const handleCopy = useCallback(() => {
-    const el = document.querySelector(`[data-lang="${language}"]`);
-    const text = el?.textContent ?? "";
+    const text = contentRef.current?.textContent ?? "";
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
-  }, [language]);
+  }, []);
 
   return (
     <div className={styles.codeBlock}>
@@ -72,7 +73,11 @@ function CodeBlockWrapper({
           {copied ? "copied" : "copy"}
         </button>
       </div>
-      <div className={styles.codeBlockContent} data-lang={language}>
+      <div
+        ref={contentRef}
+        className={styles.codeBlockContent}
+        data-lang={language}
+      >
         {children}
       </div>
     </div>

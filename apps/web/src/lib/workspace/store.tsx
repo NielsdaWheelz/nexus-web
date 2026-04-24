@@ -48,7 +48,7 @@ type WorkspaceAction =
   | { type: "hydrate"; state: WorkspaceStateV3 }
   | { type: "activate_pane"; paneId: string }
   | { type: "open_pane"; panes: WorkspacePaneStateV3[]; afterPaneId: string | null; activate: boolean }
-  | { type: "navigate_pane"; paneId: string; href: string }
+  | { type: "navigate_pane"; paneId: string; href: string; activate: boolean }
   | { type: "close_pane"; paneId: string }
   | { type: "resize_pane"; paneId: string; widthPx: number };
 
@@ -95,7 +95,11 @@ function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): Wor
       const panes = state.panes.map((p) =>
         p.id === action.paneId ? { ...p, href: action.href } : p
       );
-      return { ...state, panes, activePaneId: action.paneId };
+      return {
+        ...state,
+        panes,
+        activePaneId: action.activate ? action.paneId : state.activePaneId,
+      };
     }
 
     case "close_pane": {
@@ -183,7 +187,11 @@ interface WorkspaceStoreValue {
   runtimeTitleByPaneId: ReadonlyMap<string, string>;
   activatePane: (paneId: string) => void;
   openPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
-  navigatePane: (paneId: string, href: string, options?: { replace?: boolean }) => void;
+  navigatePane: (
+    paneId: string,
+    href: string,
+    options?: { replace?: boolean; activate?: boolean },
+  ) => void;
   closePane: (paneId: string) => void;
   resizePane: (paneId: string, widthPx: number) => void;
   publishPaneTitle: (paneId: string, title: string | null) => void;
@@ -426,12 +434,17 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   );
 
   const navigatePane = useCallback(
-    (paneId: string, href: string, options?: { replace?: boolean }) => {
+    (paneId: string, href: string, options?: { replace?: boolean; activate?: boolean }) => {
       const normalized = normalizeWorkspaceHref(href);
       if (!normalized) return;
       recordUserDrivenRecent(paneId, normalized);
       dispatchAndSync(
-        { type: "navigate_pane", paneId, href: normalized },
+        {
+          type: "navigate_pane",
+          paneId,
+          href: normalized,
+          activate: options?.activate ?? true,
+        },
         options?.replace ? "replace" : "push"
       );
     },

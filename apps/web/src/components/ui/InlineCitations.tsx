@@ -8,21 +8,14 @@
 "use client";
 
 import { useState } from "react";
+import type { MessageContextSnapshot } from "@/lib/conversations/types";
+import { truncateText } from "@/lib/conversations/display";
 import styles from "./InlineCitations.module.css";
-
-interface ContextSnapshot {
-  type: "highlight" | "annotation" | "media";
-  id: string;
-  color?: "yellow" | "green" | "blue" | "pink" | "purple";
-  exact?: string;
-  preview?: string;
-  media_title?: string;
-}
 
 export default function InlineCitations({
   contexts,
 }: {
-  contexts: ContextSnapshot[];
+  contexts: MessageContextSnapshot[];
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
 
@@ -44,13 +37,13 @@ export default function InlineCitations({
   );
 }
 
-function CitationCard({ context }: { context: ContextSnapshot }) {
+function CitationCard({ context }: { context: MessageContextSnapshot }) {
   const text = context.exact || context.preview;
   return (
     <div className={styles.card}>
       {text && (
         <div className={styles.cardText}>
-          {text.length > 120 ? text.slice(0, 120) + "..." : text}
+          {truncateText(text, 120)}
         </div>
       )}
       {context.media_title && (

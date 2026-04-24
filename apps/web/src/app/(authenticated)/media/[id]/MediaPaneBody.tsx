@@ -8,7 +8,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from "react";
-import ChatComposer from "@/components/ChatComposer";
+import QuoteChatSheet from "@/components/chat/QuoteChatSheet";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import PdfReader, {
   type PdfHighlightOut,
@@ -199,6 +199,8 @@ type QuoteChatTarget = {
   paneHref: string | null;
   conversationId: string | null;
 };
+
+type QuoteChatContextSeed = Pick<ContextItem, "color" | "exact" | "preview">;
 
 function createEmptyPdfHighlightsPaneState(): PdfHighlightsPaneState {
   return {
@@ -2718,21 +2720,40 @@ export default function MediaPaneBody() {
   );
   const activeChatHighlights = isPdf ? pdfHighlightsPaneState.highlights : highlights;
 
-  const handleSendToChat = useCallback(
-    (highlightId: string) => {
+  const buildHighlightChatContext = useCallback(
+    (highlightId: string, seed?: QuoteChatContextSeed): ContextItem => {
       const highlight = activeChatHighlights.find((item) => item.id === highlightId);
+      const exact = highlight?.exact || seed?.exact;
+      const preview = seed?.preview || (exact ? exact.slice(0, 120) : undefined);
+      const color = highlight?.color || seed?.color;
+
+      return {
+        type: "highlight",
+        id: highlightId,
+        ...(color ? { color } : {}),
+        ...(preview ? { preview } : {}),
+        ...(exact ? { exact } : {}),
+        ...(media?.id ? { mediaId: media.id } : {}),
+        ...(media?.title ? { mediaTitle: media.title } : {}),
+      };
+    },
+    [activeChatHighlights, media?.id, media?.title]
+  );
+
+  const handleSendToChat = useCallback(
+    (highlightId: string, seed?: QuoteChatContextSeed) => {
+      const context = buildHighlightChatContext(highlightId, seed);
 
       const quoteParams = new URLSearchParams({
         attach_type: "highlight",
         attach_id: highlightId,
       });
-      if (highlight) {
-        if (highlight.color) {
-          quoteParams.set("attach_color", highlight.color);
-        }
-        if (highlight.exact) {
-          quoteParams.set("attach_preview", highlight.exact.slice(0, 120));
-        }
+      if (context.color) {
+        quoteParams.set("attach_color", context.color);
+      }
+      const preview = context.preview || context.exact;
+      if (preview) {
+        quoteParams.set("attach_preview", preview.slice(0, 120));
       }
       if (media?.id) {
         quoteParams.set("attach_media_id", media.id);
@@ -2758,7 +2779,7 @@ export default function MediaPaneBody() {
       requestOpenInAppPane(`/conversations/new?${quoteParams.toString()}`, { titleHint: "New chat" });
     },
     [
-      activeChatHighlights,
+      buildHighlightChatContext,
       media?.id,
       media?.title,
       navigatePane,
@@ -2775,7 +2796,8 @@ export default function MediaPaneBody() {
       targetConversationId: string | null;
     } | null> => {
       const activeSelection = selection ?? selectionSnapshotRef.current;
-      const preview = activeSelection?.selectedText.slice(0, 120) || undefined;
+      const exact = activeSelection?.selectedText || undefined;
+      const preview = exact?.slice(0, 120);
       const highlightId = await handleCreateHighlight(color);
       if (!highlightId) {
         return null;
@@ -2787,6 +2809,7 @@ export default function MediaPaneBody() {
           id: highlightId,
           color,
           ...(preview ? { preview } : {}),
+          ...(exact ? { exact } : {}),
           ...(media?.id ? { mediaId: media.id } : {}),
           ...(media?.title ? { mediaTitle: media.title } : {}),
         },
@@ -2799,13 +2822,18 @@ export default function MediaPaneBody() {
 
   const handleQuoteSelectionToNewChat = useCallback(
     async (color: HighlightColor) => {
+      const activeSelection = selection ?? selectionSnapshotRef.current;
+      const exact = activeSelection?.selectedText || undefined;
       const highlightId = await handleCreateHighlight(color);
       if (!highlightId) {
         return;
       }
-      handleSendToChat(highlightId);
+      handleSendToChat(highlightId, {
+        color,
+        ...(exact ? { exact, preview: exact.slice(0, 120) } : {}),
+      });
     },
-    [handleCreateHighlight, handleSendToChat]
+    [handleCreateHighlight, handleSendToChat, selection]
   );
 
   const handleOpenConversation = useCallback(
@@ -2903,7 +2931,7 @@ export default function MediaPaneBody() {
 
   const [highlightsDrawerOpen, setHighlightsDrawerOpen] = useState(false);
   const lastMobileFocusedHighlightIdRef = useRef<string | null>(null);
-  const [quoteDrawerState, setQuoteDrawerState] = useState<{
+  const [quoteChatSheetState, setQuoteChatSheetState] = useState<{
     context: ContextItem;
     targetPaneId: string | null;
     targetConversationId: string | null;
@@ -3069,37 +3097,70 @@ export default function MediaPaneBody() {
       if (!prepared) {
         return;
       }
-      setQuoteDrawerState(prepared);
+      setQuoteChatSheetState(prepared);
     },
     [handleQuoteSelectionToNewChat, isMobileViewport, prepareQuoteSelectionForChat]
   );
 
-  const handleQuoteDrawerConversationCreated = useCallback(
+  const handleQuoteChatSheetConversationCreated = useCallback(
     (conversationId: string) => {
-      if (quoteDrawerState?.targetPaneId) {
-        navigatePane(quoteDrawerState.targetPaneId, `/conversations/${conversationId}`);
-        return;
+      if (quoteChatSheetState?.targetPaneId) {
+        navigatePane(quoteChatSheetState.targetPaneId, `/conversations/${conversationId}`, {
+          replace: true,
+          activate: false,
+        });
       }
-      if (!requestOpenInAppPane(`/conversations/${conversationId}`, { titleHint: "Chat" })) {
-        router.push(`/conversations/${conversationId}`);
-      }
+      setQuoteChatSheetState((current) =>
+        current ? { ...current, targetConversationId: conversationId } : current
+      );
     },
-    [navigatePane, quoteDrawerState?.targetPaneId, router]
+    [navigatePane, quoteChatSheetState?.targetPaneId]
   );
 
-  const handleQuoteDrawerMessageSent = useCallback(() => {
-    if (quoteDrawerState?.targetPaneId && quoteDrawerState.targetConversationId) {
-      navigatePane(
-        quoteDrawerState.targetPaneId,
-        `/conversations/${quoteDrawerState.targetConversationId}`
-      );
-    }
-    setQuoteDrawerState(null);
-  }, [
-    navigatePane,
-    quoteDrawerState?.targetConversationId,
-    quoteDrawerState?.targetPaneId,
-  ]);
+  const handleOpenQuoteChatSheetConversation = useCallback(
+    (conversationId: string) => {
+      setQuoteChatSheetState(null);
+      const route = `/conversations/${conversationId}`;
+      if (quoteChatSheetState?.targetPaneId) {
+        navigatePane(quoteChatSheetState.targetPaneId, route);
+        return;
+      }
+      if (!requestOpenInAppPane(route, { titleHint: "Chat" })) {
+        router.push(route);
+      }
+    },
+    [navigatePane, quoteChatSheetState?.targetPaneId, router]
+  );
+
+  const quoteChatSheetTargetLabel = quoteChatSheetState
+    ? quoteChatSheetState.targetConversationId
+      ? "Existing chat"
+      : quoteChatSheetState.targetPaneId
+        ? "New chat pane"
+        : "New chat"
+    : undefined;
+
+  const handleExistingHighlightSendToChat = useCallback(
+    (highlightId: string, seed?: QuoteChatContextSeed) => {
+      if (isMobileViewport) {
+        setHighlightsDrawerOpen(false);
+        setQuoteChatSheetState({
+          context: buildHighlightChatContext(highlightId, seed),
+          targetPaneId: quoteChatTarget.paneId,
+          targetConversationId: quoteChatTarget.conversationId,
+        });
+        return;
+      }
+      handleSendToChat(highlightId, seed);
+    },
+    [
+      buildHighlightChatContext,
+      handleSendToChat,
+      isMobileViewport,
+      quoteChatTarget.conversationId,
+      quoteChatTarget.paneId,
+    ]
+  );
 
   const isReflowableReader = canRead && !isPdf;
   const mediaAuthorMeta = formatMediaAuthors(media?.authors, 2);
@@ -3357,26 +3418,10 @@ export default function MediaPaneBody() {
   }, [focusState.focusedId, isMobileViewport, showHighlightsPane]);
 
   useEffect(() => {
-    if (!quoteDrawerState) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setQuoteDrawerState(null);
-      }
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [quoteDrawerState]);
-
-  useEffect(() => {
-    if (quoteDrawerState && !isMobileViewport) {
-      setQuoteDrawerState(null);
+    if (quoteChatSheetState && !isMobileViewport) {
+      setQuoteChatSheetState(null);
     }
-  }, [isMobileViewport, quoteDrawerState]);
+  }, [isMobileViewport, quoteChatSheetState]);
 
   useEffect(() => {
     setVideoSeekTargetMs(null);
@@ -3401,7 +3446,7 @@ export default function MediaPaneBody() {
     }
     const lockVisible = Boolean(
       highlightsDrawerOpen ||
-        quoteDrawerState ||
+        quoteChatSheetState ||
         libraryPanelOpen ||
         (selection && !focusState.editingBounds)
     );
@@ -3418,7 +3463,7 @@ export default function MediaPaneBody() {
     focusState.editingBounds,
     isMobileViewport,
     paneMobileChrome,
-    quoteDrawerState,
+    quoteChatSheetState,
     selection,
   ]);
 
@@ -3553,7 +3598,8 @@ export default function MediaPaneBody() {
       focusedId={focusState.focusedId}
       onFocusHighlight={focusHighlight}
       onClearFocus={clearFocus}
-      onSendToChat={handleSendToChat}
+      canSendToChat={Boolean(media.capabilities?.can_quote)}
+      onSendToChat={handleExistingHighlightSendToChat}
       onColorChange={handleColorChange}
       onDelete={handleDelete}
       onStartEditBounds={startEditBounds}
@@ -3675,7 +3721,9 @@ export default function MediaPaneBody() {
                 highlightRefreshToken={pdfRefreshToken}
                 onPageHighlightsChange={handlePdfPageHighlightsChange}
                 onHighlightTap={handlePdfHighlightTap}
-                onQuoteToChat={media.capabilities?.can_quote ? handleSendToChat : undefined}
+                onQuoteToChat={
+                  media.capabilities?.can_quote ? handleExistingHighlightSendToChat : undefined
+                }
                 onControlsStateChange={setPdfControlsState}
                 onControlsReady={(controls) => {
                   pdfControlsRef.current = controls;
@@ -3778,34 +3826,15 @@ export default function MediaPaneBody() {
         </div>
       )}
 
-      {isMobileViewport && quoteDrawerState ? (
-        <div
-          className={styles.quoteBackdrop}
-          onClick={() => setQuoteDrawerState(null)}
-        >
-          <aside
-            className={styles.quoteDrawer}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Ask in chat"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <header className={styles.quoteDrawerHeader}>
-              <h2>Ask in chat</h2>
-              <button type="button" onClick={() => setQuoteDrawerState(null)}>
-                Close
-              </button>
-            </header>
-            <div className={styles.quoteDrawerBody}>
-              <ChatComposer
-                conversationId={quoteDrawerState.targetConversationId}
-                attachedContexts={[quoteDrawerState.context]}
-                onConversationCreated={handleQuoteDrawerConversationCreated}
-                onMessageSent={handleQuoteDrawerMessageSent}
-              />
-            </div>
-          </aside>
-        </div>
+      {isMobileViewport && quoteChatSheetState ? (
+        <QuoteChatSheet
+          context={quoteChatSheetState.context}
+          conversationId={quoteChatSheetState.targetConversationId}
+          targetLabel={quoteChatSheetTargetLabel}
+          onClose={() => setQuoteChatSheetState(null)}
+          onConversationCreated={handleQuoteChatSheetConversationCreated}
+          onOpenFullChat={handleOpenQuoteChatSheetConversation}
+        />
       ) : null}
 
       {!isPdf && selection && !focusState.editingBounds && contentRef.current && (

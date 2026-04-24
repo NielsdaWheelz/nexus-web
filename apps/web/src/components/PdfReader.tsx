@@ -106,6 +106,12 @@ export interface PdfReaderControlsState {
   isBusy: boolean;
 }
 
+export interface PdfQuoteContextSeed {
+  color: HighlightColor;
+  exact?: string;
+  preview?: string;
+}
+
 export interface PdfReaderControlActions {
   goToPreviousPage: () => void;
   goToNextPage: () => void;
@@ -144,7 +150,7 @@ interface PdfReaderProps {
   onHighlightNavigationComplete?: () => void;
   onHighlightsMutated?: () => void;
   onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
-  onQuoteToChat?: (highlightId: string) => void;
+  onQuoteToChat?: (highlightId: string, contextSeed?: PdfQuoteContextSeed) => void;
   /** Resume seed: page (1-based) to open when this media loads */
   startPageNumber?: number;
   /** Resume seed: intra-page scroll progression to apply after first render */
@@ -2083,13 +2089,18 @@ export default function PdfReader({
       if (!onQuoteToChat) {
         return;
       }
+      const quoteSelection = selection ?? selectionSnapshotRef.current;
+      const exact = textGeometryReliable ? quoteSelection?.range.toString().trim() : "";
       const highlightId = await handleCreateHighlight(color);
       if (!highlightId) {
         return;
       }
-      onQuoteToChat(highlightId);
+      onQuoteToChat(highlightId, {
+        color,
+        ...(exact ? { exact, preview: exact.slice(0, 120) } : {}),
+      });
     },
-    [handleCreateHighlight, onQuoteToChat]
+    [handleCreateHighlight, onQuoteToChat, selection, textGeometryReliable]
   );
 
   useEffect(() => {

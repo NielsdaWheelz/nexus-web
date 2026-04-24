@@ -177,7 +177,11 @@ const PaneContent = memo(function PaneContent({
 }: {
   paneId: string;
   href: string;
-  navigatePane: (paneId: string, href: string, options?: { replace?: boolean }) => void;
+  navigatePane: (
+    paneId: string,
+    href: string,
+    options?: { replace?: boolean; activate?: boolean },
+  ) => void;
   openPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
   publishPaneTitle: (paneId: string, title: string | null) => void;
 }) {
@@ -229,7 +233,11 @@ const PaneContent = memo(function PaneContent({
 function buildShellPane(input: {
   pane: WorkspacePaneStateV3;
   descriptor: WorkspacePaneTitleDescriptor;
-  onNavigatePane: (paneId: string, href: string, options?: { replace?: boolean }) => void;
+  onNavigatePane: (
+    paneId: string,
+    href: string,
+    options?: { replace?: boolean; activate?: boolean },
+  ) => void;
   onOpenPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
   onPublishPaneTitle: (paneId: string, title: string | null) => void;
   isActive: boolean;

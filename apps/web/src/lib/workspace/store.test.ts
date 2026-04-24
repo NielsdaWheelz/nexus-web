@@ -50,9 +50,32 @@ describe("workspace reducer", () => {
       type: "navigate_pane",
       paneId: initial.panes[0]!.id,
       href: "/settings",
+      activate: true,
     });
     expect(next.panes[0]?.href).toBe("/settings");
     expect(next.activePaneId).toBe(initial.panes[0]!.id);
+  });
+
+  it("can update a background pane without activating it", () => {
+    const initial = createDefaultWorkspaceState("/media/media-1");
+    const chatId = createPaneId();
+    const withChat = workspaceReducer(initial, {
+      type: "open_pane",
+      panes: [{ id: chatId, href: "/conversations/new", widthPx: 480 }],
+      afterPaneId: null,
+      activate: false,
+    });
+    const next = workspaceReducer(withChat, {
+      type: "navigate_pane",
+      paneId: chatId,
+      href: "/conversations/conversation-1",
+      activate: false,
+    });
+
+    expect(next.panes.find((pane) => pane.id === chatId)?.href).toBe(
+      "/conversations/conversation-1",
+    );
+    expect(next.activePaneId).toBe(initial.activePaneId);
   });
 
   it("resizes a pane and clamps the width", () => {

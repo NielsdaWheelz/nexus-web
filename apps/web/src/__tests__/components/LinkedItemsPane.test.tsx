@@ -7,6 +7,7 @@ import { ToastProvider } from "@/components/Toast";
 const scrollHosts: HTMLDivElement[] = [];
 const linkedItemsPaneBaseProps = {
   isEditingBounds: false,
+  canSendToChat: true,
   onSendToChat: vi.fn(),
   onColorChange: vi.fn(async () => undefined),
   onDelete: vi.fn(async () => undefined),
@@ -301,6 +302,42 @@ describe("LinkedItemsPane", () => {
     expect(within(row).queryByText("Context thread")).not.toBeInTheDocument();
     expect(within(row).queryByRole("button", { name: "Send to chat" })).not.toBeInTheDocument();
     expect(within(row).queryByRole("button", { name: "Actions" })).not.toBeInTheDocument();
+  });
+
+  it("hides the expanded ask-in-chat action when quote chat is unavailable", async () => {
+    const { host, contentRef } = createScrollableContent(
+      '<p><span data-highlight-anchor="chat-disabled-h"></span>chat gated preview</p>'
+    );
+    host.setAttribute("data-test-scroll-host", "true");
+
+    renderLinkedItemsPane({
+      ...linkedItemsPaneBaseProps,
+      canSendToChat: false,
+      highlights: [
+        {
+          id: "chat-disabled-h",
+          exact: "chat gated preview",
+          color: "yellow",
+          annotation: null,
+          anchor: {
+            start_offset: 0,
+            end_offset: 18,
+          },
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ] as never,
+      contentRef,
+      focusedId: "chat-disabled-h",
+      isMobile: false,
+      onHighlightClick: vi.fn(),
+    });
+
+    await waitFor(() => {
+      expect(getRowButtons()).toHaveLength(1);
+    });
+
+    const row = screen.getByTestId("linked-item-row-chat-disabled-h");
+    expect(within(row).queryByRole("button", { name: "Ask in chat" })).not.toBeInTheDocument();
   });
 
   it("on mobile, swaps rows as highlights move into and out of the reader viewport", async () => {

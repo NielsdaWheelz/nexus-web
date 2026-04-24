@@ -25,6 +25,7 @@ interface MediaHighlightsPaneBodyProps {
   focusedId: string | null;
   onFocusHighlight: (id: string | null) => void;
   onClearFocus: () => void;
+  canSendToChat: boolean;
   onSendToChat: (id: string) => void;
   onColorChange: (id: string, color: HighlightColor) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
@@ -49,6 +50,7 @@ export default function MediaHighlightsPaneBody({
   focusedId,
   onFocusHighlight,
   onClearFocus,
+  canSendToChat,
   onSendToChat,
   onColorChange,
   onDelete,
@@ -215,6 +217,7 @@ export default function MediaHighlightsPaneBody({
           highlightsVersion={isPdf ? pdfHighlightsVersion : highlightsVersion}
           isMobile={isMobile}
           isEditingBounds={isEditingBounds}
+          canSendToChat={canSendToChat}
           onSendToChat={onSendToChat}
           onColorChange={onColorChange}
           onDelete={onDelete}

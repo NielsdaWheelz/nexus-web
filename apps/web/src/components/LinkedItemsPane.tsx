@@ -113,6 +113,7 @@ interface LinkedItemsPaneProps {
   highlightsVersion?: number;
   isMobile: boolean;
   isEditingBounds: boolean;
+  canSendToChat: boolean;
   onSendToChat: (highlightId: string) => void;
   onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
   onDelete: (highlightId: string) => Promise<void>;
@@ -131,6 +132,7 @@ export default function LinkedItemsPane({
   highlightsVersion = 0,
   isMobile,
   isEditingBounds,
+  canSendToChat,
   onSendToChat,
   onColorChange,
   onDelete,
@@ -827,14 +829,16 @@ export default function LinkedItemsPane({
 
             {isFocused ? (
               <div className={styles.rowActions}>
-                <button
-                  type="button"
-                  className={styles.chatButton}
-                  aria-label="Ask in chat"
-                  onClick={() => onSendToChat(highlight.id)}
-                >
-                  <MessageSquare size={14} aria-hidden="true" />
-                </button>
+                {canSendToChat ? (
+                  <button
+                    type="button"
+                    className={styles.chatButton}
+                    aria-label="Ask in chat"
+                    onClick={() => onSendToChat(highlight.id)}
+                  >
+                    <MessageSquare size={14} aria-hidden="true" />
+                  </button>
+                ) : null}
                 {menuOptions.length > 0 ? <ActionMenu options={menuOptions} /> : null}
               </div>
             ) : null}

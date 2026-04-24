@@ -8,14 +8,11 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import type { ContextItem } from "@/lib/api/sse";
-import {
-  getAttachContextSignature,
-  parseAttachContext,
-  stripAttachParams,
-} from "@/lib/conversations/attachedContext";
+import { useCallback } from "react";
+import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import ChatComposer from "@/components/ChatComposer";
+import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
+import ChatSurface from "@/components/chat/ChatSurface";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
@@ -34,35 +31,17 @@ export default function ConversationNewPaneBody() {
   const searchParams = usePaneSearchParams();
   useSetPaneTitle("New chat");
 
-  const initialAttach = useMemo(
-    () => parseAttachContext(searchParams),
-    [searchParams],
-  );
   const isMobileViewport = useIsMobileViewport();
-  const initialAttachSignature = useMemo(
-    () => getAttachContextSignature(initialAttach),
-    [initialAttach],
-  );
-  const [attachedContexts, setAttachedContexts] =
-    useState<ContextItem[]>(initialAttach);
-  const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
-  const syncedAttachSignatureRef = useRef(initialAttachSignature);
-
-  useEffect(() => {
-    if (syncedAttachSignatureRef.current === initialAttachSignature) {
-      return;
-    }
-    syncedAttachSignatureRef.current = initialAttachSignature;
-    setAttachedContexts(initialAttach);
-  }, [initialAttach, initialAttachSignature]);
-
-  const handleRemoveContext = useCallback((index: number) => {
-    setAttachedContexts((prev) => prev.filter((_, i) => i !== index));
-  }, []);
+  const {
+    attachedContexts,
+    removeContext,
+    clearContexts,
+    stripAttachState,
+  } = useAttachedContextsFromUrl(searchParams);
 
   const handleConversationCreated = useCallback(
     (conversationId: string) => {
-      const cleaned = stripAttachParams(searchParams);
+      const cleaned = stripAttachState();
       const qs = cleaned.toString();
       router.replace(
         qs
@@ -70,44 +49,30 @@ export default function ConversationNewPaneBody() {
           : `/conversations/${conversationId}`,
       );
     },
-    [router, searchParams],
+    [router, stripAttachState],
   );
 
   const clearAttachState = useCallback(() => {
-    setAttachedContexts([]);
-  }, []);
-
-  useEffect(() => {
-    if (!contextDrawerOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setContextDrawerOpen(false);
-      }
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [contextDrawerOpen]);
+    clearContexts();
+  }, [clearContexts]);
 
   return (
     <>
       <div className={styles.chatSplitLayout}>
         <div className={styles.chatPrimaryColumn}>
           <div className={styles.paneContentChat}>
-            <div className={styles.chatContainer}>
-              <div className={styles.messageList} />
-              <ChatComposer
-                conversationId={null}
-                attachedContexts={attachedContexts}
-                onRemoveContext={handleRemoveContext}
-                onConversationCreated={handleConversationCreated}
-                onMessageSent={clearAttachState}
-              />
-            </div>
+            <ChatSurface
+              messages={[]}
+              composer={
+                <ChatComposer
+                  conversationId={null}
+                  attachedContexts={attachedContexts}
+                  onRemoveContext={removeContext}
+                  onConversationCreated={handleConversationCreated}
+                  onMessageSent={clearAttachState}
+                />
+              }
+            />
           </div>
         </div>
 
@@ -115,53 +80,17 @@ export default function ConversationNewPaneBody() {
           <aside className={styles.chatContextColumn}>
             <ConversationContextPane
               contexts={attachedContexts}
-              onRemoveContext={handleRemoveContext}
+              onRemoveContext={removeContext}
             />
           </aside>
         ) : null}
       </div>
 
       {isMobileViewport ? (
-        <button
-          type="button"
-          className={styles.chatContextFab}
-          onClick={() => setContextDrawerOpen((open) => !open)}
-          aria-label="Linked context"
-          aria-expanded={contextDrawerOpen}
-        >
-          Linked context
-        </button>
-      ) : null}
-
-      {isMobileViewport && contextDrawerOpen ? (
-        <div
-          className={styles.chatContextBackdrop}
-          onClick={() => setContextDrawerOpen(false)}
-        >
-          <aside
-            className={styles.chatContextDrawer}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Linked context"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <header className={styles.chatContextDrawerHeader}>
-              <h2>Linked context</h2>
-              <button
-                type="button"
-                onClick={() => setContextDrawerOpen(false)}
-              >
-                Close
-              </button>
-            </header>
-            <div className={styles.chatContextDrawerBody}>
-              <ConversationContextPane
-                contexts={attachedContexts}
-                onRemoveContext={handleRemoveContext}
-              />
-            </div>
-          </aside>
-        </div>
+        <ChatContextDrawer
+          contexts={attachedContexts}
+          onRemoveContext={removeContext}
+        />
       ) : null}
     </>
   );

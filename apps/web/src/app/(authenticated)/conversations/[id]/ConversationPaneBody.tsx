@@ -8,22 +8,20 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { AlertCircle } from "lucide-react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { ContextItem } from "@/lib/api/sse";
-import {
-  getAttachContextSignature,
-  parseAttachContext,
-  stripAttachParams,
-} from "@/lib/conversations/attachedContext";
+import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import ChatComposer from "@/components/ChatComposer";
-import InlineCitations from "@/components/ui/InlineCitations";
-import {
-  MarkdownMessage,
-  StreamingMarkdownMessage,
-} from "@/components/ui/MarkdownMessage";
+import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
+import ChatSurface from "@/components/chat/ChatSurface";
+import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import StateMessage from "@/components/ui/StateMessage";
+import type {
+  ConversationMessage,
+  ConversationMessagesResponse,
+  MessageContextSnapshot,
+} from "@/lib/conversations/types";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneParam,
@@ -33,41 +31,6 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import styles from "../page.module.css";
-
-// ============================================================================
-// Types
-// ============================================================================
-
-export interface Message {
-  id: string;
-  seq: number;
-  role: "user" | "assistant" | "system";
-  content: string;
-  contexts?: MessageContextSnapshot[];
-  status: "pending" | "complete" | "error";
-  error_code: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface MessageContextSnapshot {
-  type: "highlight" | "annotation" | "media";
-  id: string;
-  color?: "yellow" | "green" | "blue" | "pink" | "purple";
-  preview?: string;
-  exact?: string;
-  prefix?: string;
-  suffix?: string;
-  annotation_body?: string;
-  media_id?: string;
-  media_title?: string;
-  media_kind?: string;
-}
-
-interface MessagesResponse {
-  data: Message[];
-  page: { next_cursor: string | null };
-}
 
 interface Conversation {
   id: string;
@@ -87,44 +50,25 @@ export default function ConversationPaneBody() {
 
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
-
-  // Attached context state — shared by both branches
-  const initialAttach = useMemo(
-    () => parseAttachContext(searchParams),
-    [searchParams],
-  );
-  const initialAttachSignature = useMemo(
-    () => getAttachContextSignature(initialAttach),
-    [initialAttach],
-  );
-  const [attachedContexts, setAttachedContexts] =
-    useState<ContextItem[]>(initialAttach);
-  const syncedAttachSignatureRef = useRef(initialAttachSignature);
-
-  useEffect(() => {
-    if (syncedAttachSignatureRef.current === initialAttachSignature) {
-      return;
-    }
-    syncedAttachSignatureRef.current = initialAttachSignature;
-    setAttachedContexts(initialAttach);
-  }, [initialAttach, initialAttachSignature]);
-
-  const handleRemoveContext = useCallback((index: number) => {
-    setAttachedContexts((prev) => prev.filter((_, i) => i !== index));
-  }, []);
+  const {
+    attachedContexts,
+    removeContext,
+    clearContexts,
+    stripAttachState,
+  } = useAttachedContextsFromUrl(searchParams);
 
   const clearAttachState = useCallback(() => {
-    setAttachedContexts([]);
-    const cleaned = stripAttachParams(searchParams);
+    clearContexts();
+    const cleaned = stripAttachState();
     const qs = cleaned.toString();
     router.replace(qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`);
-  }, [router, searchParams, id]);
+  }, [clearContexts, stripAttachState, router, id]);
 
   return (
     <ChatView
       id={id}
       attachedContexts={attachedContexts}
-      onRemoveContext={handleRemoveContext}
+      onRemoveContext={removeContext}
       onMessageSent={clearAttachState}
     />
   );
@@ -148,16 +92,24 @@ function ChatView({
   const isMobileViewport = useIsMobileViewport();
   const router = usePaneRouter();
   const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   useSetPaneTitle(conversation?.title ?? "Chat");
 
   const messageListRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
+  const {
+    handleOptimisticMessages,
+    handleMetaReceived,
+    handleDelta,
+    handleToolCall,
+    handleToolResult,
+    handleDone,
+    handleNonStreamMessages,
+  } = useChatMessageUpdates({ setMessages, shouldScrollRef });
   const persistedRows = useMemo(() => {
     const rows: Array<{
       context: MessageContextSnapshot;
@@ -190,7 +142,7 @@ function ChatView({
       try {
         const [convData, msgsData] = await Promise.all([
           apiFetch<{ data: Conversation }>(`/api/conversations/${id}`),
-          apiFetch<MessagesResponse>(`/api/conversations/${id}/messages?limit=50`),
+          apiFetch<ConversationMessagesResponse>(`/api/conversations/${id}/messages?limit=50`),
         ]);
         setConversation(convData.data);
         setMessages(msgsData.data);
@@ -227,7 +179,7 @@ function ChatView({
         limit: "50",
         cursor: olderCursor,
       });
-      const response = await apiFetch<MessagesResponse>(
+      const response = await apiFetch<ConversationMessagesResponse>(
         `/api/conversations/${id}/messages?${params}`
       );
       // Prepend older messages, deduplicate by ID
@@ -275,113 +227,6 @@ function ChatView({
   });
 
   // --------------------------------------------------------------------------
-  // Streaming message handlers (rAF-buffered deltas)
-  // --------------------------------------------------------------------------
-
-  const handleOptimisticMessages = useCallback(
-    (userMsg: Message, assistantMsg: Message) => {
-      shouldScrollRef.current = true;
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    },
-    []
-  );
-
-  const handleMetaReceived = useCallback(
-    (tempUserId: string, realUserId: string, tempAsstId: string, realAsstId: string) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id === tempUserId) return { ...m, id: realUserId };
-          if (m.id === tempAsstId) return { ...m, id: realAsstId };
-          return m;
-        })
-      );
-    },
-    []
-  );
-
-  // rAF-buffered delta handler — batches tokens arriving within one frame
-  const deltaBufferRef = useRef<Map<string, string>>(new Map());
-  const rafRef = useRef<number | null>(null);
-
-  const flushDeltas = useCallback(() => {
-    rafRef.current = null;
-    const buffer = deltaBufferRef.current;
-    if (buffer.size === 0) return;
-    const snapshot = new Map(buffer);
-    buffer.clear();
-    setMessages((prev) =>
-      prev.map((m) => {
-        const delta = snapshot.get(m.id);
-        return delta ? { ...m, content: m.content + delta } : m;
-      })
-    );
-  }, []);
-
-  const handleDelta = useCallback((assistantId: string, delta: string) => {
-    const buffer = deltaBufferRef.current;
-    buffer.set(assistantId, (buffer.get(assistantId) ?? "") + delta);
-    if (rafRef.current === null) {
-      rafRef.current = requestAnimationFrame(flushDeltas);
-    }
-  }, [flushDeltas]);
-
-  useEffect(() => {
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    };
-  }, []);
-
-  const handleDone = useCallback(
-    (assistantId: string, status: "complete" | "error", errorCode: string | null) => {
-      // Flush any remaining buffered deltas before marking done
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      const buffer = deltaBufferRef.current;
-      const remaining = buffer.get(assistantId);
-      buffer.delete(assistantId);
-
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          return {
-            ...m,
-            content: remaining ? m.content + remaining : m.content,
-            status,
-            error_code: errorCode,
-          };
-        })
-      );
-    },
-    []
-  );
-
-  const handleNonStreamMessages = useCallback(
-    (userMsg: Message, assistantMsg: Message) => {
-      shouldScrollRef.current = true;
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    },
-    []
-  );
-
-  useEffect(() => {
-    if (!contextDrawerOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setContextDrawerOpen(false);
-      }
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [contextDrawerOpen]);
-
-  // --------------------------------------------------------------------------
   // Render
   // --------------------------------------------------------------------------
 
@@ -398,39 +243,27 @@ function ChatView({
       <div className={styles.chatSplitLayout}>
         <div className={styles.chatPrimaryColumn}>
           <div className={styles.paneContentChat}>
-            <div className={styles.chatContainer}>
-              <div
-                ref={messageListRef}
-                className={styles.messageList}
-                data-testid="chat-transcript"
-              >
-                {olderCursor && (
-                  <button
-                    className={styles.loadOlder}
-                    aria-label="Load older messages"
-                    onClick={loadOlder}
-                  >
-                    Load older messages
-                  </button>
-                )}
-
-                {messages.map((msg) => (
-                  <MessageRow key={msg.id} message={msg} />
-                ))}
-              </div>
-
-              <ChatComposer
-                conversationId={id}
-                attachedContexts={attachedContexts}
-                onRemoveContext={onRemoveContext}
-                onOptimisticMessages={handleOptimisticMessages}
-                onMetaReceived={handleMetaReceived}
-                onDelta={handleDelta}
-                onDone={handleDone}
-                onNonStreamMessages={handleNonStreamMessages}
-                onMessageSent={onMessageSent}
-              />
-            </div>
+            <ChatSurface
+              messages={messages}
+              messageListRef={messageListRef}
+              olderCursor={olderCursor}
+              onLoadOlder={loadOlder}
+              composer={
+                <ChatComposer
+                  conversationId={id}
+                  attachedContexts={attachedContexts}
+                  onRemoveContext={onRemoveContext}
+                  onOptimisticMessages={handleOptimisticMessages}
+                  onMetaReceived={handleMetaReceived}
+                  onDelta={handleDelta}
+                  onToolCall={handleToolCall}
+                  onToolResult={handleToolResult}
+                  onDone={handleDone}
+                  onNonStreamMessages={handleNonStreamMessages}
+                  onMessageSent={onMessageSent}
+                />
+              }
+            />
           </div>
         </div>
 
@@ -446,120 +279,12 @@ function ChatView({
       </div>
 
       {isMobileViewport ? (
-        <button
-          type="button"
-          className={styles.chatContextFab}
-          onClick={() => setContextDrawerOpen((open) => !open)}
-          aria-label="Linked context"
-          aria-expanded={contextDrawerOpen}
-        >
-          Linked context
-        </button>
-      ) : null}
-
-      {isMobileViewport && contextDrawerOpen ? (
-        <div
-          className={styles.chatContextBackdrop}
-          onClick={() => setContextDrawerOpen(false)}
-        >
-          <aside
-            className={styles.chatContextDrawer}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Linked context"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <header className={styles.chatContextDrawerHeader}>
-              <h2>Linked context</h2>
-              <button
-                type="button"
-                onClick={() => setContextDrawerOpen(false)}
-              >
-                Close
-              </button>
-            </header>
-            <div className={styles.chatContextDrawerBody}>
-              <ConversationContextPane
-                contexts={attachedContexts}
-                persistedRows={persistedRows}
-                onRemoveContext={onRemoveContext}
-              />
-            </div>
-          </aside>
-        </div>
+        <ChatContextDrawer
+          contexts={attachedContexts}
+          persistedRows={persistedRows}
+          onRemoveContext={onRemoveContext}
+        />
       ) : null}
     </>
-  );
-}
-
-// ============================================================================
-// MessageRow
-// ============================================================================
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const now = Date.now();
-  const diffSec = Math.floor((now - d.getTime()) / 1000);
-  if (diffSec < 60) return "just now";
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function MessageRow({ message }: { message: Message }) {
-  const roleClass = styles[message.role] ?? "";
-  const statusClass = message.status !== "complete" ? (styles[message.status] ?? "") : "";
-  const contexts = message.contexts ?? [];
-
-  return (
-    <div className={`${styles.message} ${roleClass} ${statusClass}`}>
-      {message.role === "user" && contexts.length === 1 && (
-        <ReplyBar context={contexts[0]} />
-      )}
-      {message.role === "user" && contexts.length > 1 && (
-        <InlineCitations contexts={contexts} />
-      )}
-
-      {message.role === "assistant" ? (
-        message.status === "pending" ? (
-          <StreamingMarkdownMessage content={message.content} />
-        ) : (
-          <MarkdownMessage content={message.content} />
-        )
-      ) : (
-        <span>{message.content || (message.status === "pending" ? "..." : "")}</span>
-      )}
-
-      {message.status === "error" && message.error_code && (
-        <span className={styles.messageError}>
-          <AlertCircle size={14} />
-          {message.error_code}
-        </span>
-      )}
-
-      <span className={styles.messageTimestamp}>
-        {formatTime(message.created_at)}
-      </span>
-    </div>
-  );
-}
-
-function ReplyBar({ context }: { context: MessageContextSnapshot }) {
-  const text = context.exact || context.preview;
-  const colorClass = styles[`replyBar-${context.color ?? ""}`] ?? "";
-
-  return (
-    <div className={`${styles.replyBar} ${colorClass}`}>
-      {text && (
-        <div>{text.length > 140 ? text.slice(0, 140) + "..." : text}</div>
-      )}
-      {context.annotation_body && (
-        <div className={styles.replyBarAnnotation}>{context.annotation_body}</div>
-      )}
-      {!text && !context.annotation_body && context.media_title && (
-        <div>{context.media_title}</div>
-      )}
-    </div>
   );
 }
