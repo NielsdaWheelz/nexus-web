@@ -78,6 +78,9 @@ describe("sseClientDirect", () => {
               'event: tool_result',
               'data: {"assistant_message_id":"assistant-1","tool_name":"app_search","tool_call_index":0,"status":"complete","result_count":1,"selected_count":1,"latency_ms":12,"citations":[{"result_type":"media","source_id":"media-1","title":"Article","source_label":"Article","snippet":"match","deep_link":"/media/media-1","context_ref":{"type":"media","id":"media-1"},"media_id":"media-1","media_kind":"web_article","score":1,"selected":true}]}',
               "",
+              'event: citation',
+              'data: {"assistant_message_id":"assistant-1","tool_call_index":1,"citation_index":0,"result_ref":"web:1","title":"Web Result","url":"https://example.com/story","display_url":"example.com","source_name":"Example","snippet":"web match","provider":"brave"}',
+              "",
               'event: delta',
               'data: {"delta":"Hello"}',
               "",
@@ -110,6 +113,12 @@ describe("sseClientDirect", () => {
           content: "Hello",
           model_id: "model-1",
           reasoning: "none",
+          web_search: {
+            mode: "auto",
+            freshness_days: null,
+            allowed_domains: [],
+            blocked_domains: [],
+          },
         },
         {
           onEvent: (event) => {
@@ -134,6 +143,12 @@ describe("sseClientDirect", () => {
           content: "Hello",
           model_id: "model-1",
           reasoning: "none",
+          web_search: {
+            mode: "auto",
+            freshness_days: null,
+            allowed_domains: [],
+            blocked_domains: [],
+          },
         }),
       })
     );
@@ -183,6 +198,21 @@ describe("sseClientDirect", () => {
               selected: true,
             },
           ],
+        },
+      },
+      {
+        type: "citation",
+        data: {
+          assistant_message_id: "assistant-1",
+          tool_call_index: 1,
+          citation_index: 0,
+          result_ref: "web:1",
+          title: "Web Result",
+          url: "https://example.com/story",
+          display_url: "example.com",
+          source_name: "Example",
+          snippet: "web match",
+          provider: "brave",
         },
       },
       {

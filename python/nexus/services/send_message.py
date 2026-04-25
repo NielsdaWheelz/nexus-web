@@ -70,8 +70,10 @@ from nexus.schemas.conversation import (
     MAX_MESSAGE_CONTENT_LENGTH,
     ContextItem,
     SendMessageResponse,
+    WebSearchOptions,
 )
 from nexus.services.agent_tools.app_search import execute_app_search
+from nexus.services.agent_tools.web_search import WebSearchProvider, execute_web_search
 from nexus.services.api_key_resolver import (
     ResolvedKey,
     get_model_by_id,
@@ -207,13 +209,18 @@ def compute_payload_hash(
     reasoning: str,
     key_mode: str,
     contexts: Sequence[ContextItem],
-    conversation_id: UUID | None,
+    web_search: WebSearchOptions | None = None,
+    conversation_id: UUID | None = None,
 ) -> str:
     """Compute a hash of the request payload for idempotency."""
+    if web_search is None:
+        raise ValueError("web_search is required for payload hashing")
     sorted_contexts = sorted(contexts, key=lambda c: (c.type, str(c.id)))
     payload_contexts = [(ctx.type, str(ctx.id)) for ctx in sorted_contexts]
+    payload_web_search = web_search.model_dump(mode="json")
     payload_str = (
-        f"{conversation_id}|{content}|{model_id}|{reasoning}|{key_mode}|{payload_contexts}"
+        f"{conversation_id}|{content}|{model_id}|{reasoning}|{key_mode}|"
+        f"{payload_contexts}|{payload_web_search}"
     )
     return hashlib.sha256(payload_str.encode()).hexdigest()
 
@@ -705,9 +712,14 @@ async def send_message(
     reasoning: str,
     key_mode: str = "auto",
     contexts: Sequence[ContextItem] | None = None,
+    web_search: WebSearchOptions | None = None,
     idempotency_key: str | None = None,
     *,
     router: LLMRouter,
+    web_search_provider: WebSearchProvider | None = None,
+    web_search_country: str = "US",
+    web_search_language: str = "en",
+    web_search_safe_search: str = "moderate",
 ) -> SendMessageResponse:
     """Send a message and get LLM response.
 
@@ -716,6 +728,8 @@ async def send_message(
     main event loop so the shared httpx.AsyncClient is used correctly.
     """
     contexts = list(contexts or [])
+    if web_search is None:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "web_search.mode is required")
     rate_limiter = get_rate_limiter()
 
     flow_id = str(uuid4())
@@ -729,6 +743,7 @@ async def send_message(
             reasoning,
             key_mode,
             contexts,
+            web_search,
             conversation_id,
         )
 
@@ -879,6 +894,23 @@ async def send_message(
             if app_search_run and app_search_run.context_text:
                 context_blocks.append(app_search_run.context_text)
                 context_types.add("app_search")
+
+            web_search_run = await execute_web_search(
+                db,
+                provider=web_search_provider,
+                viewer_id=viewer_id,
+                conversation_id=prepare_result.conversation.id,
+                user_message_id=prepare_result.user_message.id,
+                assistant_message_id=prepare_result.assistant_message.id,
+                content=content,
+                options=web_search,
+                country=web_search_country,
+                search_lang=web_search_language,
+                safe_search=web_search_safe_search,
+            )
+            if web_search_run and web_search_run.context_text:
+                context_blocks.append(web_search_run.context_text)
+                context_types.add("web_search")
 
             history = await run_in_threadpool(
                 load_prompt_history,

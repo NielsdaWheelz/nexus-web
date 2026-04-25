@@ -9,14 +9,46 @@ import {
   type SetStateAction,
 } from "react";
 import type {
+  SSECitationEvent,
   SSEToolCallEvent,
   SSEToolResultEvent,
 } from "@/lib/api/sse";
+import {
+  isSearchCitation,
+  isWebCitation,
+  toWebCitationChipData,
+  type WebCitationChipData,
+} from "@/lib/chat/citations";
 import type {
   ConversationMessage,
   MessageRetrieval,
   MessageToolCall,
 } from "@/lib/conversations/types";
+
+type MessageWithWebCitations = ConversationMessage & {
+  citations?: WebCitationChipData[];
+};
+
+function appendWebCitations(
+  existing: WebCitationChipData[] | undefined,
+  incoming: WebCitationChipData[],
+): WebCitationChipData[] {
+  if (incoming.length === 0) return existing ?? [];
+
+  const next = [...(existing ?? [])];
+  const seen = new Set(
+    next.map((citation) => citation.result_ref || citation.url),
+  );
+
+  for (const citation of incoming) {
+    const key = citation.result_ref || citation.url;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    next.push(citation);
+  }
+
+  return next;
+}
 
 export function useChatMessageUpdates({
   setMessages,
@@ -122,7 +154,7 @@ export function useChatMessageUpdates({
 
   const handleToolResult = useCallback(
     (assistantId: string, data: SSEToolResultEvent["data"]) => {
-      const retrievals: MessageRetrieval[] = data.citations.map(
+      const retrievals: MessageRetrieval[] = data.citations.filter(isSearchCitation).map(
         (citation, index) => ({
           tool_call_id: data.tool_call_id ?? undefined,
           ordinal: index,
@@ -136,10 +168,23 @@ export function useChatMessageUpdates({
           selected: citation.selected,
         }),
       );
+      const webCitations = data.citations
+        .filter(isWebCitation)
+        .map((citation, index) =>
+          toWebCitationChipData({
+            ...citation,
+            assistant_message_id:
+              citation.assistant_message_id ?? data.assistant_message_id,
+            tool_call_id: citation.tool_call_id ?? data.tool_call_id,
+            tool_call_index: citation.tool_call_index ?? data.tool_call_index,
+            citation_index: citation.citation_index ?? citation.index ?? index,
+          }),
+        );
 
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantId) return m;
+          const message = m as MessageWithWebCitations;
           const existing = m.tool_calls ?? [];
           const index = existing.findIndex(
             (call) => call.tool_call_index === data.tool_call_index,
@@ -159,7 +204,28 @@ export function useChatMessageUpdates({
             index >= 0
               ? existing.map((call, idx) => (idx === index ? nextCall : call))
               : [...existing, nextCall];
-          return { ...m, tool_calls: toolCalls };
+          return {
+            ...m,
+            tool_calls: toolCalls,
+            citations: appendWebCitations(message.citations, webCitations),
+          };
+        }),
+      );
+    },
+    [setMessages],
+  );
+
+  const handleCitation = useCallback(
+    (assistantId: string, data: SSECitationEvent["data"]) => {
+      const citation = toWebCitationChipData(data);
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== assistantId) return m;
+          const message = m as MessageWithWebCitations;
+          return {
+            ...m,
+            citations: appendWebCitations(message.citations, [citation]),
+          };
         }),
       );
     },
@@ -211,6 +277,7 @@ export function useChatMessageUpdates({
     handleDelta,
     handleToolCall,
     handleToolResult,
+    handleCitation,
     handleDone,
     handleNonStreamMessages,
   };

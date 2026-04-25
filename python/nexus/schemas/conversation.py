@@ -36,10 +36,13 @@ APP_SEARCH_RESULT_TYPES = Literal[
     "annotation",
     "message",
     "transcript_chunk",
+    "web_result",
 ]
 
 # Valid assistant tool-call statuses - must match message_tool_calls.status
 MESSAGE_TOOL_STATUSES = Literal["pending", "complete", "error"]
+WEB_SEARCH_MODES = Literal["off", "auto", "required"]
+WEB_SEARCH_RESULT_TYPES = Literal["web", "news", "mixed"]
 
 
 # =============================================================================
@@ -133,6 +136,17 @@ class MessageToolCallOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class WebSearchOptions(BaseModel):
+    """Explicit public-web search mode for chat sends."""
+
+    mode: WEB_SEARCH_MODES
+    freshness_days: int | None = Field(default=None, ge=1)
+    allowed_domains: list[str] = Field(default_factory=list)
+    blocked_domains: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
 class PageInfo(BaseModel):
     """Pagination information for list responses."""
 
@@ -223,6 +237,7 @@ class SendMessageRequest(BaseModel):
     reasoning: REASONING_MODES
     key_mode: KEY_MODES = "auto"
     contexts: list[MessageContextRef] = Field(default_factory=list)
+    web_search: WebSearchOptions
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -260,6 +275,21 @@ class StreamDoneEvent(BaseModel):
     status: str  # "complete" | "error"
     usage: dict | None = None
     error_code: str | None = None
+    final_chars: int | None = None
+
+
+class StreamCitationEvent(BaseModel):
+    """SSE citation event emitted when a tool selects a web citation."""
+
+    assistant_message_id: UUID
+    tool_name: str
+    tool_call_index: int
+    title: str
+    url: str
+    display_url: str
+    source_name: str | None = None
+    snippet: str | None = None
+    provider: str | None = None
 
 
 # =============================================================================

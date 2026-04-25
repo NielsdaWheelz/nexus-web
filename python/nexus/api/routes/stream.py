@@ -17,12 +17,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
-from nexus.api.deps import get_llm_router, get_session_factory
+from nexus.api.deps import get_llm_router, get_session_factory, get_web_search_provider
 from nexus.auth.stream_token import verify_stream_token
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger, set_stream_jti
 from nexus.schemas.conversation import SendMessageRequest
+from nexus.services.agent_tools.web_search import WebSearchProvider
 from nexus.services.llm import LLMRouter
 from nexus.services.send_message_stream import stream_send_message_async
 
@@ -68,6 +69,7 @@ async def stream_send_existing(
     body: SendMessageRequest,
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
     llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
+    web_search_provider: Annotated[WebSearchProvider | None, Depends(get_web_search_provider)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> StreamingResponse:
     """Send a message with SSE streaming in an existing conversation.
@@ -90,8 +92,13 @@ async def stream_send_existing(
             reasoning=body.reasoning,
             key_mode=body.key_mode,
             contexts=body.contexts,
+            web_search=body.web_search,
             idempotency_key=idempotency_key,
             llm_router=llm_router,
+            web_search_provider=web_search_provider,
+            web_search_country=settings.brave_search_country,
+            web_search_language=settings.brave_search_language,
+            web_search_safe_search=settings.brave_search_safe_search,
         ),
         media_type="text/event-stream; charset=utf-8",
         headers={
@@ -106,6 +113,7 @@ async def stream_send_new(
     body: SendMessageRequest,
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
     llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
+    web_search_provider: Annotated[WebSearchProvider | None, Depends(get_web_search_provider)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> StreamingResponse:
     """Send a message with SSE streaming, creating a new conversation.
@@ -128,8 +136,13 @@ async def stream_send_new(
             reasoning=body.reasoning,
             key_mode=body.key_mode,
             contexts=body.contexts,
+            web_search=body.web_search,
             idempotency_key=idempotency_key,
             llm_router=llm_router,
+            web_search_provider=web_search_provider,
+            web_search_country=settings.brave_search_country,
+            web_search_language=settings.brave_search_language,
+            web_search_safe_search=settings.brave_search_safe_search,
         ),
         media_type="text/event-stream; charset=utf-8",
         headers={

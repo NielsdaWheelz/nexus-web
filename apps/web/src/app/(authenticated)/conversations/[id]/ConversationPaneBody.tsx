@@ -107,6 +107,7 @@ function ChatView({
     handleDelta,
     handleToolCall,
     handleToolResult,
+    handleCitation,
     handleDone,
     handleNonStreamMessages,
   } = useChatMessageUpdates({ setMessages, shouldScrollRef });
@@ -258,6 +259,7 @@ function ChatView({
                   onDelta={handleDelta}
                   onToolCall={handleToolCall}
                   onToolResult={handleToolResult}
+                  onCitation={handleCitation}
                   onDone={handleDone}
                   onNonStreamMessages={handleNonStreamMessages}
                   onMessageSent={onMessageSent}

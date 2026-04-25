@@ -168,6 +168,22 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
 
+    # Public web search provider settings.
+    # Brave is the first production web-search provider. If no API key is
+    # configured, required web-search turns fail closed with a typed tool error.
+    brave_search_api_key: str | None = Field(default=None, alias="BRAVE_SEARCH_API_KEY")
+    brave_search_base_url: str = Field(
+        default="https://api.search.brave.com/res/v1",
+        alias="BRAVE_SEARCH_BASE_URL",
+    )
+    brave_search_timeout_seconds: float = Field(
+        default=8.0,
+        alias="BRAVE_SEARCH_TIMEOUT_SECONDS",
+    )
+    brave_search_country: str = Field(default="US", alias="BRAVE_SEARCH_COUNTRY")
+    brave_search_language: str = Field(default="en", alias="BRAVE_SEARCH_LANGUAGE")
+    brave_search_safe_search: str = Field(default="moderate", alias="BRAVE_SEARCH_SAFE_SEARCH")
+
     # S3 PR-04: LLM provider feature flags
     # Controls whether each provider is available to users
     # All providers enabled by default; disable in production if needed

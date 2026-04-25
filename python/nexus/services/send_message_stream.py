@@ -33,8 +33,15 @@ from nexus.config import get_settings
 from nexus.db.models import MessageLLM, Model
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger, set_flow_id
-from nexus.schemas.conversation import ContextItem
+from nexus.schemas.conversation import ContextItem, WebSearchOptions
 from nexus.services.agent_tools.app_search import execute_app_search, should_run_app_search
+from nexus.services.agent_tools.web_search import (
+    WEB_SEARCH_TOOL_CALL_INDEX,
+    WEB_SEARCH_TOOL_NAME,
+    WebSearchProvider,
+    execute_web_search,
+    should_run_web_search,
+)
 from nexus.services.api_key_resolver import (
     ResolvedKey,
     get_model_by_id,
@@ -212,8 +219,13 @@ async def stream_send_message_async(
     reasoning: str,
     key_mode: str = "auto",
     contexts: list[ContextItem] | None = None,
+    web_search: WebSearchOptions | None = None,
     idempotency_key: str | None = None,
     llm_router: LLMRouter | None = None,
+    web_search_provider: WebSearchProvider | None = None,
+    web_search_country: str = "US",
+    web_search_language: str = "en",
+    web_search_safe_search: str = "moderate",
 ) -> AsyncIterator[str]:
     """Async generator for streaming message send via SSE.
 
@@ -236,6 +248,8 @@ async def stream_send_message_async(
         SSE-formatted event strings.
     """
     contexts = contexts or []
+    if web_search is None:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "web_search.mode is required")
     rate_limiter = get_rate_limiter()
     settings = get_settings()
     db = db_factory()
@@ -251,6 +265,7 @@ async def stream_send_message_async(
         reasoning,
         key_mode,
         contexts,
+        web_search,
         conversation_id,
     )
 
@@ -568,6 +583,44 @@ async def stream_send_message_async(
         if app_search_run and app_search_run.context_text:
             context_blocks.append(app_search_run.context_text)
             context_types.add("app_search")
+
+        web_search_run = None
+        if should_run_web_search(content, web_search):
+            yield format_sse_event(
+                "tool_call",
+                {
+                    "assistant_message_id": str(assistant_message_id),
+                    "tool_name": WEB_SEARCH_TOOL_NAME,
+                    "tool_call_index": WEB_SEARCH_TOOL_CALL_INDEX,
+                    "status": "started",
+                    "scope": "public_web",
+                    "types": ["mixed"],
+                    "semantic": False,
+                },
+            )
+            web_search_run = await execute_web_search(
+                db,
+                provider=web_search_provider,
+                viewer_id=viewer_id,
+                conversation_id=prepare_result.conversation.id,
+                user_message_id=prepare_result.user_message.id,
+                assistant_message_id=assistant_message_id,
+                content=content,
+                options=web_search,
+                country=web_search_country,
+                search_lang=web_search_language,
+                safe_search=web_search_safe_search,
+            )
+        if web_search_run:
+            yield format_sse_event("tool_result", web_search_run.tool_result_event())
+            for citation in web_search_run.selected_citations:
+                yield format_sse_event(
+                    "citation",
+                    citation.citation_event(assistant_message_id, web_search_run.tool_call_index),
+                )
+            if web_search_run.context_text:
+                context_blocks.append(web_search_run.context_text)
+                context_types.add("web_search")
 
         history = await run_in_threadpool(
             load_prompt_history,

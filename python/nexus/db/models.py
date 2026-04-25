@@ -2357,7 +2357,8 @@ class MessageRetrieval(Base):
                 'fragment',
                 'annotation',
                 'message',
-                'transcript_chunk'
+                'transcript_chunk',
+                'web_result'
             )
             """,
             name="ck_message_retrievals_result_type",

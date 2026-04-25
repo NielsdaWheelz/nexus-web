@@ -217,6 +217,23 @@ def _extract_openai_system_prompt(mock_openai_api) -> str:
 class TestSendMessageBasic:
     """Tests for basic send message functionality."""
 
+    def test_send_message_requires_web_search_mode(self, auth_client):
+        """Hard cutover: send requests must declare web_search.mode."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        response = auth_client.post(
+            "/conversations/messages",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Hello",
+                "model_id": str(uuid4()),
+                "reasoning": "none",
+            },
+        )
+
+        assert response.status_code == 400
+
     def test_send_message_creates_conversation_and_messages(
         self,
         auth_client,
@@ -243,6 +260,7 @@ class TestSendMessageBasic:
                 "content": "Hello, what is 2+2?",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -303,6 +321,7 @@ class TestSendMessageBasic:
                 "content": "Follow-up question",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -344,6 +363,7 @@ class TestSendMessageBasic:
                 "content": "First message should set title",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -394,6 +414,7 @@ class TestSendMessageIdempotency:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -417,6 +438,7 @@ class TestSendMessageIdempotency:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -462,6 +484,7 @@ class TestSendMessageIdempotency:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -483,6 +506,7 @@ class TestSendMessageIdempotency:
                 "content": "Different content!",  # Different!
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -529,6 +553,7 @@ class TestSendMessageRateLimits:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -566,6 +591,7 @@ class TestSendMessageRateLimits:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -603,6 +629,7 @@ class TestSendMessageRateLimits:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -655,6 +682,7 @@ class TestSendMessageContext:
                 "content": "What does this mean?",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -790,6 +818,7 @@ class TestSendMessageContext:
                 "content": "Summarize this podcast quote.",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -926,6 +955,7 @@ class TestSendMessageContext:
                 "content": "Summarize this video quote.",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -973,6 +1003,7 @@ class TestSendMessageContext:
                 "content": "What does this mean?",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -1006,6 +1037,7 @@ class TestSendMessageContext:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": contexts,
             },
         )
@@ -1169,6 +1201,7 @@ class TestSendMessagePdfQuoteToChat:
                 "content": "Explain this PDF quote",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -1266,6 +1299,7 @@ class TestSendMessagePdfQuoteToChat:
                 "content": "Use this PDF quote",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -1319,6 +1353,7 @@ class TestSendMessagePdfQuoteToChat:
                 "content": "Use this annotated PDF quote",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "annotation", "id": str(annotation_id)}],
             },
         )
@@ -1366,6 +1401,7 @@ class TestSendMessagePdfQuoteToChat:
                 "content": "Explain this repeated PDF phrase",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "highlight", "id": str(highlight_id)}],
             },
         )
@@ -1412,6 +1448,7 @@ class TestSendMessageKeyModes:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "key_mode": "byok_only",
             },
         )
@@ -1443,6 +1480,7 @@ class TestSendMessageKeyModes:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "key_mode": "platform_only",
             },
         )
@@ -1496,6 +1534,7 @@ class TestSendMessageConversationBusy:
                 "content": "Another message",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -1537,6 +1576,7 @@ class TestSendMessageLLMErrors:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -1581,6 +1621,7 @@ class TestSendMessageLLMErrors:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -1640,6 +1681,7 @@ class TestSendMessageLLMErrors:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "key_mode": "byok_only",
             },
         )
@@ -1695,6 +1737,7 @@ class TestSendMessageValidation:
                 "content": "x" * 20001,  # 20,001 chars
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -1721,6 +1764,7 @@ class TestSendMessageValidation:
                 "content": "Hello!",
                 "model_id": str(fake_model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -1752,6 +1796,7 @@ class TestSendMessageValidation:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -1782,6 +1827,7 @@ class TestSendMessageValidation:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -1817,6 +1863,7 @@ class TestSendMessageValidation:
                 "content": "Hello!",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
             },
         )
 
@@ -1852,7 +1899,12 @@ class TestSendMessageOwnerFields:
         response = auth_client.post(
             "/conversations/messages",
             headers=auth_headers(user_id),
-            json={"content": "Hello", "model_id": str(model_id), "reasoning": "none"},
+            json={
+                "content": "Hello",
+                "model_id": str(model_id),
+                "reasoning": "none",
+                "web_search": {"mode": "off"},
+            },
         )
 
         assert response.status_code == 200
@@ -1891,7 +1943,12 @@ class TestSendMessageOwnerFields:
         response = auth_client.post(
             f"/conversations/{conversation_id}/messages",
             headers=auth_headers(user_id),
-            json={"content": "Follow up", "model_id": str(model_id), "reasoning": "none"},
+            json={
+                "content": "Follow up",
+                "model_id": str(model_id),
+                "reasoning": "none",
+                "web_search": {"mode": "off"},
+            },
         )
 
         assert response.status_code == 200
@@ -1998,6 +2055,7 @@ class TestSendMessageEpubQuoteToChat:
                 "content": "Explain this quote",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "highlight", "id": str(hl_id)}],
             },
         )
@@ -2038,6 +2096,7 @@ class TestSendMessageEpubQuoteToChat:
                 "content": "What does this mean?",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "highlight", "id": str(hl_id)}],
             },
         )
@@ -2078,6 +2137,7 @@ class TestSendMessageEpubQuoteToChat:
                 "content": "Explain this",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "highlight", "id": str(hl_id)}],
             },
         )
@@ -2157,6 +2217,7 @@ class TestSendMessageContextKernel:
                 "content": "What does this mean?",
                 "model_id": str(model_id),
                 "reasoning": "none",
+                "web_search": {"mode": "off"},
                 "contexts": [{"type": "highlight", "id": str(hl_id)}],
             },
         )

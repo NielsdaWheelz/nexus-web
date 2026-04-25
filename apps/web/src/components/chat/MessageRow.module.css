@@ -106,6 +106,19 @@
   border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
 }
 
+.webCitation {
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+}
+
+.webCitation > svg:first-child {
+  color: var(--color-accent);
+}
+
+.citationMeta {
+  max-width: 120px;
+  color: var(--color-text-muted);
+}
+
 .sourceCitation svg {
   flex: 0 0 auto;
 }

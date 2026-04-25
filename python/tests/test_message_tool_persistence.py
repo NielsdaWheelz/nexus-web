@@ -3,7 +3,7 @@
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import func, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -126,9 +126,17 @@ def test_message_tool_call_constraints_and_cascade(db_session: Session):
     )
     db_session.add(tool_call)
     db_session.commit()
+    tool_call_id = tool_call.id
 
     db_session.execute(text("DELETE FROM messages WHERE id = :id"), {"id": assistant_message_id})
     db_session.commit()
 
-    assert db_session.scalar(func.count(MessageToolCall.id)) == 0
-    assert db_session.scalar(func.count(MessageRetrieval.id)) == 0
+    assert db_session.get(MessageToolCall, tool_call_id) is None
+    assert (
+        db_session.scalar(
+            select(func.count(MessageRetrieval.id)).where(
+                MessageRetrieval.tool_call_id == tool_call_id
+            )
+        )
+        == 0
+    )

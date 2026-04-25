@@ -59,6 +59,7 @@ from nexus.responses import (
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.llm import LLMRouter
+from nexus.services.web_search import BraveSearchProvider
 
 # Configure structured logging at import time
 configure_logging()
@@ -127,12 +128,23 @@ async def lifespan(app: FastAPI):
         enable_gemini=settings.enable_gemini,
         enable_deepseek=settings.enable_deepseek,
     )
+    app.state.web_search_provider = (
+        BraveSearchProvider(
+            app.state.httpx_client,
+            api_key=settings.brave_search_api_key,
+            base_url=settings.brave_search_base_url,
+            timeout_seconds=settings.brave_search_timeout_seconds,
+        )
+        if settings.brave_search_api_key
+        else None
+    )
 
     logger.info(
         "llm_router_initialized",
         enable_openai=settings.enable_openai,
         enable_anthropic=settings.enable_anthropic,
         enable_gemini=settings.enable_gemini,
+        web_search_provider="brave" if settings.brave_search_api_key else None,
     )
 
     # Initialize Postgres-backed rate limiter runtime state.

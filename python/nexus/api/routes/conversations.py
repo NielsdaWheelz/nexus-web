@@ -21,14 +21,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db, get_llm_router
+from nexus.api.deps import get_db, get_llm_router, get_web_search_provider
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.config import get_settings
 from nexus.errors import ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.conversation import SendMessageRequest, SetConversationSharesRequest
 from nexus.services import conversations as conversations_service
 from nexus.services import send_message as send_message_service
 from nexus.services import shares as shares_service
+from nexus.services.agent_tools.web_search import WebSearchProvider
 from nexus.services.llm import LLMRouter
 
 router = APIRouter(tags=["conversations"])
@@ -261,6 +263,7 @@ async def send_message_new_conversation(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
+    web_search_provider: Annotated[WebSearchProvider | None, Depends(get_web_search_provider)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
     """Send a message and create a new conversation.
@@ -292,8 +295,13 @@ async def send_message_new_conversation(
         reasoning=body.reasoning,
         key_mode=body.key_mode,
         contexts=body.contexts,
+        web_search=body.web_search,
         idempotency_key=idempotency_key,
         router=llm_router,
+        web_search_provider=web_search_provider,
+        web_search_country=get_settings().brave_search_country,
+        web_search_language=get_settings().brave_search_language,
+        web_search_safe_search=get_settings().brave_search_safe_search,
     )
 
     return success_response(result.model_dump(mode="json"))
@@ -306,6 +314,7 @@ async def send_message_existing_conversation(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
+    web_search_provider: Annotated[WebSearchProvider | None, Depends(get_web_search_provider)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
     """Send a message in an existing conversation.
@@ -339,8 +348,13 @@ async def send_message_existing_conversation(
         reasoning=body.reasoning,
         key_mode=body.key_mode,
         contexts=body.contexts,
+        web_search=body.web_search,
         idempotency_key=idempotency_key,
         router=llm_router,
+        web_search_provider=web_search_provider,
+        web_search_country=get_settings().brave_search_country,
+        web_search_language=get_settings().brave_search_language,
+        web_search_safe_search=get_settings().brave_search_safe_search,
     )
 
     return success_response(result.model_dump(mode="json"))

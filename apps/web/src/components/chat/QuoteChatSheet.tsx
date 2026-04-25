@@ -61,6 +61,7 @@ export default function QuoteChatSheet({
     handleDelta,
     handleToolCall,
     handleToolResult,
+    handleCitation,
     handleDone,
     handleNonStreamMessages,
   } = useChatMessageUpdates({ setMessages, shouldScrollRef });
@@ -274,6 +275,7 @@ export default function QuoteChatSheet({
                 onDelta={handleDelta}
                 onToolCall={handleToolCall}
                 onToolResult={handleToolResult}
+                onCitation={handleCitation}
                 onDone={handleDone}
                 onNonStreamMessages={handleNonStreamMessages}
                 onMessageSent={handleMessageSent}

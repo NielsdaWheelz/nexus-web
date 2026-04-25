@@ -1,4 +1,8 @@
-import type { ContextItem, SearchCitationEventData } from "@/lib/api/sse";
+import type {
+  CitationEventData,
+  ContextItem,
+  SearchCitationEventData,
+} from "@/lib/api/sse";
 
 export interface ConversationModel {
   id: string;
@@ -30,11 +34,11 @@ export interface MessageRetrieval {
   id?: string;
   tool_call_id?: string;
   ordinal?: number;
-  result_type: SearchCitationEventData["result_type"];
+  result_type: SearchCitationEventData["result_type"] | "web_result";
   source_id: string;
   media_id: string | null;
-  context_ref: SearchCitationEventData["context_ref"];
-  result_ref: SearchCitationEventData;
+  context_ref: SearchCitationEventData["context_ref"] | { type: "web_result"; id: string };
+  result_ref: CitationEventData;
   deep_link: string | null;
   score: number | null;
   selected: boolean;
@@ -46,7 +50,7 @@ export interface MessageToolCall {
   conversation_id?: string;
   user_message_id?: string;
   assistant_message_id?: string;
-  tool_name: "app_search" | string;
+  tool_name: "app_search" | "web_search" | string;
   tool_call_index: number;
   query_hash?: string | null;
   scope?: string;

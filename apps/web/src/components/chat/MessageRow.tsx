@@ -1,11 +1,17 @@
 "use client";
 
-import { AlertCircle, ExternalLink, Search } from "lucide-react";
+import { AlertCircle, ExternalLink, Globe, Search } from "lucide-react";
 import InlineCitations from "@/components/ui/InlineCitations";
 import {
   MarkdownMessage,
   StreamingMarkdownMessage,
 } from "@/components/ui/MarkdownMessage";
+import {
+  getWebCitationKey,
+  isWebCitation,
+  toWebCitationChipData,
+  type WebCitationChipData,
+} from "@/lib/chat/citations";
 import { truncateText } from "@/lib/conversations/display";
 import type {
   ConversationMessage,
@@ -14,6 +20,10 @@ import type {
   MessageToolCall,
 } from "@/lib/conversations/types";
 import styles from "./MessageRow.module.css";
+
+type MessageWithWebCitations = ConversationMessage & {
+  citations?: WebCitationChipData[];
+};
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -35,6 +45,7 @@ export function MessageRow({ message }: { message: ConversationMessage }) {
   const selectedRetrievals = toolCalls.flatMap((toolCall) =>
     toolCall.retrievals.filter((retrieval) => retrieval.selected),
   );
+  const webCitations = (message as MessageWithWebCitations).citations ?? [];
 
   return (
     <div className={`${styles.message} ${roleClass} ${statusClass}`}>
@@ -53,7 +64,10 @@ export function MessageRow({ message }: { message: ConversationMessage }) {
           ) : (
             <MarkdownMessage content={message.content} />
           )}
-          <SourceCitations retrievals={selectedRetrievals} />
+          <SourceCitations
+            retrievals={selectedRetrievals}
+            webCitations={webCitations}
+          />
         </>
       ) : (
         <span>{message.content || (message.status === "pending" ? "..." : "")}</span>
@@ -76,22 +90,76 @@ function ToolActivity({ toolCalls }: { toolCalls: MessageToolCall[] }) {
     ["started", "pending"].includes(toolCall.status),
   );
   if (!active) return null;
+  const label = active.tool_name === "web_search" ? "Searching web" : "Searching library";
 
   return (
     <div className={styles.toolActivity}>
       <Search size={14} />
-      <span>Searching library</span>
+      <span>{label}</span>
     </div>
   );
 }
 
-function SourceCitations({ retrievals }: { retrievals: MessageRetrieval[] }) {
-  if (retrievals.length === 0) return null;
+function SourceCitations({
+  retrievals,
+  webCitations,
+}: {
+  retrievals: MessageRetrieval[];
+  webCitations: WebCitationChipData[];
+}) {
+  if (retrievals.length === 0 && webCitations.length === 0) return null;
 
   return (
     <div className={styles.sourceCitations}>
+      {webCitations.map((citation, index) => {
+        const label = citation.title || citation.source_name || citation.display_url || "Web";
+        const meta = citation.source_name || citation.display_url;
+        return (
+          <a
+            key={getWebCitationKey(citation, index)}
+            className={`${styles.sourceCitation} ${styles.webCitation}`}
+            href={citation.url}
+            target="_blank"
+            rel="noreferrer"
+            title={citation.snippet ?? label}
+          >
+            <Globe size={12} />
+            <span>{label}</span>
+            {meta && meta !== label ? (
+              <span className={styles.citationMeta}>{meta}</span>
+            ) : null}
+            <ExternalLink size={12} />
+          </a>
+        );
+      })}
       {retrievals.map((retrieval) => {
         const citation = retrieval.result_ref;
+        if (isWebCitation(citation)) {
+          const webCitation = toWebCitationChipData(citation);
+          const label =
+            webCitation.title ||
+            webCitation.source_name ||
+            webCitation.display_url ||
+            "Web";
+          const meta = webCitation.source_name || webCitation.display_url;
+          return (
+            <a
+              key={`${retrieval.result_type}-${retrieval.source_id}`}
+              className={`${styles.sourceCitation} ${styles.webCitation}`}
+              href={webCitation.url}
+              target="_blank"
+              rel="noreferrer"
+              title={webCitation.snippet ?? label}
+            >
+              <Globe size={12} />
+              <span>{label}</span>
+              {meta && meta !== label ? (
+                <span className={styles.citationMeta}>{meta}</span>
+              ) : null}
+              <ExternalLink size={12} />
+            </a>
+          );
+        }
         const href = retrieval.deep_link || citation.deep_link;
         const label = citation.title || citation.source_label || "Source";
         return (

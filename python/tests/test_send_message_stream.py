@@ -37,7 +37,7 @@ from nexus.db.session import create_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.middleware.stream_cors import StreamCORSMiddleware
 from nexus.schemas.billing import BillingEntitlementsOut
-from nexus.schemas.conversation import ContextItem
+from nexus.schemas.conversation import ContextItem, WebSearchOptions
 from nexus.services.api_key_resolver import ResolvedKey
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.llm.types import LLMChunk, LLMUsage
@@ -50,6 +50,11 @@ from nexus.services.stream_liveness import (
     check_liveness_marker,
     clear_liveness_marker,
     set_liveness_marker,
+)
+from nexus.services.web_search.types import (
+    WebSearchRequest,
+    WebSearchResponse,
+    WebSearchResultItem,
 )
 from nexus.tasks.sweep_pending import sweep_pending_messages
 from tests.factories import (
@@ -368,6 +373,31 @@ class _DeltaRouter:
         )
 
 
+class _FakeWebSearchProvider:
+    async def search(self, request: WebSearchRequest) -> WebSearchResponse:
+        return WebSearchResponse(
+            query=request.query,
+            provider="fake",
+            provider_request_id="fake-web-request",
+            more_results_available=False,
+            results=(
+                WebSearchResultItem(
+                    result_ref="fake:web:stream",
+                    title="Stream Web Result",
+                    url="https://example.com/stream",
+                    display_url="example.com/stream",
+                    snippet="Stream web snippet",
+                    extra_snippets=(),
+                    published_at=None,
+                    source_name="Example",
+                    rank=1,
+                    provider="fake",
+                    provider_request_id="fake-web-request",
+                ),
+            ),
+        )
+
+
 def _parse_sse_data(event: str) -> dict:
     data_line = next(line for line in event.splitlines() if line.startswith("data: "))
     return json.loads(data_line.removeprefix("data: "))
@@ -417,6 +447,7 @@ class TestAppSearchStream:
             reasoning="none",
             key_mode="auto",
             contexts=[],
+            web_search=WebSearchOptions(mode="off"),
             llm_router=_DeltaRouter(),
         ):
             events.append(event)
@@ -439,6 +470,73 @@ class TestAppSearchStream:
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+
+class TestWebSearchStream:
+    @pytest.mark.asyncio
+    async def test_stream_emits_web_search_tool_and_citation_events(
+        self,
+        engine,
+        direct_db,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-platform-key")
+        monkeypatch.setattr(
+            "nexus.services.api_key_resolver.get_entitlements",
+            lambda db, user_id: BillingEntitlementsOut(
+                plan_tier="ai_plus",
+                can_share=True,
+                can_use_platform_llm=True,
+                platform_token_limit_monthly=1_000_000,
+                transcription_minutes_limit_monthly=300,
+            ),
+        )
+        clear_settings_cache()
+        set_rate_limiter(NoOpRateLimiter())
+
+        user_id = uuid4()
+        with direct_db.session() as session:
+            ensure_user_and_default_library(session, user_id)
+            model_id = create_test_model(session)
+
+        db_factory = create_session_factory(engine)
+        events = []
+
+        async for event in stream_send_message_async(
+            db_factory=db_factory,
+            viewer_id=user_id,
+            conversation_id=None,
+            content="latest external API documentation",
+            model_id=model_id,
+            reasoning="none",
+            key_mode="auto",
+            contexts=[],
+            web_search=WebSearchOptions(mode="required"),
+            llm_router=_DeltaRouter(),
+            web_search_provider=_FakeWebSearchProvider(),
+        ):
+            events.append(event)
+
+        web_tool_result = next(
+            event
+            for event in events
+            if event.startswith("event: tool_result")
+            and _parse_sse_data(event)["tool_name"] == "web_search"
+        )
+        tool_payload = _parse_sse_data(web_tool_result)
+        assert tool_payload["status"] == "complete"
+        assert tool_payload["result_count"] == 1
+        assert tool_payload["citations"][0]["url"] == "https://example.com/stream"
+
+        citation_event = next(event for event in events if event.startswith("event: citation"))
+        citation_payload = _parse_sse_data(citation_event)
+        assert citation_payload["tool_name"] == "web_search"
+        assert citation_payload["url"] == "https://example.com/stream"
+
+        meta_payload = _parse_sse_data(events[0])
+        conversation_id = UUID(meta_payload["conversation_id"])
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
@@ -549,6 +647,7 @@ class TestPdfQuoteBlockingStream:
             reasoning="none",
             key_mode="auto",
             contexts=[ContextItem(type="highlight", id=highlight_id)],
+            web_search=WebSearchOptions(mode="off"),
             llm_router=router,
         ):
             events.append(event)

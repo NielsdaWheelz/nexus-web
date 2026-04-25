@@ -66,17 +66,41 @@ export interface SearchCitationEventData {
   selected: boolean;
 }
 
+export interface WebCitationEventData {
+  assistant_message_id?: string;
+  tool_call_id?: string | null;
+  tool_call_index?: number | null;
+  citation_index?: number;
+  index?: number;
+  result_ref?: string;
+  result_type?: "web" | "news" | "mixed" | string;
+  title: string;
+  url: string;
+  display_url?: string | null;
+  source_name?: string | null;
+  snippet?: string | null;
+  excerpt?: string | null;
+  provider?: string | null;
+  provider_request_id?: string | null;
+  selected?: boolean;
+}
+
+export type CitationEventData = SearchCitationEventData | WebCitationEventData;
+
 export interface SSEToolCallEvent {
   type: "tool_call";
   data: {
     tool_call_id?: string | null;
     assistant_message_id: string;
-    tool_name: "app_search" | string;
+    tool_name: "app_search" | "web_search" | string;
     tool_call_index: number;
     status: "started" | "pending" | "complete" | "error" | string;
     scope?: string;
     types?: string[];
     semantic?: boolean;
+    freshness_days?: number | null;
+    allowed_domains?: string[];
+    blocked_domains?: string[];
   };
 }
 
@@ -85,15 +109,20 @@ export interface SSEToolResultEvent {
   data: {
     tool_call_id?: string | null;
     assistant_message_id: string;
-    tool_name: "app_search" | string;
+    tool_name: "app_search" | "web_search" | string;
     tool_call_index: number;
     status: "complete" | "error" | "skipped" | string;
     error_code?: string | null;
     result_count: number;
     selected_count: number;
     latency_ms: number;
-    citations: SearchCitationEventData[];
+    citations: CitationEventData[];
   };
+}
+
+export interface SSECitationEvent {
+  type: "citation";
+  data: WebCitationEventData;
 }
 
 export type SSEEvent =
@@ -101,7 +130,8 @@ export type SSEEvent =
   | SSEDeltaEvent
   | SSEDoneEvent
   | SSEToolCallEvent
-  | SSEToolResultEvent;
+  | SSEToolResultEvent
+  | SSECitationEvent;
 
 type SSEEventHandler = (event: SSEEvent) => void;
 type SSEErrorHandler = (error: Error) => void;
@@ -154,6 +184,12 @@ export interface SendMessageRequest {
   reasoning: "none" | "minimal" | "low" | "medium" | "high" | "max";
   key_mode?: "auto" | "byok_only" | "platform_only";
   contexts?: SendMessageContext[];
+  web_search: {
+    mode: "off" | "auto" | "required";
+    freshness_days?: number | null;
+    allowed_domains?: string[];
+    blocked_domains?: string[];
+  };
 }
 
 // ============================================================================
@@ -276,6 +312,9 @@ function processEvent(
       break;
     case "tool_result":
       onEvent({ type: "tool_result", data: parsed as SSEToolResultEvent["data"] });
+      break;
+    case "citation":
+      onEvent({ type: "citation", data: parsed as SSECitationEvent["data"] });
       break;
     default:
       // Unknown event type — ignore per spec

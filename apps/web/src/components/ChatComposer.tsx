@@ -19,12 +19,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
   sseClientDirect,
   toWireContextItem,
+  type SSECitationEvent,
   type SSEEvent,
   type SSEToolCallEvent,
   type SSEToolResultEvent,
@@ -76,6 +77,7 @@ export interface ChatComposerProps {
   onDelta?: (assistantId: string, delta: string) => void;
   onToolCall?: (assistantId: string, data: SSEToolCallEvent["data"]) => void;
   onToolResult?: (assistantId: string, data: SSEToolResultEvent["data"]) => void;
+  onCitation?: (assistantId: string, data: SSECitationEvent["data"]) => void;
   onDone?: (
     assistantId: string,
     status: "complete" | "error",
@@ -91,8 +93,10 @@ export interface ChatComposerProps {
 /** Max contexts per message. */
 const MAX_CONTEXTS = 10;
 const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
+const WEB_SEARCH_MODES = ["auto", "required", "off"] as const;
 
 type ComposerModel = ConversationModel;
+type WebSearchMode = SendMessageRequest["web_search"]["mode"];
 
 function getModelSourceLabel(model: ComposerModel): string {
   if (model.available_via === "byok") {
@@ -116,6 +120,10 @@ function firstModelForProviderOrder(models: ComposerModel[]): ComposerModel | un
   return models[0];
 }
 
+function assertNever(value: never): never {
+  throw new Error(`Unhandled SSE event type: ${JSON.stringify(value)}`);
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -131,6 +139,7 @@ export default function ChatComposer({
   onDelta,
   onToolCall,
   onToolResult,
+  onCitation,
   onDone,
   onNonStreamMessages,
 }: ChatComposerProps) {
@@ -145,6 +154,7 @@ export default function ChatComposer({
     "none" | "minimal" | "low" | "medium" | "high" | "max" | ""
   >("");
   const [onlyUseMyKeys, setOnlyUseMyKeys] = useState(false);
+  const [webSearchMode, setWebSearchMode] = useState<WebSearchMode>("auto");
   const abortRef = useRef<(() => void) | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -378,6 +388,10 @@ export default function ChatComposer({
               onToolResult?.(currentAsstId, event.data);
               break;
             }
+            case "citation": {
+              onCitation?.(currentAsstId, event.data);
+              break;
+            }
             case "done": {
               if (event.data.error_code === "E_STREAM_IN_PROGRESS") {
                 pollForCompletion(currentAsstId);
@@ -388,6 +402,9 @@ export default function ChatComposer({
                 event.data.error_code
               );
               break;
+            }
+            default: {
+              assertNever(event);
             }
           }
         },
@@ -442,6 +459,7 @@ export default function ChatComposer({
       onDone,
       onMetaReceived,
       onOptimisticMessages,
+      onCitation,
       onToolCall,
       onToolResult,
       pollForCompletion,
@@ -466,6 +484,12 @@ export default function ChatComposer({
       model_id: selectedModelId,
       reasoning: selectedReasoning,
       key_mode: onlyUseMyKeys ? "byok_only" : "auto",
+      web_search: {
+        mode: webSearchMode,
+        freshness_days: null,
+        allowed_domains: [],
+        blocked_domains: [],
+      },
       contexts:
         attachedContexts.length > 0
           ? attachedContexts.slice(0, MAX_CONTEXTS).map(toWireContextItem)
@@ -493,6 +517,7 @@ export default function ChatComposer({
     selectedModelId,
     selectedReasoning,
     onlyUseMyKeys,
+    webSearchMode,
     attachedContexts,
     streamingEnabled,
     sendNonStreaming,
@@ -621,6 +646,24 @@ export default function ChatComposer({
             disabled={sending}
           />
           Only use my keys
+        </label>
+
+        <label className={styles.webSearchControl}>
+          <Search size={13} aria-hidden="true" />
+          <span className={styles.visuallyHidden}>Web search</span>
+          <select
+            className={styles.webSearchSelect}
+            value={webSearchMode}
+            onChange={(e) => setWebSearchMode(e.target.value as WebSearchMode)}
+            disabled={sending}
+            aria-label="Web search mode"
+          >
+            {WEB_SEARCH_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                Web {mode}
+              </option>
+            ))}
+          </select>
         </label>
       </div>
 
