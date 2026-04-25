@@ -1,6 +1,7 @@
 """Background job handler exports."""
 
 from nexus.tasks.backfill_default_library_closure import backfill_default_library_closure_job
+from nexus.tasks.chat_run import chat_run
 from nexus.tasks.enrich_metadata import enrich_metadata
 from nexus.tasks.ingest_epub import ingest_epub
 from nexus.tasks.ingest_pdf import ingest_pdf
@@ -18,6 +19,7 @@ __all__ = [
     "ingest_epub",
     "ingest_pdf",
     "ingest_youtube_video",
+    "chat_run",
     "enrich_metadata",
     "backfill_default_library_closure_job",
     "podcast_active_subscription_poll_job",

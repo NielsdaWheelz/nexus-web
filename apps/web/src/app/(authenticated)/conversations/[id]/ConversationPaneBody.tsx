@@ -1,15 +1,16 @@
 /**
  * Conversation detail page — chat thread + composer.
  *
- * Loads message history (paginated, oldest first), supports streaming send,
- * and handles optimistic message reconciliation per s3_pr07 §5.4.
+ * Loads message history (paginated, oldest first), sends chat runs,
+ * and handles streamed message updates.
  */
 
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import type { ContextItem } from "@/lib/api/sse";
+import { sseClientDirect, type ContextItem, type SSEEvent } from "@/lib/api/sse";
+import { fetchStreamToken } from "@/lib/api/streamToken";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
@@ -20,6 +21,7 @@ import StateMessage from "@/components/ui/StateMessage";
 import type {
   ConversationMessage,
   ConversationMessagesResponse,
+  ChatRunListResponse,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -101,6 +103,7 @@ function ChatView({
 
   const messageListRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
+  const activeStreamAbortsRef = useRef<Map<string, () => void>>(new Map());
   const {
     handleOptimisticMessages,
     handleMetaReceived,
@@ -109,7 +112,6 @@ function ChatView({
     handleToolResult,
     handleCitation,
     handleDone,
-    handleNonStreamMessages,
   } = useChatMessageUpdates({ setMessages, shouldScrollRef });
   const persistedRows = useMemo(() => {
     const rows: Array<{
@@ -134,6 +136,109 @@ function ChatView({
     return rows;
   }, [messages]);
 
+  const tailChatRun = useCallback(
+    async (runData: ChatRunListResponse["data"][number]) => {
+      const runId = runData.run.id;
+      if (activeStreamAbortsRef.current.has(runId)) return;
+
+      activeStreamAbortsRef.current.set(runId, () => {});
+      let streamBaseUrl: string;
+      let firstStreamToken: string | null = null;
+      try {
+        const tokenResponse = await fetchStreamToken();
+        streamBaseUrl = tokenResponse.stream_base_url;
+        firstStreamToken = tokenResponse.token;
+      } catch (err) {
+        console.error("Failed to resume chat run:", err);
+        activeStreamAbortsRef.current.delete(runId);
+        handleDone(runData.assistant_message.id, "error", "E_STREAM_INTERRUPTED");
+        return;
+      }
+      if (!activeStreamAbortsRef.current.has(runId)) return;
+
+      const getStreamToken = async () => {
+        if (firstStreamToken !== null) {
+          const token = firstStreamToken;
+          firstStreamToken = null;
+          return token;
+        }
+        return (await fetchStreamToken()).token;
+      };
+
+      let currentAsstId = runData.assistant_message.id;
+      shouldScrollRef.current = true;
+
+      const forgetStream = () => {
+        activeStreamAbortsRef.current.delete(runId);
+      };
+
+      const abort = sseClientDirect(
+        streamBaseUrl,
+        getStreamToken,
+        runId,
+        {
+          onEvent: (event: SSEEvent) => {
+            switch (event.type) {
+              case "meta": {
+                const {
+                  user_message_id,
+                  assistant_message_id,
+                } = event.data;
+                handleMetaReceived(
+                  runData.user_message.id,
+                  user_message_id,
+                  runData.assistant_message.id,
+                  assistant_message_id,
+                );
+                currentAsstId = assistant_message_id;
+                break;
+              }
+              case "delta": {
+                handleDelta(currentAsstId, event.data.delta);
+                break;
+              }
+              case "tool_call": {
+                handleToolCall(currentAsstId, event.data);
+                break;
+              }
+              case "tool_result": {
+                handleToolResult(currentAsstId, event.data);
+                break;
+              }
+              case "citation": {
+                handleCitation(currentAsstId, event.data);
+                break;
+              }
+              case "done": {
+                handleDone(
+                  currentAsstId,
+                  event.data.status,
+                  event.data.error_code,
+                );
+                break;
+              }
+            }
+          },
+          onError: (err) => {
+            console.error("Chat run stream failed:", err);
+            handleDone(currentAsstId, "error", "E_STREAM_INTERRUPTED");
+            forgetStream();
+          },
+          onComplete: forgetStream,
+        },
+      );
+      activeStreamAbortsRef.current.set(runId, abort);
+    },
+    [
+      handleCitation,
+      handleDelta,
+      handleDone,
+      handleMetaReceived,
+      handleToolCall,
+      handleToolResult,
+    ],
+  );
+
   // --------------------------------------------------------------------------
   // Data fetching
   // --------------------------------------------------------------------------
@@ -149,6 +254,19 @@ function ChatView({
         setMessages(msgsData.data);
         setOlderCursor(msgsData.page.next_cursor);
         setError(null);
+        try {
+          const activeRuns = await apiFetch<ChatRunListResponse>(
+            `/api/chat-runs?${new URLSearchParams({
+              conversation_id: id,
+              status: "active",
+            })}`,
+          );
+          for (const runData of activeRuns.data) {
+            void tailChatRun(runData);
+          }
+        } catch (err) {
+          console.error("Failed to load active chat runs:", err);
+        }
       } catch (err) {
         if (isApiError(err)) {
           setError(err.message);
@@ -160,6 +278,16 @@ function ChatView({
       }
     };
     load();
+  }, [id, tailChatRun]);
+
+  useEffect(() => {
+    const activeStreamAborts = activeStreamAbortsRef.current;
+    return () => {
+      for (const abort of activeStreamAborts.values()) {
+        abort();
+      }
+      activeStreamAborts.clear();
+    };
   }, [id]);
 
   // Auto-scroll to bottom on new messages
@@ -261,7 +389,6 @@ function ChatView({
                   onToolResult={handleToolResult}
                   onCitation={handleCitation}
                   onDone={handleDone}
-                  onNonStreamMessages={handleNonStreamMessages}
                   onMessageSent={onMessageSent}
                 />
               }

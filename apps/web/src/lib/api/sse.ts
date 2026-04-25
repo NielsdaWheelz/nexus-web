@@ -1,5 +1,5 @@
 /**
- * SSE parser and direct browser -> FastAPI stream client for chat responses.
+ * SSE parser and direct browser -> FastAPI chat-run stream client.
  *
  * Framing rules:
  * 1. Only process `event:` + `data:` lines.
@@ -11,6 +11,7 @@
 
 /** Maximum single event payload size (256 KB). */
 const MAX_EVENT_SIZE_BYTES = 256 * 1024;
+const RECONNECT_DELAY_MS = 1000;
 
 // ============================================================================
 // Types
@@ -40,7 +41,7 @@ export interface SSEDeltaEvent {
 export interface SSEDoneEvent {
   type: "done";
   data: {
-    status: "complete" | "error";
+    status: "complete" | "error" | "cancelled";
     error_code: string | null;
     final_chars?: number;
   };
@@ -135,6 +136,7 @@ export type SSEEvent =
 
 type SSEEventHandler = (event: SSEEvent) => void;
 type SSEErrorHandler = (error: Error) => void;
+type SSEEventIdHandler = (id: string) => void;
 
 // ============================================================================
 // Request payload types
@@ -159,14 +161,14 @@ export interface ContextItem {
  * Strip client-side enriched fields from a ContextItem before sending to the API.
  * Only keeps the wire-format fields that the backend expects.
  */
-export type SendMessageContext = Pick<
+export type ChatRunContext = Pick<
   ContextItem,
   "type" | "id" | "color" | "preview" | "exact" | "mediaId" | "mediaTitle"
 >;
 
 export function toWireContextItem(
   item: ContextItem,
-): SendMessageContext {
+): ChatRunContext {
   return {
     type: item.type,
     id: item.id,
@@ -178,12 +180,12 @@ export function toWireContextItem(
   };
 }
 
-export interface SendMessageRequest {
+export interface ChatRunCreateRequest {
   content: string;
   model_id: string;
   reasoning: "none" | "minimal" | "low" | "medium" | "high" | "max";
   key_mode?: "auto" | "byok_only" | "platform_only";
-  contexts?: SendMessageContext[];
+  contexts?: ChatRunContext[];
   web_search: {
     mode: "off" | "auto" | "required";
     freshness_days?: number | null;
@@ -205,11 +207,13 @@ export interface SendMessageRequest {
 async function parseSSEStream(
   body: ReadableStream<Uint8Array>,
   onEvent: SSEEventHandler,
-  onError: SSEErrorHandler
+  onError: SSEErrorHandler,
+  onEventId: SSEEventIdHandler
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let currentId = "";
   let currentEvent = "";
   let currentData = "";
 
@@ -231,7 +235,9 @@ async function parseSSEStream(
           // Blank line = end of event
           if (currentData) {
             processEvent(currentEvent, currentData, onEvent, onError);
+            if (currentId) onEventId(currentId);
           }
+          currentId = "";
           currentEvent = "";
           currentData = "";
           continue;
@@ -239,6 +245,11 @@ async function parseSSEStream(
 
         if (line.startsWith(":")) {
           // Comment line — ignore
+          continue;
+        }
+
+        if (line.startsWith("id:")) {
+          currentId = line.slice(3).trim();
           continue;
         }
 
@@ -274,6 +285,7 @@ async function parseSSEStream(
     // Process any remaining buffered event
     if (currentData) {
       processEvent(currentEvent, currentData, onEvent, onError);
+      if (currentId) onEventId(currentId);
     }
   } finally {
     reader.releaseLock();
@@ -323,30 +335,23 @@ function processEvent(
 }
 
 // ============================================================================
-// Direct-to-FastAPI SSE Client (PR-08)
+// Direct-to-FastAPI Chat Run SSE Client
 // ============================================================================
 
 /**
- * Send a message via direct browser→fastapi SSE using a stream token.
- *
- * Per PR-08 spec §11.1:
- * 1. Uses stream_base_url + token from fetchStreamToken()
- * 2. Sends to /stream/conversations/{id}/messages or /stream/conversations/messages
- * 3. Parses the shared SSE event format from `/stream/*`
+ * Tail a durable chat run via direct browser -> FastAPI SSE using a stream token.
  *
  * @param streamBaseUrl - The fastapi base URL for streaming
- * @param streamToken - The short-lived stream JWT
- * @param conversationId - Existing conversation ID or null for new
- * @param body - The send message request body
+ * @param streamToken - The short-lived stream JWT, or a supplier that mints one per reconnect
+ * @param runId - Chat run ID returned by POST /api/chat-runs
  * @param handlers - Event callbacks
  * @param options - Optional fetch options
  * @returns Cleanup function to abort the stream
  */
 export function sseClientDirect(
   streamBaseUrl: string,
-  streamToken: string,
-  conversationId: string | null,
-  body: SendMessageRequest,
+  streamToken: string | (() => Promise<string>),
+  runId: string,
   handlers: {
     onEvent: SSEEventHandler;
     onError: SSEErrorHandler;
@@ -354,7 +359,7 @@ export function sseClientDirect(
   },
   options?: {
     signal?: AbortSignal;
-    idempotencyKey?: string;
+    lastEventId?: string;
   }
 ): () => void {
   const controller = new AbortController();
@@ -362,29 +367,37 @@ export function sseClientDirect(
     ? combineSignals(options.signal, controller.signal)
     : controller.signal;
 
-  const url = conversationId
-    ? `${streamBaseUrl}/stream/conversations/${conversationId}/messages`
-    : `${streamBaseUrl}/stream/conversations/messages`;
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-    Authorization: `Bearer ${streamToken}`,
-  };
-
-  if (options?.idempotencyKey) {
-    headers["Idempotency-Key"] = options.idempotencyKey;
-  }
+  const url = `${streamBaseUrl}/stream/chat-runs/${runId}/events`;
+  let lastEventId = options?.lastEventId ?? "";
 
   // Start the fetch + parse pipeline
   (async () => {
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: combinedSignal,
-      });
+    let terminalEventSeen = false;
+
+    while (!combinedSignal.aborted && !terminalEventSeen) {
+      let response: Response;
+      try {
+        const token =
+          typeof streamToken === "function" ? await streamToken() : streamToken;
+        const headers: Record<string, string> = {
+          Accept: "text/event-stream",
+          Authorization: `Bearer ${token}`,
+        };
+        if (lastEventId) headers["Last-Event-ID"] = lastEventId;
+
+        response = await fetch(url, {
+          method: "GET",
+          headers,
+          signal: combinedSignal,
+        });
+      } catch (err) {
+        if (isAbortError(err) || combinedSignal.aborted) {
+          handlers.onComplete?.();
+          return;
+        }
+        await delay(RECONNECT_DELAY_MS);
+        continue;
+      }
 
       if (!response.ok) {
         let errorMessage = `Request failed with status ${response.status}`;
@@ -405,20 +418,56 @@ export function sseClientDirect(
         return;
       }
 
-      await parseSSEStream(response.body, handlers.onEvent, handlers.onError);
-      handlers.onComplete?.();
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
+      let streamError: Error | null = null;
+      try {
+        await parseSSEStream(
+          response.body,
+          (event) => {
+            handlers.onEvent(event);
+            if (event.type === "done") terminalEventSeen = true;
+          },
+          (error) => {
+            streamError = error;
+          },
+          (id) => {
+            lastEventId = id;
+          },
+        );
+      } catch (err) {
+        if (isAbortError(err) || combinedSignal.aborted) {
+          handlers.onComplete?.();
+          return;
+        }
+        await delay(RECONNECT_DELAY_MS);
+        continue;
+      }
+
+      if (streamError) {
+        handlers.onError(streamError);
+        return;
+      }
+    }
+
+    handlers.onComplete?.();
+  })().catch((err) => {
+      if (isAbortError(err)) {
         handlers.onComplete?.();
         return;
       }
       handlers.onError(
         err instanceof Error ? err : new Error("Unknown SSE error")
       );
-    }
-  })();
+    });
 
   return () => controller.abort();
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 // ============================================================================

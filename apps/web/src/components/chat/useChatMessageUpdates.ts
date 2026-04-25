@@ -235,7 +235,7 @@ export function useChatMessageUpdates({
   const handleDone = useCallback(
     (
       assistantId: string,
-      status: "complete" | "error",
+      status: "complete" | "error" | "cancelled",
       errorCode: string | null,
     ) => {
       if (rafRef.current !== null) {
@@ -261,16 +261,6 @@ export function useChatMessageUpdates({
     [setMessages],
   );
 
-  const handleNonStreamMessages = useCallback(
-    (userMsg: ConversationMessage, assistantMsg: ConversationMessage) => {
-      if (shouldScrollRef) {
-        shouldScrollRef.current = true;
-      }
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    },
-    [setMessages, shouldScrollRef],
-  );
-
   return {
     handleOptimisticMessages,
     handleMetaReceived,
@@ -279,6 +269,5 @@ export function useChatMessageUpdates({
     handleToolResult,
     handleCitation,
     handleDone,
-    handleNonStreamMessages,
   };
 }

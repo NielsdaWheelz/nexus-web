@@ -97,6 +97,8 @@ class ApiErrorCode(str, Enum):
     E_STREAM_TOKEN_EXPIRED = "E_STREAM_TOKEN_EXPIRED"  # 401 token past expiry
     E_STREAM_TOKEN_REPLAYED = "E_STREAM_TOKEN_REPLAYED"  # 401 jti already used
     E_STREAM_TOKEN_INVALID = "E_STREAM_TOKEN_INVALID"  # 401 signature or claims failed
+    E_CANCELLED = "E_CANCELLED"  # explicit chat-run cancellation
+    E_LLM_INTERRUPTED = "E_LLM_INTERRUPTED"  # worker crashed after partial provider output
     E_PODCAST_QUOTA_EXCEEDED = (
         "E_PODCAST_QUOTA_EXCEEDED"  # 429 monthly transcription quota exceeded
     )
@@ -208,6 +210,8 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_STREAM_TOKEN_EXPIRED: 401,
     ApiErrorCode.E_STREAM_TOKEN_REPLAYED: 401,
     ApiErrorCode.E_STREAM_TOKEN_INVALID: 401,
+    ApiErrorCode.E_CANCELLED: 499,
+    ApiErrorCode.E_LLM_INTERRUPTED: 503,
     ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED: 429,
     # S5 EPUB errors
     ApiErrorCode.E_RETRY_INVALID_STATE: 409,

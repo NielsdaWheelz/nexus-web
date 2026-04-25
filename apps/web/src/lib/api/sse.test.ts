@@ -62,7 +62,7 @@ describe("sseClientDirect", () => {
     vi.unstubAllGlobals();
   });
 
-  it("posts directly to /stream/* and parses the SSE event stream", async () => {
+  it("tails a chat run and parses the SSE event stream", async () => {
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -108,47 +108,26 @@ describe("sseClientDirect", () => {
       sseClientDirect(
         "https://stream.nexus.test",
         "stream-token",
-        "conv-1",
-        {
-          content: "Hello",
-          model_id: "model-1",
-          reasoning: "none",
-          web_search: {
-            mode: "auto",
-            freshness_days: null,
-            allowed_domains: [],
-            blocked_domains: [],
-          },
-        },
+        "run-1",
         {
           onEvent: (event) => {
             events.push(event);
           },
           onError: reject,
           onComplete: resolve,
-        }
+        },
+        { lastEventId: "7" },
       );
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://stream.nexus.test/stream/conversations/conv-1/messages",
+      "https://stream.nexus.test/stream/chat-runs/run-1/events",
       expect.objectContaining({
-        method: "POST",
+        method: "GET",
         headers: expect.objectContaining({
           Accept: "text/event-stream",
           Authorization: "Bearer stream-token",
-          "Content-Type": "application/json",
-        }),
-        body: JSON.stringify({
-          content: "Hello",
-          model_id: "model-1",
-          reasoning: "none",
-          web_search: {
-            mode: "auto",
-            freshness_days: null,
-            allowed_domains: [],
-            blocked_domains: [],
-          },
+          "Last-Event-ID": "7",
         }),
       })
     );
@@ -230,5 +209,84 @@ describe("sseClientDirect", () => {
         },
       },
     ]);
+  });
+
+  it("mints a fresh stream token when reconnecting", async () => {
+    const encoder = new TextEncoder();
+    const firstStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            [
+              "id: 1",
+              "event: delta",
+              'data: {"delta":"Hel"}',
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    const secondStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            [
+              "id: 2",
+              "event: done",
+              'data: {"status":"complete","error_code":null,"final_chars":3}',
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(firstStream, { status: 200 }))
+      .mockResolvedValueOnce(new Response(secondStream, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tokenSupplier = vi
+      .fn()
+      .mockResolvedValueOnce("token-1")
+      .mockResolvedValueOnce("token-2");
+
+    await new Promise<void>((resolve, reject) => {
+      sseClientDirect(
+        "https://stream.nexus.test",
+        tokenSupplier,
+        "run-1",
+        {
+          onEvent: () => {},
+          onError: reject,
+          onComplete: resolve,
+        },
+      );
+    });
+
+    expect(tokenSupplier).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://stream.nexus.test/stream/chat-runs/run-1/events",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer token-1",
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://stream.nexus.test/stream/chat-runs/run-1/events",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer token-2",
+          "Last-Event-ID": "1",
+        }),
+      }),
+    );
   });
 });

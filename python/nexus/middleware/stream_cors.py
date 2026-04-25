@@ -48,8 +48,8 @@ class StreamCORSMiddleware:
                 status_code=204,
                 headers={
                     "access-control-allow-origin": origin,
-                    "access-control-allow-methods": "POST, OPTIONS",
-                    "access-control-allow-headers": "Authorization, Content-Type, Idempotency-Key",
+                    "access-control-allow-methods": "GET, OPTIONS",
+                    "access-control-allow-headers": "Authorization, Last-Event-ID",
                     "access-control-max-age": "600",
                 },
             )

@@ -1,45 +1,30 @@
-"""Streaming API routes under /stream/*.
+"""SSE replay/tail routes for durable chat runs."""
 
-Per PR-08 spec §10:
-- POST /stream/conversations/{id}/messages — existing conversation
-- POST /stream/conversations/messages — new conversation
-- Auth: Authorization: Bearer <stream_token> (not supabase)
-- CORS via custom middleware (StreamCORSMiddleware)
-- Same request body as non-streaming send-message
+from __future__ import annotations
 
-These routes are browser-callable. Auth middleware skips /stream/* paths;
-authentication is handled by verify_stream_token dependency.
-"""
-
+import asyncio
+import json
+import time
+from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
 
-from nexus.api.deps import get_llm_router, get_session_factory, get_web_search_provider
+from nexus.api.deps import get_session_factory
 from nexus.auth.stream_token import verify_stream_token
-from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.logging import get_logger, set_stream_jti
-from nexus.schemas.conversation import SendMessageRequest
-from nexus.services.agent_tools.web_search import WebSearchProvider
-from nexus.services.llm import LLMRouter
-from nexus.services.send_message_stream import stream_send_message_async
-
-logger = get_logger(__name__)
+from nexus.logging import set_stream_jti
+from nexus.services import chat_runs as chat_runs_service
 
 router = APIRouter(prefix="/stream", tags=["streaming"])
 
+KEEPALIVE_INTERVAL_SECONDS = 15.0
+POLL_INTERVAL_SECONDS = 0.5
+
 
 def get_stream_viewer(request: Request) -> UUID:
-    """Dependency: verify stream token and return user_id.
-
-    Extracts bearer token from Authorization header, verifies it
-    using stream token verification (HS256, iss/aud/scope/jti checks).
-
-    PR-09: Also sets stream_jti in logging context for correlation.
-    """
     auth_header = request.headers.get("authorization", "")
     if not auth_header.lower().startswith("bearer "):
         raise ApiError(
@@ -49,57 +34,28 @@ def get_stream_viewer(request: Request) -> UUID:
 
     token = auth_header[7:].strip()
     if not token:
-        raise ApiError(
-            ApiErrorCode.E_STREAM_TOKEN_INVALID,
-            "Empty bearer token",
-        )
+        raise ApiError(ApiErrorCode.E_STREAM_TOKEN_INVALID, "Empty bearer token")
 
     user_id, jti = verify_stream_token(token)
-
-    # PR-09: Set stream_jti in logging context
     if jti:
         set_stream_jti(jti)
-
     return user_id
 
 
-@router.post("/conversations/{conversation_id}/messages")
-async def stream_send_existing(
-    conversation_id: UUID,
-    body: SendMessageRequest,
+@router.get("/chat-runs/{run_id}/events")
+async def stream_chat_run_events(
+    run_id: UUID,
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
-    llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
-    web_search_provider: Annotated[WebSearchProvider | None, Depends(get_web_search_provider)],
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    after: int | None = Query(default=None, ge=0),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
-    """Send a message with SSE streaming in an existing conversation.
-
-    Browser-callable via stream token auth.
-    """
-    settings = get_settings()
-    if not settings.enable_streaming:
-        raise ApiError(ApiErrorCode.E_FORBIDDEN, "Streaming is disabled")
-
+    cursor = after if after is not None else _parse_last_event_id(last_event_id)
     db_factory = get_session_factory()
+    with db_factory() as db:
+        chat_runs_service.assert_chat_run_owner(db, viewer_id=viewer_id, run_id=run_id)
 
     return StreamingResponse(
-        stream_send_message_async(
-            db_factory=db_factory,
-            viewer_id=viewer_id,
-            conversation_id=conversation_id,
-            content=body.content,
-            model_id=body.model_id,
-            reasoning=body.reasoning,
-            key_mode=body.key_mode,
-            contexts=body.contexts,
-            web_search=body.web_search,
-            idempotency_key=idempotency_key,
-            llm_router=llm_router,
-            web_search_provider=web_search_provider,
-            web_search_country=settings.brave_search_country,
-            web_search_language=settings.brave_search_language,
-            web_search_safe_search=settings.brave_search_safe_search,
-        ),
+        _tail_chat_run_events(run_id=run_id, viewer_id=viewer_id, after=cursor),
         media_type="text/event-stream; charset=utf-8",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -108,45 +64,46 @@ async def stream_send_existing(
     )
 
 
-@router.post("/conversations/messages")
-async def stream_send_new(
-    body: SendMessageRequest,
-    viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
-    llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
-    web_search_provider: Annotated[WebSearchProvider | None, Depends(get_web_search_provider)],
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> StreamingResponse:
-    """Send a message with SSE streaming, creating a new conversation.
-
-    Browser-callable via stream token auth.
-    """
-    settings = get_settings()
-    if not settings.enable_streaming:
-        raise ApiError(ApiErrorCode.E_FORBIDDEN, "Streaming is disabled")
-
+async def _tail_chat_run_events(run_id: UUID, viewer_id: UUID, after: int) -> AsyncIterator[str]:
     db_factory = get_session_factory()
+    cursor = after
+    last_keepalive = time.monotonic()
 
-    return StreamingResponse(
-        stream_send_message_async(
-            db_factory=db_factory,
-            viewer_id=viewer_id,
-            conversation_id=None,
-            content=body.content,
-            model_id=body.model_id,
-            reasoning=body.reasoning,
-            key_mode=body.key_mode,
-            contexts=body.contexts,
-            web_search=body.web_search,
-            idempotency_key=idempotency_key,
-            llm_router=llm_router,
-            web_search_provider=web_search_provider,
-            web_search_country=settings.brave_search_country,
-            web_search_language=settings.brave_search_language,
-            web_search_safe_search=settings.brave_search_safe_search,
-        ),
-        media_type="text/event-stream; charset=utf-8",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    while True:
+        with db_factory() as db:
+            events = chat_runs_service.get_chat_run_events(
+                db,
+                viewer_id=viewer_id,
+                run_id=run_id,
+                after=cursor,
+            )
+
+        for event in events:
+            cursor = event.seq
+            yield _format_sse_event(event.seq, event.event_type, event.payload)
+            if event.event_type == "done":
+                return
+
+        now = time.monotonic()
+        if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
+            yield ": keepalive\n\n"
+            last_keepalive = now
+
+        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+
+def _parse_last_event_id(value: str | None) -> int:
+    if value is None or not value.strip():
+        return 0
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Last-Event-ID must be an integer") from exc
+    if parsed < 0:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Last-Event-ID must be non-negative")
+    return parsed
+
+
+def _format_sse_event(seq: int, event_type: str, payload: dict) -> str:
+    data = json.dumps(payload, separators=(",", ":"))
+    return f"id: {seq}\nevent: {event_type}\ndata: {data}\n\n"

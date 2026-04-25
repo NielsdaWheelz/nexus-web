@@ -74,7 +74,7 @@ export interface ConversationMessage {
   content: string;
   contexts?: MessageContextSnapshot[];
   tool_calls?: MessageToolCall[];
-  status: "pending" | "complete" | "error";
+  status: "pending" | "complete" | "error" | "cancelled";
   error_code: string | null;
   created_at: string;
   updated_at: string;
@@ -83,4 +83,34 @@ export interface ConversationMessage {
 export interface ConversationMessagesResponse {
   data: ConversationMessage[];
   page: { next_cursor: string | null };
+}
+
+export interface ChatRun {
+  id: string;
+  status: "queued" | "running" | "complete" | "error" | "cancelled";
+  conversation_id: string;
+  user_message_id: string;
+  assistant_message_id: string;
+  model_id: string;
+  reasoning: string;
+  key_mode: string;
+  cancel_requested_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error_code: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatRunResponse {
+  data: {
+    run: ChatRun;
+    conversation: { id: string };
+    user_message: ConversationMessage;
+    assistant_message: ConversationMessage;
+  };
+}
+
+export interface ChatRunListResponse {
+  data: ChatRunResponse["data"][];
 }

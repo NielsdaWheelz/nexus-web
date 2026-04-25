@@ -8,8 +8,8 @@ This module provides helpers for:
 - Transactionally upserting conversation_media
 - Recomputing conversation_media (repair helper)
 
-NO PUBLIC ROUTES use this in PR-02. Used by send-message (PR-05) and tested via
-service-layer tests only.
+NO PUBLIC ROUTES use this directly. Chat runs use it while preparing user
+message context rows.
 """
 
 from collections.abc import Sequence

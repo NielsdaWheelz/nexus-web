@@ -6,7 +6,7 @@ Provides JSON-formatted logs with consistent context including:
 - path: Raw request path (never includes query string)
 - method: HTTP method
 - route_template: FastAPI route template (when available after routing)
-- flow_id: Correlation ID for multi-phase send-message flows
+- flow_id: Correlation ID for multi-phase chat-run flows
 - stream_jti: JWT ID from stream token (streaming only)
 - task_name / task_id: background job context
 - timestamp: ISO8601 formatted timestamp
@@ -193,10 +193,10 @@ def set_route_template(template: str | None) -> None:
 
 
 def set_flow_id(flow_id: str | None) -> None:
-    """Set flow_id for multi-phase send-message correlation.
+    """Set flow_id for multi-phase chat-run correlation.
 
     Args:
-        flow_id: UUID string for the current send flow.
+        flow_id: UUID string for the current chat-run flow.
     """
     flow_id_var.set(flow_id)
 

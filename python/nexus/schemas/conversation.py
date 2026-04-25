@@ -3,8 +3,7 @@
 Contains request and response models for conversation and message endpoints.
 These schemas are introduced in Slice 3 (Chat + Quote-to-Chat + Keyword Search).
 
-Note: Per PR-02, only CRUD operations are exposed. Message creation (send)
-is deferred to PR-05.
+Message creation happens through durable chat runs.
 """
 
 from datetime import datetime
@@ -43,6 +42,8 @@ APP_SEARCH_RESULT_TYPES = Literal[
 MESSAGE_TOOL_STATUSES = Literal["pending", "complete", "error"]
 WEB_SEARCH_MODES = Literal["off", "auto", "required"]
 WEB_SEARCH_RESULT_TYPES = Literal["web", "news", "mixed"]
+CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled"]
+CHAT_RUN_EVENT_TYPES = Literal["meta", "tool_call", "tool_result", "citation", "delta", "done"]
 
 
 # =============================================================================
@@ -137,7 +138,7 @@ class MessageToolCallOut(BaseModel):
 
 
 class WebSearchOptions(BaseModel):
-    """Explicit public-web search mode for chat sends."""
+    """Explicit public-web search mode for chat runs."""
 
     mode: WEB_SEARCH_MODES
     freshness_days: int | None = Field(default=None, ge=1)
@@ -178,7 +179,7 @@ class MessageListResponse(BaseModel):
 
 
 # =============================================================================
-# PR-05: Send Message Schemas
+# Chat-run request schemas
 # =============================================================================
 
 
@@ -192,7 +193,7 @@ MAX_CONTEXTS = 10
 
 
 class MessageContextRef(BaseModel):
-    """Canonical typed context reference for send-message inputs.
+    """Canonical typed context reference for chat-run inputs.
 
     Context references point at objects (media, highlights, annotations) whose
     content will be included in the LLM prompt.
@@ -221,17 +222,10 @@ class MessageContextSnapshot(MessageContextRef):
     media_kind: str | None = None
 
 
-class SendMessageRequest(BaseModel):
-    """Request schema for sending a message.
+class ChatRunCreateRequest(BaseModel):
+    """Request schema for creating a durable chat run."""
 
-    Per PR-05 spec:
-    - content: max 20,000 chars
-    - contexts: max 10 items
-    - model_id: must exist and be available to user
-    - reasoning: model-specific reasoning intensity
-    - key_mode: auto | byok_only | platform_only
-    """
-
+    conversation_id: UUID | None = None
     content: str
     model_id: UUID
     reasoning: REASONING_MODES
@@ -242,15 +236,43 @@ class SendMessageRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
 
-class SendMessageResponse(BaseModel):
-    """Response schema for send message.
+class ChatRunOut(BaseModel):
+    """Response schema for a durable chat run."""
 
-    Returns the conversation (created if new), user message, and assistant message.
-    """
+    id: UUID
+    status: CHAT_RUN_STATUSES
+    conversation_id: UUID
+    user_message_id: UUID
+    assistant_message_id: UUID
+    model_id: UUID
+    reasoning: str
+    key_mode: str
+    cancel_requested_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_code: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChatRunResponse(BaseModel):
+    """Response schema for create/read chat-run endpoints."""
+
+    run: ChatRunOut
     conversation: ConversationOut
     user_message: MessageOut
     assistant_message: MessageOut
+
+
+class ChatRunEventOut(BaseModel):
+    """Persisted stream event for a chat run."""
+
+    seq: int
+    event_type: CHAT_RUN_EVENT_TYPES
+    payload: dict[str, Any]
+    created_at: datetime
 
 
 class StreamMetaEvent(BaseModel):
@@ -272,7 +294,7 @@ class StreamDeltaEvent(BaseModel):
 class StreamDoneEvent(BaseModel):
     """SSE done event at stream end."""
 
-    status: str  # "complete" | "error"
+    status: str  # "complete" | "error" | "cancelled"
     usage: dict | None = None
     error_code: str | None = None
     final_chars: int | None = None

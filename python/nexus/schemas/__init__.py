@@ -4,6 +4,10 @@ All schemas are re-exported here for convenient imports.
 """
 
 from nexus.schemas.conversation import (
+    ChatRunCreateRequest,
+    ChatRunEventOut,
+    ChatRunOut,
+    ChatRunResponse,
     ConversationListResponse,
     ConversationOut,
     ConversationSharesOut,
@@ -95,6 +99,10 @@ __all__ = [
     "ConversationListResponse",
     "MessageListResponse",
     "PageInfo",
+    "ChatRunCreateRequest",
+    "ChatRunOut",
+    "ChatRunResponse",
+    "ChatRunEventOut",
     # S4 PR-06 conversation share schemas
     "SetConversationSharesRequest",
     "ConversationShareTargetOut",

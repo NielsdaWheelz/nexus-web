@@ -94,6 +94,7 @@ include = [
     "nexus/services/api_key_resolver.py",
     "nexus/services/capabilities.py",
     "nexus/services/canonicalize.py",
+    "nexus/services/chat_runs.py",
     "nexus/services/context_rendering.py",
     "nexus/services/context_window.py",
     "nexus/services/contexts.py",
@@ -120,7 +121,6 @@ include = [
     "nexus/services/semantic_chunks.py",
     "nexus/services/seq.py",
     "nexus/services/shares.py",
-    "nexus/services/stream_liveness.py",
     "nexus/services/transcript_media.py",
     "nexus/services/transcript_segments.py",
     "nexus/services/url_normalize.py",
@@ -133,7 +133,6 @@ include = [
 ]
 exclude = [
     "tests",
-    "nexus/tasks/sweep_pending.py",
 ]
 
 [tool.pytest.ini_options]

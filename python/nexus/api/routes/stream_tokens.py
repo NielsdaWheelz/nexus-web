@@ -4,7 +4,7 @@ Per PR-08 spec §2:
 - POST /internal/stream-tokens — mints a stream token JWT
 - BFF-only: requires X-Nexus-Internal header + supabase bearer auth
 - Signing key never leaves fastapi env
-- Rate-limited: shares the same per-user RPM limit as send-message
+- Rate-limited: shares the same per-user RPM limit as chat run creation
 """
 
 from typing import Annotated
@@ -34,7 +34,7 @@ def create_stream_token(
             "expires_at": "2026-02-08T21:01:00+00:00"
         }
     """
-    # Share RPM limit with send-message
+    # Share RPM limit with chat run creation.
     rate_limiter = get_rate_limiter()
     rate_limiter.check_rpm_limit(viewer.user_id)
 

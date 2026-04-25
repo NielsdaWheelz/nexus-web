@@ -104,6 +104,13 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(0,),
             lease_seconds=120,
         ),
+        "chat_run": JobDefinition(
+            kind="chat_run",
+            handler=_run_chat_run,
+            max_attempts=3,
+            retry_delays_seconds=(30, 120, 300),
+            lease_seconds=900,
+        ),
         "podcast_sync_subscription_job": JobDefinition(
             kind="podcast_sync_subscription_job",
             handler=_run_podcast_sync_subscription,
@@ -205,6 +212,12 @@ def _run_enrich_metadata(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | N
         media_id=str(payload["media_id"]),
         request_id=_optional_str(payload.get("request_id")),
     )
+
+
+def _run_chat_run(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.chat_run import chat_run
+
+    return chat_run(run_id=str(payload["run_id"]))
 
 
 def _run_podcast_sync_subscription(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:

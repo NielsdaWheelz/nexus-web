@@ -1899,6 +1899,27 @@ class MessageToolStatus(str, PyEnum):
     error = "error"
 
 
+class ChatRunStatus(str, PyEnum):
+    """Lifecycle states for a durable chat run."""
+
+    queued = "queued"
+    running = "running"
+    complete = "complete"
+    error = "error"
+    cancelled = "cancelled"
+
+
+class ChatRunEventType(str, PyEnum):
+    """User-visible event types persisted for chat run replay."""
+
+    meta = "meta"
+    tool_call = "tool_call"
+    tool_result = "tool_result"
+    citation = "citation"
+    delta = "delta"
+    done = "done"
+
+
 class AppSearchResultType(str, PyEnum):
     """Typed app-search result classes surfaced to assistant retrieval."""
 
@@ -2401,6 +2422,138 @@ class MessageRetrieval(Base):
     media: Mapped["Media | None"] = relationship("Media")
 
 
+class ChatRun(Base):
+    """Durable lifecycle row for one user chat send."""
+
+    __tablename__ = "chat_runs"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    owner_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    assistant_message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    model_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("models.id"),
+        nullable=False,
+    )
+    reasoning: Mapped[str] = mapped_column(Text, nullable=False)
+    key_mode: Mapped[str] = mapped_column(Text, nullable=False)
+    web_search: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    next_event_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'running', 'complete', 'error', 'cancelled')",
+            name="ck_chat_runs_status",
+        ),
+        CheckConstraint(
+            "length(idempotency_key) >= 1 AND length(idempotency_key) <= 128",
+            name="ck_chat_runs_idempotency_key_length",
+        ),
+        CheckConstraint("next_event_seq >= 1", name="ck_chat_runs_next_event_seq_positive"),
+        UniqueConstraint(
+            "owner_user_id",
+            "idempotency_key",
+            name="uix_chat_runs_owner_idempotency_key",
+        ),
+        Index("idx_chat_runs_owner_created", "owner_user_id", "created_at", "id"),
+    )
+
+    owner: Mapped["User"] = relationship("User")
+    conversation: Mapped["Conversation"] = relationship("Conversation")
+    user_message: Mapped["Message"] = relationship("Message", foreign_keys=[user_message_id])
+    assistant_message: Mapped["Message"] = relationship(
+        "Message",
+        foreign_keys=[assistant_message_id],
+    )
+    model: Mapped["Model"] = relationship("Model")
+    events: Mapped[list["ChatRunEvent"]] = relationship(
+        "ChatRunEvent",
+        back_populates="run",
+        order_by="ChatRunEvent.seq",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class ChatRunEvent(Base):
+    """Append-only replay event for a chat run."""
+
+    __tablename__ = "chat_run_events"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("chat_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("seq >= 1", name="ck_chat_run_events_seq_positive"),
+        CheckConstraint(
+            "event_type IN ('meta', 'tool_call', 'tool_result', 'citation', 'delta', 'done')",
+            name="ck_chat_run_events_event_type",
+        ),
+        UniqueConstraint("run_id", "seq", name="uix_chat_run_events_run_seq"),
+        Index("idx_chat_run_events_run_seq", "run_id", "seq"),
+    )
+
+    run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="events")
+
+
 class UserApiKey(Base):
     """UserApiKey model - encrypted BYOK API keys per provider."""
 
@@ -2597,50 +2750,6 @@ class ExtensionSession(Base):
     )
 
     user: Mapped["User"] = relationship("User")
-
-
-class IdempotencyKey(Base):
-    """IdempotencyKey model - request deduplication for message sends."""
-
-    __tablename__ = "idempotency_keys"
-
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    key: Mapped[str] = mapped_column(Text, primary_key=True)
-    payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    user_message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    assistant_message_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-
-    __table_args__ = (
-        CheckConstraint(
-            "length(key) >= 1 AND length(key) <= 128",
-            name="ck_idempotency_keys_key_length",
-        ),
-    )
-
-    # Relationships
-    user: Mapped["User"] = relationship("User")
-    user_message: Mapped["Message"] = relationship("Message", foreign_keys=[user_message_id])
-    assistant_message: Mapped["Message"] = relationship(
-        "Message", foreign_keys=[assistant_message_id]
-    )
 
 
 class MessageContext(Base):

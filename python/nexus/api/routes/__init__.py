@@ -9,6 +9,7 @@ from fastapi import APIRouter
 
 from nexus.api.routes.billing import router as billing_router
 from nexus.api.routes.browse import router as browse_router
+from nexus.api.routes.chat_runs import router as chat_runs_router
 from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
 from nexus.api.routes.health import router as health_router
@@ -46,6 +47,7 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router.include_router(highlights_router, tags=["highlights"])
     api_router.include_router(billing_router, tags=["billing"])
     api_router.include_router(conversations_router, tags=["conversations"])
+    api_router.include_router(chat_runs_router, tags=["chat-runs"])
     api_router.include_router(models_router, tags=["models"])
     api_router.include_router(keys_router, tags=["keys"])
     api_router.include_router(browse_router, tags=["browse"])

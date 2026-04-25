@@ -7,9 +7,6 @@ Per PR-02 spec:
 - Conversations: GET/POST/DELETE
 - Messages: GET (list), DELETE
 
-Per PR-05 spec:
-- Message creation: POST /conversations/{id}/messages (send message + LLM response)
-
 All routes require authentication.
 Response envelope: {"data": ...} or {"data": [...], "page": {...}}
 Error envelope: {"error": {"code": "...", "message": "...", "request_id": "..."}}
@@ -18,20 +15,16 @@ Error envelope: {"error": {"code": "...", "message": "...", "request_id": "..."}
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db, get_llm_router, get_web_search_provider
+from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.config import get_settings
 from nexus.errors import ApiErrorCode
 from nexus.responses import success_response
-from nexus.schemas.conversation import SendMessageRequest, SetConversationSharesRequest
+from nexus.schemas.conversation import SetConversationSharesRequest
 from nexus.services import conversations as conversations_service
-from nexus.services import send_message as send_message_service
 from nexus.services import shares as shares_service
-from nexus.services.agent_tools.web_search import WebSearchProvider
-from nexus.services.llm import LLMRouter
 
 router = APIRouter(tags=["conversations"])
 
@@ -129,7 +122,7 @@ def delete_conversation(
 ) -> Response:
     """Delete a conversation.
 
-    Cascades to messages, message_context, conversation_media, conversation_shares.
+    Cascades to messages, message_context, conversation_media, conversation_shares, and chat runs.
 
     Errors:
         E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
@@ -250,111 +243,3 @@ def delete_message(
         message_id=message_id,
     )
     return Response(status_code=204)
-
-
-# =============================================================================
-# Send Message Endpoints (PR-05)
-# =============================================================================
-
-
-@router.post("/conversations/messages", status_code=200)
-async def send_message_new_conversation(
-    body: SendMessageRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
-    web_search_provider: Annotated[WebSearchProvider | None, Depends(get_web_search_provider)],
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> dict:
-    """Send a message and create a new conversation.
-
-    Creates a new conversation, sends the user message, and returns the
-    assistant response from the selected LLM model.
-
-    Per PR-05 spec, this endpoint:
-    - Creates conversation + user message + assistant message atomically
-    - Executes LLM call outside DB transaction
-    - Supports idempotency via Idempotency-Key header
-    - Enforces rate limits and token budgets
-
-    Errors:
-        E_MESSAGE_TOO_LONG (400): Message exceeds 20,000 char limit.
-        E_CONTEXT_TOO_LARGE (400): Context exceeds limits.
-        E_MODEL_NOT_AVAILABLE (400): Model not found or not available.
-        E_LLM_NO_KEY (400): No API key available for provider.
-        E_RATE_LIMITED (429): Per-user rate limit exceeded.
-        E_TOKEN_BUDGET_EXCEEDED (429): Platform token budget exceeded.
-        E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409): Key reused with different payload.
-    """
-    result = await send_message_service.send_message(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=None,
-        content=body.content,
-        model_id=body.model_id,
-        reasoning=body.reasoning,
-        key_mode=body.key_mode,
-        contexts=body.contexts,
-        web_search=body.web_search,
-        idempotency_key=idempotency_key,
-        router=llm_router,
-        web_search_provider=web_search_provider,
-        web_search_country=get_settings().brave_search_country,
-        web_search_language=get_settings().brave_search_language,
-        web_search_safe_search=get_settings().brave_search_safe_search,
-    )
-
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.post("/conversations/{conversation_id}/messages", status_code=200)
-async def send_message_existing_conversation(
-    conversation_id: UUID,
-    body: SendMessageRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
-    web_search_provider: Annotated[WebSearchProvider | None, Depends(get_web_search_provider)],
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> dict:
-    """Send a message in an existing conversation.
-
-    Sends the user message in the specified conversation and returns the
-    assistant response from the selected LLM model.
-
-    Per PR-05 spec, this endpoint:
-    - Locks conversation and assigns seq atomically
-    - Executes LLM call outside DB transaction
-    - Supports idempotency via Idempotency-Key header
-    - Enforces rate limits and token budgets
-
-    Errors:
-        E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
-        E_CONVERSATION_BUSY (409): Pending assistant already exists.
-        E_MESSAGE_TOO_LONG (400): Message exceeds 20,000 char limit.
-        E_CONTEXT_TOO_LARGE (400): Context exceeds limits.
-        E_MODEL_NOT_AVAILABLE (400): Model not found or not available.
-        E_LLM_NO_KEY (400): No API key available for provider.
-        E_RATE_LIMITED (429): Per-user rate limit exceeded.
-        E_TOKEN_BUDGET_EXCEEDED (429): Platform token budget exceeded.
-        E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409): Key reused with different payload.
-    """
-    result = await send_message_service.send_message(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        content=body.content,
-        model_id=body.model_id,
-        reasoning=body.reasoning,
-        key_mode=body.key_mode,
-        contexts=body.contexts,
-        web_search=body.web_search,
-        idempotency_key=idempotency_key,
-        router=llm_router,
-        web_search_provider=web_search_provider,
-        web_search_country=get_settings().brave_search_country,
-        web_search_language=get_settings().brave_search_language,
-        web_search_safe_search=get_settings().brave_search_safe_search,
-    )
-
-    return success_response(result.model_dump(mode="json"))

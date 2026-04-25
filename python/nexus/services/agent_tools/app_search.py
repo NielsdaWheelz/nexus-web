@@ -331,80 +331,122 @@ def _citation_from_search_result(result: SearchResultOut) -> AppSearchCitation:
 def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
     """Persist the app-search tool call and retrieval rows."""
     selected_context_refs = [citation.context_ref for citation in run.selected_citations]
-    insert_tool = text(
-        """
-        INSERT INTO message_tool_calls (
-            conversation_id,
-            user_message_id,
-            assistant_message_id,
-            tool_name,
-            tool_call_index,
-            query_hash,
-            scope,
-            requested_types,
-            semantic,
-            result_refs,
-            selected_context_refs,
-            provider_request_ids,
-            latency_ms,
-            status,
-            error_code
-        )
-        VALUES (
-            :conversation_id,
-            :user_message_id,
-            :assistant_message_id,
-            :tool_name,
-            :tool_call_index,
-            :query_hash,
-            :scope,
-            :requested_types,
-            :semantic,
-            :result_refs,
-            :selected_context_refs,
-            '[]'::jsonb,
-            :latency_ms,
-            :status,
-            :error_code
-        )
-        ON CONFLICT (assistant_message_id, tool_call_index)
-        DO UPDATE SET
-            query_hash = EXCLUDED.query_hash,
-            scope = EXCLUDED.scope,
-            requested_types = EXCLUDED.requested_types,
-            semantic = EXCLUDED.semantic,
-            result_refs = EXCLUDED.result_refs,
-            selected_context_refs = EXCLUDED.selected_context_refs,
-            latency_ms = EXCLUDED.latency_ms,
-            status = EXCLUDED.status,
-            error_code = EXCLUDED.error_code,
-            updated_at = now()
-        RETURNING id
-        """
-    ).bindparams(
-        bindparam("requested_types", type_=JSONB),
-        bindparam("result_refs", type_=JSONB),
-        bindparam("selected_context_refs", type_=JSONB),
-    )
-    tool_call_id = db.execute(
-        insert_tool,
+    existing = db.execute(
+        text(
+            """
+            SELECT id
+            FROM message_tool_calls
+            WHERE assistant_message_id = :assistant_message_id
+              AND tool_call_index = :tool_call_index
+            FOR UPDATE
+            """
+        ),
         {
-            "conversation_id": run.conversation_id,
-            "user_message_id": run.user_message_id,
             "assistant_message_id": run.assistant_message_id,
-            "tool_name": APP_SEARCH_TOOL_NAME,
             "tool_call_index": run.tool_call_index,
-            "query_hash": run.query_hash,
-            "scope": run.scope,
-            "requested_types": run.requested_types,
-            "semantic": run.semantic,
-            "result_refs": run.result_refs,
-            "selected_context_refs": selected_context_refs,
-            "latency_ms": run.latency_ms,
-            "status": run.status,
-            "error_code": run.error_code,
         },
-    ).scalar_one()
+    ).first()
+
+    if existing is None:
+        insert_tool = text(
+            """
+            INSERT INTO message_tool_calls (
+                conversation_id,
+                user_message_id,
+                assistant_message_id,
+                tool_name,
+                tool_call_index,
+                query_hash,
+                scope,
+                requested_types,
+                semantic,
+                result_refs,
+                selected_context_refs,
+                provider_request_ids,
+                latency_ms,
+                status,
+                error_code
+            )
+            VALUES (
+                :conversation_id,
+                :user_message_id,
+                :assistant_message_id,
+                :tool_name,
+                :tool_call_index,
+                :query_hash,
+                :scope,
+                :requested_types,
+                :semantic,
+                :result_refs,
+                :selected_context_refs,
+                '[]'::jsonb,
+                :latency_ms,
+                :status,
+                :error_code
+            )
+            RETURNING id
+            """
+        ).bindparams(
+            bindparam("requested_types", type_=JSONB),
+            bindparam("result_refs", type_=JSONB),
+            bindparam("selected_context_refs", type_=JSONB),
+        )
+        tool_call_id = db.execute(
+            insert_tool,
+            {
+                "conversation_id": run.conversation_id,
+                "user_message_id": run.user_message_id,
+                "assistant_message_id": run.assistant_message_id,
+                "tool_name": APP_SEARCH_TOOL_NAME,
+                "tool_call_index": run.tool_call_index,
+                "query_hash": run.query_hash,
+                "scope": run.scope,
+                "requested_types": run.requested_types,
+                "semantic": run.semantic,
+                "result_refs": run.result_refs,
+                "selected_context_refs": selected_context_refs,
+                "latency_ms": run.latency_ms,
+                "status": run.status,
+                "error_code": run.error_code,
+            },
+        ).scalar_one()
+    else:
+        tool_call_id = existing[0]
+        update_tool = text(
+            """
+            UPDATE message_tool_calls
+            SET query_hash = :query_hash,
+                scope = :scope,
+                requested_types = :requested_types,
+                semantic = :semantic,
+                result_refs = :result_refs,
+                selected_context_refs = :selected_context_refs,
+                latency_ms = :latency_ms,
+                status = :status,
+                error_code = :error_code,
+                updated_at = now()
+            WHERE id = :tool_call_id
+            """
+        ).bindparams(
+            bindparam("requested_types", type_=JSONB),
+            bindparam("result_refs", type_=JSONB),
+            bindparam("selected_context_refs", type_=JSONB),
+        )
+        db.execute(
+            update_tool,
+            {
+                "tool_call_id": tool_call_id,
+                "query_hash": run.query_hash,
+                "scope": run.scope,
+                "requested_types": run.requested_types,
+                "semantic": run.semantic,
+                "result_refs": run.result_refs,
+                "selected_context_refs": selected_context_refs,
+                "latency_ms": run.latency_ms,
+                "status": run.status,
+                "error_code": run.error_code,
+            },
+        )
     run.tool_call_id = tool_call_id
 
     db.execute(

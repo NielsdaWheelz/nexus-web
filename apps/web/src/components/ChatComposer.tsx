@@ -1,19 +1,8 @@
 /**
- * ChatComposer — message input with model picker, context chips, and streaming send.
- *
- * Uses the direct `/stream/*` transport when streaming is enabled.
- * Uses the non-stream API path when streaming is disabled.
- *
- * Per s3_pr07:
- * - Streaming path uses temporary IDs, patches on meta event.
- * - Non-streaming path creates no optimistic state.
- * - Idempotency key generated per send.
- * - Send disabled while in-flight.
- * - Context cap of 10 enforced client-side.
+ * ChatComposer - message input with model picker, context chips, and chat-run send.
  *
  * Security:
  * - Never console.log API key material.
- * - Key input cleared on submit.
  */
 
 "use client";
@@ -30,11 +19,12 @@ import {
   type SSEToolCallEvent,
   type SSEToolResultEvent,
   type ContextItem,
-  type SendMessageRequest,
+  type ChatRunCreateRequest,
 } from "@/lib/api/sse";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import ContextChips from "@/components/chat/ContextChips";
 import type {
+  ChatRunResponse,
   ConversationMessage,
   ConversationModel,
 } from "@/lib/conversations/types";
@@ -43,14 +33,6 @@ import styles from "./ChatComposer.module.css";
 // ============================================================================
 // Types
 // ============================================================================
-
-interface SendResponse {
-  data: {
-    conversation: { id: string };
-    user_message: ConversationMessage;
-    assistant_message: ConversationMessage;
-  };
-}
 
 export interface ChatComposerProps {
   /** Existing conversation ID (null for new conversation). */
@@ -63,7 +45,6 @@ export interface ChatComposerProps {
   onConversationCreated?: (conversationId: string) => void;
   /** Called after message sent (for refreshing lists). */
   onMessageSent?: () => void;
-  /** Streaming callbacks — only used when streaming is enabled. */
   onOptimisticMessages?: (
     userMsg: ConversationMessage,
     assistantMsg: ConversationMessage,
@@ -80,13 +61,8 @@ export interface ChatComposerProps {
   onCitation?: (assistantId: string, data: SSECitationEvent["data"]) => void;
   onDone?: (
     assistantId: string,
-    status: "complete" | "error",
+    status: "complete" | "error" | "cancelled",
     errorCode: string | null
-  ) => void;
-  /** Non-streaming callback. */
-  onNonStreamMessages?: (
-    userMsg: ConversationMessage,
-    assistantMsg: ConversationMessage,
   ) => void;
 }
 
@@ -96,7 +72,7 @@ const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
 const WEB_SEARCH_MODES = ["auto", "required", "off"] as const;
 
 type ComposerModel = ConversationModel;
-type WebSearchMode = SendMessageRequest["web_search"]["mode"];
+type WebSearchMode = ChatRunCreateRequest["web_search"]["mode"];
 
 function getModelSourceLabel(model: ComposerModel): string {
   if (model.available_via === "byok") {
@@ -141,7 +117,6 @@ export default function ChatComposer({
   onToolResult,
   onCitation,
   onDone,
-  onNonStreamMessages,
 }: ChatComposerProps) {
   const router = useRouter();
   const [content, setContent] = useState("");
@@ -165,10 +140,6 @@ export default function ChatComposer({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
     el.style.overflowY = el.scrollHeight > 160 ? "auto" : "hidden";
   }, [content]);
-
-  const streamingEnabled =
-    typeof window !== "undefined" &&
-    process.env.NEXT_PUBLIC_ENABLE_STREAMING === "1";
 
   // --------------------------------------------------------------------------
   // Fetch available models
@@ -214,145 +185,64 @@ export default function ChatComposer({
   }, []);
 
   // --------------------------------------------------------------------------
-  // PR-08 §11.3: Poll for E_STREAM_IN_PROGRESS completion
+  // Chat-run send
   // --------------------------------------------------------------------------
 
-  const pollForCompletion = useCallback(
-    async (assistantMessageId: string) => {
-      if (!conversationId) return;
-
-      const maxAttempts = 15; // 30s total (2s intervals)
-      for (let i = 0; i < maxAttempts; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        try {
-          const res = await apiFetch<{
-            data: ConversationMessage[];
-          }>(`/api/conversations/${conversationId}/messages?limit=5`);
-          const messages = res.data;
-          const found = messages.find(
-            (m) => m.id === assistantMessageId && m.status === "complete"
-          );
-          if (found) {
-            onDone?.(assistantMessageId, "complete", null);
-            return;
-          }
-        } catch {
-          // Ignore polling errors
-        }
-      }
-      // Timed out — show message
-      setError("Message is still generating — please wait and try again.");
-    },
-    [conversationId, onDone]
-  );
-
-  // --------------------------------------------------------------------------
-  // Non-streaming send
-  // --------------------------------------------------------------------------
-
-  const sendNonStreaming = useCallback(
-    async (body: SendMessageRequest, idempotencyKey: string): Promise<boolean> => {
+  const sendChatRun = useCallback(
+    async (body: ChatRunCreateRequest, idempotencyKey: string): Promise<boolean> => {
+      let runResponse: ChatRunResponse;
       try {
-        const url = conversationId
-          ? `/api/conversations/${conversationId}/messages`
-          : `/api/conversations/messages`;
-
-        const response = await apiFetch<SendResponse>(url, {
+        runResponse = await apiFetch<ChatRunResponse>("/api/chat-runs", {
           method: "POST",
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            ...body,
+            ...(conversationId ? { conversation_id: conversationId } : {}),
+          }),
           headers: { "Idempotency-Key": idempotencyKey },
         });
-
-        const { conversation, user_message, assistant_message } =
-          response.data;
-
-        onNonStreamMessages?.(user_message, assistant_message);
-
-        if (!conversationId) {
-          if (onConversationCreated) {
-            onConversationCreated(conversation.id);
-          } else {
-            router.replace(`/conversations/${conversation.id}`);
-          }
-        }
-        return true;
       } catch (err) {
-        if (isApiError(err)) {
-          setError(err.message);
-        } else {
-          setError("Failed to send message");
-        }
+        setError(isApiError(err) ? err.message : "Failed to start chat run");
         return false;
       }
-    },
-    [conversationId, onConversationCreated, onNonStreamMessages, router]
-  );
 
-  // --------------------------------------------------------------------------
-  // Streaming send
-  // --------------------------------------------------------------------------
+      const { run, conversation, user_message, assistant_message } =
+        runResponse.data;
+      onOptimisticMessages?.(user_message, assistant_message);
 
-  const sendStreaming = useCallback(
-    async (body: SendMessageRequest, idempotencyKey: string): Promise<boolean> => {
+      if (!conversationId) {
+        if (onConversationCreated) {
+          onConversationCreated(conversation.id);
+        } else {
+          router.replace(`/conversations/${conversation.id}`);
+        }
+      }
+
       let streamBaseUrl: string;
-      let streamToken: string;
+      let firstStreamToken: string | null = null;
       try {
         const tokenResponse = await fetchStreamToken();
         streamBaseUrl = tokenResponse.stream_base_url;
-        streamToken = tokenResponse.token;
+        firstStreamToken = tokenResponse.token;
       } catch {
         setError("Streaming is unavailable right now.");
         return false;
       }
 
-      const tempUserId = `temp-user-${crypto.randomUUID()}`;
-      const tempAsstId = `temp-assistant-${crypto.randomUUID()}`;
-      const now = new Date().toISOString();
-
-      // Create optimistic placeholders
-      const userMsg: ConversationMessage = {
-        id: tempUserId,
-        seq: 0,
-        role: "user",
-        content: body.content,
-        contexts: body.contexts?.map((ctx) => ({
-          type: ctx.type,
-          id: ctx.id,
-          ...(ctx.color !== undefined && { color: ctx.color }),
-          ...(ctx.preview !== undefined && { preview: ctx.preview }),
-          ...(ctx.exact !== undefined && { exact: ctx.exact }),
-          ...(ctx.mediaId !== undefined && { media_id: ctx.mediaId }),
-          ...(ctx.mediaTitle !== undefined && { media_title: ctx.mediaTitle }),
-        })),
-        status: "complete",
-        error_code: null,
-        created_at: now,
-        updated_at: now,
-      };
-      const asstMsg: ConversationMessage = {
-        id: tempAsstId,
-        seq: 0,
-        role: "assistant",
-        content: "",
-        status: "pending",
-        error_code: null,
-        created_at: now,
-        updated_at: now,
+      const getStreamToken = async () => {
+        if (firstStreamToken !== null) {
+          const token = firstStreamToken;
+          firstStreamToken = null;
+          return token;
+        }
+        return (await fetchStreamToken()).token;
       };
 
-      onOptimisticMessages?.(userMsg, asstMsg);
-
-      // Track current assistant ID (may change from temp to real)
-      let currentAsstId = tempAsstId;
-      let receivedMeta = false;
-      let sendAccepted = false;
+      let currentAsstId = assistant_message.id;
 
       const eventHandlers = {
         onEvent: (event: SSEEvent) => {
           switch (event.type) {
             case "meta": {
-              receivedMeta = true;
-              sendAccepted = true;
               const {
                 conversation_id,
                 user_message_id,
@@ -360,9 +250,9 @@ export default function ChatComposer({
               } = event.data;
 
               onMetaReceived?.(
-                tempUserId,
+                user_message.id,
                 user_message_id,
-                tempAsstId,
+                assistant_message.id,
                 assistant_message_id
               );
               currentAsstId = assistant_message_id;
@@ -393,9 +283,6 @@ export default function ChatComposer({
               break;
             }
             case "done": {
-              if (event.data.error_code === "E_STREAM_IN_PROGRESS") {
-                pollForCompletion(currentAsstId);
-              }
               onDone?.(
                 currentAsstId,
                 event.data.status,
@@ -409,11 +296,8 @@ export default function ChatComposer({
           }
         },
         onError: (err: Error) => {
-          if (!receivedMeta) {
-            setError(`Stream error: ${err.message}`);
-          } else {
-            onDone?.(currentAsstId, "error", "E_STREAM_INTERRUPTED");
-          }
+          setError(`Stream error: ${err.message}`);
+          onDone?.(currentAsstId, "error", "E_STREAM_INTERRUPTED");
         },
         onComplete: () => {},
       };
@@ -431,24 +315,22 @@ export default function ChatComposer({
           ...eventHandlers,
           onError: (err: Error) => {
             eventHandlers.onError(err);
-            finish(sendAccepted);
+            finish(true);
           },
           onComplete: () => {
-            finish(sendAccepted);
+            finish(true);
           },
           onEvent: (event: SSEEvent) => {
             eventHandlers.onEvent(event);
-            if (event.type === "done") finish(sendAccepted);
+            if (event.type === "done") finish(true);
           },
         };
 
         abortRef.current = sseClientDirect(
           streamBaseUrl,
-          streamToken,
-          conversationId,
-          body,
+          getStreamToken,
+          run.id,
           wrappedHandlers,
-          { idempotencyKey }
         );
       });
     },
@@ -462,7 +344,6 @@ export default function ChatComposer({
       onCitation,
       onToolCall,
       onToolResult,
-      pollForCompletion,
       router,
     ]
   );
@@ -479,7 +360,7 @@ export default function ChatComposer({
     setError(null);
 
     const idempotencyKey = crypto.randomUUID();
-    const body: SendMessageRequest = {
+    const body: ChatRunCreateRequest = {
       content: trimmed,
       model_id: selectedModelId,
       reasoning: selectedReasoning,
@@ -498,11 +379,7 @@ export default function ChatComposer({
 
     let sent = false;
     try {
-      if (streamingEnabled) {
-        sent = await sendStreaming(body, idempotencyKey);
-      } else {
-        sent = await sendNonStreaming(body, idempotencyKey);
-      }
+      sent = await sendChatRun(body, idempotencyKey);
     } finally {
       setSending(false);
     }
@@ -519,9 +396,7 @@ export default function ChatComposer({
     onlyUseMyKeys,
     webSearchMode,
     attachedContexts,
-    streamingEnabled,
-    sendNonStreaming,
-    sendStreaming,
+    sendChatRun,
     onMessageSent,
   ]);
 

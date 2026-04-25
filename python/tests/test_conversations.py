@@ -1006,8 +1006,8 @@ class TestListConversationsScope:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_MESSAGE_NOT_FOUND"
 
-    # NOTE: test_send_message_existing_conversation_non_owner_still_masked_404
-    # is covered by test_send_message.py::TestSendMessageValidation::test_conversation_not_owned_returns_404
+    # NOTE: Chat send ownership checks are covered by the chat-run create contract
+    # after the durable chat-runs cutover.
     # (requires lifespan-aware TestClient for llm_router setup)
 
     def test_list_conversations_scope_all_cursor_is_stable_across_mixed_visibility(

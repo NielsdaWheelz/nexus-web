@@ -63,7 +63,6 @@ export default function QuoteChatSheet({
     handleToolResult,
     handleCitation,
     handleDone,
-    handleNonStreamMessages,
   } = useChatMessageUpdates({ setMessages, shouldScrollRef });
 
   useFocusTrap(sheetRef, true);
@@ -277,7 +276,6 @@ export default function QuoteChatSheet({
                 onToolResult={handleToolResult}
                 onCitation={handleCitation}
                 onDone={handleDone}
-                onNonStreamMessages={handleNonStreamMessages}
                 onMessageSent={handleMessageSent}
               />
             }

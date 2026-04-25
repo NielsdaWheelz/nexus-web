@@ -15,6 +15,7 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "ingest_pdf",
         "ingest_youtube_video",
         "enrich_metadata",
+        "chat_run",
         "podcast_sync_subscription_job",
         "podcast_transcribe_episode_job",
         "podcast_reindex_semantic_job",

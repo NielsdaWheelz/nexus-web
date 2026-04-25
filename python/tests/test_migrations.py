@@ -2690,15 +2690,23 @@ class TestS3SchemaConstraints:
             session.rollback()
             assert "uix_user_api_keys_user_provider" in str(exc_info.value)
 
-    def test_idempotency_key_length_constraint(self, migrated_engine):
-        """CHECK constraint: key length between 1 and 128."""
+    def test_chat_run_idempotency_key_length_constraint(self, migrated_engine):
+        """CHECK constraint: chat run idempotency key length between 1 and 128."""
         with Session(migrated_engine) as session:
             user_id = uuid4()
             conversation_id = uuid4()
             msg1_id = uuid4()
             msg2_id = uuid4()
+            model_id = uuid4()
 
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
+                    VALUES (:id, 'openai', :model_name, 4096, true)
+                """),
+                {"id": model_id, "model_name": f"migration-test-{model_id}"},
+            )
             session.execute(
                 text("""
                     INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
@@ -2726,20 +2734,46 @@ class TestS3SchemaConstraints:
             with pytest.raises(IntegrityError) as exc_info:
                 session.execute(
                     text("""
-                        INSERT INTO idempotency_keys (user_id, key, payload_hash, user_message_id, assistant_message_id, expires_at)
-                        VALUES (:user_id, :key, 'hash', :msg1, :msg2, now() + interval '1 day')
+                        INSERT INTO chat_runs (
+                            owner_user_id,
+                            conversation_id,
+                            user_message_id,
+                            assistant_message_id,
+                            idempotency_key,
+                            payload_hash,
+                            status,
+                            model_id,
+                            reasoning,
+                            key_mode,
+                            web_search
+                        )
+                        VALUES (
+                            :user_id,
+                            :conversation_id,
+                            :msg1,
+                            :msg2,
+                            :key,
+                            'hash',
+                            'queued',
+                            :model_id,
+                            'none',
+                            'auto',
+                            '{"mode": "off"}'::jsonb
+                        )
                     """),
                     {
                         "user_id": user_id,
+                        "conversation_id": conversation_id,
                         "key": "x" * 129,  # Too long
                         "msg1": msg1_id,
                         "msg2": msg2_id,
+                        "model_id": model_id,
                     },
                 )
                 session.commit()
 
             session.rollback()
-            assert "ck_idempotency_keys_key_length" in str(exc_info.value)
+            assert "ck_chat_runs_idempotency_key_length" in str(exc_info.value)
 
     def test_fragment_block_offsets_constraint(self, migrated_engine):
         """CHECK constraint: end_offset >= start_offset."""

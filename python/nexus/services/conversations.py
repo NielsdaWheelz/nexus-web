@@ -700,8 +700,8 @@ def _build_conversation_page(
 def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:
     """Delete a conversation.
 
-    Cascades to messages, message_context, conversation_media, conversation_shares
-    via FK CASCADE.
+    Cascades to messages, message_context, conversation_media, conversation_shares,
+    chat runs, and chat run events.
 
     Args:
         db: Database session.
@@ -715,7 +715,6 @@ def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> 
     # Verify ownership (write = owner-only)
     get_conversation_for_owner_write_or_404(db, viewer_id, conversation_id)
 
-    # Delete via raw SQL to let CASCADE do its work
     db.execute(delete(Conversation).where(Conversation.id == conversation_id))
     db.flush()
     db.commit()
@@ -849,7 +848,6 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
 
     conversation_id = conversation.id
 
-    # Delete the message (CASCADE handles message_context)
     db.execute(delete(Message).where(Message.id == message_id))
     db.flush()
 
