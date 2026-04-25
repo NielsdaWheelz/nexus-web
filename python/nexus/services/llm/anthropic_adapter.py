@@ -212,8 +212,7 @@ class AnthropicAdapter(LLMAdapter):
             body["system"] = system_prompt
 
         uses_adaptive_thinking = (
-            req.model_name in ANTHROPIC_ADAPTIVE_THINKING_MODELS
-            and req.reasoning_effort != "none"
+            req.model_name in ANTHROPIC_ADAPTIVE_THINKING_MODELS and req.reasoning_effort != "none"
         )
         if req.temperature is not None and not uses_adaptive_thinking:
             body["temperature"] = req.temperature

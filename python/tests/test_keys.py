@@ -18,6 +18,7 @@ import base64
 from uuid import uuid4
 
 import pytest
+import respx
 from sqlalchemy import text
 
 from nexus.services.crypto import (
@@ -32,6 +33,30 @@ from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+
+
+def _openai_key_test_success() -> dict:
+    return {
+        "id": "resp_test_key",
+        "output": [
+            {
+                "type": "message",
+                "content": [{"type": "output_text", "text": "ok"}],
+            }
+        ],
+        "usage": {
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "total_tokens": 2,
+        },
+    }
+
+
+def _provider_state(data: list[dict], provider: str) -> dict:
+    return next(item for item in data if item["provider"] == provider)
+
 
 # =============================================================================
 # Fixtures
@@ -143,9 +168,9 @@ class TestApiSafety:
 
         assert response.status_code == 200
         data = response.json()["data"]
-        assert len(data) == 1
+        assert len(data) == 4
 
-        key = data[0]
+        key = _provider_state(data, "openai")
         # These fields must NEVER be present
         assert "encrypted_key" not in key
         assert "key_nonce" not in key
@@ -154,9 +179,13 @@ class TestApiSafety:
         # These fields should be present
         assert "id" in key
         assert "provider" in key
+        assert "provider_display_name" in key
+        assert "fingerprint" in key
         assert "key_fingerprint" in key
         assert "status" in key
         assert "created_at" in key
+        assert "last_tested_at" in key
+        assert "last_used_at" in key
 
     def test_upsert_key_response_excludes_sensitive_fields(self, auth_client):
         """POST /keys response never includes sensitive fields."""
@@ -658,6 +687,13 @@ class TestAuth:
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "E_UNAUTHENTICATED"
 
+    def test_test_key_without_auth_returns_401(self, client):
+        """POST /keys/:id/test without auth returns 401 E_UNAUTHENTICATED."""
+        response = client.post(f"/keys/{uuid4()}/test")
+
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "E_UNAUTHENTICATED"
+
 
 # =============================================================================
 # List Keys Tests
@@ -668,16 +704,25 @@ class TestListKeys:
     """Tests for GET /keys endpoint."""
 
     def test_list_keys_empty(self, auth_client):
-        """List keys returns empty list for user with no keys."""
+        """List keys returns missing states for enabled providers with no keys."""
         user_id = create_test_user_id()
 
         response = auth_client.get("/keys", headers=auth_headers(user_id))
 
         assert response.status_code == 200
-        assert response.json()["data"] == []
+        data = response.json()["data"]
+        assert [item["provider"] for item in data] == [
+            "openai",
+            "anthropic",
+            "gemini",
+            "deepseek",
+        ]
+        assert {item["status"] for item in data} == {"missing"}
+        assert all(item["id"] is None for item in data)
+        assert all(item["fingerprint"] is None for item in data)
 
     def test_list_keys_returns_all_user_keys(self, auth_client):
-        """List keys returns all keys for the user."""
+        """List keys returns saved keys plus missing enabled provider states."""
         user_id = create_test_user_id()
 
         # Create keys for multiple providers
@@ -695,10 +740,15 @@ class TestListKeys:
         response = auth_client.get("/keys", headers=auth_headers(user_id))
 
         assert response.status_code == 200
-        assert len(response.json()["data"]) == 2
+        data = response.json()["data"]
+        assert len(data) == 4
+        assert _provider_state(data, "openai")["status"] == "untested"
+        assert _provider_state(data, "anthropic")["status"] == "untested"
+        assert _provider_state(data, "gemini")["status"] == "missing"
+        assert _provider_state(data, "deepseek")["status"] == "missing"
 
     def test_list_keys_isolation(self, auth_client):
-        """Users can only see their own keys."""
+        """Users can only see their own saved key states."""
         user_a = create_test_user_id()
         user_b = create_test_user_id()
 
@@ -713,4 +763,98 @@ class TestListKeys:
         response = auth_client.get("/keys", headers=auth_headers(user_b))
 
         assert response.status_code == 200
-        assert response.json()["data"] == []
+        data = response.json()["data"]
+        assert len(data) == 4
+        assert {item["status"] for item in data} == {"missing"}
+
+
+# =============================================================================
+# Saved Key Test Endpoint
+# =============================================================================
+
+
+class TestKeyValidation:
+    """Tests for POST /keys/{key_id}/test."""
+
+    @respx.mock
+    def test_test_key_marks_saved_key_valid(self, auth_client, direct_db: DirectSessionManager):
+        """A successful provider validation marks the key valid and updates last_tested_at."""
+        user_id = create_test_user_id()
+        create_resp = auth_client.post(
+            "/keys",
+            json={"provider": "openai", "api_key": "sk-test-valid-key-1234567890abcdef"},
+            headers=auth_headers(user_id),
+        )
+        key_id = create_resp.json()["data"]["id"]
+
+        respx.post(OPENAI_RESPONSES_URL).respond(200, json=_openai_key_test_success())
+
+        response = auth_client.post(f"/keys/{key_id}/test", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["status"] == "valid"
+        assert data["last_tested_at"] is not None
+        assert data["last_used_at"] is None
+        assert "encrypted_key" not in data
+        assert "key_nonce" not in data
+        assert "master_key_version" not in data
+
+        with direct_db.session() as session:
+            result = session.execute(
+                text("SELECT status, last_tested_at FROM user_api_keys WHERE id = :id"),
+                {"id": key_id},
+            )
+            row = result.fetchone()
+            assert row[0] == "valid"
+            assert row[1] is not None
+
+    @respx.mock
+    def test_test_key_marks_saved_key_invalid(self, auth_client, direct_db: DirectSessionManager):
+        """An auth failure marks the key invalid and returns the updated state."""
+        user_id = create_test_user_id()
+        create_resp = auth_client.post(
+            "/keys",
+            json={"provider": "openai", "api_key": "sk-test-invalid-key-1234567890abcdef"},
+            headers=auth_headers(user_id),
+        )
+        key_id = create_resp.json()["data"]["id"]
+
+        respx.post(OPENAI_RESPONSES_URL).respond(
+            401,
+            json={"error": {"message": "Invalid API key", "code": "invalid_api_key"}},
+        )
+
+        response = auth_client.post(f"/keys/{key_id}/test", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["status"] == "invalid"
+        assert data["last_tested_at"] is not None
+
+        with direct_db.session() as session:
+            result = session.execute(
+                text("SELECT status, last_tested_at FROM user_api_keys WHERE id = :id"),
+                {"id": key_id},
+            )
+            row = result.fetchone()
+            assert row[0] == "invalid"
+            assert row[1] is not None
+
+    def test_test_other_users_key_returns_404(self, auth_client):
+        """Testing another user's key returns 404 E_KEY_NOT_FOUND."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/keys",
+            json={"provider": "openai", "api_key": "sk-test-user-a-key-1234567890abcdef"},
+            headers=auth_headers(user_a),
+        )
+        key_id = create_resp.json()["data"]["id"]
+
+        auth_client.get("/me", headers=auth_headers(user_b))
+        response = auth_client.post(f"/keys/{key_id}/test", headers=auth_headers(user_b))
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_KEY_NOT_FOUND"

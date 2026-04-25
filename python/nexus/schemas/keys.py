@@ -24,6 +24,8 @@ ReasoningMode = Literal["none", "minimal", "low", "medium", "high", "max"]
 
 # Valid key statuses - must match DB constraint
 KeyStatus = Literal["untested", "valid", "invalid", "revoked"]
+KeyProviderStateStatus = Literal["missing", "untested", "valid", "invalid", "revoked"]
+ModelAvailableVia = Literal["byok", "platform", "both"]
 
 
 # =============================================================================
@@ -46,6 +48,7 @@ class ModelOut(BaseModel):
     model_tier: ModelTier
     reasoning_modes: list[ReasoningMode]
     max_context_tokens: int
+    available_via: ModelAvailableVia
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -67,12 +70,15 @@ class UserApiKeyOut(BaseModel):
     - master_key_version
     """
 
-    id: UUID
+    id: UUID | None = None
     provider: str
-    key_fingerprint: str
-    status: str  # untested | valid | invalid | revoked
-    created_at: datetime
+    provider_display_name: str
+    fingerprint: str | None = None
+    key_fingerprint: str | None = None
+    status: KeyProviderStateStatus
+    created_at: datetime | None = None
     last_tested_at: datetime | None = None
+    last_used_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

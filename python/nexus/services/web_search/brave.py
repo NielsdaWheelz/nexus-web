@@ -86,10 +86,14 @@ class BraveSearchProvider:
                     raise last_error from exc
             except httpx.HTTPStatusError as exc:
                 error = self._map_http_error(exc.response)
-                if error.code not in {
-                    WebSearchErrorCode.RATE_LIMITED,
-                    WebSearchErrorCode.PROVIDER_DOWN,
-                } or attempt + 1 >= BRAVE_SEARCH_MAX_ATTEMPTS:
+                if (
+                    error.code
+                    not in {
+                        WebSearchErrorCode.RATE_LIMITED,
+                        WebSearchErrorCode.PROVIDER_DOWN,
+                    }
+                    or attempt + 1 >= BRAVE_SEARCH_MAX_ATTEMPTS
+                ):
                     raise error from exc
                 last_error = error
             except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
@@ -225,9 +229,7 @@ class BraveSearchProvider:
             if isinstance(snippet, str) and snippet.strip()
         )
         profile = raw.get("profile") or {}
-        source_name = (
-            str(profile.get("name") or raw.get("source") or "").strip() or _hostname(url)
-        )
+        source_name = str(profile.get("name") or raw.get("source") or "").strip() or _hostname(url)
         published_at = (
             raw.get("age")
             or raw.get("page_age")

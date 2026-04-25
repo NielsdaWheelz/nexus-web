@@ -902,6 +902,7 @@ export default function LinkedItemsPane({
       );
     },
     [
+      canSendToChat,
       changingColor,
       deleting,
       focusedId,

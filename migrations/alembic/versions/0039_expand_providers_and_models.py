@@ -80,20 +80,40 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Remove new models
+    # Remove rows that cannot satisfy the pre-0039 provider constraints.
+    op.execute(
+        """
+        DELETE FROM message_llm WHERE provider = 'deepseek'
+        """
+    )
+    op.execute(
+        """
+        DELETE FROM user_api_keys WHERE provider = 'deepseek'
+        """
+    )
+    op.execute(
+        """
+        DELETE FROM models WHERE provider = 'deepseek'
+        """
+    )
+
+    # Remove new non-DeepSeek models.
     op.execute(
         """
         DELETE FROM models
         WHERE model_name IN (
-            'gpt-5.4-mini', 'gpt-4.1-nano',
-            'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001',
-            'gemini-2.5-pro', 'gemini-2.5-flash',
-            'deepseek-chat', 'deepseek-reasoner'
+            'gpt-5.4-mini',
+            'gpt-4.1-nano',
+            'claude-opus-4-6',
+            'claude-sonnet-4-6',
+            'claude-haiku-4-5-20251001',
+            'gemini-2.5-pro',
+            'gemini-2.5-flash'
         )
         """
     )
 
-    # Restore stale models
+    # Restore stale models.
     op.execute(
         """
         UPDATE models SET is_available = true

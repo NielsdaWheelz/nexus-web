@@ -137,9 +137,7 @@ class DeepSeekAdapter(LLMAdapter):
             body["temperature"] = req.temperature
 
         if req.model_name in DEEPSEEK_V4_MODELS:
-            body["thinking"] = {
-                "type": "disabled" if req.reasoning_effort == "none" else "enabled"
-            }
+            body["thinking"] = {"type": "disabled" if req.reasoning_effort == "none" else "enabled"}
 
         return body
 

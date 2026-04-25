@@ -65,29 +65,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        """
-        UPDATE models
-        SET is_available = false
-        WHERE provider IN ('openai', 'anthropic', 'gemini', 'deepseek')
-          AND (
-            (provider = 'openai' AND model_name IN ('gpt-5.5', 'gpt-5.4-mini'))
-            OR (
-              provider = 'anthropic'
-              AND model_name IN (
-                'claude-opus-4-7',
-                'claude-sonnet-4-6',
-                'claude-haiku-4-5-20251001'
-              )
-            )
-            OR (
-              provider = 'gemini'
-              AND model_name IN ('gemini-3.1-pro-preview', 'gemini-3-flash-preview')
-            )
-            OR (
-              provider = 'deepseek'
-              AND model_name IN ('deepseek-v4-pro', 'deepseek-v4-flash')
-            )
-          )
-        """
-    )
+    pass

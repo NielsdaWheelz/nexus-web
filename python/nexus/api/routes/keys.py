@@ -25,12 +25,13 @@ from fastapi import APIRouter, Depends, Response
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db
+from nexus.api.deps import get_db, get_llm_router
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.keys import UserApiKeyCreate
 from nexus.services import user_keys as user_keys_service
+from nexus.services.llm import LLMRouter
 
 router = APIRouter(tags=["keys"])
 
@@ -95,6 +96,23 @@ def upsert_key(
     if not is_created:
         response.status_code = 200
 
+    return success_response(key_out.model_dump(mode="json"))
+
+
+@router.post("/keys/{key_id}/test")
+async def test_key(
+    key_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
+) -> dict:
+    """Validate a saved API key and return the updated provider state."""
+    key_out = await user_keys_service.test_user_key(
+        db=db,
+        user_id=viewer.user_id,
+        key_id=key_id,
+        router=llm_router,
+    )
     return success_response(key_out.model_dump(mode="json"))
 
 

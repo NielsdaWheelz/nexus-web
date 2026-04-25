@@ -859,9 +859,7 @@ class TestTurnConversion:
         assert body["reasoning"]["effort"] == "xhigh"
 
     @pytest.mark.parametrize("model_name", ["claude-opus-4-7", "claude-sonnet-4-6"])
-    def test_reasoning_anthropic_adaptive_models_map_max_to_xhigh(
-        self, httpx_client, model_name
-    ):
+    def test_reasoning_anthropic_adaptive_models_map_max_to_xhigh(self, httpx_client, model_name):
         adapter = AnthropicAdapter(httpx_client)
         req = LLMRequest(
             model_name=model_name,

@@ -4,44 +4,114 @@
   gap: var(--space-4);
 }
 
-.revokeBtn {
-  padding: var(--space-1) var(--space-2);
-  background: none;
-  border: 1px solid var(--color-error);
-  border-radius: 4px;
-  color: var(--color-error);
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.title {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-xl);
+  font-weight: 650;
+}
+
+.subtitle {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.providerGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-3);
+}
+
+.providerCard {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.providerCardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.providerName {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+  font-weight: 650;
+}
+
+.fingerprint {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
-  cursor: pointer;
-  transition: all var(--transition-fast);
 }
 
-.revokeBtn:hover {
-  background: rgba(247, 118, 142, 0.1);
-}
-
-.form {
-  display: flex;
-  flex-direction: column;
+.metaGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
+  margin: 0;
 }
 
-.formRow {
-  display: flex;
-  gap: var(--space-3);
-  align-items: flex-end;
+.metaGrid div {
+  min-width: 0;
 }
 
-.formField {
+.metaGrid dt {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.metaGrid dd {
+  margin: var(--space-1) 0 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inlineForm {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 
-.formFieldWide {
-  flex: 1;
+.inlineFormRow {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
 }
 
 .formLabel {
@@ -50,23 +120,9 @@
   font-weight: 500;
 }
 
-.providerSelect {
-  padding: var(--space-2);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-}
-
-.providerSelect:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
 .keyInput {
   flex: 1;
+  min-width: 0;
   padding: var(--space-2);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
@@ -81,31 +137,68 @@
   border-color: var(--color-accent);
 }
 
-.submitBtn {
+.primaryBtn,
+.secondaryBtn,
+.dangerBtn {
   padding: var(--space-2) var(--space-4);
-  background: var(--color-accent);
-  color: var(--color-bg);
-  border: none;
   border-radius: 6px;
   font-size: var(--font-size-sm);
   font-weight: 500;
   cursor: pointer;
-  transition: background var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
   white-space: nowrap;
 }
 
-.submitBtn:hover:not(:disabled) {
+.primaryBtn {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  border: 1px solid var(--color-accent);
+}
+
+.primaryBtn:hover:not(:disabled) {
   background: var(--color-accent-hover);
 }
 
-.submitBtn:disabled {
+.secondaryBtn {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.secondaryBtn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.dangerBtn {
+  background: transparent;
+  border: 1px solid var(--color-error);
+  color: var(--color-error);
+}
+
+.dangerBtn:hover:not(:disabled) {
+  background: rgba(247, 118, 142, 0.1);
+}
+
+.primaryBtn:disabled,
+.secondaryBtn:disabled,
+.dangerBtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
 @media (max-width: 900px) {
-  .formRow {
+  .inlineFormRow {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .primaryBtn,
+  .secondaryBtn,
+  .dangerBtn {
+    width: 100%;
   }
 }
