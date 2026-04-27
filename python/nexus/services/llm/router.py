@@ -71,6 +71,30 @@ def _base_log_fields(
     return fields
 
 
+def _provider_error_log_fields(json_body: dict | None) -> dict[str, str]:
+    if not json_body:
+        return {}
+
+    error = json_body.get("error")
+    if not isinstance(error, dict):
+        return {}
+
+    fields: dict[str, str] = {}
+    code = error.get("code")
+    if isinstance(code, str) and code:
+        fields["provider_error_code"] = code
+
+    error_type = error.get("type")
+    if isinstance(error_type, str) and error_type:
+        fields["provider_error_type"] = error_type
+
+    param = error.get("param")
+    if isinstance(param, str) and param:
+        fields["provider_error_param"] = param
+
+    return fields
+
+
 class LLMRouter:
     """Routes LLM requests to appropriate provider adapters.
 
@@ -254,7 +278,9 @@ class LLMRouter:
                     outcome="error",
                     error_class=error_class.value,
                     latency_ms=latency_ms,
+                    provider_status_code=e.response.status_code,
                     provider_request_id=provider_req_id,
+                    **_provider_error_log_fields(json_body),
                 ),
             )
             raise LLMError(
@@ -407,6 +433,9 @@ class LLMRouter:
             latency_ms = int((time.monotonic() - start) * 1000)
             json_body = self._safe_parse_json(e.response)
             error_class = classify_provider_error(provider, e.response.status_code, json_body, None)
+            provider_req_id = e.response.headers.get("x-request-id") or e.response.headers.get(
+                "request-id"
+            )
             logger.error(
                 "llm.request.failed",
                 **safe_kv(
@@ -414,6 +443,9 @@ class LLMRouter:
                     outcome="error",
                     error_class=error_class.value,
                     latency_ms=latency_ms,
+                    provider_status_code=e.response.status_code,
+                    provider_request_id=provider_req_id,
+                    **_provider_error_log_fields(json_body),
                 ),
             )
             raise LLMError(

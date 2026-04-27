@@ -275,8 +275,7 @@ async def test_user_key(
     req = LLMRequest(
         model_name=KEY_TEST_MODELS[key.provider],
         messages=[Turn(role="user", content="Reply with ok.")],
-        max_tokens=1,
-        temperature=0,
+        max_tokens=8,
         reasoning_effort="none",
     )
 

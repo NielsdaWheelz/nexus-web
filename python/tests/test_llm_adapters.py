@@ -124,6 +124,56 @@ class TestOpenAIAdapter:
 
     @pytest.mark.asyncio
     @respx.mock
+    async def test_openai_gpt5_mini_payload_omits_temperature_and_sets_none_reasoning(
+        self, httpx_client
+    ):
+        """Hard-cutover GPT-5 Responses payload disables reasoning explicitly."""
+        fixture = load_fixture("openai", "success_nonstream.json")
+        route = respx.post("https://api.openai.com/v1/responses").respond(200, json=fixture)
+        req = LLMRequest(
+            model_name="gpt-5.4-mini",
+            messages=[Turn(role="user", content="Hello")],
+            max_tokens=32,
+            temperature=0.7,
+            reasoning_effort="none",
+        )
+
+        adapter = OpenAIAdapter(httpx_client)
+        await adapter.generate(req, api_key="sk-test", timeout_s=30)
+
+        assert route.called, "Expected OpenAI Responses request to be issued"
+        body = json.loads(route.calls.last.request.content)
+        assert body["model"] == "gpt-5.4-mini"
+        assert body["max_output_tokens"] == 32
+        assert body["reasoning"] == {"effort": "none"}
+        assert "temperature" not in body
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_openai_gpt5_payload_maps_max_reasoning_to_xhigh(self, httpx_client):
+        """Hard-cutover GPT-5 Responses payload preserves max -> xhigh mapping."""
+        fixture = load_fixture("openai", "success_nonstream.json")
+        route = respx.post("https://api.openai.com/v1/responses").respond(200, json=fixture)
+        req = LLMRequest(
+            model_name="gpt-5.5",
+            messages=[Turn(role="user", content="Hello")],
+            max_tokens=100,
+            temperature=0.7,
+            reasoning_effort="max",
+        )
+
+        adapter = OpenAIAdapter(httpx_client)
+        await adapter.generate(req, api_key="sk-test", timeout_s=30)
+
+        assert route.called, "Expected OpenAI Responses request to be issued"
+        body = json.loads(route.calls.last.request.content)
+        assert body["model"] == "gpt-5.5"
+        assert body["max_output_tokens"] == 100
+        assert body["reasoning"] == {"effort": "xhigh"}
+        assert "temperature" not in body
+
+    @pytest.mark.asyncio
+    @respx.mock
     async def test_openai_stream_success(self, httpx_client, llm_request):
         """Happy path streaming generation."""
         stream_content = load_fixture("openai", "success_stream_chunks.txt")

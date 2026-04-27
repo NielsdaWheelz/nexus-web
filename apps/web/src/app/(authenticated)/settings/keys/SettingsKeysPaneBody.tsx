@@ -207,7 +207,9 @@ export default function SettingsKeysPaneBody() {
         setFormSuccess(`${providerLabel(key.provider, key)} key tested.`);
       } catch (err) {
         if (isApiError(err)) {
-          setFormError(err.message);
+          setFormError(
+            err.requestId ? `${err.message} (Nexus request id: ${err.requestId})` : err.message
+          );
         } else {
           setFormError("Failed to test key");
         }

@@ -13,7 +13,7 @@ Request body:
     }
   ],
   "max_output_tokens": 4096,
-  "reasoning": {"effort": "low" | "medium" | "high" | "xhigh"},
+  "reasoning": {"effort": "none" | "minimal" | "low" | "medium" | "high" | "xhigh"},
   "stream": false
 }
 
@@ -167,11 +167,10 @@ class OpenAIAdapter(LLMAdapter):
             "stream": stream,
         }
 
-        if req.temperature is not None:
-            body["temperature"] = req.temperature
-
         if req.reasoning_effort == "none":
-            pass
+            body["reasoning"] = {"effort": "none"}
+        elif req.reasoning_effort == "minimal":
+            body["reasoning"] = {"effort": "minimal"}
         elif req.reasoning_effort == "low":
             body["reasoning"] = {"effort": "low"}
         elif req.reasoning_effort == "medium":

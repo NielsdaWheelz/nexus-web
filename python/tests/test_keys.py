@@ -15,8 +15,10 @@ Per PR-03 spec:
 """
 
 import base64
+import json
 from uuid import uuid4
 
+import httpx
 import pytest
 import respx
 from sqlalchemy import text
@@ -777,6 +779,36 @@ class TestKeyValidation:
     """Tests for POST /keys/{key_id}/test."""
 
     @respx.mock
+    def test_openai_key_test_uses_gpt5_mini_responses_payload(self, auth_client):
+        """OpenAI saved-key smoke tests use the hard-cutover Responses shape."""
+        user_id = create_test_user_id()
+        create_resp = auth_client.post(
+            "/keys",
+            json={"provider": "openai", "api_key": "sk-test-valid-key-1234567890abcdef"},
+            headers=auth_headers(user_id),
+        )
+        assert create_resp.status_code == 201, (
+            f"Expected key creation to succeed, got {create_resp.status_code}: {create_resp.json()}"
+        )
+        key_id = create_resp.json()["data"]["id"]
+
+        route = respx.post(OPENAI_RESPONSES_URL).respond(200, json=_openai_key_test_success())
+
+        response = auth_client.post(f"/keys/{key_id}/test", headers=auth_headers(user_id))
+
+        assert response.status_code == 200, (
+            f"Expected key test to succeed, got {response.status_code}: {response.json()}"
+        )
+        assert route.called, "Expected OpenAI Responses request to be issued"
+        body = json.loads(route.calls.last.request.content)
+        assert body["model"] == "gpt-5.4-mini"
+        assert body["max_output_tokens"] > 1, (
+            f"Expected smoke-test token budget > 1, got {body['max_output_tokens']}"
+        )
+        assert body["reasoning"] == {"effort": "none"}
+        assert "temperature" not in body
+
+    @respx.mock
     def test_test_key_marks_saved_key_valid(self, auth_client, direct_db: DirectSessionManager):
         """A successful provider validation marks the key valid and updates last_tested_at."""
         user_id = create_test_user_id()
@@ -840,6 +872,62 @@ class TestKeyValidation:
             row = result.fetchone()
             assert row[0] == "invalid"
             assert row[1] is not None
+
+    @respx.mock
+    def test_provider_bad_request_leaves_saved_key_status_unchanged(self, auth_client):
+        """Provider 400 returns E_LLM_BAD_REQUEST without invalidating the saved key."""
+        user_id = create_test_user_id()
+        create_resp = auth_client.post(
+            "/keys",
+            json={"provider": "openai", "api_key": "sk-test-bad-request-key-1234567890abcdef"},
+            headers=auth_headers(user_id),
+        )
+        assert create_resp.status_code == 201, (
+            f"Expected key creation to succeed, got {create_resp.status_code}: {create_resp.json()}"
+        )
+        key_id = create_resp.json()["data"]["id"]
+
+        responses = [
+            (200, _openai_key_test_success()),
+            (
+                400,
+                {
+                    "error": {
+                        "message": "Unrecognized request argument supplied: temperature",
+                        "code": "invalid_request_error",
+                    }
+                },
+            ),
+        ]
+
+        def openai_response(request: httpx.Request) -> httpx.Response:
+            status_code, json_body = responses.pop(0)
+            return httpx.Response(status_code, json=json_body, request=request)
+
+        respx.post(OPENAI_RESPONSES_URL).mock(side_effect=openai_response)
+
+        valid_response = auth_client.post(f"/keys/{key_id}/test", headers=auth_headers(user_id))
+        assert valid_response.status_code == 200, (
+            f"Expected initial key test to succeed, got {valid_response.status_code}: "
+            f"{valid_response.json()}"
+        )
+        prior_status = valid_response.json()["data"]["status"]
+        assert prior_status == "valid"
+
+        bad_response = auth_client.post(f"/keys/{key_id}/test", headers=auth_headers(user_id))
+
+        assert bad_response.status_code == 400, (
+            f"Expected provider bad request to return 400, got {bad_response.status_code}: "
+            f"{bad_response.json()}"
+        )
+        assert bad_response.json()["error"]["code"] == "E_LLM_BAD_REQUEST"
+
+        list_response = auth_client.get("/keys", headers=auth_headers(user_id))
+        assert list_response.status_code == 200, (
+            f"Expected key list to succeed, got {list_response.status_code}: {list_response.json()}"
+        )
+        openai_state = _provider_state(list_response.json()["data"], "openai")
+        assert openai_state["status"] == prior_status
 
     def test_test_other_users_key_returns_404(self, auth_client):
         """Testing another user's key returns 404 E_KEY_NOT_FOUND."""
