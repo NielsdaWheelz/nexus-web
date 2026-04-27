@@ -1,11 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
 
 test.describe("api keys", () => {
-  const settingsBody = (page: Page) => page.getByTestId("pane-shell-body");
+  const settingsChrome = (page: Page) => page.getByTestId("pane-shell-chrome");
 
   test("provider cards visible", async ({ page }) => {
     await page.goto("/settings/keys");
-    await expect(settingsBody(page).getByRole("heading", { name: "API keys" })).toBeVisible();
+    await expect(settingsChrome(page).getByRole("heading", { name: "API Keys" })).toBeVisible();
     await expect(page.locator("[data-provider-card='openai']")).toBeVisible();
     await expect(page.locator("[data-provider-card='anthropic']")).toBeVisible();
     await expect(page.locator("[data-provider-card='gemini']")).toBeVisible();
@@ -14,7 +14,7 @@ test.describe("api keys", () => {
 
   test("shows safe key metadata", async ({ page }) => {
     await page.goto("/settings/keys");
-    await expect(settingsBody(page).getByRole("heading", { name: "API keys" })).toBeVisible();
+    await expect(settingsChrome(page).getByRole("heading", { name: "API Keys" })).toBeVisible();
     // The seeded API key should appear once loading completes
     const openaiCard = page.locator("[data-provider-card='openai']");
     await expect(openaiCard.locator("p").filter({ hasText: "...0000" })).toBeVisible({

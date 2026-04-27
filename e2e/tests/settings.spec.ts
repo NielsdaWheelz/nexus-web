@@ -1,12 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
 
 test.describe("settings", () => {
-  const settingsBody = (page: Page) => page.getByTestId("pane-shell-body");
+  const settingsChrome = (page: Page) => page.getByTestId("pane-shell-chrome");
 
   test("view settings", async ({ page }) => {
     await page.goto("/settings/keys");
     await expect(
-      settingsBody(page).getByRole("heading", { name: "API keys" })
+      settingsChrome(page).getByRole("heading", { name: "API Keys" })
     ).toBeVisible();
   });
 
@@ -20,11 +20,11 @@ test.describe("settings", () => {
   test("persisted settings state after reload", async ({ page }) => {
     await page.goto("/settings/keys");
     await expect(
-      settingsBody(page).getByRole("heading", { name: "API keys" })
+      settingsChrome(page).getByRole("heading", { name: "API Keys" })
     ).toBeVisible();
     await page.reload();
     await expect(
-      settingsBody(page).getByRole("heading", { name: "API keys" })
+      settingsChrome(page).getByRole("heading", { name: "API Keys" })
     ).toBeVisible();
   });
 });

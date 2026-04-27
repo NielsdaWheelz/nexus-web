@@ -8,20 +8,20 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: none;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
   line-height: 1;
   cursor: pointer;
-  padding: var(--space-1);
-  border-radius: 4px;
-  min-width: 24px;
-  min-height: 24px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  min-width: 32px;
+  min-height: 32px;
 }
 
 .trigger:hover {
-  background: var(--color-surface);
+  background: var(--color-bg-hover);
   color: var(--color-text);
 }
 
@@ -74,4 +74,10 @@
 
 .menuItemDanger {
   color: var(--color-error);
+}
+
+.separator {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--color-border-subtle);
 }

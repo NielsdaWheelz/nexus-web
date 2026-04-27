@@ -273,7 +273,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
   {
     id: "settingsKeys",
     pattern: ["settings", "keys"],
-    staticTitle: "API keys",
+    staticTitle: "API Keys",
     render: () => <SettingsKeysPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -281,7 +281,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "API Keys",
-      subtitle: "BYOK credentials for model providers. keys never leave server-side flows.",
+      subtitle: "Connect provider keys without storing plaintext in the browser.",
     }),
   },
   {

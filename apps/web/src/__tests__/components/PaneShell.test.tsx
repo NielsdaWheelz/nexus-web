@@ -63,6 +63,29 @@ describe("PaneShell", () => {
     expect(onResizePane).toHaveBeenCalledWith("pane-a", 320);
   });
 
+  it("renders standard pane options in every header", async () => {
+    render(
+      <PaneShell
+        paneId="pane-a"
+        href="/settings/keys"
+        title="API Keys"
+        widthPx={560}
+        minWidthPx={320}
+        maxWidthPx={1400}
+        bodyMode="standard"
+        onResizePane={() => {}}
+      >
+        <div>Body content</div>
+      </PaneShell>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Options" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("menuitem", { name: "Copy pane link" })).toBeInTheDocument();
+    });
+  });
+
   it("keeps mobile chrome visible while a standard-pane body scrolls", async () => {
     render(
       <PaneShell
@@ -299,7 +322,7 @@ describe("PaneShell", () => {
     expect(screen.queryByText("Override toolbar")).not.toBeInTheDocument();
     expect(screen.queryByText("Override action")).not.toBeInTheDocument();
     expect(screen.queryByText("Override meta")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Options" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Options" })).toBeInTheDocument();
   });
 
   it("clears chrome overrides when a mounted child stops overriding", () => {
@@ -345,7 +368,7 @@ describe("PaneShell", () => {
     expect(screen.queryByText("Override toolbar")).not.toBeInTheDocument();
     expect(screen.queryByText("Override action")).not.toBeInTheDocument();
     expect(screen.queryByText("Override meta")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Options" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Options" })).toBeInTheDocument();
   });
 
   it("renders an icon-only Search trigger on mobile and dispatches the open event", () => {

@@ -222,15 +222,6 @@ export default function SettingsKeysPaneBody() {
 
   return (
     <div className={styles.content}>
-      <div className={styles.header}>
-        <div>
-          <h2 className={styles.title}>API keys</h2>
-          <p className={styles.subtitle}>
-            Connect provider keys without storing plaintext in the browser.
-          </p>
-        </div>
-      </div>
-
       <div className={styles.messages}>
         {loading && <StateMessage variant="loading">Loading...</StateMessage>}
         {error && <StateMessage variant="error">{error}</StateMessage>}

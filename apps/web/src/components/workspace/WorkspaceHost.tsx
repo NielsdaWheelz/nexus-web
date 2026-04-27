@@ -31,6 +31,7 @@ import styles from "./WorkspaceHost.module.css";
 
 interface WorkspaceShellPane {
   paneId: string;
+  href: string;
   title: string;
   subtitle?: React.ReactNode;
   toolbar?: React.ReactNode;
@@ -250,6 +251,7 @@ function buildShellPane(input: {
 
   return {
     paneId: input.pane.id,
+    href: input.pane.href,
     title,
     subtitle: chrome?.subtitle,
     toolbar: chrome?.toolbar,
@@ -461,6 +463,7 @@ export default function WorkspaceHost() {
           >
             <PaneShell
               paneId={pane.paneId}
+              href={pane.href}
               title={pane.title}
               subtitle={pane.subtitle}
               toolbar={pane.toolbar}

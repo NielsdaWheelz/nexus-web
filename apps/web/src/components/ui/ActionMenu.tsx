@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useId,
@@ -20,6 +21,7 @@ export interface ActionMenuOption {
   disabled?: boolean;
   tone?: "default" | "danger";
   restoreFocusOnClose?: boolean;
+  separatorBefore?: boolean;
 }
 
 interface ActionMenuProps {
@@ -36,9 +38,11 @@ export default function ActionMenu({
   className,
 }: ActionMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [initialFocus, setInitialFocus] = useState<"first" | "last">("first");
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuContainerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
+  const triggerId = useId();
   const menuId = useId();
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
@@ -62,6 +66,11 @@ export default function ActionMenu({
     });
   }, []);
 
+  const openMenu = useCallback((focusTarget: "first" | "last" = "first") => {
+    setInitialFocus(focusTarget);
+    setMenuOpen(true);
+  }, []);
+
   useEffect(() => {
     if (!menuOpen) return;
 
@@ -75,11 +84,6 @@ export default function ActionMenu({
     };
 
     updateMenuPos();
-
-    requestAnimationFrame(() => {
-      const [first] = getFocusableItems();
-      first?.focus();
-    });
 
     const handlePointerDown = (event: MouseEvent) => {
       if (
@@ -109,7 +113,20 @@ export default function ActionMenu({
       window.removeEventListener("scroll", updateMenuPos, true);
       window.removeEventListener("resize", updateMenuPos);
     };
-  }, [closeMenu, getFocusableItems, menuOpen]);
+  }, [closeMenu, menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen || !menuPos) return;
+
+    requestAnimationFrame(() => {
+      const focusable = getFocusableItems();
+      const target =
+        initialFocus === "last"
+          ? focusable[focusable.length - 1]
+          : focusable[0];
+      target?.focus();
+    });
+  }, [getFocusableItems, initialFocus, menuOpen, menuPos]);
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLUListElement>) => {
     event.stopPropagation();
@@ -162,6 +179,28 @@ export default function ActionMenu({
       return;
     }
 
+    if (
+      event.key.length === 1 &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey
+    ) {
+      const prefix = event.key.toLocaleLowerCase();
+      const startIndex = activeIndex < 0 ? 0 : activeIndex + 1;
+      const orderedItems = [
+        ...focusable.slice(startIndex),
+        ...focusable.slice(0, startIndex),
+      ];
+      const next = orderedItems.find((item) =>
+        item.textContent?.trim().toLocaleLowerCase().startsWith(prefix)
+      );
+      if (next) {
+        event.preventDefault();
+        next.focus();
+      }
+      return;
+    }
+
     if (event.key === "Escape") {
       event.preventDefault();
       closeMenu();
@@ -187,57 +226,63 @@ export default function ActionMenu({
           left: `${menuPos.left}px`,
           transform: "translateX(-100%)",
         }}
+        aria-labelledby={triggerId}
         onKeyDown={handleMenuKeyDown}
       >
-        {options.map((option) => (
-          <li key={option.id} role="none">
-            {option.href ? (
-              <a
-                href={option.href}
-                role="menuitem"
-                className={`${styles.menuItem} ${
-                  option.tone === "danger" ? styles.menuItemDanger : ""
-                }`}
-                aria-disabled={option.disabled || undefined}
-                tabIndex={option.disabled ? -1 : undefined}
-                onKeyDown={(event: ReactKeyboardEvent<HTMLAnchorElement>) => {
-                  if (
-                    option.disabled &&
-                    (event.key === "Enter" || event.key === " ")
-                  ) {
-                    event.preventDefault();
-                  }
-                }}
-                onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
-                  event.stopPropagation();
-                  if (option.disabled) {
-                    event.preventDefault();
-                    return;
-                  }
-                  option.onSelect?.({ triggerEl: toggleRef.current });
-                  closeMenu(option.restoreFocusOnClose !== false);
-                }}
-              >
-                {option.label}
-              </a>
-            ) : (
-              <button
-                type="button"
-                role="menuitem"
-                className={`${styles.menuItem} ${
-                  option.tone === "danger" ? styles.menuItemDanger : ""
-                }`}
-                disabled={option.disabled}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  option.onSelect?.({ triggerEl: toggleRef.current });
-                  closeMenu(option.restoreFocusOnClose !== false);
-                }}
-              >
-                {option.label}
-              </button>
-            )}
-          </li>
+        {options.map((option, index) => (
+          <Fragment key={option.id}>
+            {option.separatorBefore && index > 0 ? (
+              <li role="separator" className={styles.separator} />
+            ) : null}
+            <li role="none">
+              {option.href ? (
+                <a
+                  href={option.href}
+                  role="menuitem"
+                  className={`${styles.menuItem} ${
+                    option.tone === "danger" ? styles.menuItemDanger : ""
+                  }`}
+                  aria-disabled={option.disabled || undefined}
+                  tabIndex={option.disabled ? -1 : undefined}
+                  onKeyDown={(event: ReactKeyboardEvent<HTMLAnchorElement>) => {
+                    if (
+                      option.disabled &&
+                      (event.key === "Enter" || event.key === " ")
+                    ) {
+                      event.preventDefault();
+                    }
+                  }}
+                  onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
+                    event.stopPropagation();
+                    if (option.disabled) {
+                      event.preventDefault();
+                      return;
+                    }
+                    option.onSelect?.({ triggerEl: toggleRef.current });
+                    closeMenu(option.restoreFocusOnClose !== false);
+                  }}
+                >
+                  {option.label}
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={`${styles.menuItem} ${
+                    option.tone === "danger" ? styles.menuItemDanger : ""
+                  }`}
+                  disabled={option.disabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    option.onSelect?.({ triggerEl: toggleRef.current });
+                    closeMenu(option.restoreFocusOnClose !== false);
+                  }}
+                >
+                  {option.label}
+                </button>
+              )}
+            </li>
+          </Fragment>
         ))}
       </ul>
     ) : null;
@@ -250,6 +295,7 @@ export default function ActionMenu({
     >
       <button
         type="button"
+        id={triggerId}
         ref={toggleRef}
         className={styles.trigger}
         aria-haspopup="menu"
@@ -258,17 +304,27 @@ export default function ActionMenu({
         aria-label={label}
         onClick={(e) => {
           e.stopPropagation();
-          setMenuOpen((open) => {
-            const next = !open;
-            if (!next) {
-              setMenuPos(null);
-            }
-            return next;
-          });
+          if (menuOpen) {
+            closeMenu(false);
+          } else {
+            openMenu();
+          }
         }}
         onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
+          if (
+            event.key === "Enter" ||
+            event.key === " " ||
+            event.key === "ArrowDown"
+          ) {
+            event.preventDefault();
             event.stopPropagation();
+            openMenu("first");
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            event.stopPropagation();
+            openMenu("last");
           }
         }}
       >

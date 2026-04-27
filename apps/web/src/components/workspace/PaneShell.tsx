@@ -33,6 +33,27 @@ interface PaneChromeOverrides {
 
 const EMPTY_PANE_CHROME_OVERRIDES: PaneChromeOverrides = {};
 
+function fallbackCopyText(value: string): void {
+  if (typeof document === "undefined") return;
+  const textArea = document.createElement("textarea");
+  textArea.value = value;
+  textArea.setAttribute("readonly", "true");
+  textArea.style.position = "fixed";
+  textArea.style.top = "-1000px";
+  document.body.appendChild(textArea);
+  textArea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textArea);
+}
+
+function copyText(value: string): void {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(value).catch(() => fallbackCopyText(value));
+    return;
+  }
+  fallbackCopyText(value);
+}
+
 const PaneChromeOverrideContext = createContext<
   ((overrides: PaneChromeOverrides) => void) | null
 >(null);
@@ -80,6 +101,7 @@ type PaneShellStyle = CSSProperties & {
 
 interface PaneShellProps {
   paneId: string;
+  href?: string;
   title: string;
   subtitle?: React.ReactNode;
   toolbar?: React.ReactNode;
@@ -98,6 +120,7 @@ interface PaneShellProps {
 
 export default function PaneShell({
   paneId,
+  href = "/",
   title,
   subtitle,
   toolbar,
@@ -252,6 +275,29 @@ export default function PaneShell({
     () => ({ setMobileChromeLockedVisible, showMobileChrome }),
     [showMobileChrome]
   );
+  const copyPaneLink = useCallback(() => {
+    const link =
+      typeof window === "undefined"
+        ? href
+        : new URL(href, window.location.origin).toString();
+    copyText(link);
+  }, [href]);
+  const paneMenuOptions = useMemo<SurfaceHeaderOption[]>(() => {
+    const routeOptions = effectiveOptions ?? [];
+    const contextualOptions = routeOptions.map((option, index) =>
+      index === 0
+        ? { ...option, separatorBefore: option.separatorBefore ?? true }
+        : option
+    );
+    return [
+      {
+        id: "copy-pane-link",
+        label: "Copy pane link",
+        onSelect: copyPaneLink,
+      },
+      ...contextualOptions,
+    ];
+  }, [copyPaneLink, effectiveOptions]);
 
   const shellClass = effectiveMobileChromeHidden
     ? `${styles.paneShell} ${styles.mobileChromeHidden}`
@@ -305,7 +351,7 @@ export default function PaneShell({
           title={title}
           subtitle={subtitle}
           meta={chromeOverrides.meta}
-          options={effectiveOptions}
+          options={paneMenuOptions}
           actions={
             isMobile ? (
               <>

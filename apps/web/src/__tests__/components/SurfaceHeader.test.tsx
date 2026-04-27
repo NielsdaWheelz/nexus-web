@@ -42,9 +42,6 @@ describe("SurfaceHeader", () => {
 
     const openSourceOption = screen.getByRole("menuitem", { name: "Open source" });
     const deleteOption = screen.getByRole("menuitem", { name: "Delete" });
-    expect(optionsToggle).toHaveFocus();
-
-    await user.tab();
     await waitFor(() => {
       expect(openSourceOption).toHaveFocus();
     });
