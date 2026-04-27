@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
+from nexus_web_search.types import (
+    WebSearchError,
+    WebSearchErrorCode,
+    WebSearchProvider,
+    WebSearchRequest,
+    WebSearchResultItem,
+    WebSearchResultType,
+)
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -16,14 +24,6 @@ from starlette.concurrency import run_in_threadpool
 from nexus.logging import get_logger
 from nexus.schemas.conversation import WebSearchOptions
 from nexus.services.search import hash_query
-from nexus.services.web_search.types import (
-    WebSearchError,
-    WebSearchErrorCode,
-    WebSearchRequest,
-    WebSearchResponse,
-    WebSearchResultItem,
-    WebSearchResultType,
-)
 
 logger = get_logger(__name__)
 
@@ -79,12 +79,6 @@ _WEB_SEARCH_CUE_TERMS = (
     "regulation",
     "standard",
 )
-
-
-class WebSearchProvider(Protocol):
-    """Minimal provider contract used by chat orchestration."""
-
-    async def search(self, request: WebSearchRequest) -> WebSearchResponse: ...
 
 
 @dataclass(slots=True)
@@ -235,7 +229,7 @@ async def execute_web_search(
     options: WebSearchOptions,
     country: str = "US",
     search_lang: str = "en",
-    safe_search: str = "moderate",
+    safe_search: Literal["off", "moderate", "strict"] = "moderate",
 ) -> WebSearchRun | None:
     """Run public web search for a chat turn and persist tool metadata."""
 
@@ -271,7 +265,7 @@ async def execute_web_search(
             blocked_domains=tuple(options.blocked_domains),
             country=country,
             search_lang=search_lang,
-            safe_search=safe_search,  # type: ignore[arg-type]
+            safe_search=safe_search,
         )
         result_type = request.result_type.value
         response = await provider.search(request)

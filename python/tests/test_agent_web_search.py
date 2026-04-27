@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import text
-
-from nexus.schemas.conversation import WebSearchOptions
-from nexus.services.agent_tools.web_search import execute_web_search
-from nexus.services.web_search.types import (
+from nexus_web_search.types import (
+    WebSearchProvider,
     WebSearchRequest,
     WebSearchResponse,
     WebSearchResultItem,
 )
+from sqlalchemy import text
+
+from nexus.schemas.conversation import WebSearchOptions
+from nexus.services.agent_tools.web_search import execute_web_search
 from tests.factories import create_test_conversation, create_test_message
 from tests.helpers import create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -26,10 +27,8 @@ class FakeWebSearchProvider:
     async def search(self, request: WebSearchRequest) -> WebSearchResponse:
         self.requests.append(request)
         return WebSearchResponse(
-            query=request.query,
             provider="fake",
             provider_request_id="fake-request-id",
-            more_results_available=False,
             results=(
                 WebSearchResultItem(
                     result_ref="fake:web:001",
@@ -73,7 +72,7 @@ async def test_execute_web_search_persists_tool_and_web_retrievals(
             status="pending",
         )
 
-        provider = FakeWebSearchProvider()
+        provider: WebSearchProvider = FakeWebSearchProvider()
         run = await execute_web_search(
             session,
             provider=provider,

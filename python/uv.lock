@@ -719,6 +719,7 @@ dependencies = [
     { name = "html5lib" },
     { name = "httpx" },
     { name = "lxml" },
+    { name = "nexus-web-search" },
     { name = "pillow" },
     { name = "psycopg-binary" },
     { name = "pydantic-settings" },
@@ -755,6 +756,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.0" },
     { name = "lxml", specifier = ">=5.0.0" },
+    { name = "nexus-web-search", editable = "../../nexus-web-search" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.9.0" },
     { name = "psycopg-binary", specifier = ">=3.1.0" },
@@ -778,6 +780,27 @@ requires-dist = [
     { name = "zizmor", marker = "extra == 'dev'", specifier = ">=1.24.1" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "nexus-web-search"
+version = "0.1.0"
+source = { editable = "../../nexus-web-search" }
+dependencies = [
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "httpx", specifier = ">=0.28.0" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pip-audit", specifier = ">=2.9.0" },
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8.3.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "respx", specifier = ">=0.21.0" },
+    { name = "ruff", specifier = ">=0.8.0" },
+]
 
 [[package]]
 name = "nodeenv"

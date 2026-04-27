@@ -12,9 +12,10 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 
+from nexus_web_search.types import WebSearchProvider
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -48,7 +49,6 @@ from nexus.services.agent_tools.app_search import execute_app_search, should_run
 from nexus.services.agent_tools.web_search import (
     WEB_SEARCH_TOOL_CALL_INDEX,
     WEB_SEARCH_TOOL_NAME,
-    WebSearchProvider,
     execute_web_search,
     should_run_web_search,
 )
@@ -343,7 +343,7 @@ async def execute_chat_run(
     web_search_provider: WebSearchProvider | None,
     web_search_country: str = "US",
     web_search_language: str = "en",
-    web_search_safe_search: str = "moderate",
+    web_search_safe_search: Literal["off", "moderate", "strict"] = "moderate",
 ) -> dict[str, str]:
     flow_id = str(run_id)
     set_flow_id(flow_id)
@@ -392,7 +392,7 @@ async def _execute_chat_run(
     web_search_provider: WebSearchProvider | None,
     web_search_country: str,
     web_search_language: str,
-    web_search_safe_search: str,
+    web_search_safe_search: Literal["off", "moderate", "strict"],
 ) -> dict[str, str]:
     run = db.get(ChatRun, run_id)
     if run is None:

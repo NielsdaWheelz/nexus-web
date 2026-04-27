@@ -16,7 +16,7 @@ Local/test environments use Supabase local, staging/prod use cloud.
 
 from enum import Enum
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
@@ -182,7 +182,10 @@ class Settings(BaseSettings):
     )
     brave_search_country: str = Field(default="US", alias="BRAVE_SEARCH_COUNTRY")
     brave_search_language: str = Field(default="en", alias="BRAVE_SEARCH_LANGUAGE")
-    brave_search_safe_search: str = Field(default="moderate", alias="BRAVE_SEARCH_SAFE_SEARCH")
+    brave_search_safe_search: Literal["off", "moderate", "strict"] = Field(
+        default="moderate",
+        alias="BRAVE_SEARCH_SAFE_SEARCH",
+    )
 
     # S3 PR-04: LLM provider feature flags
     # Controls whether each provider is available to users
