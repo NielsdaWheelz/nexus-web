@@ -12,20 +12,13 @@ import { ArrowUp, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
-  sseClientDirect,
   toWireContextItem,
-  type SSECitationEvent,
-  type SSEEvent,
-  type SSEToolCallEvent,
-  type SSEToolResultEvent,
   type ContextItem,
   type ChatRunCreateRequest,
 } from "@/lib/api/sse";
-import { fetchStreamToken } from "@/lib/api/streamToken";
 import ContextChips from "@/components/chat/ContextChips";
 import type {
   ChatRunResponse,
-  ConversationMessage,
   ConversationModel,
 } from "@/lib/conversations/types";
 import styles from "./ChatComposer.module.css";
@@ -41,29 +34,10 @@ export interface ChatComposerProps {
   attachedContexts?: ContextItem[];
   /** Remove a context chip. */
   onRemoveContext?: (index: number) => void;
-  /** Called when a new conversation is created (for URL update). */
-  onConversationCreated?: (conversationId: string) => void;
+  /** Called when the chat run has been created. */
+  onChatRunCreated?: (data: ChatRunResponse["data"]) => void;
   /** Called after message sent (for refreshing lists). */
   onMessageSent?: () => void;
-  onOptimisticMessages?: (
-    userMsg: ConversationMessage,
-    assistantMsg: ConversationMessage,
-  ) => void;
-  onMetaReceived?: (
-    tempUserId: string,
-    realUserId: string,
-    tempAsstId: string,
-    realAsstId: string
-  ) => void;
-  onDelta?: (assistantId: string, delta: string) => void;
-  onToolCall?: (assistantId: string, data: SSEToolCallEvent["data"]) => void;
-  onToolResult?: (assistantId: string, data: SSEToolResultEvent["data"]) => void;
-  onCitation?: (assistantId: string, data: SSECitationEvent["data"]) => void;
-  onDone?: (
-    assistantId: string,
-    status: "complete" | "error" | "cancelled",
-    errorCode: string | null
-  ) => void;
 }
 
 /** Max contexts per message. */
@@ -96,10 +70,6 @@ function firstModelForProviderOrder(models: ComposerModel[]): ComposerModel | un
   return models[0];
 }
 
-function assertNever(value: never): never {
-  throw new Error(`Unhandled SSE event type: ${JSON.stringify(value)}`);
-}
-
 // ============================================================================
 // Component
 // ============================================================================
@@ -108,15 +78,8 @@ export default function ChatComposer({
   conversationId,
   attachedContexts = [],
   onRemoveContext,
-  onConversationCreated,
+  onChatRunCreated,
   onMessageSent,
-  onOptimisticMessages,
-  onMetaReceived,
-  onDelta,
-  onToolCall,
-  onToolResult,
-  onCitation,
-  onDone,
 }: ChatComposerProps) {
   const router = useRouter();
   const [content, setContent] = useState("");
@@ -130,7 +93,6 @@ export default function ChatComposer({
   >("");
   const [onlyUseMyKeys, setOnlyUseMyKeys] = useState(false);
   const [webSearchMode, setWebSearchMode] = useState<WebSearchMode>("auto");
-  const abortRef = useRef<(() => void) | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -175,16 +137,6 @@ export default function ChatComposer({
   const selectedModel = availableModels.find((model) => model.id === selectedModelId);
 
   // --------------------------------------------------------------------------
-  // Cleanup on unmount
-  // --------------------------------------------------------------------------
-
-  useEffect(() => {
-    return () => {
-      abortRef.current?.();
-    };
-  }, []);
-
-  // --------------------------------------------------------------------------
   // Chat-run send
   // --------------------------------------------------------------------------
 
@@ -205,147 +157,15 @@ export default function ChatComposer({
         return false;
       }
 
-      const { run, conversation, user_message, assistant_message } =
-        runResponse.data;
-      onOptimisticMessages?.(user_message, assistant_message);
+      onChatRunCreated?.(runResponse.data);
 
-      if (!conversationId) {
-        if (onConversationCreated) {
-          onConversationCreated(conversation.id);
-        } else {
-          router.replace(`/conversations/${conversation.id}`);
-        }
+      if (!conversationId && !onChatRunCreated) {
+        router.replace(`/conversations/${runResponse.data.conversation.id}`);
       }
 
-      let streamBaseUrl: string;
-      let firstStreamToken: string | null = null;
-      try {
-        const tokenResponse = await fetchStreamToken();
-        streamBaseUrl = tokenResponse.stream_base_url;
-        firstStreamToken = tokenResponse.token;
-      } catch {
-        setError("Streaming is unavailable right now.");
-        return false;
-      }
-
-      const getStreamToken = async () => {
-        if (firstStreamToken !== null) {
-          const token = firstStreamToken;
-          firstStreamToken = null;
-          return token;
-        }
-        return (await fetchStreamToken()).token;
-      };
-
-      let currentAsstId = assistant_message.id;
-
-      const eventHandlers = {
-        onEvent: (event: SSEEvent) => {
-          switch (event.type) {
-            case "meta": {
-              const {
-                conversation_id,
-                user_message_id,
-                assistant_message_id,
-              } = event.data;
-
-              onMetaReceived?.(
-                user_message.id,
-                user_message_id,
-                assistant_message.id,
-                assistant_message_id
-              );
-              currentAsstId = assistant_message_id;
-
-              if (!conversationId) {
-                if (onConversationCreated) {
-                  onConversationCreated(conversation_id);
-                } else {
-                  router.replace(`/conversations/${conversation_id}`);
-                }
-              }
-              break;
-            }
-            case "delta": {
-              onDelta?.(currentAsstId, event.data.delta);
-              break;
-            }
-            case "tool_call": {
-              onToolCall?.(currentAsstId, event.data);
-              break;
-            }
-            case "tool_result": {
-              onToolResult?.(currentAsstId, event.data);
-              break;
-            }
-            case "citation": {
-              onCitation?.(currentAsstId, event.data);
-              break;
-            }
-            case "done": {
-              onDone?.(
-                currentAsstId,
-                event.data.status,
-                event.data.error_code
-              );
-              break;
-            }
-            default: {
-              assertNever(event);
-            }
-          }
-        },
-        onError: (err: Error) => {
-          setError(`Stream error: ${err.message}`);
-          onDone?.(currentAsstId, "error", "E_STREAM_INTERRUPTED");
-        },
-        onComplete: () => {},
-      };
-
-      return new Promise<boolean>((resolve) => {
-        let settled = false;
-        const finish = (ok: boolean) => {
-          if (settled) return;
-          settled = true;
-          abortRef.current = null;
-          resolve(ok);
-        };
-
-        const wrappedHandlers = {
-          ...eventHandlers,
-          onError: (err: Error) => {
-            eventHandlers.onError(err);
-            finish(true);
-          },
-          onComplete: () => {
-            finish(true);
-          },
-          onEvent: (event: SSEEvent) => {
-            eventHandlers.onEvent(event);
-            if (event.type === "done") finish(true);
-          },
-        };
-
-        abortRef.current = sseClientDirect(
-          streamBaseUrl,
-          getStreamToken,
-          run.id,
-          wrappedHandlers,
-        );
-      });
+      return true;
     },
-    [
-      conversationId,
-      onConversationCreated,
-      onDelta,
-      onDone,
-      onMetaReceived,
-      onOptimisticMessages,
-      onCitation,
-      onToolCall,
-      onToolResult,
-      router,
-    ]
+    [conversationId, onChatRunCreated, router]
   );
 
   // --------------------------------------------------------------------------

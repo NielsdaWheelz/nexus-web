@@ -22,6 +22,7 @@ import type {
   ConversationMessage,
   ConversationMessagesResponse,
   ChatRunListResponse,
+  ChatRunResponse,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -42,6 +43,8 @@ interface Conversation {
   updated_at: string;
 }
 
+type ChatRunData = ChatRunResponse["data"];
+
 // ============================================================================
 // ConversationPaneBody — chat view with inline linked-context surface
 // ============================================================================
@@ -58,6 +61,7 @@ export default function ConversationPaneBody() {
     clearContexts,
     stripAttachState,
   } = useAttachedContextsFromUrl(searchParams);
+  const runIdFromUrl = searchParams.get("run");
 
   const clearAttachState = useCallback(() => {
     clearContexts();
@@ -66,12 +70,25 @@ export default function ConversationPaneBody() {
     router.replace(qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`);
   }, [clearContexts, stripAttachState, router, id]);
 
+  const clearRunParam = useCallback(
+    (runId: string) => {
+      if (searchParams.get("run") !== runId) return;
+      const cleaned = new URLSearchParams(searchParams);
+      cleaned.delete("run");
+      const qs = cleaned.toString();
+      router.replace(qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`);
+    },
+    [id, router, searchParams],
+  );
+
   return (
     <ChatView
       id={id}
+      runIdFromUrl={runIdFromUrl}
       attachedContexts={attachedContexts}
       onRemoveContext={removeContext}
       onMessageSent={clearAttachState}
+      onRunFinished={clearRunParam}
     />
   );
 }
@@ -82,14 +99,18 @@ export default function ConversationPaneBody() {
 
 function ChatView({
   id,
+  runIdFromUrl,
   attachedContexts,
   onRemoveContext,
   onMessageSent,
+  onRunFinished,
 }: {
   id: string;
+  runIdFromUrl: string | null;
   attachedContexts: ContextItem[];
   onRemoveContext: (index: number) => void;
   onMessageSent: () => void;
+  onRunFinished: (runId: string) => void;
 }) {
   const isMobileViewport = useIsMobileViewport();
   const router = usePaneRouter();
@@ -105,7 +126,6 @@ function ChatView({
   const shouldScrollRef = useRef(true);
   const activeStreamAbortsRef = useRef<Map<string, () => void>>(new Map());
   const {
-    handleOptimisticMessages,
     handleMetaReceived,
     handleDelta,
     handleToolCall,
@@ -136,10 +156,57 @@ function ChatView({
     return rows;
   }, [messages]);
 
+  const mergeChatRunMessages = useCallback((runData: ChatRunData) => {
+    shouldScrollRef.current = true;
+    setMessages((prev) => {
+      const existingIds = new Set(prev.map((message) => message.id));
+      const next = prev.map((message) => {
+        if (message.id === runData.user_message.id) return runData.user_message;
+        if (message.id === runData.assistant_message.id) return runData.assistant_message;
+        return message;
+      });
+
+      if (!existingIds.has(runData.user_message.id)) {
+        next.push(runData.user_message);
+      }
+      if (!existingIds.has(runData.assistant_message.id)) {
+        next.push(runData.assistant_message);
+      }
+
+      return next.sort((a, b) => a.seq - b.seq);
+    });
+  }, []);
+
+  const finishChatRun = useCallback(
+    async (
+      runId: string,
+      assistantId: string,
+      status: "complete" | "error" | "cancelled",
+      errorCode: string | null,
+    ) => {
+      try {
+        const response = await apiFetch<ChatRunResponse>(`/api/chat-runs/${runId}`);
+        mergeChatRunMessages(response.data);
+      } catch (err) {
+        console.error("Failed to reconcile chat run:", err);
+        handleDone(assistantId, status, errorCode);
+      } finally {
+        onRunFinished(runId);
+      }
+    },
+    [handleDone, mergeChatRunMessages, onRunFinished],
+  );
+
   const tailChatRun = useCallback(
-    async (runData: ChatRunListResponse["data"][number]) => {
+    async (runData: ChatRunData) => {
       const runId = runData.run.id;
       if (activeStreamAbortsRef.current.has(runId)) return;
+      mergeChatRunMessages(runData);
+
+      if (["complete", "error", "cancelled"].includes(runData.run.status)) {
+        onRunFinished(runId);
+        return;
+      }
 
       activeStreamAbortsRef.current.set(runId, () => {});
       let streamBaseUrl: string;
@@ -151,7 +218,6 @@ function ChatView({
       } catch (err) {
         console.error("Failed to resume chat run:", err);
         activeStreamAbortsRef.current.delete(runId);
-        handleDone(runData.assistant_message.id, "error", "E_STREAM_INTERRUPTED");
         return;
       }
       if (!activeStreamAbortsRef.current.has(runId)) return;
@@ -215,13 +281,19 @@ function ChatView({
                   event.data.status,
                   event.data.error_code,
                 );
+                forgetStream();
+                void finishChatRun(
+                  runId,
+                  currentAsstId,
+                  event.data.status,
+                  event.data.error_code,
+                );
                 break;
               }
             }
           },
           onError: (err) => {
             console.error("Chat run stream failed:", err);
-            handleDone(currentAsstId, "error", "E_STREAM_INTERRUPTED");
             forgetStream();
           },
           onComplete: forgetStream,
@@ -236,7 +308,17 @@ function ChatView({
       handleMetaReceived,
       handleToolCall,
       handleToolResult,
+      finishChatRun,
+      mergeChatRunMessages,
+      onRunFinished,
     ],
+  );
+
+  const handleChatRunCreated = useCallback(
+    (runData: ChatRunData) => {
+      void tailChatRun(runData);
+    },
+    [tailChatRun],
   );
 
   // --------------------------------------------------------------------------
@@ -254,6 +336,18 @@ function ChatView({
         setMessages(msgsData.data);
         setOlderCursor(msgsData.page.next_cursor);
         setError(null);
+        if (runIdFromUrl) {
+          try {
+            const runResponse = await apiFetch<ChatRunResponse>(
+              `/api/chat-runs/${runIdFromUrl}`,
+            );
+            if (runResponse.data.conversation.id === id) {
+              void tailChatRun(runResponse.data);
+            }
+          } catch (err) {
+            console.error("Failed to load requested chat run:", err);
+          }
+        }
         try {
           const activeRuns = await apiFetch<ChatRunListResponse>(
             `/api/chat-runs?${new URLSearchParams({
@@ -262,6 +356,7 @@ function ChatView({
             })}`,
           );
           for (const runData of activeRuns.data) {
+            if (runData.run.id === runIdFromUrl) continue;
             void tailChatRun(runData);
           }
         } catch (err) {
@@ -278,7 +373,7 @@ function ChatView({
       }
     };
     load();
-  }, [id, tailChatRun]);
+  }, [id, runIdFromUrl, tailChatRun]);
 
   useEffect(() => {
     const activeStreamAborts = activeStreamAbortsRef.current;
@@ -382,13 +477,7 @@ function ChatView({
                   conversationId={id}
                   attachedContexts={attachedContexts}
                   onRemoveContext={onRemoveContext}
-                  onOptimisticMessages={handleOptimisticMessages}
-                  onMetaReceived={handleMetaReceived}
-                  onDelta={handleDelta}
-                  onToolCall={handleToolCall}
-                  onToolResult={handleToolResult}
-                  onCitation={handleCitation}
-                  onDone={handleDone}
+                  onChatRunCreated={handleChatRunCreated}
                   onMessageSent={onMessageSent}
                 />
               }

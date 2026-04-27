@@ -13,13 +13,15 @@ import ChatSurface from "@/components/chat/ChatSurface";
 import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
 import StateMessage from "@/components/ui/StateMessage";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import type { ContextItem } from "@/lib/api/sse";
+import { sseClientDirect, type ContextItem, type SSEEvent } from "@/lib/api/sse";
+import { fetchStreamToken } from "@/lib/api/streamToken";
 import {
   getContextExact,
   getContextMediaTitle,
   truncateText,
 } from "@/lib/conversations/display";
 import type {
+  ChatRunResponse,
   ConversationMessage,
   ConversationMessagesResponse,
 } from "@/lib/conversations/types";
@@ -38,7 +40,7 @@ export default function QuoteChatSheet({
   conversationId: string | null;
   targetLabel?: string;
   onClose: () => void;
-  onConversationCreated: (conversationId: string) => void;
+  onConversationCreated: (conversationId: string, runId?: string) => void;
   onOpenFullChat: (conversationId: string) => void;
 }) {
   const sheetRef = useRef<HTMLElement | null>(null);
@@ -47,7 +49,10 @@ export default function QuoteChatSheet({
   const shouldScrollRef = useRef(true);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const createdInSheetRef = useRef(false);
+  const activeStreamAbortRef = useRef<(() => void) | null>(null);
+  const activeRunIdRef = useRef<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState(conversationId);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(Boolean(conversationId));
@@ -92,6 +97,10 @@ export default function QuoteChatSheet({
   }, [conversationId]);
 
   useEffect(() => {
+    activeStreamAbortRef.current?.();
+    activeStreamAbortRef.current = null;
+    activeRunIdRef.current = null;
+    setActiveRunId(null);
     setPendingContexts([context]);
     setMessages([]);
     setOlderCursor(null);
@@ -132,6 +141,14 @@ export default function QuoteChatSheet({
   }, [activeConversationId]);
 
   useEffect(() => {
+    return () => {
+      activeStreamAbortRef.current?.();
+      activeStreamAbortRef.current = null;
+      activeRunIdRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     if (shouldScrollRef.current && messageListRef.current) {
       messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
     }
@@ -153,10 +170,10 @@ export default function QuoteChatSheet({
   }, [activeConversationId, olderCursor]);
 
   const handleConversationCreated = useCallback(
-    (nextConversationId: string) => {
+    (nextConversationId: string, runId?: string) => {
       createdInSheetRef.current = true;
       setActiveConversationId(nextConversationId);
-      onConversationCreated(nextConversationId);
+      onConversationCreated(nextConversationId, runId);
     },
     [onConversationCreated],
   );
@@ -164,6 +181,164 @@ export default function QuoteChatSheet({
   const handleMessageSent = useCallback(() => {
     setPendingContexts([]);
   }, []);
+
+  const handleChatRunCreated = useCallback(
+    async (runData: ChatRunResponse["data"]) => {
+      const runId = runData.run.id;
+      const originalUserId = runData.user_message.id;
+      const originalAssistantId = runData.assistant_message.id;
+      let currentUserId = originalUserId;
+      let currentAssistantId = originalAssistantId;
+
+      activeStreamAbortRef.current?.();
+      activeStreamAbortRef.current = null;
+      activeRunIdRef.current = runId;
+      setActiveRunId(runId);
+      handleOptimisticMessages(runData.user_message, runData.assistant_message);
+
+      if (!activeConversationId) {
+        handleConversationCreated(runData.conversation.id, runId);
+      }
+
+      let streamBaseUrl: string;
+      let firstStreamToken: string | null = null;
+      try {
+        const tokenResponse = await fetchStreamToken();
+        streamBaseUrl = tokenResponse.stream_base_url;
+        firstStreamToken = tokenResponse.token;
+      } catch (err) {
+        console.error("Failed to attach quote chat stream:", err);
+        return;
+      }
+      if (activeRunIdRef.current !== runId) return;
+
+      const getStreamToken = async () => {
+        if (firstStreamToken !== null) {
+          const token = firstStreamToken;
+          firstStreamToken = null;
+          return token;
+        }
+        return (await fetchStreamToken()).token;
+      };
+
+      const replaceWithPersistedRun = async () => {
+        try {
+          const persisted = await apiFetch<ChatRunResponse>(`/api/chat-runs/${runId}`);
+          const userMessage = persisted.data.user_message;
+          const assistantMessage = persisted.data.assistant_message;
+          const idsToReplace = new Set([
+            originalUserId,
+            originalAssistantId,
+            currentUserId,
+            currentAssistantId,
+            userMessage.id,
+            assistantMessage.id,
+          ]);
+          setMessages((prev) => {
+            const next: ConversationMessage[] = [];
+            let inserted = false;
+            for (const message of prev) {
+              if (!idsToReplace.has(message.id)) {
+                next.push(message);
+                continue;
+              }
+              if (!inserted) {
+                next.push(userMessage, assistantMessage);
+                inserted = true;
+              }
+            }
+            return inserted ? next : [...prev, userMessage, assistantMessage];
+          });
+          if (
+            activeRunIdRef.current === runId &&
+            ["complete", "error", "cancelled"].includes(persisted.data.run.status)
+          ) {
+            activeRunIdRef.current = null;
+            setActiveRunId(null);
+          }
+        } catch (err) {
+          console.error("Failed to load completed quote chat run:", err);
+        }
+      };
+
+      const abort = sseClientDirect(
+        streamBaseUrl,
+        getStreamToken,
+        runId,
+        {
+          onEvent: (event: SSEEvent) => {
+            switch (event.type) {
+              case "meta": {
+                currentUserId = event.data.user_message_id;
+                currentAssistantId = event.data.assistant_message_id;
+                handleMetaReceived(
+                  originalUserId,
+                  currentUserId,
+                  originalAssistantId,
+                  currentAssistantId,
+                );
+                if (!activeConversationId && !createdInSheetRef.current) {
+                  handleConversationCreated(event.data.conversation_id, runId);
+                }
+                break;
+              }
+              case "delta": {
+                handleDelta(currentAssistantId, event.data.delta);
+                break;
+              }
+              case "tool_call": {
+                handleToolCall(currentAssistantId, event.data);
+                break;
+              }
+              case "tool_result": {
+                handleToolResult(currentAssistantId, event.data);
+                break;
+              }
+              case "citation": {
+                handleCitation(currentAssistantId, event.data);
+                break;
+              }
+              case "done": {
+                handleDone(
+                  currentAssistantId,
+                  event.data.status,
+                  event.data.error_code,
+                );
+                if (activeRunIdRef.current === runId) {
+                  activeStreamAbortRef.current = null;
+                }
+                void replaceWithPersistedRun();
+                break;
+              }
+            }
+          },
+          onError: (err) => {
+            console.error("Quote chat stream disconnected:", err);
+            if (activeRunIdRef.current === runId) {
+              activeStreamAbortRef.current = null;
+            }
+          },
+          onComplete: () => {
+            if (activeRunIdRef.current === runId) {
+              activeStreamAbortRef.current = null;
+            }
+          },
+        },
+      );
+      activeStreamAbortRef.current = abort;
+    },
+    [
+      activeConversationId,
+      handleCitation,
+      handleConversationCreated,
+      handleDelta,
+      handleDone,
+      handleMetaReceived,
+      handleOptimisticMessages,
+      handleToolCall,
+      handleToolResult,
+    ],
+  );
 
   const handleFocusCapture = useCallback((event: FocusEvent<HTMLElement>) => {
     if (event.target instanceof HTMLTextAreaElement) {
@@ -186,6 +361,10 @@ export default function QuoteChatSheet({
   const quoteText = getContextExact(context);
   const mediaTitle = getContextMediaTitle(context);
   const fullChatDisabled = !activeConversationId;
+  const fullChatConversationTarget =
+    activeConversationId && activeRunId
+      ? `${activeConversationId}?run=${encodeURIComponent(activeRunId)}`
+      : activeConversationId;
 
   return (
     <div className={styles.backdrop} onClick={onClose}>
@@ -211,8 +390,8 @@ export default function QuoteChatSheet({
               className={styles.openButton}
               disabled={fullChatDisabled}
               onClick={() => {
-                if (activeConversationId) {
-                  onOpenFullChat(activeConversationId);
+                if (fullChatConversationTarget) {
+                  onOpenFullChat(fullChatConversationTarget);
                 }
               }}
             >
@@ -268,14 +447,7 @@ export default function QuoteChatSheet({
                 onRemoveContext={(index) =>
                   setPendingContexts((prev) => prev.filter((_, i) => i !== index))
                 }
-                onConversationCreated={handleConversationCreated}
-                onOptimisticMessages={handleOptimisticMessages}
-                onMetaReceived={handleMetaReceived}
-                onDelta={handleDelta}
-                onToolCall={handleToolCall}
-                onToolResult={handleToolResult}
-                onCitation={handleCitation}
-                onDone={handleDone}
+                onChatRunCreated={handleChatRunCreated}
                 onMessageSent={handleMessageSent}
               />
             }

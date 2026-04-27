@@ -3103,12 +3103,19 @@ export default function MediaPaneBody() {
   );
 
   const handleQuoteChatSheetConversationCreated = useCallback(
-    (conversationId: string) => {
+    (conversationId: string, runId?: string) => {
       if (quoteChatSheetState?.targetPaneId) {
-        navigatePane(quoteChatSheetState.targetPaneId, `/conversations/${conversationId}`, {
-          replace: true,
-          activate: false,
-        });
+        const route = runId
+          ? `/conversations/${conversationId}?run=${encodeURIComponent(runId)}`
+          : `/conversations/${conversationId}`;
+        navigatePane(
+          quoteChatSheetState.targetPaneId,
+          route,
+          {
+            replace: true,
+            activate: false,
+          },
+        );
       }
       setQuoteChatSheetState((current) =>
         current ? { ...current, targetConversationId: conversationId } : current

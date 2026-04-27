@@ -20,6 +20,7 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import type { ChatRunResponse } from "@/lib/conversations/types";
 import styles from "../page.module.css";
 
 // ============================================================================
@@ -39,15 +40,12 @@ export default function ConversationNewPaneBody() {
     stripAttachState,
   } = useAttachedContextsFromUrl(searchParams);
 
-  const handleConversationCreated = useCallback(
-    (conversationId: string) => {
+  const handleChatRunCreated = useCallback(
+    (runData: ChatRunResponse["data"]) => {
       const cleaned = stripAttachState();
+      cleaned.set("run", runData.run.id);
       const qs = cleaned.toString();
-      router.replace(
-        qs
-          ? `/conversations/${conversationId}?${qs}`
-          : `/conversations/${conversationId}`,
-      );
+      router.replace(`/conversations/${runData.conversation.id}?${qs}`);
     },
     [router, stripAttachState],
   );
@@ -68,7 +66,7 @@ export default function ConversationNewPaneBody() {
                   conversationId={null}
                   attachedContexts={attachedContexts}
                   onRemoveContext={removeContext}
-                  onConversationCreated={handleConversationCreated}
+                  onChatRunCreated={handleChatRunCreated}
                   onMessageSent={clearAttachState}
                 />
               }
