@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
+from llm_calling.errors import LLMError, LLMErrorCode
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
@@ -25,7 +26,6 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.billing import get_entitlements
 from nexus.services.crypto import decrypt_api_key
-from nexus.services.llm.errors import LLMError, LLMErrorClass
 
 logger = get_logger(__name__)
 
@@ -140,7 +140,7 @@ def resolve_api_key(
                 user_key_id=user_key_id,
             )
         raise LLMError(
-            error_class=LLMErrorClass.INVALID_KEY,
+            error_code=LLMErrorCode.INVALID_KEY,
             message=f"No BYOK key available for {provider}",
         )
 
@@ -157,7 +157,7 @@ def resolve_api_key(
                 provider=provider,
             )
         raise LLMError(
-            error_class=LLMErrorClass.INVALID_KEY,
+            error_code=LLMErrorCode.INVALID_KEY,
             message=f"No platform key configured for {provider}",
         )
 
@@ -183,7 +183,7 @@ def resolve_api_key(
                 provider=provider,
             )
         raise LLMError(
-            error_class=LLMErrorClass.INVALID_KEY,
+            error_code=LLMErrorCode.INVALID_KEY,
             message=f"No API key available for {provider}",
         )
 

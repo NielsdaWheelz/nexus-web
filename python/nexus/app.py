@@ -38,6 +38,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from llm_calling.router import LLMRouter
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from web_search_tool.brave import BraveSearchProvider
 
@@ -59,7 +60,6 @@ from nexus.responses import (
     unhandled_exception_handler,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.llm import LLMRouter
 
 # Configure structured logging at import time
 configure_logging()

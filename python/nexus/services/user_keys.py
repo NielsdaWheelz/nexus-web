@@ -19,10 +19,14 @@ Security invariants:
 - encrypted_key, key_nonce, master_key_version never returned to clients
 """
 
+import time
 from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
 
+from llm_calling.errors import LLMError, LLMErrorCode
+from llm_calling.router import LLMRouter
+from llm_calling.types import LLMRequest, Turn
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -32,9 +36,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.keys import KeyProviderStateStatus, UserApiKeyOut
 from nexus.services.crypto import decrypt_api_key, encrypt_api_key
-from nexus.services.llm import LLMRouter
-from nexus.services.llm.errors import LLMError, LLMErrorClass
-from nexus.services.llm.types import LLMCallContext, LLMOperation, LLMRequest, Turn
+from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
@@ -52,6 +54,16 @@ KEY_TEST_MODELS = {
     "anthropic": "claude-haiku-4-5-20251001",
     "gemini": "gemini-3-flash-preview",
     "deepseek": "deepseek-v4-flash",
+}
+
+LLM_ERROR_CODE_TO_API_ERROR_CODE = {
+    LLMErrorCode.INVALID_KEY: ApiErrorCode.E_LLM_INVALID_KEY,
+    LLMErrorCode.RATE_LIMIT: ApiErrorCode.E_LLM_RATE_LIMIT,
+    LLMErrorCode.CONTEXT_TOO_LARGE: ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE,
+    LLMErrorCode.TIMEOUT: ApiErrorCode.E_LLM_TIMEOUT,
+    LLMErrorCode.PROVIDER_DOWN: ApiErrorCode.E_LLM_PROVIDER_DOWN,
+    LLMErrorCode.BAD_REQUEST: ApiErrorCode.E_LLM_BAD_REQUEST,
+    LLMErrorCode.MODEL_NOT_AVAILABLE: ApiErrorCode.E_MODEL_NOT_AVAILABLE,
 }
 
 
@@ -279,29 +291,53 @@ async def test_user_key(
         reasoning_effort="none",
     )
 
+    llm_start = time.monotonic()
+    llm_log_fields = safe_kv(
+        provider=key.provider,
+        model_name=req.model_name,
+        reasoning_effort=req.reasoning_effort,
+        key_mode="byok",
+        streaming=False,
+        llm_operation="key_test",
+        message_chars=sum(len(message.content) for message in req.messages),
+    )
+    logger.info("llm.request.started", **llm_log_fields)
     try:
         await router.generate(
             key.provider,
             req,
             api_key,
             timeout_s=15,
-            key_mode="byok",
-            call_context=LLMCallContext(operation=LLMOperation.KEY_TEST),
         )
     except LLMError as e:
-        if e.error_class == LLMErrorClass.INVALID_KEY:
+        error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[e.error_code]
+        logger.error(
+            "llm.request.failed",
+            **safe_kv(
+                **llm_log_fields,
+                outcome="error",
+                error_class=error_code.value,
+                latency_ms=int((time.monotonic() - llm_start) * 1000),
+            ),
+        )
+        if e.error_code == LLMErrorCode.INVALID_KEY:
             key.status = "invalid"
             key.last_tested_at = datetime.now(UTC)
             db.commit()
             return _key_to_out(key)
 
-        try:
-            code = ApiErrorCode(e.error_class.value)
-        except ValueError:
-            code = ApiErrorCode.E_LLM_PROVIDER_DOWN
-        raise ApiError(code, e.message) from e
+        raise ApiError(error_code, e.message) from e
     finally:
         api_key = ""
+
+    logger.info(
+        "llm.request.finished",
+        **safe_kv(
+            **llm_log_fields,
+            outcome="success",
+            latency_ms=int((time.monotonic() - llm_start) * 1000),
+        ),
+    )
 
     key.status = "valid"
     key.last_tested_at = datetime.now(UTC)

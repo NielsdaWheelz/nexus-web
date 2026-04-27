@@ -5,16 +5,18 @@ Never fails the media — if the LLM call fails, logs a warning and returns.
 """
 
 import asyncio
+import time
 from uuid import UUID
 
 import httpx
+from llm_calling.errors import LLMError
+from llm_calling.router import LLMRouter
+from llm_calling.types import LLMRequest, Turn
 
 from nexus.config import get_settings
 from nexus.db.models import Media, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
-from nexus.services.llm.router import LLMRouter
-from nexus.services.llm.types import LLMRequest, Turn
 from nexus.services.metadata_enrichment import (
     build_enrichment_prompt,
     detect_metadata_gaps,
@@ -24,6 +26,7 @@ from nexus.services.metadata_enrichment import (
     parse_enrichment_response,
     select_enrichment_provider,
 )
+from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
@@ -95,6 +98,19 @@ def enrich_metadata(
             temperature=0.0,
         )
 
+        llm_start = time.monotonic()
+        llm_log_fields = safe_kv(
+            provider=provider,
+            model_name=req.model_name,
+            reasoning_effort=req.reasoning_effort,
+            key_mode="platform",
+            streaming=False,
+            llm_operation="metadata_enrichment",
+            media_id=media_id,
+            message_chars=sum(len(message.content) for message in req.messages),
+        )
+        logger.info("llm.request.started", **llm_log_fields)
+
         try:
 
             async def _call():
@@ -106,9 +122,7 @@ def enrich_metadata(
                         enable_gemini=settings.enable_gemini,
                         enable_deepseek=settings.enable_deepseek,
                     )
-                    return await router.generate(
-                        provider, req, api_key, timeout_s=30, key_mode="platform"
-                    )
+                    return await router.generate(provider, req, api_key, timeout_s=30)
 
             # Use an explicit event loop so the handler stays self-contained in
             # the long-lived worker process.
@@ -118,6 +132,17 @@ def enrich_metadata(
             finally:
                 loop.close()
         except Exception as exc:
+            error_code = exc.error_code.value if isinstance(exc, LLMError) else None
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **llm_log_fields,
+                    outcome="error",
+                    error_class=error_code,
+                    latency_ms=int((time.monotonic() - llm_start) * 1000),
+                    exception_type=type(exc).__name__,
+                ),
+            )
             logger.warning(
                 "enrich_metadata_llm_failed",
                 media_id=media_id,
@@ -125,6 +150,20 @@ def enrich_metadata(
                 error=str(exc),
             )
             return {"status": "skipped", "reason": "llm_failed"}
+
+        usage = response.usage if hasattr(response, "usage") else None
+        logger.info(
+            "llm.request.finished",
+            **safe_kv(
+                **llm_log_fields,
+                outcome="success",
+                latency_ms=int((time.monotonic() - llm_start) * 1000),
+                tokens_input=usage.prompt_tokens if usage else None,
+                tokens_output=usage.completion_tokens if usage else None,
+                tokens_total=usage.total_tokens if usage else None,
+                provider_request_id=getattr(response, "provider_request_id", None),
+            ),
+        )
 
         # Parse and merge
         enrichment = parse_enrichment_response(response.text)

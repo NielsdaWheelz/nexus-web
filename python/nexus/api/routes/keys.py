@@ -22,6 +22,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
+from llm_calling.router import LLMRouter
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -31,7 +32,6 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.keys import UserApiKeyCreate
 from nexus.services import user_keys as user_keys_service
-from nexus.services.llm import LLMRouter
 
 router = APIRouter(tags=["keys"])
 

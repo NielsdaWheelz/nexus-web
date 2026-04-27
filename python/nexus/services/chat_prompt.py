@@ -16,7 +16,7 @@ Validation:
 - Total prompt size must not exceed max_chars (100,000 default)
 """
 
-from nexus.services.llm.types import Turn
+from llm_calling.types import Turn
 
 # Maximum total prompt size in characters (100,000 per spec)
 MAX_PROMPT_CHARS = 100_000
@@ -134,11 +134,3 @@ def validate_prompt_size(turns: list[Turn], max_chars: int = MAX_PROMPT_CHARS) -
     total = sum(len(t.content) for t in turns)
     if total > max_chars:
         raise PromptTooLargeError(total, max_chars)
-
-
-def estimate_token_count(text: str) -> int:
-    """Rough estimate of token count (~4 chars per token).
-
-    NOT used for billing — just for quick pre-validation.
-    """
-    return len(text) // 4 + 1

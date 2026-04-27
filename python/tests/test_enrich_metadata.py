@@ -127,8 +127,8 @@ class TestEnrichMetadata:
 
         prompt_holder: dict[str, str] = {}
 
-        async def _fake_generate(self, provider, req, api_key, timeout_s, key_mode):
-            _ = self, provider, api_key, timeout_s, key_mode
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, api_key, timeout_s
             prompt_holder["prompt"] = req.messages[0].content
             return SimpleNamespace(
                 text=json.dumps(
@@ -252,8 +252,8 @@ class TestEnrichMetadata:
             lambda _settings: ("openai", "gpt-test", "sk-test"),
         )
 
-        async def _fake_generate(self, provider, req, api_key, timeout_s, key_mode):
-            _ = self, provider, req, api_key, timeout_s, key_mode
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, req, api_key, timeout_s
             return SimpleNamespace(
                 text=json.dumps(
                     {

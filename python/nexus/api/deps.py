@@ -4,10 +4,10 @@ Common dependencies like database sessions, authentication, etc.
 """
 
 from fastapi import Request
+from llm_calling.router import LLMRouter
 from web_search_tool.types import WebSearchProvider
 
 from nexus.db.session import get_db, get_session_factory
-from nexus.services.llm import LLMRouter
 
 __all__ = ["get_db", "get_llm_router", "get_session_factory", "get_web_search_provider"]
 

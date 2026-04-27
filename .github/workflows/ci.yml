@@ -57,7 +57,7 @@ jobs:
           client-id: ${{ vars.WEB_SEARCH_TOOL_GITHUB_APP_CLIENT_ID }}
           private-key: ${{ secrets.WEB_SEARCH_TOOL_GITHUB_APP_PRIVATE_KEY }}
           owner: NielsdaWheelz
-          repositories: web-search-tool
+          repositories: web-search-tool, llm-calling
           permission-contents: read
 
       - name: Configure private Git dependency access
@@ -100,7 +100,7 @@ jobs:
           client-id: ${{ vars.WEB_SEARCH_TOOL_GITHUB_APP_CLIENT_ID }}
           private-key: ${{ secrets.WEB_SEARCH_TOOL_GITHUB_APP_PRIVATE_KEY }}
           owner: NielsdaWheelz
-          repositories: web-search-tool
+          repositories: web-search-tool, llm-calling
           permission-contents: read
 
       - name: Configure private Git dependency access
@@ -139,7 +139,7 @@ jobs:
           client-id: ${{ vars.WEB_SEARCH_TOOL_GITHUB_APP_CLIENT_ID }}
           private-key: ${{ secrets.WEB_SEARCH_TOOL_GITHUB_APP_PRIVATE_KEY }}
           owner: NielsdaWheelz
-          repositories: web-search-tool
+          repositories: web-search-tool, llm-calling
           permission-contents: read
 
       - name: Configure private Git dependency access
@@ -186,7 +186,7 @@ jobs:
           client-id: ${{ vars.WEB_SEARCH_TOOL_GITHUB_APP_CLIENT_ID }}
           private-key: ${{ secrets.WEB_SEARCH_TOOL_GITHUB_APP_PRIVATE_KEY }}
           owner: NielsdaWheelz
-          repositories: web-search-tool
+          repositories: web-search-tool, llm-calling
           permission-contents: read
 
       - name: Configure private Git dependency access
@@ -319,7 +319,7 @@ jobs:
           client-id: ${{ vars.WEB_SEARCH_TOOL_GITHUB_APP_CLIENT_ID }}
           private-key: ${{ secrets.WEB_SEARCH_TOOL_GITHUB_APP_PRIVATE_KEY }}
           owner: NielsdaWheelz
-          repositories: web-search-tool
+          repositories: web-search-tool, llm-calling
           permission-contents: read
 
       - name: Configure private Git dependency access

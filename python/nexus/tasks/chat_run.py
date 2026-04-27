@@ -6,13 +6,13 @@ import asyncio
 from uuid import UUID
 
 import httpx
+from llm_calling.router import LLMRouter
 from web_search_tool.brave import BraveSearchProvider
 
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services.chat_runs import execute_chat_run
-from nexus.services.llm import LLMRouter
 
 logger = get_logger(__name__)
 

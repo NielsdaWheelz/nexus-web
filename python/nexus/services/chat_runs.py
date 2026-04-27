@@ -15,6 +15,9 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID
 
+from llm_calling.errors import LLMError, LLMErrorCode
+from llm_calling.router import LLMRouter
+from llm_calling.types import LLMRequest, LLMUsage, ReasoningEffort, Turn
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
@@ -59,6 +62,7 @@ from nexus.services.api_key_resolver import (
     resolve_api_key,
     update_user_key_status,
 )
+from nexus.services.chat_prompt import render_prompt
 from nexus.services.context_rendering import PROMPT_VERSION, render_context_blocks
 from nexus.services.contexts import insert_contexts_batch
 from nexus.services.conversations import (
@@ -69,17 +73,6 @@ from nexus.services.conversations import (
     load_message_context_snapshots_for_message_ids,
     load_message_tool_calls_for_message_ids,
     message_to_out,
-)
-from nexus.services.llm import LLMRouter
-from nexus.services.llm.errors import LLMError, LLMErrorClass
-from nexus.services.llm.prompt import render_prompt
-from nexus.services.llm.types import (
-    LLMCallContext,
-    LLMOperation,
-    LLMRequest,
-    LLMUsage,
-    ReasoningEffort,
-    Turn,
 )
 from nexus.services.models import get_model_catalog_metadata
 from nexus.services.quote_context_errors import (
@@ -114,12 +107,30 @@ ERROR_CODE_TO_MESSAGE = {
     "E_TOKEN_BUDGET_EXCEEDED": "Monthly AI token quota exceeded.",
 }
 
+LLM_ERROR_CODE_TO_API_ERROR_CODE = {
+    LLMErrorCode.INVALID_KEY: ApiErrorCode.E_LLM_INVALID_KEY,
+    LLMErrorCode.RATE_LIMIT: ApiErrorCode.E_LLM_RATE_LIMIT,
+    LLMErrorCode.CONTEXT_TOO_LARGE: ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE,
+    LLMErrorCode.TIMEOUT: ApiErrorCode.E_LLM_TIMEOUT,
+    LLMErrorCode.PROVIDER_DOWN: ApiErrorCode.E_LLM_PROVIDER_DOWN,
+    LLMErrorCode.BAD_REQUEST: ApiErrorCode.E_LLM_BAD_REQUEST,
+    LLMErrorCode.MODEL_NOT_AVAILABLE: ApiErrorCode.E_MODEL_NOT_AVAILABLE,
+}
+
 
 @dataclass
 class PreparedMessages:
     conversation: Conversation
     user_message: Message
     assistant_message: Message
+
+
+def _api_error_code_for_llm_error(error_code: LLMErrorCode) -> ApiErrorCode:
+    return LLM_ERROR_CODE_TO_API_ERROR_CODE[error_code]
+
+
+def _llm_error_code_value(exc: LLMError) -> str:
+    return _api_error_code_for_llm_error(exc.error_code).value
 
 
 def compute_payload_hash(
@@ -435,6 +446,7 @@ async def _execute_chat_run(
     try:
         resolved_key = resolve_api_key(db, run.owner_user_id, model.provider, run.key_mode)
     except LLMError as exc:
+        error_code = _llm_error_code_value(exc)
         _finalize_run(
             db,
             run_id=run.id,
@@ -442,7 +454,7 @@ async def _execute_chat_run(
             assistant_status="error",
             run_status="error",
             done_status="error",
-            error_code=exc.error_class.value,
+            error_code=error_code,
             model=model,
             resolved_key=_dummy_resolved_key(model),
             key_mode=run.key_mode,
@@ -451,7 +463,7 @@ async def _execute_chat_run(
             provider_request_id=None,
             viewer_id=run.owner_user_id,
         )
-        return {"status": "error", "error_code": exc.error_class.value}
+        return {"status": "error", "error_code": error_code}
 
     rate_limiter = get_rate_limiter()
     rate_limiter.acquire_inflight_slot(run.owner_user_id)
@@ -597,23 +609,28 @@ async def _execute_chat_run(
             temperature=0.7,
             reasoning_effort=cast(ReasoningEffort, run.reasoning),
         )
-        call_context = LLMCallContext(
-            operation=LLMOperation.CHAT_SEND,
-            conversation_id=str(run.conversation_id),
-            assistant_message_id=str(run.assistant_message_id),
-        )
-
         full_content = ""
         usage: LLMUsage | None = None
         provider_request_id: str | None = None
+        llm_start = time.monotonic()
+        llm_log_fields = safe_kv(
+            provider=model.provider,
+            model_name=llm_request.model_name,
+            reasoning_effort=llm_request.reasoning_effort,
+            key_mode=resolved_key.mode,
+            streaming=True,
+            llm_operation="chat_send",
+            conversation_id=str(run.conversation_id),
+            assistant_message_id=str(run.assistant_message_id),
+            message_chars=sum(len(message.content) for message in llm_request.messages),
+        )
+        logger.info("llm.request.started", **llm_log_fields)
         try:
             async for chunk in llm_router.generate_stream(
                 model.provider,
                 llm_request,
                 resolved_key.api_key,
                 timeout_s=int(LLM_TIMEOUT_SECONDS),
-                key_mode=resolved_key.mode,
-                call_context=call_context,
             ):
                 if chunk.done:
                     usage = chunk.usage
@@ -640,17 +657,27 @@ async def _execute_chat_run(
                     return {"status": "cancelled"}
         except LLMError as exc:
             latency_ms = int((time.monotonic() - start_time) * 1000)
+            error_code = _llm_error_code_value(exc)
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **llm_log_fields,
+                    outcome="error",
+                    error_class=error_code,
+                    latency_ms=int((time.monotonic() - llm_start) * 1000),
+                ),
+            )
             _finalize_run(
                 db,
                 run_id=run.id,
                 assistant_content=ERROR_CODE_TO_MESSAGE.get(
-                    exc.error_class.value,
+                    error_code,
                     "An unexpected error occurred. Please try again.",
                 ),
                 assistant_status="error",
                 run_status="error",
                 done_status="error",
-                error_code=exc.error_class.value,
+                error_code=error_code,
                 model=model,
                 resolved_key=resolved_key,
                 key_mode=run.key_mode,
@@ -659,7 +686,20 @@ async def _execute_chat_run(
                 provider_request_id=provider_request_id,
                 viewer_id=run.owner_user_id,
             )
-            return {"status": "error", "error_code": exc.error_class.value}
+            return {"status": "error", "error_code": error_code}
+
+        logger.info(
+            "llm.request.finished",
+            **safe_kv(
+                **llm_log_fields,
+                outcome="success",
+                latency_ms=int((time.monotonic() - llm_start) * 1000),
+                tokens_input=usage.prompt_tokens if usage else None,
+                tokens_output=usage.completion_tokens if usage else None,
+                tokens_total=usage.total_tokens if usage else None,
+                provider_request_id=provider_request_id,
+            ),
+        )
 
         latency_ms = int((time.monotonic() - start_time) * 1000)
         _finalize_run(
@@ -1094,7 +1134,7 @@ def _finalize_run(
         if key.mode == "byok":
             if assistant_status == "complete":
                 update_user_key_status(db, key.user_key_id, "valid")
-            elif error_code == LLMErrorClass.INVALID_KEY.value:
+            elif error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
                 update_user_key_status(db, key.user_key_id, "invalid")
 
     run.status = run_status

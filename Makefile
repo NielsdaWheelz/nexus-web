@@ -165,7 +165,11 @@ build:
 
 audit:
 	cd python && uv sync --all-extras --locked
-	cd python && uv run pip-audit --strict
+	cd python && uv export --locked --all-extras --no-emit-project \
+		--no-emit-package llm-calling --no-emit-package web-search-tool \
+		--format requirements.txt > /tmp/nexus-python-audit-requirements.txt
+	cd python && uv run pip-audit --strict --no-deps --disable-pip \
+		--requirement /tmp/nexus-python-audit-requirements.txt
 	cd apps/web && bun audit --audit-level=high
 	cd e2e && bun audit --audit-level=high
 	cd node/ingest && bun audit --audit-level=high
