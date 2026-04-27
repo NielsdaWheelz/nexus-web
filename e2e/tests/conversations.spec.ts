@@ -96,31 +96,27 @@ test.describe("conversations", () => {
     try {
       await page.goto(`/conversations/${conversationId}`);
 
-      const modelSelect = page.locator("select").first();
+      const modelSettingsButton = page.getByRole("button", { name: /model settings:/i });
       const missingKeyError = page.getByText("No API key available for openai");
-      const input = page.getByPlaceholder(/ask anything|type a message/i);
-      const sendButton = input.locator("xpath=following-sibling::button[1]");
+      const input = page.getByRole("textbox", { name: /ask anything|type a message/i });
+      const sendButton = page.getByRole("button", { name: /send message/i });
 
-      let composeState: "pending" | "ready" | "missing_key" = "pending";
       await expect
         .poll(async () => {
           if (await missingKeyError.isVisible().catch(() => false)) {
-            composeState = "missing_key";
-            return composeState;
+            return "ready";
           }
 
-          const modelValue = await modelSelect.inputValue().catch(() => "");
-          if (modelValue) {
-            composeState = "ready";
-            return composeState;
+          const modelLabel = await modelSettingsButton.getAttribute("aria-label").catch(() => "");
+          if (modelLabel && modelLabel !== "Model settings: Model") {
+            return "ready";
           }
 
-          composeState = "pending";
-          return composeState;
+          return "pending";
         }, { timeout: 15_000 })
         .not.toBe("pending");
 
-      if (composeState === "missing_key") {
+      if (await missingKeyError.isVisible().catch(() => false)) {
         await expect(sendButton).toBeDisabled();
         return;
       }
@@ -131,25 +127,21 @@ test.describe("conversations", () => {
 
       const optimisticUserMessage = page.getByText("Hello, this is a test message").first();
 
-      let outcome: "pending" | "message" | "missing_key" = "pending";
       await expect
         .poll(async () => {
           if (await optimisticUserMessage.isVisible().catch(() => false)) {
-            outcome = "message";
-            return outcome;
+            return "done";
           }
 
           if (await missingKeyError.isVisible().catch(() => false)) {
-            outcome = "missing_key";
-            return outcome;
+            return "done";
           }
 
-          outcome = "pending";
-          return outcome;
+          return "pending";
         }, { timeout: 10_000 })
         .not.toBe("pending");
 
-      if (outcome === "missing_key") {
+      if (await missingKeyError.isVisible().catch(() => false)) {
         await expect(sendButton).toBeDisabled();
       } else {
         await expect(optimisticUserMessage).toBeVisible();

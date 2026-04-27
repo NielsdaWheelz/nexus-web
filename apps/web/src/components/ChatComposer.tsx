@@ -8,7 +8,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { ArrowUp, Search } from "lucide-react";
+import { ArrowUp, ChevronDown, Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
@@ -17,6 +17,7 @@ import {
   type ChatRunCreateRequest,
 } from "@/lib/api/sse";
 import ContextChips from "@/components/chat/ContextChips";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type {
   ChatRunResponse,
   ConversationModel,
@@ -40,13 +41,19 @@ export interface ChatComposerProps {
   onMessageSent?: () => void;
 }
 
+type ComposerModel = ConversationModel;
+type ReasoningMode = ConversationModel["reasoning_modes"][number];
+type WebSearchMode = ChatRunCreateRequest["web_search"]["mode"];
+
 /** Max contexts per message. */
 const MAX_CONTEXTS = 10;
 const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
 const WEB_SEARCH_MODES = ["auto", "required", "off"] as const;
-
-type ComposerModel = ConversationModel;
-type WebSearchMode = ChatRunCreateRequest["web_search"]["mode"];
+const WEB_SEARCH_MODE_LABELS = {
+  auto: "Auto",
+  required: "Required",
+  off: "Off",
+} satisfies Record<WebSearchMode, string>;
 
 function getModelSourceLabel(model: ComposerModel): string {
   if (model.available_via === "byok") {
@@ -88,12 +95,14 @@ export default function ChatComposer({
   const [models, setModels] = useState<ComposerModel[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [selectedModelId, setSelectedModelId] = useState<string>("");
-  const [selectedReasoning, setSelectedReasoning] = useState<
-    "none" | "minimal" | "low" | "medium" | "high" | "max" | ""
-  >("");
+  const [selectedReasoning, setSelectedReasoning] = useState<ReasoningMode | "">("");
   const [onlyUseMyKeys, setOnlyUseMyKeys] = useState(false);
   const [webSearchMode, setWebSearchMode] = useState<WebSearchMode>("auto");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const isMobile = useIsMobileViewport();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -135,6 +144,50 @@ export default function ChatComposer({
   }, [availableModels, selectedModelId, selectedProvider]);
 
   const selectedModel = availableModels.find((model) => model.id === selectedModelId);
+  const providerOptions = PROVIDER_ORDER.filter((provider) =>
+    availableModels.some((model) => model.provider === provider)
+  );
+  const modelSummary = selectedModel
+    ? `${selectedModel.model_display_name}${selectedReasoning ? ` / ${selectedReasoning}` : ""}`
+    : "Model";
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (isMobile) return;
+      const target = event.target as Node;
+      if (
+        settingsPanelRef.current?.contains(target) ||
+        settingsButtonRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setSettingsOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSettingsOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [settingsOpen, isMobile]);
+
+  useEffect(() => {
+    if (!settingsOpen || !isMobile) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [settingsOpen, isMobile]);
 
   // --------------------------------------------------------------------------
   // Chat-run send
@@ -270,123 +323,190 @@ export default function ChatComposer({
 
   return (
     <div className={styles.composer}>
-      {error && <div className={styles.composerError}>{error}</div>}
+      <div className={styles.composerShell}>
+        {error && <div className={styles.composerError}>{error}</div>}
 
-      <ContextChips
-        contexts={attachedContexts}
-        onRemoveContext={onRemoveContext}
-        maxContexts={MAX_CONTEXTS}
-      />
+        <ContextChips
+          contexts={attachedContexts}
+          onRemoveContext={onRemoveContext}
+          maxContexts={MAX_CONTEXTS}
+        />
 
-      {/* Provider / model / reasoning */}
-      <div className={styles.composerControlBar}>
-        <select
-          className={styles.modelSelect}
-          value={selectedProvider}
-          onChange={(e) => handleProviderChange(e.target.value)}
-          disabled={sending}
-        >
-          {availableModels.length === 0 && <option value="">No providers available</option>}
-          {PROVIDER_ORDER
-            .filter((provider) => availableModels.some((model) => model.provider === provider))
-            .map((provider) => {
-              const model = availableModels.find((item) => item.provider === provider);
-              return (
-                <option key={provider} value={provider}>
-                  {model?.provider_display_name ?? provider}
-                </option>
-              );
-            })}
-        </select>
-
-        <select
-          className={styles.modelSelect}
-          value={selectedModelId}
-          onChange={(e) => handleModelChange(e.target.value)}
-          disabled={sending}
-        >
-          {availableModels.length === 0 && <option value="">No models available</option>}
-          {availableModels
-            .filter((model) => model.provider === selectedProvider)
-            .map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.model_display_name} ({m.model_tier}) - {getModelSourceLabel(m)}
-              </option>
-            ))}
-        </select>
-
-        <select
-          className={styles.modelSelect}
-          value={selectedReasoning}
-          onChange={(e) =>
-            setSelectedReasoning(
-              e.target.value as "none" | "minimal" | "low" | "medium" | "high" | "max"
-            )
-          }
-          disabled={sending || !selectedModel}
-        >
-          {!selectedModel && <option value="">No reasoning modes</option>}
-          {selectedModel?.reasoning_modes.map((mode) => (
-            <option key={mode} value={mode}>
-              {mode}
-            </option>
-          ))}
-        </select>
-
-        <label className={styles.keyModeToggle}>
-          <input
-            type="checkbox"
-            checked={onlyUseMyKeys}
-            onChange={(e) => setOnlyUseMyKeys(e.target.checked)}
-            disabled={sending}
-          />
-          Only use my keys
-        </label>
-
-        <label className={styles.webSearchControl}>
-          <Search size={13} aria-hidden="true" />
-          <span className={styles.visuallyHidden}>Web search</span>
-          <select
-            className={styles.webSearchSelect}
-            value={webSearchMode}
-            onChange={(e) => setWebSearchMode(e.target.value as WebSearchMode)}
-            disabled={sending}
-            aria-label="Web search mode"
-          >
-            {WEB_SEARCH_MODES.map((mode) => (
-              <option key={mode} value={mode}>
-                Web {mode}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {/* Input + send */}
-      <div className={styles.composerInputWrapper}>
         <textarea
           ref={textareaRef}
           className={styles.composerInput}
           value={content}
           onChange={(e) => setContent(e.target.value)}
           onKeyDown={handleKeyDown}
+          aria-label="Ask anything"
           placeholder="Ask anything..."
           disabled={sending}
           rows={1}
         />
-        <button
-          className={styles.sendBtn}
-          onClick={handleSend}
-          disabled={
-            sending ||
-            !content.trim() ||
-            !selectedProvider ||
-            !selectedModelId ||
-            !selectedReasoning
-          }
-        >
-          <ArrowUp size={18} />
-        </button>
+
+        <div className={styles.composerActionRow}>
+          <button
+            ref={settingsButtonRef}
+            type="button"
+            className={styles.modelSettingsButton}
+            onClick={() => setSettingsOpen((open) => !open)}
+            aria-haspopup="dialog"
+            aria-expanded={settingsOpen}
+            aria-label={`Model settings: ${modelSummary}`}
+            title={modelSummary}
+          >
+            <span className={styles.modelSummary}>{modelSummary}</span>
+            <ChevronDown size={14} aria-hidden="true" />
+          </button>
+
+          <label className={styles.webSearchControl}>
+            <Search size={13} aria-hidden="true" />
+            <span className={styles.visuallyHidden}>Web search</span>
+            <select
+              className={styles.webSearchSelect}
+              value={webSearchMode}
+              onChange={(e) => setWebSearchMode(e.target.value as WebSearchMode)}
+              disabled={sending}
+              aria-label="Web search mode"
+            >
+              {WEB_SEARCH_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {WEB_SEARCH_MODE_LABELS[mode]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {onlyUseMyKeys && <span className={styles.keyModeStatus}>Your key</span>}
+
+          <button
+            type="button"
+            className={styles.sendBtn}
+            onClick={handleSend}
+            aria-label={sending ? "Sending message" : "Send message"}
+            disabled={
+              sending ||
+              !content.trim() ||
+              !selectedProvider ||
+              !selectedModelId ||
+              !selectedReasoning
+            }
+          >
+            <ArrowUp size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        {settingsOpen && (
+          <div className={styles.settingsLayer} data-mobile={isMobile ? "true" : "false"}>
+            {isMobile && (
+              <div
+                className={styles.settingsBackdrop}
+                onClick={() => setSettingsOpen(false)}
+              />
+            )}
+
+            <div
+              ref={settingsPanelRef}
+              className={styles.settingsPanel}
+              role="dialog"
+              aria-modal={isMobile ? "true" : undefined}
+              aria-label="Model settings"
+            >
+              <header className={styles.settingsHeader}>
+                <h2 className={styles.settingsTitle}>Model settings</h2>
+                <button
+                  type="button"
+                  className={styles.settingsClose}
+                  onClick={() => setSettingsOpen(false)}
+                  aria-label="Close model settings"
+                >
+                  <X size={16} aria-hidden="true" />
+                </button>
+              </header>
+
+              <label className={styles.settingsField}>
+                <span className={styles.settingsLabel}>Provider</span>
+                <select
+                  className={styles.settingsSelect}
+                  value={selectedProvider}
+                  onChange={(e) => {
+                    handleProviderChange(e.target.value);
+                    if (!isMobile) setSettingsOpen(false);
+                  }}
+                  disabled={sending || providerOptions.length === 0}
+                >
+                  {availableModels.length === 0 && (
+                    <option value="">No providers available</option>
+                  )}
+                  {providerOptions.map((provider) => {
+                    const model = availableModels.find((item) => item.provider === provider);
+                    return (
+                      <option key={provider} value={provider}>
+                        {model?.provider_display_name ?? provider}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+
+              <label className={styles.settingsField}>
+                <span className={styles.settingsLabel}>Model</span>
+                <select
+                  className={styles.settingsSelect}
+                  value={selectedModelId}
+                  onChange={(e) => {
+                    handleModelChange(e.target.value);
+                    if (!isMobile) setSettingsOpen(false);
+                  }}
+                  disabled={sending || availableModels.length === 0}
+                >
+                  {availableModels.length === 0 && <option value="">No models available</option>}
+                  {availableModels
+                    .filter((model) => model.provider === selectedProvider)
+                    .map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.model_display_name} ({model.model_tier}) -{" "}
+                        {getModelSourceLabel(model)}
+                      </option>
+                    ))}
+                </select>
+              </label>
+
+              <label className={styles.settingsField}>
+                <span className={styles.settingsLabel}>Reasoning</span>
+                <select
+                  className={styles.settingsSelect}
+                  value={selectedReasoning}
+                  onChange={(e) => {
+                    setSelectedReasoning(e.target.value as ReasoningMode);
+                    if (!isMobile) setSettingsOpen(false);
+                  }}
+                  disabled={sending || !selectedModel}
+                >
+                  {!selectedModel && <option value="">No reasoning modes</option>}
+                  {selectedModel?.reasoning_modes.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {mode}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className={styles.keyModeToggle}>
+                <input
+                  type="checkbox"
+                  checked={onlyUseMyKeys}
+                  onChange={(e) => {
+                    setOnlyUseMyKeys(e.target.checked);
+                    if (!isMobile) setSettingsOpen(false);
+                  }}
+                  disabled={sending}
+                />
+                Use my keys only
+              </label>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

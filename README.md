@@ -90,6 +90,7 @@ make test-real
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
 - `docs/sdlc/` -> planning and execution workflow: `docs/sdlc/README.md`
 - `docs/reader-implementation.md` -> current reader behavior contract
+- `docs/chat-composer-redesign.md` -> chat composer hard-cutover plan
 - `docs/mobile-command-palette.md` -> mobile command launcher behavior contract
 - `docs/podcast-detail-episode-pane-cutover.md` -> podcast detail split-pane cutover contract
 
