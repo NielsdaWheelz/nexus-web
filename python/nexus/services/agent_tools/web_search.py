@@ -8,7 +8,11 @@ from typing import Any, Literal
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from nexus_web_search.types import (
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
+from web_search_tool.types import (
     WebSearchError,
     WebSearchErrorCode,
     WebSearchProvider,
@@ -16,10 +20,6 @@ from nexus_web_search.types import (
     WebSearchResultItem,
     WebSearchResultType,
 )
-from sqlalchemy import bindparam, text
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
 from nexus.logging import get_logger
 from nexus.schemas.conversation import WebSearchOptions

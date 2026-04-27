@@ -719,7 +719,6 @@ dependencies = [
     { name = "html5lib" },
     { name = "httpx" },
     { name = "lxml" },
-    { name = "nexus-web-search" },
     { name = "pillow" },
     { name = "psycopg-binary" },
     { name = "pydantic-settings" },
@@ -731,6 +730,7 @@ dependencies = [
     { name = "stripe" },
     { name = "structlog" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "web-search-tool" },
     { name = "youtube-transcript-api" },
 ]
 
@@ -756,7 +756,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.0" },
     { name = "lxml", specifier = ">=5.0.0" },
-    { name = "nexus-web-search", editable = "../../nexus-web-search" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.9.0" },
     { name = "psycopg-binary", specifier = ">=3.1.0" },
@@ -776,31 +775,11 @@ requires-dist = [
     { name = "stripe", specifier = ">=12.0.0" },
     { name = "structlog", specifier = ">=24.1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
+    { name = "web-search-tool", editable = "../../web-search-tool" },
     { name = "youtube-transcript-api", specifier = ">=1.2.4" },
     { name = "zizmor", marker = "extra == 'dev'", specifier = ">=1.24.1" },
 ]
 provides-extras = ["dev"]
-
-[[package]]
-name = "nexus-web-search"
-version = "0.1.0"
-source = { editable = "../../nexus-web-search" }
-dependencies = [
-    { name = "httpx" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "httpx", specifier = ">=0.28.0" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pip-audit", specifier = ">=2.9.0" },
-    { name = "pyright", specifier = ">=1.1.390" },
-    { name = "pytest", specifier = ">=8.3.0" },
-    { name = "pytest-asyncio", specifier = ">=0.24.0" },
-    { name = "respx", specifier = ">=0.21.0" },
-    { name = "ruff", specifier = ">=0.8.0" },
-]
 
 [[package]]
 name = "nodeenv"
@@ -1741,6 +1720,27 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4f/55/2af26693fd15165c4ff7857e38330e1b61ab8c37d15dc79118cdba115b7a/watchfiles-1.1.1-cp314-cp314t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8c91ed27800188c2ae96d16e3149f199d62f86c7af5f5f4d2c61a3ed8cd3666c", size = 455072, upload-time = "2025-10-14T15:05:48.928Z" },
     { url = "https://files.pythonhosted.org/packages/66/1d/d0d200b10c9311ec25d2273f8aad8c3ef7cc7ea11808022501811208a750/watchfiles-1.1.1-cp314-cp314t-musllinux_1_1_aarch64.whl", hash = "sha256:311ff15a0bae3714ffb603e6ba6dbfba4065ab60865d15a6ec544133bdb21099", size = 629104, upload-time = "2025-10-14T15:05:49.908Z" },
     { url = "https://files.pythonhosted.org/packages/e3/bd/fa9bb053192491b3867ba07d2343d9f2252e00811567d30ae8d0f78136fe/watchfiles-1.1.1-cp314-cp314t-musllinux_1_1_x86_64.whl", hash = "sha256:a916a2932da8f8ab582f242c065f5c81bed3462849ca79ee357dd9551b0e9b01", size = 622112, upload-time = "2025-10-14T15:05:50.941Z" },
+]
+
+[[package]]
+name = "web-search-tool"
+version = "0.1.0"
+source = { editable = "../../web-search-tool" }
+dependencies = [
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "httpx", specifier = ">=0.28.0" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pip-audit", specifier = ">=2.9.0" },
+    { name = "pyright", specifier = ">=1.1.390" },
+    { name = "pytest", specifier = ">=8.3.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "respx", specifier = ">=0.21.0" },
+    { name = "ruff", specifier = ">=0.8.0" },
 ]
 
 [[package]]

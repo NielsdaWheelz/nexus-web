@@ -4,7 +4,7 @@ Common dependencies like database sessions, authentication, etc.
 """
 
 from fastapi import Request
-from nexus_web_search.types import WebSearchProvider
+from web_search_tool.types import WebSearchProvider
 
 from nexus.db.session import get_db, get_session_factory
 from nexus.services.llm import LLMRouter

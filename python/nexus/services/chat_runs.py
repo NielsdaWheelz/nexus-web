@@ -15,9 +15,9 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID
 
-from nexus_web_search.types import WebSearchProvider
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
+from web_search_tool.types import WebSearchProvider
 
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import (

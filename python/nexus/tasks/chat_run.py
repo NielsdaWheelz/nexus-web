@@ -6,7 +6,7 @@ import asyncio
 from uuid import UUID
 
 import httpx
-from nexus_web_search.brave import BraveSearchProvider
+from web_search_tool.brave import BraveSearchProvider
 
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory

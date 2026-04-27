@@ -38,8 +38,8 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from nexus_web_search.brave import BraveSearchProvider
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from web_search_tool.brave import BraveSearchProvider
 
 from nexus.api.routes import create_api_router
 from nexus.api.routes.stream import router as stream_router

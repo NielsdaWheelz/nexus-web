@@ -39,24 +39,24 @@ and no duplicated local provider implementation.
 
 ### New Repository
 
-Create a separate repository named `nexus-web-search`.
+Create a separate repository named `web-search-tool`.
 
 Python distribution name:
 
 ```text
-nexus-web-search
+web-search-tool
 ```
 
 Python import package:
 
 ```text
-nexus_web_search
+web_search_tool
 ```
 
 Expected structure:
 
 ```text
-nexus-web-search/
+web-search-tool/
   README.md
   SECURITY.md
   pyproject.toml
@@ -66,7 +66,7 @@ nexus-web-search/
       ci.yml
       publish.yml
   src/
-    nexus_web_search/
+    web_search_tool/
       __init__.py
       brave.py
       types.py
@@ -75,11 +75,11 @@ nexus-web-search/
     test_types.py
 ```
 
-`src/nexus_web_search/__init__.py` stays empty. Consumers import symbols from the defining module:
+`src/web_search_tool/__init__.py` stays empty. Consumers import symbols from the defining module:
 
 ```python
-from nexus_web_search.brave import BraveSearchProvider
-from nexus_web_search.types import WebSearchRequest, WebSearchResultType
+from web_search_tool.brave import BraveSearchProvider
+from web_search_tool.types import WebSearchRequest, WebSearchResultType
 ```
 
 ### Nexus Repository
@@ -99,9 +99,9 @@ Dependency direction is one-way:
 
 ```text
 nexus-web
-  imports nexus-web-search
+  imports web-search-tool
 
-nexus-web-search
+web-search-tool
   imports httpx and stdlib only
 ```
 
@@ -116,7 +116,7 @@ with the shared client it already owns.
 
 Keep the API small and concrete.
 
-`nexus_web_search.types` owns:
+`web_search_tool.types` owns:
 
 - `WebSearchRequest`
 - `WebSearchResultItem`
@@ -142,7 +142,7 @@ carry operational value:
 - drop response fields that are not used by Nexus and are not actionable, such as pagination flags
   without pagination support.
 
-`nexus_web_search.brave` owns:
+`web_search_tool.brave` owns:
 
 - `BraveSearchProvider`
 - Brave endpoint selection,
@@ -166,20 +166,20 @@ Delete:
 Update:
 
 - `python/pyproject.toml`
-  - Add `nexus-web-search` as a backend dependency.
+  - Add `web-search-tool` as a backend dependency.
   - Expand the Pyright include list for newly touched backend modules if they type-check cleanly.
 - `python/uv.lock`
   - Lock the new package dependency.
 - `python/nexus/app.py`
-  - Import `BraveSearchProvider` from `nexus_web_search.brave`.
+  - Import `BraveSearchProvider` from `web_search_tool.brave`.
 - `python/nexus/tasks/chat_run.py`
-  - Import `BraveSearchProvider` from `nexus_web_search.brave`.
+  - Import `BraveSearchProvider` from `web_search_tool.brave`.
 - `python/nexus/api/deps.py`
-  - Import `WebSearchProvider` from `nexus_web_search.types`.
+  - Import `WebSearchProvider` from `web_search_tool.types`.
 - `python/nexus/services/chat_runs.py`
-  - Import `WebSearchProvider` from `nexus_web_search.types`.
+  - Import `WebSearchProvider` from `web_search_tool.types`.
 - `python/nexus/services/agent_tools/web_search.py`
-  - Import request, response, result, error, and provider types from `nexus_web_search.types`.
+  - Import request, response, result, error, and provider types from `web_search_tool.types`.
   - Remove the local `WebSearchProvider` protocol.
   - Remove the unjustified `# type: ignore[arg-type]`.
   - Keep Nexus-specific execution, rendering, and persistence here.
@@ -262,7 +262,7 @@ Apply these repo rules directly:
 
 4. Use a hard cutover.
 
-   All Nexus imports move to `nexus_web_search.*`. The old `nexus.services.web_search` path is
+   All Nexus imports move to `web_search_tool.*`. The old `nexus.services.web_search` path is
    deleted.
 
 5. Keep provider errors typed.
@@ -310,7 +310,7 @@ Apply these repo rules directly:
 - The package can be imported with:
 
   ```bash
-  python -c "from nexus_web_search.brave import BraveSearchProvider"
+  python -c "from web_search_tool.brave import BraveSearchProvider"
   ```
 
 ### Nexus
@@ -356,16 +356,15 @@ Apply these repo rules directly:
 
 ## Implementation Order
 
-1. Create `nexus-web-search` with the package files and tests.
+1. Create `web-search-tool` with the package files and tests.
 2. Trim the copied code while preserving current Brave behavior.
 3. Run package checks and build the package.
 4. Publish `0.1.0` through trusted publishing, or use a temporary git dependency for the cutover
    branch only.
 5. Update Nexus dependency metadata and lockfile.
-6. Replace Nexus imports with `nexus_web_search.*`.
+6. Replace Nexus imports with `web_search_tool.*`.
 7. Delete `python/nexus/services/web_search/`.
 8. Remove provider tests from Nexus after they exist in the package.
 9. Fix the safe-search setting type and remove the `# type: ignore`.
 10. Run targeted Nexus backend, frontend, and static checks.
 11. Run the grep-based hard-cutover checks.
-

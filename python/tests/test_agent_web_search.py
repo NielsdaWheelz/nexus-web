@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from nexus_web_search.types import (
+from sqlalchemy import text
+from web_search_tool.types import (
     WebSearchProvider,
     WebSearchRequest,
     WebSearchResponse,
     WebSearchResultItem,
 )
-from sqlalchemy import text
 
 from nexus.schemas.conversation import WebSearchOptions
 from nexus.services.agent_tools.web_search import execute_web_search
