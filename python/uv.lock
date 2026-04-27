@@ -775,7 +775,7 @@ requires-dist = [
     { name = "stripe", specifier = ">=12.0.0" },
     { name = "structlog", specifier = ">=24.1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
-    { name = "web-search-tool", editable = "../../web-search-tool" },
+    { name = "web-search-tool", git = "https://github.com/NielsdaWheelz/web-search-tool?rev=ce911344a2e31900eaee3039b5d61109ef54bcb1" },
     { name = "youtube-transcript-api", specifier = ">=1.2.4" },
     { name = "zizmor", marker = "extra == 'dev'", specifier = ">=1.24.1" },
 ]
@@ -1725,22 +1725,9 @@ wheels = [
 [[package]]
 name = "web-search-tool"
 version = "0.1.0"
-source = { editable = "../../web-search-tool" }
+source = { git = "https://github.com/NielsdaWheelz/web-search-tool?rev=ce911344a2e31900eaee3039b5d61109ef54bcb1#ce911344a2e31900eaee3039b5d61109ef54bcb1" }
 dependencies = [
     { name = "httpx" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "httpx", specifier = ">=0.28.0" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pip-audit", specifier = ">=2.9.0" },
-    { name = "pyright", specifier = ">=1.1.390" },
-    { name = "pytest", specifier = ">=8.3.0" },
-    { name = "pytest-asyncio", specifier = ">=0.24.0" },
-    { name = "respx", specifier = ">=0.21.0" },
-    { name = "ruff", specifier = ">=0.8.0" },
 ]
 
 [[package]]

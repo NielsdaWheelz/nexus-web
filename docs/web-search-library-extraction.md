@@ -93,6 +93,15 @@ python/nexus/services/web_search/
 Update Nexus to depend on the external package and import from it directly. There must be no
 `nexus.services.web_search` compatibility module.
 
+Nexus consumes the private package from GitHub, pinned to the package commit:
+
+```toml
+[tool.uv.sources]
+web-search-tool = { git = "https://github.com/NielsdaWheelz/web-search-tool", rev = "ce911344a2e31900eaee3039b5d61109ef54bcb1" }
+```
+
+The final state must not depend on a sibling checkout such as `../../web-search-tool`.
+
 ## Architecture
 
 Dependency direction is one-way:
@@ -167,9 +176,14 @@ Update:
 
 - `python/pyproject.toml`
   - Add `web-search-tool` as a backend dependency.
+  - Source `web-search-tool` from the private GitHub repository pinned to a full commit SHA.
   - Expand the Pyright include list for newly touched backend modules if they type-check cleanly.
 - `python/uv.lock`
-  - Lock the new package dependency.
+  - Lock the new package dependency to the same Git commit.
+- `.github/workflows/ci.yml`
+  - Before each backend `uv sync --all-extras --locked`, create a short-lived GitHub App token
+    scoped to `web-search-tool`.
+  - Configure Git to use that token for `https://github.com/NielsdaWheelz/` fetches.
 - `python/nexus/app.py`
   - Import `BraveSearchProvider` from `web_search_tool.brave`.
 - `python/nexus/tasks/chat_run.py`
@@ -242,6 +256,7 @@ Apply these repo rules directly:
 - Use `respx` or equivalent HTTP mocking only at the external Brave boundary. Do not mock internal
   Nexus services.
 - Prefer a small amount of duplication over introducing a reusable-looking abstraction.
+- Keep private Git credentials out of `pyproject.toml`, `uv.lock`, and source code.
 
 ## Key Decisions
 
@@ -279,10 +294,15 @@ Apply these repo rules directly:
    There is no schema reason to touch migrations. The external package only changes where search
    results come from, not how Nexus stores tool calls.
 
-8. Prefer package release over git URL for production.
+8. Use a private Git dependency instead of a package index.
 
-   The long-term state is a versioned package published through trusted publishing. A temporary git
-   dependency is acceptable only during the implementation branch before the first package release.
+   Publishing a private package index is unnecessary for one internal package. Nexus pins the full
+   `web-search-tool` commit in `tool.uv.sources`, and CI uses a GitHub App token to fetch it.
+
+9. Use GitHub App auth for CI.
+
+   The token is short-lived, read-only, scoped to the dependency repository, and not tied to a human
+   account. Do not use a PAT, deploy key, or token embedded in dependency metadata.
 
 ## Acceptance Criteria
 
@@ -333,6 +353,12 @@ Apply these repo rules directly:
 
 ### Repository Operations
 
+- `python/pyproject.toml` uses the private Git source for `web-search-tool`, not a local path.
+- `python/uv.lock` records `web-search-tool` from GitHub, not an editable local directory.
+- `rg "../../web-search-tool|editable = .*web-search-tool|path = .*web-search-tool" python .github`
+  returns no active dependency source.
+- Each GitHub Actions job that runs backend `uv sync --all-extras --locked` first configures
+  private Git access with `actions/create-github-app-token`.
 - The package repository has branch protection on the default branch.
 - Required checks include lint, format, type check, tests, build, and audit.
 - `CODEOWNERS`, Dependabot, secret scanning, and dependency review are enabled where available.
@@ -359,12 +385,12 @@ Apply these repo rules directly:
 1. Create `web-search-tool` with the package files and tests.
 2. Trim the copied code while preserving current Brave behavior.
 3. Run package checks and build the package.
-4. Publish `0.1.0` through trusted publishing, or use a temporary git dependency for the cutover
-   branch only.
+4. Push `web-search-tool` to its private GitHub repository.
 5. Update Nexus dependency metadata and lockfile.
 6. Replace Nexus imports with `web_search_tool.*`.
 7. Delete `python/nexus/services/web_search/`.
 8. Remove provider tests from Nexus after they exist in the package.
 9. Fix the safe-search setting type and remove the `# type: ignore`.
-10. Run targeted Nexus backend, frontend, and static checks.
-11. Run the grep-based hard-cutover checks.
+10. Add GitHub App token setup before each backend dependency install in CI.
+11. Run targeted Nexus backend, frontend, workflow, and static checks.
+12. Run the grep-based hard-cutover checks.
