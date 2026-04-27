@@ -48,7 +48,7 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import styles from "./CommandPalette.module.css";
 
-type Section = "Recent" | "Panes" | "Create" | "Navigate" | "Settings" | "Search Results";
+type Section = "Open tabs" | "Recent" | "Create" | "Navigate" | "Settings" | "Search results";
 
 interface Action {
   id: string;
@@ -57,6 +57,7 @@ interface Action {
   section: Section;
   icon: LucideIcon;
   execute: () => void;
+  meta?: string;
 }
 
 interface CommandPaletteRecentRow {
@@ -87,7 +88,6 @@ const ACTIONS: Action[] = [
 ];
 
 const ACTIONS_BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
-const SECTION_ORDER: Section[] = ["Recent", "Panes", "Create", "Navigate", "Settings", "Search Results"];
 
 const SEARCH_TYPE_ICON: Record<SearchType, LucideIcon> = {
   media: Globe,
@@ -133,7 +133,6 @@ function getRecentDestinationIcon(routeId: string): LucideIcon {
 export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
   const [recentRows, setRecentRows] = useState<CommandPaletteRecentRow[]>([]);
   const [searchResults, setSearchResults] = useState<SearchResultRowViewModel[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -190,7 +189,6 @@ export default function CommandPalette() {
         setOpen((prev) => {
           if (!prev) {
             setQuery("");
-            setActiveIndex(0);
           }
           return !prev;
         });
@@ -218,7 +216,6 @@ export default function CommandPalette() {
   useEffect(() => {
     const handler = () => {
       setQuery("");
-      setActiveIndex(0);
       setOpen(true);
     };
     window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
@@ -286,27 +283,60 @@ export default function CommandPalette() {
     };
   }, [query]);
 
-  // Filter static actions
-  const filtered = useMemo(() => {
-    if (!query) return ACTIONS;
-    const q = query.toLowerCase();
-    return ACTIONS.filter(
-      (a) =>
-        a.label.toLowerCase().includes(q) ||
-        a.keywords.some((k) => k.includes(q)),
-    );
-  }, [query]);
+  const normalizedQuery = query.trim().toLowerCase();
 
-  // Build recent actions (only when no query)
+  const createActions = useMemo(() => {
+    const actions = ACTIONS.filter((action) => action.section === "Create");
+    if (!normalizedQuery) return actions;
+    return actions.filter(
+      (action) =>
+        action.label.toLowerCase().includes(normalizedQuery) ||
+        action.keywords.some((keyword) => keyword.includes(normalizedQuery)),
+    );
+  }, [normalizedQuery]);
+
+  const navigateActions = useMemo(() => {
+    const actions = ACTIONS.filter((action) => action.section === "Navigate");
+    if (!normalizedQuery) return actions;
+    return actions.filter(
+      (action) =>
+        action.label.toLowerCase().includes(normalizedQuery) ||
+        action.keywords.some((keyword) => keyword.includes(normalizedQuery)),
+    );
+  }, [normalizedQuery]);
+
+  const settingsActions = useMemo(() => {
+    const actions = ACTIONS.filter((action) => action.section === "Settings");
+    if (!normalizedQuery) return actions;
+    return actions.filter(
+      (action) =>
+        action.label.toLowerCase().includes(normalizedQuery) ||
+        action.keywords.some((keyword) => keyword.includes(normalizedQuery)),
+    );
+  }, [normalizedQuery]);
+
+  const openPaneHrefs = useMemo(
+    () => new Set(workspaceState.panes.map((pane) => pane.href)),
+    [workspaceState.panes],
+  );
+
+  // Build recent actions
   const recentActions = useMemo(() => {
-    if (query) return [];
-    return recentRows.map((row) => {
+    return recentRows.flatMap((row) => {
+      if (openPaneHrefs.has(row.href)) return [];
       const descriptor = resolveWorkspacePaneTitle(
         { id: row.href, href: row.href },
         EMPTY_RUNTIME_TITLE_BY_PANE_ID
       );
       const label = row.title_snapshot?.trim() || descriptor.title;
-      return {
+      if (
+        normalizedQuery &&
+        !label.toLowerCase().includes(normalizedQuery) &&
+        !row.href.toLowerCase().includes(normalizedQuery)
+      ) {
+        return [];
+      }
+      return [{
         id: `recent-${encodeURIComponent(row.href)}`,
         label,
         keywords: [row.href],
@@ -316,9 +346,9 @@ export default function CommandPalette() {
           requestOpenInAppPane(row.href, {
             titleHint: row.title_snapshot ?? undefined,
           }),
-      };
+      }];
     });
-  }, [query, recentRows]);
+  }, [normalizedQuery, openPaneHrefs, recentRows]);
 
   // Build pane-switching actions from workspace state
   const paneActions: Action[] = useMemo(() => {
@@ -328,49 +358,54 @@ export default function CommandPalette() {
         id: `pane-${pane.id}`,
         label: title,
         keywords: ["tab", "pane", "switch"],
-        section: "Panes" as Section,
+        section: "Open tabs" as Section,
         icon: PanelLeft,
         execute: () => activatePane(pane.id),
       };
     });
-    if (!query) return panes;
-    const q = query.toLowerCase();
+    if (!normalizedQuery) return panes;
     return panes.filter(
-      (a) =>
-        a.label.toLowerCase().includes(q) ||
-        a.keywords.some((k) => k.includes(q)),
+      (action) =>
+        action.label.toLowerCase().includes(normalizedQuery) ||
+        action.keywords.some((keyword) => keyword.includes(normalizedQuery)),
     );
-  }, [workspaceState.panes, runtimeTitleByPaneId, activatePane, query]);
+  }, [workspaceState.panes, runtimeTitleByPaneId, activatePane, normalizedQuery]);
 
   // Build search result actions
   const searchActions: Action[] = useMemo(
     () =>
-      searchResults.map((r) => ({
-        id: `search-${r.key}`,
-        label: r.primaryText,
+      searchResults.map((result) => ({
+        id: `search-${result.key}`,
+        label: result.primaryText,
         keywords: [],
-        section: "Search Results" as Section,
-        icon: SEARCH_TYPE_ICON[r.type],
-        execute: () => requestOpenInAppPane(r.href),
+        section: "Search results" as Section,
+        icon: SEARCH_TYPE_ICON[result.type],
+        meta: result.typeLabel,
+        execute: () => requestOpenInAppPane(result.href),
       })),
     [searchResults],
   );
 
-  // Group by section in display order
-  const grouped = useMemo(() => {
-    const allItems = [...recentActions, ...paneActions, ...filtered, ...searchActions];
-    const groups: { section: Section; items: Action[] }[] = [];
-    for (const section of SECTION_ORDER) {
-      const items = allItems.filter((a) => a.section === section);
-      if (items.length > 0) groups.push({ section, items });
-    }
-    return groups;
-  }, [recentActions, paneActions, filtered, searchActions]);
+  const firstVisibleAction = normalizedQuery
+    ? paneActions[0] ??
+      searchActions[0] ??
+      recentActions[0] ??
+      createActions[0] ??
+      navigateActions[0] ??
+      settingsActions[0]
+    : paneActions[0] ??
+      recentActions[0] ??
+      createActions[0] ??
+      navigateActions[0] ??
+      settingsActions[0];
 
-  const flatItems = useMemo(
-    () => grouped.flatMap((g) => g.items),
-    [grouped],
-  );
+  const hasVisibleActions =
+    paneActions.length > 0 ||
+    searchActions.length > 0 ||
+    recentActions.length > 0 ||
+    createActions.length > 0 ||
+    navigateActions.length > 0 ||
+    settingsActions.length > 0;
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -382,110 +417,133 @@ export default function CommandPalette() {
     [close],
   );
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close();
+  const focusAdjacentCommand = useCallback((current: HTMLElement, offset: number) => {
+    const buttons = Array.from(
+      listRef.current?.querySelectorAll<HTMLElement>("[data-command-palette-primary='true']") ?? []
+    );
+    const index = buttons.indexOf(current);
+    if (index < 0) return;
+    buttons[Math.max(0, Math.min(buttons.length - 1, index + offset))]?.focus();
+  }, []);
+
+  const handleCommandButtonKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        focusAdjacentCommand(event.currentTarget, 1);
         return;
       }
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setActiveIndex((i) => Math.min(i + 1, flatItems.length - 1));
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        focusAdjacentCommand(event.currentTarget, -1);
         return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setActiveIndex((i) => Math.max(i - 1, 0));
-        return;
-      }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        const item = flatItems[activeIndex];
-        if (item) executeAction(item);
       }
     },
-    [activeIndex, close, executeAction, flatItems],
+    [focusAdjacentCommand],
   );
 
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [query]);
+  const handleDialogKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    },
+    [close],
+  );
 
-  useEffect(() => {
-    if (!listRef.current) return;
-    const active = listRef.current.querySelector(`[data-index="${activeIndex}"]`);
-    active?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex]);
+  const handleInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        listRef.current
+          ?.querySelector<HTMLElement>("[data-command-palette-primary='true']")
+          ?.focus();
+        return;
+      }
+      if (event.key === "Enter" && normalizedQuery && firstVisibleAction) {
+        event.preventDefault();
+        executeAction(firstVisibleAction);
+      }
+    },
+    [executeAction, firstVisibleAction, normalizedQuery],
+  );
+
+  const renderSection = (section: Section, actions: Action[], searching: boolean) => {
+    if (actions.length === 0 && !searching) return null;
+    const sectionId = `command-palette-${section.toLowerCase().replace(/\s+/g, "-")}`;
+    return (
+      <section key={section} className={styles.section} aria-labelledby={sectionId}>
+        <h3 id={sectionId} className={styles.sectionHeader}>
+          {section}
+        </h3>
+        {actions.map((action) => {
+          const Icon = action.icon;
+          const combo = keybindings[action.id];
+          const isPane = action.id.startsWith("pane-");
+          const isCurrentPane = action.id === `pane-${workspaceState.activePaneId}`;
+          return (
+            <div key={action.id} className={styles.row}>
+              <button
+                type="button"
+                className={styles.item}
+                data-command-palette-primary="true"
+                onClick={() => executeAction(action)}
+                onKeyDown={handleCommandButtonKeyDown}
+              >
+                <span className={styles.itemLabel}>
+                  <Icon size={16} aria-hidden="true" />
+                  <span className={styles.itemText}>{action.label}</span>
+                  {action.meta && (
+                    <span className={styles.searchResultMeta}>{action.meta}</span>
+                  )}
+                </span>
+                <span className={styles.itemTrailing}>
+                  {isCurrentPane && (
+                    <span className={styles.currentBadge}>Current</span>
+                  )}
+                  {combo && (
+                    <span className={styles.shortcutHint}>{formatKeyCombo(combo)}</span>
+                  )}
+                </span>
+              </button>
+              {isPane && (
+                <button
+                  type="button"
+                  className={styles.paneClose}
+                  aria-label={`Close ${action.label}`}
+                  onClick={() => closePane(action.id.slice(5))}
+                >
+                  <X size={14} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {searching && (
+          <div className={styles.searchingIndicator}>Searching...</div>
+        )}
+      </section>
+    );
+  };
 
   if (!open) return null;
-
-  let itemIndex = 0;
 
   const listContent = (
     <div
       ref={listRef}
       id="command-palette-list"
       className={styles.list}
-      role="listbox"
     >
-      {grouped.length === 0 && !searchLoading && (
+      {!hasVisibleActions && !searchLoading && (
         <div className={styles.empty}>No matching commands</div>
       )}
-      {grouped.map((group) => (
-        <div key={group.section}>
-          <div className={styles.sectionHeader} role="presentation">
-            {group.section}
-          </div>
-          {group.items.map((action) => {
-            const idx = itemIndex++;
-            const Icon = action.icon;
-            const combo = keybindings[action.id];
-            const searchVm = action.id.startsWith("search-")
-              ? searchResults.find((r) => `search-${r.key}` === action.id)
-              : null;
-            return (
-              <div
-                key={action.id}
-                id={`cmd-${action.id}`}
-                className={`${styles.item} ${idx === activeIndex ? styles.active : ""}`}
-                role="option"
-                aria-selected={idx === activeIndex}
-                data-index={idx}
-                onClick={() => executeAction(action)}
-                onMouseEnter={() => setActiveIndex(idx)}
-              >
-                <span className={styles.itemLabel}>
-                  <Icon size={16} aria-hidden="true" />
-                  {action.label}
-                  {searchVm && (
-                    <span className={styles.searchResultMeta}>{searchVm.typeLabel}</span>
-                  )}
-                </span>
-                {combo && (
-                  <span className={styles.shortcutHint}>{formatKeyCombo(combo)}</span>
-                )}
-                {action.id.startsWith("pane-") && (
-                  <button
-                    type="button"
-                    className={styles.paneClose}
-                    aria-label={`Close ${action.label}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closePane(action.id.slice(5));
-                    }}
-                  >
-                    <X size={14} aria-hidden="true" />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ))}
-      {searchLoading && (
-        <div className={styles.searchingIndicator}>Searching...</div>
-      )}
+      {renderSection("Open tabs", paneActions, false)}
+      {normalizedQuery ? renderSection("Search results", searchActions, searchLoading) : null}
+      {renderSection("Recent", recentActions, false)}
+      {renderSection("Create", createActions, false)}
+      {renderSection("Navigate", navigateActions, false)}
+      {renderSection("Settings", settingsActions, false)}
     </div>
   );
 
@@ -497,16 +555,9 @@ export default function CommandPalette() {
       placeholder="Search or run an action..."
       value={query}
       onChange={(e) => setQuery(e.target.value)}
+      onKeyDown={handleInputKeyDown}
       aria-label="Search actions"
-      aria-activedescendant={
-        flatItems[activeIndex]
-          ? `cmd-${flatItems[activeIndex].id}`
-          : undefined
-      }
-      role="combobox"
-      aria-expanded="true"
       aria-controls="command-palette-list"
-      aria-autocomplete="list"
     />
   );
 
@@ -521,7 +572,7 @@ export default function CommandPalette() {
           aria-label="Search"
           tabIndex={-1}
           onClick={(e) => e.stopPropagation()}
-          onKeyDown={handleKeyDown}
+          onKeyDown={handleDialogKeyDown}
         >
           <header className={styles.mobileHeader}>
             <h2>Search</h2>
@@ -549,7 +600,7 @@ export default function CommandPalette() {
         aria-modal="true"
         aria-label="Search"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={handleKeyDown}
+        onKeyDown={handleDialogKeyDown}
       >
         {inputElement}
         {listContent}

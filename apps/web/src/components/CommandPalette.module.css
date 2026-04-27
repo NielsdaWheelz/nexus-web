@@ -45,6 +45,10 @@
   padding: var(--space-2) 0;
 }
 
+.section {
+  min-width: 0;
+}
+
 .sectionHeader {
   padding: var(--space-2) var(--space-4) var(--space-1);
   font-size: var(--font-size-xs);
@@ -54,20 +58,34 @@
   letter-spacing: 0.04em;
 }
 
+.row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
 .item {
+  width: 100%;
+  min-width: 0;
+  border: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
+  background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
+  font: inherit;
+  text-align: left;
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
-.item.active {
+.item:hover,
+.item:focus-visible {
   background: var(--color-surface);
   color: var(--color-text);
+  outline: none;
 }
 
 .itemLabel {
@@ -80,8 +98,30 @@
   white-space: nowrap;
 }
 
+.itemText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .itemLabel > svg {
   flex-shrink: 0;
+}
+
+.itemTrailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.currentBadge {
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+  padding: 0 var(--space-1);
 }
 
 .searchResultMeta {
@@ -106,8 +146,7 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
+  width: 36px;
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -118,6 +157,12 @@
 .paneClose:hover {
   background: var(--color-surface);
   color: var(--color-text);
+}
+
+.paneClose:focus-visible {
+  background: var(--color-surface);
+  color: var(--color-text);
+  outline: none;
 }
 
 .searchingIndicator {
@@ -200,6 +245,10 @@
     min-height: 44px;
     padding: var(--space-3) var(--space-4);
     touch-action: manipulation;
+  }
+
+  .paneClose {
+    width: 44px;
   }
 }
 
