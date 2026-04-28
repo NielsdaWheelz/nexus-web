@@ -49,6 +49,7 @@ from nexus.schemas.conversation import (
     MessageToolCallOut,
     PageInfo,
 )
+from nexus.services.conversation_memory import conversation_memory_inspection
 
 logger = get_logger(__name__)
 
@@ -235,6 +236,7 @@ def conversation_to_out(
         sharing=conversation.sharing,
         scope=conversation_scope_to_out(db, conversation),
         message_count=message_count,
+        memory=conversation_memory_inspection(db, conversation_id=conversation.id),
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
     )
@@ -937,8 +939,7 @@ def _conversation_scope_out_from_row(row: Sequence) -> ConversationScopeOut:
 def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:
     """Delete a conversation.
 
-    Cascades to messages, message_context, conversation_media, conversation_shares,
-    chat runs, and chat run events.
+    Cleans conversation-owned context memory, then deletes the conversation.
 
     Args:
         db: Database session.
@@ -952,6 +953,31 @@ def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> 
     # Verify ownership (write = owner-only)
     get_conversation_for_owner_write_or_404(db, viewer_id, conversation_id)
 
+    db.execute(
+        text("DELETE FROM chat_prompt_assemblies WHERE conversation_id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM conversation_memory_item_sources
+            WHERE memory_item_id IN (
+                SELECT id
+                FROM conversation_memory_items
+                WHERE conversation_id = :conversation_id
+            )
+            """
+        ),
+        {"conversation_id": conversation_id},
+    )
+    db.execute(
+        text("DELETE FROM conversation_memory_items WHERE conversation_id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    )
+    db.execute(
+        text("DELETE FROM conversation_state_snapshots WHERE conversation_id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    )
     db.execute(delete(Conversation).where(Conversation.id == conversation_id))
     db.flush()
     db.commit()

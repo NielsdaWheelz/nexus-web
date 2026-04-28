@@ -12,6 +12,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.context_memory import ConversationMemoryInspectionOut
+
 # Valid sharing modes - must match DB constraint
 SHARING_MODES = Literal["private", "library", "public"]
 
@@ -113,6 +115,7 @@ class ConversationOut(BaseModel):
     sharing: str  # "private" | "library" | "public"
     scope: ConversationScopeOut
     message_count: int
+    memory: ConversationMemoryInspectionOut | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -364,6 +364,7 @@ function ChatView({
           <aside className={styles.chatContextColumn}>
             <ConversationContextPane
               scope={conversationScope}
+              memory={conversation?.memory}
               contexts={attachedContexts}
               persistedRows={persistedRows}
               onRemoveContext={onRemoveContext}
@@ -375,6 +376,7 @@ function ChatView({
       {isMobileViewport ? (
         <ChatContextDrawer
           scope={conversationScope}
+          memory={conversation?.memory}
           contexts={attachedContexts}
           persistedRows={persistedRows}
           onRemoveContext={onRemoveContext}

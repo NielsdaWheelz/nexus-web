@@ -8,6 +8,7 @@ privacy-safe query metadata: raw user queries are never stored in tool tables.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -235,17 +236,32 @@ def execute_app_search(
     scope: str,
     history: list[Turn],
     scope_metadata: dict[str, Any],
+    planned_query: str | None = None,
+    planned_types: Sequence[str] | None = None,
+    force: bool = False,
 ) -> AppSearchRun | None:
     """Run app search for a chat turn and persist tool/retrieval metadata."""
-    if scope == "all" and not should_run_app_search(content, has_user_context=has_user_context):
+    if (
+        scope == "all"
+        and not force
+        and not should_run_app_search(content, has_user_context=has_user_context)
+    ):
         return None
 
-    query = build_app_search_query(content, history=history, scope_metadata=scope_metadata)
-    requested_types = [
-        result_type
-        for result_type in ALL_RESULT_TYPES
-        if scope == "all" or result_type != "message"
-    ]
+    query = planned_query or build_app_search_query(
+        content,
+        history=history,
+        scope_metadata=scope_metadata,
+    )
+    requested_types = (
+        list(planned_types)
+        if planned_types is not None
+        else [
+            result_type
+            for result_type in ALL_RESULT_TYPES
+            if scope == "all" or result_type != "message"
+        ]
+    )
     semantic = True
     start = time.monotonic()
     status = "complete"

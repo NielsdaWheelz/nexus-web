@@ -1931,6 +1931,57 @@ class AppSearchResultType(str, PyEnum):
     transcript_chunk = "transcript_chunk"
 
 
+class SourceRefType(str, PyEnum):
+    """Resolvable source reference classes for conversation memory."""
+
+    message = "message"
+    message_context = "message_context"
+    message_retrieval = "message_retrieval"
+    app_context_ref = "app_context_ref"
+    web_result = "web_result"
+
+
+class ConversationMemoryKind(str, PyEnum):
+    """Typed conversation memory item classes."""
+
+    goal = "goal"
+    constraint = "constraint"
+    decision = "decision"
+    correction = "correction"
+    open_question = "open_question"
+    task = "task"
+    assistant_commitment = "assistant_commitment"
+    user_preference = "user_preference"
+    source_claim = "source_claim"
+
+
+class ConversationMemoryStatus(str, PyEnum):
+    """Lifecycle states for memory items and snapshots."""
+
+    active = "active"
+    superseded = "superseded"
+    invalid = "invalid"
+
+
+class ConversationMemoryInvalidReason(str, PyEnum):
+    """Finite invalidation reasons for memory items and snapshots."""
+
+    prompt_version_changed = "prompt_version_changed"
+    source_deleted = "source_deleted"
+    source_permission_changed = "source_permission_changed"
+    source_stale = "source_stale"
+    validation_failed = "validation_failed"
+
+
+class ConversationMemoryEvidenceRole(str, PyEnum):
+    """Evidence role for a memory source reference."""
+
+    supports = "supports"
+    contradicts = "contradicts"
+    supersedes = "supersedes"
+    context = "context"
+
+
 class Conversation(Base):
     """Conversation model - a thread of messages owned by one user."""
 
@@ -2042,6 +2093,24 @@ class Conversation(Base):
     )
     conversation_media: Mapped[list["ConversationMedia"]] = relationship(
         "ConversationMedia", back_populates="conversation", cascade="all, delete-orphan"
+    )
+    memory_items: Mapped[list["ConversationMemoryItem"]] = relationship(
+        "ConversationMemoryItem",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    state_snapshots: Mapped[list["ConversationStateSnapshot"]] = relationship(
+        "ConversationStateSnapshot",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    prompt_assemblies: Mapped[list["ChatPromptAssembly"]] = relationship(
+        "ChatPromptAssembly",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -2480,6 +2549,343 @@ class MessageRetrieval(Base):
     media: Mapped["Media | None"] = relationship("Media")
 
 
+class ConversationMemoryItem(Base):
+    """Durable typed conversation memory item."""
+
+    __tablename__ = "conversation_memory_items"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    source_required: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+    )
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    valid_from_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    valid_through_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    supersedes_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversation_memory_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_by_message_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    memory_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    invalid_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            """
+            kind IN (
+                'goal',
+                'constraint',
+                'decision',
+                'correction',
+                'open_question',
+                'task',
+                'assistant_commitment',
+                'user_preference',
+                'source_claim'
+            )
+            """,
+            name="ck_conversation_memory_items_kind",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'superseded', 'invalid')",
+            name="ck_conversation_memory_items_status",
+        ),
+        CheckConstraint(
+            "char_length(btrim(body)) BETWEEN 1 AND 4000",
+            name="ck_conversation_memory_items_body_length",
+        ),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1",
+            name="ck_conversation_memory_items_confidence",
+        ),
+        CheckConstraint(
+            """
+            (valid_from_seq IS NULL OR valid_from_seq >= 1)
+            AND (valid_through_seq IS NULL OR valid_through_seq >= 1)
+            AND (
+                valid_from_seq IS NULL
+                OR valid_through_seq IS NULL
+                OR valid_from_seq <= valid_through_seq
+            )
+            """,
+            name="ck_conversation_memory_items_valid_seq",
+        ),
+        CheckConstraint(
+            "supersedes_id IS NULL OR supersedes_id != id",
+            name="ck_conversation_memory_items_not_self_supersedes",
+        ),
+        CheckConstraint(
+            "kind != 'source_claim' OR source_required",
+            name="ck_conversation_memory_items_source_claim_requires_source",
+        ),
+        CheckConstraint(
+            "char_length(prompt_version) BETWEEN 1 AND 128",
+            name="ck_conversation_memory_items_prompt_version_length",
+        ),
+        CheckConstraint(
+            "memory_version >= 1",
+            name="ck_conversation_memory_items_memory_version",
+        ),
+        CheckConstraint(
+            """
+            (
+                status = 'invalid'
+                AND invalid_reason IN (
+                    'prompt_version_changed',
+                    'source_deleted',
+                    'source_permission_changed',
+                    'source_stale',
+                    'validation_failed'
+                )
+            )
+            OR (
+                status != 'invalid'
+                AND invalid_reason IS NULL
+            )
+            """,
+            name="ck_conversation_memory_items_invalid_reason",
+        ),
+        Index(
+            "idx_conversation_memory_items_active",
+            "conversation_id",
+            "status",
+            "prompt_version",
+            "valid_from_seq",
+        ),
+    )
+
+    conversation: Mapped["Conversation"] = relationship(
+        "Conversation",
+        back_populates="memory_items",
+    )
+    supersedes: Mapped["ConversationMemoryItem | None"] = relationship(
+        "ConversationMemoryItem",
+        remote_side=[id],
+    )
+    created_by_message: Mapped["Message | None"] = relationship("Message")
+    sources: Mapped[list["ConversationMemoryItemSource"]] = relationship(
+        "ConversationMemoryItemSource",
+        back_populates="memory_item",
+        order_by="ConversationMemoryItemSource.ordinal",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class ConversationMemoryItemSource(Base):
+    """Normalized source reference supporting a conversation memory item."""
+
+    __tablename__ = "conversation_memory_item_sources"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    memory_item_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversation_memory_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    evidence_role: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "ordinal >= 0",
+            name="ck_conversation_memory_item_sources_ordinal",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_ref) = 'object'",
+            name="ck_conversation_memory_item_sources_source_ref_object",
+        ),
+        CheckConstraint(
+            """
+            source_ref ? 'type'
+            AND source_ref ->> 'type' IN (
+                'message',
+                'message_context',
+                'message_retrieval',
+                'app_context_ref',
+                'web_result'
+            )
+            """,
+            name="ck_conversation_memory_item_sources_source_ref_type",
+        ),
+        CheckConstraint(
+            """
+            source_ref ? 'id'
+            AND jsonb_typeof(source_ref -> 'id') = 'string'
+            AND char_length(source_ref ->> 'id') BETWEEN 1 AND 256
+            """,
+            name="ck_conversation_memory_item_sources_source_ref_id",
+        ),
+        CheckConstraint(
+            "evidence_role IN ('supports', 'contradicts', 'supersedes', 'context')",
+            name="ck_conversation_memory_item_sources_evidence_role",
+        ),
+        UniqueConstraint(
+            "memory_item_id",
+            "ordinal",
+            name="uix_conversation_memory_item_sources_item_ordinal",
+        ),
+    )
+
+    memory_item: Mapped["ConversationMemoryItem"] = relationship(
+        "ConversationMemoryItem",
+        back_populates="sources",
+    )
+
+
+class ConversationStateSnapshot(Base):
+    """Compact auditable state snapshot for older conversation turns."""
+
+    __tablename__ = "conversation_state_snapshots"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    covered_through_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    state_text: Mapped[str] = mapped_column(Text, nullable=False)
+    state_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    source_refs: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    memory_item_ids: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    invalid_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "covered_through_seq >= 1",
+            name="ck_conversation_state_snapshots_covered_seq",
+        ),
+        CheckConstraint(
+            "char_length(btrim(state_text)) BETWEEN 1 AND 20000",
+            name="ck_conversation_state_snapshots_state_text_length",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(state_json) = 'object'",
+            name="ck_conversation_state_snapshots_state_json_object",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_refs) = 'array'",
+            name="ck_conversation_state_snapshots_source_refs_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(memory_item_ids) = 'array'",
+            name="ck_conversation_state_snapshots_memory_item_ids_array",
+        ),
+        CheckConstraint(
+            "char_length(prompt_version) BETWEEN 1 AND 128",
+            name="ck_conversation_state_snapshots_prompt_version_length",
+        ),
+        CheckConstraint(
+            "snapshot_version >= 1",
+            name="ck_conversation_state_snapshots_snapshot_version",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'superseded', 'invalid')",
+            name="ck_conversation_state_snapshots_status",
+        ),
+        CheckConstraint(
+            """
+            (
+                status = 'invalid'
+                AND invalid_reason IN (
+                    'prompt_version_changed',
+                    'source_deleted',
+                    'source_permission_changed',
+                    'source_stale',
+                    'validation_failed'
+                )
+            )
+            OR (
+                status != 'invalid'
+                AND invalid_reason IS NULL
+            )
+            """,
+            name="ck_conversation_state_snapshots_invalid_reason",
+        ),
+        Index(
+            "uix_conversation_state_snapshots_active",
+            "conversation_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    conversation: Mapped["Conversation"] = relationship(
+        "Conversation",
+        back_populates="state_snapshots",
+    )
+
+
 class ChatRun(Base):
     """Durable lifecycle row for one user chat send."""
 
@@ -2572,6 +2978,152 @@ class ChatRun(Base):
         order_by="ChatRunEvent.seq",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    prompt_assembly: Mapped["ChatPromptAssembly | None"] = relationship(
+        "ChatPromptAssembly",
+        back_populates="chat_run",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class ChatPromptAssembly(Base):
+    """Prompt assembly ledger persisted before provider execution."""
+
+    __tablename__ = "chat_prompt_assemblies"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    chat_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("chat_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    assistant_message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    model_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("models.id"),
+        nullable=False,
+    )
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    assembler_version: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversation_state_snapshots.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    max_context_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    reserved_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    reserved_reasoning_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_budget_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    estimated_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    included_message_ids: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    included_memory_item_ids: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    included_retrieval_ids: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    included_context_refs: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    dropped_items: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    budget_breakdown: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(prompt_version) BETWEEN 1 AND 128",
+            name="ck_chat_prompt_assemblies_prompt_version_length",
+        ),
+        CheckConstraint(
+            "char_length(assembler_version) BETWEEN 1 AND 128",
+            name="ck_chat_prompt_assemblies_assembler_version_length",
+        ),
+        CheckConstraint(
+            """
+            max_context_tokens > 0
+            AND reserved_output_tokens >= 0
+            AND reserved_reasoning_tokens >= 0
+            AND input_budget_tokens >= 0
+            AND estimated_input_tokens >= 0
+            AND input_budget_tokens + reserved_output_tokens + reserved_reasoning_tokens
+                <= max_context_tokens
+            AND estimated_input_tokens <= input_budget_tokens
+            """,
+            name="ck_chat_prompt_assemblies_token_budget",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(included_message_ids) = 'array'",
+            name="ck_chat_prompt_assemblies_message_ids_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(included_memory_item_ids) = 'array'",
+            name="ck_chat_prompt_assemblies_memory_item_ids_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(included_retrieval_ids) = 'array'",
+            name="ck_chat_prompt_assemblies_retrieval_ids_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(included_context_refs) = 'array'",
+            name="ck_chat_prompt_assemblies_context_refs_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(dropped_items) = 'array'",
+            name="ck_chat_prompt_assemblies_dropped_items_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(budget_breakdown) = 'object'",
+            name="ck_chat_prompt_assemblies_budget_breakdown_object",
+        ),
+        UniqueConstraint("chat_run_id", name="uix_chat_prompt_assemblies_chat_run"),
+    )
+
+    chat_run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="prompt_assembly")
+    conversation: Mapped["Conversation"] = relationship(
+        "Conversation",
+        back_populates="prompt_assemblies",
+    )
+    assistant_message: Mapped["Message"] = relationship("Message")
+    model: Mapped["Model"] = relationship("Model")
+    snapshot: Mapped["ConversationStateSnapshot | None"] = relationship(
+        "ConversationStateSnapshot",
     )
 
 

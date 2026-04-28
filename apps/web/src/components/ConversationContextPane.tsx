@@ -4,6 +4,7 @@ import ContextRow from "@/components/ui/ContextRow";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import ActionMenu from "@/components/ui/ActionMenu";
 import StateMessage from "@/components/ui/StateMessage";
+import ConversationMemoryPanel from "@/components/chat/ConversationMemoryPanel";
 import ConversationScopeChip from "@/components/chat/ConversationScopeChip";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { ContextItem } from "@/lib/api/sse";
@@ -12,6 +13,7 @@ import {
   formatSelectionContext,
 } from "@/lib/conversations/display";
 import type {
+  ConversationMemoryInspection,
   ConversationScope,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
@@ -43,6 +45,7 @@ interface ContextRowViewModel {
 
 interface ConversationContextPaneProps {
   scope?: ConversationScope;
+  memory?: ConversationMemoryInspection | null;
   contexts: ContextItem[];
   persistedRows?: PersistedContextRow[];
   onRemoveContext?: (index: number) => void;
@@ -51,16 +54,21 @@ interface ConversationContextPaneProps {
 
 export default function ConversationContextPane({
   scope,
+  memory,
   contexts,
   persistedRows = [],
   onRemoveContext,
   testId = "conversation-context-pane",
 }: ConversationContextPaneProps) {
+  const hasMemory =
+    Boolean(memory?.state_snapshot) || (memory?.memory_items?.length ?? 0) > 0;
+
   return (
     <div className={styles.content} data-testid={testId}>
       {(!scope || scope.type === "general") &&
       contexts.length === 0 &&
-      persistedRows.length === 0 ? (
+      persistedRows.length === 0 &&
+      !hasMemory ? (
         <StateMessage variant="empty">No linked context yet.</StateMessage>
       ) : null}
 
@@ -75,23 +83,23 @@ export default function ConversationContextPane({
         <section className={styles.section} aria-label="Pending contexts">
           <h3 className={styles.sectionTitle}>Pending context</h3>
           <div className={styles.contextList}>
-          {contexts.map((contextItem, index) =>
-            renderContextRow({
-              key: `${contextItem.type}-${contextItem.id}-${index}`,
-              type: contextItem.type,
-              id: contextItem.id,
-              color: contextItem.color,
-              exact: contextItem.exact,
-              preview: contextItem.preview,
-              prefix: contextItem.prefix,
-              suffix: contextItem.suffix,
-              annotationBody: contextItem.annotationBody,
-              mediaId: contextItem.mediaId,
-              mediaTitle: contextItem.mediaTitle,
-              mediaKind: contextItem.mediaKind,
-              onRemove: onRemoveContext ? () => onRemoveContext(index) : undefined,
-            }),
-          )}
+            {contexts.map((contextItem, index) =>
+              renderContextRow({
+                key: `${contextItem.type}-${contextItem.id}-${index}`,
+                type: contextItem.type,
+                id: contextItem.id,
+                color: contextItem.color,
+                exact: contextItem.exact,
+                preview: contextItem.preview,
+                prefix: contextItem.prefix,
+                suffix: contextItem.suffix,
+                annotationBody: contextItem.annotationBody,
+                mediaId: contextItem.mediaId,
+                mediaTitle: contextItem.mediaTitle,
+                mediaKind: contextItem.mediaKind,
+                onRemove: onRemoveContext ? () => onRemoveContext(index) : undefined,
+              }),
+            )}
           </div>
         </section>
       ) : null}
@@ -100,26 +108,28 @@ export default function ConversationContextPane({
         <section className={styles.section} aria-label="Message contexts">
           <h3 className={styles.sectionTitle}>Message context</h3>
           <div className={styles.contextList}>
-          {persistedRows.map(({ context, messageId, messageSeq }, index) =>
-            renderContextRow({
-              key: `${messageId}-${context.type}-${context.id}-${index}`,
-              type: context.type,
-              id: context.id,
-              color: context.color,
-              exact: context.exact,
-              preview: context.preview,
-              prefix: context.prefix,
-              suffix: context.suffix,
-              annotationBody: context.annotation_body,
-              mediaId: context.media_id,
-              mediaTitle: context.media_title,
-              mediaKind: context.media_kind,
-              messageSeq,
-            }),
-          )}
+            {persistedRows.map(({ context, messageId, messageSeq }, index) =>
+              renderContextRow({
+                key: `${messageId}-${context.type}-${context.id}-${index}`,
+                type: context.type,
+                id: context.id,
+                color: context.color,
+                exact: context.exact,
+                preview: context.preview,
+                prefix: context.prefix,
+                suffix: context.suffix,
+                annotationBody: context.annotation_body,
+                mediaId: context.media_id,
+                mediaTitle: context.media_title,
+                mediaKind: context.media_kind,
+                messageSeq,
+              }),
+            )}
           </div>
         </section>
       ) : null}
+
+      <ConversationMemoryPanel memory={memory} />
     </div>
   );
 }

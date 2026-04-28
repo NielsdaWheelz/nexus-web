@@ -17,7 +17,7 @@ from uuid import UUID
 
 from llm_calling.errors import LLMError, LLMErrorCode
 from llm_calling.router import LLMRouter
-from llm_calling.types import LLMRequest, LLMUsage, ReasoningEffort, Turn
+from llm_calling.types import LLMUsage
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
@@ -31,7 +31,6 @@ from nexus.db.models import (
     Highlight,
     Media,
     Message,
-    MessageContext,
     MessageLLM,
     Model,
 )
@@ -46,15 +45,13 @@ from nexus.schemas.conversation import (
     ChatRunResponse,
     ContextItem,
     ConversationScopeRequest,
-    MessageContextRef,
     WebSearchOptions,
 )
-from nexus.services.agent_tools.app_search import execute_app_search, should_run_app_search
+from nexus.services.agent_tools.app_search import execute_app_search
 from nexus.services.agent_tools.web_search import (
     WEB_SEARCH_TOOL_CALL_INDEX,
     WEB_SEARCH_TOOL_NAME,
     execute_web_search,
-    should_run_web_search,
 )
 from nexus.services.api_key_resolver import (
     ResolvedKey,
@@ -63,13 +60,21 @@ from nexus.services.api_key_resolver import (
     resolve_api_key,
     update_user_key_status,
 )
-from nexus.services.chat_prompt import render_prompt
-from nexus.services.context_rendering import (
-    PROMPT_VERSION,
-    render_context_blocks,
-    render_conversation_scope_block,
+from nexus.services.context_assembler import (
+    assemble_chat_context,
+    load_message_context_refs,
+    load_recent_history_units,
+    persist_prompt_assembly,
 )
+from nexus.services.context_lookup import ContextLookupError
+from nexus.services.context_rendering import PROMPT_VERSION
 from nexus.services.contexts import insert_contexts_batch
+from nexus.services.conversation_memory import (
+    collect_memory_source_refs,
+    load_active_memory_items,
+    load_active_state_snapshot,
+    refresh_conversation_memory,
+)
 from nexus.services.conversations import (
     DEFAULT_CONVERSATION_TITLE,
     authorize_conversation_scope,
@@ -83,12 +88,10 @@ from nexus.services.conversations import (
     resolve_conversation_for_scope,
 )
 from nexus.services.models import get_model_catalog_metadata
-from nexus.services.quote_context_errors import (
-    QuoteContextBlockingError,
-    get_quote_context_error_message,
-)
+from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
+from nexus.services.retrieval_planner import build_retrieval_plan
 from nexus.services.seq import assign_next_message_seq
 
 logger = get_logger(__name__)
@@ -96,9 +99,7 @@ logger = get_logger(__name__)
 TERMINAL_RUN_STATUSES = frozenset({"complete", "error", "cancelled"})
 MAX_ASSISTANT_CONTENT_LENGTH = 50000
 TRUNCATION_NOTICE = "\n\n[Response truncated due to length]"
-MAX_RENDERED_CONTEXT_CHARS = 25000
 LLM_TIMEOUT_SECONDS = 45.0
-MAX_HISTORY_TURNS = 40
 
 ERROR_CODE_TO_MESSAGE = {
     "E_LLM_TIMEOUT": "The model timed out while responding. Please try again.",
@@ -115,6 +116,7 @@ ERROR_CODE_TO_MESSAGE = {
         "The model ran out of output tokens before it could finish. "
         "Try again with less context or a lower reasoning setting."
     ),
+    "E_CONTEXT_TOO_LARGE": "One selected context is too large or unavailable. Remove it and try again.",
     "E_APP_SEARCH_FAILED": "The scoped content search failed. Please try again.",
     "E_CANCELLED": "Request cancelled.",
     "E_TOKEN_BUDGET_EXCEEDED": "Monthly AI token quota exceeded.",
@@ -524,39 +526,9 @@ async def _execute_chat_run(
             )
             budget_reserved = True
 
-        contexts = load_context_refs(db, run.user_message_id)
-        try:
-            context_text, context_chars = render_context_blocks(db, contexts)
-        except QuoteContextBlockingError as exc:
-            latency_ms = int((time.monotonic() - start_time) * 1000)
-            _finalize_run(
-                db,
-                run_id=run.id,
-                assistant_content=get_quote_context_error_message(exc.error_code),
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
-                error_code=exc.error_code.value,
-                model=model,
-                resolved_key=resolved_key,
-                key_mode=run.key_mode,
-                latency_ms=latency_ms,
-                usage=None,
-                provider_request_id=None,
-                viewer_id=run.owner_user_id,
-            )
-            return {"status": "error", "error_code": exc.error_code.value}
-
-        if context_chars > MAX_RENDERED_CONTEXT_CHARS:
-            logger.warning(
-                "chat_run.context_exceeds_limit",
-                run_id=str(run.id),
-                context_chars=context_chars,
-                limit=MAX_RENDERED_CONTEXT_CHARS,
-            )
-
         conversation = db.get(Conversation, run.conversation_id)
-        if conversation is None:
+        user_message = db.get(Message, run.user_message_id)
+        if conversation is None or user_message is None:
             _finalize_run(
                 db,
                 run_id=run.id,
@@ -576,49 +548,44 @@ async def _execute_chat_run(
             return {"status": "error", "error_code": ApiErrorCode.E_CONVERSATION_NOT_FOUND.value}
 
         scope_metadata = conversation_scope_metadata(db, conversation)
-        scope_block = render_conversation_scope_block(scope_metadata)
-        context_blocks = [scope_block] if scope_block else []
-        if context_text:
-            context_blocks.append(context_text)
-        context_types = {ctx.type for ctx in contexts}
-        content = run.user_message.content
-        history = load_prompt_history(db, run.conversation_id, run.user_message.seq)
-        scope_type = scope_metadata.get("type")
-        if scope_type == "general":
-            app_search_scope = "all"
-        elif scope_type == "media":
-            media_id = scope_metadata.get("media_id")
-            if not isinstance(media_id, str):
-                raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid media conversation scope")
-            app_search_scope = f"media:{media_id}"
-        elif scope_type == "library":
-            library_id = scope_metadata.get("library_id")
-            if not isinstance(library_id, str):
-                raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid library conversation scope")
-            app_search_scope = f"library:{library_id}"
-        else:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
+        attached_context_refs = load_message_context_refs(db, run.user_message_id)
+        snapshot = load_active_state_snapshot(
+            db,
+            conversation_id=conversation.id,
+            prompt_version=PROMPT_VERSION,
+        )
+        after_seq = snapshot.covered_through_seq if snapshot is not None else None
+        memory_items = load_active_memory_items(
+            db,
+            conversation_id=conversation.id,
+            after_seq=after_seq,
+            prompt_version=PROMPT_VERSION,
+        )
+        history_units = load_recent_history_units(
+            db,
+            conversation_id=conversation.id,
+            before_seq=user_message.seq,
+            after_seq=after_seq,
+        )
+        planner_history = [
+            turn for history_unit in history_units[-4:] for turn in history_unit.turns
+        ]
+        retrieval_plan = build_retrieval_plan(
+            user_content=user_message.content,
+            history=planner_history,
+            scope_metadata=scope_metadata,
+            attached_context_refs=[
+                {"type": context_ref.type, "id": str(context_ref.id)}
+                for context_ref in attached_context_refs
+            ],
+            memory_source_refs=collect_memory_source_refs(
+                memory_items=memory_items,
+                snapshot=snapshot,
+            ),
+            web_search_options=run.web_search,
+        )
 
-        if scope_type in {"media", "library"} or should_run_app_search(
-            content,
-            has_user_context=bool(contexts),
-        ):
-            app_search_types = [
-                "media",
-                "podcast",
-                "fragment",
-                "annotation",
-                "message",
-                "transcript_chunk",
-            ]
-            if scope_type in {"media", "library"}:
-                app_search_types = [
-                    "media",
-                    "podcast",
-                    "fragment",
-                    "annotation",
-                    "transcript_chunk",
-                ]
+        if retrieval_plan.app_search.enabled:
             _append_and_commit(
                 db,
                 run.id,
@@ -628,9 +595,9 @@ async def _execute_chat_run(
                     "tool_name": "app_search",
                     "tool_call_index": 0,
                     "status": "started",
-                    "scope": app_search_scope,
-                    "types": app_search_types,
-                    "semantic": True,
+                    "scope": retrieval_plan.app_search.scope,
+                    "types": list(retrieval_plan.app_search.types),
+                    "semantic": retrieval_plan.app_search.semantic,
                 },
             )
             app_search_run = execute_app_search(
@@ -639,15 +606,21 @@ async def _execute_chat_run(
                 conversation_id=run.conversation_id,
                 user_message_id=run.user_message_id,
                 assistant_message_id=run.assistant_message_id,
-                content=content,
-                has_user_context=bool(contexts),
-                scope=app_search_scope,
-                history=history,
+                content=user_message.content,
+                has_user_context=bool(attached_context_refs),
+                scope=retrieval_plan.app_search.scope,
+                history=planner_history,
                 scope_metadata=scope_metadata,
+                planned_query=retrieval_plan.app_search.query,
+                planned_types=retrieval_plan.app_search.types,
+                force=True,
             )
             if app_search_run is not None:
                 _append_and_commit(db, run.id, "tool_result", app_search_run.tool_result_event())
-                if app_search_run.status == "error" and scope_type in {"media", "library"}:
+                if app_search_run.status == "error" and scope_metadata.get("type") in {
+                    "media",
+                    "library",
+                }:
                     latency_ms = int((time.monotonic() - start_time) * 1000)
                     _finalize_run(
                         db,
@@ -671,9 +644,6 @@ async def _execute_chat_run(
                         "status": "error",
                         "error_code": ApiErrorCode.E_APP_SEARCH_FAILED.value,
                     }
-                if app_search_run.context_text:
-                    context_blocks.append(app_search_run.context_text)
-                    context_types.add("app_search")
 
         if _is_cancel_requested(db, run.id):
             _finalize_cancelled(
@@ -682,7 +652,7 @@ async def _execute_chat_run(
             return {"status": "cancelled"}
 
         web_search = WebSearchOptions.model_validate(run.web_search)
-        if should_run_web_search(content, web_search):
+        if retrieval_plan.web_search.enabled:
             _append_and_commit(
                 db,
                 run.id,
@@ -704,7 +674,7 @@ async def _execute_chat_run(
                 conversation_id=run.conversation_id,
                 user_message_id=run.user_message_id,
                 assistant_message_id=run.assistant_message_id,
-                content=content,
+                content=user_message.content,
                 options=web_search,
                 country=web_search_country,
                 search_lang=web_search_language,
@@ -722,9 +692,6 @@ async def _execute_chat_run(
                             web_search_run.tool_call_index,
                         ),
                     )
-                if web_search_run.context_text:
-                    context_blocks.append(web_search_run.context_text)
-                    context_types.add("web_search")
 
         if _is_cancel_requested(db, run.id):
             _finalize_cancelled(
@@ -732,19 +699,70 @@ async def _execute_chat_run(
             )
             return {"status": "cancelled"}
 
-        llm_request = LLMRequest(
-            model_name=model.model_name,
-            messages=render_prompt(
-                user_content=content,
-                history=history,
-                context_blocks=context_blocks,
-                context_types=context_types,
-                scope_metadata=scope_metadata,
-            ),
-            max_tokens=max_output_tokens,
-            temperature=0.7,
-            reasoning_effort=cast(ReasoningEffort, run.reasoning),
-        )
+        try:
+            assembly = assemble_chat_context(
+                db,
+                run=run,
+                model=model,
+                max_output_tokens=max_output_tokens,
+            )
+            persist_prompt_assembly(db, run=run, assembly=assembly)
+            db.commit()
+        except ContextBudgetError as exc:
+            logger.warning(
+                "chat_run.context_budget_exceeded",
+                run_id=str(run.id),
+                lane=exc.lane,
+                item_key=exc.item_key,
+                requested_tokens=exc.requested_tokens,
+                remaining_tokens=exc.remaining_tokens,
+            )
+            error_code = exc.api_error_code.value
+            _finalize_run(
+                db,
+                run_id=run.id,
+                assistant_content=ERROR_CODE_TO_MESSAGE[error_code],
+                assistant_status="error",
+                run_status="error",
+                done_status="error",
+                error_code=error_code,
+                model=model,
+                resolved_key=resolved_key,
+                key_mode=run.key_mode,
+                latency_ms=int((time.monotonic() - start_time) * 1000),
+                usage=None,
+                provider_request_id=None,
+                viewer_id=run.owner_user_id,
+            )
+            return {"status": "error", "error_code": error_code}
+        except ContextLookupError as exc:
+            failure = exc.result.failure
+            logger.warning(
+                "chat_run.context_lookup_failed",
+                run_id=str(run.id),
+                failure_code=failure.code if failure is not None else None,
+                failure_message=failure.message if failure is not None else str(exc),
+            )
+            error_code = ApiErrorCode.E_CONTEXT_TOO_LARGE.value
+            _finalize_run(
+                db,
+                run_id=run.id,
+                assistant_content=ERROR_CODE_TO_MESSAGE[error_code],
+                assistant_status="error",
+                run_status="error",
+                done_status="error",
+                error_code=error_code,
+                model=model,
+                resolved_key=resolved_key,
+                key_mode=run.key_mode,
+                latency_ms=int((time.monotonic() - start_time) * 1000),
+                usage=None,
+                provider_request_id=None,
+                viewer_id=run.owner_user_id,
+            )
+            return {"status": "error", "error_code": error_code}
+
+        llm_request = assembly.llm_request
         full_content = ""
         usage: LLMUsage | None = None
         provider_request_id: str | None = None
@@ -920,6 +938,12 @@ async def _execute_chat_run(
             provider_request_id=provider_request_id,
             viewer_id=run.owner_user_id,
         )
+        refresh_conversation_memory(
+            db,
+            conversation_id=run.conversation_id,
+            prompt_version=PROMPT_VERSION,
+        )
+        db.commit()
         if resolved_key.mode == "platform":
             actual_tokens = (
                 usage.total_tokens if usage and usage.total_tokens else len(full_content) // 4 + 100
@@ -1120,53 +1144,6 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
             tool_calls_by_message_id.get(assistant_message.id, []),
         ),
     )
-
-
-def load_prompt_history(db: Session, conversation_id: UUID, before_seq: int) -> list[Turn]:
-    rows = list(
-        db.execute(
-            text(
-                """
-                SELECT role, content
-                FROM messages
-                WHERE conversation_id = :conversation_id
-                  AND status = 'complete'
-                  AND role IN ('user', 'assistant')
-                  AND seq < :before_seq
-                ORDER BY seq DESC
-                LIMIT :limit
-                """
-            ),
-            {
-                "conversation_id": conversation_id,
-                "before_seq": before_seq,
-                "limit": MAX_HISTORY_TURNS,
-            },
-        ).fetchall()
-    )
-    rows.reverse()
-    return [Turn(role=row[0], content=row[1]) for row in rows]
-
-
-def load_context_refs(db: Session, user_message_id: UUID) -> list[MessageContextRef]:
-    rows = (
-        db.execute(
-            select(MessageContext)
-            .where(MessageContext.message_id == user_message_id)
-            .order_by(MessageContext.ordinal.asc())
-        )
-        .scalars()
-        .all()
-    )
-    refs: list[MessageContextRef] = []
-    for row in rows:
-        if row.target_type == "media" and row.media_id is not None:
-            refs.append(MessageContextRef(type="media", id=row.media_id))
-        elif row.target_type == "highlight" and row.highlight_id is not None:
-            refs.append(MessageContextRef(type="highlight", id=row.highlight_id))
-        elif row.target_type == "annotation" and row.annotation_id is not None:
-            refs.append(MessageContextRef(type="annotation", id=row.annotation_id))
-    return refs
 
 
 def _get_run_for_owner(db: Session, viewer_id: UUID, run_id: UUID) -> ChatRun:
