@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -16,9 +16,15 @@ function readSeededNonPdfMedia(): SeededNonPdfMedia {
   return JSON.parse(readFileSync(seedPath, "utf-8"));
 }
 
-async function openAddContentDialog(page: Parameters<typeof test>[0]["page"]) {
+async function openAddContentDialog(page: Page) {
   await page.getByRole("button", { name: "Add content" }).click();
   return page.getByRole("dialog", { name: "Add content" });
+}
+
+function workspacePaneButton(page: Page, name: RegExp | string) {
+  return page
+    .getByRole("toolbar", { name: "Workspace panes" })
+    .getByRole("button", { name });
 }
 
 test.describe("web articles", () => {
@@ -29,7 +35,7 @@ test.describe("web articles", () => {
     await expect(urlInput).toBeVisible();
     await urlInput.fill("https://example.com");
     await addContentDialog.getByRole("button", { name: "Add" }).click();
-    await expect(page.getByRole("tab", { name: "https://example.com" })).toBeVisible({
+    await expect(workspacePaneButton(page, /^https:\/\/example\.com\b/)).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByRole("heading", { name: "https://example.com" })).toBeVisible({

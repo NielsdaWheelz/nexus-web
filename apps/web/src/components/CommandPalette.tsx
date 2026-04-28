@@ -58,6 +58,8 @@ interface Action {
   icon: LucideIcon;
   execute: () => void;
   meta?: string;
+  paneId?: string;
+  paneVisibility?: "visible" | "minimized";
 }
 
 interface CommandPaletteRecentRow {
@@ -147,6 +149,7 @@ export default function CommandPalette() {
     runtimeTitleByPaneId,
     activatePane,
     closePane,
+    restorePane,
   } = useWorkspaceStore();
 
   // Load keybindings on mount
@@ -357,10 +360,26 @@ export default function CommandPalette() {
       return {
         id: `pane-${pane.id}`,
         label: title,
-        keywords: ["tab", "pane", "switch"],
+        keywords:
+          pane.visibility === "minimized"
+            ? ["tab", "pane", "switch", "restore", "minimized"]
+            : ["tab", "pane", "switch"],
         section: "Open tabs" as Section,
         icon: PanelLeft,
-        execute: () => activatePane(pane.id),
+        execute: () => {
+          switch (pane.visibility) {
+            case "visible":
+              activatePane(pane.id);
+              return;
+            case "minimized":
+              restorePane(pane.id);
+              return;
+          }
+          const exhaustiveVisibility: never = pane.visibility;
+          return exhaustiveVisibility;
+        },
+        paneId: pane.id,
+        paneVisibility: pane.visibility,
       };
     });
     if (!normalizedQuery) return panes;
@@ -369,7 +388,7 @@ export default function CommandPalette() {
         action.label.toLowerCase().includes(normalizedQuery) ||
         action.keywords.some((keyword) => keyword.includes(normalizedQuery)),
     );
-  }, [workspaceState.panes, runtimeTitleByPaneId, activatePane, normalizedQuery]);
+  }, [workspaceState.panes, runtimeTitleByPaneId, activatePane, restorePane, normalizedQuery]);
 
   // Build search result actions
   const searchActions: Action[] = useMemo(
@@ -480,8 +499,9 @@ export default function CommandPalette() {
         {actions.map((action) => {
           const Icon = action.icon;
           const combo = keybindings[action.id];
-          const isPane = action.id.startsWith("pane-");
+          const isPane = action.paneId != null;
           const isCurrentPane = action.id === `pane-${workspaceState.activePaneId}`;
+          const isMinimizedPane = action.paneVisibility === "minimized";
           return (
             <div key={action.id} className={styles.row}>
               <button
@@ -502,6 +522,9 @@ export default function CommandPalette() {
                   {isCurrentPane && (
                     <span className={styles.currentBadge}>Current</span>
                   )}
+                  {isMinimizedPane && (
+                    <span className={styles.minimizedBadge}>Minimized</span>
+                  )}
                   {combo && (
                     <span className={styles.shortcutHint}>{formatKeyCombo(combo)}</span>
                   )}
@@ -512,7 +535,11 @@ export default function CommandPalette() {
                   type="button"
                   className={styles.paneClose}
                   aria-label={`Close ${action.label}`}
-                  onClick={() => closePane(action.id.slice(5))}
+                  onClick={() => {
+                    if (action.paneId) {
+                      closePane(action.paneId);
+                    }
+                  }}
                 >
                   <X size={14} aria-hidden="true" />
                 </button>

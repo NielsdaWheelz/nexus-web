@@ -14,6 +14,7 @@ describe("workspace schema", () => {
     expect(state.panes).toHaveLength(1);
     expect(state.panes[0]?.href).toBe("/media/abc");
     expect(state.panes[0]?.widthPx).toBe(480);
+    expect(state.panes[0]?.visibility).toBe("visible");
     expect(state.activePaneId).toBe(state.panes[0]?.id);
   });
 
@@ -32,6 +33,20 @@ describe("workspace schema", () => {
     expect(state.panes[0]?.href).toBe("/conversations");
   });
 
+  it("rejects pane payloads without visibility", () => {
+    const state = sanitizeWorkspaceState(
+      {
+        schemaVersion: WORKSPACE_SCHEMA_VERSION,
+        activePaneId: "pane-1",
+        panes: [{ id: "pane-1", href: "/media/1", widthPx: 480 }],
+      },
+      { fallbackHref: "/libraries" }
+    );
+    expect(state.panes).toHaveLength(1);
+    expect(state.panes[0]?.href).toBe("/libraries");
+    expect(state.panes[0]?.visibility).toBe("visible");
+  });
+
   it("caps pane count during sanitization", () => {
     const oversized = {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
@@ -40,6 +55,7 @@ describe("workspace schema", () => {
         id: `pane-${i}`,
         href: `/media/${i}`,
         widthPx: 480,
+        visibility: "visible",
       })),
     };
     const state = sanitizeWorkspaceState(oversized, { fallbackHref: "/libraries" });
@@ -52,13 +68,46 @@ describe("workspace schema", () => {
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activePaneId: "pane-1",
         panes: [
-          { id: "pane-1", href: "/libraries", widthPx: 10 },
-          { id: "pane-2", href: "/media/1", widthPx: 99999 },
+          { id: "pane-1", href: "/libraries", widthPx: 10, visibility: "visible" },
+          { id: "pane-2", href: "/media/1", widthPx: 99999, visibility: "visible" },
         ],
       },
       { fallbackHref: "/libraries" }
     );
     expect(state.panes[0]?.widthPx).toBe(320);
     expect(state.panes[1]?.widthPx).toBe(1400);
+  });
+
+  it("keeps minimized panes when the active pane is visible", () => {
+    const state = sanitizeWorkspaceState(
+      {
+        schemaVersion: WORKSPACE_SCHEMA_VERSION,
+        activePaneId: "pane-2",
+        panes: [
+          { id: "pane-1", href: "/libraries", widthPx: 480, visibility: "minimized" },
+          { id: "pane-2", href: "/media/1", widthPx: 520, visibility: "visible" },
+        ],
+      },
+      { fallbackHref: "/libraries" }
+    );
+    expect(state.panes.map((pane) => pane.visibility)).toEqual(["minimized", "visible"]);
+    expect(state.activePaneId).toBe("pane-2");
+  });
+
+  it("falls back when the requested active pane is minimized", () => {
+    const state = sanitizeWorkspaceState(
+      {
+        schemaVersion: WORKSPACE_SCHEMA_VERSION,
+        activePaneId: "pane-1",
+        panes: [
+          { id: "pane-1", href: "/libraries", widthPx: 480, visibility: "minimized" },
+          { id: "pane-2", href: "/media/1", widthPx: 520, visibility: "visible" },
+        ],
+      },
+      { fallbackHref: "/conversations" }
+    );
+    expect(state.panes).toHaveLength(1);
+    expect(state.panes[0]?.href).toBe("/conversations");
+    expect(state.activePaneId).toBe(state.panes[0]?.id);
   });
 });

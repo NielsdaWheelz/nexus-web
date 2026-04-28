@@ -73,7 +73,7 @@ import {
 import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import type { WorkspacePaneStateV3 } from "@/lib/workspace/schema";
+import type { WorkspacePaneStateV4 } from "@/lib/workspace/schema";
 import {
   normalizeEpubNavigationToc,
   resolveInitialEpubSectionId,
@@ -231,7 +231,7 @@ function isQuoteChatPaneHref(href: string, baseOrigin: string): boolean {
 }
 
 function findQuoteChatTarget(
-  panes: WorkspacePaneStateV3[],
+  panes: WorkspacePaneStateV4[],
   activePaneId: string
 ): QuoteChatTarget {
   const baseOrigin = getQuoteChatBaseOrigin();

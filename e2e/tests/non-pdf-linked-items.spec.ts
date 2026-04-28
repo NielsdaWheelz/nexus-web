@@ -116,19 +116,29 @@ async function readAttachedHighlightId(page: Page): Promise<string | null> {
   return currentUrl.searchParams.get("attach_id");
 }
 
-async function switchBackToMediaTab(page: Page): Promise<void> {
-  const tabs = page.getByRole("tab");
-  const tabCount = await tabs.count();
-  for (let idx = 0; idx < tabCount; idx += 1) {
-    const tab = tabs.nth(idx);
-    const label = ((await tab.textContent()) ?? "").trim();
-    if (/chat/i.test(label)) {
+function workspacePaneButton(page: Page, name: RegExp | string) {
+  return page
+    .getByRole("toolbar", { name: "Workspace panes" })
+    .getByRole("button", { name });
+}
+
+async function switchBackToMediaPane(page: Page): Promise<void> {
+  const buttons = page
+    .getByRole("toolbar", { name: "Workspace panes" })
+    .getByRole("button");
+  const buttonCount = await buttons.count();
+  for (let idx = 0; idx < buttonCount; idx += 1) {
+    const button = buttons.nth(idx);
+    const label =
+      (await button.getAttribute("aria-label")) ??
+      ((await button.textContent()) ?? "").trim();
+    if (/^(minimize|restore|close)\b/i.test(label) || /chat/i.test(label)) {
       continue;
     }
-    await tab.click();
+    await button.click();
     return;
   }
-  throw new Error("Expected a non-chat workspace tab to switch back to media");
+  throw new Error("Expected a non-chat workspace pane to switch back to media");
 }
 
 test.describe("non-pdf linked-items", () => {
@@ -157,26 +167,25 @@ test.describe("non-pdf linked-items", () => {
     await expectHighlightRowToBeExpanded(focusRow, focusNote);
     await expectHighlightRowToStayCollapsed(quoteRow, quoteNote);
     const focusRowChatButton = rowAskInChatButton(focusRow);
-    const conversationTabCountBefore = await page
-      .getByRole("tab", { name: /chat/i })
-      .count();
+    const conversationPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
     await focusRowChatButton.click();
 
     await expect
       .poll(
-        async () => page.getByRole("tab", { name: /chat/i }).count(),
+        async () => workspacePaneButton(page, /^chat\b/i).count(),
         { timeout: 15_000 }
       )
-      .toBe(conversationTabCountBefore + 1);
+      .toBe(conversationPaneCountBefore + 1);
 
     await expect.poll(() => readAttachedHighlightId(page), { timeout: 15_000 }).toBe(
       seeded.focus_highlight_id
     );
 
-    const conversationTabCountAfterFirstSend = await page
-      .getByRole("tab", { name: /chat/i })
-      .count();
-    await switchBackToMediaTab(page);
+    const conversationPaneCountAfterFirstSend = await workspacePaneButton(
+      page,
+      /^chat\b/i
+    ).count();
+    await switchBackToMediaPane(page);
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
     const focusedSegment = contentPane
@@ -241,10 +250,10 @@ test.describe("non-pdf linked-items", () => {
     await rowAskInChatButton(quoteRow).click();
     await expect
       .poll(
-        async () => page.getByRole("tab", { name: /chat/i }).count(),
+        async () => workspacePaneButton(page, /^chat\b/i).count(),
         { timeout: 15_000 }
       )
-      .toBe(conversationTabCountAfterFirstSend);
+      .toBe(conversationPaneCountAfterFirstSend);
     await expect.poll(() => readAttachedHighlightId(page), { timeout: 15_000 }).toBe(
       seeded.quote_highlight_id
     );

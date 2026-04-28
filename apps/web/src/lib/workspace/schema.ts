@@ -1,6 +1,6 @@
 "use client";
 
-export const WORKSPACE_SCHEMA_VERSION = 3;
+export const WORKSPACE_SCHEMA_VERSION = 4;
 export const WORKSPACE_VERSION_PARAM = "wsv";
 export const WORKSPACE_STATE_PARAM = "ws";
 export const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
@@ -10,16 +10,19 @@ export const MIN_PANE_WIDTH_PX = 320;
 export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 const MAX_PANE_TITLE_LENGTH = 120;
 
-export interface WorkspacePaneStateV3 {
+export type WorkspacePaneVisibility = "visible" | "minimized";
+
+export interface WorkspacePaneStateV4 {
   id: string;
   href: string;
   widthPx: number;
+  visibility: WorkspacePaneVisibility;
 }
 
-export interface WorkspaceStateV3 {
+export interface WorkspaceStateV4 {
   schemaVersion: typeof WORKSPACE_SCHEMA_VERSION;
   activePaneId: string;
-  panes: WorkspacePaneStateV3[];
+  panes: WorkspacePaneStateV4[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -101,13 +104,20 @@ export function clampPaneWidth(value: number): number {
 export function createDefaultWorkspaceState(
   primaryHref: string,
   widthPx?: number
-): WorkspaceStateV3 {
+): WorkspaceStateV4 {
   const href = normalizeWorkspaceHref(primaryHref) ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
   const id = createPaneId();
   return {
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
     activePaneId: id,
-    panes: [{ id, href, widthPx: widthPx != null ? clampPaneWidth(widthPx) : 480 }],
+    panes: [
+      {
+        id,
+        href,
+        widthPx: widthPx != null ? clampPaneWidth(widthPx) : 480,
+        visibility: "visible",
+      },
+    ],
   };
 }
 
@@ -116,8 +126,12 @@ function sanitizePane(
   fallbackHref: string,
   seenIds: Set<string>,
   options?: { baseOrigin?: string }
-): WorkspacePaneStateV3 | null {
+): WorkspacePaneStateV4 | null {
   if (!isRecord(value)) {
+    return null;
+  }
+  const visibility = value.visibility;
+  if (visibility !== "visible" && visibility !== "minimized") {
     return null;
   }
   const rawHref = typeof value.href === "string" ? value.href : fallbackHref;
@@ -132,13 +146,13 @@ function sanitizePane(
   const widthPx =
     typeof value.widthPx === "number" ? clampPaneWidth(value.widthPx) : 480;
 
-  return { id, href, widthPx };
+  return { id, href, widthPx, visibility };
 }
 
 export function sanitizeWorkspaceState(
   value: unknown,
   options: { fallbackHref: string; baseOrigin?: string }
-): WorkspaceStateV3 {
+): WorkspaceStateV4 {
   const fallbackHref =
     normalizeWorkspaceHref(options.fallbackHref, options) ??
     WORKSPACE_DEFAULT_FALLBACK_HREF;
@@ -149,26 +163,31 @@ export function sanitizeWorkspaceState(
 
   const rawPanes = Array.isArray(value.panes) ? value.panes : [];
   const seenIds = new Set<string>();
-  const panes: WorkspacePaneStateV3[] = [];
+  const panes: WorkspacePaneStateV4[] = [];
 
   for (const rawPane of rawPanes) {
     if (panes.length >= MAX_PANES) {
       break;
     }
     const pane = sanitizePane(rawPane, fallbackHref, seenIds, options);
-    if (pane) {
-      panes.push(pane);
+    if (!pane) {
+      return createDefaultWorkspaceState(fallbackHref);
     }
+    panes.push(pane);
   }
 
   if (panes.length === 0) {
     return createDefaultWorkspaceState(fallbackHref);
   }
+  if (!panes.some((p) => p.visibility === "visible")) {
+    return createDefaultWorkspaceState(fallbackHref);
+  }
 
   const requestedActiveId =
     typeof value.activePaneId === "string" ? value.activePaneId : "";
-  const activePaneId =
-    panes.find((p) => p.id === requestedActiveId)?.id ?? panes[0]?.id ?? "";
+  const activePaneId = panes.find(
+    (p) => p.id === requestedActiveId && p.visibility === "visible"
+  )?.id;
 
   if (!activePaneId) {
     return createDefaultWorkspaceState(fallbackHref);

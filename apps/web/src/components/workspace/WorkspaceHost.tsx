@@ -8,14 +8,14 @@ import {
 } from "@/lib/panes/paneRouteRegistry";
 import { PaneRuntimeProvider, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import PaneShell, { type PaneBodyMode } from "@/components/workspace/PaneShell";
-import WorkspaceTabsBar from "@/components/workspace/WorkspaceTabsBar";
+import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import {
   MAX_STANDARD_PANE_WIDTH_PX,
   MIN_PANE_WIDTH_PX,
   normalizeWorkspaceHref,
-  type WorkspacePaneStateV3,
+  type WorkspacePaneStateV4,
 } from "@/lib/workspace/schema";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import {
@@ -43,6 +43,7 @@ interface WorkspaceShellPane {
   minWidthPx: number;
   maxWidthPx: number;
   isActive: boolean;
+  visibility: "visible" | "minimized";
   content: React.ReactNode;
 }
 
@@ -232,7 +233,7 @@ const PaneContent = memo(function PaneContent({
 // ---------------------------------------------------------------------------
 
 function buildShellPane(input: {
-  pane: WorkspacePaneStateV3;
+  pane: WorkspacePaneStateV4;
   descriptor: WorkspacePaneTitleDescriptor;
   onNavigatePane: (
     paneId: string,
@@ -262,6 +263,7 @@ function buildShellPane(input: {
     minWidthPx: route.definition?.minWidthPx ?? MIN_PANE_WIDTH_PX,
     maxWidthPx: route.definition?.maxWidthPx ?? MAX_STANDARD_PANE_WIDTH_PX,
     isActive: input.isActive,
+    visibility: input.pane.visibility,
     content: (
       <PaneContent
         paneId={input.pane.id}
@@ -276,7 +278,7 @@ function buildShellPane(input: {
 
 // ---------------------------------------------------------------------------
 // WorkspaceHost — the top-level pane orchestrator. Reads workspace state,
-// builds pane descriptors, and renders the shell layout with tabs + pane strip.
+// builds pane descriptors, and renders the shell layout with pane strip.
 // ---------------------------------------------------------------------------
 
 export default function WorkspaceHost() {
@@ -288,6 +290,8 @@ export default function WorkspaceHost() {
     navigatePane,
     closePane,
     resizePane,
+    minimizePane,
+    restorePane,
     publishPaneTitle,
   } = useWorkspaceStore();
   const titleTelemetryByPaneIdRef = useRef<Map<string, string>>(new Map());
@@ -351,19 +355,26 @@ export default function WorkspaceHost() {
     ]
   );
 
-  // --- Tabs for desktop tab bar ---
-  const tabs = useMemo(
+  const visiblePaneCount = state.panes.filter((pane) => pane.visibility === "visible").length;
+  const stripItems = useMemo(
     () =>
       panes.map((pane) => ({
         paneId: pane.paneId,
         title: pane.title,
         isActive: pane.isActive,
+        visibility: pane.visibility,
+        canMinimize: pane.visibility === "visible" && visiblePaneCount > 1,
       })),
-    [panes]
+    [panes, visiblePaneCount]
   );
 
-  const activePane = panes.find((pane) => pane.paneId === state.activePaneId) ?? panes[0] ?? null;
-  const visiblePanes = isMobile ? (activePane ? [activePane] : []) : panes;
+  const activePane =
+    panes.find(
+      (pane) => pane.paneId === state.activePaneId && pane.visibility === "visible"
+    ) ??
+    panes.find((pane) => pane.visibility === "visible") ??
+    null;
+  const renderedPanes = isMobile ? (activePane ? [activePane] : []) : panes;
 
   // --- Focus management (from WorkspaceShell) ---
   useEffect(() => {
@@ -424,11 +435,12 @@ export default function WorkspaceHost() {
   return (
     <section className={styles.host} aria-label="Workspace host">
       {!isMobile && (
-        <WorkspaceTabsBar
-          tabs={tabs}
+        <WorkspacePaneStrip
+          items={stripItems}
           onActivatePane={handleActivatePane}
+          onMinimizePane={minimizePane}
+          onRestorePane={restorePane}
           onClosePane={handleClosePane}
-          mobileSwitcherLabel="Open panes"
         />
       )}
       <div
@@ -444,14 +456,15 @@ export default function WorkspaceHost() {
           overflowY: "hidden",
         }}
       >
-        {visiblePanes.map((pane) => (
+        {renderedPanes.map((pane) => (
           <div
             key={pane.paneId}
             className={styles.paneWrap}
-            id={`workspace-panel-${pane.paneId}`}
-            aria-labelledby={`workspace-tab-${pane.paneId}`}
             data-active={pane.isActive ? "true" : "false"}
             data-mobile={isMobile ? "true" : "false"}
+            data-minimized={pane.visibility === "minimized" ? "true" : "false"}
+            hidden={pane.visibility === "minimized"}
+            inert={pane.visibility === "minimized" ? true : undefined}
             ref={(element) => {
               if (element) {
                 paneWrapRefById.current.set(pane.paneId, element);

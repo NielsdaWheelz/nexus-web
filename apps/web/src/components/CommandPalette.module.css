@@ -115,13 +115,22 @@
   flex-shrink: 0;
 }
 
-.currentBadge {
+.currentBadge,
+.minimizedBadge {
   font-size: var(--font-size-xs);
-  color: var(--color-text);
-  background: var(--color-surface);
   border: 1px solid var(--color-border-subtle);
   border-radius: 4px;
   padding: 0 var(--space-1);
+}
+
+.currentBadge {
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.minimizedBadge {
+  color: var(--color-text-muted);
+  background: var(--color-bg-secondary);
 }
 
 .searchResultMeta {

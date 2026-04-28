@@ -17,6 +17,12 @@ interface PdfReaderResumeState {
   zoom: number | null;
 }
 
+function workspacePaneButton(page: Page, name: RegExp | string) {
+  return page
+    .getByRole("toolbar", { name: "Workspace panes" })
+    .getByRole("button", { name });
+}
+
 function readSeededPdfMedia(): SeededPdfMedia {
   const seedPath = path.join(process.cwd(), ".seed", "pdf-media.json");
   const raw = readFileSync(seedPath, "utf-8");
@@ -216,7 +222,7 @@ test.describe("pdf reader", () => {
       });
       await expect(pdfControlsToolbar(page)).toBeVisible({ timeout: 20_000 });
       await expect(activeTextLayer(page)).toBeVisible();
-      // Normalize route after upload redirect to avoid pane-runtime tab churn
+      // Normalize route after upload redirect to avoid pane-runtime churn.
       // affecting subsequent viewer assertions under parallel workers.
       await page.goto(`/media/${expectedMediaId}`);
 
@@ -268,17 +274,15 @@ test.describe("pdf reader", () => {
       await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
       await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
       const chatButton = rowAskInChatButton(linkedRow);
-      const conversationTabCountBefore = await page
-        .getByRole("tab", { name: /chat/i })
-        .count();
+      const conversationPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
       await chatButton.click();
 
       await expect
         .poll(
-          async () => page.getByRole("tab", { name: /chat/i }).count(),
+          async () => workspacePaneButton(page, /^chat\b/i).count(),
           { timeout: 15_000 }
         )
-        .toBe(conversationTabCountBefore + 1);
+        .toBe(conversationPaneCountBefore + 1);
 
       await expect
         .poll(() => {

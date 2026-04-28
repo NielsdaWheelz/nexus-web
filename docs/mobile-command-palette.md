@@ -12,7 +12,10 @@ This document owns the mobile command palette product behavior.
 ## Default Content
 
 - The default mobile dialog shows `Open tabs` before `Recent`.
-- `Open tabs` lists currently open workspace tabs.
+- `Open tabs` lists visible and minimized workspace tabs.
+- Minimized tabs show a compact `Minimized` badge.
+- Selecting a minimized tab restores and activates it.
+- Closing a tab from `Open tabs` keeps the command palette open.
 - `Recent` lists command palette recents after removing destinations already present in `Open tabs`.
 - Recents are deduped by destination, not by title.
 
@@ -25,6 +28,7 @@ This document owns the mobile command palette product behavior.
 ## Cutover
 
 - The mobile command palette has no legacy compatibility mode.
+- The mobile command palette does not add inline minimize controls.
 - Removed mobile command palette behavior must not remain behind viewport checks, feature flags, or fallback events.
 
 ## Ownership

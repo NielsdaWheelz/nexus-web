@@ -18,8 +18,8 @@ import {
   createPaneId,
   normalizePaneTitle,
   normalizeWorkspaceHref,
-  type WorkspacePaneStateV3,
-  type WorkspaceStateV3,
+  type WorkspacePaneStateV4,
+  type WorkspaceStateV4,
 } from "@/lib/workspace/schema";
 import {
   buildWorkspaceUrl,
@@ -45,30 +45,45 @@ import { apiFetch } from "@/lib/api/client";
 type HistoryMode = "replace" | "push";
 
 type WorkspaceAction =
-  | { type: "hydrate"; state: WorkspaceStateV3 }
+  | { type: "hydrate"; state: WorkspaceStateV4 }
   | { type: "activate_pane"; paneId: string }
-  | { type: "open_pane"; panes: WorkspacePaneStateV3[]; afterPaneId: string | null; activate: boolean }
+  | {
+      type: "open_pane";
+      panes: WorkspacePaneStateV4[];
+      afterPaneId: string | null;
+      activate: boolean;
+    }
   | { type: "navigate_pane"; paneId: string; href: string; activate: boolean }
   | { type: "close_pane"; paneId: string }
-  | { type: "resize_pane"; paneId: string; widthPx: number };
+  | { type: "resize_pane"; paneId: string; widthPx: number }
+  | { type: "minimize_pane"; paneId: string }
+  | { type: "restore_pane"; paneId: string };
 
-function ensureActivePaneId(state: WorkspaceStateV3): WorkspaceStateV3 {
+function ensureActivePaneId(state: WorkspaceStateV4): WorkspaceStateV4 {
   if (!state.panes.length) {
     return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
   }
-  if (state.panes.some((p) => p.id === state.activePaneId)) {
+  if (
+    state.panes.some((p) => p.id === state.activePaneId && p.visibility === "visible")
+  ) {
     return state;
   }
-  return { ...state, activePaneId: state.panes[0]!.id };
+  const firstVisiblePane = state.panes.find((p) => p.visibility === "visible");
+  if (firstVisiblePane) {
+    return { ...state, activePaneId: firstVisiblePane.id };
+  }
+  return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
 }
 
-function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): WorkspaceStateV3 {
+function workspaceReducer(state: WorkspaceStateV4, action: WorkspaceAction): WorkspaceStateV4 {
   switch (action.type) {
     case "hydrate":
       return ensureActivePaneId(action.state);
 
     case "activate_pane": {
-      if (!state.panes.some((p) => p.id === action.paneId)) {
+      if (
+        !state.panes.some((p) => p.id === action.paneId && p.visibility === "visible")
+      ) {
         return state;
       }
       return { ...state, activePaneId: action.paneId };
@@ -76,9 +91,13 @@ function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): Wor
 
     case "open_pane": {
       let panes = state.panes;
-      if (panes.length + action.panes.length > MAX_PANES) {
+      const panesToOpen = action.panes.map((pane) => ({
+        ...pane,
+        visibility: "visible" as const,
+      }));
+      if (panes.length + panesToOpen.length > MAX_PANES) {
         // Drop oldest non-active panes to make room
-        const keep = MAX_PANES - action.panes.length;
+        const keep = MAX_PANES - panesToOpen.length;
         panes = panes.filter((p) => p.id === state.activePaneId).concat(
           panes.filter((p) => p.id !== state.activePaneId).slice(-(keep - 1))
         );
@@ -86,31 +105,65 @@ function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): Wor
       const insertIdx = action.afterPaneId
         ? panes.findIndex((p) => p.id === action.afterPaneId) + 1
         : panes.length;
-      const next = [...panes.slice(0, insertIdx), ...action.panes, ...panes.slice(insertIdx)];
-      const activePaneId = action.activate ? action.panes[0]!.id : state.activePaneId;
+      const next = [...panes.slice(0, insertIdx), ...panesToOpen, ...panes.slice(insertIdx)];
+      const activePaneId = action.activate ? panesToOpen[0]!.id : state.activePaneId;
       return ensureActivePaneId({ ...state, panes: next, activePaneId });
     }
 
     case "navigate_pane": {
+      const pane = state.panes.find((p) => p.id === action.paneId);
+      if (!pane) {
+        return state;
+      }
       const panes = state.panes.map((p) =>
-        p.id === action.paneId ? { ...p, href: action.href } : p
+        p.id === action.paneId
+          ? {
+              ...p,
+              href: action.href,
+              visibility: action.activate ? "visible" : p.visibility,
+            }
+          : p
       );
-      return {
+      return ensureActivePaneId({
         ...state,
         panes,
         activePaneId: action.activate ? action.paneId : state.activePaneId,
-      };
+      });
     }
 
     case "close_pane": {
-      const panes = state.panes.filter((p) => p.id !== action.paneId);
+      const closedIdx = state.panes.findIndex((p) => p.id === action.paneId);
+      if (closedIdx < 0) {
+        return state;
+      }
+      let panes = state.panes.filter((p) => p.id !== action.paneId);
       if (!panes.length) {
         return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
       }
       let { activePaneId } = state;
-      if (activePaneId === action.paneId) {
-        const closedIdx = state.panes.findIndex((p) => p.id === action.paneId);
-        activePaneId = panes[Math.min(closedIdx, panes.length - 1)]?.id ?? panes[0]!.id;
+      if (
+        activePaneId === action.paneId ||
+        !panes.some((p) => p.id === activePaneId && p.visibility === "visible")
+      ) {
+        let replacementPane = panes.slice(closedIdx).find((p) => p.visibility === "visible");
+        if (!replacementPane) {
+          for (let i = Math.min(closedIdx - 1, panes.length - 1); i >= 0; i -= 1) {
+            const candidate = panes[i];
+            if (candidate?.visibility === "visible") {
+              replacementPane = candidate;
+              break;
+            }
+          }
+        }
+        if (replacementPane) {
+          activePaneId = replacementPane.id;
+        } else {
+          const restoredPane = panes[Math.min(closedIdx, panes.length - 1)] ?? panes[0]!;
+          activePaneId = restoredPane.id;
+          panes = panes.map((p) =>
+            p.id === activePaneId ? { ...p, visibility: "visible" } : p
+          );
+        }
       }
       return ensureActivePaneId({ ...state, panes, activePaneId });
     }
@@ -120,6 +173,52 @@ function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): Wor
         p.id === action.paneId ? { ...p, widthPx: clampPaneWidth(action.widthPx) } : p
       );
       return { ...state, panes };
+    }
+
+    case "minimize_pane": {
+      const paneIndex = state.panes.findIndex((p) => p.id === action.paneId);
+      const pane = state.panes[paneIndex];
+      if (!pane || pane.visibility === "minimized") {
+        return state;
+      }
+      if (state.panes.filter((p) => p.visibility === "visible").length <= 1) {
+        return state;
+      }
+
+      let activePaneId = state.activePaneId;
+      if (pane.id === state.activePaneId) {
+        let replacementPane = state.panes
+          .slice(paneIndex + 1)
+          .find((p) => p.visibility === "visible");
+        if (!replacementPane) {
+          for (let i = paneIndex - 1; i >= 0; i -= 1) {
+            const candidate = state.panes[i];
+            if (candidate?.visibility === "visible") {
+              replacementPane = candidate;
+              break;
+            }
+          }
+        }
+        if (!replacementPane) {
+          return state;
+        }
+        activePaneId = replacementPane.id;
+      }
+
+      const panes = state.panes.map((p) =>
+        p.id === action.paneId ? { ...p, visibility: "minimized" as const } : p
+      );
+      return { ...state, activePaneId, panes };
+    }
+
+    case "restore_pane": {
+      if (!state.panes.some((p) => p.id === action.paneId)) {
+        return state;
+      }
+      const panes = state.panes.map((p) =>
+        p.id === action.paneId ? { ...p, visibility: "visible" as const } : p
+      );
+      return { ...state, activePaneId: action.paneId, panes };
     }
   }
 
@@ -131,7 +230,7 @@ function workspaceReducer(state: WorkspaceStateV3, action: WorkspaceAction): Wor
 // Build pane for an open action
 // ---------------------------------------------------------------------------
 
-function buildPanesForOpen(href: string): WorkspacePaneStateV3[] {
+function buildPanesForOpen(href: string): WorkspacePaneStateV4[] {
   const route = resolvePaneRoute(href);
   const mainId = createPaneId();
   return [
@@ -139,6 +238,7 @@ function buildPanesForOpen(href: string): WorkspacePaneStateV3[] {
       id: mainId,
       href,
       widthPx: route.definition?.defaultWidthPx ?? 480,
+      visibility: "visible",
     },
   ];
 }
@@ -183,7 +283,7 @@ export function resolveWorkspacePaneTitle(
 // ---------------------------------------------------------------------------
 
 interface WorkspaceStoreValue {
-  state: WorkspaceStateV3;
+  state: WorkspaceStateV4;
   runtimeTitleByPaneId: ReadonlyMap<string, string>;
   activatePane: (paneId: string) => void;
   openPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
@@ -194,6 +294,8 @@ interface WorkspaceStoreValue {
   ) => void;
   closePane: (paneId: string) => void;
   resizePane: (paneId: string, widthPx: number) => void;
+  minimizePane: (paneId: string) => void;
+  restorePane: (paneId: string) => void;
   publishPaneTitle: (paneId: string, title: string | null) => void;
 }
 
@@ -457,7 +559,18 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   );
 
   const resizePane = useCallback(
-    (paneId: string, widthPx: number) => dispatchAndSync({ type: "resize_pane", paneId, widthPx }, "replace"),
+    (paneId: string, widthPx: number) =>
+      dispatchAndSync({ type: "resize_pane", paneId, widthPx }, "replace"),
+    [dispatchAndSync]
+  );
+
+  const minimizePane = useCallback(
+    (paneId: string) => dispatchAndSync({ type: "minimize_pane", paneId }, "push"),
+    [dispatchAndSync]
+  );
+
+  const restorePane = useCallback(
+    (paneId: string) => dispatchAndSync({ type: "restore_pane", paneId }, "push"),
     [dispatchAndSync]
   );
 
@@ -494,6 +607,8 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       navigatePane,
       closePane,
       resizePane,
+      minimizePane,
+      restorePane,
       publishPaneTitle,
     }),
     [
@@ -504,6 +619,8 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       navigatePane,
       closePane,
       resizePane,
+      minimizePane,
+      restorePane,
       publishPaneTitle,
     ]
   );

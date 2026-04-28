@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CommandPalette from "@/components/CommandPalette";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { NEXUS_OPEN_PANE_EVENT } from "@/lib/panes/openInAppPane";
+import { WORKSPACE_SCHEMA_VERSION } from "@/lib/workspace/schema";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { encodeWorkspaceStateParam } from "@/lib/workspace/urlCodec";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -66,6 +68,33 @@ function openPane(href: string, titleHint?: string) {
       })
     );
   });
+}
+
+function setMinimizedWorkspaceUrl() {
+  const encoded = encodeWorkspaceStateParam({
+    schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    activePaneId: "pane-libraries",
+    panes: [
+      {
+        id: "pane-libraries",
+        href: "/libraries",
+        widthPx: 480,
+        visibility: "visible",
+      },
+      {
+        id: "pane-minimized",
+        href: "/media/media-1",
+        widthPx: 480,
+        visibility: "minimized",
+      },
+    ],
+  });
+  expect(encoded.ok).toBe(true);
+  window.history.replaceState(
+    {},
+    "",
+    `/libraries?wsv=${WORKSPACE_SCHEMA_VERSION}&ws=${encoded.value}`
+  );
 }
 
 function sectionHeadings() {
@@ -220,6 +249,44 @@ describe("CommandPalette", () => {
     });
     expect(screen.getByRole("dialog", { name: "Search" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Libraries Current/ })).toBeInTheDocument();
+  });
+
+  it("shows minimized open tabs and restores them when selected", async () => {
+    setMinimizedWorkspaceUrl();
+    renderCommandPalette();
+
+    expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
+
+    openPalette();
+
+    const minimizedTab = await screen.findByRole("button", { name: /Media Minimized/ });
+    expect(screen.getByText("Minimized")).toBeInTheDocument();
+
+    fireEvent.click(minimizedTab);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Search" })).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/media/media-1");
+    });
+  });
+
+  it("closes minimized open tabs without closing the palette", async () => {
+    setMinimizedWorkspaceUrl();
+    renderCommandPalette();
+
+    expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
+
+    openPalette();
+
+    expect(await screen.findByRole("button", { name: /Media Minimized/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close Media" }));
+
+    expect(screen.getByRole("dialog", { name: "Search" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Close Media" })).not.toBeInTheDocument();
+    });
   });
 
   it("keeps static command groups below open tabs and recents when there is no query", async () => {

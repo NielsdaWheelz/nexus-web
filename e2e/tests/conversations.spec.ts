@@ -126,6 +126,12 @@ function readConversationIdFromUrl(url: string): string | null {
   return match?.[1] ?? null;
 }
 
+function workspacePaneButton(page: Page, name: RegExp | string) {
+  return page
+    .getByRole("toolbar", { name: "Workspace panes" })
+    .getByRole("button", { name });
+}
+
 test.describe("conversations", () => {
   test("create conversation", async ({ page }) => {
     let conversationId: string | null = null;
@@ -143,9 +149,9 @@ test.describe("conversations", () => {
 
       await expect(page).toHaveURL(new RegExp(`/conversations/${conversationId}$`));
       expect(readConversationIdFromUrl(page.url())).toBe(conversationId);
-      const conversationTab = page.getByRole("tab", { name: /chat/i }).first();
-      await expect(conversationTab).toBeVisible();
-      await expect(conversationTab).not.toContainText(
+      const conversationPaneButton = workspacePaneButton(page, /^chat\b/i).first();
+      await expect(conversationPaneButton).toBeVisible();
+      await expect(conversationPaneButton).not.toContainText(
         new RegExp(conversationId.slice(0, 8), "i"),
       );
     } finally {
