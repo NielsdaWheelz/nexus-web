@@ -14,6 +14,7 @@ Nexus is a reading and annotation platform with a Next.js frontend, a FastAPI ba
 ### Prerequisites
 
 - Python 3.12+
+- Git
 - Node.js 22+
 - Bun
 - Docker (running)

@@ -6,6 +6,7 @@ set -euo pipefail
 #
 # Prerequisites:
 #   - Docker running
+#   - Git installed
 #   - Supabase CLI installed (brew install supabase/tap/supabase)
 #   - Ports 54321-54324 free for Supabase
 #
@@ -42,6 +43,7 @@ check_tool() {
 
 echo "Checking required tools..."
 check_tool uv
+check_tool git
 check_tool docker
 check_tool node
 check_tool bun
