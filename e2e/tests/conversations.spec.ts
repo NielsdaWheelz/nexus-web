@@ -1,12 +1,16 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 
-async function ensureAppContext(page: Parameters<typeof test>[0]["page"]) {
+const ROOT_DIR = path.resolve(__dirname, "..", "..");
+
+async function ensureAppContext(page: Page) {
   if (page.url() === "about:blank") {
     await page.goto("/libraries");
   }
 }
 
-async function createConversationViaApi(page: Parameters<typeof test>[0]["page"]) {
+async function createConversationViaApi(page: Page) {
   await ensureAppContext(page);
   const createResponse = await page.request.post("/api/conversations", {
     maxRedirects: 0,
@@ -34,7 +38,7 @@ async function createConversationViaApi(page: Parameters<typeof test>[0]["page"]
 }
 
 async function deleteConversationViaApi(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   conversationId: string
 ) {
   await ensureAppContext(page);
@@ -55,6 +59,66 @@ async function deleteConversationViaApi(
       await page.waitForTimeout(250 * (attempt + 1));
     }
   }
+}
+
+function seedConversationMessages(conversationId: string, messageCount: number) {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("DATABASE_URL is required to seed conversation scroll fixtures.");
+  }
+
+  execFileSync(
+    "uv",
+    [
+      "run",
+      "--project",
+      "python",
+      "python",
+      "-c",
+      `
+import os
+import psycopg
+
+conversation_id = os.environ["NEXUS_E2E_CONVERSATION_ID"]
+message_count = int(os.environ["NEXUS_E2E_MESSAGE_COUNT"])
+
+with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO messages (conversation_id, seq, role, content, status)
+            VALUES (%s::uuid, %s, %s, %s, 'complete')
+            """,
+            [
+                (
+                    conversation_id,
+                    seq,
+                    "user" if seq % 2 else "assistant",
+                    (
+                        f"Scroll fixture message {seq}: "
+                        + ("bounded chat scroll ownership " * 8)
+                    ),
+                )
+                for seq in range(1, message_count + 1)
+            ],
+        )
+        cur.execute(
+            "UPDATE conversations SET next_seq = %s, updated_at = now() WHERE id = %s::uuid",
+            (message_count + 1, conversation_id),
+        )
+`,
+    ],
+    {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env,
+        DATABASE_URL: databaseUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://"),
+        NEXUS_E2E_CONVERSATION_ID: conversationId,
+        NEXUS_E2E_MESSAGE_COUNT: String(messageCount),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
 }
 
 function readConversationIdFromUrl(url: string): string | null {
@@ -146,6 +210,61 @@ test.describe("conversations", () => {
       } else {
         await expect(optimisticUserMessage).toBeVisible();
       }
+    } finally {
+      await deleteConversationViaApi(page, conversationId);
+    }
+  });
+
+  test("main chat pane owns message and composer scrolling", async ({ page }) => {
+    const conversationId = await createConversationViaApi(page);
+    try {
+      seedConversationMessages(conversationId, 50);
+      await page.goto(`/conversations/${conversationId}`);
+
+      const paneBody = page.getByTestId("pane-shell-body");
+      const scrollport = page.getByRole("region", { name: "Chat conversation" });
+      const log = page.getByRole("log", { name: "Chat messages" });
+
+      await expect(paneBody).toHaveAttribute("data-body-mode", "contained");
+      await expect(scrollport).toBeVisible();
+      await expect(log).toContainText("Scroll fixture message 50", { timeout: 10_000 });
+      await expect
+        .poll(async () =>
+          scrollport.evaluate(
+            (node) => node.scrollHeight > node.clientHeight && node.scrollTop > 0,
+          )
+        )
+        .toBe(true);
+
+      const bottomScrollTop = await scrollport.evaluate((node) => node.scrollTop);
+      const scrollportBox = await scrollport.boundingBox();
+      if (!scrollportBox) {
+        throw new Error("Chat scrollport has no bounding box.");
+      }
+
+      await page.mouse.move(
+        scrollportBox.x + scrollportBox.width / 2,
+        scrollportBox.y + Math.min(160, scrollportBox.height / 2),
+      );
+      await page.mouse.wheel(0, -700);
+      await expect
+        .poll(async () => scrollport.evaluate((node) => node.scrollTop))
+        .toBeLessThan(bottomScrollTop);
+
+      await scrollport.evaluate((node) => {
+        node.scrollTop = node.scrollHeight;
+      });
+      const beforeComposerWheel = await scrollport.evaluate((node) => node.scrollTop);
+      await page.getByRole("textbox", { name: "Ask anything" }).hover();
+      await page.mouse.wheel(0, -700);
+      await expect
+        .poll(async () => scrollport.evaluate((node) => node.scrollTop))
+        .toBeLessThan(beforeComposerWheel);
+
+      expect(await paneBody.evaluate((node) => node.scrollTop)).toBe(0);
+      expect(
+        await paneBody.evaluate((node) => getComputedStyle(node).overflowY),
+      ).toBe("hidden");
     } finally {
       await deleteConversationViaApi(page, conversationId);
     }

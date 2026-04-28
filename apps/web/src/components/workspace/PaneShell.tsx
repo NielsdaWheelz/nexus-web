@@ -17,7 +17,7 @@ import SurfaceHeader, { type SurfaceHeaderOption } from "@/components/ui/Surface
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import styles from "./PaneShell.module.css";
 
-export type PaneBodyMode = "standard" | "document";
+export type PaneBodyMode = "standard" | "document" | "contained";
 
 // ---------------------------------------------------------------------------
 // Chrome override — lets body components push toolbar/options/meta into the
@@ -310,23 +310,41 @@ export default function PaneShell({
     shellStyle["--mobile-pane-chrome-height"] = `${mobileChromeHeight}px`;
   }
 
-  const bodyStyle: CSSProperties =
-    bodyMode === "document"
-      ? {
-          display: "flex",
-          flexDirection: "column",
-          minHeight: 0,
-          overflow: "hidden",
-          ...(isMobile && { overscrollBehavior: "contain" }),
-        }
-      : {
-          display: "flex",
-          flexDirection: "column",
-          minHeight: 0,
-          overflowY: "auto",
-          overflowX: "hidden",
-          ...(isMobile && { overscrollBehavior: "contain" }),
-        };
+  let bodyStyle: CSSProperties;
+  switch (bodyMode) {
+    case "standard":
+      bodyStyle = {
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        overflowY: "auto",
+        overflowX: "hidden",
+        ...(isMobile && { overscrollBehavior: "contain" }),
+      };
+      break;
+    case "document":
+      bodyStyle = {
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        overflow: "hidden",
+        ...(isMobile && { overscrollBehavior: "contain" }),
+      };
+      break;
+    case "contained":
+      bodyStyle = {
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        overflow: "hidden",
+        ...(isMobile && { overscrollBehavior: "contain" }),
+      };
+      break;
+    default: {
+      const exhaustive: never = bodyMode;
+      throw new Error(`Unhandled pane body mode: ${exhaustive}`);
+    }
+  }
 
   return (
     <section
@@ -387,7 +405,9 @@ export default function PaneShell({
       >
         <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
           <PaneChromeVisibilityContext.Provider value={paneChromeVisibility}>
-            <PaneChromeScrollContext.Provider value={handleDocumentScroll}>
+            <PaneChromeScrollContext.Provider
+              value={bodyMode === "document" ? handleDocumentScroll : null}
+            >
               {children}
             </PaneChromeScrollContext.Provider>
           </PaneChromeVisibilityContext.Provider>

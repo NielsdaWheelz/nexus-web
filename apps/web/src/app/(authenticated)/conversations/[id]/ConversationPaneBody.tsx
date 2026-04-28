@@ -7,7 +7,14 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import {
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+  useLayoutEffect,
+} from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { sseClientDirect, type ContextItem, type SSEEvent } from "@/lib/api/sse";
 import { fetchStreamToken } from "@/lib/api/streamToken";
@@ -122,8 +129,12 @@ function ChatView({
   const [deleting, setDeleting] = useState(false);
   useSetPaneTitle(conversation?.title ?? "Chat");
 
-  const messageListRef = useRef<HTMLDivElement>(null);
+  const scrollportRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
+  const pendingScrollRestoreRef = useRef<{
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
   const activeStreamAbortsRef = useRef<Map<string, () => void>>(new Map());
   const {
     handleMetaReceived,
@@ -157,7 +168,6 @@ function ChatView({
   }, [messages]);
 
   const mergeChatRunMessages = useCallback((runData: ChatRunData) => {
-    shouldScrollRef.current = true;
     setMessages((prev) => {
       const existingIds = new Set(prev.map((message) => message.id));
       const next = prev.map((message) => {
@@ -232,7 +242,6 @@ function ChatView({
       };
 
       let currentAsstId = runData.assistant_message.id;
-      shouldScrollRef.current = true;
 
       const forgetStream = () => {
         activeStreamAbortsRef.current.delete(runId);
@@ -316,6 +325,7 @@ function ChatView({
 
   const handleChatRunCreated = useCallback(
     (runData: ChatRunData) => {
+      shouldScrollRef.current = true;
       void tailChatRun(runData);
     },
     [tailChatRun],
@@ -385,12 +395,27 @@ function ChatView({
     };
   }, [id]);
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
-    if (shouldScrollRef.current && messageListRef.current) {
-      messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+  useLayoutEffect(() => {
+    if (!scrollportRef.current) return;
+    if (pendingScrollRestoreRef.current) {
+      const restore = pendingScrollRestoreRef.current;
+      pendingScrollRestoreRef.current = null;
+      scrollportRef.current.scrollTop =
+        scrollportRef.current.scrollHeight - restore.scrollHeight + restore.scrollTop;
+      shouldScrollRef.current = false;
+      return;
+    }
+    if (shouldScrollRef.current) {
+      scrollportRef.current.scrollTop = scrollportRef.current.scrollHeight;
     }
   }, [messages]);
+
+  const handleChatScroll = useCallback(() => {
+    const scrollport = scrollportRef.current;
+    if (!scrollport) return;
+    shouldScrollRef.current =
+      scrollport.scrollHeight - scrollport.scrollTop - scrollport.clientHeight <= 48;
+  }, []);
 
   // --------------------------------------------------------------------------
   // Actions
@@ -399,6 +424,12 @@ function ChatView({
   const loadOlder = useCallback(async () => {
     if (!olderCursor) return;
     try {
+      if (scrollportRef.current) {
+        pendingScrollRestoreRef.current = {
+          scrollHeight: scrollportRef.current.scrollHeight,
+          scrollTop: scrollportRef.current.scrollTop,
+        };
+      }
       const params = new URLSearchParams({
         limit: "50",
         cursor: olderCursor,
@@ -415,6 +446,7 @@ function ChatView({
       setOlderCursor(response.page.next_cursor);
       shouldScrollRef.current = false;
     } catch (err) {
+      pendingScrollRestoreRef.current = null;
       console.error("Failed to load older messages:", err);
     }
   }, [id, olderCursor]);
@@ -469,7 +501,8 @@ function ChatView({
           <div className={styles.paneContentChat}>
             <ChatSurface
               messages={messages}
-              messageListRef={messageListRef}
+              scrollportRef={scrollportRef}
+              onScroll={handleChatScroll}
               olderCursor={olderCursor}
               onLoadOlder={loadOlder}
               composer={

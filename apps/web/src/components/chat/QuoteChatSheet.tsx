@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type FocusEvent,
@@ -45,8 +46,12 @@ export default function QuoteChatSheet({
 }) {
   const sheetRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const messageListRef = useRef<HTMLDivElement>(null);
+  const scrollportRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
+  const pendingScrollRestoreRef = useRef<{
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const createdInSheetRef = useRef(false);
   const activeStreamAbortRef = useRef<(() => void) | null>(null);
@@ -148,25 +153,52 @@ export default function QuoteChatSheet({
     };
   }, []);
 
-  useEffect(() => {
-    if (shouldScrollRef.current && messageListRef.current) {
-      messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+  useLayoutEffect(() => {
+    if (!scrollportRef.current) return;
+    if (pendingScrollRestoreRef.current) {
+      const restore = pendingScrollRestoreRef.current;
+      pendingScrollRestoreRef.current = null;
+      scrollportRef.current.scrollTop =
+        scrollportRef.current.scrollHeight - restore.scrollHeight + restore.scrollTop;
+      shouldScrollRef.current = false;
+      return;
+    }
+    if (shouldScrollRef.current) {
+      scrollportRef.current.scrollTop = scrollportRef.current.scrollHeight;
     }
   }, [messages]);
 
+  const handleChatScroll = useCallback(() => {
+    const scrollport = scrollportRef.current;
+    if (!scrollport) return;
+    shouldScrollRef.current =
+      scrollport.scrollHeight - scrollport.scrollTop - scrollport.clientHeight <= 48;
+  }, []);
+
   const loadOlder = useCallback(async () => {
     if (!activeConversationId || !olderCursor) return;
+    if (scrollportRef.current) {
+      pendingScrollRestoreRef.current = {
+        scrollHeight: scrollportRef.current.scrollHeight,
+        scrollTop: scrollportRef.current.scrollTop,
+      };
+    }
     const params = new URLSearchParams({ limit: "30", cursor: olderCursor });
-    const response = await apiFetch<ConversationMessagesResponse>(
-      `/api/conversations/${activeConversationId}/messages?${params}`,
-    );
-    setMessages((prev) => {
-      const existingIds = new Set(prev.map((m) => m.id));
-      const next = response.data.filter((m) => !existingIds.has(m.id));
-      return [...next, ...prev];
-    });
-    setOlderCursor(response.page.next_cursor);
-    shouldScrollRef.current = false;
+    try {
+      const response = await apiFetch<ConversationMessagesResponse>(
+        `/api/conversations/${activeConversationId}/messages?${params}`,
+      );
+      setMessages((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        const next = response.data.filter((m) => !existingIds.has(m.id));
+        return [...next, ...prev];
+      });
+      setOlderCursor(response.page.next_cursor);
+      shouldScrollRef.current = false;
+    } catch (err) {
+      pendingScrollRestoreRef.current = null;
+      throw err;
+    }
   }, [activeConversationId, olderCursor]);
 
   const handleConversationCreated = useCallback(
@@ -428,10 +460,10 @@ export default function QuoteChatSheet({
         ) : (
           <ChatSurface
             messages={messages}
-            messageListRef={messageListRef}
+            scrollportRef={scrollportRef}
+            onScroll={handleChatScroll}
             olderCursor={olderCursor}
             onLoadOlder={loadOlder}
-            transcriptTestId="quote-chat-transcript"
             emptyState={
               <>
                 <p className={styles.emptyTitle}>Ask about this quote</p>

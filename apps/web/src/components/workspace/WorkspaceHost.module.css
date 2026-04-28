@@ -45,6 +45,11 @@
   min-height: 0;
 }
 
+[data-body-mode="contained"] > .routeShell {
+  height: 100%;
+  min-height: 0;
+}
+
 /* ── Pane route boundary ── */
 
 .paneRouteBoundaryShell {

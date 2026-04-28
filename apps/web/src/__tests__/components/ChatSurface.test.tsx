@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { createRef } from "react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import ChatSurface from "@/components/chat/ChatSurface";
 import type { ConversationMessage } from "@/lib/conversations/types";
 
@@ -12,7 +13,7 @@ const baseMessage = {
 } as const;
 
 describe("ChatSurface", () => {
-  it("keeps an empty transcript before the composer so the composer stays bottom-pinned", () => {
+  it("keeps a named focusable scrollport with the message log before the composer", () => {
     render(
       <ChatSurface
         messages={[]}
@@ -21,9 +22,12 @@ describe("ChatSurface", () => {
       />,
     );
 
-    const transcript = screen.getByTestId("chat-transcript");
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const transcript = screen.getByRole("log", { name: "Chat messages" });
     const composer = screen.getByRole("textbox", { name: "Message" });
 
+    expect(scrollport).toHaveAttribute("tabindex", "0");
+    expect(scrollport).toContainElement(transcript);
     expect(transcript).toContainElement(screen.getByText("Ask about this quote"));
     expect(transcript.compareDocumentPosition(composer)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
@@ -56,5 +60,27 @@ describe("ChatSurface", () => {
 
     expect(screen.getByText("What does this quote mean?")).toBeInTheDocument();
     expect(screen.getByText("It is about the tradeoff.")).toBeInTheDocument();
+  });
+
+  it("forwards the scrollport ref and scroll events to the scroll owner", () => {
+    const scrollportRef = createRef<HTMLDivElement>();
+    const scrollEvents: EventTarget[] = [];
+
+    render(
+      <ChatSurface
+        messages={[]}
+        scrollportRef={scrollportRef}
+        onScroll={(event) => scrollEvents.push(event.currentTarget)}
+        composer={<textarea aria-label="Message" />}
+      />,
+    );
+
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+
+    expect(scrollportRef.current).toBe(scrollport);
+
+    fireEvent.scroll(scrollport);
+
+    expect(scrollEvents).toEqual([scrollport]);
   });
 });

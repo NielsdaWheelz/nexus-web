@@ -116,6 +116,44 @@ describe("PaneShell", () => {
     await expectChromeHidden(shell, false);
   });
 
+  it("clips contained bodies without enabling document chrome scroll handling", async () => {
+    render(
+      <PaneShell
+        paneId="pane-contained"
+        title="Chat"
+        widthPx={560}
+        minWidthPx={320}
+        maxWidthPx={1400}
+        bodyMode="contained"
+        onResizePane={() => {}}
+        isMobile
+      >
+        <ContainedModeProbe />
+      </PaneShell>
+    );
+
+    const body = screen.getByTestId("pane-shell-body");
+    const shell = screen.getByTestId("pane-shell-root");
+
+    expect(body).toHaveAttribute("data-body-mode", "contained");
+    expect(body).toHaveStyle({
+      display: "flex",
+      flexDirection: "column",
+      minHeight: "0",
+      overflow: "hidden",
+      overscrollBehavior: "contain",
+    });
+    expect(screen.getByTestId("contained-scroll-handler")).toHaveTextContent("none");
+
+    Object.defineProperty(body, "scrollTop", {
+      configurable: true,
+      get: () => 200,
+    });
+    fireEvent.scroll(body);
+
+    await expectChromeHidden(shell, false);
+  });
+
   it("hides mobile document chrome only after deliberate downward scroll and reveals it only after deliberate upward scroll", async () => {
     render(
       <PaneShell
@@ -437,6 +475,19 @@ function LockVisibleProbe() {
     >
       Lock chrome
     </button>
+  );
+}
+
+function ContainedModeProbe() {
+  const paneChromeScrollHandler = usePaneChromeScrollHandler();
+
+  return (
+    <div>
+      <span data-testid="contained-scroll-handler">
+        {paneChromeScrollHandler ? "present" : "none"}
+      </span>
+      <div style={{ height: "1200px" }}>Contained body</div>
+    </div>
   );
 }
 

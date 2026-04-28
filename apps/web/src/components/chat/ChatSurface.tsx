@@ -1,55 +1,64 @@
 "use client";
 
-import type { RefObject, ReactNode } from "react";
+import type { RefObject, ReactNode, UIEventHandler } from "react";
 import type { ConversationMessage } from "@/lib/conversations/types";
 import { MessageRow } from "./MessageRow";
 import styles from "./ChatSurface.module.css";
 
 export default function ChatSurface({
   messages,
-  messageListRef,
+  scrollportRef,
+  onScroll,
   olderCursor,
   onLoadOlder,
   emptyState,
   composer,
-  transcriptTestId = "chat-transcript",
 }: {
   messages: ConversationMessage[];
-  messageListRef?: RefObject<HTMLDivElement | null>;
+  scrollportRef?: RefObject<HTMLDivElement | null>;
+  onScroll?: UIEventHandler<HTMLDivElement>;
   olderCursor?: string | null;
   onLoadOlder?: () => void;
   emptyState?: ReactNode;
   composer: ReactNode;
-  transcriptTestId?: string;
 }) {
   return (
     <div className={styles.surface}>
       <div
-        ref={messageListRef}
-        className={styles.transcript}
-        data-testid={transcriptTestId}
+        ref={scrollportRef}
+        className={styles.scrollport}
+        role="region"
+        tabIndex={0}
+        aria-label="Chat conversation"
+        onScroll={onScroll}
       >
-        {olderCursor && onLoadOlder ? (
-          <button
-            type="button"
-            className={styles.loadOlder}
-            aria-label="Load older messages"
-            onClick={onLoadOlder}
-          >
-            Load older messages
-          </button>
-        ) : null}
+        <div
+          className={styles.transcript}
+          role="log"
+          aria-label="Chat messages"
+        >
+          {olderCursor && onLoadOlder ? (
+            <button
+              type="button"
+              className={styles.loadOlder}
+              aria-label="Load older messages"
+              onClick={onLoadOlder}
+            >
+              Load older messages
+            </button>
+          ) : null}
 
-        {messages.length === 0 && emptyState ? (
-          <div className={styles.emptyState}>{emptyState}</div>
-        ) : null}
+          {messages.length === 0 && emptyState ? (
+            <div className={styles.emptyState}>{emptyState}</div>
+          ) : null}
 
-        {messages.map((msg) => (
-          <MessageRow key={msg.id} message={msg} />
-        ))}
+          {messages.map((msg) => (
+            <MessageRow key={msg.id} message={msg} />
+          ))}
+        </div>
+
+        <div className={styles.composerSlot}>{composer}</div>
       </div>
-
-      <div className={styles.composerSlot}>{composer}</div>
     </div>
   );
 }

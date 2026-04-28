@@ -23,7 +23,7 @@ import KeybindingsPaneBody from "@/app/(authenticated)/settings/keybindings/Keyb
 type RouteParamValue = string;
 type RouteParams = Record<string, RouteParamValue>;
 type RoutePattern = readonly string[];
-export type PaneBodyMode = "standard" | "document";
+export type PaneBodyMode = "standard" | "document" | "contained";
 
 export interface PaneRouteContext {
   href: string;
@@ -147,7 +147,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     pattern: ["conversations", "new"],
     staticTitle: "New chat",
     render: () => <ConversationNewPaneBody />,
-    bodyMode: "standard",
+    bodyMode: "contained",
     defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
@@ -162,7 +162,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       return id ? `conversation:${id}` : null;
     },
     render: () => <ConversationPaneBody />,
-    bodyMode: "standard",
+    bodyMode: "contained",
     defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,

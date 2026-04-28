@@ -86,7 +86,8 @@
   pointer-events: none;
 }
 
-.paneShell[data-mobile="true"] .body[data-body-mode="standard"] {
+.paneShell[data-mobile="true"] .body[data-body-mode="standard"],
+.paneShell[data-mobile="true"] .body[data-body-mode="contained"] {
   padding-top: calc(var(--space-2) + var(--mobile-pane-chrome-height));
 }
 

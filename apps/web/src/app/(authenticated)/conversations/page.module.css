@@ -1,26 +1,35 @@
-/* Pane content override for chat — prevent nested scroll containers */
 .paneContentChat {
+  flex: 1;
   padding: 0;
-  overflow-y: hidden;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  min-height: 100%;
 }
 
 .chatSplitLayout {
+  flex: 1;
   display: flex;
-  min-height: 100%;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
 }
 
 .chatPrimaryColumn {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  display: flex;
 }
 
 .chatContextColumn {
+  display: flex;
   flex: 0 0 320px;
   width: 320px;
   min-width: 280px;
+  min-height: 0;
   border-left: 1px solid var(--color-border-subtle);
   background: var(--color-bg-secondary);
 }

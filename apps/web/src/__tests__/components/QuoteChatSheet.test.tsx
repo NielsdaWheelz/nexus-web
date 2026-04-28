@@ -99,7 +99,7 @@ describe("QuoteChatSheet", () => {
     expect(screen.getByRole("dialog", { name: "Ask in chat" })).toBeInTheDocument();
     expect(screen.getAllByText("A quote worth asking about.")).toHaveLength(2);
     expect(screen.getByText("Source document")).toBeInTheDocument();
-    expect(screen.getByTestId("quote-chat-transcript")).toBeInTheDocument();
+    expect(screen.getByRole("log", { name: "Chat messages" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Ask anything...")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /open chat/i })).toBeDisabled();
 
