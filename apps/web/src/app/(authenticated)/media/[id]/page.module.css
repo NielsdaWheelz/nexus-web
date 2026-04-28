@@ -816,3 +816,94 @@
   flex: 1;
   overflow-y: auto;
 }
+
+.quoteLibraryBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.quoteLibraryDialog {
+  width: min(420px, 100%);
+  max-height: min(520px, calc(100vh - var(--space-8)));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.quoteLibraryHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.quoteLibraryHeader h2 {
+  margin: 0;
+  font-size: var(--font-size-base);
+}
+
+.quoteLibraryHeader button {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.quoteLibraryList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  overflow-y: auto;
+}
+
+.quoteLibraryOption {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 36px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  padding: 0 var(--space-2);
+  cursor: pointer;
+}
+
+.quoteLibraryOption:hover:not(:disabled),
+.quoteLibraryOption:focus-visible {
+  background: var(--color-bg-secondary);
+  outline: none;
+}
+
+.quoteLibraryOption:disabled,
+.quoteLibraryHeader button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.quoteLibraryColor {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}

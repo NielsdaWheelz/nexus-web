@@ -43,6 +43,8 @@ def _create_run_payload(model_id: UUID, **overrides) -> dict:
         "contexts": [],
         "web_search": {"mode": "off"},
     }
+    if "conversation_id" not in overrides:
+        payload["conversation_scope"] = {"type": "general"}
     payload.update(overrides)
     return payload
 

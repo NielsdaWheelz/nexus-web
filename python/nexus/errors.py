@@ -80,6 +80,7 @@ class ApiErrorCode(str, Enum):
     E_LLM_TIMEOUT = "E_LLM_TIMEOUT"  # 504 - Provider request timed out
     E_LLM_CONTEXT_TOO_LARGE = "E_LLM_CONTEXT_TOO_LARGE"  # 400 - Context too large for model
     E_LLM_INCOMPLETE = "E_LLM_INCOMPLETE"  # 400 - Provider hit output token budget
+    E_APP_SEARCH_FAILED = "E_APP_SEARCH_FAILED"  # 500 - Required in-app retrieval failed
     E_MESSAGE_TOO_LONG = "E_MESSAGE_TOO_LONG"  # 400 - Message exceeds 20,000 char limit
     E_CONTEXT_TOO_LARGE = "E_CONTEXT_TOO_LARGE"  # 400 - Context exceeds 25,000 char limit
     E_MODEL_NOT_AVAILABLE = "E_MODEL_NOT_AVAILABLE"  # 400 - Model not available to user
@@ -197,6 +198,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_LLM_TIMEOUT: 504,
     ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE: 400,
     ApiErrorCode.E_LLM_INCOMPLETE: 400,
+    ApiErrorCode.E_APP_SEARCH_FAILED: 500,
     ApiErrorCode.E_MESSAGE_TOO_LONG: 400,
     ApiErrorCode.E_CONTEXT_TOO_LARGE: 400,
     ApiErrorCode.E_MODEL_NOT_AVAILABLE: 400,

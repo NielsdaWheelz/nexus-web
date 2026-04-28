@@ -4,15 +4,20 @@ import { useEffect, useState } from "react";
 import { PanelRight, X } from "lucide-react";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import type { ContextItem } from "@/lib/api/sse";
-import type { MessageContextSnapshot } from "@/lib/conversations/types";
+import type {
+  ConversationScope,
+  MessageContextSnapshot,
+} from "@/lib/conversations/types";
 import styles from "./ChatContextDrawer.module.css";
 
 export default function ChatContextDrawer({
   contexts,
+  scope,
   persistedRows,
   onRemoveContext,
 }: {
   contexts: ContextItem[];
+  scope?: ConversationScope;
   persistedRows?: Array<{
     context: MessageContextSnapshot;
     messageId: string;
@@ -72,6 +77,7 @@ export default function ChatContextDrawer({
             </header>
             <div className={styles.body}>
               <ConversationContextPane
+                scope={scope}
                 contexts={contexts}
                 persistedRows={persistedRows}
                 onRemoveContext={onRemoveContext}

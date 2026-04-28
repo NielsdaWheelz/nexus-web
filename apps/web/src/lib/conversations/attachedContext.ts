@@ -1,105 +1,109 @@
-/**
- * URL-based attach-context parsing for chat composer flows.
- *
- * Supports attach_type=highlight only in v1. Invalid or unsupported
- * values are silently ignored (non-fatal).
- */
-
 import type { ContextItem } from "@/lib/api/sse";
+import type { ConversationScope } from "@/lib/conversations/types";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const SUPPORTED_ATTACH_TYPES = new Set<ContextItem["type"]>(["highlight"]);
+const PENDING_CONTEXT_PARAM = "context";
+const PENDING_SCOPE_PARAM = "scope";
 
-const VALID_COLORS = new Set(["yellow", "green", "blue", "pink", "purple"]);
-
-const ATTACH_PARAM_KEYS = [
-  "attach_type",
-  "attach_id",
-  "attach_color",
-  "attach_preview",
-  "attach_media_id",
-  "attach_media_title",
-] as const;
-
-/**
- * Parse attach query params into a ContextItem list.
- *
- * Returns empty array when params are missing, malformed, or unsupported.
- */
-export function parseAttachContext(
-  searchParams: URLSearchParams,
-): ContextItem[] {
-  const attachType = searchParams.get("attach_type");
-  const attachId = searchParams.get("attach_id");
-
-  if (!attachType || !attachId) return [];
-  if (!SUPPORTED_ATTACH_TYPES.has(attachType as ContextItem["type"]))
-    return [];
-  if (!UUID_RE.test(attachId)) return [];
-
-  const item: ContextItem = {
-    type: attachType as ContextItem["type"],
-    id: attachId,
-  };
-
-  const color = searchParams.get("attach_color");
-  if (color && VALID_COLORS.has(color)) {
-    item.color = color as ContextItem["color"];
+function parseTypedId(value: string): { type: ContextItem["type"]; id: string } | null {
+  const [type, id, extra] = value.split(":");
+  if (extra !== undefined || !id || !UUID_RE.test(id)) {
+    return null;
   }
-
-  const preview = searchParams.get("attach_preview");
-  if (preview) {
-    item.preview = preview;
-    item.exact = preview;
+  if (type === "highlight" || type === "annotation" || type === "media") {
+    return { type, id };
   }
-
-  const mediaId = searchParams.get("attach_media_id");
-  if (mediaId && UUID_RE.test(mediaId)) {
-    item.mediaId = mediaId;
-  }
-
-  const mediaTitle = searchParams.get("attach_media_title");
-  if (mediaTitle) {
-    item.mediaTitle = mediaTitle;
-  }
-
-  return [item];
+  return null;
 }
 
-/**
- * Stable signature for URL-backed attach context state.
- *
- * Includes only fields sourced from attach_* params.
- */
-export function getAttachContextSignature(items: ContextItem[]): string {
-  return items
-    .map((item) =>
-      [
-        item.type,
-        item.id,
-        item.color ?? "",
-        item.preview ?? "",
-        item.mediaId ?? "",
-        item.mediaTitle ?? "",
-      ].join("\u001f")
-    )
-    .join("\u001e");
-}
-
-/**
- * Remove attach_type and attach_id from query params while preserving
- * all other keys. Returns a new URLSearchParams instance.
- */
-export function stripAttachParams(
-  searchParams: URLSearchParams,
-): URLSearchParams {
-  const cleaned = new URLSearchParams();
-  for (const [key, value] of searchParams.entries()) {
-    if (!(ATTACH_PARAM_KEYS as readonly string[]).includes(key)) {
-      cleaned.set(key, value);
+export function parsePendingContexts(searchParams: URLSearchParams): ContextItem[] {
+  const contexts: ContextItem[] = [];
+  for (const rawValue of searchParams.getAll(PENDING_CONTEXT_PARAM)) {
+    const parsed = parseTypedId(rawValue);
+    if (parsed) {
+      contexts.push(parsed);
     }
   }
+  return contexts;
+}
+
+export function parseConversationScopeFromUrl(
+  searchParams: URLSearchParams,
+): ConversationScope {
+  const rawScope = searchParams.get(PENDING_SCOPE_PARAM);
+  if (!rawScope) {
+    return { type: "general" };
+  }
+
+  const [type, id, extra] = rawScope.split(":");
+  if (extra !== undefined || !id || !UUID_RE.test(id)) {
+    return { type: "general" };
+  }
+  if (type === "media") {
+    return { type: "media", media_id: id };
+  }
+  if (type === "library") {
+    return { type: "library", library_id: id };
+  }
+  return { type: "general" };
+}
+
+export function getPendingContextSignature(items: ContextItem[]): string {
+  return items.map((item) => `${item.type}:${item.id}`).join("\u001e");
+}
+
+export function getConversationScopeSignature(scope: ConversationScope): string {
+  if (scope.type === "general") {
+    return "general";
+  }
+  if (scope.type === "media") {
+    return `media:${scope.media_id}`;
+  }
+  if (scope.type === "library") {
+    return `library:${scope.library_id}`;
+  }
+  const exhaustive: never = scope;
+  return exhaustive;
+}
+
+export function stripPendingContextParams(
+  searchParams: URLSearchParams,
+): URLSearchParams {
+  const cleaned = new URLSearchParams(searchParams);
+  cleaned.delete(PENDING_CONTEXT_PARAM);
+  cleaned.delete(PENDING_SCOPE_PARAM);
   return cleaned;
+}
+
+export function setPendingContextParam(
+  searchParams: URLSearchParams,
+  context: Pick<ContextItem, "type" | "id">,
+): URLSearchParams {
+  const next = new URLSearchParams(searchParams);
+  next.delete(PENDING_CONTEXT_PARAM);
+  next.append(PENDING_CONTEXT_PARAM, `${context.type}:${context.id}`);
+  return next;
+}
+
+export function setConversationScopeParam(
+  searchParams: URLSearchParams,
+  scope: ConversationScope,
+): URLSearchParams {
+  const next = new URLSearchParams(searchParams);
+  if (scope.type === "general") {
+    next.delete(PENDING_SCOPE_PARAM);
+    return next;
+  }
+  if (scope.type === "media") {
+    next.set(PENDING_SCOPE_PARAM, `media:${scope.media_id}`);
+    return next;
+  }
+  if (scope.type === "library") {
+    next.set(PENDING_SCOPE_PARAM, `library:${scope.library_id}`);
+    return next;
+  }
+  const exhaustive: never = scope;
+  return exhaustive;
 }

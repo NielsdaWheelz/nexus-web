@@ -1948,6 +1948,17 @@ class Conversation(Base):
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, server_default="Chat")
     sharing: Mapped[str] = mapped_column(Text, nullable=False, server_default="private")
+    scope_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="general")
+    scope_media_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id"),
+        nullable=True,
+    )
+    scope_library_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("libraries.id"),
+        nullable=True,
+    )
     next_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -1966,6 +1977,30 @@ class Conversation(Base):
             name="ck_conversations_sharing",
         ),
         CheckConstraint(
+            "scope_type IN ('general', 'media', 'library')",
+            name="ck_conversations_scope_type",
+        ),
+        CheckConstraint(
+            """
+            (
+                scope_type = 'general'
+                AND scope_media_id IS NULL
+                AND scope_library_id IS NULL
+            )
+            OR (
+                scope_type = 'media'
+                AND scope_media_id IS NOT NULL
+                AND scope_library_id IS NULL
+            )
+            OR (
+                scope_type = 'library'
+                AND scope_media_id IS NULL
+                AND scope_library_id IS NOT NULL
+            )
+            """,
+            name="ck_conversations_scope_targets",
+        ),
+        CheckConstraint(
             "next_seq >= 1",
             name="ck_conversations_next_seq_positive",
         ),
@@ -1977,10 +2012,28 @@ class Conversation(Base):
             "char_length(title) <= 120",
             name="ck_conversations_title_max_length",
         ),
+        Index(
+            "uix_conversations_owner_scope_media",
+            "owner_user_id",
+            "scope_media_id",
+            unique=True,
+            postgresql_where=text("scope_type = 'media'"),
+        ),
+        Index(
+            "uix_conversations_owner_scope_library",
+            "owner_user_id",
+            "scope_library_id",
+            unique=True,
+            postgresql_where=text("scope_type = 'library'"),
+        ),
     )
 
     # Relationships
     owner: Mapped["User"] = relationship("User")
+    scope_media: Mapped["Media | None"] = relationship("Media", foreign_keys=[scope_media_id])
+    scope_library: Mapped["Library | None"] = relationship(
+        "Library", foreign_keys=[scope_library_id]
+    )
     messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan"
     )
@@ -2354,6 +2407,7 @@ class MessageRetrieval(Base):
         ForeignKey("media.id", ondelete="SET NULL"),
         nullable=True,
     )
+    scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
     context_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     result_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     deep_link: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -2387,6 +2441,10 @@ class MessageRetrieval(Base):
         CheckConstraint(
             "char_length(source_id) BETWEEN 1 AND 128",
             name="ck_message_retrievals_source_id_length",
+        ),
+        CheckConstraint(
+            "char_length(scope) BETWEEN 1 AND 256",
+            name="ck_message_retrievals_scope_length",
         ),
         CheckConstraint(
             "jsonb_typeof(context_ref) = 'object'",

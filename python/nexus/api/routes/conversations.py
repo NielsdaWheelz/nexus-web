@@ -22,7 +22,7 @@ from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.errors import ApiErrorCode
 from nexus.responses import success_response
-from nexus.schemas.conversation import SetConversationSharesRequest
+from nexus.schemas.conversation import ConversationScopeRequest, SetConversationSharesRequest
 from nexus.services import conversations as conversations_service
 from nexus.services import shares as shares_service
 
@@ -91,6 +91,21 @@ def create_conversation(
     result = conversations_service.create_conversation(
         db=db,
         viewer_id=viewer.user_id,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.post("/conversations/resolve", status_code=200)
+def resolve_conversation(
+    body: ConversationScopeRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Resolve the canonical conversation for a durable scope."""
+    result = conversations_service.resolve_conversation(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_scope=body,
     )
     return success_response(result.model_dump(mode="json"))
 

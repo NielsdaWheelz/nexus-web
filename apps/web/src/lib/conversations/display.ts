@@ -1,5 +1,8 @@
 import type { ContextItem } from "@/lib/api/sse";
-import type { MessageContextSnapshot } from "@/lib/conversations/types";
+import type {
+  ConversationScope,
+  MessageContextSnapshot,
+} from "@/lib/conversations/types";
 
 type DisplayContext =
   | ContextItem
@@ -66,4 +69,32 @@ export function formatContextMeta(
     return undefined;
   }
   return parts.join(" - ");
+}
+
+export function formatConversationScopeLabel(scope: ConversationScope): string {
+  if (scope.type === "general") {
+    return "General chat";
+  }
+  if (scope.type === "media") {
+    return `Document: ${scope.title || "Selected document"}`;
+  }
+  if (scope.type === "library") {
+    return `Library: ${scope.title || scope.library_name || "Selected library"}`;
+  }
+  const exhaustive: never = scope;
+  return exhaustive;
+}
+
+export function formatConversationScopeBadge(scope: ConversationScope): string {
+  if (scope.type === "general") {
+    return "General";
+  }
+  if (scope.type === "media") {
+    return "Document";
+  }
+  if (scope.type === "library") {
+    return "Library";
+  }
+  const exhaustive: never = scope;
+  return exhaustive;
 }

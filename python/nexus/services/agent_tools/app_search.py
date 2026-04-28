@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
+from llm_calling.types import Turn
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -73,20 +74,6 @@ _SEARCH_CUE_TERMS = (
     "when did",
     "summarize",
     "compare",
-)
-
-_CURRENT_SCOPE_TERMS = (
-    "this conversation",
-    "this chat",
-    "above",
-    "earlier",
-    "we discussed",
-    "attached",
-    "this document",
-    "this article",
-    "this episode",
-    "this video",
-    "this pdf",
 )
 
 
@@ -181,15 +168,12 @@ def should_run_app_search(content: str, *, has_user_context: bool) -> bool:
     return not has_user_context and len(normalized) >= 12
 
 
-def infer_app_search_scope(content: str, conversation_id: UUID) -> str:
-    """Choose the default tool scope for the current turn."""
-    normalized = " ".join(content.lower().split())
-    if any(term in normalized for term in _CURRENT_SCOPE_TERMS):
-        return f"conversation:{conversation_id}"
-    return "all"
-
-
-def build_app_search_query(content: str) -> str:
+def build_app_search_query(
+    content: str,
+    *,
+    history: list[Turn],
+    scope_metadata: dict[str, Any],
+) -> str:
     """Build the search query from a user message without storing raw text."""
     query = " ".join(content.split()).strip()
     lowered = query.lower()
@@ -224,6 +208,18 @@ def build_app_search_query(content: str) -> str:
         query = query.replace(phrase, "").replace(phrase.title(), "")
 
     query = query.strip(" \t\r\n?.!,;:")
+    normalized = " ".join(query.lower().split())
+    if normalized in {"what about that", "what about it", "tell me more", "why"}:
+        for turn in reversed(history):
+            if turn.role == "user" and turn.content.strip():
+                query = f"{turn.content.strip()} {query}"
+                break
+
+    scope_title = scope_metadata.get("title")
+    if scope_metadata.get("type") in {"media", "library"} and isinstance(scope_title, str):
+        if scope_title.lower() not in query.lower():
+            query = f"{scope_title} {query}"
+
     return (query or content).strip()[:APP_SEARCH_QUERY_MAX_CHARS]
 
 
@@ -236,14 +232,20 @@ def execute_app_search(
     assistant_message_id: UUID,
     content: str,
     has_user_context: bool,
+    scope: str,
+    history: list[Turn],
+    scope_metadata: dict[str, Any],
 ) -> AppSearchRun | None:
     """Run app search for a chat turn and persist tool/retrieval metadata."""
-    if not should_run_app_search(content, has_user_context=has_user_context):
+    if scope == "all" and not should_run_app_search(content, has_user_context=has_user_context):
         return None
 
-    query = build_app_search_query(content)
-    scope = infer_app_search_scope(query, conversation_id)
-    requested_types = list(ALL_RESULT_TYPES)
+    query = build_app_search_query(content, history=history, scope_metadata=scope_metadata)
+    requested_types = [
+        result_type
+        for result_type in ALL_RESULT_TYPES
+        if scope == "all" or result_type != "message"
+    ]
     semantic = True
     start = time.monotonic()
     status = "complete"
@@ -268,7 +270,7 @@ def execute_app_search(
             citations=citations,
         )
         if not context_text and not citations:
-            context_text = '<app_search_results status="no_results" />'
+            context_text = f'<app_search_results status="no_results" scope="{xml_escape(scope)}" />'
             context_chars = len(context_text)
     except Exception as exc:
         try:
@@ -462,6 +464,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             result_type,
             source_id,
             media_id,
+            scope,
             context_ref,
             result_ref,
             deep_link,
@@ -474,6 +477,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             :result_type,
             :source_id,
             :media_id,
+            :scope,
             :context_ref,
             :result_ref,
             :deep_link,
@@ -495,6 +499,7 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 "result_type": citation.result_type,
                 "source_id": citation.source_id,
                 "media_id": citation.media_id,
+                "scope": run.scope,
                 "context_ref": citation.context_ref,
                 "result_ref": citation.to_json(),
                 "deep_link": citation.deep_link,

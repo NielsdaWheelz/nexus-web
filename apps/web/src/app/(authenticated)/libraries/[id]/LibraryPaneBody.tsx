@@ -18,6 +18,7 @@ import type {
   UserSearchResult,
 } from "@/components/LibraryEditDialog";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { usePaneParam, usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
@@ -499,6 +500,28 @@ export default function LibraryPaneBody() {
     router.push("/libraries");
   }, [library, closeEditDialog, router]);
 
+  const handleOpenLibraryChat = useCallback(async () => {
+    if (!library) {
+      return;
+    }
+
+    try {
+      const response = await apiFetch<{ data: { id: string; title: string } }>(
+        "/api/conversations/resolve",
+        {
+          method: "POST",
+          body: JSON.stringify({ type: "library", library_id: library.id }),
+        }
+      );
+      const route = `/conversations/${response.data.id}`;
+      if (!requestOpenInAppPane(route, { titleHint: response.data.title || library.name })) {
+        router.push(route);
+      }
+    } catch (err) {
+      setError(isApiError(err) ? err.message : "Failed to open library chat");
+    }
+  }, [library, router]);
+
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
     if (!library || library.role !== "admin") {
       return;
@@ -524,26 +547,35 @@ export default function LibraryPaneBody() {
       });
   };
 
-  const paneOptions = !library || library.is_default
+  const paneOptions = !library
     ? []
     : [
         {
-          id: "edit-library",
-          label: "Edit library",
-          onSelect: () => void openEditDialog(),
+          id: "library-chat",
+          label: "Chat about this library",
+          onSelect: () => void handleOpenLibraryChat(),
         },
-        ...(library?.role === "admin"
-          ? [
+        ...(library.is_default
+          ? []
+          : [
               {
-                id: "delete-library",
-                label: "Delete library",
-                tone: "danger" as const,
-                onSelect: () => {
-                  void handleDeleteLibrary();
-                },
+                id: "edit-library",
+                label: "Edit library",
+                onSelect: () => void openEditDialog(),
               },
-            ]
-          : []),
+              ...(library.role === "admin"
+                ? [
+                    {
+                      id: "delete-library",
+                      label: "Delete library",
+                      tone: "danger" as const,
+                      onSelect: () => {
+                        void handleDeleteLibrary();
+                      },
+                    },
+                  ]
+                : []),
+            ]),
       ];
 
   usePaneChromeOverride({ options: paneOptions });

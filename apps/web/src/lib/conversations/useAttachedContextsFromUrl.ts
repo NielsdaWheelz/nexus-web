@@ -3,18 +3,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContextItem } from "@/lib/api/sse";
 import {
-  getAttachContextSignature,
-  parseAttachContext,
-  stripAttachParams,
+  getPendingContextSignature,
+  parseConversationScopeFromUrl,
+  parsePendingContexts,
+  stripPendingContextParams,
 } from "@/lib/conversations/attachedContext";
 
 export function useAttachedContextsFromUrl(searchParams: URLSearchParams) {
   const initialAttach = useMemo(
-    () => parseAttachContext(searchParams),
+    () => parsePendingContexts(searchParams),
+    [searchParams],
+  );
+  const conversationScope = useMemo(
+    () => parseConversationScopeFromUrl(searchParams),
     [searchParams],
   );
   const initialAttachSignature = useMemo(
-    () => getAttachContextSignature(initialAttach),
+    () => getPendingContextSignature(initialAttach),
     [initialAttach],
   );
   const [attachedContexts, setAttachedContexts] =
@@ -38,12 +43,13 @@ export function useAttachedContextsFromUrl(searchParams: URLSearchParams) {
   }, []);
 
   const stripAttachState = useCallback(
-    () => stripAttachParams(searchParams),
+    () => stripPendingContextParams(searchParams),
     [searchParams],
   );
 
   return {
     attachedContexts,
+    conversationScope,
     setAttachedContexts,
     removeContext,
     clearContexts,

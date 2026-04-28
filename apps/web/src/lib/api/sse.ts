@@ -159,14 +159,16 @@ export interface ContextItem {
   mediaKind?: string;
 }
 
+export type ConversationScopeInput =
+  | { type: "general" }
+  | { type: "media"; media_id: string }
+  | { type: "library"; library_id: string };
+
 /**
  * Strip client-side enriched fields from a ContextItem before sending to the API.
  * Only keeps the wire-format fields that the backend expects.
  */
-export type ChatRunContext = Pick<
-  ContextItem,
-  "type" | "id" | "color" | "preview" | "exact" | "mediaId" | "mediaTitle"
->;
+export type ChatRunContext = Pick<ContextItem, "type" | "id">;
 
 export function toWireContextItem(
   item: ContextItem,
@@ -174,11 +176,6 @@ export function toWireContextItem(
   return {
     type: item.type,
     id: item.id,
-    ...(item.color !== undefined && { color: item.color }),
-    ...(item.preview !== undefined && { preview: item.preview }),
-    ...(item.exact !== undefined && { exact: item.exact }),
-    ...(item.mediaId !== undefined && { mediaId: item.mediaId }),
-    ...(item.mediaTitle !== undefined && { mediaTitle: item.mediaTitle }),
   };
 }
 
@@ -187,6 +184,7 @@ export interface ChatRunCreateRequest {
   model_id: string;
   reasoning: "default" | "none" | "minimal" | "low" | "medium" | "high" | "max";
   key_mode?: "auto" | "byok_only" | "platform_only";
+  conversation_scope?: ConversationScopeInput;
   contexts?: ChatRunContext[];
   web_search: {
     mode: "off" | "auto" | "required";

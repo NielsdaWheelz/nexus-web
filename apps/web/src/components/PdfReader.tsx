@@ -150,7 +150,16 @@ interface PdfReaderProps {
   onHighlightNavigationComplete?: () => void;
   onHighlightsMutated?: () => void;
   onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
-  onQuoteToChat?: (highlightId: string, contextSeed?: PdfQuoteContextSeed) => void;
+  quoteDestinations?: Array<{
+    id: "new" | "media" | "library";
+    label: string;
+    disabled?: boolean;
+  }>;
+  onQuoteToChat?: (
+    highlightId: string,
+    destination: "new" | "media" | "library",
+    contextSeed?: PdfQuoteContextSeed,
+  ) => void;
   /** Resume seed: page (1-based) to open when this media loads */
   startPageNumber?: number;
   /** Resume seed: intra-page scroll progression to apply after first render */
@@ -528,6 +537,7 @@ export default function PdfReader({
   onHighlightNavigationComplete,
   onHighlightsMutated,
   onHighlightTap,
+  quoteDestinations = [],
   onQuoteToChat,
   startPageNumber,
   startPageProgression,
@@ -2085,7 +2095,7 @@ export default function PdfReader({
   );
 
   const handleQuoteToChat = useCallback(
-    async (color: HighlightColor) => {
+    async (color: HighlightColor, destination: "new" | "media" | "library") => {
       if (!onQuoteToChat) {
         return;
       }
@@ -2095,10 +2105,14 @@ export default function PdfReader({
       if (!highlightId) {
         return;
       }
-      onQuoteToChat(highlightId, {
-        color,
-        ...(exact ? { exact, preview: exact.slice(0, 120) } : {}),
-      });
+      onQuoteToChat(
+        highlightId,
+        destination,
+        {
+          color,
+          ...(exact ? { exact, preview: exact.slice(0, 120) } : {}),
+        },
+      );
     },
     [handleCreateHighlight, onQuoteToChat, selection, textGeometryReliable]
   );
@@ -2232,6 +2246,7 @@ export default function PdfReader({
           selectionLineRects={selection.lineRects}
           containerRef={viewerContainerRef}
           onCreateHighlight={handleCreateHighlight}
+          quoteDestinations={quoteDestinations}
           onQuoteToChat={onQuoteToChat ? handleQuoteToChat : undefined}
           onDismiss={clearSelection}
           isCreating={isCreating}

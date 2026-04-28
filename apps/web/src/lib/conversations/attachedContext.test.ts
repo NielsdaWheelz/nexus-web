@@ -1,70 +1,102 @@
 import { describe, it, expect } from "vitest";
-import { parseAttachContext, stripAttachParams } from "./attachedContext";
+import {
+  getConversationScopeSignature,
+  getPendingContextSignature,
+  parseConversationScopeFromUrl,
+  parsePendingContexts,
+  setConversationScopeParam,
+  setPendingContextParam,
+  stripPendingContextParams,
+} from "./attachedContext";
 
-describe("parseAttachContext", () => {
-  it("returns highlight context for valid query", () => {
+describe("parsePendingContexts", () => {
+  it("returns typed context ids for valid query values", () => {
     const params = new URLSearchParams(
-      "attach_type=highlight&attach_id=a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "context=highlight:a1b2c3d4-e5f6-7890-abcd-ef1234567890&context=media:b1b2c3d4-e5f6-7890-abcd-ef1234567890",
     );
-    const result = parseAttachContext(params);
+    const result = parsePendingContexts(params);
     expect(result).toEqual([
       { type: "highlight", id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890" },
+      { type: "media", id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890" },
     ]);
   });
 
   it("ignores invalid or unsupported values", () => {
-    // Unsupported attach_type
-    expect(
-      parseAttachContext(
-        new URLSearchParams(
-          "attach_type=bookmark&attach_id=a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        ),
-      ),
-    ).toEqual([]);
-
-    // Malformed UUID
-    expect(
-      parseAttachContext(
-        new URLSearchParams("attach_type=highlight&attach_id=not-a-uuid"),
-      ),
-    ).toEqual([]);
-
-    // Missing attach_id
-    expect(
-      parseAttachContext(new URLSearchParams("attach_type=highlight")),
-    ).toEqual([]);
-
-    // Missing attach_type
-    expect(
-      parseAttachContext(
-        new URLSearchParams(
-          "attach_id=a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        ),
-      ),
-    ).toEqual([]);
-
-    // Both missing
-    expect(parseAttachContext(new URLSearchParams())).toEqual([]);
+    const params = new URLSearchParams(
+      "context=bookmark:a1b2c3d4-e5f6-7890-abcd-ef1234567890&context=highlight:not-a-uuid&context=highlight",
+    );
+    expect(parsePendingContexts(params)).toEqual([]);
   });
 });
 
-describe("stripAttachParams", () => {
-  it("preserves unrelated query keys", () => {
-    const params = new URLSearchParams(
-      "attach_type=highlight&attach_id=a1b2c3d4-e5f6-7890-abcd-ef1234567890&foo=bar&baz=qux",
-    );
-    const result = stripAttachParams(params);
-    expect(result.get("foo")).toBe("bar");
-    expect(result.get("baz")).toBe("qux");
-    expect(result.has("attach_type")).toBe(false);
-    expect(result.has("attach_id")).toBe(false);
+describe("parseConversationScopeFromUrl", () => {
+  it("returns media and library scopes", () => {
+    expect(
+      parseConversationScopeFromUrl(
+        new URLSearchParams("scope=media:a1b2c3d4-e5f6-7890-abcd-ef1234567890"),
+      ),
+    ).toEqual({ type: "media", media_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890" });
+    expect(
+      parseConversationScopeFromUrl(
+        new URLSearchParams("scope=library:b1b2c3d4-e5f6-7890-abcd-ef1234567890"),
+      ),
+    ).toEqual({ type: "library", library_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890" });
   });
 
-  it("returns empty params when only attach keys present", () => {
+  it("returns general for absent or invalid scope", () => {
+    expect(parseConversationScopeFromUrl(new URLSearchParams())).toEqual({ type: "general" });
+    expect(parseConversationScopeFromUrl(new URLSearchParams("scope=media:not-a-uuid"))).toEqual({
+      type: "general",
+    });
+  });
+});
+
+describe("pending context params", () => {
+  it("preserves unrelated query keys", () => {
     const params = new URLSearchParams(
-      "attach_type=highlight&attach_id=a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "context=highlight:a1b2c3d4-e5f6-7890-abcd-ef1234567890&scope=media:b1b2c3d4-e5f6-7890-abcd-ef1234567890&foo=bar&baz=qux",
     );
-    const result = stripAttachParams(params);
-    expect(result.toString()).toBe("");
+    const result = stripPendingContextParams(params);
+    expect(result.get("foo")).toBe("bar");
+    expect(result.get("baz")).toBe("qux");
+    expect(result.has("context")).toBe(false);
+    expect(result.has("scope")).toBe(false);
+  });
+
+  it("sets typed context and scope params", () => {
+    const withContext = setPendingContextParam(new URLSearchParams("foo=bar"), {
+      type: "highlight",
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    });
+    const withScope = setConversationScopeParam(
+      withContext,
+      { type: "library", library_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890" },
+    );
+    expect(withScope.get("foo")).toBe("bar");
+    expect(withScope.get("context")).toBe(
+      "highlight:a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    );
+    expect(withScope.get("scope")).toBe(
+      "library:b1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    );
+  });
+});
+
+describe("signatures", () => {
+  it("serializes pending contexts and conversation scopes", () => {
+    expect(
+      getPendingContextSignature([
+        { type: "highlight", id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890" },
+        { type: "media", id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890" },
+      ]),
+    ).toBe(
+      "highlight:a1b2c3d4-e5f6-7890-abcd-ef1234567890\u001emedia:b1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    );
+    expect(
+      getConversationScopeSignature({
+        type: "media",
+        media_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      }),
+    ).toBe("media:a1b2c3d4-e5f6-7890-abcd-ef1234567890");
   });
 });

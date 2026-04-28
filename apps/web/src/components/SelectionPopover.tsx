@@ -10,7 +10,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { MessageSquare } from "lucide-react";
+import { ChevronDown, MessageSquare } from "lucide-react";
 import { COLOR_LABELS } from "@/lib/highlights/colors";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights/segmenter";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -21,7 +21,15 @@ export interface SelectionPopoverProps {
   selectionLineRects?: DOMRect[];
   containerRef: React.RefObject<HTMLElement | null>;
   onCreateHighlight: (color: HighlightColor) => void | Promise<void | string | null>;
-  onQuoteToChat?: (color: HighlightColor) => void | Promise<void>;
+  quoteDestinations?: Array<{
+    id: "new" | "media" | "library";
+    label: string;
+    disabled?: boolean;
+  }>;
+  onQuoteToChat?: (
+    color: HighlightColor,
+    destination: "new" | "media" | "library",
+  ) => void | Promise<void>;
   onDismiss: () => void;
   isCreating?: boolean;
 }
@@ -76,12 +84,14 @@ export default function SelectionPopover({
   selectionLineRects,
   containerRef,
   onCreateHighlight,
+  quoteDestinations = [],
   onQuoteToChat,
   onDismiss,
   isCreating = false,
 }: SelectionPopoverProps) {
   const isMobileViewport = useIsMobileViewport();
   const [selectedColor, setSelectedColor] = useState<HighlightColor>(DEFAULT_COLOR);
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{
     top: number;
@@ -284,12 +294,33 @@ export default function SelectionPopover({
     [isCreating, onCreateHighlight]
   );
 
+  const handleQuoteDestination = useCallback(
+    (destination: "new" | "media" | "library") => {
+      if (isCreating || !onQuoteToChat) {
+        return;
+      }
+      setChatMenuOpen(false);
+      void onQuoteToChat(selectedColor, destination);
+    },
+    [isCreating, onQuoteToChat, selectedColor],
+  );
+
   const handleQuoteToChat = useCallback(() => {
-    if (isCreating || !onQuoteToChat) {
+    if (quoteDestinations.length === 1) {
+      handleQuoteDestination(quoteDestinations[0]!.id);
       return;
     }
-    void onQuoteToChat(selectedColor);
-  }, [isCreating, onQuoteToChat, selectedColor]);
+    setChatMenuOpen((open) => !open);
+  }, [handleQuoteDestination, quoteDestinations]);
+
+  const handleChatMenuKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setChatMenuOpen(false);
+  }, []);
 
   const handlePopoverPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -325,17 +356,38 @@ export default function SelectionPopover({
           />
         ))}
       </div>
-      {onQuoteToChat && (
-        <button
-          type="button"
-          className={styles.chatButton}
-          onClick={handleQuoteToChat}
-          disabled={isCreating}
-          aria-label="Ask in chat"
-        >
-          <MessageSquare size={14} aria-hidden="true" />
-        </button>
-      )}
+      {onQuoteToChat && quoteDestinations.length > 0 ? (
+        <div className={styles.chatMenuWrap} onKeyDown={handleChatMenuKeyDown}>
+          <button
+            type="button"
+            className={styles.chatButton}
+            onClick={handleQuoteToChat}
+            disabled={isCreating}
+            aria-label="Ask in chat"
+            aria-haspopup="menu"
+            aria-expanded={chatMenuOpen}
+          >
+            <MessageSquare size={14} aria-hidden="true" />
+            <ChevronDown size={12} aria-hidden="true" />
+          </button>
+          {chatMenuOpen ? (
+            <div className={styles.chatMenu} role="menu" aria-label="Ask in chat">
+              {quoteDestinations.map((destination) => (
+                <button
+                  key={destination.id}
+                  type="button"
+                  role="menuitem"
+                  className={styles.chatMenuItem}
+                  disabled={destination.disabled}
+                  onClick={() => handleQuoteDestination(destination.id)}
+                >
+                  {destination.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

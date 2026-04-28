@@ -107,13 +107,16 @@ async function expectHighlightRowToBeExpanded(
 
 async function readAttachedHighlightId(page: Page): Promise<string | null> {
   const currentUrl = new URL(page.url());
-  if (currentUrl.pathname !== "/conversations/new") {
+  if (
+    currentUrl.pathname !== "/conversations/new" &&
+    !/^\/conversations\/[^/]+$/.test(currentUrl.pathname)
+  ) {
     return null;
   }
-  if (currentUrl.searchParams.get("attach_type") !== "highlight") {
-    return null;
-  }
-  return currentUrl.searchParams.get("attach_id");
+  const context = currentUrl.searchParams
+    .getAll("context")
+    .find((value) => value.startsWith("highlight:"));
+  return context ? context.slice("highlight:".length) : null;
 }
 
 function workspacePaneButton(page: Page, name: RegExp | string) {

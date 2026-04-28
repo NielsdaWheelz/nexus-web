@@ -4,13 +4,17 @@ import ContextRow from "@/components/ui/ContextRow";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import ActionMenu from "@/components/ui/ActionMenu";
 import StateMessage from "@/components/ui/StateMessage";
+import ConversationScopeChip from "@/components/chat/ConversationScopeChip";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { ContextItem } from "@/lib/api/sse";
 import {
   formatContextMeta,
   formatSelectionContext,
 } from "@/lib/conversations/display";
-import type { MessageContextSnapshot } from "@/lib/conversations/types";
+import type {
+  ConversationScope,
+  MessageContextSnapshot,
+} from "@/lib/conversations/types";
 import type { ReactNode } from "react";
 import styles from "./ConversationContextPane.module.css";
 
@@ -38,6 +42,7 @@ interface ContextRowViewModel {
 }
 
 interface ConversationContextPaneProps {
+  scope?: ConversationScope;
   contexts: ContextItem[];
   persistedRows?: PersistedContextRow[];
   onRemoveContext?: (index: number) => void;
@@ -45,6 +50,7 @@ interface ConversationContextPaneProps {
 }
 
 export default function ConversationContextPane({
+  scope,
   contexts,
   persistedRows = [],
   onRemoveContext,
@@ -52,12 +58,23 @@ export default function ConversationContextPane({
 }: ConversationContextPaneProps) {
   return (
     <div className={styles.content} data-testid={testId}>
-      {contexts.length === 0 && persistedRows.length === 0 ? (
+      {(!scope || scope.type === "general") &&
+      contexts.length === 0 &&
+      persistedRows.length === 0 ? (
         <StateMessage variant="empty">No linked context yet.</StateMessage>
       ) : null}
 
+      {scope && scope.type !== "general" ? (
+        <section className={styles.section} aria-label="Conversation scope">
+          <h3 className={styles.sectionTitle}>Scope</h3>
+          <ConversationScopeChip scope={scope} />
+        </section>
+      ) : null}
+
       {contexts.length > 0 ? (
-        <div className={styles.contextList}>
+        <section className={styles.section} aria-label="Pending contexts">
+          <h3 className={styles.sectionTitle}>Pending context</h3>
+          <div className={styles.contextList}>
           {contexts.map((contextItem, index) =>
             renderContextRow({
               key: `${contextItem.type}-${contextItem.id}-${index}`,
@@ -75,11 +92,14 @@ export default function ConversationContextPane({
               onRemove: onRemoveContext ? () => onRemoveContext(index) : undefined,
             }),
           )}
-        </div>
+          </div>
+        </section>
       ) : null}
 
       {persistedRows.length > 0 ? (
-        <div className={styles.contextList}>
+        <section className={styles.section} aria-label="Message contexts">
+          <h3 className={styles.sectionTitle}>Message context</h3>
+          <div className={styles.contextList}>
           {persistedRows.map(({ context, messageId, messageSeq }, index) =>
             renderContextRow({
               key: `${messageId}-${context.type}-${context.id}-${index}`,
@@ -97,7 +117,8 @@ export default function ConversationContextPane({
               messageSeq,
             }),
           )}
-        </div>
+          </div>
+        </section>
       ) : null}
     </div>
   );

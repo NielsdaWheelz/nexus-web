@@ -25,12 +25,13 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session, joinedload
 
-from nexus.auth.permissions import can_read_conversation
+from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.db.models import (
     Annotation,
     Conversation,
     Highlight,
     HighlightFragmentAnchor,
+    Library,
     Media,
     Message,
     MessageContext,
@@ -41,6 +42,8 @@ from nexus.logging import get_logger
 from nexus.schemas.conversation import (
     HIGHLIGHT_COLORS,
     ConversationOut,
+    ConversationScopeOut,
+    ConversationScopeRequest,
     MessageContextSnapshot,
     MessageOut,
     MessageToolCallOut,
@@ -212,7 +215,10 @@ def get_message_count(db: Session, conversation_id: UUID) -> int:
 
 
 def conversation_to_out(
-    conversation: Conversation, message_count: int, viewer_id: UUID | None = None
+    db: Session,
+    conversation: Conversation,
+    message_count: int,
+    viewer_id: UUID | None = None,
 ) -> ConversationOut:
     """Convert Conversation ORM model to ConversationOut schema.
 
@@ -227,10 +233,192 @@ def conversation_to_out(
         owner_user_id=conversation.owner_user_id,
         is_owner=(viewer_id is not None and conversation.owner_user_id == viewer_id),
         sharing=conversation.sharing,
+        scope=conversation_scope_to_out(db, conversation),
         message_count=message_count,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
     )
+
+
+def conversation_scope_to_out(db: Session, conversation: Conversation) -> ConversationScopeOut:
+    if conversation.scope_type == "general":
+        return ConversationScopeOut(type="general")
+
+    if conversation.scope_type == "media":
+        media = db.get(Media, conversation.scope_media_id) if conversation.scope_media_id else None
+        if media is None:
+            return ConversationScopeOut(type="media", media_id=conversation.scope_media_id)
+        authors = [author.name for author in media.authors]
+        return ConversationScopeOut(
+            type="media",
+            media_id=media.id,
+            title=media.title,
+            media_kind=media.kind,
+            authors=authors,
+            published_date=media.published_date,
+            publisher=media.publisher,
+            canonical_source_url=media.canonical_source_url,
+        )
+
+    if conversation.scope_type == "library":
+        library = (
+            db.get(Library, conversation.scope_library_id)
+            if conversation.scope_library_id
+            else None
+        )
+        if library is None:
+            return ConversationScopeOut(type="library", library_id=conversation.scope_library_id)
+        rows = db.execute(
+            text(
+                """
+                SELECT COUNT(le.media_id), array_remove(array_agg(DISTINCT m.kind), NULL)
+                FROM library_entries le
+                LEFT JOIN media m ON m.id = le.media_id
+                WHERE le.library_id = :library_id
+                """
+            ),
+            {"library_id": library.id},
+        ).one()
+        return ConversationScopeOut(
+            type="library",
+            library_id=library.id,
+            title=library.name,
+            library_name=library.name,
+            entry_count=int(rows[0] or 0),
+            media_kinds=list(rows[1] or []),
+            source_policy="library_membership",
+        )
+
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
+
+
+def conversation_scope_metadata(db: Session, conversation: Conversation) -> dict[str, object]:
+    scope = conversation_scope_to_out(db, conversation)
+    return scope.model_dump(mode="json")
+
+
+def authorize_conversation_scope(
+    db: Session,
+    viewer_id: UUID,
+    conversation_scope: ConversationScopeRequest,
+) -> None:
+    if conversation_scope.type == "general":
+        return
+
+    if conversation_scope.type == "media":
+        media_id = conversation_scope.media_id
+        if media_id is None or not can_read_media(db, viewer_id, media_id):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
+        return
+
+    if conversation_scope.type == "library":
+        library_id = conversation_scope.library_id
+        if library_id is None or not is_library_member(db, viewer_id, library_id):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Library not found")
+        return
+
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
+
+
+def _lock_scoped_conversation(
+    db: Session, viewer_id: UUID, scope_type: str, scope_id: UUID
+) -> None:
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+        {"lock_key": f"conversation_scope:{viewer_id}:{scope_type}:{scope_id}"},
+    )
+
+
+def resolve_conversation_for_scope(
+    db: Session,
+    viewer_id: UUID,
+    conversation_scope: ConversationScopeRequest,
+    title_content: str | None = None,
+) -> Conversation:
+    authorize_conversation_scope(db, viewer_id, conversation_scope)
+
+    if conversation_scope.type == "general":
+        conversation = Conversation(
+            owner_user_id=viewer_id,
+            title=derive_conversation_title(title_content),
+            sharing="private",
+            scope_type="general",
+            scope_media_id=None,
+            scope_library_id=None,
+            next_seq=1,
+        )
+        db.add(conversation)
+        db.flush()
+        return conversation
+
+    if conversation_scope.type == "media":
+        media = db.get(Media, conversation_scope.media_id) if conversation_scope.media_id else None
+        if conversation_scope.media_id is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Media scope requires media_id"
+            )
+        _lock_scoped_conversation(db, viewer_id, "media", conversation_scope.media_id)
+        conversation = (
+            db.execute(
+                select(Conversation).where(
+                    Conversation.owner_user_id == viewer_id,
+                    Conversation.scope_type == "media",
+                    Conversation.scope_media_id == conversation_scope.media_id,
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if conversation is not None:
+            return conversation
+        conversation = Conversation(
+            owner_user_id=viewer_id,
+            title=media.title if media is not None else DEFAULT_CONVERSATION_TITLE,
+            sharing="private",
+            scope_type="media",
+            scope_media_id=conversation_scope.media_id,
+            scope_library_id=None,
+            next_seq=1,
+        )
+        db.add(conversation)
+        db.flush()
+        return conversation
+
+    if conversation_scope.type == "library":
+        if conversation_scope.library_id is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Library scope requires library_id",
+            )
+        library = db.get(Library, conversation_scope.library_id)
+        _lock_scoped_conversation(db, viewer_id, "library", conversation_scope.library_id)
+        conversation = (
+            db.execute(
+                select(Conversation).where(
+                    Conversation.owner_user_id == viewer_id,
+                    Conversation.scope_type == "library",
+                    Conversation.scope_library_id == conversation_scope.library_id,
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if conversation is not None:
+            return conversation
+        conversation = Conversation(
+            owner_user_id=viewer_id,
+            title=library.name if library is not None else DEFAULT_CONVERSATION_TITLE,
+            sharing="private",
+            scope_type="library",
+            scope_media_id=None,
+            scope_library_id=conversation_scope.library_id,
+            next_seq=1,
+        )
+        db.add(conversation)
+        db.flush()
+        return conversation
+
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
 
 
 def message_to_out(
@@ -491,6 +679,7 @@ def create_conversation(db: Session, viewer_id: UUID) -> ConversationOut:
         owner_user_id=viewer_id,
         title=DEFAULT_CONVERSATION_TITLE,
         sharing="private",
+        scope_type="general",
         next_seq=1,
     )
 
@@ -498,7 +687,22 @@ def create_conversation(db: Session, viewer_id: UUID) -> ConversationOut:
     db.flush()
     db.commit()
 
-    return conversation_to_out(conversation, message_count=0, viewer_id=viewer_id)
+    return conversation_to_out(db, conversation, message_count=0, viewer_id=viewer_id)
+
+
+def resolve_conversation(
+    db: Session,
+    viewer_id: UUID,
+    conversation_scope: ConversationScopeRequest,
+) -> ConversationOut:
+    conversation = resolve_conversation_for_scope(db, viewer_id, conversation_scope)
+    db.commit()
+    return conversation_to_out(
+        db,
+        conversation,
+        get_message_count(db, conversation.id),
+        viewer_id=viewer_id,
+    )
 
 
 def get_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> ConversationOut:
@@ -518,7 +722,7 @@ def get_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> Con
     """
     conversation = get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
     message_count = get_message_count(db, conversation_id)
-    return conversation_to_out(conversation, message_count, viewer_id=viewer_id)
+    return conversation_to_out(db, conversation, message_count, viewer_id=viewer_id)
 
 
 VALID_SCOPES = {"mine", "all", "shared"}
@@ -608,8 +812,13 @@ def _list_conversations_mine(
     result = db.execute(
         text(f"""
             SELECT c.id, c.owner_user_id, c.title, c.sharing, c.created_at, c.updated_at,
-                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
+                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count,
+                   c.scope_type, c.scope_media_id, c.scope_library_id,
+                   sm.title AS scope_media_title, sm.kind AS scope_media_kind,
+                   sl.name AS scope_library_name
             FROM conversations c
+            LEFT JOIN media sm ON sm.id = c.scope_media_id
+            LEFT JOIN libraries sl ON sl.id = c.scope_library_id
             WHERE c.owner_user_id = :viewer_id
               {cursor_clause}
             ORDER BY c.updated_at DESC, c.id DESC
@@ -652,9 +861,14 @@ def _list_conversations_visible(
         text(f"""
             WITH {cte}
             SELECT c.id, c.owner_user_id, c.title, c.sharing, c.created_at, c.updated_at,
-                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
+                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count,
+                   c.scope_type, c.scope_media_id, c.scope_library_id,
+                   sm.title AS scope_media_title, sm.kind AS scope_media_kind,
+                   sl.name AS scope_library_name
             FROM conversations c
             JOIN visible_conversations vc ON vc.id = c.id
+            LEFT JOIN media sm ON sm.id = c.scope_media_id
+            LEFT JOIN libraries sl ON sl.id = c.scope_library_id
             WHERE true
               {scope_filter}
               {cursor_clause}
@@ -682,6 +896,7 @@ def _build_conversation_page(
             title=row[2],
             is_owner=(row[1] == viewer_id),
             sharing=row[3],
+            scope=_conversation_scope_out_from_row(row),
             created_at=row[4],
             updated_at=row[5],
             message_count=row[6],
@@ -695,6 +910,28 @@ def _build_conversation_page(
         next_cursor = encode_conversation_cursor(last.updated_at, last.id)
 
     return conversations, PageInfo(next_cursor=next_cursor)
+
+
+def _conversation_scope_out_from_row(row: Sequence) -> ConversationScopeOut:
+    scope_type = row[7]
+    if scope_type == "general":
+        return ConversationScopeOut(type="general")
+    if scope_type == "media":
+        return ConversationScopeOut(
+            type="media",
+            media_id=row[8],
+            title=row[10],
+            media_kind=row[11],
+        )
+    if scope_type == "library":
+        return ConversationScopeOut(
+            type="library",
+            library_id=row[9],
+            title=row[12],
+            library_name=row[12],
+            source_policy="library_membership",
+        )
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
 
 
 def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:

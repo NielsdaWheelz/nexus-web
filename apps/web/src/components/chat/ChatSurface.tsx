@@ -1,7 +1,11 @@
 "use client";
 
 import type { RefObject, ReactNode, UIEventHandler } from "react";
-import type { ConversationMessage } from "@/lib/conversations/types";
+import type {
+  ConversationMessage,
+  ConversationScope,
+} from "@/lib/conversations/types";
+import ConversationScopeChip from "./ConversationScopeChip";
 import { MessageRow } from "./MessageRow";
 import styles from "./ChatSurface.module.css";
 
@@ -13,6 +17,7 @@ export default function ChatSurface({
   onLoadOlder,
   emptyState,
   composer,
+  scope,
 }: {
   messages: ConversationMessage[];
   scrollportRef?: RefObject<HTMLDivElement | null>;
@@ -21,6 +26,7 @@ export default function ChatSurface({
   onLoadOlder?: () => void;
   emptyState?: ReactNode;
   composer: ReactNode;
+  scope?: ConversationScope;
 }) {
   return (
     <div className={styles.surface}>
@@ -37,6 +43,12 @@ export default function ChatSurface({
           role="log"
           aria-label="Chat messages"
         >
+          {scope && scope.type !== "general" ? (
+            <div className={styles.scopeBanner}>
+              <ConversationScopeChip scope={scope} />
+            </div>
+          ) : null}
+
           {olderCursor && onLoadOlder ? (
             <button
               type="button"

@@ -37,6 +37,13 @@
   background: color-mix(in srgb, var(--color-bg) 96%, transparent);
 }
 
+.scopeBanner {
+  width: 100%;
+  max-width: var(--content-max-width);
+  display: flex;
+  justify-content: flex-start;
+}
+
 .loadOlder {
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--color-border-subtle);

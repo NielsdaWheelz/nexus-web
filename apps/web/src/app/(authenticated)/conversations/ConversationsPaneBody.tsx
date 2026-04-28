@@ -3,21 +3,20 @@
 import { useEffect, useState, useCallback } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import StateMessage from "@/components/ui/StateMessage";
+import StatusPill from "@/components/ui/StatusPill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
+import {
+  formatConversationScopeBadge,
+  formatConversationScopeLabel,
+} from "@/lib/conversations/display";
+import type { ConversationSummary } from "@/lib/conversations/types";
 import styles from "./ConversationsPaneBody.module.css";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-interface Conversation {
-  id: string;
-  title: string;
-  sharing: string;
-  message_count: number;
-  created_at: string;
-  updated_at: string;
-}
+type Conversation = ConversationSummary;
 
 interface ConversationsResponse {
   data: Conversation[];
@@ -97,21 +96,10 @@ export default function ConversationsPaneBody() {
       {conversations.length > 0 && (
         <AppList>
           {conversations.map((conv) => (
-            <AppListItem
+            <ConversationListItem
               key={conv.id}
-              href={`/conversations/${conv.id}`}
-              title={conv.title}
-              paneTitleHint={conv.title}
-              description={`${conv.message_count} messages`}
-              meta={new Date(conv.updated_at).toLocaleDateString()}
-              options={[
-                {
-                  id: "delete",
-                  label: "Delete",
-                  tone: "danger",
-                  onSelect: () => void handleDelete(conv.id),
-                },
-              ]}
+              conversation={conv}
+              onDelete={handleDelete}
             />
           ))}
         </AppList>
@@ -127,5 +115,42 @@ export default function ConversationsPaneBody() {
         </button>
       )}
     </div>
+  );
+}
+
+function ConversationListItem({
+  conversation,
+  onDelete,
+}: {
+  conversation: Conversation;
+  onDelete: (conversationId: string) => Promise<void>;
+}) {
+  const scope = conversation.scope;
+  const description =
+    scope.type === "general"
+      ? `${conversation.message_count} messages`
+      : `${formatConversationScopeLabel(scope)} - ${conversation.message_count} messages`;
+
+  return (
+    <AppListItem
+      href={`/conversations/${conversation.id}`}
+      title={conversation.title}
+      paneTitleHint={conversation.title}
+      description={description}
+      meta={new Date(conversation.updated_at).toLocaleDateString()}
+      trailing={
+        <StatusPill variant={scope.type === "general" ? "neutral" : "info"}>
+          {formatConversationScopeBadge(scope)}
+        </StatusPill>
+      }
+      options={[
+        {
+          id: "delete",
+          label: "Delete",
+          tone: "danger",
+          onSelect: () => void onDelete(conversation.id),
+        },
+      ]}
+    />
   );
 }

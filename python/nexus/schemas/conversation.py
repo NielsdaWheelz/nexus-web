@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Valid sharing modes - must match DB constraint
 SHARING_MODES = Literal["private", "library", "public"]
@@ -23,6 +23,9 @@ MESSAGE_STATUSES = Literal["pending", "complete", "error"]
 
 # Valid context target types - must match message_contexts.target_type
 MESSAGE_CONTEXT_TYPES = Literal["media", "highlight", "annotation"]
+
+# Valid conversation scopes - must match conversations.scope_type
+CONVERSATION_SCOPE_TYPES = Literal["general", "media", "library"]
 
 # Valid highlight colors surfaced on context snapshots
 HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
@@ -46,6 +49,50 @@ CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled
 CHAT_RUN_EVENT_TYPES = Literal["meta", "tool_call", "tool_result", "citation", "delta", "done"]
 
 
+class ConversationScopeRequest(BaseModel):
+    """Client-selected durable conversation scope."""
+
+    type: CONVERSATION_SCOPE_TYPES
+    media_id: UUID | None = None
+    library_id: UUID | None = None
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
+
+    @model_validator(mode="after")
+    def validate_scope_targets(self) -> "ConversationScopeRequest":
+        if self.type == "general":
+            if self.media_id is not None or self.library_id is not None:
+                raise ValueError("general scope cannot include target ids")
+            return self
+        if self.type == "media":
+            if self.media_id is None or self.library_id is not None:
+                raise ValueError("media scope requires media_id only")
+            return self
+        if self.type == "library":
+            if self.library_id is None or self.media_id is not None:
+                raise ValueError("library scope requires library_id only")
+            return self
+        raise ValueError("invalid conversation scope")
+
+
+class ConversationScopeOut(BaseModel):
+    """Persisted scope metadata for a conversation."""
+
+    type: CONVERSATION_SCOPE_TYPES
+    media_id: UUID | None = None
+    library_id: UUID | None = None
+    title: str | None = None
+    media_kind: str | None = None
+    library_name: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    published_date: str | None = None
+    publisher: str | None = None
+    canonical_source_url: str | None = None
+    entry_count: int | None = None
+    media_kinds: list[str] = Field(default_factory=list)
+    source_policy: str | None = None
+
+
 # =============================================================================
 # Response Schemas
 # =============================================================================
@@ -64,6 +111,7 @@ class ConversationOut(BaseModel):
     owner_user_id: UUID
     is_owner: bool
     sharing: str  # "private" | "library" | "public"
+    scope: ConversationScopeOut
     message_count: int
     created_at: datetime
     updated_at: datetime
@@ -101,6 +149,7 @@ class MessageRetrievalOut(BaseModel):
     result_type: APP_SEARCH_RESULT_TYPES
     source_id: str
     media_id: UUID | None = None
+    scope: str
     context_ref: dict[str, Any]
     result_ref: dict[str, Any]
     deep_link: str | None = None
@@ -226,6 +275,7 @@ class ChatRunCreateRequest(BaseModel):
     """Request schema for creating a durable chat run."""
 
     conversation_id: UUID | None = None
+    conversation_scope: ConversationScopeRequest | None = None
     content: str
     model_id: UUID
     reasoning: REASONING_MODES = "default"

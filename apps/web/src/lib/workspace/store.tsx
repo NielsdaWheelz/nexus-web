@@ -91,23 +91,43 @@ function workspaceReducer(state: WorkspaceStateV4, action: WorkspaceAction): Wor
 
     case "open_pane": {
       let panes = state.panes;
-      const panesToOpen = action.panes.map((pane) => ({
-        ...pane,
-        visibility: "visible" as const,
-      }));
-      if (panes.length + panesToOpen.length > MAX_PANES) {
-        // Drop oldest non-active panes to make room
-        const keep = MAX_PANES - panesToOpen.length;
-        panes = panes.filter((p) => p.id === state.activePaneId).concat(
-          panes.filter((p) => p.id !== state.activePaneId).slice(-(keep - 1))
-        );
+      let activePaneId = state.activePaneId;
+
+      for (const pane of action.panes) {
+        const paneToOpen = { ...pane, visibility: "visible" as const };
+        const resourceRef = resolvePaneRoute(paneToOpen.href).resourceRef;
+        const existingPane = resourceRef
+          ? panes.find((item) => resolvePaneRoute(item.href).resourceRef === resourceRef)
+          : undefined;
+
+        if (existingPane) {
+          panes = panes.map((item) =>
+            item.id === existingPane.id
+              ? { ...item, href: paneToOpen.href, widthPx: paneToOpen.widthPx, visibility: "visible" }
+              : item
+          );
+          if (action.activate) {
+            activePaneId = existingPane.id;
+          }
+          continue;
+        }
+
+        if (panes.length + 1 > MAX_PANES) {
+          const keep = MAX_PANES - 1;
+          panes = panes.filter((p) => p.id === activePaneId).concat(
+            panes.filter((p) => p.id !== activePaneId).slice(-(keep - 1))
+          );
+        }
+        const insertIdx = action.afterPaneId
+          ? panes.findIndex((p) => p.id === action.afterPaneId) + 1
+          : panes.length;
+        panes = [...panes.slice(0, insertIdx), paneToOpen, ...panes.slice(insertIdx)];
+        if (action.activate) {
+          activePaneId = paneToOpen.id;
+        }
       }
-      const insertIdx = action.afterPaneId
-        ? panes.findIndex((p) => p.id === action.afterPaneId) + 1
-        : panes.length;
-      const next = [...panes.slice(0, insertIdx), ...panesToOpen, ...panes.slice(insertIdx)];
-      const activePaneId = action.activate ? panesToOpen[0]!.id : state.activePaneId;
-      return ensureActivePaneId({ ...state, panes: next, activePaneId });
+
+      return ensureActivePaneId({ ...state, panes, activePaneId });
     }
 
     case "navigate_pane": {

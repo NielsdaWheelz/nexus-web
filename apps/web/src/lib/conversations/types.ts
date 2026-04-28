@@ -4,6 +4,38 @@ import type {
   SearchCitationEventData,
 } from "@/lib/api/sse";
 
+export type ConversationScope =
+  | { type: "general" }
+  | {
+      type: "media";
+      media_id: string;
+      title?: string | null;
+      media_kind?: string | null;
+      authors?: string[];
+      published_date?: string | null;
+      publisher?: string | null;
+      canonical_source_url?: string | null;
+    }
+  | {
+      type: "library";
+      library_id: string;
+      title?: string | null;
+      library_name?: string | null;
+      entry_count?: number | null;
+      media_kinds?: string[];
+      source_policy?: string | null;
+    };
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  sharing: string;
+  message_count: number;
+  scope: ConversationScope;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ConversationModel {
   id: string;
   provider: string;
@@ -107,7 +139,7 @@ export interface ChatRun {
 export interface ChatRunResponse {
   data: {
     run: ChatRun;
-    conversation: { id: string };
+    conversation: ConversationSummary;
     user_message: ConversationMessage;
     assistant_message: ConversationMessage;
   };

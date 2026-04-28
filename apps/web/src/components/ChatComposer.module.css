@@ -30,6 +30,11 @@
   font-size: var(--font-size-xs);
 }
 
+.scopeRow {
+  display: flex;
+  min-width: 0;
+}
+
 .composerInput {
   display: block;
   width: 100%;

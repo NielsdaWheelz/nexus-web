@@ -29,8 +29,10 @@ import type {
   ConversationMessagesResponse,
   ChatRunListResponse,
   ChatRunResponse,
+  ConversationSummary,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
+import { formatConversationScopeLabel } from "@/lib/conversations/display";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneParam,
@@ -41,13 +43,7 @@ import {
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import styles from "../page.module.css";
 
-interface Conversation {
-  id: string;
-  title: string;
-  sharing: string;
-  created_at: string;
-  updated_at: string;
-}
+type Conversation = ConversationSummary;
 
 type ChatRunData = ChatRunResponse["data"];
 
@@ -126,7 +122,16 @@ function ChatView({
   const [error, setError] = useState<string | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  useSetPaneTitle(conversation?.title ?? "Chat");
+  const conversationScope = conversation?.scope ?? { type: "general" as const };
+  useSetPaneTitle(
+    conversation
+      ? `Chat: ${
+          conversationScope.type !== "general"
+            ? formatConversationScopeLabel(conversationScope)
+            : conversation.title
+        }`
+      : "Chat",
+  );
 
   const scrollportRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
@@ -336,6 +341,7 @@ function ChatView({
           <div className={styles.paneContentChat}>
             <ChatSurface
               messages={messages}
+              scope={conversationScope}
               scrollportRef={scrollportRef}
               onScroll={handleChatScroll}
               olderCursor={olderCursor}
@@ -343,6 +349,7 @@ function ChatView({
               composer={
                 <ChatComposer
                   conversationId={id}
+                  conversationScope={conversationScope}
                   attachedContexts={attachedContexts}
                   onRemoveContext={onRemoveContext}
                   onChatRunCreated={handleChatRunCreated}
@@ -356,6 +363,7 @@ function ChatView({
         {!isMobileViewport ? (
           <aside className={styles.chatContextColumn}>
             <ConversationContextPane
+              scope={conversationScope}
               contexts={attachedContexts}
               persistedRows={persistedRows}
               onRemoveContext={onRemoveContext}
@@ -366,6 +374,7 @@ function ChatView({
 
       {isMobileViewport ? (
         <ChatContextDrawer
+          scope={conversationScope}
           contexts={attachedContexts}
           persistedRows={persistedRows}
           onRemoveContext={onRemoveContext}

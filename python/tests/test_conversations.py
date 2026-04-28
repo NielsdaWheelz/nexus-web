@@ -20,7 +20,12 @@ from nexus.services.conversations import (
     MAX_CONVERSATION_TITLE_LENGTH,
     derive_conversation_title,
 )
-from tests.factories import create_test_conversation, create_test_message
+from tests.factories import (
+    create_test_conversation,
+    create_test_library,
+    create_test_media_in_library,
+    create_test_message,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -68,6 +73,86 @@ class TestCreateConversation:
         assert "id" in data
         assert "created_at" in data
         assert "updated_at" in data
+
+
+class TestResolveConversationScope:
+    def test_resolve_media_scope_reuses_canonical_conversation(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Scoped Chat Library")
+            media_id = create_test_media_in_library(
+                session,
+                user_id,
+                library_id,
+                title="Scoped Chat Document",
+            )
+
+        first = auth_client.post(
+            "/conversations/resolve",
+            headers=auth_headers(user_id),
+            json={"type": "media", "media_id": str(media_id)},
+        )
+        second = auth_client.post(
+            "/conversations/resolve",
+            headers=auth_headers(user_id),
+            json={"type": "media", "media_id": str(media_id)},
+        )
+
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        first_data = first.json()["data"]
+        second_data = second.json()["data"]
+        assert first_data["id"] == second_data["id"]
+        assert first_data["scope"]["type"] == "media"
+        assert first_data["scope"]["media_id"] == str(media_id)
+        assert first_data["scope"]["title"] == "Scoped Chat Document"
+
+        direct_db.register_cleanup("conversations", "id", UUID(first_data["id"]))
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("users", "id", user_id)
+
+    def test_resolve_library_scope_reuses_canonical_conversation(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Scoped Research Library")
+
+        first = auth_client.post(
+            "/conversations/resolve",
+            headers=auth_headers(user_id),
+            json={"type": "library", "library_id": str(library_id)},
+        )
+        second = auth_client.post(
+            "/conversations/resolve",
+            headers=auth_headers(user_id),
+            json={"type": "library", "library_id": str(library_id)},
+        )
+
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        first_data = first.json()["data"]
+        second_data = second.json()["data"]
+        assert first_data["id"] == second_data["id"]
+        assert first_data["scope"]["type"] == "library"
+        assert first_data["scope"]["library_id"] == str(library_id)
+        assert first_data["scope"]["title"] == "Scoped Research Library"
+
+        direct_db.register_cleanup("conversations", "id", UUID(first_data["id"]))
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("users", "id", user_id)
 
     def test_create_conversation_is_private(self, auth_client, direct_db: DirectSessionManager):
         """New conversations are always private."""

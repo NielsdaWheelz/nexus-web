@@ -42,7 +42,7 @@ import {
   reconcileFocusAfterRefetch,
 } from "@/lib/highlights/useHighlightInteraction";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import { stripAttachParams } from "@/lib/conversations/attachedContext";
+import { setPendingContextParam } from "@/lib/conversations/attachedContext";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import MediaHighlightsPaneBody from "./MediaHighlightsPaneBody";
 import StateMessage from "@/components/ui/StateMessage";
@@ -72,8 +72,7 @@ import {
 } from "@/lib/reader/types";
 import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
-import { useWorkspaceStore } from "@/lib/workspace/store";
-import type { WorkspacePaneStateV4 } from "@/lib/workspace/schema";
+import type { ConversationScope, ConversationSummary } from "@/lib/conversations/types";
 import {
   normalizeEpubNavigationToc,
   resolveInitialEpubSectionId,
@@ -193,14 +192,9 @@ const DOCUMENT_PROCESSING_POLL_INTERVAL_MS = 3000;
 const READER_QUOTE_EXACT_CP = 48;
 const READER_QUOTE_CONTEXT_CP = 24;
 
-type QuoteChatTarget = {
-  baseOrigin: string;
-  paneId: string | null;
-  paneHref: string | null;
-  conversationId: string | null;
-};
-
 type QuoteChatContextSeed = Pick<ContextItem, "color" | "exact" | "preview">;
+type QuoteDestination = "new" | "media" | "library";
+type QuoteLibraryChoice = Pick<LibraryTargetPickerItem, "id" | "name" | "color">;
 
 function createEmptyPdfHighlightsPaneState(): PdfHighlightsPaneState {
   return {
@@ -208,68 +202,6 @@ function createEmptyPdfHighlightsPaneState(): PdfHighlightsPaneState {
     highlights: [],
     version: 0,
   };
-}
-
-function getQuoteChatBaseOrigin(): string {
-  if (
-    typeof window !== "undefined" &&
-    window.location.origin &&
-    window.location.origin !== "null"
-  ) {
-    return window.location.origin;
-  }
-  return "http://localhost";
-}
-
-function isQuoteChatPaneHref(href: string, baseOrigin: string): boolean {
-  try {
-    const pathname = new URL(href, baseOrigin).pathname;
-    return pathname === "/conversations/new" || /^\/conversations\/[^/]+$/.test(pathname);
-  } catch {
-    return false;
-  }
-}
-
-function findQuoteChatTarget(
-  panes: WorkspacePaneStateV4[],
-  activePaneId: string
-): QuoteChatTarget {
-  const baseOrigin = getQuoteChatBaseOrigin();
-  const activePane = panes.find((pane) => pane.id === activePaneId) ?? null;
-  let paneToReuse =
-    activePane && isQuoteChatPaneHref(activePane.href, baseOrigin) ? activePane : null;
-
-  if (!paneToReuse) {
-    const chatPanes = panes.filter((pane) => isQuoteChatPaneHref(pane.href, baseOrigin));
-    paneToReuse = chatPanes.length === 1 ? (chatPanes[0] ?? null) : null;
-  }
-
-  if (!paneToReuse) {
-    return {
-      baseOrigin,
-      paneId: null,
-      paneHref: null,
-      conversationId: null,
-    };
-  }
-
-  try {
-    const pathname = new URL(paneToReuse.href, baseOrigin).pathname;
-    const match = pathname.match(/^\/conversations\/([^/]+)$/);
-    return {
-      baseOrigin,
-      paneId: paneToReuse.id,
-      paneHref: paneToReuse.href,
-      conversationId: match?.[1] ?? null,
-    };
-  } catch {
-    return {
-      baseOrigin,
-      paneId: paneToReuse.id,
-      paneHref: paneToReuse.href,
-      conversationId: null,
-    };
-  }
 }
 
 function escapeAttrValue(value: string): string {
@@ -869,7 +801,6 @@ export default function MediaPaneBody() {
 
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
-  const { state: workspaceState, navigatePane } = useWorkspaceStore();
   const paneMobileChrome = usePaneMobileChromeVisibility();
   const requestedFragmentId = searchParams.get("fragment");
   const requestedHighlightId = searchParams.get("highlight");
@@ -992,6 +923,18 @@ export default function MediaPaneBody() {
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
+  const [quoteChatSheetState, setQuoteChatSheetState] = useState<{
+    context: ContextItem;
+    conversationId: string | null;
+    targetLabel: string;
+  } | null>(null);
+  const [quoteLibraryPickerState, setQuoteLibraryPickerState] = useState<{
+    highlightId: string;
+    context: ContextItem;
+    libraries: QuoteLibraryChoice[];
+    mobile: boolean;
+  } | null>(null);
+  const [quoteLibraryPickerBusy, setQuoteLibraryPickerBusy] = useState(false);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
   const selectionSnapshotKeyRef = useRef<string | null>(null);
   const selectionVisibleRef = useRef(false);
@@ -2714,11 +2657,15 @@ export default function MediaPaneBody() {
   // Quote-to-Chat
   // ==========================================================================
 
-  const quoteChatTarget = useMemo(
-    () => findQuoteChatTarget(workspaceState.panes, workspaceState.activePaneId),
-    [workspaceState.activePaneId, workspaceState.panes]
-  );
   const activeChatHighlights = isPdf ? pdfHighlightsPaneState.highlights : highlights;
+  const quoteDestinations = useMemo(
+    () => [
+      { id: "new" as const, label: "Ask in new chat" },
+      { id: "media" as const, label: "Ask in this document" },
+      { id: "library" as const, label: "Ask in library..." },
+    ],
+    []
+  );
 
   const buildHighlightChatContext = useCallback(
     (highlightId: string, seed?: QuoteChatContextSeed): ContextItem => {
@@ -2740,100 +2687,214 @@ export default function MediaPaneBody() {
     [activeChatHighlights, media?.id, media?.title]
   );
 
+  const openChatRouteWithHighlight = useCallback(
+    (route: string, titleHint: string, highlightId: string) => {
+      const params = setPendingContextParam(new URLSearchParams(), {
+        type: "highlight",
+        id: highlightId,
+      });
+      const href = `${route}?${params.toString()}`;
+      if (!requestOpenInAppPane(href, { titleHint })) {
+        router.push(href);
+      }
+    },
+    [router]
+  );
+
+  const resolveConversationForScope = useCallback(
+    async (scope: ConversationScope): Promise<ConversationSummary> => {
+      let body:
+        | { type: "general" }
+        | { type: "media"; media_id: string }
+        | { type: "library"; library_id: string };
+      if (scope.type === "general") {
+        body = { type: "general" };
+      } else if (scope.type === "media") {
+        body = { type: "media", media_id: scope.media_id };
+      } else if (scope.type === "library") {
+        body = { type: "library", library_id: scope.library_id };
+      } else {
+        const exhaustive: never = scope;
+        return exhaustive;
+      }
+
+      const response = await apiFetch<{ data: ConversationSummary }>("/api/conversations/resolve", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      return response.data;
+    },
+    []
+  );
+
+  const openResolvedConversationWithHighlight = useCallback(
+    async (scope: ConversationScope, titleHint: string, highlightId: string) => {
+      const conversation = await resolveConversationForScope(scope);
+      openChatRouteWithHighlight(
+        `/conversations/${conversation.id}`,
+        conversation.title || titleHint,
+        highlightId
+      );
+    },
+    [openChatRouteWithHighlight, resolveConversationForScope]
+  );
+
+  const openResolvedConversation = useCallback(
+    async (scope: ConversationScope, titleHint: string) => {
+      const conversation = await resolveConversationForScope(scope);
+      const route = `/conversations/${conversation.id}`;
+      if (!requestOpenInAppPane(route, { titleHint: conversation.title || titleHint })) {
+        router.push(route);
+      }
+    },
+    [resolveConversationForScope, router]
+  );
+
   const handleSendToChat = useCallback(
-    (highlightId: string, seed?: QuoteChatContextSeed) => {
+    async (
+      highlightId: string,
+      destination: QuoteDestination = "media",
+      seed?: QuoteChatContextSeed
+    ) => {
       const context = buildHighlightChatContext(highlightId, seed);
 
-      const quoteParams = new URLSearchParams({
-        attach_type: "highlight",
-        attach_id: highlightId,
-      });
-      if (context.color) {
-        quoteParams.set("attach_color", context.color);
-      }
-      const preview = context.preview || context.exact;
-      if (preview) {
-        quoteParams.set("attach_preview", preview.slice(0, 120));
-      }
-      if (media?.id) {
-        quoteParams.set("attach_media_id", media.id);
-      }
-      if (media?.title) {
-        quoteParams.set("attach_media_title", media.title);
+      if (destination === "new") {
+        if (isMobileViewport) {
+          setQuoteChatSheetState({
+            context,
+            conversationId: null,
+            targetLabel: "New chat",
+          });
+          return;
+        }
+        openChatRouteWithHighlight("/conversations/new", "New chat", highlightId);
+        return;
       }
 
-      if (quoteChatTarget.paneId && quoteChatTarget.paneHref) {
-        const parsed = new URL(quoteChatTarget.paneHref, quoteChatTarget.baseOrigin);
-        const cleaned = stripAttachParams(parsed.searchParams);
-        for (const [key, value] of quoteParams.entries()) {
-          cleaned.set(key, value);
+      if (!media) {
+        return;
+      }
+
+      if (destination === "media") {
+        const scope: ConversationScope = { type: "media", media_id: media.id };
+        if (isMobileViewport) {
+          const conversation = await resolveConversationForScope(scope);
+          setQuoteChatSheetState({
+            context,
+            conversationId: conversation.id,
+            targetLabel: conversation.title || media.title || "Document chat",
+          });
+          return;
         }
-        const qs = cleaned.toString();
-        navigatePane(
-          quoteChatTarget.paneId,
-          qs ? `${parsed.pathname}?${qs}${parsed.hash}` : `${parsed.pathname}${parsed.hash}`
+        await openResolvedConversationWithHighlight(
+          scope,
+          media.title || "Document chat",
+          highlightId
         );
         return;
       }
 
-      requestOpenInAppPane(`/conversations/new?${quoteParams.toString()}`, { titleHint: "New chat" });
+      if (destination === "library") {
+        const response = await apiFetch<{
+          data: Array<{
+            id: string;
+            name: string;
+            color: string | null;
+            is_in_library: boolean;
+          }>;
+        }>(`/api/media/${media.id}/libraries`);
+        const libraries = response.data
+          .filter((library) => library.is_in_library)
+          .map((library) => ({
+            id: library.id,
+            name: library.name,
+            color: library.color,
+          }));
+
+        if (libraries.length === 0) {
+          toast({
+            variant: "info",
+            message: "Add this document to a library before asking in a library chat.",
+          });
+          return;
+        }
+
+        if (libraries.length === 1) {
+          const library = libraries[0]!;
+          const scope: ConversationScope = { type: "library", library_id: library.id };
+          if (isMobileViewport) {
+            const conversation = await resolveConversationForScope(scope);
+            setQuoteChatSheetState({
+              context,
+              conversationId: conversation.id,
+              targetLabel: conversation.title || library.name,
+            });
+            return;
+          }
+          await openResolvedConversationWithHighlight(scope, library.name, highlightId);
+          return;
+        }
+
+        setQuoteLibraryPickerState({
+          highlightId,
+          context,
+          libraries,
+          mobile: isMobileViewport,
+        });
+        return;
+      }
+
+      const exhaustive: never = destination;
+      return exhaustive;
     },
     [
       buildHighlightChatContext,
-      media?.id,
-      media?.title,
-      navigatePane,
-      quoteChatTarget,
+      isMobileViewport,
+      media,
+      openChatRouteWithHighlight,
+      openResolvedConversationWithHighlight,
+      resolveConversationForScope,
+      toast,
     ]
   );
 
-  const prepareQuoteSelectionForChat = useCallback(
-    async (
-      color: HighlightColor
-    ): Promise<{
-      context: ContextItem;
-      targetPaneId: string | null;
-      targetConversationId: string | null;
-    } | null> => {
-      const activeSelection = selection ?? selectionSnapshotRef.current;
-      const exact = activeSelection?.selectedText || undefined;
-      const preview = exact?.slice(0, 120);
-      const highlightId = await handleCreateHighlight(color);
-      if (!highlightId) {
-        return null;
-      }
-
-      return {
-        context: {
-          type: "highlight",
-          id: highlightId,
-          color,
-          ...(preview ? { preview } : {}),
-          ...(exact ? { exact } : {}),
-          ...(media?.id ? { mediaId: media.id } : {}),
-          ...(media?.title ? { mediaTitle: media.title } : {}),
-        },
-        targetPaneId: quoteChatTarget.paneId,
-        targetConversationId: quoteChatTarget.conversationId,
-      };
-    },
-    [handleCreateHighlight, media?.id, media?.title, quoteChatTarget, selection]
-  );
-
-  const handleQuoteSelectionToNewChat = useCallback(
-    async (color: HighlightColor) => {
-      const activeSelection = selection ?? selectionSnapshotRef.current;
-      const exact = activeSelection?.selectedText || undefined;
-      const highlightId = await handleCreateHighlight(color);
-      if (!highlightId) {
+  const handleQuoteLibrarySelect = useCallback(
+    async (library: QuoteLibraryChoice) => {
+      const picker = quoteLibraryPickerState;
+      if (!picker || quoteLibraryPickerBusy) {
         return;
       }
-      handleSendToChat(highlightId, {
-        color,
-        ...(exact ? { exact, preview: exact.slice(0, 120) } : {}),
-      });
+
+      setQuoteLibraryPickerBusy(true);
+      try {
+        const scope: ConversationScope = { type: "library", library_id: library.id };
+        if (picker.mobile) {
+          const conversation = await resolveConversationForScope(scope);
+          setQuoteChatSheetState({
+            context: picker.context,
+            conversationId: conversation.id,
+            targetLabel: conversation.title || library.name,
+          });
+        } else {
+          await openResolvedConversationWithHighlight(scope, library.name, picker.highlightId);
+        }
+        setQuoteLibraryPickerState(null);
+      } catch (err) {
+        toast({
+          variant: "error",
+          message: isApiError(err) ? err.message : "Failed to open library chat",
+        });
+      } finally {
+        setQuoteLibraryPickerBusy(false);
+      }
     },
-    [handleCreateHighlight, handleSendToChat, selection]
+    [
+      openResolvedConversationWithHighlight,
+      quoteLibraryPickerBusy,
+      quoteLibraryPickerState,
+      resolveConversationForScope,
+      toast,
+    ]
   );
 
   const handleOpenConversation = useCallback(
@@ -2931,11 +2992,6 @@ export default function MediaPaneBody() {
 
   const [highlightsDrawerOpen, setHighlightsDrawerOpen] = useState(false);
   const lastMobileFocusedHighlightIdRef = useRef<string | null>(null);
-  const [quoteChatSheetState, setQuoteChatSheetState] = useState<{
-    context: ContextItem;
-    targetPaneId: string | null;
-    targetConversationId: string | null;
-  } | null>(null);
   const [libraryPanelOpen, setLibraryPanelOpen] = useState(false);
   const [libraryPanelAnchorEl, setLibraryPanelAnchorEl] =
     useState<HTMLElement | null>(null);
@@ -3088,84 +3144,56 @@ export default function MediaPaneBody() {
   );
 
   const handleQuoteToChat = useCallback(
-    async (color: HighlightColor) => {
-      if (!isMobileViewport) {
-        await handleQuoteSelectionToNewChat(color);
+    async (color: HighlightColor, destination: QuoteDestination) => {
+      const activeSelection = selection ?? selectionSnapshotRef.current;
+      const exact = activeSelection?.selectedText || undefined;
+      const highlightId = await handleCreateHighlight(color);
+      if (!highlightId) {
         return;
       }
-      const prepared = await prepareQuoteSelectionForChat(color);
-      if (!prepared) {
-        return;
-      }
-      setQuoteChatSheetState(prepared);
+      await handleSendToChat(highlightId, destination, {
+        color,
+        ...(exact ? { exact, preview: exact.slice(0, 120) } : {}),
+      });
     },
-    [handleQuoteSelectionToNewChat, isMobileViewport, prepareQuoteSelectionForChat]
+    [handleCreateHighlight, handleSendToChat, selection]
   );
 
   const handleQuoteChatSheetConversationCreated = useCallback(
-    (conversationId: string, runId?: string) => {
-      if (quoteChatSheetState?.targetPaneId) {
-        const route = runId
-          ? `/conversations/${conversationId}?run=${encodeURIComponent(runId)}`
-          : `/conversations/${conversationId}`;
-        navigatePane(
-          quoteChatSheetState.targetPaneId,
-          route,
-          {
-            replace: true,
-            activate: false,
-          },
-        );
-      }
+    (conversationId: string) => {
       setQuoteChatSheetState((current) =>
-        current ? { ...current, targetConversationId: conversationId } : current
+        current
+          ? {
+              ...current,
+              conversationId,
+            }
+          : current
       );
     },
-    [navigatePane, quoteChatSheetState?.targetPaneId]
+    []
   );
 
   const handleOpenQuoteChatSheetConversation = useCallback(
     (conversationId: string) => {
       setQuoteChatSheetState(null);
       const route = `/conversations/${conversationId}`;
-      if (quoteChatSheetState?.targetPaneId) {
-        navigatePane(quoteChatSheetState.targetPaneId, route);
-        return;
-      }
       if (!requestOpenInAppPane(route, { titleHint: "Chat" })) {
         router.push(route);
       }
     },
-    [navigatePane, quoteChatSheetState?.targetPaneId, router]
+    [router]
   );
 
-  const quoteChatSheetTargetLabel = quoteChatSheetState
-    ? quoteChatSheetState.targetConversationId
-      ? "Existing chat"
-      : quoteChatSheetState.targetPaneId
-        ? "New chat pane"
-        : "New chat"
-    : undefined;
-
   const handleExistingHighlightSendToChat = useCallback(
-    (highlightId: string, seed?: QuoteChatContextSeed) => {
+    (highlightId: string, destination: QuoteDestination = "media", seed?: QuoteChatContextSeed) => {
       if (isMobileViewport) {
         setHighlightsDrawerOpen(false);
-        setQuoteChatSheetState({
-          context: buildHighlightChatContext(highlightId, seed),
-          targetPaneId: quoteChatTarget.paneId,
-          targetConversationId: quoteChatTarget.conversationId,
-        });
-        return;
       }
-      handleSendToChat(highlightId, seed);
+      void handleSendToChat(highlightId, destination, seed);
     },
     [
-      buildHighlightChatContext,
       handleSendToChat,
       isMobileViewport,
-      quoteChatTarget.conversationId,
-      quoteChatTarget.paneId,
     ]
   );
 
@@ -3223,6 +3251,16 @@ export default function MediaPaneBody() {
   }
 
   if (media) {
+    mediaHeaderOptions.push({
+      id: "document-chat",
+      label: "Chat about this document",
+      onSelect: () => {
+        void openResolvedConversation(
+          { type: "media", media_id: media.id },
+          media.title || "Document chat"
+        );
+      },
+    });
     mediaHeaderOptions.push({
       id: "libraries",
       label: "Libraries…",
@@ -3728,6 +3766,7 @@ export default function MediaPaneBody() {
                 highlightRefreshToken={pdfRefreshToken}
                 onPageHighlightsChange={handlePdfPageHighlightsChange}
                 onHighlightTap={handlePdfHighlightTap}
+                quoteDestinations={quoteDestinations}
                 onQuoteToChat={
                   media.capabilities?.can_quote ? handleExistingHighlightSendToChat : undefined
                 }
@@ -3833,11 +3872,59 @@ export default function MediaPaneBody() {
         </div>
       )}
 
+      {quoteLibraryPickerState ? (
+        <div
+          className={styles.quoteLibraryBackdrop}
+          onClick={() => setQuoteLibraryPickerState(null)}
+        >
+          <section
+            className={styles.quoteLibraryDialog}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Choose library chat"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className={styles.quoteLibraryHeader}>
+              <h2>Ask in library</h2>
+              <button
+                type="button"
+                onClick={() => setQuoteLibraryPickerState(null)}
+                disabled={quoteLibraryPickerBusy}
+              >
+                Close
+              </button>
+            </header>
+            <div className={styles.quoteLibraryList}>
+              {quoteLibraryPickerState.libraries.map((library) => (
+                <button
+                  key={library.id}
+                  type="button"
+                  className={styles.quoteLibraryOption}
+                  onClick={() => {
+                    void handleQuoteLibrarySelect(library);
+                  }}
+                  disabled={quoteLibraryPickerBusy}
+                >
+                  {library.color ? (
+                    <span
+                      className={styles.quoteLibraryColor}
+                      style={{ backgroundColor: library.color }}
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <span>{library.name}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {isMobileViewport && quoteChatSheetState ? (
         <QuoteChatSheet
           context={quoteChatSheetState.context}
-          conversationId={quoteChatSheetState.targetConversationId}
-          targetLabel={quoteChatSheetTargetLabel}
+          conversationId={quoteChatSheetState.conversationId}
+          targetLabel={quoteChatSheetState.targetLabel}
           onClose={() => setQuoteChatSheetState(null)}
           onConversationCreated={handleQuoteChatSheetConversationCreated}
           onOpenFullChat={handleOpenQuoteChatSheetConversation}
@@ -3850,6 +3937,7 @@ export default function MediaPaneBody() {
           selectionLineRects={selection.lineRects}
           containerRef={contentRef}
           onCreateHighlight={handleCreateHighlight}
+          quoteDestinations={quoteDestinations}
           onQuoteToChat={media.capabilities?.can_quote ? handleQuoteToChat : undefined}
           onDismiss={handleDismissPopover}
           isCreating={isCreating}

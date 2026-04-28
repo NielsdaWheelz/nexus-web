@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.conversation import ChatRunCreateRequest
 from nexus.services import chat_runs as chat_runs_service
@@ -22,10 +23,16 @@ def create_chat_run(
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
+    if (body.conversation_id is None) == (body.conversation_scope is None):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Exactly one of conversation_id or conversation_scope is required",
+        )
     result = chat_runs_service.create_chat_run(
         db=db,
         viewer_id=viewer.user_id,
         conversation_id=body.conversation_id,
+        conversation_scope=body.conversation_scope,
         content=body.content,
         model_id=body.model_id,
         reasoning=body.reasoning,

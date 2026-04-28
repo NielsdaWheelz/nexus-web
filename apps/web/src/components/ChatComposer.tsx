@@ -17,9 +17,11 @@ import {
   type ChatRunCreateRequest,
 } from "@/lib/api/sse";
 import ContextChips from "@/components/chat/ContextChips";
+import ConversationScopeChip from "@/components/chat/ConversationScopeChip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type {
   ChatRunResponse,
+  ConversationScope,
   ConversationModel,
 } from "@/lib/conversations/types";
 import styles from "./ChatComposer.module.css";
@@ -31,6 +33,8 @@ import styles from "./ChatComposer.module.css";
 export interface ChatComposerProps {
   /** Existing conversation ID (null for new conversation). */
   conversationId: string | null;
+  /** Persistent scope for a new scoped draft or loaded scoped conversation. */
+  conversationScope?: ConversationScope;
   /** Attached context items (from quote-to-chat). */
   attachedContexts?: ContextItem[];
   /** Remove a context chip. */
@@ -64,6 +68,7 @@ const REASONING_LABELS = {
   high: "High",
   max: "Max",
 } satisfies Record<ReasoningMode, string>;
+const DEFAULT_CONVERSATION_SCOPE: ConversationScope = { type: "general" };
 
 function getModelSourceLabel(model: ComposerModel): string {
   if (model.available_via === "byok") {
@@ -104,6 +109,7 @@ function reasoningOptionsForModel(model: ComposerModel | undefined): ReasoningMo
 
 export default function ChatComposer({
   conversationId,
+  conversationScope = DEFAULT_CONVERSATION_SCOPE,
   attachedContexts = [],
   onRemoveContext,
   onChatRunCreated,
@@ -272,6 +278,19 @@ export default function ChatComposer({
           ? attachedContexts.slice(0, MAX_CONTEXTS).map(toWireContextItem)
           : undefined,
     };
+    if (!conversationId && conversationScope.type === "general") {
+      body.conversation_scope = { type: "general" };
+    } else if (!conversationId && conversationScope.type === "media") {
+      body.conversation_scope = {
+        type: "media",
+        media_id: conversationScope.media_id,
+      };
+    } else if (!conversationId && conversationScope.type === "library") {
+      body.conversation_scope = {
+        type: "library",
+        library_id: conversationScope.library_id,
+      };
+    }
 
     let sent = false;
     try {
@@ -292,6 +311,8 @@ export default function ChatComposer({
     onlyUseMyKeys,
     webSearchMode,
     attachedContexts,
+    conversationId,
+    conversationScope,
     sendChatRun,
     onMessageSent,
   ]);
@@ -348,6 +369,12 @@ export default function ChatComposer({
     <div className={styles.composer}>
       <div className={styles.composerShell}>
         {error && <div className={styles.composerError}>{error}</div>}
+
+        {conversationScope.type !== "general" ? (
+          <div className={styles.scopeRow}>
+            <ConversationScopeChip scope={conversationScope} compact />
+          </div>
+        ) : null}
 
         <ContextChips
           contexts={attachedContexts}

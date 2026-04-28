@@ -55,6 +55,9 @@ def test_execute_app_search_persists_retrieval_metadata(
             assistant_message_id=assistant_message_id,
             content="App Search Needle",
             has_user_context=False,
+            scope="all",
+            history=[],
+            scope_metadata={"type": "general"},
         )
 
         assert run is not None
@@ -84,6 +87,7 @@ def test_execute_app_search_persists_retrieval_metadata(
                 SELECT COUNT(*)
                 FROM message_retrievals
                 WHERE tool_call_id = :tool_call_id
+                  AND scope = 'all'
                 """
             ),
             {"tool_call_id": run.tool_call_id},

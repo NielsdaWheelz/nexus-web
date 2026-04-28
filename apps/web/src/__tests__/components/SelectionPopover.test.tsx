@@ -142,6 +142,7 @@ describe("SelectionPopover", () => {
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={onCreateHighlight}
+        quoteDestinations={[{ id: "new", label: "Ask in new chat" }]}
         onQuoteToChat={onQuoteToChat}
         onDismiss={vi.fn()}
       />
@@ -154,7 +155,7 @@ describe("SelectionPopover", () => {
     fireEvent.click(button);
 
     expect(onQuoteToChat).toHaveBeenCalledTimes(1);
-    expect(onQuoteToChat).toHaveBeenCalledWith("yellow");
+    expect(onQuoteToChat).toHaveBeenCalledWith("yellow", "new");
     expect(onCreateHighlight).not.toHaveBeenCalled();
   });
 
@@ -167,6 +168,7 @@ describe("SelectionPopover", () => {
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={onCreateHighlight}
+        quoteDestinations={[{ id: "new", label: "Ask in new chat" }]}
         onQuoteToChat={onQuoteToChat}
         onDismiss={vi.fn()}
       />
@@ -176,7 +178,7 @@ describe("SelectionPopover", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ask in chat" }));
 
     expect(onCreateHighlight).toHaveBeenCalledWith("blue");
-    expect(onQuoteToChat).toHaveBeenCalledWith("blue");
+    expect(onQuoteToChat).toHaveBeenCalledWith("blue", "new");
   });
 
   it("hides ask-in-chat when no quote callback is provided", () => {

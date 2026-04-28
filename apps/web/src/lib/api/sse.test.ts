@@ -23,13 +23,13 @@ describe("toWireContextItem", () => {
     expect(wire).toEqual({
       type: "highlight",
       id: "abc-123",
-      color: "blue",
-      preview: "selected text",
-      mediaId: "m1",
-      mediaTitle: "Article",
     });
 
-    // Verify enriched fields are absent
+    // Verify display and enriched fields are absent
+    expect("color" in wire).toBe(false);
+    expect("preview" in wire).toBe(false);
+    expect("mediaId" in wire).toBe(false);
+    expect("mediaTitle" in wire).toBe(false);
     expect("prefix" in wire).toBe(false);
     expect("suffix" in wire).toBe(false);
     expect("annotationBody" in wire).toBe(false);

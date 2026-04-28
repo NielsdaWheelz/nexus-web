@@ -1,15 +1,16 @@
 /**
  * New conversation page — fresh chat composer with optional attached context.
  *
- * Opened by quote-to-chat flows. Reads attach_* search params to pre-populate
- * context chips. On first message send the backend creates the conversation and
- * we navigate to /conversations/:id.
+ * Opened by quote-to-chat flows. Reads typed context ids from search params.
+ * On first message send the backend creates the conversation and we navigate
+ * to /conversations/:id.
  */
 
 "use client";
 
 import { useCallback } from "react";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
+import { parseConversationScopeFromUrl } from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
@@ -30,7 +31,14 @@ import styles from "../page.module.css";
 export default function ConversationNewPaneBody() {
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
-  useSetPaneTitle("New chat");
+  const conversationScope = parseConversationScopeFromUrl(searchParams);
+  useSetPaneTitle(
+    conversationScope.type === "media"
+      ? "Chat: Document"
+      : conversationScope.type === "library"
+        ? "Chat: Library"
+        : "New chat",
+  );
 
   const isMobileViewport = useIsMobileViewport();
   const {
@@ -61,9 +69,11 @@ export default function ConversationNewPaneBody() {
           <div className={styles.paneContentChat}>
             <ChatSurface
               messages={[]}
+              scope={conversationScope}
               composer={
                 <ChatComposer
                   conversationId={null}
+                  conversationScope={conversationScope}
                   attachedContexts={attachedContexts}
                   onRemoveContext={removeContext}
                   onChatRunCreated={handleChatRunCreated}
@@ -77,6 +87,7 @@ export default function ConversationNewPaneBody() {
         {!isMobileViewport ? (
           <aside className={styles.chatContextColumn}>
             <ConversationContextPane
+              scope={conversationScope}
               contexts={attachedContexts}
               onRemoveContext={removeContext}
             />
@@ -86,6 +97,7 @@ export default function ConversationNewPaneBody() {
 
       {isMobileViewport ? (
         <ChatContextDrawer
+          scope={conversationScope}
           contexts={attachedContexts}
           onRemoveContext={removeContext}
         />

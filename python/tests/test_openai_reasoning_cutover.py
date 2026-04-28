@@ -131,6 +131,7 @@ def _post_chat_run(auth_client, user_id: UUID, model_id: UUID, reasoning: str | 
         "content": "Summarize the current notes.",
         "model_id": str(model_id),
         "key_mode": "auto",
+        "conversation_scope": {"type": "general"},
         "contexts": [],
         "web_search": {"mode": "off"},
     }

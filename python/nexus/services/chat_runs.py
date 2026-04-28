@@ -45,6 +45,7 @@ from nexus.schemas.conversation import (
     ChatRunOut,
     ChatRunResponse,
     ContextItem,
+    ConversationScopeRequest,
     MessageContextRef,
     WebSearchOptions,
 )
@@ -63,16 +64,23 @@ from nexus.services.api_key_resolver import (
     update_user_key_status,
 )
 from nexus.services.chat_prompt import render_prompt
-from nexus.services.context_rendering import PROMPT_VERSION, render_context_blocks
+from nexus.services.context_rendering import (
+    PROMPT_VERSION,
+    render_context_blocks,
+    render_conversation_scope_block,
+)
 from nexus.services.contexts import insert_contexts_batch
 from nexus.services.conversations import (
     DEFAULT_CONVERSATION_TITLE,
+    authorize_conversation_scope,
+    conversation_scope_metadata,
     conversation_to_out,
     derive_conversation_title,
     get_message_count,
     load_message_context_snapshots_for_message_ids,
     load_message_tool_calls_for_message_ids,
     message_to_out,
+    resolve_conversation_for_scope,
 )
 from nexus.services.models import get_model_catalog_metadata
 from nexus.services.quote_context_errors import (
@@ -107,6 +115,7 @@ ERROR_CODE_TO_MESSAGE = {
         "The model ran out of output tokens before it could finish. "
         "Try again with less context or a lower reasoning setting."
     ),
+    "E_APP_SEARCH_FAILED": "The scoped content search failed. Please try again.",
     "E_CANCELLED": "Request cancelled.",
     "E_TOKEN_BUDGET_EXCEEDED": "Monthly AI token quota exceeded.",
 }
@@ -155,12 +164,14 @@ def compute_payload_hash(
     contexts: Sequence[ContextItem],
     web_search: WebSearchOptions,
     conversation_id: UUID | None,
+    conversation_scope: ConversationScopeRequest | None,
 ) -> str:
     sorted_contexts = sorted(contexts, key=lambda item: (item.type, str(item.id)))
     payload_contexts = [(ctx.type, str(ctx.id)) for ctx in sorted_contexts]
+    payload_scope = conversation_scope.model_dump(mode="json") if conversation_scope else None
     payload = (
         f"{conversation_id}|{content}|{model_id}|{reasoning}|{key_mode}|"
-        f"{payload_contexts}|{web_search.model_dump(mode='json')}"
+        f"{payload_scope}|{payload_contexts}|{web_search.model_dump(mode='json')}"
     )
     return hashlib.sha256(payload.encode()).hexdigest()
 
@@ -170,6 +181,7 @@ def create_chat_run(
     *,
     viewer_id: UUID,
     conversation_id: UUID | None,
+    conversation_scope: ConversationScopeRequest | None,
     content: str,
     model_id: UUID,
     reasoning: str,
@@ -179,6 +191,11 @@ def create_chat_run(
     idempotency_key: str | None,
 ) -> ChatRunResponse:
     contexts = list(contexts)
+    if (conversation_id is None) == (conversation_scope is None):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Exactly one of conversation_id or conversation_scope is required",
+        )
     normalized_key = (idempotency_key or "").strip()
     if not normalized_key:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is required")
@@ -193,6 +210,7 @@ def create_chat_run(
         contexts,
         web_search,
         conversation_id,
+        conversation_scope,
     )
 
     existing = _get_run_by_idempotency_key(db, viewer_id, normalized_key)
@@ -218,6 +236,7 @@ def create_chat_run(
         db,
         viewer_id,
         conversation_id,
+        conversation_scope,
         content,
         model_id,
         reasoning,
@@ -234,7 +253,15 @@ def create_chat_run(
             db.commit()
             return build_chat_run_response(db, viewer_id, existing)
 
-        prepared = prepare_messages(db, viewer_id, conversation_id, content, model_id, contexts)
+        prepared = prepare_messages(
+            db,
+            viewer_id,
+            conversation_id,
+            conversation_scope,
+            content,
+            model_id,
+            contexts,
+        )
         run = ChatRun(
             owner_user_id=viewer_id,
             conversation_id=prepared.conversation.id,
@@ -528,11 +555,70 @@ async def _execute_chat_run(
                 limit=MAX_RENDERED_CONTEXT_CHARS,
             )
 
-        context_blocks = [context_text] if context_text else []
+        conversation = db.get(Conversation, run.conversation_id)
+        if conversation is None:
+            _finalize_run(
+                db,
+                run_id=run.id,
+                assistant_content="Conversation not found.",
+                assistant_status="error",
+                run_status="error",
+                done_status="error",
+                error_code=ApiErrorCode.E_CONVERSATION_NOT_FOUND.value,
+                model=model,
+                resolved_key=resolved_key,
+                key_mode=run.key_mode,
+                latency_ms=int((time.monotonic() - start_time) * 1000),
+                usage=None,
+                provider_request_id=None,
+                viewer_id=run.owner_user_id,
+            )
+            return {"status": "error", "error_code": ApiErrorCode.E_CONVERSATION_NOT_FOUND.value}
+
+        scope_metadata = conversation_scope_metadata(db, conversation)
+        scope_block = render_conversation_scope_block(scope_metadata)
+        context_blocks = [scope_block] if scope_block else []
+        if context_text:
+            context_blocks.append(context_text)
         context_types = {ctx.type for ctx in contexts}
         content = run.user_message.content
+        history = load_prompt_history(db, run.conversation_id, run.user_message.seq)
+        scope_type = scope_metadata.get("type")
+        if scope_type == "general":
+            app_search_scope = "all"
+        elif scope_type == "media":
+            media_id = scope_metadata.get("media_id")
+            if not isinstance(media_id, str):
+                raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid media conversation scope")
+            app_search_scope = f"media:{media_id}"
+        elif scope_type == "library":
+            library_id = scope_metadata.get("library_id")
+            if not isinstance(library_id, str):
+                raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid library conversation scope")
+            app_search_scope = f"library:{library_id}"
+        else:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
 
-        if should_run_app_search(content, has_user_context=bool(contexts)):
+        if scope_type in {"media", "library"} or should_run_app_search(
+            content,
+            has_user_context=bool(contexts),
+        ):
+            app_search_types = [
+                "media",
+                "podcast",
+                "fragment",
+                "annotation",
+                "message",
+                "transcript_chunk",
+            ]
+            if scope_type in {"media", "library"}:
+                app_search_types = [
+                    "media",
+                    "podcast",
+                    "fragment",
+                    "annotation",
+                    "transcript_chunk",
+                ]
             _append_and_commit(
                 db,
                 run.id,
@@ -542,6 +628,9 @@ async def _execute_chat_run(
                     "tool_name": "app_search",
                     "tool_call_index": 0,
                     "status": "started",
+                    "scope": app_search_scope,
+                    "types": app_search_types,
+                    "semantic": True,
                 },
             )
             app_search_run = execute_app_search(
@@ -552,9 +641,36 @@ async def _execute_chat_run(
                 assistant_message_id=run.assistant_message_id,
                 content=content,
                 has_user_context=bool(contexts),
+                scope=app_search_scope,
+                history=history,
+                scope_metadata=scope_metadata,
             )
             if app_search_run is not None:
                 _append_and_commit(db, run.id, "tool_result", app_search_run.tool_result_event())
+                if app_search_run.status == "error" and scope_type in {"media", "library"}:
+                    latency_ms = int((time.monotonic() - start_time) * 1000)
+                    _finalize_run(
+                        db,
+                        run_id=run.id,
+                        assistant_content=ERROR_CODE_TO_MESSAGE[
+                            ApiErrorCode.E_APP_SEARCH_FAILED.value
+                        ],
+                        assistant_status="error",
+                        run_status="error",
+                        done_status="error",
+                        error_code=ApiErrorCode.E_APP_SEARCH_FAILED.value,
+                        model=model,
+                        resolved_key=resolved_key,
+                        key_mode=run.key_mode,
+                        latency_ms=latency_ms,
+                        usage=None,
+                        provider_request_id=None,
+                        viewer_id=run.owner_user_id,
+                    )
+                    return {
+                        "status": "error",
+                        "error_code": ApiErrorCode.E_APP_SEARCH_FAILED.value,
+                    }
                 if app_search_run.context_text:
                     context_blocks.append(app_search_run.context_text)
                     context_types.add("app_search")
@@ -616,7 +732,6 @@ async def _execute_chat_run(
             )
             return {"status": "cancelled"}
 
-        history = load_prompt_history(db, run.conversation_id, run.user_message.seq)
         llm_request = LLMRequest(
             model_name=model.model_name,
             messages=render_prompt(
@@ -624,6 +739,7 @@ async def _execute_chat_run(
                 history=history,
                 context_blocks=context_blocks,
                 context_types=context_types,
+                scope_metadata=scope_metadata,
             ),
             max_tokens=max_output_tokens,
             temperature=0.7,
@@ -823,6 +939,7 @@ def validate_pre_phase(
     db: Session,
     viewer_id: UUID,
     conversation_id: UUID | None,
+    conversation_scope: ConversationScopeRequest | None,
     content: str,
     model_id: UUID,
     reasoning: str,
@@ -871,6 +988,40 @@ def validate_pre_phase(
         rate_limiter.check_token_budget(viewer_id)
     if conversation_id is not None:
         _check_conversation_not_busy(db, viewer_id, conversation_id)
+    elif conversation_scope is not None:
+        authorize_conversation_scope(db, viewer_id, conversation_scope)
+        if conversation_scope.type == "media":
+            existing_conversation = (
+                db.execute(
+                    select(Conversation).where(
+                        Conversation.owner_user_id == viewer_id,
+                        Conversation.scope_type == "media",
+                        Conversation.scope_media_id == conversation_scope.media_id,
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if existing_conversation is not None:
+                _check_conversation_not_busy(db, viewer_id, existing_conversation.id)
+        elif conversation_scope.type == "library":
+            existing_conversation = (
+                db.execute(
+                    select(Conversation).where(
+                        Conversation.owner_user_id == viewer_id,
+                        Conversation.scope_type == "library",
+                        Conversation.scope_library_id == conversation_scope.library_id,
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if existing_conversation is not None:
+                _check_conversation_not_busy(db, viewer_id, existing_conversation.id)
+        elif conversation_scope.type == "general":
+            pass
+        else:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
 
     return model
 
@@ -879,23 +1030,22 @@ def prepare_messages(
     db: Session,
     viewer_id: UUID,
     conversation_id: UUID | None,
+    conversation_scope: ConversationScopeRequest | None,
     content: str,
     model_id: UUID,
     contexts: Sequence[ContextItem],
 ) -> PreparedMessages:
-    if conversation_id is None:
-        conversation = Conversation(
-            owner_user_id=viewer_id,
-            title=derive_conversation_title(content),
-            sharing="private",
-            next_seq=1,
-        )
-        db.add(conversation)
-        db.flush()
-    else:
+    if conversation_id is None and conversation_scope is not None:
+        conversation = resolve_conversation_for_scope(db, viewer_id, conversation_scope, content)
+    elif conversation_id is not None and conversation_scope is None:
         conversation = db.get(Conversation, conversation_id)
         if conversation is None or conversation.owner_user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
+    else:
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Exactly one of conversation_id or conversation_scope is required",
+        )
 
     user_seq = assign_next_message_seq(db, conversation.id)
     if user_seq == 1 and conversation.title == DEFAULT_CONVERSATION_TITLE:
@@ -954,6 +1104,7 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
     return ChatRunResponse(
         run=ChatRunOut.model_validate(run),
         conversation=conversation_to_out(
+            db,
             conversation,
             get_message_count(db, conversation.id),
             viewer_id=viewer_id,
