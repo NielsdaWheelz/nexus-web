@@ -46,6 +46,10 @@ export function MessageRow({ message }: { message: ConversationMessage }) {
     toolCall.retrievals.filter((retrieval) => retrieval.selected),
   );
   const webCitations = (message as MessageWithWebCitations).citations ?? [];
+  let errorLabel = message.error_code;
+  if (message.error_code === "E_LLM_INCOMPLETE") {
+    errorLabel = "Response stopped before completion.";
+  }
 
   return (
     <div className={`${styles.message} ${roleClass} ${statusClass}`}>
@@ -73,10 +77,13 @@ export function MessageRow({ message }: { message: ConversationMessage }) {
         <span>{message.content || (message.status === "pending" ? "..." : "")}</span>
       )}
 
-      {message.status === "error" && message.error_code ? (
+      {message.status === "error" && errorLabel ? (
         <span className={styles.messageError}>
           <AlertCircle size={14} />
-          {message.error_code}
+          {errorLabel}
+          {message.error_code !== errorLabel ? (
+            <span className={styles.errorCode}> {message.error_code}</span>
+          ) : null}
         </span>
       ) : null}
 

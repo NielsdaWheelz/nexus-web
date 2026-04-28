@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 VALID_PROVIDERS = {"openai", "anthropic", "gemini", "deepseek"}
 LLMProvider = Literal["openai", "anthropic", "gemini", "deepseek"]
 ModelTier = Literal["sota", "light"]
-ReasoningMode = Literal["none", "minimal", "low", "medium", "high", "max"]
+ReasoningMode = Literal["default", "none", "minimal", "low", "medium", "high", "max"]
 
 # Valid key statuses - must match DB constraint
 KeyStatus = Literal["untested", "valid", "invalid", "revoked"]

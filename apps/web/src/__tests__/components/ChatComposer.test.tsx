@@ -22,7 +22,7 @@ const MODELS = [
     model_name: "gpt-5-mini",
     model_display_name: "GPT-5 mini",
     model_tier: "light",
-    reasoning_modes: ["none", "medium"],
+    reasoning_modes: ["default", "none", "medium"],
     max_context_tokens: 128000,
     available_via: "platform",
   },
@@ -33,7 +33,7 @@ const MODELS = [
     model_name: "gpt-5.5",
     model_display_name: "GPT-5.5",
     model_tier: "sota",
-    reasoning_modes: ["medium", "high"],
+    reasoning_modes: ["default", "medium", "high"],
     max_context_tokens: 256000,
     available_via: "both",
   },
@@ -193,7 +193,7 @@ describe("ChatComposer", () => {
     );
 
     expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*none/i }),
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
     ).toBeInTheDocument();
 
     await openModelSettings(user);
@@ -254,7 +254,7 @@ describe("ChatComposer", () => {
     render(<ChatComposer conversationId="conversation-1" />);
 
     expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*none/i }),
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
     ).toBeInTheDocument();
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
@@ -325,7 +325,7 @@ describe("ChatComposer", () => {
     );
 
     expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*none/i }),
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
     ).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Web search mode" })).toBeVisible();

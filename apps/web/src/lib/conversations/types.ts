@@ -11,7 +11,9 @@ export interface ConversationModel {
   model_name: string;
   model_display_name: string;
   model_tier: "sota" | "light";
-  reasoning_modes: Array<"none" | "minimal" | "low" | "medium" | "high" | "max">;
+  reasoning_modes: Array<
+    "default" | "none" | "minimal" | "low" | "medium" | "high" | "max"
+  >;
   max_context_tokens: number;
   available_via: "byok" | "platform" | "both";
 }

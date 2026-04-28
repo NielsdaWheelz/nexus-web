@@ -58,4 +58,18 @@ describe("MessageRow", () => {
 
     expect(screen.getByText("Searching web")).toBeInTheDocument();
   });
+
+  it("shows incomplete model responses as readable failures", () => {
+    const message: ConversationMessage = {
+      ...baseMessage,
+      content: "The model ran out of output tokens before it could finish.",
+      status: "error",
+      error_code: "E_LLM_INCOMPLETE",
+    };
+
+    render(<MessageRow message={message} />);
+
+    expect(screen.getByText("Response stopped before completion.")).toBeInTheDocument();
+    expect(screen.getByText("E_LLM_INCOMPLETE")).toBeInTheDocument();
+  });
 });

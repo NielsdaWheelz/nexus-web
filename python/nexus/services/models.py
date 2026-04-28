@@ -8,17 +8,26 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import Model
 from nexus.logging import get_logger
-from nexus.schemas.keys import ModelOut
+from nexus.schemas.keys import ModelAvailableVia, ModelOut, ModelTier, ReasoningMode
 from nexus.services.billing import get_entitlements
 from nexus.services.user_keys import get_usable_key_providers
 
 logger = get_logger(__name__)
 
+OPENAI_REASONING_MODES: tuple[ReasoningMode, ...] = (
+    "default",
+    "none",
+    "low",
+    "medium",
+    "high",
+    "max",
+)
+
 
 def get_model_catalog_metadata(
     provider: str,
     model_name: str,
-) -> tuple[str, str, str, list[str]] | None:
+) -> tuple[str, str, ModelTier, list[ReasoningMode]] | None:
     """Return curated catalog metadata for supported models.
 
     Returns:
@@ -31,14 +40,14 @@ def get_model_catalog_metadata(
                 "OpenAI",
                 "GPT-5.5",
                 "sota",
-                ["none", "low", "medium", "high", "max"],
+                list(OPENAI_REASONING_MODES),
             )
         if model_name == "gpt-5.4-mini":
             return (
                 "OpenAI",
                 "GPT-5.4 Mini",
                 "light",
-                ["none", "low", "medium", "high", "max"],
+                list(OPENAI_REASONING_MODES),
             )
         return None
 
@@ -119,7 +128,9 @@ def _tier_sort_rank(model_tier: str) -> int:
     return 0 if model_tier == "sota" else 1
 
 
-def _available_via(provider: str, user_providers: set[str], platform_providers: set[str]) -> str:
+def _available_via(
+    provider: str, user_providers: set[str], platform_providers: set[str]
+) -> ModelAvailableVia:
     has_byok = provider in user_providers
     has_platform = provider in platform_providers
     if has_byok and has_platform:

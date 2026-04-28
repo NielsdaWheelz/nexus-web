@@ -303,12 +303,27 @@ async def test_user_key(
     )
     logger.info("llm.request.started", **llm_log_fields)
     try:
-        await router.generate(
+        response = await router.generate(
             key.provider,
             req,
             api_key,
             timeout_s=15,
         )
+        if response.status == "incomplete":
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **llm_log_fields,
+                    outcome="error",
+                    error_class=ApiErrorCode.E_LLM_INCOMPLETE.value,
+                    latency_ms=int((time.monotonic() - llm_start) * 1000),
+                    provider_request_id=response.provider_request_id,
+                ),
+            )
+            raise ApiError(
+                ApiErrorCode.E_LLM_INCOMPLETE,
+                "The provider returned an incomplete key-test response.",
+            )
     except LLMError as e:
         error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[e.error_code]
         logger.error(

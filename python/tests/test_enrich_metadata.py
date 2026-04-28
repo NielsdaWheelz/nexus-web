@@ -131,6 +131,7 @@ class TestEnrichMetadata:
             _ = self, provider, api_key, timeout_s
             prompt_holder["prompt"] = req.messages[0].content
             return SimpleNamespace(
+                status="completed",
                 text=json.dumps(
                     {
                         "authors": ["Episode Host"],
@@ -139,7 +140,7 @@ class TestEnrichMetadata:
                         "description": "A short summary of the episode.",
                         "published_date": "2026-03-02",
                     }
-                )
+                ),
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -255,13 +256,14 @@ class TestEnrichMetadata:
         async def _fake_generate(self, provider, req, api_key, timeout_s):
             _ = self, provider, req, api_key, timeout_s
             return SimpleNamespace(
+                status="completed",
                 text=json.dumps(
                     {
                         "title": "Analytical Engine Notes",
                         "authors": ["Ada Lovelace"],
                         "publisher": "Nexus Archive",
                     }
-                )
+                ),
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)

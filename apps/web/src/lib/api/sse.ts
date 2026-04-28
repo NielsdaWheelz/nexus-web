@@ -185,7 +185,7 @@ export function toWireContextItem(
 export interface ChatRunCreateRequest {
   content: string;
   model_id: string;
-  reasoning: "none" | "minimal" | "low" | "medium" | "high" | "max";
+  reasoning: "default" | "none" | "minimal" | "low" | "medium" | "high" | "max";
   key_mode?: "auto" | "byok_only" | "platform_only";
   contexts?: ChatRunContext[];
   web_search: {

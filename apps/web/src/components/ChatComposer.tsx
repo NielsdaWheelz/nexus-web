@@ -42,18 +42,28 @@ export interface ChatComposerProps {
 }
 
 type ComposerModel = ConversationModel;
-type ReasoningMode = ConversationModel["reasoning_modes"][number];
+type ReasoningMode = ChatRunCreateRequest["reasoning"];
 type WebSearchMode = ChatRunCreateRequest["web_search"]["mode"];
 
 /** Max contexts per message. */
 const MAX_CONTEXTS = 10;
 const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
+const DEFAULT_REASONING: ReasoningMode = "default";
 const WEB_SEARCH_MODES = ["auto", "required", "off"] as const;
 const WEB_SEARCH_MODE_LABELS = {
   auto: "Auto",
   required: "Required",
   off: "Off",
 } satisfies Record<WebSearchMode, string>;
+const REASONING_LABELS = {
+  default: "Default",
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  max: "Max",
+} satisfies Record<ReasoningMode, string>;
 
 function getModelSourceLabel(model: ComposerModel): string {
   if (model.available_via === "byok") {
@@ -77,6 +87,17 @@ function firstModelForProviderOrder(models: ComposerModel[]): ComposerModel | un
   return models[0];
 }
 
+function reasoningOptionsForModel(model: ComposerModel | undefined): ReasoningMode[] {
+  if (!model) return [];
+  const options: ReasoningMode[] = [DEFAULT_REASONING];
+  for (const mode of model.reasoning_modes) {
+    if (!options.includes(mode)) {
+      options.push(mode);
+    }
+  }
+  return options;
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -95,7 +116,8 @@ export default function ChatComposer({
   const [models, setModels] = useState<ComposerModel[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [selectedModelId, setSelectedModelId] = useState<string>("");
-  const [selectedReasoning, setSelectedReasoning] = useState<ReasoningMode | "">("");
+  const [selectedReasoning, setSelectedReasoning] =
+    useState<ReasoningMode>(DEFAULT_REASONING);
   const [onlyUseMyKeys, setOnlyUseMyKeys] = useState(false);
   const [webSearchMode, setWebSearchMode] = useState<WebSearchMode>("auto");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -140,15 +162,16 @@ export default function ChatComposer({
     const firstModel = firstModelForProviderOrder(availableModels);
     setSelectedProvider(firstModel?.provider ?? "");
     setSelectedModelId(firstModel?.id ?? "");
-    setSelectedReasoning(firstModel?.reasoning_modes[0] ?? "");
+    setSelectedReasoning(DEFAULT_REASONING);
   }, [availableModels, selectedModelId, selectedProvider]);
 
   const selectedModel = availableModels.find((model) => model.id === selectedModelId);
+  const reasoningOptions = reasoningOptionsForModel(selectedModel);
   const providerOptions = PROVIDER_ORDER.filter((provider) =>
     availableModels.some((model) => model.provider === provider)
   );
   const modelSummary = selectedModel
-    ? `${selectedModel.model_display_name}${selectedReasoning ? ` / ${selectedReasoning}` : ""}`
+    ? `${selectedModel.model_display_name} / ${REASONING_LABELS[selectedReasoning]}`
     : "Model";
 
   useEffect(() => {
@@ -227,7 +250,7 @@ export default function ChatComposer({
 
   const handleSend = useCallback(async () => {
     const trimmed = content.trim();
-    if (!trimmed || sending || !selectedModelId || !selectedReasoning) return;
+    if (!trimmed || sending || !selectedModelId) return;
 
     setSending(true);
     setError(null);
@@ -280,7 +303,7 @@ export default function ChatComposer({
       const providerModels = availableModels.filter((model) => model.provider === provider);
       const nextModel = providerModels[0];
       setSelectedModelId(nextModel?.id ?? "");
-      setSelectedReasoning(nextModel?.reasoning_modes[0] ?? "");
+      setSelectedReasoning(DEFAULT_REASONING);
     },
     [availableModels]
   );
@@ -291,16 +314,16 @@ export default function ChatComposer({
 
       const model = availableModels.find((item) => item.id === modelId);
       if (!model) {
-        setSelectedReasoning("");
+        setSelectedReasoning(DEFAULT_REASONING);
         return;
       }
       setSelectedProvider(model.provider);
 
       if (
-        selectedReasoning === "" ||
+        selectedReasoning !== DEFAULT_REASONING &&
         !model.reasoning_modes.includes(selectedReasoning)
       ) {
-        setSelectedReasoning(model.reasoning_modes[0] ?? "");
+        setSelectedReasoning(DEFAULT_REASONING);
       }
     },
     [availableModels, selectedReasoning]
@@ -388,8 +411,7 @@ export default function ChatComposer({
               sending ||
               !content.trim() ||
               !selectedProvider ||
-              !selectedModelId ||
-              !selectedReasoning
+              !selectedModelId
             }
           >
             <ArrowUp size={18} aria-hidden="true" />
@@ -484,9 +506,9 @@ export default function ChatComposer({
                   disabled={sending || !selectedModel}
                 >
                   {!selectedModel && <option value="">No reasoning modes</option>}
-                  {selectedModel?.reasoning_modes.map((mode) => (
+                  {reasoningOptions.map((mode) => (
                     <option key={mode} value={mode}>
-                      {mode}
+                      {REASONING_LABELS[mode]}
                     </option>
                   ))}
                 </select>

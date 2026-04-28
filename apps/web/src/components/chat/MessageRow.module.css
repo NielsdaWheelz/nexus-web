@@ -168,6 +168,10 @@
   color: var(--color-error);
 }
 
+.errorCode {
+  color: var(--color-text-muted);
+}
+
 .timestamp {
   display: block;
   margin-top: var(--space-1);

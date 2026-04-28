@@ -497,6 +497,8 @@ class TestModelResponseFormat:
         assert "reasoning_modes" in model
         assert "max_context_tokens" in model
         assert "available_via" in model
+        assert model["reasoning_modes"][0] == "default"
+        assert "none" in model["reasoning_modes"]
 
 
 # =============================================================================

@@ -185,7 +185,7 @@ class MessageListResponse(BaseModel):
 
 # Valid key modes for LLM calls
 KEY_MODES = Literal["auto", "byok_only", "platform_only"]
-REASONING_MODES = Literal["none", "minimal", "low", "medium", "high", "max"]
+REASONING_MODES = Literal["default", "none", "minimal", "low", "medium", "high", "max"]
 
 # Max content length
 MAX_MESSAGE_CONTENT_LENGTH = 20000
@@ -228,7 +228,7 @@ class ChatRunCreateRequest(BaseModel):
     conversation_id: UUID | None = None
     content: str
     model_id: UUID
-    reasoning: REASONING_MODES
+    reasoning: REASONING_MODES = "default"
     key_mode: KEY_MODES = "auto"
     contexts: list[MessageContextRef] = Field(default_factory=list)
     web_search: WebSearchOptions

@@ -32,7 +32,7 @@ def test_curated_catalog_contains_only_hard_cutover_models():
 def test_openai_reasoning_modes_match_responses_api():
     metadata = get_model_catalog_metadata("openai", "gpt-5.5")
     assert metadata is not None
-    assert metadata[3] == ["none", "low", "medium", "high", "max"]
+    assert metadata[3] == ["default", "none", "low", "medium", "high", "max"]
 
 
 def test_anthropic_reasoning_modes_match_effort_support():

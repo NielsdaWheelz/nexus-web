@@ -113,7 +113,7 @@ function MinimizeHarness() {
 
 describe("WorkspacePaneStrip", () => {
   it("renders pane switcher semantics without tab ARIA", () => {
-    const { container } = render(
+    render(
       <WorkspacePaneStrip
         items={[
           {
@@ -139,10 +139,12 @@ describe("WorkspacePaneStrip", () => {
     );
 
     expect(screen.getByRole("toolbar", { name: "Workspace panes" })).toBeInTheDocument();
-    expect(container.querySelector('[role="tablist"]')).toBeNull();
-    expect(container.querySelector('[role="tab"]')).toBeNull();
-    expect(container.querySelector("[aria-selected]")).toBeNull();
-    expect(container.querySelector("[aria-controls]")).toBeNull();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("tab")).toHaveLength(0);
+    for (const button of screen.getAllByRole("button")) {
+      expect(button).not.toHaveAttribute("aria-selected");
+      expect(button).not.toHaveAttribute("aria-controls");
+    }
     expect(primaryButton("Libraries")).toHaveAttribute("aria-current", "true");
     expect(primaryButton("Search")).toHaveAccessibleName(/Minimized\. Restore\./);
   });

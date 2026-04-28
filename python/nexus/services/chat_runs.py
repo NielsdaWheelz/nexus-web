@@ -17,7 +17,7 @@ from uuid import UUID
 
 from llm_calling.errors import LLMError, LLMErrorCode
 from llm_calling.router import LLMRouter
-from llm_calling.types import LLMChunk, LLMRequest, LLMUsage, ReasoningEffort, Turn
+from llm_calling.types import LLMRequest, LLMUsage, ReasoningEffort, Turn
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
@@ -111,7 +111,7 @@ ERROR_CODE_TO_MESSAGE = {
     "E_TOKEN_BUDGET_EXCEEDED": "Monthly AI token quota exceeded.",
 }
 
-LLM_INCOMPLETE_ERROR_CODE = "E_LLM_INCOMPLETE"
+LLM_INCOMPLETE_ERROR_CODE = ApiErrorCode.E_LLM_INCOMPLETE.value
 REASONING_OUTPUT_TOKENS = 25000
 DEFAULT_OUTPUT_TOKENS = 4096
 
@@ -142,26 +142,9 @@ def _llm_error_code_value(exc: LLMError) -> str:
 
 
 def _max_output_tokens_for_reasoning(model: Model, reasoning: str) -> int:
-    if reasoning in {"default", "low", "medium", "high", "max"}:
+    if model.provider == "openai" and reasoning in {"default", "low", "medium", "high", "max"}:
         return min(REASONING_OUTPUT_TOKENS, model.max_context_tokens)
     return min(DEFAULT_OUTPUT_TOKENS, model.max_context_tokens)
-
-
-def _llm_reasoning_effort(provider: str, reasoning: str) -> ReasoningEffort:
-    if reasoning == "default" and provider == "openai":
-        return "medium"
-    return cast(ReasoningEffort, reasoning)
-
-
-def _incomplete_reason(chunk: LLMChunk) -> str | None:
-    if getattr(chunk, "status", None) != "incomplete":
-        return None
-    details = getattr(chunk, "incomplete_details", None)
-    if isinstance(details, dict):
-        reason = details.get("reason")
-        return reason if isinstance(reason, str) else "unknown"
-    reason = getattr(chunk, "incomplete_reason", None)
-    return reason if isinstance(reason, str) else "unknown"
 
 
 def compute_payload_hash(
@@ -644,7 +627,7 @@ async def _execute_chat_run(
             ),
             max_tokens=max_output_tokens,
             temperature=0.7,
-            reasoning_effort=_llm_reasoning_effort(model.provider, run.reasoning),
+            reasoning_effort=cast(ReasoningEffort, run.reasoning),
         )
         full_content = ""
         usage: LLMUsage | None = None
@@ -676,7 +659,11 @@ async def _execute_chat_run(
                     terminal_seen = True
                     usage = chunk.usage
                     provider_request_id = chunk.provider_request_id
-                    incomplete_reason = _incomplete_reason(chunk)
+                    if chunk.status == "incomplete":
+                        incomplete_reason = "unknown"
+                        if chunk.incomplete_details is not None:
+                            reason = chunk.incomplete_details.get("reason")
+                            incomplete_reason = reason if isinstance(reason, str) else "unknown"
                     break
                 if chunk.delta_text:
                     delta = chunk.delta_text
@@ -764,6 +751,7 @@ async def _execute_chat_run(
                     tokens_input=usage.prompt_tokens if usage else None,
                     tokens_output=usage.completion_tokens if usage else None,
                     tokens_total=usage.total_tokens if usage else None,
+                    tokens_reasoning=usage.reasoning_tokens if usage else None,
                     provider_request_id=provider_request_id,
                 ),
             )
@@ -794,6 +782,7 @@ async def _execute_chat_run(
                 tokens_input=usage.prompt_tokens if usage else None,
                 tokens_output=usage.completion_tokens if usage else None,
                 tokens_total=usage.total_tokens if usage else None,
+                tokens_reasoning=usage.reasoning_tokens if usage else None,
                 provider_request_id=provider_request_id,
             ),
         )

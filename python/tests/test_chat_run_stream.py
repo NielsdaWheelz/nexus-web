@@ -142,9 +142,7 @@ def _parse_sse_events(body: str) -> list[dict]:
 
 
 def _response_start_headers(sent_messages: list[dict]) -> dict[str, str]:
-    start = next(
-        message for message in sent_messages if message["type"] == "http.response.start"
-    )
+    start = next(message for message in sent_messages if message["type"] == "http.response.start")
     return {
         key.decode("latin1").lower(): value.decode("latin1")
         for key, value in start.get("headers", [])

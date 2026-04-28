@@ -151,6 +151,25 @@ def enrich_metadata(
             )
             return {"status": "skipped", "reason": "llm_failed"}
 
+        if response.status == "incomplete":
+            usage = response.usage
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **llm_log_fields,
+                    outcome="error",
+                    error_class="E_LLM_INCOMPLETE",
+                    incomplete_details=response.incomplete_details,
+                    latency_ms=int((time.monotonic() - llm_start) * 1000),
+                    tokens_input=usage.prompt_tokens if usage else None,
+                    tokens_output=usage.completion_tokens if usage else None,
+                    tokens_total=usage.total_tokens if usage else None,
+                    tokens_reasoning=usage.reasoning_tokens if usage else None,
+                    provider_request_id=response.provider_request_id,
+                ),
+            )
+            return {"status": "skipped", "reason": "llm_incomplete"}
+
         usage = response.usage if hasattr(response, "usage") else None
         logger.info(
             "llm.request.finished",
