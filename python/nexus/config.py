@@ -198,8 +198,6 @@ class Settings(BaseSettings):
     # PR-05: Rate limiting settings
     rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute
     rate_limit_concurrent: int = Field(default=3, alias="RATE_LIMIT_CONCURRENT")  # Max concurrent
-    # PR-05: Streaming settings
-    enable_streaming: bool = Field(default=False, alias="ENABLE_STREAMING")  # Feature flag
 
     # PR-05: LLM settings
     llm_timeout_seconds: float = Field(default=45.0, alias="LLM_TIMEOUT_SECONDS")

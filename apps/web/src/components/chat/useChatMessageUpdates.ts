@@ -262,6 +262,7 @@ export function useChatMessageUpdates({
   );
 
   return {
+    flushDeltas,
     handleOptimisticMessages,
     handleMetaReceived,
     handleDelta,

@@ -59,6 +59,7 @@ describe("toWireContextItem", () => {
 
 describe("sseClientDirect", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -114,7 +115,7 @@ describe("sseClientDirect", () => {
             events.push(event);
           },
           onError: reject,
-          onComplete: resolve,
+          onComplete: () => resolve(),
         },
         { lastEventId: "7" },
       );
@@ -212,20 +213,29 @@ describe("sseClientDirect", () => {
   });
 
   it("mints a fresh stream token when reconnecting", async () => {
+    vi.useFakeTimers();
+
     const encoder = new TextEncoder();
+    let firstPull = true;
     const firstStream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(
-          encoder.encode(
-            [
-              "id: 1",
-              "event: delta",
-              'data: {"delta":"Hel"}',
-              "",
-            ].join("\n"),
-          ),
-        );
-        controller.close();
+      pull(controller) {
+        if (firstPull) {
+          firstPull = false;
+          controller.enqueue(
+            encoder.encode(
+              [
+                "id: 1",
+                "retry: 25",
+                "event: delta",
+                'data: {"delta":"Hel"}',
+                "",
+                "",
+              ].join("\n"),
+            ),
+          );
+          return;
+        }
+        controller.error(new Error("stream interrupted"));
       },
     });
     const secondStream = new ReadableStream<Uint8Array>({
@@ -255,7 +265,7 @@ describe("sseClientDirect", () => {
       .mockResolvedValueOnce("token-1")
       .mockResolvedValueOnce("token-2");
 
-    await new Promise<void>((resolve, reject) => {
+    const complete = new Promise<void>((resolve, reject) => {
       sseClientDirect(
         "https://stream.nexus.test",
         tokenSupplier,
@@ -263,10 +273,16 @@ describe("sseClientDirect", () => {
         {
           onEvent: () => {},
           onError: reject,
-          onComplete: resolve,
+          onComplete: () => resolve(),
         },
       );
     });
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await complete;
 
     expect(tokenSupplier).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -288,5 +304,130 @@ describe("sseClientDirect", () => {
         }),
       }),
     );
+  });
+
+  it("parses CRLF, CR, split line endings, comments, ids, and multi-line data", async () => {
+    const encoder = new TextEncoder();
+    const chunks = [
+      "id: 9\r",
+      "\nevent: delta\r\n",
+      ": ignored comment\r",
+      'data: {"delta":\r',
+      'data: "Hello"}\r',
+      "\r",
+      "event: done\n",
+      'data: {"status":"complete","error_code":null,"final_chars":5}\n',
+      "\n",
+    ];
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const events: Array<{ type: string; data: unknown }> = [];
+    let completedWithTerminal: boolean | null = null;
+
+    await new Promise<void>((resolve, reject) => {
+      sseClientDirect(
+        "https://stream.nexus.test",
+        "stream-token",
+        "run-1",
+        {
+          onEvent: (event) => {
+            events.push(event);
+          },
+          onError: reject,
+          onComplete: (terminalEventSeen) => {
+            completedWithTerminal = terminalEventSeen;
+            resolve();
+          },
+        },
+      );
+    });
+
+    expect(events).toEqual([
+      {
+        type: "delta",
+        data: { delta: "Hello" },
+      },
+      {
+        type: "done",
+        data: {
+          status: "complete",
+          error_code: null,
+          final_chars: 5,
+        },
+      },
+    ]);
+    expect(completedWithTerminal).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("completes cleanly with terminalEventSeen false when the stream closes without done", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            [
+              "event: delta",
+              'data: {"delta":"partial"}',
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const events: Array<{ type: string; data: unknown }> = [];
+    let completedWithTerminal: boolean | null = null;
+
+    await new Promise<void>((resolve, reject) => {
+      sseClientDirect(
+        "https://stream.nexus.test",
+        "stream-token",
+        "run-1",
+        {
+          onEvent: (event) => {
+            events.push(event);
+          },
+          onError: reject,
+          onComplete: (terminalEventSeen) => {
+            completedWithTerminal = terminalEventSeen;
+            resolve();
+          },
+        },
+      );
+    });
+
+    expect(events).toEqual([
+      {
+        type: "delta",
+        data: { delta: "partial" },
+      },
+    ]);
+    expect(completedWithTerminal).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

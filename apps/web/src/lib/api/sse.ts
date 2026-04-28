@@ -137,6 +137,8 @@ export type SSEEvent =
 type SSEEventHandler = (event: SSEEvent) => void;
 type SSEErrorHandler = (error: Error) => void;
 type SSEEventIdHandler = (id: string) => void;
+type SSECompleteHandler = (terminalEventSeen: boolean) => void;
+type SSERetryHandler = (milliseconds: number) => void;
 
 // ============================================================================
 // Request payload types
@@ -208,14 +210,101 @@ async function parseSSEStream(
   body: ReadableStream<Uint8Array>,
   onEvent: SSEEventHandler,
   onError: SSEErrorHandler,
-  onEventId: SSEEventIdHandler
+  onEventId: SSEEventIdHandler,
+  onRetry: SSERetryHandler,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let currentId = "";
   let currentEvent = "";
-  let currentData = "";
+  let currentDataLines: string[] = [];
+  let currentDataBytes = 0;
+  const textEncoder = new TextEncoder();
+
+  const dispatchEvent = () => {
+    if (currentDataLines.length > 0) {
+      processEvent(currentEvent, currentDataLines.join("\n"), onEvent, onError);
+      if (currentId) onEventId(currentId);
+    }
+    currentId = "";
+    currentEvent = "";
+    currentDataLines = [];
+    currentDataBytes = 0;
+  };
+
+  const processLine = (line: string) => {
+    if (line === "") {
+      dispatchEvent();
+      return;
+    }
+
+    if (line.startsWith(":")) {
+      // Comment line — ignore
+      return;
+    }
+
+    const colonIndex = line.indexOf(":");
+    const field = colonIndex === -1 ? line : line.slice(0, colonIndex);
+    let value = colonIndex === -1 ? "" : line.slice(colonIndex + 1);
+    if (value.startsWith(" ")) value = value.slice(1);
+
+    switch (field) {
+      case "id":
+        currentId = value;
+        break;
+      case "event":
+        currentEvent = value;
+        break;
+      case "data": {
+        const valueBytes = textEncoder.encode(value).byteLength;
+        const newlineBytes = currentDataLines.length > 0 ? 1 : 0;
+        currentDataBytes += valueBytes + newlineBytes;
+        if (currentDataBytes > MAX_EVENT_SIZE_BYTES) {
+          throw new Error(
+            `SSE event exceeds maximum size of ${MAX_EVENT_SIZE_BYTES} bytes`
+          );
+        }
+        currentDataLines.push(value);
+        break;
+      }
+      case "retry":
+        if (/^\d+$/.test(value)) {
+          onRetry(Number(value));
+        }
+        break;
+      default:
+        // Unknown field — ignore per SSE spec
+        break;
+    }
+  };
+
+  const processBufferedLines = (flush: boolean) => {
+    let start = 0;
+
+    for (let i = 0; i < buffer.length; i += 1) {
+      const char = buffer[i];
+      if (char !== "\n" && char !== "\r") continue;
+
+      if (char === "\r" && i + 1 === buffer.length && !flush) {
+        break;
+      }
+
+      processLine(buffer.slice(start, i));
+
+      if (char === "\r" && buffer[i + 1] === "\n") {
+        i += 1;
+      }
+      start = i + 1;
+    }
+
+    buffer = buffer.slice(start);
+
+    if (flush && buffer !== "") {
+      processLine(buffer);
+      buffer = "";
+    }
+  };
 
   try {
     while (true) {
@@ -224,69 +313,12 @@ async function parseSSEStream(
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-
-      // Process complete lines
-      const lines = buffer.split("\n");
-      // Keep the last incomplete line in the buffer
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (line === "") {
-          // Blank line = end of event
-          if (currentData) {
-            processEvent(currentEvent, currentData, onEvent, onError);
-            if (currentId) onEventId(currentId);
-          }
-          currentId = "";
-          currentEvent = "";
-          currentData = "";
-          continue;
-        }
-
-        if (line.startsWith(":")) {
-          // Comment line — ignore
-          continue;
-        }
-
-        if (line.startsWith("id:")) {
-          currentId = line.slice(3).trim();
-          continue;
-        }
-
-        if (line.startsWith("event:")) {
-          currentEvent = line.slice(6).trim();
-          continue;
-        }
-
-        if (line.startsWith("data:")) {
-          const dataPayload = line.slice(5);
-          // Trim leading space per SSE spec (one optional space after colon)
-          currentData = dataPayload.startsWith(" ")
-            ? dataPayload.slice(1)
-            : dataPayload;
-
-          // Enforce max event size
-          if (currentData.length > MAX_EVENT_SIZE_BYTES) {
-            onError(
-              new Error(
-                `SSE event exceeds maximum size of ${MAX_EVENT_SIZE_BYTES} bytes`
-              )
-            );
-            reader.cancel();
-            return;
-          }
-          continue;
-        }
-
-        // Unknown field — ignore per SSE spec
-      }
+      processBufferedLines(false);
     }
 
-    // Process any remaining buffered event
-    if (currentData) {
-      processEvent(currentEvent, currentData, onEvent, onError);
-      if (currentId) onEventId(currentId);
-    }
+    buffer += decoder.decode();
+    processBufferedLines(true);
+    dispatchEvent();
   } finally {
     reader.releaseLock();
   }
@@ -355,7 +387,7 @@ export function sseClientDirect(
   handlers: {
     onEvent: SSEEventHandler;
     onError: SSEErrorHandler;
-    onComplete?: () => void;
+    onComplete?: SSECompleteHandler;
   },
   options?: {
     signal?: AbortSignal;
@@ -369,6 +401,7 @@ export function sseClientDirect(
 
   const url = `${streamBaseUrl}/stream/chat-runs/${runId}/events`;
   let lastEventId = options?.lastEventId ?? "";
+  let reconnectDelayMs = RECONNECT_DELAY_MS;
 
   // Start the fetch + parse pipeline
   (async () => {
@@ -392,10 +425,10 @@ export function sseClientDirect(
         });
       } catch (err) {
         if (isAbortError(err) || combinedSignal.aborted) {
-          handlers.onComplete?.();
+          handlers.onComplete?.(terminalEventSeen);
           return;
         }
-        await delay(RECONNECT_DELAY_MS);
+        await delay(reconnectDelayMs);
         continue;
       }
 
@@ -432,13 +465,23 @@ export function sseClientDirect(
           (id) => {
             lastEventId = id;
           },
+          (milliseconds) => {
+            reconnectDelayMs = milliseconds;
+          },
         );
       } catch (err) {
         if (isAbortError(err) || combinedSignal.aborted) {
-          handlers.onComplete?.();
+          handlers.onComplete?.(terminalEventSeen);
           return;
         }
-        await delay(RECONNECT_DELAY_MS);
+        if (
+          err instanceof Error &&
+          err.message.startsWith("SSE event exceeds maximum size")
+        ) {
+          handlers.onError(err);
+          return;
+        }
+        await delay(reconnectDelayMs);
         continue;
       }
 
@@ -446,12 +489,14 @@ export function sseClientDirect(
         handlers.onError(streamError);
         return;
       }
+
+      break;
     }
 
-    handlers.onComplete?.();
+    handlers.onComplete?.(terminalEventSeen);
   })().catch((err) => {
       if (isAbortError(err)) {
-        handlers.onComplete?.();
+        handlers.onComplete?.(false);
         return;
       }
       handlers.onError(

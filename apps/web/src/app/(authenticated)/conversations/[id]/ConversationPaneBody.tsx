@@ -16,13 +16,12 @@ import {
   useLayoutEffect,
 } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import { sseClientDirect, type ContextItem, type SSEEvent } from "@/lib/api/sse";
-import { fetchStreamToken } from "@/lib/api/streamToken";
+import { type ContextItem } from "@/lib/api/sse";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
-import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
+import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import StateMessage from "@/components/ui/StateMessage";
 import type {
@@ -135,15 +134,11 @@ function ChatView({
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
-  const activeStreamAbortsRef = useRef<Map<string, () => void>>(new Map());
-  const {
-    handleMetaReceived,
-    handleDelta,
-    handleToolCall,
-    handleToolResult,
-    handleCitation,
-    handleDone,
-  } = useChatMessageUpdates({ setMessages, shouldScrollRef });
+  const { tailChatRun, abortAll } = useChatRunTail({
+    setMessages,
+    shouldScrollRef,
+    onRunFinished,
+  });
   const persistedRows = useMemo(() => {
     const rows: Array<{
       context: MessageContextSnapshot;
@@ -166,162 +161,6 @@ function ChatView({
 
     return rows;
   }, [messages]);
-
-  const mergeChatRunMessages = useCallback((runData: ChatRunData) => {
-    setMessages((prev) => {
-      const existingIds = new Set(prev.map((message) => message.id));
-      const next = prev.map((message) => {
-        if (message.id === runData.user_message.id) return runData.user_message;
-        if (message.id === runData.assistant_message.id) return runData.assistant_message;
-        return message;
-      });
-
-      if (!existingIds.has(runData.user_message.id)) {
-        next.push(runData.user_message);
-      }
-      if (!existingIds.has(runData.assistant_message.id)) {
-        next.push(runData.assistant_message);
-      }
-
-      return next.sort((a, b) => a.seq - b.seq);
-    });
-  }, []);
-
-  const finishChatRun = useCallback(
-    async (
-      runId: string,
-      assistantId: string,
-      status: "complete" | "error" | "cancelled",
-      errorCode: string | null,
-    ) => {
-      try {
-        const response = await apiFetch<ChatRunResponse>(`/api/chat-runs/${runId}`);
-        mergeChatRunMessages(response.data);
-      } catch (err) {
-        console.error("Failed to reconcile chat run:", err);
-        handleDone(assistantId, status, errorCode);
-      } finally {
-        onRunFinished(runId);
-      }
-    },
-    [handleDone, mergeChatRunMessages, onRunFinished],
-  );
-
-  const tailChatRun = useCallback(
-    async (runData: ChatRunData) => {
-      const runId = runData.run.id;
-      if (activeStreamAbortsRef.current.has(runId)) return;
-      mergeChatRunMessages(runData);
-
-      if (["complete", "error", "cancelled"].includes(runData.run.status)) {
-        onRunFinished(runId);
-        return;
-      }
-
-      activeStreamAbortsRef.current.set(runId, () => {});
-      let streamBaseUrl: string;
-      let firstStreamToken: string | null = null;
-      try {
-        const tokenResponse = await fetchStreamToken();
-        streamBaseUrl = tokenResponse.stream_base_url;
-        firstStreamToken = tokenResponse.token;
-      } catch (err) {
-        console.error("Failed to resume chat run:", err);
-        activeStreamAbortsRef.current.delete(runId);
-        return;
-      }
-      if (!activeStreamAbortsRef.current.has(runId)) return;
-
-      const getStreamToken = async () => {
-        if (firstStreamToken !== null) {
-          const token = firstStreamToken;
-          firstStreamToken = null;
-          return token;
-        }
-        return (await fetchStreamToken()).token;
-      };
-
-      let currentAsstId = runData.assistant_message.id;
-
-      const forgetStream = () => {
-        activeStreamAbortsRef.current.delete(runId);
-      };
-
-      const abort = sseClientDirect(
-        streamBaseUrl,
-        getStreamToken,
-        runId,
-        {
-          onEvent: (event: SSEEvent) => {
-            switch (event.type) {
-              case "meta": {
-                const {
-                  user_message_id,
-                  assistant_message_id,
-                } = event.data;
-                handleMetaReceived(
-                  runData.user_message.id,
-                  user_message_id,
-                  runData.assistant_message.id,
-                  assistant_message_id,
-                );
-                currentAsstId = assistant_message_id;
-                break;
-              }
-              case "delta": {
-                handleDelta(currentAsstId, event.data.delta);
-                break;
-              }
-              case "tool_call": {
-                handleToolCall(currentAsstId, event.data);
-                break;
-              }
-              case "tool_result": {
-                handleToolResult(currentAsstId, event.data);
-                break;
-              }
-              case "citation": {
-                handleCitation(currentAsstId, event.data);
-                break;
-              }
-              case "done": {
-                handleDone(
-                  currentAsstId,
-                  event.data.status,
-                  event.data.error_code,
-                );
-                forgetStream();
-                void finishChatRun(
-                  runId,
-                  currentAsstId,
-                  event.data.status,
-                  event.data.error_code,
-                );
-                break;
-              }
-            }
-          },
-          onError: (err) => {
-            console.error("Chat run stream failed:", err);
-            forgetStream();
-          },
-          onComplete: forgetStream,
-        },
-      );
-      activeStreamAbortsRef.current.set(runId, abort);
-    },
-    [
-      handleCitation,
-      handleDelta,
-      handleDone,
-      handleMetaReceived,
-      handleToolCall,
-      handleToolResult,
-      finishChatRun,
-      mergeChatRunMessages,
-      onRunFinished,
-    ],
-  );
 
   const handleChatRunCreated = useCallback(
     (runData: ChatRunData) => {
@@ -386,14 +225,10 @@ function ChatView({
   }, [id, runIdFromUrl, tailChatRun]);
 
   useEffect(() => {
-    const activeStreamAborts = activeStreamAbortsRef.current;
     return () => {
-      for (const abort of activeStreamAborts.values()) {
-        abort();
-      }
-      activeStreamAborts.clear();
+      abortAll();
     };
-  }, [id]);
+  }, [abortAll, id]);
 
   useLayoutEffect(() => {
     if (!scrollportRef.current) return;

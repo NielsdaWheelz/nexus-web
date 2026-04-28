@@ -145,6 +145,8 @@ SUPABASE_ISSUER="${SUPABASE_URL}/auth/v1"
 SUPABASE_JWKS_URL="${SUPABASE_URL}/auth/v1/.well-known/jwks.json"
 SUPABASE_AUDIENCES="authenticated"
 AUTH_ALLOWED_REDIRECT_ORIGINS="http://localhost:3000,http://localhost:3001"
+STREAM_BASE_URL="http://localhost:8000"
+STREAM_CORS_ORIGINS="http://localhost:3000,http://localhost:3001"
 
 # Run migrations on dev database (using default 'postgres' db)
 echo "Running migrations on dev database..."
@@ -196,6 +198,10 @@ SUPABASE_ISSUER=${SUPABASE_ISSUER}
 SUPABASE_JWKS_URL=${SUPABASE_JWKS_URL}
 SUPABASE_AUDIENCES=${SUPABASE_AUDIENCES}
 AUTH_ALLOWED_REDIRECT_ORIGINS=${AUTH_ALLOWED_REDIRECT_ORIGINS}
+
+# Direct browser-to-FastAPI SSE
+STREAM_BASE_URL=${STREAM_BASE_URL}
+STREAM_CORS_ORIGINS=${STREAM_CORS_ORIGINS}
 
 # Key encryption for BYOK API keys (XChaCha20-Poly1305)
 NEXUS_KEY_ENCRYPTION_KEY=${NEXUS_KEY_ENCRYPTION_KEY}

@@ -50,7 +50,6 @@ Primary variables for this app:
 - `AUTH_ALLOWED_REDIRECT_ORIGINS`
 - `NEXUS_EXTENSION_REDIRECT_ORIGINS`
 - `NEXUS_INTERNAL_SECRET` (required outside local/test)
-- `NEXT_PUBLIC_ENABLE_STREAMING` (optional)
 
 `make setup` writes `apps/web/.env.local` for local development.
 Full variable definitions live in root `.env.example`.

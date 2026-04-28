@@ -20,7 +20,8 @@ from nexus.services import chat_runs as chat_runs_service
 
 router = APIRouter(prefix="/stream", tags=["streaming"])
 
-KEEPALIVE_INTERVAL_SECONDS = 15.0
+STREAM_IDLE_TTL_SECONDS = 45.0
+KEEPALIVE_INTERVAL_SECONDS = STREAM_IDLE_TTL_SECONDS / 3.0
 POLL_INTERVAL_SECONDS = 0.5
 
 
@@ -44,6 +45,7 @@ def get_stream_viewer(request: Request) -> UUID:
 
 @router.get("/chat-runs/{run_id}/events")
 async def stream_chat_run_events(
+    request: Request,
     run_id: UUID,
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
     after: int | None = Query(default=None, ge=0),
@@ -55,7 +57,12 @@ async def stream_chat_run_events(
         chat_runs_service.assert_chat_run_owner(db, viewer_id=viewer_id, run_id=run_id)
 
     return StreamingResponse(
-        _tail_chat_run_events(run_id=run_id, viewer_id=viewer_id, after=cursor),
+        _tail_chat_run_events(
+            request=request,
+            run_id=run_id,
+            viewer_id=viewer_id,
+            after=cursor,
+        ),
         media_type="text/event-stream; charset=utf-8",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -64,12 +71,21 @@ async def stream_chat_run_events(
     )
 
 
-async def _tail_chat_run_events(run_id: UUID, viewer_id: UUID, after: int) -> AsyncIterator[str]:
+async def _tail_chat_run_events(
+    *,
+    request: Request,
+    run_id: UUID,
+    viewer_id: UUID,
+    after: int,
+) -> AsyncIterator[str]:
     db_factory = get_session_factory()
     cursor = after
     last_keepalive = time.monotonic()
 
     while True:
+        if await request.is_disconnected():
+            return
+
         with db_factory() as db:
             events = chat_runs_service.get_chat_run_events(
                 db,
@@ -77,12 +93,20 @@ async def _tail_chat_run_events(run_id: UUID, viewer_id: UUID, after: int) -> As
                 run_id=run_id,
                 after=cursor,
             )
+            terminal = chat_runs_service.is_chat_run_terminal(
+                db,
+                viewer_id=viewer_id,
+                run_id=run_id,
+            )
 
         for event in events:
             cursor = event.seq
             yield _format_sse_event(event.seq, event.event_type, event.payload)
             if event.event_type == "done":
                 return
+
+        if terminal:
+            return
 
         now = time.monotonic()
         if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:

@@ -46,7 +46,6 @@ export default defineConfig({
         NEXUS_ENV: "test",
         E2E_DISABLE_CSP: "1",
         PORT: WEB_PORT,
-        NEXT_PUBLIC_ENABLE_STREAMING: "1",
       },
     },
     {

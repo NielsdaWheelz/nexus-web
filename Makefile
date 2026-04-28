@@ -17,6 +17,8 @@ export
 SUPABASE_DB_PORT ?= 54322
 SUPABASE_URL ?= http://127.0.0.1:54321
 AUTH_ALLOWED_REDIRECT_ORIGINS ?= http://localhost:3000,http://localhost:3001
+STREAM_BASE_URL ?= http://localhost:$(API_PORT)
+STREAM_CORS_ORIGINS ?= http://localhost:$(WEB_PORT),http://localhost:3000,http://localhost:3001
 
 DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:$(SUPABASE_DB_PORT)/postgres
 DATABASE_URL_TEST ?= postgresql+psycopg://postgres:postgres@localhost:$(SUPABASE_DB_PORT)/nexus_test
@@ -96,6 +98,8 @@ clean:
 
 api:
 	cd apps/api && PYTHONPATH=$$PWD/../../python DATABASE_URL=$(DATABASE_URL) \
+		STREAM_BASE_URL=$(STREAM_BASE_URL) \
+		STREAM_CORS_ORIGINS=$(STREAM_CORS_ORIGINS) \
 		uv run --project ../../python uvicorn main:app --reload --port $(API_PORT)
 
 web:

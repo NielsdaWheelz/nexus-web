@@ -32,6 +32,7 @@ LLM Client Lifecycle (PR-04 spec):
 
 import json
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
@@ -260,6 +261,27 @@ def create_app(
     if cors_origins:
         app.add_middleware(StreamCORSMiddleware, allowed_origins=cors_origins)
         logger.info("stream_cors_middleware_enabled", origins=cors_origins)
+    else:
+        app_url = urlparse(settings.app_public_url)
+        stream_url = urlparse(settings.effective_stream_base_url)
+        if (
+            app_url.scheme,
+            app_url.hostname,
+            app_url.port,
+        ) != (
+            stream_url.scheme,
+            stream_url.hostname,
+            stream_url.port,
+        ):
+            if settings.nexus_env in (Environment.STAGING, Environment.PROD):
+                raise RuntimeError(
+                    "STREAM_CORS_ORIGINS is required when STREAM_BASE_URL is cross-origin"
+                )
+            logger.warning(
+                "stream_cors_middleware_disabled_for_cross_origin_stream",
+                app_public_url=settings.app_public_url,
+                stream_base_url=settings.effective_stream_base_url,
+            )
 
     return app
 

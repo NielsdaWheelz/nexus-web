@@ -141,6 +141,16 @@ def _parse_sse_events(body: str) -> list[dict]:
     return events
 
 
+def _response_start_headers(sent_messages: list[dict]) -> dict[str, str]:
+    start = next(
+        message for message in sent_messages if message["type"] == "http.response.start"
+    )
+    return {
+        key.decode("latin1").lower(): value.decode("latin1")
+        for key, value in start.get("headers", [])
+    }
+
+
 class TestStreamTokenMint:
     def test_mint_returns_token_and_url(self):
         user_id = uuid4()
@@ -262,6 +272,23 @@ class TestChatRunEventStream:
         assert [(event["id"], event["event"]) for event in events] == [("3", "done")]
         assert events[0]["data"] == {"status": "complete"}
 
+    def test_closes_when_cursor_is_at_terminal_run(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = uuid4()
+        run_id, _conversation_id = _insert_terminal_run(direct_db, owner_user_id=user_id)
+        stream_token = mint_stream_token(user_id)["token"]
+
+        response = auth_client.get(
+            f"/stream/chat-runs/{run_id}/events?after=3",
+            headers={"Authorization": f"Bearer {stream_token}"},
+        )
+
+        assert response.status_code == 200, (
+            f"Expected terminal cursor stream to close, got {response.status_code}: {response.text}"
+        )
+        assert response.text == ""
+
 
 class TestStreamCORSMiddleware:
     @pytest.mark.asyncio
@@ -336,6 +363,44 @@ class TestStreamCORSMiddleware:
         await middleware(scope, None, send)
 
         assert any(message.get("status") == 204 for message in sent_messages)
+        headers = _response_start_headers(sent_messages)
+        assert headers["access-control-allow-origin"] == "https://nexus.test"
+        assert headers["access-control-allow-methods"] == "GET, OPTIONS"
+        assert headers["access-control-allow-headers"] == "Authorization, Last-Event-ID"
+
+    @pytest.mark.asyncio
+    async def test_actual_get_injects_stream_cors_headers(self):
+        sent_messages = []
+
+        async def app(scope, receive, send):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"text/event-stream; charset=utf-8")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+        async def send(message):
+            sent_messages.append(message)
+
+        middleware = StreamCORSMiddleware(app, allowed_origins=["https://nexus.test"])
+        scope = {
+            "type": "http",
+            "path": "/stream/chat-runs/00000000-0000-0000-0000-000000000000/events",
+            "method": "GET",
+            "headers": [
+                (b"origin", b"https://nexus.test"),
+                (b"authorization", b"Bearer token"),
+                (b"last-event-id", b"3"),
+            ],
+        }
+        await middleware(scope, None, send)
+
+        headers = _response_start_headers(sent_messages)
+        assert headers["access-control-allow-origin"] == "https://nexus.test"
+        assert headers["access-control-expose-headers"] == "X-Request-Id"
 
 
 class TestLegacyStreamSendRoutesRemoved:
