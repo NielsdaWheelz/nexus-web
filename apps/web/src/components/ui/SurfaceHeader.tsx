@@ -17,6 +17,7 @@ interface SurfaceHeaderProps {
   headingLevel?: 1 | 2;
   className?: string;
   onBack?: () => void;
+  onOptionsOpenChange?: (open: boolean) => void;
 }
 
 const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function SurfaceHeader(
@@ -29,6 +30,7 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
     headingLevel = 2,
     className,
     onBack,
+    onOptionsOpenChange,
   }: SurfaceHeaderProps,
   ref
 ) {
@@ -75,7 +77,12 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
         {actions && <div className={styles.actions}>{actions}</div>}
 
         {hasOptions && (
-          <ActionMenu options={options} label="Options" className={styles.optionsContainer} />
+          <ActionMenu
+            options={options}
+            label="Options"
+            className={styles.optionsContainer}
+            onOpenChange={onOptionsOpenChange}
+          />
         )}
       </div>
     </header>

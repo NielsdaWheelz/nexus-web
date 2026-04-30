@@ -58,8 +58,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import {
   usePaneChromeOverride,
-  usePaneChromeScrollHandler,
-  usePaneMobileChromeVisibility,
+  usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import {
@@ -801,7 +800,7 @@ export default function MediaPaneBody() {
 
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
-  const paneMobileChrome = usePaneMobileChromeVisibility();
+  const paneMobileChrome = usePaneMobileChromeController();
   const requestedFragmentId = searchParams.get("fragment");
   const requestedHighlightId = searchParams.get("highlight");
   const requestedEpubLoc = searchParams.get("loc");
@@ -1698,10 +1697,14 @@ export default function MediaPaneBody() {
       return;
     }
 
-    if (isMobileViewport && paneMobileChrome) {
-      paneMobileChrome.showMobileChrome();
-      paneMobileChrome.setMobileChromeLockedVisible(true);
-    }
+    let releaseChromeLock =
+      isMobileViewport && paneMobileChrome
+        ? paneMobileChrome.acquireVisibleLock("reader-restore")
+        : null;
+    const releaseChrome = () => {
+      releaseChromeLock?.();
+      releaseChromeLock = null;
+    };
 
     void updateRestorePhase(sessionId, "restoring_exact");
 
@@ -1711,6 +1714,7 @@ export default function MediaPaneBody() {
 
     const attemptRestore = () => {
       if (sessionId !== restoreSessionIdRef.current) {
+        releaseChrome();
         return;
       }
       attempts += 1;
@@ -1718,6 +1722,12 @@ export default function MediaPaneBody() {
       if (!cursor) {
         if (attempts < maxAttempts) {
           rafId = window.requestAnimationFrame(attemptRestore);
+        } else if (isEpub && (epubAnchorId !== null || allowEpubTopFallback)) {
+          releaseChrome();
+          void updateRestorePhase(sessionId, "restoring_fallback");
+        } else {
+          releaseChrome();
+          void settleRestoreSession(sessionId);
         }
         return;
       }
@@ -1733,12 +1743,15 @@ export default function MediaPaneBody() {
       if (restored && visible) {
         scrollRestoreAppliedRef.current = true;
         lastSavedTextAnchorOffsetRef.current = resumeOffset;
+        releaseChrome();
         void settleRestoreSession(sessionId);
       } else if (attempts < maxAttempts) {
         rafId = window.requestAnimationFrame(attemptRestore);
       } else if (isEpub && (epubAnchorId !== null || allowEpubTopFallback)) {
+        releaseChrome();
         void updateRestorePhase(sessionId, "restoring_fallback");
       } else {
+        releaseChrome();
         void settleRestoreSession(sessionId);
       }
     };
@@ -1748,9 +1761,7 @@ export default function MediaPaneBody() {
       if (rafId) {
         window.cancelAnimationFrame(rafId);
       }
-      if (isMobileViewport && paneMobileChrome) {
-        paneMobileChrome.setMobileChromeLockedVisible(false);
-      }
+      releaseChrome();
     };
   }, [
     isPdf,
@@ -1921,10 +1932,14 @@ export default function MediaPaneBody() {
     let rafId = 0;
     const MAX_ATTEMPTS = 96;
 
-    if (isMobileViewport && paneMobileChrome) {
-      paneMobileChrome.showMobileChrome();
-      paneMobileChrome.setMobileChromeLockedVisible(true);
-    }
+    let releaseChromeLock =
+      isMobileViewport && paneMobileChrome
+        ? paneMobileChrome.acquireVisibleLock("reader-restore")
+        : null;
+    const releaseChrome = () => {
+      releaseChromeLock?.();
+      releaseChromeLock = null;
+    };
 
     const findTarget = (): HTMLElement | null => {
       const root = contentRef.current;
@@ -1952,6 +1967,7 @@ export default function MediaPaneBody() {
 
     const attemptScroll = (attempt: number) => {
       if (sessionId !== restoreSessionIdRef.current) {
+        releaseChrome();
         return;
       }
 
@@ -1959,6 +1975,7 @@ export default function MediaPaneBody() {
       if (target) {
         target.scrollIntoView({ block: "start", behavior: "auto" });
         scrollRestoreAppliedRef.current = true;
+        releaseChrome();
         void settleRestoreSession(sessionId);
         return;
       }
@@ -1975,6 +1992,7 @@ export default function MediaPaneBody() {
         }
         scrollRestoreAppliedRef.current = true;
       }
+      releaseChrome();
       void settleRestoreSession(sessionId);
     };
 
@@ -1984,9 +2002,7 @@ export default function MediaPaneBody() {
       if (rafId) {
         window.cancelAnimationFrame(rafId);
       }
-      if (isMobileViewport && paneMobileChrome) {
-        paneMobileChrome.setMobileChromeLockedVisible(false);
-      }
+      releaseChrome();
     };
   }, [
     activeEpubSection,
@@ -2154,12 +2170,13 @@ export default function MediaPaneBody() {
       `[data-highlight-anchor="${escapedId}"]`
     );
     let unlockChromeFrame = 0;
+    let releaseChromeLock: (() => void) | null = null;
     if (anchor) {
       if (isMobileViewport && paneMobileChrome) {
-        paneMobileChrome.showMobileChrome();
-        paneMobileChrome.setMobileChromeLockedVisible(true);
+        releaseChromeLock = paneMobileChrome.acquireVisibleLock("highlight-navigation");
         unlockChromeFrame = window.requestAnimationFrame(() => {
-          paneMobileChrome.setMobileChromeLockedVisible(false);
+          releaseChromeLock?.();
+          releaseChromeLock = null;
         });
       }
       anchor.scrollIntoView({ behavior: "auto", block: "center" });
@@ -2170,9 +2187,7 @@ export default function MediaPaneBody() {
       if (unlockChromeFrame) {
         window.cancelAnimationFrame(unlockChromeFrame);
       }
-      if (isMobileViewport && paneMobileChrome) {
-        paneMobileChrome.setMobileChromeLockedVisible(false);
-      }
+      releaseChromeLock?.();
     };
   }, [
     requestedHighlightId,
@@ -2938,7 +2953,6 @@ export default function MediaPaneBody() {
   const chapterLoading = epubSectionLoading;
   const handleMediaContentClick = handleReaderContentClick;
 
-  const paneChromeScrollHandler = usePaneChromeScrollHandler();
   const { setTrack, seekToMs, play } = useGlobalPlayer();
   const readerFontFamily =
     readerProfile.font_family === "sans"
@@ -3136,9 +3150,13 @@ export default function MediaPaneBody() {
 
   const handleDocumentScroll = useCallback(
     (event: React.UIEvent<HTMLDivElement>) => {
-      paneChromeScrollHandler?.(event.currentTarget.scrollTop);
+      paneMobileChrome?.onDocumentScroll({
+        scrollTop: event.currentTarget.scrollTop,
+        scrollHeight: event.currentTarget.scrollHeight,
+        clientHeight: event.currentTarget.clientHeight,
+      });
     },
-    [paneChromeScrollHandler]
+    [paneMobileChrome]
   );
 
   const handleQuoteToChat = useCallback(
@@ -3499,18 +3517,23 @@ export default function MediaPaneBody() {
     if (!paneMobileChrome || !isMobileViewport) {
       return;
     }
-    const lockVisible = Boolean(
-      highlightsDrawerOpen ||
-        quoteChatSheetState ||
-        libraryPanelOpen ||
-        (selection && !focusState.editingBounds)
-    );
-    if (lockVisible) {
-      paneMobileChrome.showMobileChrome();
+    const releaseLocks: Array<() => void> = [];
+    if (highlightsDrawerOpen) {
+      releaseLocks.push(paneMobileChrome.acquireVisibleLock("highlights-drawer"));
     }
-    paneMobileChrome.setMobileChromeLockedVisible(lockVisible);
+    if (quoteChatSheetState) {
+      releaseLocks.push(paneMobileChrome.acquireVisibleLock("quote-chat-sheet"));
+    }
+    if (libraryPanelOpen) {
+      releaseLocks.push(paneMobileChrome.acquireVisibleLock("library-picker"));
+    }
+    if (selection && !focusState.editingBounds) {
+      releaseLocks.push(paneMobileChrome.acquireVisibleLock("text-selection"));
+    }
     return () => {
-      paneMobileChrome.setMobileChromeLockedVisible(false);
+      for (const releaseLock of releaseLocks) {
+        releaseLock();
+      }
     };
   }, [
     highlightsDrawerOpen,

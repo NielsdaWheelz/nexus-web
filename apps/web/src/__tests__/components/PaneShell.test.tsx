@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import PaneShell, {
   usePaneChromeOverride,
-  usePaneChromeScrollHandler,
-  usePaneMobileChromeVisibility,
+  usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
 
 describe("PaneShell", () => {
@@ -178,13 +177,12 @@ describe("PaneShell", () => {
       screen.getByTestId("pane-shell-chrome").getBoundingClientRect().height
     );
     const scrollTo = (scrollTop: number) => {
-      Object.defineProperty(viewport, "scrollTop", {
-        configurable: true,
-        get: () => scrollTop,
-      });
-      fireEvent.scroll(viewport);
+      scrollViewportTo(viewport, scrollTop);
     };
 
+    await expectChromeHidden(shell, false);
+
+    scrollTo(-20);
     await expectChromeHidden(shell, false);
 
     scrollTo(Math.max(1, chromeHeight - 8));
@@ -237,21 +235,65 @@ describe("PaneShell", () => {
       screen.getByTestId("pane-shell-chrome").getBoundingClientRect().height
     );
 
-    Object.defineProperty(viewport, "scrollTop", {
-      configurable: true,
-      get: () => chromeHeight + 12,
-    });
-    fireEvent.scroll(viewport);
-    Object.defineProperty(viewport, "scrollTop", {
-      configurable: true,
-      get: () => chromeHeight + 40,
-    });
-    fireEvent.scroll(viewport);
+    scrollViewportTo(viewport, chromeHeight + 12);
+    scrollViewportTo(viewport, chromeHeight + 40);
 
     await expectChromeHidden(shell, true);
 
     fireEvent.click(screen.getByRole("button", { name: "Lock chrome" }));
     await expectChromeHidden(shell, false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Release chrome" }));
+    fireEvent.click(screen.getByRole("button", { name: "Release chrome" }));
+    await expectChromeHidden(shell, false);
+
+    scrollViewportTo(viewport, chromeHeight + 64);
+    scrollViewportTo(viewport, chromeHeight + 92);
+    await expectChromeHidden(shell, true);
+  });
+
+  it("keeps document chrome visible until all scoped locks release", async () => {
+    render(
+      <PaneShell
+        paneId="pane-doc"
+        title="Reader"
+        widthPx={920}
+        minWidthPx={420}
+        maxWidthPx={1800}
+        bodyMode="document"
+        onResizePane={() => {}}
+        isMobile
+      >
+        <TwoLocksProbe />
+        <WiredDocumentBody>
+          <div style={{ height: "1600px" }}>Document body</div>
+        </WiredDocumentBody>
+      </PaneShell>
+    );
+
+    const viewport = screen.getByTestId("document-viewport");
+    const shell = screen.getByTestId("pane-shell-root");
+    const chromeHeight = Math.ceil(
+      screen.getByTestId("pane-shell-chrome").getBoundingClientRect().height
+    );
+
+    scrollViewportTo(viewport, chromeHeight + 12);
+    scrollViewportTo(viewport, chromeHeight + 40);
+    await expectChromeHidden(shell, true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Lock first" }));
+    fireEvent.click(screen.getByRole("button", { name: "Lock second" }));
+    await expectChromeHidden(shell, false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Release first" }));
+    scrollViewportTo(viewport, chromeHeight + 68);
+    scrollViewportTo(viewport, chromeHeight + 96);
+    await expectChromeHidden(shell, false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Release second" }));
+    scrollViewportTo(viewport, chromeHeight + 120);
+    scrollViewportTo(viewport, chromeHeight + 148);
+    await expectChromeHidden(shell, true);
   });
 
   it("pins mobile document chrome visible when reduced motion is active", async () => {
@@ -295,18 +337,10 @@ describe("PaneShell", () => {
         screen.getByTestId("pane-shell-chrome").getBoundingClientRect().height
       );
 
-      Object.defineProperty(viewport, "scrollTop", {
-        configurable: true,
-        get: () => chromeHeight + 12,
-      });
-      fireEvent.scroll(viewport);
+      scrollViewportTo(viewport, chromeHeight + 12);
       await expectChromeHidden(shell, false);
 
-      Object.defineProperty(viewport, "scrollTop", {
-        configurable: true,
-        get: () => chromeHeight + 40,
-      });
-      fireEvent.scroll(viewport);
+      scrollViewportTo(viewport, chromeHeight + 40);
 
       await expectChromeHidden(shell, false);
     } finally {
@@ -460,31 +494,87 @@ function ChromeOverrideProbe({ shouldOverride }: { shouldOverride: boolean }) {
 }
 
 function LockVisibleProbe() {
-  const paneMobileChrome = usePaneMobileChromeVisibility();
+  const paneMobileChrome = usePaneMobileChromeController();
+  const releaseRef = useRef<(() => void) | null>(null);
 
   return (
-    <button
-      type="button"
-      onClick={() => {
-        if (!paneMobileChrome) {
-          return;
-        }
-        paneMobileChrome.showMobileChrome();
-        paneMobileChrome.setMobileChromeLockedVisible(true);
-      }}
-    >
-      Lock chrome
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          releaseRef.current?.();
+          releaseRef.current =
+            paneMobileChrome?.acquireVisibleLock("text-selection") ?? null;
+        }}
+      >
+        Lock chrome
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          releaseRef.current?.();
+        }}
+      >
+        Release chrome
+      </button>
+    </>
+  );
+}
+
+function TwoLocksProbe() {
+  const paneMobileChrome = usePaneMobileChromeController();
+  const firstReleaseRef = useRef<(() => void) | null>(null);
+  const secondReleaseRef = useRef<(() => void) | null>(null);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          firstReleaseRef.current?.();
+          firstReleaseRef.current =
+            paneMobileChrome?.acquireVisibleLock("text-selection") ?? null;
+        }}
+      >
+        Lock first
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          secondReleaseRef.current?.();
+          secondReleaseRef.current =
+            paneMobileChrome?.acquireVisibleLock("quote-chat-sheet") ?? null;
+        }}
+      >
+        Lock second
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          firstReleaseRef.current?.();
+        }}
+      >
+        Release first
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          secondReleaseRef.current?.();
+        }}
+      >
+        Release second
+      </button>
+    </>
   );
 }
 
 function ContainedModeProbe() {
-  const paneChromeScrollHandler = usePaneChromeScrollHandler();
+  const paneMobileChrome = usePaneMobileChromeController();
 
   return (
     <div>
       <span data-testid="contained-scroll-handler">
-        {paneChromeScrollHandler ? "present" : "none"}
+        {paneMobileChrome ? "present" : "none"}
       </span>
       <div style={{ height: "1200px" }}>Contained body</div>
     </div>
@@ -492,14 +582,18 @@ function ContainedModeProbe() {
 }
 
 function WiredDocumentBody({ children }: { children: ReactNode }) {
-  const paneChromeScrollHandler = usePaneChromeScrollHandler();
+  const paneMobileChrome = usePaneMobileChromeController();
 
   return (
     <div
       data-testid="document-viewport"
       style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
       onScroll={(event) => {
-        paneChromeScrollHandler?.(event.currentTarget.scrollTop);
+        paneMobileChrome?.onDocumentScroll({
+          scrollTop: event.currentTarget.scrollTop,
+          scrollHeight: event.currentTarget.scrollHeight,
+          clientHeight: event.currentTarget.clientHeight,
+        });
       }}
     >
       {children}
@@ -511,4 +605,20 @@ async function expectChromeHidden(shell: HTMLElement, hidden: boolean): Promise<
   await waitFor(() => {
     expect(shell).toHaveAttribute("data-mobile-chrome-hidden", hidden ? "true" : "false");
   });
+}
+
+function scrollViewportTo(viewport: HTMLElement, scrollTop: number): void {
+  Object.defineProperty(viewport, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+  });
+  Object.defineProperty(viewport, "scrollHeight", {
+    configurable: true,
+    get: () => 2000,
+  });
+  Object.defineProperty(viewport, "clientHeight", {
+    configurable: true,
+    get: () => 500,
+  });
+  fireEvent.scroll(viewport);
 }

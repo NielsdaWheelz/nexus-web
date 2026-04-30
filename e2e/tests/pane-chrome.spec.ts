@@ -102,6 +102,12 @@ test.describe("pane chrome", () => {
         documentViewport.evaluate((element) => element.scrollHeight - element.clientHeight)
       )
       .toBeGreaterThan(200);
+    await expect(documentViewport).toHaveCSS("overscroll-behavior-y", "contain");
+    await expectPaneChromeHidden(page, false);
+    await page.evaluate(() => {
+      window.scrollTo(0, 240);
+      window.dispatchEvent(new Event("scroll"));
+    });
     await expectPaneChromeHidden(page, false);
     const chromeHeight = await paneChromeHeight(page);
 
@@ -115,6 +121,7 @@ test.describe("pane chrome", () => {
 
     await setScrollTop(documentViewport, chromeHeight + 40);
     await expectPaneChromeHidden(page, true);
+    await expect(page.getByTestId("pane-shell-chrome")).toHaveCSS("pointer-events", "none");
     await expectScrollTop(documentViewport, chromeHeight + 40);
 
     await setScrollTop(documentViewport, chromeHeight + 34);
@@ -127,6 +134,7 @@ test.describe("pane chrome", () => {
 
     await setScrollTop(documentViewport, chromeHeight + 18);
     await expectPaneChromeHidden(page, false);
+    await expect(page.getByTestId("pane-shell-chrome")).toHaveCSS("pointer-events", "auto");
     await expectScrollTop(documentViewport, chromeHeight + 18);
   });
 
@@ -150,6 +158,7 @@ test.describe("pane chrome", () => {
         { timeout: 20_000 }
       )
       .toBe(true);
+    await expect(pdfViewport).toHaveCSS("overscroll-behavior-y", "contain");
     await setScrollTop(pdfViewport, 0);
     await expectScrollTop(pdfViewport, 0);
     await expectPaneChromeHidden(page, false);

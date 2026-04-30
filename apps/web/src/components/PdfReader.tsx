@@ -11,7 +11,7 @@ import {
 } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import type { PdfReaderResumeState } from "@/lib/reader/types";
-import { usePaneMobileChromeVisibility } from "@/components/workspace/PaneShell";
+import { usePaneMobileChromeController } from "@/components/workspace/PaneShell";
 import {
   PDF_WORKER_SRC,
   getPdfSelection,
@@ -35,7 +35,6 @@ import {
   type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { usePaneChromeScrollHandler } from "@/components/workspace/PaneShell";
 import styles from "./PdfReader.module.css";
 
 export type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
@@ -545,8 +544,7 @@ export default function PdfReader({
   onResumeStateChange,
 }: PdfReaderProps) {
   const isMobile = useIsMobileViewport();
-  const paneChromeScrollHandler = usePaneChromeScrollHandler();
-  const paneMobileChrome = usePaneMobileChromeVisibility();
+  const paneMobileChrome = usePaneMobileChromeController();
   const isMobileRef = useRef(isMobile);
   const initialMobileFitDoneRef = useRef(false);
   const startPageNumberRef = useRef(startPageNumber);
@@ -644,25 +642,22 @@ export default function PdfReader({
 
   const handleViewerContainerScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
-      if (!paneChromeScrollHandler) {
-        return;
-      }
-      paneChromeScrollHandler(event.currentTarget.scrollTop);
+      paneMobileChrome?.onDocumentScroll({
+        scrollTop: event.currentTarget.scrollTop,
+        scrollHeight: event.currentTarget.scrollHeight,
+        clientHeight: event.currentTarget.clientHeight,
+      });
     },
-    [paneChromeScrollHandler]
+    [paneMobileChrome]
   );
 
   useEffect(() => {
-    if (!isMobile || !paneMobileChrome) {
+    if (!isMobile || !paneMobileChrome || selection === null) {
       return;
     }
-    const lockVisible = selection !== null;
-    if (lockVisible) {
-      paneMobileChrome.showMobileChrome();
-    }
-    paneMobileChrome.setMobileChromeLockedVisible(lockVisible);
+    const releaseChromeLock = paneMobileChrome.acquireVisibleLock("pdf-selection");
     return () => {
-      paneMobileChrome.setMobileChromeLockedVisible(false);
+      releaseChromeLock();
     };
   }, [isMobile, paneMobileChrome, selection]);
 

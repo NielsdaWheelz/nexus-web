@@ -30,12 +30,14 @@ interface ActionMenuProps {
   label?: string;
   /** Optional class name for the container. */
   className?: string;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export default function ActionMenu({
   options,
   label = "Actions",
   className,
+  onOpenChange,
 }: ActionMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [initialFocus, setInitialFocus] = useState<"first" | "last">("first");
@@ -70,6 +72,15 @@ export default function ActionMenu({
     setInitialFocus(focusTarget);
     setMenuOpen(true);
   }, []);
+
+  useEffect(() => {
+    onOpenChange?.(menuOpen);
+    return () => {
+      if (menuOpen) {
+        onOpenChange?.(false);
+      }
+    };
+  }, [menuOpen, onOpenChange]);
 
   useEffect(() => {
     if (!menuOpen) return;

@@ -288,6 +288,51 @@ test.describe("reader settings + resume", () => {
       if (anchorBox && chromeBox) {
         expect(anchorBox.y).toBeGreaterThanOrEqual(chromeBox.y + chromeBox.height - 8);
       }
+
+      const documentViewport = page.getByTestId("document-viewport");
+      await documentViewport.evaluate((element) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await expect(page.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
+        "data-mobile-chrome-hidden",
+        "false"
+      );
+      const chromeHeight = Math.ceil(
+        await chrome.evaluate((element) => element.getBoundingClientRect().height)
+      );
+      await documentViewport.evaluate((element, scrollTop) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = scrollTop;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }, chromeHeight + 12);
+      await documentViewport.evaluate((element, scrollTop) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = scrollTop;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }, chromeHeight + 40);
+      await expect(page.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
+        "data-mobile-chrome-hidden",
+        "true"
+      );
+      await documentViewport.evaluate((element, scrollTop) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = scrollTop;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }, chromeHeight + 18);
+      await expect(page.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
+        "data-mobile-chrome-hidden",
+        "false"
+      );
     } finally {
       await patchReaderProfile(page.request, {
         font_size_px: baseline.font_size_px,
